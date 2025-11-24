@@ -96,6 +96,8 @@ export interface Session {
   scratchPadEditScrollPos?: number;
   scratchPadPreviewScrollPos?: number;
   scratchPadMode?: 'edit' | 'preview';
+  // Claude Code session ID for conversation continuity
+  claudeSessionId?: string;
 }
 
 export interface Group {
@@ -119,6 +121,7 @@ export interface ProcessConfig {
   cwd: string;
   command: string;
   args: string[];
+  prompt?: string; // For batch mode agents like Claude (passed as CLI argument)
 }
 
 // Directory entry from fs:readDir

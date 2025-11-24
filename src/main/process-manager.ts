@@ -9,6 +9,7 @@ interface ProcessConfig {
   command: string;
   args: string[];
   requiresPty?: boolean; // Whether this agent needs a pseudo-terminal
+  prompt?: string; // For batch mode agents like Claude (passed as CLI argument)
 }
 
 interface ManagedProcess {
@@ -19,6 +20,8 @@ interface ManagedProcess {
   cwd: string;
   pid: number;
   isTerminal: boolean;
+  isBatchMode?: boolean; // True for agents that run in batch mode (exit after response)
+  jsonBuffer?: string; // Buffer for accumulating JSON output in batch mode
 }
 
 export class ProcessManager extends EventEmitter {
@@ -28,12 +31,16 @@ export class ProcessManager extends EventEmitter {
    * Spawn a new process for a session
    */
   spawn(config: ProcessConfig): { pid: number; success: boolean } {
-    const { sessionId, toolType, cwd, command, args, requiresPty } = config;
+    const { sessionId, toolType, cwd, command, args, requiresPty, prompt } = config;
+
+    // For batch mode with prompt, append prompt to args
+    const finalArgs = prompt ? [...args, prompt] : args;
 
     // Determine if this should use a PTY:
     // - If toolType is 'terminal', always use PTY for full shell emulation
     // - If requiresPty is true, use PTY for AI agents that need TTY (like Claude Code)
-    const usePty = toolType === 'terminal' || requiresPty === true;
+    // - Batch mode (with prompt) never uses PTY
+    const usePty = (toolType === 'terminal' || requiresPty === true) && !prompt;
     const isTerminal = toolType === 'terminal';
 
     try {
@@ -49,7 +56,7 @@ export class ProcessManager extends EventEmitter {
         } else {
           // Spawn the AI agent directly with PTY support
           ptyCommand = command;
-          ptyArgs = args;
+          ptyArgs = finalArgs;
         }
 
         const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {
@@ -96,12 +103,14 @@ export class ProcessManager extends EventEmitter {
 
         return { pid: ptyProcess.pid, success: true };
       } else {
-        // Use regular child_process for AI tools
-        const childProcess = spawn(command, args, {
+        // Use regular child_process for AI tools (including batch mode)
+        const childProcess = spawn(command, finalArgs, {
           cwd,
           env: process.env,
           shell: false, // Explicitly disable shell to prevent injection
         });
+
+        const isBatchMode = !!prompt;
 
         const managedProcess: ManagedProcess = {
           sessionId,
@@ -110,13 +119,23 @@ export class ProcessManager extends EventEmitter {
           cwd,
           pid: childProcess.pid || -1,
           isTerminal: false,
+          isBatchMode,
+          jsonBuffer: isBatchMode ? '' : undefined,
         };
 
         this.processes.set(sessionId, managedProcess);
 
         // Handle stdout
         childProcess.stdout?.on('data', (data: Buffer) => {
-          this.emit('data', sessionId, data.toString());
+          const output = data.toString();
+
+          if (isBatchMode) {
+            // In batch mode, accumulate JSON output
+            managedProcess.jsonBuffer = (managedProcess.jsonBuffer || '') + output;
+          } else {
+            // In interactive mode, emit data immediately
+            this.emit('data', sessionId, output);
+          }
         });
 
         // Handle stderr
@@ -126,6 +145,35 @@ export class ProcessManager extends EventEmitter {
 
         // Handle exit
         childProcess.on('exit', (code) => {
+          if (isBatchMode && managedProcess.jsonBuffer) {
+            // Parse JSON response from batch mode
+            try {
+              const jsonResponse = JSON.parse(managedProcess.jsonBuffer);
+
+              // Emit the result text
+              if (jsonResponse.result) {
+                this.emit('data', sessionId, jsonResponse.result);
+              }
+
+              // Emit session_id if present
+              if (jsonResponse.session_id) {
+                this.emit('session-id', sessionId, jsonResponse.session_id);
+              }
+
+              // Emit full response for debugging
+              console.log('[ProcessManager] Batch mode JSON response:', {
+                sessionId,
+                hasResult: !!jsonResponse.result,
+                hasSessionId: !!jsonResponse.session_id,
+                sessionIdValue: jsonResponse.session_id
+              });
+            } catch (error) {
+              console.error('[ProcessManager] Failed to parse JSON response:', error);
+              // Emit raw buffer as fallback
+              this.emit('data', sessionId, managedProcess.jsonBuffer);
+            }
+          }
+
           this.emit('exit', sessionId, code || 0);
           this.processes.delete(sessionId);
         });

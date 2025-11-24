@@ -226,6 +226,7 @@ function setupIpcHandlers() {
     cwd: string;
     command: string;
     args: string[];
+    prompt?: string;
   }) => {
     if (!processManager) throw new Error('Process manager not initialized');
     if (!agentDetector) throw new Error('Agent detector not initialized');
@@ -264,7 +265,8 @@ function setupIpcHandlers() {
     const result = processManager.spawn({
       ...config,
       args: finalArgs,
-      requiresPty: agent?.requiresPty
+      requiresPty: agent?.requiresPty,
+      prompt: config.prompt
     });
 
     logger.info(`Process spawned successfully`, 'ProcessManager', {
@@ -532,6 +534,10 @@ function setupProcessListeners() {
 
     processManager.on('exit', (sessionId: string, code: number) => {
       mainWindow?.webContents.send('process:exit', sessionId, code);
+    });
+
+    processManager.on('session-id', (sessionId: string, claudeSessionId: string) => {
+      mainWindow?.webContents.send('process:session-id', sessionId, claudeSessionId);
     });
   }
 }

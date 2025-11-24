@@ -18,6 +18,10 @@ export interface ProcessExitHandler {
   (sessionId: string, code: number): void;
 }
 
+export interface ProcessSessionIdHandler {
+  (sessionId: string, claudeSessionId: string): void;
+}
+
 export const processService = {
   /**
    * Spawn a new process
@@ -79,5 +83,12 @@ export const processService = {
    */
   onExit(handler: ProcessExitHandler): () => void {
     return window.maestro.process.onExit(handler);
+  },
+
+  /**
+   * Register handler for session-id events (batch mode)
+   */
+  onSessionId(handler: ProcessSessionIdHandler): () => void {
+    return window.maestro.process.onSessionId(handler);
   }
 };

@@ -7,6 +7,7 @@ interface ProcessConfig {
   cwd: string;
   command: string;
   args: string[];
+  prompt?: string;
 }
 
 interface AgentConfig {
@@ -62,6 +63,11 @@ contextBridge.exposeInMainWorld('maestro', {
       const handler = (_: any, sessionId: string, code: number) => callback(sessionId, code);
       ipcRenderer.on('process:exit', handler);
       return () => ipcRenderer.removeListener('process:exit', handler);
+    },
+    onSessionId: (callback: (sessionId: string, claudeSessionId: string) => void) => {
+      const handler = (_: any, sessionId: string, claudeSessionId: string) => callback(sessionId, claudeSessionId);
+      ipcRenderer.on('process:session-id', handler);
+      return () => ipcRenderer.removeListener('process:session-id', handler);
     },
   },
 
@@ -152,6 +158,7 @@ export interface MaestroAPI {
     resize: (sessionId: string, cols: number, rows: number) => Promise<boolean>;
     onData: (callback: (sessionId: string, data: string) => void) => () => void;
     onExit: (callback: (sessionId: string, code: number) => void) => () => void;
+    onSessionId: (callback: (sessionId: string, claudeSessionId: string) => void) => () => void;
   };
   git: {
     status: (cwd: string) => Promise<string>;

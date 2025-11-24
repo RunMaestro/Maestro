@@ -575,10 +575,35 @@ export default function MaestroConsole() {
       }));
     });
 
+    // Handle Claude session ID capture from batch mode
+    const unsubscribeSessionId = window.maestro.process.onSessionId((sessionId: string, claudeSessionId: string) => {
+      console.log('[onSessionId] Received Claude session ID:', claudeSessionId, 'for session:', sessionId);
+
+      // Parse sessionId to get actual session ID
+      let actualSessionId: string;
+      if (sessionId.endsWith('-ai')) {
+        actualSessionId = sessionId.slice(0, -3);
+      } else {
+        actualSessionId = sessionId;
+      }
+
+      // Store Claude session ID in session state
+      setSessions(prev => prev.map(s => {
+        if (s.id !== actualSessionId) return s;
+
+        console.log('[onSessionId] Storing Claude session ID for session:', actualSessionId, 'claudeSessionId:', claudeSessionId);
+        return {
+          ...s,
+          claudeSessionId
+        };
+      }));
+    });
+
     // Cleanup listeners on unmount
     return () => {
       unsubscribeData();
       unsubscribeExit();
+      unsubscribeSessionId();
     };
   }, []);
 
@@ -1331,8 +1356,51 @@ export default function MaestroConsole() {
     const targetPid = currentMode === 'ai' ? activeSession.aiPid : activeSession.terminalPid;
     const targetSessionId = currentMode === 'ai' ? `${activeSession.id}-ai` : `${activeSession.id}-terminal`;
 
-    if (targetPid > 0) {
-      // Add newline for terminal/shell commands
+    // Check if this is Claude Code in batch mode (AI mode with claude-code tool)
+    const isClaudeBatchMode = currentMode === 'ai' && activeSession.toolType === 'claude-code';
+
+    if (isClaudeBatchMode) {
+      // Batch mode: Spawn new Claude process with prompt
+      (async () => {
+        try {
+          // Get agent configuration
+          const agent = await window.maestro.agents.get('claude-code');
+          if (!agent) throw new Error('Claude Code agent not found');
+
+          // Build spawn args with resume if we have a session ID
+          const spawnArgs = [...agent.args];
+          if (activeSession.claudeSessionId) {
+            spawnArgs.push('--resume', activeSession.claudeSessionId);
+          }
+
+          // Spawn Claude with prompt as argument
+          await window.maestro.process.spawn({
+            sessionId: targetSessionId,
+            toolType: 'claude-code',
+            cwd: activeSession.cwd,
+            command: agent.command,
+            args: spawnArgs,
+            prompt: inputValue
+          });
+        } catch (error) {
+          console.error('Failed to spawn Claude batch process:', error);
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSessionId) return s;
+            return {
+              ...s,
+              state: 'idle',
+              [targetLogKey]: [...s[targetLogKey], {
+                id: generateId(),
+                timestamp: Date.now(),
+                source: 'system',
+                text: `Error: Failed to spawn Claude process - ${error.message}`
+              }]
+            };
+          }));
+        }
+      })();
+    } else if (targetPid > 0) {
+      // Interactive mode: Write to stdin
       const dataToSend = currentMode === 'terminal' ? inputValue + '\n' : inputValue;
       window.maestro.process.write(targetSessionId, dataToSend).catch(error => {
         console.error('Failed to write to process:', error);
