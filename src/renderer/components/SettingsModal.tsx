@@ -1,12 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { X, Key, Moon, Sun, Keyboard, Check } from 'lucide-react';
-
-interface AgentConfig {
-  id: string;
-  name: string;
-  available: boolean;
-  path?: string;
-}
+import type { AgentConfig } from '../types';
 
 interface SettingsModalProps {
   isOpen: boolean;

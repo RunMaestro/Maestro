@@ -102,3 +102,10 @@ export interface Group {
   emoji: string;
   collapsed: boolean;
 }
+
+export interface AgentConfig {
+  id: string;
+  name: string;
+  available: boolean;
+  path?: string;
+}

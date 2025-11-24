@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Folder, X } from 'lucide-react';
-
-interface AgentConfig {
-  id: string;
-  name: string;
-  available: boolean;
-  path?: string;
-}
+import type { AgentConfig } from '../types';
 
 interface NewInstanceModalProps {
   isOpen: boolean;
