@@ -369,7 +369,7 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
               {/* Local filter icon for system output only */}
               {log.source !== 'user' && isTerminal && (
                 <div className="absolute top-2 right-2 flex items-center gap-2">
-                  {activeLocalFilter === log.id ? (
+                  {activeLocalFilter === log.id || localFilterQuery ? (
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
@@ -382,6 +382,12 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
                             setLocalFilterQuery(log.id, '');
                           }
                         }}
+                        onBlur={() => {
+                          // Close filter input when clicking away, but only if empty
+                          if (!localFilterQuery) {
+                            setActiveLocalFilter(null);
+                          }
+                        }}
                         placeholder="Filter lines..."
                         className="w-40 px-2 py-1 text-xs rounded border bg-transparent outline-none"
                         style={{
@@ -389,7 +395,7 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
                           color: theme.colors.textMain,
                           backgroundColor: theme.colors.bgMain
                         }}
-                        autoFocus
+                        autoFocus={activeLocalFilter === log.id}
                       />
                       <button
                         onClick={() => {
