@@ -619,6 +619,7 @@ export function MainPanel(props: MainPanelProps) {
                 maxOutputLines={maxOutputLines}
                 onDeleteLog={props.onDeleteLog}
                 onRemoveQueuedMessage={onRemoveQueuedMessage}
+                onInterrupt={handleInterrupt}
               />
 
               {/* Input Area */}

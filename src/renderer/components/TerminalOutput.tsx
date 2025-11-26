@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo, forwardRef, useState, useCallback } from 'react';
-import { Activity, X, ChevronDown, ChevronUp, Filter, PlusCircle, MinusCircle, Trash2, Copy } from 'lucide-react';
+import { Activity, X, ChevronDown, ChevronUp, Filter, PlusCircle, MinusCircle, Trash2, Copy, StopCircle } from 'lucide-react';
 import type { Session, Theme, LogEntry } from '../types';
 import Convert from 'ansi-to-html';
 import DOMPurify from 'dompurify';
@@ -23,13 +23,14 @@ interface TerminalOutputProps {
   maxOutputLines: number;
   onDeleteLog?: (logId: string) => number | null; // Returns the index to scroll to after deletion
   onRemoveQueuedMessage?: (messageId: string) => void; // Callback to remove a queued message
+  onInterrupt?: () => void; // Callback to interrupt the current process
 }
 
 export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((props, ref) => {
   const {
     session, theme, fontFamily, activeFocus, outputSearchOpen, outputSearchQuery,
     setOutputSearchOpen, setOutputSearchQuery, setActiveFocus, setLightboxImage,
-    inputRef, logsEndRef, maxOutputLines, onDeleteLog, onRemoveQueuedMessage
+    inputRef, logsEndRef, maxOutputLines, onDeleteLog, onRemoveQueuedMessage, onInterrupt
   } = props;
 
   // Use the forwarded ref if provided, otherwise create a local one
@@ -926,7 +927,7 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
               {/* Busy indicator */}
               {session.state === 'busy' && (
                 <div
-                  className="flex flex-col items-center justify-center gap-1 py-6 mx-6 my-4 rounded-xl border"
+                  className="flex flex-col items-center justify-center gap-2 py-6 mx-6 my-4 rounded-xl border"
                   style={{
                     backgroundColor: theme.colors.bgActivity,
                     borderColor: theme.colors.border
@@ -955,6 +956,20 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
                         <span>Cache: {session.usageStats.cacheReadInputTokens.toLocaleString()}</span>
                       )}
                     </div>
+                  )}
+                  {onInterrupt && (
+                    <button
+                      onClick={onInterrupt}
+                      className="flex items-center gap-2 mt-2 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-90"
+                      style={{
+                        backgroundColor: theme.colors.error,
+                        color: '#fff'
+                      }}
+                      title="Interrupt (Ctrl+C)"
+                    >
+                      <StopCircle className="w-4 h-4" />
+                      Stop
+                    </button>
                   )}
                 </div>
               )}

@@ -369,12 +369,12 @@ export function InputArea(props: InputAreaProps) {
           >
             {session.inputMode === 'terminal' ? <Terminal className="w-4 h-4" /> : <Cpu className="w-4 h-4" />}
           </button>
-          {session.state === 'busy' && session.inputMode === 'terminal' ? (
+          {session.state === 'busy' ? (
             <button
               onClick={handleInterrupt}
               className="p-2 rounded-md text-white hover:opacity-90 shadow-sm transition-all animate-pulse"
               style={{ backgroundColor: theme.colors.error }}
-              title="Interrupt (Ctrl+C)"
+              title={session.inputMode === 'ai' ? 'Interrupt Claude (Ctrl+C)' : 'Interrupt (Ctrl+C)'}
             >
               <StopCircle className="w-4 h-4" />
             </button>
