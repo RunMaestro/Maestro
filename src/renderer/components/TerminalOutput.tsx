@@ -375,12 +375,14 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
   useEffect(() => {
     // Only scroll when new logs are added, not when deleted
     if (filteredLogs.length > prevLogCountRef.current && filteredLogs.length > 0) {
-      // Scroll to bottom to show latest message
-      virtuosoRef.current?.scrollToIndex({
-        index: filteredLogs.length - 1,
-        align: 'end',
-        behavior: 'auto'
-      });
+      // Use setTimeout to ensure scroll happens after render
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: filteredLogs.length - 1,
+          align: 'end',
+          behavior: 'auto'
+        });
+      }, 0);
     }
     prevLogCountRef.current = filteredLogs.length;
   }, [filteredLogs.length]);
@@ -390,15 +392,35 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
   useEffect(() => {
     const isBusy = session.state === 'busy';
     // Scroll when transitioning to busy state
-    if (isBusy && !prevBusyStateRef.current && filteredLogs.length > 0) {
-      virtuosoRef.current?.scrollToIndex({
-        index: filteredLogs.length - 1,
-        align: 'end',
-        behavior: 'auto'
-      });
+    if (isBusy && !prevBusyStateRef.current) {
+      // Use setTimeout to ensure scroll happens after the Footer renders
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: Math.max(0, filteredLogs.length - 1),
+          align: 'end',
+          behavior: 'auto'
+        });
+      }, 50);
     }
     prevBusyStateRef.current = isBusy;
   }, [session.state, filteredLogs.length]);
+
+  // Auto-scroll to bottom when message queue changes
+  const prevQueueLengthRef = useRef(session.messageQueue?.length || 0);
+  useEffect(() => {
+    const queueLength = session.messageQueue?.length || 0;
+    // Scroll when new messages are added to the queue
+    if (queueLength > prevQueueLengthRef.current) {
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: Math.max(0, filteredLogs.length - 1),
+          align: 'end',
+          behavior: 'auto'
+        });
+      }, 50);
+    }
+    prevQueueLengthRef.current = queueLength;
+  }, [session.messageQueue?.length, filteredLogs.length]);
 
   // Render a single log item - used by Virtuoso
   const LogItem = useCallback(({ index, log }: { index: number; log: LogEntry }) => {
@@ -858,6 +880,8 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
         followOutput={(isAtBottom) => {
           // Always scroll when session becomes busy to show the thinking indicator
           if (session.state === 'busy') return 'smooth';
+          // Always scroll when there are queued messages to show them
+          if (session.messageQueue && session.messageQueue.length > 0) return 'smooth';
           // Otherwise, only follow if user is already at bottom
           return isAtBottom ? 'smooth' : false;
         }}
