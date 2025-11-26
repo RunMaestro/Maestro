@@ -75,6 +75,7 @@ export function AgentSessionsBrowser({
   onCloseRef.current = onClose;
   const viewingSessionRef = useRef(viewingSession);
   viewingSessionRef.current = viewingSession;
+  const autoJumpedRef = useRef<string | null>(null); // Track which session we've auto-jumped to
 
   const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
@@ -138,6 +139,18 @@ export function AgentSessionsBrowser({
 
     loadSessions();
   }, [activeSession?.cwd]);
+
+  // Auto-view session when activeClaudeSessionId is provided (e.g., from history panel click)
+  useEffect(() => {
+    // Only auto-jump once per activeClaudeSessionId
+    if (!loading && sessions.length > 0 && activeClaudeSessionId && !viewingSession && autoJumpedRef.current !== activeClaudeSessionId) {
+      const targetSession = sessions.find(s => s.sessionId === activeClaudeSessionId);
+      if (targetSession) {
+        autoJumpedRef.current = activeClaudeSessionId;
+        handleViewSession(targetSession);
+      }
+    }
+  }, [loading, sessions, activeClaudeSessionId, viewingSession, handleViewSession]);
 
   // Focus input on mount
   useEffect(() => {
