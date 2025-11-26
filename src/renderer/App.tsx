@@ -24,6 +24,8 @@ import { useSettings } from './hooks';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
+import { useToast } from './contexts/ToastContext';
+import { ToastContainer } from './components/Toast';
 
 // Import services
 import { gitService } from './services/git';
@@ -42,6 +44,9 @@ import { shouldOpenExternally, loadFileTree, getAllFolderPaths, flattenTree } fr
 export default function MaestroConsole() {
   // --- LAYER STACK (for blocking shortcuts when modals are open) ---
   const { hasOpenLayers, hasOpenModal } = useLayerStack();
+
+  // --- TOAST NOTIFICATIONS ---
+  const { addToast } = useToast();
 
   // --- SETTINGS (from useSettings hook) ---
   const settings = useSettings();
@@ -502,6 +507,38 @@ export default function MaestroConsole() {
             };
           }
 
+          // Task complete - show toast notification
+          // Get the last AI response to summarize
+          const lastAiLog = s.aiLogs.filter(log => log.source === 'ai').pop();
+          const duration = s.thinkingStartTime ? Date.now() - s.thinkingStartTime : 0;
+
+          // Get group name for this session
+          const sessionGroup = groupsRef.current.find((g: any) => g.sessionIds?.includes(actualSessionId));
+          const groupName = sessionGroup?.name || 'Ungrouped';
+          const projectName = s.name || s.cwd.split('/').pop() || 'Unknown';
+
+          // Create a short summary from the last response
+          let summary = 'Task completed';
+          if (lastAiLog?.text) {
+            // Extract first sentence or first 100 chars
+            const text = lastAiLog.text.trim();
+            const firstSentence = text.match(/^[^.!?]*[.!?]/)?.[0] || text.substring(0, 100);
+            summary = firstSentence.length < text.length ? firstSentence : text.substring(0, 100) + (text.length > 100 ? '...' : '');
+          }
+
+          // Fire toast notification (async, don't block state update)
+          setTimeout(() => {
+            addToastRef.current({
+              type: 'success',
+              title: 'Task Complete',
+              message: summary,
+              group: groupName,
+              project: projectName,
+              taskDuration: duration,
+              duration: 6000,
+            });
+          }, 0);
+
           return {
             ...s,
             state: 'idle' as SessionState,
@@ -662,6 +699,14 @@ export default function MaestroConsole() {
   const terminalOutputRef = useRef<HTMLDivElement>(null);
   const fileTreeContainerRef = useRef<HTMLDivElement>(null);
   const fileTreeFilterInputRef = useRef<HTMLInputElement>(null);
+
+  // Refs for toast notifications (to access latest values in event handlers)
+  const groupsRef = useRef(groups);
+  const addToastRef = useRef(addToast);
+  const sessionsRef = useRef(sessions);
+  groupsRef.current = groups;
+  addToastRef.current = addToast;
+  sessionsRef.current = sessions;
 
   // Keyboard navigation state
   const [selectedSidebarIndex, setSelectedSidebarIndex] = useState(0);
@@ -1713,6 +1758,7 @@ export default function MaestroConsole() {
           sessions,
           setSessions,
           currentMode: activeSession.inputMode,
+          groups,
           setRightPanelOpen,
           setActiveRightTab,
           setActiveFocus,
@@ -1721,7 +1767,8 @@ export default function MaestroConsole() {
           sendPromptToAgent: spawnAgentWithPrompt,
           addHistoryEntry,
           startNewClaudeSession,
-          spawnBackgroundSynopsis
+          spawnBackgroundSynopsis,
+          addToast,
         });
 
         setInputValue('');
@@ -2160,6 +2207,7 @@ export default function MaestroConsole() {
             sessions,
             setSessions,
             currentMode: activeSession.inputMode,
+            groups,
             setRightPanelOpen,
             setActiveRightTab,
             setActiveFocus,
@@ -2167,7 +2215,8 @@ export default function MaestroConsole() {
             sendPromptToAgent: spawnAgentWithPrompt,
             addHistoryEntry,
             startNewClaudeSession,
-            spawnBackgroundSynopsis
+            spawnBackgroundSynopsis,
+            addToast,
           });
         }
       } else if (e.key === 'Escape') {
@@ -3011,6 +3060,9 @@ export default function MaestroConsole() {
         setMaxOutputLines={setMaxOutputLines}
         initialTab={settingsTab}
       />
+
+      {/* --- TOAST NOTIFICATIONS --- */}
+      <ToastContainer theme={theme} />
       </div>
   );
 }

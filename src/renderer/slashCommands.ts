@@ -11,6 +11,7 @@ export interface SlashCommandContext {
   sessions: any[];
   setSessions: (sessions: any[] | ((prev: any[]) => any[])) => void;
   currentMode: 'ai' | 'terminal';
+  groups: any[];
   // Optional properties for file tree navigation
   setRightPanelOpen?: (open: boolean) => void;
   setActiveRightTab?: (tab: string) => void;
@@ -23,6 +24,8 @@ export interface SlashCommandContext {
   startNewClaudeSession?: () => void;
   // Background synopsis - resumes old session without blocking
   spawnBackgroundSynopsis?: (sessionId: string, cwd: string, resumeClaudeSessionId: string, prompt: string) => Promise<{ success: boolean; response?: string; claudeSessionId?: string }>;
+  // Toast notifications
+  addToast?: (toast: { type: 'success' | 'info' | 'warning' | 'error'; title: string; message: string; group?: string; project?: string; taskDuration?: number; duration?: number }) => void;
 }
 
 // Synopsis prompt for getting a summary of recent work
@@ -59,7 +62,7 @@ export const slashCommands: SlashCommand[] = [
     command: '/clear',
     description: 'Clear output history and start new AI session',
     execute: async (context: SlashCommandContext) => {
-      const { activeSessionId, sessions, setSessions, currentMode, spawnBackgroundSynopsis, addHistoryEntry, startNewClaudeSession } = context;
+      const { activeSessionId, sessions, setSessions, currentMode, groups, spawnBackgroundSynopsis, addHistoryEntry, startNewClaudeSession, addToast } = context;
 
       // Use fallback to first session if activeSessionId is empty
       const actualActiveId = activeSessionId || (sessions.length > 0 ? sessions[0].id : '');
@@ -73,6 +76,12 @@ export const slashCommands: SlashCommand[] = [
         // Save old session info before clearing
         const oldClaudeSessionId = activeSession.claudeSessionId;
         const sessionCwd = activeSession.cwd;
+        const startTime = Date.now();
+
+        // Get group name for the session
+        const sessionGroup = groups.find((g: any) => g.sessionIds?.includes(actualActiveId));
+        const groupName = sessionGroup?.name || 'Ungrouped';
+        const projectName = activeSession.name || sessionCwd.split('/').pop() || 'Unknown';
 
         // Step 1: Clear logs, start new session, show synopsizing status
         // User can immediately start typing in the new session
@@ -89,12 +98,26 @@ export const slashCommands: SlashCommand[] = [
         // Step 2: Run synopsis in background on the OLD session (doesn't block user)
         spawnBackgroundSynopsis(actualActiveId, sessionCwd, oldClaudeSessionId, SYNOPSIS_PROMPT)
           .then(result => {
+            const duration = Date.now() - startTime;
             if (result.success && result.response) {
               addHistoryEntry({
                 type: 'USER',
                 summary: result.response,
                 claudeSessionId: oldClaudeSessionId
               });
+
+              // Show toast notification
+              if (addToast) {
+                addToast({
+                  type: 'success',
+                  title: 'Synopsis Complete',
+                  message: result.response,
+                  group: groupName,
+                  project: projectName,
+                  taskDuration: duration,
+                  duration: 6000,
+                });
+              }
             }
           })
           .finally(() => {
