@@ -30,3 +30,16 @@ export type {
   UseWebSocketOptions,
   UseWebSocketReturn,
 } from './useWebSocket';
+
+export {
+  useSessions,
+  default as useSessionsDefault,
+} from './useSessions';
+
+export type {
+  Session,
+  SessionState,
+  InputMode,
+  UseSessionsOptions,
+  UseSessionsReturn,
+} from './useSessions';
