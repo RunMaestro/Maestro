@@ -307,6 +307,26 @@ app.whenReady().then(() => {
     }));
   });
 
+  // Set up callback for web server to fetch single session details
+  webServer.setGetSessionDetailCallback((sessionId: string) => {
+    const sessions = sessionsStore.get('sessions', []);
+    const session = sessions.find((s: any) => s.id === sessionId);
+    if (!session) return null;
+    return {
+      id: session.id,
+      name: session.name,
+      toolType: session.toolType,
+      state: session.state,
+      inputMode: session.inputMode,
+      cwd: session.cwd,
+      aiLogs: session.aiLogs || [],
+      shellLogs: session.shellLogs || [],
+      usageStats: session.usageStats,
+      claudeSessionId: session.claudeSessionId,
+      isGitRepo: session.isGitRepo,
+    };
+  });
+
   // Set up callback for web server to fetch current theme
   webServer.setGetThemeCallback(() => {
     const themeId = store.get('activeThemeId', 'dracula');

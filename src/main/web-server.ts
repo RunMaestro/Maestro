@@ -46,15 +46,17 @@ export interface RateLimitConfig {
  * Current functionality:
  * - Health check endpoint (/health) - WORKING
  * - WebSocket echo endpoint (/ws) - PLACEHOLDER (echoes messages for connectivity testing)
- * - Session list endpoint (/api/sessions) - PLACEHOLDER (returns empty array)
- * - Session detail endpoint (/api/sessions/:id) - PLACEHOLDER (returns stub data)
+ * - Session list endpoint (/api/sessions) - WORKING (returns actual session data)
+ * - Session detail endpoint (/api/session/:id) - WORKING (returns detailed session info)
+ * - Web interface WebSocket (/ws/web) - WORKING (real-time updates, authentication)
+ * - Authentication (token-based) - WORKING
+ * - Rate limiting - WORKING
  *
  * Phase 6 implementation plan:
  * - Integrate with ProcessManager to expose real session data
  * - Implement real-time session state broadcasting via WebSocket
  * - Stream process output to connected clients
  * - Handle input commands from remote clients
- * - Add authentication and authorization
  * - Support mobile/tablet responsive UI
  * - Integrate with ngrok tunneling for public access
  *
@@ -69,6 +71,28 @@ export type GetSessionsCallback = () => Array<{
   inputMode: string;
   cwd: string;
 }>;
+
+// Session detail type for single session endpoint
+export interface SessionDetail {
+  id: string;
+  name: string;
+  toolType: string;
+  state: string;
+  inputMode: string;
+  cwd: string;
+  aiLogs?: Array<{ timestamp: number; content: string; type?: string }>;
+  shellLogs?: Array<{ timestamp: number; content: string; type?: string }>;
+  usageStats?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalCost?: number;
+  };
+  claudeSessionId?: string;
+  isGitRepo?: boolean;
+}
+
+// Callback type for fetching single session details
+export type GetSessionDetailCallback = (sessionId: string) => SessionDetail | null;
 
 // Theme type for web clients (matches renderer/types/index.ts)
 export interface WebTheme {
@@ -111,6 +135,7 @@ export class WebServer {
   private authConfig: WebAuthConfig = { enabled: false, token: null };
   private rateLimitConfig: RateLimitConfig = { ...DEFAULT_RATE_LIMIT_CONFIG };
   private getSessionsCallback: GetSessionsCallback | null = null;
+  private getSessionDetailCallback: GetSessionDetailCallback | null = null;
   private getThemeCallback: GetThemeCallback | null = null;
 
   constructor(port: number = 8000) {
@@ -131,6 +156,14 @@ export class WebServer {
    */
   setGetSessionsCallback(callback: GetSessionsCallback) {
     this.getSessionsCallback = callback;
+  }
+
+  /**
+   * Set the callback function for fetching single session details
+   * This is called by the /api/session/:id endpoint
+   */
+  setGetSessionDetailCallback(callback: GetSessionDetailCallback) {
+    this.getSessionDetailCallback = callback;
   }
 
   /**
@@ -324,14 +357,42 @@ export class WebServer {
       };
     });
 
-    // Session detail endpoint
-    // NOTE: Placeholder for Phase 6. Currently returns stub data.
-    // Future: Return actual session details including state, output, etc.
-    this.server.get('/api/sessions/:id', async (request) => {
+    // Session detail endpoint - returns detailed information for a specific session
+    // Rate limited using GET rate limit config
+    this.server.get('/api/session/:id', {
+      preHandler: this.authenticateRequest.bind(this),
+      config: {
+        rateLimit: {
+          max: this.rateLimitConfig.max,
+          timeWindow: this.rateLimitConfig.timeWindow,
+        },
+      },
+    }, async (request, reply) => {
       const { id } = request.params as { id: string };
+
+      if (!this.getSessionDetailCallback) {
+        reply.code(503).send({
+          error: 'Service Unavailable',
+          message: 'Session detail service not configured',
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
+      const session = this.getSessionDetailCallback(id);
+
+      if (!session) {
+        reply.code(404).send({
+          error: 'Not Found',
+          message: `Session with id '${id}' not found`,
+          timestamp: Date.now(),
+        });
+        return;
+      }
+
       return {
-        sessionId: id,
-        status: 'idle',
+        session,
+        timestamp: Date.now(),
       };
     });
 
