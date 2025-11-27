@@ -535,9 +535,6 @@ export function SettingsModal(props: SettingsModalProps) {
           <button onClick={() => setActiveTab('shortcuts')} className={`px-6 py-4 text-sm font-bold border-b-2 ${activeTab === 'shortcuts' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`} tabIndex={-1}>
             <Keyboard className="w-4 h-4" />
             Shortcuts
-            <span className="text-xs px-1.5 py-0.5 rounded" style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}>
-              {Object.values(props.shortcuts).length}
-            </span>
           </button>
           <button onClick={() => setActiveTab('theme')} className={`px-6 py-4 text-sm font-bold border-b-2 ${activeTab === 'theme' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`} tabIndex={-1}>
             <Palette className="w-4 h-4" />
@@ -1305,7 +1302,10 @@ export function SettingsModal(props: SettingsModalProps) {
 
             return (
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs px-2 py-1.5 rounded font-medium" style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}>
+                    {shortcutsFilter ? `${filteredCount} / ${totalShortcuts}` : totalShortcuts}
+                  </span>
                   <input
                     ref={shortcutsFilterRef}
                     type="text"
@@ -1315,11 +1315,6 @@ export function SettingsModal(props: SettingsModalProps) {
                     className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
                     style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
                   />
-                  {shortcutsFilter && (
-                    <span className="ml-3 text-xs px-2 py-1 rounded" style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}>
-                      {filteredCount} / {totalShortcuts}
-                    </span>
-                  )}
                 </div>
                 <div className="space-y-2 max-h-[350px] overflow-y-auto pr-2 scrollbar-thin">
                   {filteredShortcuts.map((sc: Shortcut) => (
