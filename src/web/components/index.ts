@@ -11,3 +11,6 @@ export {
   ThemeContext,
 } from './ThemeProvider';
 export type { ThemeProviderProps, ThemeContextValue } from './ThemeProvider';
+
+export { Button, IconButton } from './Button';
+export type { ButtonProps, ButtonVariant, ButtonSize, IconButtonProps } from './Button';
