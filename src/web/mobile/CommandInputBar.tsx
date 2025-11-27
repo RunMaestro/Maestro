@@ -9,10 +9,21 @@
  * - Adjusts position when mobile keyboard appears (using visualViewport API)
  * - Supports safe area insets for notched devices
  * - Disabled state when disconnected or offline
+ * - Large touch-friendly textarea for easy mobile input
+ * - Minimum 44px touch targets per Apple HIG guidelines
  */
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
+
+/** Minimum touch target size per Apple HIG guidelines (44pt) */
+const MIN_TOUCH_TARGET = 44;
+
+/** Default minimum height for the text input area */
+const MIN_INPUT_HEIGHT = 48;
+
+/** Line height for text calculations */
+const LINE_HEIGHT = 22;
 
 export interface CommandInputBarProps {
   /** Whether the device is offline */
@@ -47,7 +58,7 @@ export function CommandInputBar({
   disabled: externalDisabled,
 }: CommandInputBarProps) {
   const colors = useThemeColors();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   // Track keyboard visibility for positioning
@@ -113,10 +124,10 @@ export function CommandInputBar({
   }, [isKeyboardVisible]);
 
   /**
-   * Handle input change
+   * Handle textarea change
    */
   const handleChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const newValue = e.target.value;
       if (controlledValue === undefined) {
         setInternalValue(newValue);
@@ -141,18 +152,19 @@ export function CommandInputBar({
         setInternalValue('');
       }
 
-      // Keep focus on input after submit
-      inputRef.current?.focus();
+      // Keep focus on textarea after submit
+      textareaRef.current?.focus();
     },
     [value, isDisabled, onSubmit, controlledValue]
   );
 
   /**
    * Handle key press events
+   * Enter submits, Shift+Enter adds a newline
    */
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      // Submit on Enter (without shift for single line)
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      // Submit on Enter (Shift+Enter adds newline for multi-line input)
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSubmit(e);
@@ -185,16 +197,15 @@ export function CommandInputBar({
         onSubmit={handleSubmit}
         style={{
           display: 'flex',
-          gap: '8px',
-          alignItems: 'center',
+          gap: '12px',
+          alignItems: 'flex-end', // Align to bottom for multi-line textarea
           paddingLeft: '16px',
           paddingRight: '16px',
         }}
       >
-        {/* Command input field */}
-        <input
-          ref={inputRef}
-          type="text"
+        {/* Large touch-friendly command textarea */}
+        <textarea
+          ref={textareaRef}
           value={value}
           onChange={handleChange}
           onKeyDown={handleKeyDown}
@@ -205,34 +216,62 @@ export function CommandInputBar({
           autoCapitalize="off"
           spellCheck={false}
           enterKeyHint="send"
+          rows={1}
           style={{
             flex: 1,
-            padding: '12px 16px',
-            borderRadius: '8px',
+            // Large touch-friendly padding (minimum 12px, but larger for comfort)
+            padding: '14px 18px',
+            borderRadius: '12px',
             backgroundColor: colors.bgMain,
-            border: `1px solid ${colors.border}`,
+            border: `2px solid ${colors.border}`,
             color: isDisabled ? colors.textDim : colors.textMain,
-            fontSize: '16px', // 16px minimum prevents iOS zoom on focus
+            // 16px minimum prevents iOS zoom on focus, 17px for better readability
+            fontSize: '17px',
             fontFamily: 'inherit',
+            lineHeight: `${LINE_HEIGHT}px`,
             opacity: isDisabled ? 0.5 : 1,
             outline: 'none',
+            // Large minimum height for easy touch targeting
+            minHeight: `${MIN_INPUT_HEIGHT}px`,
+            // Allow vertical resize but limit max height
+            maxHeight: '120px',
             // Reset appearance for consistent styling
             WebkitAppearance: 'none',
             appearance: 'none',
+            // Remove default textarea resize handle
+            resize: 'none',
             // Smooth transitions
-            transition: 'border-color 150ms ease, opacity 150ms ease',
+            transition: 'border-color 150ms ease, opacity 150ms ease, box-shadow 150ms ease',
+            // Better text rendering on mobile
+            WebkitFontSmoothing: 'antialiased',
+            MozOsxFontSmoothing: 'grayscale',
+            // Ensure text doesn't overflow
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            wordWrap: 'break-word',
+          }}
+          onFocus={(e) => {
+            // Add focus ring for accessibility
+            e.currentTarget.style.borderColor = colors.accent;
+            e.currentTarget.style.boxShadow = `0 0 0 3px ${colors.accent}33`;
+          }}
+          onBlur={(e) => {
+            // Remove focus ring
+            e.currentTarget.style.borderColor = colors.border;
+            e.currentTarget.style.boxShadow = 'none';
           }}
           aria-label="Command input"
           aria-disabled={isDisabled}
+          aria-multiline="true"
         />
 
-        {/* Send button */}
+        {/* Send button - large touch target matching input height */}
         <button
           type="submit"
           disabled={isDisabled || !value.trim()}
           style={{
-            padding: '12px 16px',
-            borderRadius: '8px',
+            padding: '14px',
+            borderRadius: '12px',
             backgroundColor: colors.accent,
             color: '#ffffff',
             fontSize: '14px',
@@ -240,23 +279,34 @@ export function CommandInputBar({
             border: 'none',
             cursor: isDisabled || !value.trim() ? 'default' : 'pointer',
             opacity: isDisabled || !value.trim() ? 0.5 : 1,
-            // Touch-friendly minimum size
-            minWidth: '64px',
-            minHeight: '44px',
+            // Touch-friendly size - meets Apple HIG 44pt minimum
+            width: `${MIN_TOUCH_TARGET + 4}px`,
+            height: `${MIN_INPUT_HEIGHT}px`,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             // Smooth transitions
-            transition: 'opacity 150ms ease, background-color 150ms ease',
+            transition: 'opacity 150ms ease, background-color 150ms ease, transform 100ms ease',
             // Prevent button from shrinking
             flexShrink: 0,
+            // Active state feedback
+            WebkitTapHighlightColor: 'transparent',
+          }}
+          onTouchStart={(e) => {
+            // Scale down slightly on touch for tactile feedback
+            if (!isDisabled && value.trim()) {
+              e.currentTarget.style.transform = 'scale(0.95)';
+            }
+          }}
+          onTouchEnd={(e) => {
+            e.currentTarget.style.transform = 'scale(1)';
           }}
           aria-label="Send command"
         >
-          {/* Arrow up icon for send */}
+          {/* Arrow up icon for send - larger for touch */}
           <svg
-            width="20"
-            height="20"
+            width="24"
+            height="24"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
