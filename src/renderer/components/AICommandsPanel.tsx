@@ -352,11 +352,11 @@ export function AICommandsPanel({ theme, customAICommands, setCustomAICommands }
                   {cmd.description}
                 </div>
                 <div
-                  className="text-xs p-2 rounded font-mono overflow-hidden text-ellipsis whitespace-nowrap"
+                  className="text-xs p-2 rounded font-mono overflow-hidden line-clamp-3"
                   style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textMain }}
                   title={cmd.prompt}
                 >
-                  {cmd.prompt.length > 100 ? `${cmd.prompt.slice(0, 100)}...` : cmd.prompt}
+                  {cmd.prompt}
                 </div>
               </div>
             )}

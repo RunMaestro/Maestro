@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Search, Clock, MessageSquare, HardDrive, Play, ChevronLeft, Loader2, Plus, X, List, Database, BarChart3, ChevronDown, User, Bot, DollarSign, Star, Zap, Timer, Hash, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
+import { Search, Clock, MessageSquare, HardDrive, Play, ChevronLeft, Loader2, Plus, X, List, Database, BarChart3, ChevronDown, User, Bot, DollarSign, Star, Zap, Timer, Hash, ArrowDownToLine, ArrowUpFromLine, Tag } from 'lucide-react';
 import type { Theme, Session, LogEntry } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -28,6 +28,7 @@ interface ClaudeSession {
   cacheCreationTokens: number;
   durationSeconds: number;
   origin?: 'user' | 'auto'; // Maestro session origin, undefined for CLI sessions
+  sessionName?: string; // User-defined session name from Maestro
 }
 
 interface SessionMessage {
@@ -61,6 +62,7 @@ export function AgentSessionsBrowser({
   const [search, setSearch] = useState('');
   const [searchMode, setSearchMode] = useState<SearchMode>('all');
   const [showAllSessions, setShowAllSessions] = useState(false);
+  const [namedOnly, setNamedOnly] = useState(false);
   const [searchModeDropdownOpen, setSearchModeDropdownOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -327,12 +329,16 @@ export function AgentSessionsBrowser({
     }
   }, [hasMoreMessages, messagesLoading, handleLoadMore]);
 
-  // Helper to check if a session should be visible based on showAllSessions
+  // Helper to check if a session should be visible based on filters
   const isSessionVisible = useCallback((session: ClaudeSession) => {
+    // Named only filter - if enabled, only show sessions with a custom name
+    if (namedOnly && !session.sessionName) {
+      return false;
+    }
     if (showAllSessions) return true;
     // Hide sessions that start with "agent-" (only show UUID-style sessions by default)
     return !session.sessionId.startsWith('agent-');
-  }, [showAllSessions]);
+  }, [showAllSessions, namedOnly]);
 
   // Calculate stats from visible sessions
   const stats = useMemo(() => {
@@ -368,20 +374,29 @@ export function AgentSessionsBrowser({
       return sortWithStarred(visibleSessions);
     }
 
-    // For title search, filter locally (fast)
+    // For title search, filter locally (fast) - include sessionName
     if (searchMode === 'title') {
       const searchLower = search.toLowerCase();
       const filtered = visibleSessions.filter(s =>
         s.firstMessage.toLowerCase().includes(searchLower) ||
-        s.sessionId.toLowerCase().includes(searchLower)
+        s.sessionId.toLowerCase().includes(searchLower) ||
+        (s.sessionName && s.sessionName.toLowerCase().includes(searchLower))
       );
       return sortWithStarred(filtered);
     }
 
     // For content searches, use backend results to filter sessions
-    if (searchResults.length > 0) {
-      const matchingIds = new Set(searchResults.map(r => r.sessionId));
-      const filtered = visibleSessions.filter(s => matchingIds.has(s.sessionId));
+    // Also include sessions that match by sessionName (strong match in 'all' mode)
+    const searchLower = search.toLowerCase();
+    const matchingIds = new Set(searchResults.map(r => r.sessionId));
+
+    // Add sessions that match by sessionName to the results
+    const filtered = visibleSessions.filter(s =>
+      matchingIds.has(s.sessionId) ||
+      (s.sessionName && s.sessionName.toLowerCase().includes(searchLower))
+    );
+
+    if (filtered.length > 0) {
       return sortWithStarred(filtered);
     }
 
@@ -798,6 +813,21 @@ export function AgentSessionsBrowser({
                   <X className="w-3 h-3" />
                 </button>
               )}
+              {/* Named Only checkbox */}
+              <label
+                className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
+                style={{ color: namedOnly ? theme.colors.accent : theme.colors.textDim }}
+                title="Only show sessions with custom names"
+              >
+                <input
+                  type="checkbox"
+                  checked={namedOnly}
+                  onChange={(e) => setNamedOnly(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded cursor-pointer accent-current"
+                  style={{ accentColor: theme.colors.accent }}
+                />
+                <span>Named</span>
+              </label>
               {/* Show All checkbox */}
               <label
                 className="flex items-center gap-1.5 text-xs cursor-pointer select-none"
@@ -904,10 +934,22 @@ export function AgentSessionsBrowser({
                         />
                       </button>
                       <div className="flex-1 min-w-0">
-                        {/* Line 1: Title/first message */}
+                        {/* Line 1: Session name (if available) with tag icon */}
+                        {session.sessionName && (
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <Tag className="w-3.5 h-3.5 flex-shrink-0" style={{ color: theme.colors.accent }} />
+                            <span
+                              className="font-semibold text-sm truncate"
+                              style={{ color: theme.colors.accent }}
+                            >
+                              {session.sessionName}
+                            </span>
+                          </div>
+                        )}
+                        {/* Line 2: First message / title */}
                         <div
-                          className="font-medium truncate text-sm mb-1.5"
-                          style={{ color: theme.colors.textMain }}
+                          className={`font-medium truncate text-sm ${session.sessionName ? 'mb-1' : 'mb-1.5'}`}
+                          style={{ color: session.sessionName ? theme.colors.textDim : theme.colors.textMain }}
                         >
                           {session.firstMessage || `Session ${session.sessionId.slice(0, 8)}...`}
                         </div>

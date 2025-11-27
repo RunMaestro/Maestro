@@ -17,7 +17,7 @@ interface TerminalOutputProps {
   setOutputSearchOpen: (open: boolean) => void;
   setOutputSearchQuery: (query: string) => void;
   setActiveFocus: (focus: string) => void;
-  setLightboxImage: (image: string | null) => void;
+  setLightboxImage: (image: string | null, contextImages?: string[]) => void;
   inputRef: React.RefObject<HTMLTextAreaElement>;
   logsEndRef: React.RefObject<HTMLDivElement>;
   maxOutputLines: number;
@@ -780,7 +780,7 @@ export const TerminalOutput = forwardRef<HTMLDivElement, TerminalOutputProps>((p
           {log.images && log.images.length > 0 && (
             <div className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin">
               {log.images.map((img, imgIdx) => (
-                <img key={imgIdx} src={img} className="h-20 rounded border cursor-zoom-in" onClick={() => setLightboxImage(img)} />
+                <img key={imgIdx} src={img} className="h-20 rounded border cursor-zoom-in" onClick={() => setLightboxImage(img, log.images)} />
               ))}
             </div>
           )}

@@ -138,9 +138,13 @@ const historyStore = new Store<HistoryData>({
 // Claude session origins store - tracks which Claude sessions were created by Maestro
 // and their origin type (user-initiated vs auto/batch)
 type ClaudeSessionOrigin = 'user' | 'auto';
+interface ClaudeSessionOriginInfo {
+  origin: ClaudeSessionOrigin;
+  sessionName?: string; // User-defined session name from Maestro
+}
 interface ClaudeSessionOriginsData {
-  // Map of projectPath -> { claudeSessionId -> origin type }
-  origins: Record<string, Record<string, ClaudeSessionOrigin>>;
+  // Map of projectPath -> { claudeSessionId -> origin info }
+  origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
 }
 
 const claudeSessionOriginsStore = new Store<ClaudeSessionOriginsData>({
@@ -1086,11 +1090,18 @@ function setupIpcHandlers() {
       const origins = claudeSessionOriginsStore.get('origins', {});
       const projectOrigins = origins[projectPath] || {};
 
-      // Add origin info to each session
-      const sessionsWithOrigins = validSessions.map(session => ({
-        ...session,
-        origin: projectOrigins[session.sessionId] as ClaudeSessionOrigin | undefined,
-      }));
+      // Add origin info and session name to each session
+      const sessionsWithOrigins = validSessions.map(session => {
+        const originData = projectOrigins[session.sessionId];
+        // Handle both old string format and new object format
+        const origin = typeof originData === 'string' ? originData : originData?.origin;
+        const sessionName = typeof originData === 'object' ? originData?.sessionName : undefined;
+        return {
+          ...session,
+          origin: origin as ClaudeSessionOrigin | undefined,
+          sessionName,
+        };
+      });
 
       logger.info(`Found ${validSessions.length} Claude sessions for project`, 'ClaudeSessions', { projectPath });
       return sessionsWithOrigins;
@@ -1527,14 +1538,38 @@ function setupIpcHandlers() {
   });
 
   // Claude session origins tracking (distinguishes Maestro-created sessions from CLI sessions)
-  ipcMain.handle('claude:registerSessionOrigin', async (_event, projectPath: string, claudeSessionId: string, origin: 'user' | 'auto') => {
+  ipcMain.handle('claude:registerSessionOrigin', async (_event, projectPath: string, claudeSessionId: string, origin: 'user' | 'auto', sessionName?: string) => {
     const origins = claudeSessionOriginsStore.get('origins', {});
     if (!origins[projectPath]) {
       origins[projectPath] = {};
     }
-    origins[projectPath][claudeSessionId] = origin;
+    // Store as object if sessionName provided, otherwise just origin string for backwards compat
+    origins[projectPath][claudeSessionId] = sessionName
+      ? { origin, sessionName }
+      : origin;
     claudeSessionOriginsStore.set('origins', origins);
-    logger.debug(`Registered Claude session origin: ${claudeSessionId} = ${origin}`, 'ClaudeSessionOrigins', { projectPath });
+    logger.debug(`Registered Claude session origin: ${claudeSessionId} = ${origin}${sessionName ? ` (name: ${sessionName})` : ''}`, 'ClaudeSessionOrigins', { projectPath });
+    return true;
+  });
+
+  // Update session name for an existing Claude session
+  ipcMain.handle('claude:updateSessionName', async (_event, projectPath: string, claudeSessionId: string, sessionName: string) => {
+    const origins = claudeSessionOriginsStore.get('origins', {});
+    if (!origins[projectPath]) {
+      origins[projectPath] = {};
+    }
+    const existing = origins[projectPath][claudeSessionId];
+    // Convert string origin to object format, or update existing object
+    if (typeof existing === 'string') {
+      origins[projectPath][claudeSessionId] = { origin: existing, sessionName };
+    } else if (existing) {
+      origins[projectPath][claudeSessionId] = { ...existing, sessionName };
+    } else {
+      // No existing origin, default to 'user' since they're naming it
+      origins[projectPath][claudeSessionId] = { origin: 'user', sessionName };
+    }
+    claudeSessionOriginsStore.set('origins', origins);
+    logger.debug(`Updated Claude session name: ${claudeSessionId} = ${sessionName}`, 'ClaudeSessionOrigins', { projectPath });
     return true;
   });
 

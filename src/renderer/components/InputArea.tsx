@@ -18,7 +18,7 @@ interface InputAreaProps {
   setEnterToSend: (value: boolean) => void;
   stagedImages: string[];
   setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
-  setLightboxImage: (image: string | null) => void;
+  setLightboxImage: (image: string | null, contextImages?: string[]) => void;
   commandHistoryOpen: boolean;
   setCommandHistoryOpen: (open: boolean) => void;
   commandHistoryFilter: string;
@@ -99,7 +99,7 @@ export function InputArea(props: InputAreaProps) {
                 src={img}
                 className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
                 style={{ borderColor: theme.colors.border }}
-                onClick={() => setLightboxImage(img)}
+                onClick={() => setLightboxImage(img, stagedImages)}
               />
               <button
                 onClick={(e) => {

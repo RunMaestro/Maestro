@@ -96,20 +96,47 @@ jobs:
 
       - name: Package for macOS
         if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        run: npx electron-builder --mac --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          CSC_LINK: ""
           DEBUG: electron-builder
+
+      # Ad-hoc sign macOS apps and re-create archives
+      # Fixes "code has no resources but signature indicates they must be present"
+      - name: Ad-hoc sign macOS apps
+        if: matrix.platform == 'mac'
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+
+          # Sign x64 app and recreate zip
+          if [ -d "release/mac/Maestro.app" ]; then
+            echo "Ad-hoc signing: release/mac/Maestro.app"
+            codesign --sign - --deep --force "release/mac/Maestro.app"
+            echo "Re-creating ZIP for x64..."
+            rm -f "release/Maestro-${VERSION}-mac.zip"
+            cd release/mac && zip -r -y "../Maestro-${VERSION}-mac.zip" Maestro.app && cd ../..
+          fi
+
+          # Sign arm64 app and recreate zip
+          if [ -d "release/mac-arm64/Maestro.app" ]; then
+            echo "Ad-hoc signing: release/mac-arm64/Maestro.app"
+            codesign --sign - --deep --force "release/mac-arm64/Maestro.app"
+            echo "Re-creating ZIP for arm64..."
+            rm -f "release/Maestro-${VERSION}-arm64-mac.zip"
+            cd release/mac-arm64 && zip -r -y "../Maestro-${VERSION}-arm64-mac.zip" Maestro.app && cd ../..
+          fi
 
       - name: Package for Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        shell: bash
+        run: npx electron-builder --win --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 
       - name: Package for Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
+        run: npx electron-builder --linux --publish never --config.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 

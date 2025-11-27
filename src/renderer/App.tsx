@@ -131,6 +131,7 @@ export default function MaestroConsole() {
   const [quickActionInitialMode, setQuickActionInitialMode] = useState<'main' | 'move-to-group'>('main');
   const [settingsTab, setSettingsTab] = useState<'general' | 'shortcuts' | 'theme' | 'network'>('general');
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]); // Context images for navigation
   const [aboutModalOpen, setAboutModalOpen] = useState(false);
   const [logViewerOpen, setLogViewerOpen] = useState(false);
   const [processMonitorOpen, setProcessMonitorOpen] = useState(false);
@@ -650,8 +651,9 @@ export default function MaestroConsole() {
         }
 
         // Register this as a user-initiated Maestro session (batch sessions are filtered above)
-        window.maestro.claude.registerSessionOrigin(session.cwd, claudeSessionId, 'user')
-          .then(() => console.log('[onSessionId] Registered session origin as user:', claudeSessionId))
+        // Also pass the session name so it can be searched in the Claude sessions browser
+        window.maestro.claude.registerSessionOrigin(session.cwd, claudeSessionId, 'user', session.name)
+          .then(() => console.log('[onSessionId] Registered session origin as user:', claudeSessionId, 'name:', session.name))
           .catch(err => console.error('[onSessionId] Failed to register session origin:', err));
 
         return prev.map(s => {
@@ -1126,6 +1128,12 @@ export default function MaestroConsole() {
       setAgentSessionsOpen(true);
     }
   }, [activeSession]);
+
+  // Handler to open lightbox with optional context images for navigation
+  const handleSetLightboxImage = useCallback((image: string | null, contextImages?: string[]) => {
+    setLightboxImage(image);
+    setLightboxImages(contextImages || []);
+  }, []);
 
   // Create sorted sessions array that matches visual display order (includes ALL sessions)
   const sortedSessions = useMemo(() => {
@@ -1860,7 +1868,28 @@ export default function MaestroConsole() {
   };
 
   const finishRenamingSession = (sessId: string, newName: string) => {
-    setSessions(prev => prev.map(s => s.id === sessId ? { ...s, name: newName } : s));
+    setSessions(prev => {
+      const updated = prev.map(s => s.id === sessId ? { ...s, name: newName } : s);
+      // Sync the session name to Claude session storage for searchability
+      const session = updated.find(s => s.id === sessId);
+      if (session?.claudeSessionId && session.cwd) {
+        console.log('[finishRenamingSession] Syncing session name to Claude storage:', {
+          claudeSessionId: session.claudeSessionId,
+          cwd: session.cwd,
+          newName
+        });
+        window.maestro.claude.updateSessionName(session.cwd, session.claudeSessionId, newName)
+          .then(() => console.log('[finishRenamingSession] Successfully synced session name'))
+          .catch(err => console.warn('[finishRenamingSession] Failed to sync session name:', err));
+      } else {
+        console.log('[finishRenamingSession] Cannot sync - missing claudeSessionId or cwd:', {
+          sessId,
+          claudeSessionId: session?.claudeSessionId,
+          cwd: session?.cwd
+        });
+      }
+      return updated;
+    });
     setEditingSessionId(null);
   };
 
@@ -2953,8 +2982,8 @@ export default function MaestroConsole() {
       {lightboxImage && (
         <LightboxModal
           image={lightboxImage}
-          stagedImages={stagedImages}
-          onClose={() => setLightboxImage(null)}
+          stagedImages={lightboxImages.length > 0 ? lightboxImages : stagedImages}
+          onClose={() => { setLightboxImage(null); setLightboxImages([]); }}
           onNavigate={(img) => setLightboxImage(img)}
         />
       )}
@@ -3196,7 +3225,7 @@ export default function MaestroConsole() {
         setEnterToSendAI={setEnterToSendAI}
         setEnterToSendTerminal={setEnterToSendTerminal}
         setStagedImages={setStagedImages}
-        setLightboxImage={setLightboxImage}
+        setLightboxImage={handleSetLightboxImage}
         setCommandHistoryOpen={setCommandHistoryOpen}
         setCommandHistoryFilter={setCommandHistoryFilter}
         setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}

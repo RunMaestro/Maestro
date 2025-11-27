@@ -312,11 +312,17 @@ export function GitLogViewer({ cwd, theme, onClose }: GitLogViewerProps) {
 
         {/* Search bar */}
         <div
-          className="px-6 py-3 border-b flex items-center gap-3"
+          className="px-6 py-3 border-b flex items-center gap-3 cursor-text"
           style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
-          onClick={() => searchInputRef.current?.focus()}
+          onMouseDown={(e) => {
+            // Prevent the modal from stealing focus back
+            if (e.target !== searchInputRef.current) {
+              e.preventDefault();
+              searchInputRef.current?.focus();
+            }
+          }}
         >
-          <Search className="w-4 h-4" style={{ color: isSearchFocused ? theme.colors.accent : theme.colors.textDim }} />
+          <Search className="w-4 h-4 flex-shrink-0 pointer-events-none" style={{ color: isSearchFocused ? theme.colors.accent : theme.colors.textDim }} />
           <input
             ref={searchInputRef}
             type="text"
@@ -326,6 +332,7 @@ export function GitLogViewer({ cwd, theme, onClose }: GitLogViewerProps) {
             onChange={(e) => setSearchQuery(e.target.value)}
             onFocus={() => setIsSearchFocused(true)}
             onBlur={() => setIsSearchFocused(false)}
+            onMouseDown={(e) => e.stopPropagation()}
             className="flex-1 bg-transparent text-sm outline-none border-none"
             style={{
               color: theme.colors.textMain,

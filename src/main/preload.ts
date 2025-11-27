@@ -210,8 +210,10 @@ contextBridge.exposeInMainWorld('maestro', {
     getCommands: (projectPath: string) =>
       ipcRenderer.invoke('claude:getCommands', projectPath),
     // Session origin tracking (distinguishes Maestro sessions from CLI sessions)
-    registerSessionOrigin: (projectPath: string, claudeSessionId: string, origin: 'user' | 'auto') =>
-      ipcRenderer.invoke('claude:registerSessionOrigin', projectPath, claudeSessionId, origin),
+    registerSessionOrigin: (projectPath: string, claudeSessionId: string, origin: 'user' | 'auto', sessionName?: string) =>
+      ipcRenderer.invoke('claude:registerSessionOrigin', projectPath, claudeSessionId, origin, sessionName),
+    updateSessionName: (projectPath: string, claudeSessionId: string, sessionName: string) =>
+      ipcRenderer.invoke('claude:updateSessionName', projectPath, claudeSessionId, sessionName),
     getSessionOrigins: (projectPath: string) =>
       ipcRenderer.invoke('claude:getSessionOrigins', projectPath),
   },
@@ -371,7 +373,14 @@ export interface MaestroAPI {
       firstMessage: string;
       messageCount: number;
       sizeBytes: number;
+      costUsd: number;
+      inputTokens: number;
+      outputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+      durationSeconds: number;
       origin?: 'user' | 'auto'; // Maestro session origin, undefined for CLI sessions
+      sessionName?: string; // User-defined session name from Maestro
     }>>;
     readSessionMessages: (projectPath: string, sessionId: string, options?: { offset?: number; limit?: number }) => Promise<{
       messages: Array<{
@@ -395,8 +404,9 @@ export interface MaestroAPI {
       command: string;
       description: string;
     }>>;
-    registerSessionOrigin: (projectPath: string, claudeSessionId: string, origin: 'user' | 'auto') => Promise<boolean>;
-    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto'>>;
+    registerSessionOrigin: (projectPath: string, claudeSessionId: string, origin: 'user' | 'auto', sessionName?: string) => Promise<boolean>;
+    updateSessionName: (projectPath: string, claudeSessionId: string, sessionName: string) => Promise<boolean>;
+    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string }>>;
   };
   tempfile: {
     write: (content: string, filename?: string) => Promise<{ success: boolean; path?: string; error?: string }>;
