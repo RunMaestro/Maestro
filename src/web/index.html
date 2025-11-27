@@ -2,11 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <meta name="theme-color" content="#1a1a2e" />
+    <!-- Responsive viewport configuration for mobile browsers -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- Theme color for browser chrome (address bar, etc.) -->
+    <meta name="theme-color" content="#1a1a2e" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#1a1a2e" media="(prefers-color-scheme: light)" />
+    <!-- iOS Safari specific -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Maestro" />
+    <!-- Disable automatic phone/date/address detection -->
+    <meta name="format-detection" content="telephone=no, date=no, email=no, address=no" />
+    <!-- Microsoft/IE specific -->
+    <meta name="msapplication-tap-highlight" content="no" />
+    <!-- App description -->
     <meta name="description" content="Maestro Web Interface - Remote control for your AI coding assistants" />
+    <!-- Mobile app specific -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="application-name" content="Maestro" />
     <title>Maestro Web</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

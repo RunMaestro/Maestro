@@ -143,7 +143,7 @@ select {
     text-size-adjust: none;
   }
 
-  /* Larger tap targets */
+  /* Larger tap targets for accessibility (44px minimum per Apple HIG) */
   button,
   a,
   input,
@@ -156,6 +156,72 @@ select {
   body {
     overscroll-behavior-y: contain;
   }
+
+  /* Prevent zoom on input focus (iOS Safari) */
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* Dynamic viewport height support for mobile browsers */
+/* dvh accounts for mobile browser chrome (address bar) */
+html, body, #root {
+  min-height: 100dvh;
+  min-height: -webkit-fill-available;
+}
+
+/* Fallback for browsers that don't support dvh */
+@supports not (min-height: 100dvh) {
+  html, body, #root {
+    min-height: 100vh;
+  }
+}
+
+/* iOS-specific fixes */
+@supports (-webkit-touch-callout: none) {
+  /* Fix for iOS rubber-banding */
+  body {
+    position: fixed;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100%;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Prevent iOS zoom on double tap */
+  * {
+    touch-action: manipulation;
+  }
+}
+
+/* Prevent touch callout (long-press menu) on interactive elements */
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Allow text selection in content areas */
+p, span, div, article, section {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Smooth momentum scrolling */
+.scrollable {
+  -webkit-overflow-scrolling: touch;
+  overflow-y: auto;
 }
 
 /* Safe area insets for iOS */
