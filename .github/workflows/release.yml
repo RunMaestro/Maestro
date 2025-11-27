@@ -59,27 +59,21 @@ jobs:
         with:
           python-version: '3.11'
 
-      # Extract version from git tag and update package.json
+      # Extract version from git tag for use in build steps
       - name: Set version from tag
+        id: version
         shell: bash
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
           if [[ "$REF_TYPE" == "tag" ]]; then
-            # Extract version from tag (strip 'v' prefix if present)
             VERSION="${REF_NAME#v}"
-            echo "Setting version to: $VERSION"
-            # Update package.json version using node
-            node -e "
-              const fs = require('fs');
-              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-              pkg.version = process.argv[1];
-              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
-            " "$VERSION"
-            echo "Updated package.json version to $VERSION"
-            grep '"version"' package.json
+          else
+            VERSION=$(node -p "require('./package.json').version")
           fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Using version: $VERSION"
 
       - name: Install dependencies
         run: npm ci
@@ -92,6 +86,8 @@ jobs:
 
       - name: Build application
         run: npm run build
+        env:
+          VITE_APP_VERSION: ${{ steps.version.outputs.VERSION }}
 
       # List release directory before packaging for debugging
       - name: Create release directory
@@ -100,20 +96,20 @@ jobs:
 
       - name: Package for macOS
         if: matrix.platform == 'mac'
-        run: npx electron-builder --mac --publish never
+        run: npx electron-builder --mac --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
           DEBUG: electron-builder
 
       - name: Package for Windows
         if: matrix.platform == 'win'
-        run: npx electron-builder --win --publish never
+        run: npx electron-builder --win --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 
       - name: Package for Linux
         if: matrix.platform == 'linux'
-        run: npx electron-builder --linux --publish never
+        run: npx electron-builder --linux --publish never -c.extraMetadata.version=${{ steps.version.outputs.VERSION }}
         env:
           DEBUG: electron-builder
 
