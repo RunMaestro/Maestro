@@ -223,3 +223,193 @@ The `window.maestro` API exposes:
 ### Modal Escape Not Working
 1. Register with layer stack (don't handle Escape locally)
 2. Check priority is set correctly
+
+---
+
+## Current Work Items
+
+Prioritized list of tasks that need implementation. Each includes suggested branch name for PRs.
+
+### High Priority
+
+#### 1. User Error Notifications (TODO)
+**Files:** `src/renderer/App.tsx:1805`, `src/renderer/hooks/useSessionManager.ts:254`
+
+Session creation errors only log to console - users see no feedback. Need toast/notification system.
+
+**Branch:** `fix/user-error-notifications`
+
+#### 2. Phase 6: Remote Access Implementation
+**File:** `src/main/web-server.ts`
+
+WebSocket and API endpoints have placeholder implementations:
+- Lines 62-68: WebSocket echoes only - needs real session streaming
+- Lines 86-92: `/api/sessions` returns `[]` - needs ProcessManager integration
+- Lines 96-104: `/api/sessions/:id` returns stub data
+
+**Branch:** `feat/phase6-remote-access`
+
+### Medium Priority
+
+#### 3. Tunnel Provider Integration
+**Files:** `src/main/index.ts:653-678`, `src/main/session-web-server.ts`
+
+Settings UI and IPC handlers exist but no actual ngrok/Cloudflare provider code.
+
+**Branch:** `feat/tunnel-providers`
+
+#### 4. Error Handling Improvements
+Services log errors without user feedback:
+- `src/renderer/services/git.ts`
+- `src/renderer/services/process.ts`
+- `src/renderer/hooks/useFileExplorer.ts`
+- `src/renderer/hooks/useBatchProcessor.ts`
+
+**Branch:** `fix/error-feedback`
+
+### Low Priority / Backburner
+
+#### 5. LLM Settings Panel (Disabled Feature)
+**File:** `src/renderer/components/SettingsModal.tsx:8-11`
+
+```typescript
+const FEATURE_FLAGS = {
+  LLM_SETTINGS: false,  // OpenRouter, Anthropic, Ollama integration
+};
+```
+
+Fully implemented but disabled. See [BACKBURNER.md](BACKBURNER.md) for details.
+
+---
+
+## Contributing Workflow
+
+### Feature Branch Naming Convention
+
+```
+feat/short-description    # New features
+fix/short-description     # Bug fixes
+docs/short-description    # Documentation
+refactor/short-description # Code refactoring
+```
+
+### Fork and Setup (First Time Only)
+
+1. **Fork on GitHub:**
+   - Go to https://github.com/pedramamini/Maestro
+   - Click "Fork" button (top right)
+   - This creates `https://github.com/YOUR-USERNAME/Maestro`
+
+2. **Clone your fork:**
+   ```bash
+   git clone https://github.com/YOUR-USERNAME/Maestro.git
+   cd Maestro
+   ```
+
+3. **Add upstream remote:**
+   ```bash
+   git remote add upstream https://github.com/pedramamini/Maestro.git
+   git remote -v  # Verify: origin=your-fork, upstream=original
+   ```
+
+4. **Install dependencies:**
+   ```bash
+   npm install
+   ```
+
+### Creating a PR
+
+1. **Sync with upstream first:**
+   ```bash
+   git checkout main
+   git fetch upstream
+   git merge upstream/main
+   git push origin main  # Keep your fork's main in sync
+   ```
+
+2. **Create feature branch:**
+   ```bash
+   git checkout -b feat/your-feature
+   ```
+
+3. **Make changes following code patterns** (see Core Patterns above)
+
+4. **Test your changes:**
+   ```bash
+   npm run dev    # Test in development
+   npm run build  # Verify build works
+   ```
+
+5. **Commit with conventional messages:**
+   ```bash
+   git add .
+   git commit -m "feat: add user error notifications"
+   ```
+
+6. **Push to your fork:**
+   ```bash
+   git push -u origin feat/your-feature
+   ```
+
+7. **Create PR via GitHub CLI or web:**
+   ```bash
+   # Using gh CLI (recommended)
+   gh pr create --repo pedramamini/Maestro \
+     --title "feat: Add user error notifications" \
+     --body "Description of changes..."
+
+   # Or via web: Go to your fork on GitHub, click "Compare & pull request"
+   ```
+
+### Keeping Your Fork Updated
+
+```bash
+git checkout main
+git fetch upstream
+git merge upstream/main
+git push origin main
+```
+
+### Error Handling Patterns
+
+| Layer | Pattern |
+|-------|---------|
+| IPC Handlers | Throw critical errors, catch optional ones |
+| Services | Never throw, return safe defaults |
+| ProcessManager | Throw spawn failures, emit runtime events |
+| Components | Try-catch async, show UI errors |
+| Hooks | Internal catch, expose error state |
+
+```typescript
+// Service pattern - never throw
+export const gitService = {
+  async isRepo(cwd: string): Promise<boolean> {
+    try {
+      return await window.maestro.git.isRepo(cwd);
+    } catch (error) {
+      console.error('Git isRepo error:', error);
+      return false;
+    }
+  },
+};
+
+// Component pattern - user-friendly errors
+const handleFileLoad = async (path: string) => {
+  try {
+    const content = await window.maestro.fs.readFile(path);
+    setFileContent(content);
+  } catch (error) {
+    console.error('Failed to load file:', error);
+    setError('Failed to load file');  // Show to user
+  }
+};
+```
+
+---
+
+## Related Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Deep technical architecture details
+- [CONTRIBUTING.md](CONTRIBUTING.md) - Development setup and contribution process
+- [BACKBURNER.md](BACKBURNER.md) - Disabled features and feature flags
+- [README.md](README.md) - User-facing documentation and features
