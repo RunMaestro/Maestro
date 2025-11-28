@@ -1271,6 +1271,7 @@ export default function MobileApp() {
         slashCommands={allSlashCommands}
         onInputFocus={handleInputFocus}
         onInputBlur={handleInputBlur}
+        showRecentCommands={!isSmallScreen}
       />
 
       {/* Command history drawer - swipe up from input area */}

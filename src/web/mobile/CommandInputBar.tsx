@@ -204,6 +204,8 @@ export interface CommandInputBarProps {
   onInputFocus?: () => void;
   /** Callback when input loses focus */
   onInputBlur?: () => void;
+  /** Whether to show recent command chips (defaults to true) */
+  showRecentCommands?: boolean;
 }
 
 /**
@@ -234,6 +236,7 @@ export function CommandInputBar({
   isSlashCommandOpen = false,
   onInputFocus,
   onInputBlur,
+  showRecentCommands = true,
 }: CommandInputBarProps) {
   const colors = useThemeColors();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -723,7 +726,8 @@ export function CommandInputBar({
       )}
 
       {/* Recent command chips - quick-tap to reuse commands */}
-      {recentCommands && recentCommands.length > 0 && onSelectRecentCommand && (
+      {/* On mobile, can be hidden when input is not focused to save space */}
+      {showRecentCommands && recentCommands && recentCommands.length > 0 && onSelectRecentCommand && (
         <RecentCommandChips
           commands={recentCommands}
           onSelectCommand={onSelectRecentCommand}
@@ -754,17 +758,18 @@ export function CommandInputBar({
         }}
       >
         {/* Mode toggle button - AI / Terminal */}
+        {/* NOTE: Mode toggle is NOT disabled when session is busy - user should always be able to switch modes */}
         <button
           type="button"
           onClick={handleModeToggle}
-          disabled={isDisabled}
+          disabled={externalDisabled || isOffline || !isConnected}
           style={{
             padding: '10px',
             borderRadius: '12px',
             backgroundColor: inputMode === 'ai' ? `${colors.accent}20` : `${colors.textDim}20`,
             border: `2px solid ${inputMode === 'ai' ? colors.accent : colors.textDim}`,
-            cursor: isDisabled ? 'default' : 'pointer',
-            opacity: isDisabled ? 0.5 : 1,
+            cursor: (externalDisabled || isOffline || !isConnected) ? 'default' : 'pointer',
+            opacity: (externalDisabled || isOffline || !isConnected) ? 0.5 : 1,
             // Touch-friendly size - meets Apple HIG 44pt minimum
             width: `${MIN_TOUCH_TARGET + 4}px`,
             height: `${MIN_INPUT_HEIGHT}px`,
@@ -781,7 +786,7 @@ export function CommandInputBar({
             WebkitTapHighlightColor: 'transparent',
           }}
           onTouchStart={(e) => {
-            if (!isDisabled) {
+            if (!(externalDisabled || isOffline || !isConnected)) {
               e.currentTarget.style.transform = 'scale(0.95)';
             }
           }}
