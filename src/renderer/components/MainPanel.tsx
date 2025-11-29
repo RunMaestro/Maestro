@@ -49,6 +49,7 @@ interface MainPanelProps {
   maxOutputLines: number;
   gitDiffPreview: string | null;
   fileTreeFilterOpen: boolean;
+  logLevel?: string; // Current log level setting for LogViewer
 
   // Setters
   setGitDiffPreview: (preview: string | null) => void;
@@ -119,7 +120,7 @@ export function MainPanel(props: MainPanelProps) {
     tabCompletionOpen, tabCompletionSuggestions, selectedTabCompletionIndex,
     setTabCompletionOpen, setSelectedTabCompletionIndex,
     previewFile, markdownRawMode, shortcuts, rightPanelOpen, maxOutputLines, gitDiffPreview,
-    fileTreeFilterOpen, setGitDiffPreview, setLogViewerOpen, setAgentSessionsOpen, setActiveClaudeSessionId,
+    fileTreeFilterOpen, logLevel, setGitDiffPreview, setLogViewerOpen, setAgentSessionsOpen, setActiveClaudeSessionId,
     onResumeClaudeSession, onNewClaudeSession, setActiveFocus, setOutputSearchOpen, setOutputSearchQuery,
     setInputValue, setEnterToSendAI, setEnterToSendTerminal, setStagedImages, setLightboxImage, setCommandHistoryOpen,
     setCommandHistoryFilter, setCommandHistorySelectedIndex, setSlashCommandOpen,
@@ -364,7 +365,7 @@ export function MainPanel(props: MainPanelProps) {
   if (logViewerOpen) {
     return (
       <div className="flex-1 flex flex-col min-w-0 relative" style={{ backgroundColor: theme.colors.bgMain }}>
-        <LogViewer theme={theme} onClose={() => setLogViewerOpen(false)} />
+        <LogViewer theme={theme} onClose={() => setLogViewerOpen(false)} logLevel={logLevel} />
       </div>
     );
   }

@@ -3915,6 +3915,7 @@ export default function MaestroConsole() {
         maxOutputLines={maxOutputLines}
         gitDiffPreview={gitDiffPreview}
         fileTreeFilterOpen={fileTreeFilterOpen}
+        logLevel={logLevel}
         setGitDiffPreview={setGitDiffPreview}
         setLogViewerOpen={setLogViewerOpen}
         setAgentSessionsOpen={setAgentSessionsOpen}

@@ -15,13 +15,34 @@ interface SystemLogEntry {
 interface LogViewerProps {
   theme: Theme;
   onClose: () => void;
+  logLevel?: string; // Current log level setting (debug, info, warn, error)
 }
 
-export function LogViewer({ theme, onClose }: LogViewerProps) {
+// Log level priority for determining which levels are enabled
+const LOG_LEVEL_PRIORITY: Record<string, number> = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3,
+};
+
+export function LogViewer({ theme, onClose, logLevel = 'info' }: LogViewerProps) {
   const [logs, setLogs] = useState<SystemLogEntry[]>([]);
   const [filteredLogs, setFilteredLogs] = useState<SystemLogEntry[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Determine which log levels are enabled based on current log level setting
+  // Levels with priority >= current level are enabled
+  const enabledLevels = new Set<'debug' | 'info' | 'warn' | 'error' | 'toast'>(
+    (['debug', 'info', 'warn', 'error'] as const).filter(
+      level => LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[logLevel]
+    )
+  );
+  // Toast is always enabled (it's a special notification level)
+  enabledLevels.add('toast');
+
+  // Only allow selecting levels that are enabled
   const [selectedLevels, setSelectedLevels] = useState<Set<'debug' | 'info' | 'warn' | 'error' | 'toast'>>(
     new Set(['debug', 'info', 'warn', 'error', 'toast'])
   );
@@ -281,22 +302,35 @@ export function LogViewer({ theme, onClose }: LogViewerProps) {
         <span className="text-xs font-bold opacity-70 uppercase mr-2" style={{ color: theme.colors.textDim }}>
           Filter:
         </span>
-        {/* All button - toggles all levels on/off */}
+        {/* All button - toggles only enabled levels on/off */}
         <button
           onClick={() => {
-            const allLevels: Array<'debug' | 'info' | 'warn' | 'error' | 'toast'> = ['debug', 'info', 'warn', 'error', 'toast'];
-            // If all are selected, turn all off; otherwise turn all on
-            if (selectedLevels.size === allLevels.length) {
-              setSelectedLevels(new Set());
+            // Only toggle enabled levels
+            const enabledLevelArray = Array.from(enabledLevels);
+            // Check if all enabled levels are currently selected
+            const allEnabledSelected = enabledLevelArray.every(level => selectedLevels.has(level));
+            if (allEnabledSelected) {
+              // Turn off all enabled levels
+              setSelectedLevels(prev => {
+                const newSet = new Set(prev);
+                enabledLevelArray.forEach(level => newSet.delete(level));
+                return newSet;
+              });
             } else {
-              setSelectedLevels(new Set(allLevels));
+              // Turn on all enabled levels
+              setSelectedLevels(prev => {
+                const newSet = new Set(prev);
+                enabledLevelArray.forEach(level => newSet.add(level));
+                return newSet;
+              });
             }
           }}
           className="px-3 py-1 rounded text-xs font-bold transition-all"
           style={{
-            backgroundColor: selectedLevels.size === 5 ? theme.colors.accent : 'transparent',
-            color: selectedLevels.size === 5 ? 'white' : theme.colors.textDim,
-            border: `1px solid ${selectedLevels.size === 5 ? theme.colors.accent : theme.colors.border}`
+            // ALL is highlighted when all enabled levels are selected
+            backgroundColor: Array.from(enabledLevels).every(level => selectedLevels.has(level)) ? theme.colors.accent : 'transparent',
+            color: Array.from(enabledLevels).every(level => selectedLevels.has(level)) ? 'white' : theme.colors.textDim,
+            border: `1px solid ${Array.from(enabledLevels).every(level => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`
           }}
         >
           ALL
@@ -304,10 +338,13 @@ export function LogViewer({ theme, onClose }: LogViewerProps) {
         {/* Individual level toggle buttons */}
         {(['debug', 'info', 'warn', 'error', 'toast'] as const).map(level => {
           const isSelected = selectedLevels.has(level);
+          const isEnabled = enabledLevels.has(level);
           return (
             <button
               key={level}
+              disabled={!isEnabled}
               onClick={() => {
+                if (!isEnabled) return; // Safety check
                 setSelectedLevels(prev => {
                   const newSet = new Set(prev);
                   if (newSet.has(level)) {
@@ -320,10 +357,15 @@ export function LogViewer({ theme, onClose }: LogViewerProps) {
               }}
               className="px-3 py-1 rounded text-xs font-bold transition-all"
               style={{
-                backgroundColor: isSelected ? getLevelColor(level) : 'transparent',
-                color: isSelected ? 'white' : theme.colors.textDim,
-                border: `1px solid ${isSelected ? getLevelColor(level) : theme.colors.border}`
+                backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
+                color: isEnabled
+                  ? (isSelected ? 'white' : theme.colors.textDim)
+                  : theme.colors.textDim,
+                border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
+                opacity: isEnabled ? 1 : 0.3,
+                cursor: isEnabled ? 'pointer' : 'not-allowed',
               }}
+              title={isEnabled ? undefined : `${level} level is disabled (current log level: ${logLevel})`}
             >
               {level.toUpperCase()}
             </button>
