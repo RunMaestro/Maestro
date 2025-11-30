@@ -2713,6 +2713,11 @@ export default function MaestroConsole() {
         e.preventDefault();
         setProcessMonitorOpen(true);
       }
+      else if (isShortcut(e, 'jumpToBottom')) {
+        e.preventDefault();
+        // Jump to the bottom of the current main panel output (AI logs or terminal output)
+        logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
 
       // Tab shortcuts (AI mode only)
       if (activeSession?.inputMode === 'ai' && activeSession?.aiTabs) {

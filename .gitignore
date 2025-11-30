@@ -10,6 +10,7 @@ dist/
 release/
 *.log
 tmp/
+scratch/
 
 # Environment
 .env

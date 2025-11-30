@@ -24,6 +24,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
   agentSessions: { id: 'agentSessions', label: 'View Agent Sessions', keys: ['Meta', 'Shift', 'l'] },
   systemLogs: { id: 'systemLogs', label: 'System Log Viewer', keys: ['Alt', 'Meta', 'l'] },
   processMonitor: { id: 'processMonitor', label: 'System Process Monitor', keys: ['Alt', 'Meta', 'p'] },
+  jumpToBottom: { id: 'jumpToBottom', label: 'Jump to Bottom', keys: ['Meta', 'Shift', 'j'] },
 };
 
 // Tab navigation shortcuts (AI mode only)

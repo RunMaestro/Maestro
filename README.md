@@ -137,6 +137,7 @@ Each session shows a color-coded status indicator:
 | Show Shortcuts Help | `Cmd+/` | `Ctrl+/` |
 | Open Settings | `Cmd+,` | `Ctrl+,` |
 | View Agent Sessions | `Cmd+Shift+L` | `Ctrl+Shift+L` |
+| Jump to Bottom | `Cmd+Shift+J` | `Ctrl+Shift+J` |
 | Cycle Focus Areas | `Tab` | `Tab` |
 | Cycle Focus Backwards | `Shift+Tab` | `Shift+Tab` |
 

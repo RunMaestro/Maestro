@@ -201,6 +201,49 @@ export function GitLogViewer({ cwd, theme, onClose }: GitLogViewerProps) {
     return parseGitDiff(diffText);
   }, [selectedCommitDiff]);
 
+  // Extract the full commit message (body) from the show output
+  const commitBody = useMemo(() => {
+    if (!selectedCommitDiff) return null;
+
+    const lines = selectedCommitDiff.split('\n');
+    const bodyLines: string[] = [];
+    let foundDate = false;
+    let foundBody = false;
+
+    for (const line of lines) {
+      // Skip until we find the Date: line
+      if (line.startsWith('Date:')) {
+        foundDate = true;
+        continue;
+      }
+
+      // After Date:, skip empty lines until we find content
+      if (foundDate && !foundBody) {
+        if (line.trim() === '') continue;
+        foundBody = true;
+      }
+
+      // Stop when we hit the stats separator (---)
+      if (foundBody && line.startsWith('---')) {
+        break;
+      }
+
+      // Collect body lines (they're usually indented with 4 spaces)
+      if (foundBody) {
+        // Remove the leading indentation (usually 4 spaces)
+        const trimmedLine = line.startsWith('    ') ? line.slice(4) : line;
+        bodyLines.push(trimmedLine);
+      }
+    }
+
+    // Return null if we only have the subject line (already shown in header)
+    // Body is meaningful if it has more than just one line
+    const body = bodyLines.join('\n').trim();
+    // Check if body has actual content beyond the subject
+    const hasMultipleLines = bodyLines.filter(l => l.trim()).length > 1;
+    return hasMultipleLines ? body : null;
+  }, [selectedCommitDiff]);
+
   // Extract commit stats from the show output
   const commitStats = useMemo(() => {
     if (!selectedCommitDiff) return null;
@@ -390,6 +433,15 @@ export function GitLogViewer({ cwd, theme, onClose }: GitLogViewerProps) {
                     <span>{new Date(entries[selectedIndex].date).toLocaleString()}</span>
                   </div>
                 </div>
+
+                {/* Full commit message body */}
+                {commitBody && (
+                  <div className="mb-6 p-3 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+                    <div className="text-xs font-mono space-y-1 whitespace-pre-wrap" style={{ color: theme.colors.textDim }}>
+                      {commitBody}
+                    </div>
+                  </div>
+                )}
 
                 {/* File stats */}
                 {commitStats && (
