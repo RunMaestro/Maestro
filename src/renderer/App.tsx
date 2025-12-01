@@ -26,7 +26,7 @@ import { CONDUCTOR_BADGES } from './constants/conductorBadges';
 
 // Import custom hooks
 import { useBatchProcessor } from './hooks/useBatchProcessor';
-import { useSettings, useActivityTracker, useMobileLandscape } from './hooks';
+import { useSettings, useActivityTracker, useMobileLandscape, useNavigationHistory } from './hooks';
 import { useTabCompletion } from './hooks/useTabCompletion';
 
 // Import contexts
@@ -75,6 +75,13 @@ export default function MaestroConsole() {
 
   // --- MOBILE LANDSCAPE MODE (reading-only view) ---
   const isMobileLandscape = useMobileLandscape();
+
+  // --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
+  const {
+    pushNavigation,
+    navigateBack,
+    navigateForward,
+  } = useNavigationHistory();
 
   // --- SETTINGS (from useSettings hook) ---
   const settings = useSettings();
@@ -2813,6 +2820,16 @@ export default function MaestroConsole() {
         // Cycle to next Maestro session (global shortcut)
         ctx.cycleSession('next');
       }
+      else if (ctx.isShortcut(e, 'navBack')) {
+        // Navigate back in history (through sessions and tabs)
+        e.preventDefault();
+        ctx.handleNavBack();
+      }
+      else if (ctx.isShortcut(e, 'navForward')) {
+        // Navigate forward in history (through sessions and tabs)
+        e.preventDefault();
+        ctx.handleNavForward();
+      }
       else if (ctx.isShortcut(e, 'toggleMode')) ctx.toggleInputMode();
       else if (ctx.isShortcut(e, 'quickAction')) {
         ctx.setQuickActionInitialMode('main');
@@ -3043,6 +3060,17 @@ export default function MaestroConsole() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId]); // Only restore on session switch, not on scroll position changes
+
+  // Track navigation history when session or AI tab changes
+  useEffect(() => {
+    if (activeSession) {
+      pushNavigation({
+        sessionId: activeSession.id,
+        tabId: activeSession.inputMode === 'ai' && activeSession.aiTabs?.length > 0 ? activeSession.activeTabId : undefined
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId, activeSession?.activeTabId]); // Track session and tab changes
 
   // Reset shortcuts search when modal closes
   useEffect(() => {
@@ -3331,6 +3359,54 @@ export default function MaestroConsole() {
     }
   };
 
+  // Navigate back in history (through sessions and tabs)
+  const handleNavBack = useCallback(() => {
+    const entry = navigateBack();
+    if (entry) {
+      // Check if session still exists
+      const sessionExists = sessions.some(s => s.id === entry.sessionId);
+      if (sessionExists) {
+        // Navigate to the session
+        setActiveSessionIdInternal(entry.sessionId);
+        cyclePositionRef.current = -1;
+
+        // If there's a tab ID, also switch to that tab
+        if (entry.tabId) {
+          setSessions(prev => prev.map(s => {
+            if (s.id === entry.sessionId && s.aiTabs?.some(t => t.id === entry.tabId)) {
+              return { ...s, activeTabId: entry.tabId };
+            }
+            return s;
+          }));
+        }
+      }
+    }
+  }, [navigateBack, sessions]);
+
+  // Navigate forward in history (through sessions and tabs)
+  const handleNavForward = useCallback(() => {
+    const entry = navigateForward();
+    if (entry) {
+      // Check if session still exists
+      const sessionExists = sessions.some(s => s.id === entry.sessionId);
+      if (sessionExists) {
+        // Navigate to the session
+        setActiveSessionIdInternal(entry.sessionId);
+        cyclePositionRef.current = -1;
+
+        // If there's a tab ID, also switch to that tab
+        if (entry.tabId) {
+          setSessions(prev => prev.map(s => {
+            if (s.id === entry.sessionId && s.aiTabs?.some(t => t.id === entry.tabId)) {
+              return { ...s, activeTabId: entry.tabId };
+            }
+            return s;
+          }));
+        }
+      }
+    }
+  }, [navigateForward, sessions]);
+
   // Update keyboardHandlerRef synchronously during render (before effects run)
   // This must be placed after all handler functions are defined to avoid TDZ errors
   keyboardHandlerRef.current = {
@@ -3347,7 +3423,7 @@ export default function MaestroConsole() {
     setAgentSessionsOpen, setLogViewerOpen, setProcessMonitorOpen, logsEndRef, inputRef, terminalOutputRef,
     setSessions, createTab, closeTab, reopenClosedTab, getActiveTab, setRenameTabId, setRenameTabInitialName,
     setRenameTabModalOpen, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab,
-    setFileTreeFilterOpen, isShortcut, isTabShortcut
+    setFileTreeFilterOpen, isShortcut, isTabShortcut, handleNavBack, handleNavForward
   };
 
   const toggleGroup = (groupId: string) => {

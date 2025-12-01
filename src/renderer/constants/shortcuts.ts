@@ -5,6 +5,8 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
   toggleRightPanel: { id: 'toggleRightPanel', label: 'Toggle Right Panel', keys: ['Alt', 'Meta', 'ArrowRight'] },
   cyclePrev: { id: 'cyclePrev', label: 'Previous Agent', keys: ['Meta', 'Shift', '{'] },
   cycleNext: { id: 'cycleNext', label: 'Next Agent', keys: ['Meta', 'Shift', '}'] },
+  navBack: { id: 'navBack', label: 'Navigate Back', keys: ['Meta', 'Shift', ','] },
+  navForward: { id: 'navForward', label: 'Navigate Forward', keys: ['Meta', 'Shift', '.'] },
   newInstance: { id: 'newInstance', label: 'New Agent', keys: ['Meta', 'n'] },
   killInstance: { id: 'killInstance', label: 'Kill Agent', keys: ['Meta', 'Shift', 'Backspace'] },
   moveToGroup: { id: 'moveToGroup', label: 'Move Session to Group', keys: ['Meta', 'Shift', 'm'] },
