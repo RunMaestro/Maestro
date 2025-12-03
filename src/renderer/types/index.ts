@@ -96,11 +96,34 @@ export interface HistoryEntry {
 export interface BatchRunState {
   isRunning: boolean;
   isStopping: boolean; // Waiting for current task to finish before stopping
+
+  // Document-level progress (multi-document support)
+  documents: string[];           // Ordered list of document filenames to process
+  currentDocumentIndex: number;  // Which document we're on (0-based)
+
+  // Task-level progress within current document
+  currentDocTasksTotal: number;     // Total tasks in current document
+  currentDocTasksCompleted: number; // Completed tasks in current document
+
+  // Overall progress (grows as reset docs add tasks back)
+  totalTasksAcrossAllDocs: number;
+  completedTasksAcrossAllDocs: number;
+
+  // Loop mode
+  loopEnabled: boolean;
+  loopIteration: number;  // How many times we've looped (0 = first pass)
+
+  // Folder path for file operations
+  folderPath: string;
+
+  // Legacy fields (kept for backwards compatibility during migration)
   totalTasks: number;
   completedTasks: number;
   currentTaskIndex: number;
   scratchpadPath?: string; // Path to temp file
   originalContent: string; // Original scratchpad content for sync back
+
+  // Prompt configuration
   customPrompt?: string; // User's custom prompt if modified
   sessionIds: string[]; // Claude session IDs from each iteration
   startTime?: number; // Timestamp when batch run started

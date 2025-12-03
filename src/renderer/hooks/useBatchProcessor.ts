@@ -8,6 +8,19 @@ const UNCHECKED_TASK_REGEX = /^[\s]*-\s*\[\s*\]\s*.+$/gm;
 const DEFAULT_BATCH_STATE: BatchRunState = {
   isRunning: false,
   isStopping: false,
+  // Multi-document progress (new fields)
+  documents: [],
+  currentDocumentIndex: 0,
+  currentDocTasksTotal: 0,
+  currentDocTasksCompleted: 0,
+  totalTasksAcrossAllDocs: 0,
+  completedTasksAcrossAllDocs: 0,
+  // Loop mode
+  loopEnabled: false,
+  loopIteration: 0,
+  // Folder path for file operations
+  folderPath: '',
+  // Legacy fields (kept for backwards compatibility)
   totalTasks: 0,
   completedTasks: 0,
   currentTaskIndex: 0,
@@ -208,6 +221,19 @@ export function useBatchProcessor({
       [sessionId]: {
         isRunning: true,
         isStopping: false,
+        // Multi-document progress (new fields - currently single-doc legacy mode)
+        documents: [],
+        currentDocumentIndex: 0,
+        currentDocTasksTotal: totalTasks,
+        currentDocTasksCompleted: 0,
+        totalTasksAcrossAllDocs: totalTasks,
+        completedTasksAcrossAllDocs: 0,
+        // Loop mode (not yet enabled in legacy mode)
+        loopEnabled: false,
+        loopIteration: 0,
+        // Folder path (empty in legacy mode - uses temp file)
+        folderPath: '',
+        // Legacy fields
         totalTasks,
         completedTasks: 0,
         currentTaskIndex: 0,
@@ -361,6 +387,19 @@ export function useBatchProcessor({
       [sessionId]: {
         isRunning: false,
         isStopping: false,
+        // Multi-document progress (reset)
+        documents: [],
+        currentDocumentIndex: 0,
+        currentDocTasksTotal: 0,
+        currentDocTasksCompleted: 0,
+        totalTasksAcrossAllDocs: 0,
+        completedTasksAcrossAllDocs: 0,
+        // Loop mode (reset)
+        loopEnabled: false,
+        loopIteration: 0,
+        // Folder path (reset)
+        folderPath: '',
+        // Legacy fields (reset)
         totalTasks: 0,
         completedTasks: 0,
         currentTaskIndex: 0,
