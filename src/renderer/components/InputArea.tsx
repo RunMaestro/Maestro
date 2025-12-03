@@ -710,11 +710,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
           <button
             type="button"
             onClick={toggleInputMode}
-            className="p-2 rounded border transition-all"
+            className="p-2 rounded-lg border transition-all"
             style={{
-              backgroundColor: session.inputMode === 'terminal' ? theme.colors.bgActivity : theme.colors.accentDim,
+              backgroundColor: theme.colors.bgMain,
               borderColor: theme.colors.border,
-              color: session.inputMode === 'terminal' ? theme.colors.textDim : theme.colors.accentText
+              color: theme.colors.textDim
             }}
             title="Toggle Mode (Cmd+J)"
           >

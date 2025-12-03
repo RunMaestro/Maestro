@@ -509,17 +509,30 @@ export function TabBar({
   const tabBarRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [isOverflowing, setIsOverflowing] = useState(false);
+  const prevTabCountRef = useRef(tabs.length);
+  const prevActiveTabIdRef = useRef(activeTabId);
 
-  // Scroll active tab into view when it changes or when tabs are added/removed
+  // Scroll active tab into view when user navigates to a different tab
   // Use 'center' to ensure the tab isn't hidden under sticky elements (unread filter, new tab button)
+  // Don't scroll when closing tabs (tab count decreased) to avoid jarring movement
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      const activeTabElement = tabRefs.current.get(activeTabId);
-      if (activeTabElement) {
-        activeTabElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
-      }
-    }, 0);
-    return () => clearTimeout(timeoutId);
+    const tabCountDecreased = tabs.length < prevTabCountRef.current;
+    const activeTabChanged = activeTabId !== prevActiveTabIdRef.current;
+
+    // Update refs for next comparison
+    prevTabCountRef.current = tabs.length;
+    prevActiveTabIdRef.current = activeTabId;
+
+    // Only scroll if active tab changed AND we didn't just close a tab
+    if (activeTabChanged && !tabCountDecreased) {
+      const timeoutId = setTimeout(() => {
+        const activeTabElement = tabRefs.current.get(activeTabId);
+        if (activeTabElement) {
+          activeTabElement.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+        }
+      }, 0);
+      return () => clearTimeout(timeoutId);
+    }
   }, [activeTabId, tabs.length]);
 
   // Can always close tabs - closing the last one creates a fresh new tab

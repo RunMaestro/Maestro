@@ -44,13 +44,18 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [activeProcesses, setActiveProcesses] = useState<ActiveProcess[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [hasExpandedInitially, setHasExpandedInitially] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const selectedNodeRef = useRef<HTMLButtonElement | HTMLDivElement>(null);
   const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
   const layerIdRef = useRef<string>();
 
   // Fetch active processes from ProcessManager
-  const fetchActiveProcesses = useCallback(async () => {
+  const fetchActiveProcesses = useCallback(async (showRefresh = false) => {
+    if (showRefresh) {
+      setIsRefreshing(true);
+    }
     try {
       const processes = await window.maestro.process.getActiveProcesses();
       setActiveProcesses(processes);
@@ -58,6 +63,10 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
       console.error('Failed to fetch active processes:', error);
     } finally {
       setIsLoading(false);
+      // Keep refresh spinner visible for at least 500ms for visual feedback
+      if (showRefresh) {
+        setTimeout(() => setIsRefreshing(false), 500);
+      }
     }
   }, []);
 
@@ -326,6 +335,18 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
     return tree;
   };
 
+  // Expand all nodes by default on initial load
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isLoading && !hasExpandedInitially) {
+      // Build tree and get all expandable node IDs
+      const tree = buildProcessTree();
+      const allIds = getAllExpandableNodeIds(tree);
+      setExpandedNodes(new Set(allIds));
+      setHasExpandedInitially(true);
+    }
+  }, [isLoading, hasExpandedInitially, activeProcesses]);
+
   // Build flat list of visible nodes for keyboard navigation
   const getVisibleNodes = (nodes: ProcessNode[]): ProcessNode[] => {
     const result: ProcessNode[] = [];
@@ -434,7 +455,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
       case 'r':
       case 'R':
         e.preventDefault();
-        fetchActiveProcesses();
+        fetchActiveProcesses(true);
         break;
     }
   };
@@ -636,14 +657,14 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
           </div>
           <div className="flex items-center gap-1">
             <button
-              onClick={() => fetchActiveProcesses()}
+              onClick={() => fetchActiveProcesses(true)}
               className="p-1.5 rounded hover:bg-opacity-10 flex items-center gap-1"
               style={{ color: theme.colors.textDim }}
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
               title="Refresh (R)"
             >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
             </button>
             <button
               onClick={expandAll}

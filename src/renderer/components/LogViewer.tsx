@@ -245,21 +245,35 @@ export function LogViewer({ theme, onClose, logLevel = 'info', savedSelectedLeve
       e.preventDefault();
       setSearchOpen(true);
     }
-    // Scroll with arrow keys (only when search is not open)
-    else if (e.key === 'ArrowUp' && !searchOpen) {
-      e.preventDefault();
-      containerRef.current?.scrollBy({ top: -100, behavior: 'smooth' });
-    } else if (e.key === 'ArrowDown' && !searchOpen) {
-      e.preventDefault();
-      containerRef.current?.scrollBy({ top: 100, behavior: 'smooth' });
-    }
-    // Jump to top/bottom
+    // Jump to top/bottom with Cmd+Up/Down
     else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowUp' && !searchOpen) {
       e.preventDefault();
       containerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     } else if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowDown' && !searchOpen) {
       e.preventDefault();
       containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: 'smooth' });
+    }
+    // Page up/down with Opt+Up/Down
+    else if (e.altKey && e.key === 'ArrowUp' && !searchOpen) {
+      e.preventDefault();
+      const container = containerRef.current;
+      if (container) {
+        container.scrollBy({ top: -container.clientHeight * 0.8, behavior: 'smooth' });
+      }
+    } else if (e.altKey && e.key === 'ArrowDown' && !searchOpen) {
+      e.preventDefault();
+      const container = containerRef.current;
+      if (container) {
+        container.scrollBy({ top: container.clientHeight * 0.8, behavior: 'smooth' });
+      }
+    }
+    // Scroll with plain arrow keys (only when search is not open)
+    else if (e.key === 'ArrowUp' && !searchOpen) {
+      e.preventDefault();
+      containerRef.current?.scrollBy({ top: -100, behavior: 'smooth' });
+    } else if (e.key === 'ArrowDown' && !searchOpen) {
+      e.preventDefault();
+      containerRef.current?.scrollBy({ top: 100, behavior: 'smooth' });
     }
   };
 
