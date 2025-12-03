@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, RotateCcw, Play, Variable, ChevronDown, ChevronRight, Save, GripVertical, Plus, Repeat, FolderOpen, Bookmark } from 'lucide-react';
-import type { Theme, BatchDocumentEntry, BatchRunConfig, Playbook, PlaybookDocumentEntry } from '../types';
+import { X, RotateCcw, Play, Variable, ChevronDown, ChevronRight, Save, GripVertical, Plus, Repeat, FolderOpen, Bookmark, GitBranch, AlertTriangle } from 'lucide-react';
+import type { Theme, BatchDocumentEntry, BatchRunConfig, Playbook, PlaybookDocumentEntry, WorktreeConfig } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
@@ -158,6 +158,23 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
   // Git worktree state - only show worktree section for git repos
   const [isGitRepo, setIsGitRepo] = useState(false);
   const [checkingGitRepo, setCheckingGitRepo] = useState(true);
+
+  // Worktree configuration state
+  const [worktreeEnabled, setWorktreeEnabled] = useState(false);
+  const [worktreePath, setWorktreePath] = useState('');
+  const [branchName, setBranchName] = useState('');
+  const [createPROnCompletion, setCreatePROnCompletion] = useState(false);
+
+  // Worktree validation state
+  const [worktreeValidation, setWorktreeValidation] = useState<{
+    checking: boolean;
+    exists: boolean;
+    isWorktree: boolean;
+    currentBranch?: string;
+    branchMismatch: boolean;
+    sameRepo: boolean;
+    error?: string;
+  }>({ checking: false, exists: false, isWorktree: false, branchMismatch: false, sameRepo: true });
 
   const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
   const layerIdRef = useRef<string>();
@@ -319,11 +336,25 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
   const handleGo = () => {
     // Also save when running
     onSave(prompt);
-    onGo({
+
+    // Build config with optional worktree settings
+    const config: BatchRunConfig = {
       documents,
       prompt,
       loopEnabled
-    });
+    };
+
+    // Add worktree config if enabled and valid
+    if (worktreeEnabled && isGitRepo && worktreePath && branchName) {
+      config.worktree = {
+        enabled: true,
+        path: worktreePath,
+        branchName,
+        createPROnCompletion
+      };
+    }
+
+    onGo(config);
     onClose();
   };
 
@@ -921,6 +952,190 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
               </div>
             )}
           </div>
+
+          {/* Git Worktree Section - only visible for git repos */}
+          {isGitRepo && !checkingGitRepo && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-3">
+                <GitBranch className="w-4 h-4" style={{ color: theme.colors.accent }} />
+                <label className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+                  Git Worktree
+                </label>
+                <span className="text-[10px] px-2 py-0.5 rounded" style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}>
+                  enables parallel work
+                </span>
+              </div>
+
+              {/* Enable Worktree Toggle */}
+              <div className="flex items-center gap-3 mb-4">
+                <button
+                  onClick={() => setWorktreeEnabled(!worktreeEnabled)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-colors ${
+                    worktreeEnabled ? 'border-accent' : 'border-border hover:bg-white/5'
+                  }`}
+                  style={{
+                    borderColor: worktreeEnabled ? theme.colors.accent : theme.colors.border,
+                    backgroundColor: worktreeEnabled ? theme.colors.accent + '15' : 'transparent'
+                  }}
+                >
+                  <div
+                    className={`w-4 h-4 rounded border flex items-center justify-center ${
+                      worktreeEnabled ? 'bg-accent border-accent' : ''
+                    }`}
+                    style={{
+                      borderColor: worktreeEnabled ? theme.colors.accent : theme.colors.border,
+                      backgroundColor: worktreeEnabled ? theme.colors.accent : 'transparent'
+                    }}
+                  >
+                    {worktreeEnabled && (
+                      <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                        <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </div>
+                  <span
+                    className="text-sm font-medium"
+                    style={{ color: worktreeEnabled ? theme.colors.accent : theme.colors.textMain }}
+                  >
+                    Enable Worktree
+                  </span>
+                </button>
+              </div>
+
+              {/* Worktree Configuration (only shown when enabled) */}
+              {worktreeEnabled && (
+                <div
+                  className="rounded-lg border p-4 space-y-4"
+                  style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
+                >
+                  {/* Worktree Path */}
+                  <div>
+                    <label className="text-xs font-medium mb-1.5 block" style={{ color: theme.colors.textDim }}>
+                      Worktree Path
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={worktreePath}
+                        onChange={(e) => setWorktreePath(e.target.value)}
+                        placeholder="/path/to/worktree"
+                        className="flex-1 px-3 py-2 rounded border bg-transparent outline-none text-sm"
+                        style={{
+                          borderColor: theme.colors.border,
+                          color: theme.colors.textMain
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          const result = await window.maestro.dialog.selectFolder();
+                          if (result) {
+                            setWorktreePath(result);
+                          }
+                        }}
+                        className="px-3 py-2 rounded border hover:bg-white/5 transition-colors text-sm"
+                        style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+                      >
+                        Browse
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Branch Name */}
+                  <div>
+                    <label className="text-xs font-medium mb-1.5 block" style={{ color: theme.colors.textDim }}>
+                      Branch Name
+                    </label>
+                    <input
+                      type="text"
+                      value={branchName}
+                      onChange={(e) => setBranchName(e.target.value)}
+                      placeholder="autorun-feature-xyz"
+                      className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+                      style={{
+                        borderColor: theme.colors.border,
+                        color: theme.colors.textMain
+                      }}
+                    />
+                  </div>
+
+                  {/* Validation Warnings */}
+                  {worktreeValidation.checking && (
+                    <div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
+                      <div className="animate-spin w-3 h-3 border border-current border-t-transparent rounded-full" />
+                      Checking worktree...
+                    </div>
+                  )}
+
+                  {/* Warning: Worktree exists with different branch */}
+                  {!worktreeValidation.checking && worktreeValidation.exists && worktreeValidation.branchMismatch && (
+                    <div
+                      className="flex items-start gap-2 p-3 rounded border"
+                      style={{
+                        backgroundColor: theme.colors.warning + '10',
+                        borderColor: theme.colors.warning
+                      }}
+                    >
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.warning }} />
+                      <div className="text-sm">
+                        <p style={{ color: theme.colors.warning }}>
+                          Worktree exists with branch "{worktreeValidation.currentBranch}"
+                        </p>
+                        <p style={{ color: theme.colors.textDim }}>
+                          Will checkout to "{branchName}"
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Error: Worktree belongs to different repo */}
+                  {!worktreeValidation.checking && worktreeValidation.exists && !worktreeValidation.sameRepo && (
+                    <div
+                      className="flex items-start gap-2 p-3 rounded border"
+                      style={{
+                        backgroundColor: theme.colors.error + '10',
+                        borderColor: theme.colors.error
+                      }}
+                    >
+                      <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: theme.colors.error }} />
+                      <p className="text-sm" style={{ color: theme.colors.error }}>
+                        This path contains a worktree for a different repository. Please choose a different path.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Create PR on Completion */}
+                  <div className="flex items-center gap-3 pt-2 border-t" style={{ borderColor: theme.colors.border }}>
+                    <button
+                      onClick={() => setCreatePROnCompletion(!createPROnCompletion)}
+                      className="flex items-center gap-2"
+                    >
+                      <div
+                        className={`w-4 h-4 rounded border flex items-center justify-center ${
+                          createPROnCompletion ? 'bg-accent border-accent' : ''
+                        }`}
+                        style={{
+                          borderColor: createPROnCompletion ? theme.colors.accent : theme.colors.border,
+                          backgroundColor: createPROnCompletion ? theme.colors.accent : 'transparent'
+                        }}
+                      >
+                        {createPROnCompletion && (
+                          <svg className="w-3 h-3 text-white" viewBox="0 0 12 12" fill="none">
+                            <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className="text-sm" style={{ color: theme.colors.textMain }}>
+                        Create PR on completion
+                      </span>
+                    </button>
+                    <span className="text-xs" style={{ color: theme.colors.textDim }}>
+                      → main
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Divider */}
           <div className="border-t mb-6" style={{ borderColor: theme.colors.border }} />
