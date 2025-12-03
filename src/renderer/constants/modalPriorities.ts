@@ -44,6 +44,9 @@ export const MODAL_PRIORITIES = {
   /** Prompt composer modal for long prompts */
   PROMPT_COMPOSER: 725,
 
+  /** Auto Run setup/folder selection modal */
+  AUTORUN_SETUP: 710,
+
   /** Quick actions command palette (Cmd+K) */
   QUICK_ACTION: 700,
 
