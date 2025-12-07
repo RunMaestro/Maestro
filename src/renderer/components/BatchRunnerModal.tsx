@@ -11,7 +11,7 @@ import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 // Default batch processing prompt
 export const DEFAULT_BATCH_PROMPT = `# Context
 
-You are **{{AGENT_NAME}}**, a Maestro-managed AI agent working on the **{{PROJECT_NAME}}** project.
+Your name is **{{AGENT_NAME}}**, a Maestro-managed AI agent working on the **{{PROJECT_NAME}}** project.
 
 - **Project Path:** {{PROJECT_PATH}}
 - **Git Branch:** {{GIT_BRANCH}}

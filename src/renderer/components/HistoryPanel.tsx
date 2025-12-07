@@ -358,7 +358,10 @@ export const HistoryPanel = React.memo(forwardRef<HistoryPanelHandle, HistoryPan
       const summaryMatch = entry.summary?.toLowerCase().includes(searchLower);
       const responseMatch = entry.fullResponse?.toLowerCase().includes(searchLower);
       const promptMatch = entry.prompt?.toLowerCase().includes(searchLower);
-      if (!summaryMatch && !responseMatch && !promptMatch) return false;
+      // Search by session ID (full ID or short octet form)
+      const sessionIdMatch = entry.claudeSessionId?.toLowerCase().includes(searchLower);
+      const sessionNameMatch = entry.sessionName?.toLowerCase().includes(searchLower);
+      if (!summaryMatch && !responseMatch && !promptMatch && !sessionIdMatch && !sessionNameMatch) return false;
     }
 
     return true;

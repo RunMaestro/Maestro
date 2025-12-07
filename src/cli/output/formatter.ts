@@ -335,21 +335,15 @@ export function formatRunEvent(event: RunEvent, options?: { debug?: boolean }): 
       const success = event.success as boolean;
       const elapsed = ((event.elapsedMs as number) / 1000).toFixed(1);
       const icon = success ? c('green', '✓') : c('red', '✗');
+      const sessionId = event.claudeSessionId as string | undefined;
       // Indent: 6 spaces under task (result of task)
 
       if (debug && event.fullResponse) {
-        // In debug mode, show full response with proper formatting
+        // In debug mode, show first line of response (Summary) + session ID
         const fullResponse = event.fullResponse as string;
-        const lines = fullResponse.split('\n');
-        const formattedLines = lines.map((line, idx) => {
-          if (idx === 0) {
-            return `${timeStr}       ${icon} ${line}`;
-          }
-          // Continuation lines get same indent but no icon/timestamp
-          return `                ${line}`;
-        });
-        formattedLines.push(`                ${dim(`(${elapsed}s)`)}`);
-        return formattedLines.join('\n');
+        const firstLine = fullResponse.split('\n')[0] || '';
+        const sessionInfo = sessionId ? dim(` [${sessionId.slice(0, 8)}]`) : '';
+        return `${timeStr}       ${icon} ${firstLine}\n                   ${dim(`(${elapsed}s)`)}${sessionInfo}`;
       } else {
         // Normal mode: truncated summary
         const summary = truncate(event.summary as string || '', 60);
