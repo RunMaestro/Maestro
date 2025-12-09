@@ -49,9 +49,11 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
     try {
       const updateResult = await window.maestro.updates.check();
       setResult(updateResult);
-      // Auto-expand the first release if there are updates
-      if (updateResult.updateAvailable && updateResult.releases.length > 0) {
+      // Auto-expand if only 1 version behind, otherwise keep all collapsed
+      if (updateResult.updateAvailable && updateResult.releases.length === 1) {
         setExpandedReleases(new Set([updateResult.releases[0].tag_name]));
+      } else {
+        setExpandedReleases(new Set());
       }
     } catch (error) {
       setResult({
