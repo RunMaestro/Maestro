@@ -36,29 +36,30 @@ Maestro ships with a variety of themes that fall under three categories: Dark, L
 <img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/c0fd1590-93c7-4303-ba03-70d7ae7e25ee" />
 
 ### Catppuccin Latte
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/2ccc1ec7-b469-4f8f-b719-4ac1a4f57c19" />
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/33fcb801-7978-4af4-b10d-7e9d5c9301e6" />
 
 ### Ayu Light
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/7e073cf0-1cb9-46a2-899f-2d8b91710681" />
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/096b29fa-109d-47fe-8510-f112e44f998c" />
 
 ## Vibes
 
 ### Pedurple
 Purple is Pedram's favorite color.
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/efb9d7ee-8ef1-4938-90c1-cd5fbaca2f3c" />
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/15875d3e-37c1-4b6c-b967-551afd40b658" />
 
 ### Maestro's Choice
 We asked Maestro to make a theme for itself, this is what it came up with.
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/13e770ad-9ff5-4c58-9b36-b048d74ea32d" />
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/9f2ae804-947e-4dd7-a8ee-acd5b727b6b0" />
 
 ### Dre Synth
 It's a vibe.
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/3a75f1fb-712a-4213-b66a-c9f807952da1" />
-
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/fc20b716-b959-47b9-b2f0-f78df2a63329" />
 
 ### InQuest
 An homage to InQuest.net, acquired by OPSWAT in 2024.
-<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/706961b2-037a-4228-9b69-0958847f2bcc" />
+<img width="3592" height="2302" alt="image" src="https://github.com/user-attachments/assets/7d10495d-6d66-41ce-83d9-36ba8681e3db" />
+
+
 
 
 
