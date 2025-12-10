@@ -7,11 +7,16 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { useWizard, WIZARD_TOTAL_STEPS, type WizardStep } from './WizardContext';
+import { useWizard, WIZARD_TOTAL_STEPS, STEP_INDEX, type WizardStep } from './WizardContext';
 import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { WizardExitConfirmModal } from './WizardExitConfirmModal';
 import type { Theme } from '../../types';
+
+/** Duration of the fade-out animation in ms */
+const FADE_OUT_DURATION = 150;
+/** Duration of the fade-in animation in ms */
+const FADE_IN_DURATION = 200;
 
 // Screen components - will be implemented in subsequent tasks
 // For now, we render placeholder content until the actual screens are created
@@ -66,6 +71,14 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
   // State for exit confirmation modal
   const [showExitConfirm, setShowExitConfirm] = useState(false);
 
+  // State for screen transition animations
+  // displayedStep is the step actually being rendered (lags behind currentStep during transitions)
+  const [displayedStep, setDisplayedStep] = useState<WizardStep>(state.currentStep);
+  // isTransitioning tracks whether we're in a fade-out/fade-in animation
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  // transitionDirection indicates whether we're moving forward or backward
+  const [transitionDirection, setTransitionDirection] = useState<'forward' | 'backward'>('forward');
+
   // Refs for stable callbacks
   const closeWizardRef = useRef(closeWizard);
   closeWizardRef.current = closeWizard;
@@ -104,6 +117,41 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
     setShowExitConfirm(false);
   }, []);
 
+  // Handle step transitions with fade animation
+  useEffect(() => {
+    // Only animate if step has actually changed
+    if (state.currentStep !== displayedStep && !isTransitioning) {
+      // Determine direction based on step indices
+      const currentIndex = STEP_INDEX[state.currentStep];
+      const displayedIndex = STEP_INDEX[displayedStep];
+      setTransitionDirection(currentIndex > displayedIndex ? 'forward' : 'backward');
+
+      // Start the transition (fade out)
+      setIsTransitioning(true);
+
+      // After fade-out completes, update the displayed step
+      const fadeOutTimer = setTimeout(() => {
+        setDisplayedStep(state.currentStep);
+
+        // After a brief moment, end the transition (allows fade-in to complete)
+        const fadeInTimer = setTimeout(() => {
+          setIsTransitioning(false);
+        }, FADE_IN_DURATION);
+
+        return () => clearTimeout(fadeInTimer);
+      }, FADE_OUT_DURATION);
+
+      return () => clearTimeout(fadeOutTimer);
+    }
+  }, [state.currentStep, displayedStep, isTransitioning]);
+
+  // Sync displayedStep when wizard opens (in case state was restored)
+  useEffect(() => {
+    if (state.isOpen) {
+      setDisplayedStep(state.currentStep);
+    }
+  }, [state.isOpen, state.currentStep]);
+
   // Register with layer stack for Escape handling
   useEffect(() => {
     if (state.isOpen && !showExitConfirm) {
@@ -129,10 +177,11 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
   const stepTitle = getStepTitle(state.currentStep);
 
   /**
-   * Render the appropriate screen component based on current step
+   * Render the appropriate screen component based on displayed step
+   * Uses displayedStep (not currentStep) to allow for transition animations
    */
-  const renderCurrentScreen = () => {
-    switch (state.currentStep) {
+  const renderCurrentScreen = useCallback(() => {
+    switch (displayedStep) {
       case 'agent-selection':
         return <AgentSelectionScreen theme={theme} />;
       case 'directory-selection':
@@ -149,7 +198,7 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
       default:
         return null;
     }
-  };
+  }, [displayedStep, theme, onLaunchSession]);
 
   return (
     <div
@@ -257,8 +306,13 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
           </button>
         </div>
 
-        {/* Content area - renders the current screen */}
-        <div className="flex-1 overflow-hidden wizard-content">
+        {/* Content area - renders the current screen with transition animations */}
+        <div
+          className={`flex-1 overflow-hidden wizard-content ${
+            isTransitioning ? 'wizard-content-exiting' : 'wizard-content-entering'
+          } ${transitionDirection === 'forward' ? 'wizard-forward' : 'wizard-backward'}`}
+          key={displayedStep}
+        >
           {renderCurrentScreen()}
         </div>
       </div>
@@ -273,8 +327,33 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
           animation: wizard-slide-up 0.3s ease-out;
         }
 
+        /* Base content styles */
         .wizard-content {
-          animation: wizard-content-fade 0.25s ease-out;
+          transition: opacity 150ms ease-out, transform 150ms ease-out;
+          will-change: opacity, transform;
+        }
+
+        /* Entering state - content fades in with subtle slide */
+        .wizard-content-entering {
+          opacity: 1;
+          transform: translateX(0);
+          animation: wizard-screen-enter 200ms ease-out;
+        }
+
+        /* Exiting state - content fades out */
+        .wizard-content-exiting {
+          opacity: 0;
+          transform: translateX(0);
+        }
+
+        /* Forward direction (going to next step) - slide from right */
+        .wizard-forward.wizard-content-entering {
+          animation: wizard-slide-in-right 200ms ease-out;
+        }
+
+        /* Backward direction (going to previous step) - slide from left */
+        .wizard-backward.wizard-content-entering {
+          animation: wizard-slide-in-left 200ms ease-out;
         }
 
         @keyframes wizard-fade-in {
@@ -297,12 +376,56 @@ export function MaestroWizard({ theme, onLaunchSession }: MaestroWizardProps): J
           }
         }
 
-        @keyframes wizard-content-fade {
+        @keyframes wizard-screen-enter {
           from {
             opacity: 0;
           }
           to {
             opacity: 1;
+          }
+        }
+
+        @keyframes wizard-slide-in-right {
+          from {
+            opacity: 0;
+            transform: translateX(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        @keyframes wizard-slide-in-left {
+          from {
+            opacity: 0;
+            transform: translateX(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        /* Respect reduced motion preferences */
+        @media (prefers-reduced-motion: reduce) {
+          .wizard-content {
+            transition: opacity 150ms ease-out;
+            transform: none !important;
+          }
+
+          .wizard-content-entering {
+            animation: wizard-screen-enter 200ms ease-out;
+          }
+
+          @keyframes wizard-slide-in-right {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+
+          @keyframes wizard-slide-in-left {
+            from { opacity: 0; }
+            to { opacity: 1; }
           }
         }
       `}</style>
