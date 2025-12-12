@@ -752,6 +752,10 @@ describe('wizardPrompts', () => {
         'agenda',
         'mind',
         'tackle',
+        'conjuring',
+        'manifest',
+        'fabricating',
+        'creation',
       ];
       const asksBuildQuestion = projectKeywords.some((kw) => lowerQuestion.includes(kw));
       expect(asksBuildQuestion).toBe(true);
