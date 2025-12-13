@@ -41,6 +41,7 @@ import type { AutoRunTreeNode } from './hooks';
 import { useTabCompletion, TabCompletionSuggestion, TabCompletionFilter } from './hooks/useTabCompletion';
 import { useAtMentionCompletion } from './hooks/useAtMentionCompletion';
 import { useKeyboardShortcutHelpers } from './hooks/useKeyboardShortcutHelpers';
+import { useKeyboardNavigation } from './hooks/useKeyboardNavigation';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -3101,6 +3102,31 @@ export default function MaestroConsole() {
     return result;
   }, [sortedSessions, groups, sessions, bookmarksCollapsed]);
 
+  // --- KEYBOARD NAVIGATION ---
+  // Extracted hook for sidebar navigation, panel focus, and related keyboard handlers
+  const {
+    handleSidebarNavigation,
+    handleTabNavigation,
+    handleEnterToActivate,
+    handleEscapeInMain,
+  } = useKeyboardNavigation({
+    sortedSessions,
+    selectedSidebarIndex,
+    setSelectedSidebarIndex,
+    activeSessionId,
+    setActiveSessionId,
+    activeFocus,
+    setActiveFocus,
+    groups,
+    setGroups,
+    bookmarksCollapsed,
+    setBookmarksCollapsed,
+    editingSessionId,
+    editingGroupId,
+    inputRef,
+    terminalOutputRef,
+  });
+
   // Persist sessions and groups to electron-store (only after initial load)
   useEffect(() => {
     if (initialLoadComplete.current) {
@@ -3257,247 +3283,18 @@ export default function MaestroConsole() {
         return;
       }
 
+      // Keyboard navigation handlers from useKeyboardNavigation hook
       // Sidebar navigation with arrow keys (works when sidebar has focus)
-      // Skip if Alt+Cmd+Arrow is pressed - that's the sidebar/panel toggle shortcut
-      const isToggleLayoutShortcut = e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
-      if (ctx.activeFocus === 'sidebar' && !isToggleLayoutShortcut && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === ' ')) {
-        e.preventDefault();
-        if (ctx.sortedSessions.length === 0) return;
-
-        // Get the currently selected session
-        const currentSession = ctx.sortedSessions[ctx.selectedSidebarIndex];
-
-        // ArrowLeft: Collapse the current group or bookmarks section
-        if (e.key === 'ArrowLeft' && currentSession) {
-          // Check if session is bookmarked and bookmarks section is expanded
-          if (currentSession.bookmarked && !ctx.bookmarksCollapsed) {
-            // Collapse bookmarks section
-            ctx.setBookmarksCollapsed(true);
-            return;
-          }
-
-          // Check if session is in a group
-          if (currentSession.groupId) {
-            const currentGroup = ctx.groups.find(g => g.id === currentSession.groupId);
-            if (currentGroup && !currentGroup.collapsed) {
-              // Collapse the group
-              ctx.setGroups(prev => prev.map(g =>
-                g.id === currentGroup.id ? { ...g, collapsed: true } : g
-              ));
-              return;
-            }
-          }
-          return;
-        }
-
-        // ArrowRight: Expand the current group or bookmarks section (if collapsed)
-        if (e.key === 'ArrowRight' && currentSession) {
-          // Check if session is bookmarked and bookmarks section is collapsed
-          if (currentSession.bookmarked && ctx.bookmarksCollapsed) {
-            // Expand bookmarks section
-            ctx.setBookmarksCollapsed(false);
-            return;
-          }
-
-          // Check if session is in a collapsed group
-          if (currentSession.groupId) {
-            const currentGroup = ctx.groups.find(g => g.id === currentSession.groupId);
-            if (currentGroup && currentGroup.collapsed) {
-              // Expand the group
-              ctx.setGroups(prev => prev.map(g =>
-                g.id === currentGroup.id ? { ...g, collapsed: false } : g
-              ));
-              return;
-            }
-          }
-          return;
-        }
-
-        // Space: Close the current group and jump to nearest visible session
-        if (e.key === ' ' && currentSession?.groupId) {
-          const currentGroup = ctx.groups.find(g => g.id === currentSession.groupId);
-          if (currentGroup && !currentGroup.collapsed) {
-            // Collapse the group
-            ctx.setGroups(prev => prev.map(g =>
-              g.id === currentGroup.id ? { ...g, collapsed: true } : g
-            ));
-
-            // Helper to check if a session will be visible after collapse
-            const willBeVisible = (s: Session) => {
-              if (s.groupId === currentGroup.id) return false; // In the group being collapsed
-              if (!s.groupId) return true; // Ungrouped sessions are always visible
-              const g = ctx.groups.find(grp => grp.id === s.groupId);
-              return g && !g.collapsed; // In an expanded group
-            };
-
-            // Find current position in sortedSessions
-            const currentIndex = ctx.sortedSessions.findIndex(s => s.id === currentSession.id);
-
-            // First, look BELOW (after) the current position
-            let nextVisible: Session | undefined;
-            for (let i = currentIndex + 1; i < ctx.sortedSessions.length; i++) {
-              if (willBeVisible(ctx.sortedSessions[i])) {
-                nextVisible = ctx.sortedSessions[i];
-                break;
-              }
-            }
-
-            // If nothing below, look ABOVE (before) the current position
-            if (!nextVisible) {
-              for (let i = currentIndex - 1; i >= 0; i--) {
-                if (willBeVisible(ctx.sortedSessions[i])) {
-                  nextVisible = ctx.sortedSessions[i];
-                  break;
-                }
-              }
-            }
-
-            if (nextVisible) {
-              const newIndex = ctx.sortedSessions.findIndex(s => s.id === nextVisible!.id);
-              ctx.setSelectedSidebarIndex(newIndex);
-              ctx.setActiveSessionId(nextVisible.id);
-            }
-            return;
-          }
-        }
-
-        // ArrowUp/ArrowDown: Navigate through sessions, expanding collapsed groups as needed
-        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-          const currentIndex = ctx.selectedSidebarIndex;
-          const totalSessions = ctx.sortedSessions.length;
-
-          // Helper to check if a session is in a collapsed group
-          const isInCollapsedGroup = (session: Session) => {
-            if (!session.groupId) return false;
-            const group = ctx.groups.find(g => g.id === session.groupId);
-            return group?.collapsed ?? false;
-          };
-
-          // Helper to get all sessions in a group
-          const getGroupSessions = (groupId: string) => {
-            return ctx.sortedSessions.filter(s => s.groupId === groupId);
-          };
-
-          // Find the next session, skipping visible sessions in collapsed groups
-          // but stopping when we hit a NEW collapsed group (to expand it)
-          let nextIndex = currentIndex;
-          let foundCollapsedGroup: string | null = null;
-
-          if (e.key === 'ArrowDown') {
-            // Moving down
-            for (let i = 1; i <= totalSessions; i++) {
-              const candidateIndex = (currentIndex + i) % totalSessions;
-              const candidate = ctx.sortedSessions[candidateIndex];
-
-              if (!candidate.groupId) {
-                // Ungrouped session - can navigate to it
-                nextIndex = candidateIndex;
-                break;
-              }
-
-              const candidateGroup = ctx.groups.find(g => g.id === candidate.groupId);
-              if (!candidateGroup?.collapsed) {
-                // Session in expanded group - can navigate to it
-                nextIndex = candidateIndex;
-                break;
-              }
-
-              // Session is in a collapsed group
-              // Check if this is a different group than we're currently in
-              if (candidate.groupId !== currentSession?.groupId) {
-                // We've hit a collapsed group - expand it and go to FIRST item
-                foundCollapsedGroup = candidate.groupId;
-                const groupSessions = getGroupSessions(candidate.groupId);
-                nextIndex = ctx.sortedSessions.findIndex(s => s.id === groupSessions[0]?.id);
-                break;
-              }
-              // Same collapsed group, keep looking (shouldn't happen if current is visible)
-            }
-          } else {
-            // Moving up
-            for (let i = 1; i <= totalSessions; i++) {
-              const candidateIndex = (currentIndex - i + totalSessions) % totalSessions;
-              const candidate = ctx.sortedSessions[candidateIndex];
-
-              if (!candidate.groupId) {
-                // Ungrouped session - can navigate to it
-                nextIndex = candidateIndex;
-                break;
-              }
-
-              const candidateGroup = ctx.groups.find(g => g.id === candidate.groupId);
-              if (!candidateGroup?.collapsed) {
-                // Session in expanded group - can navigate to it
-                nextIndex = candidateIndex;
-                break;
-              }
-
-              // Session is in a collapsed group
-              // Check if this is a different group than we're currently in
-              if (candidate.groupId !== currentSession?.groupId) {
-                // We've hit a collapsed group - expand it and go to LAST item
-                foundCollapsedGroup = candidate.groupId;
-                const groupSessions = getGroupSessions(candidate.groupId);
-                nextIndex = ctx.sortedSessions.findIndex(s => s.id === groupSessions[groupSessions.length - 1]?.id);
-                break;
-              }
-              // Same collapsed group, keep looking
-            }
-          }
-
-          // If we found a collapsed group, expand it
-          if (foundCollapsedGroup) {
-            ctx.setGroups(prev => prev.map(g =>
-              g.id === foundCollapsedGroup ? { ...g, collapsed: false } : g
-            ));
-          }
-
-          ctx.setSelectedSidebarIndex(nextIndex);
-        }
-        return;
-      }
+      if (ctx.handleSidebarNavigation(e)) return;
 
       // Enter to load selected session from sidebar
-      if (ctx.activeFocus === 'sidebar' && e.key === 'Enter') {
-        e.preventDefault();
-        if (ctx.sortedSessions[ctx.selectedSidebarIndex]) {
-          ctx.setActiveSessionId(ctx.sortedSessions[ctx.selectedSidebarIndex].id);
-        }
-        return;
-      }
+      if (ctx.handleEnterToActivate(e)) return;
 
-      // Tab navigation between panels (disabled when input is focused for tab completion)
-      if (e.key === 'Tab') {
-        // Skip global Tab handling when input is focused - let handleInputKeyDown handle it
-        if (document.activeElement === ctx.inputRef.current) {
-          return;
-        }
-        e.preventDefault();
-        if (ctx.activeFocus === 'sidebar' && !e.shiftKey) {
-          // Tab from sidebar goes to main input
-          ctx.setActiveFocus('main');
-          setTimeout(() => ctx.inputRef.current?.focus(), 0);
-          return;
-        }
-        const order: FocusArea[] = ['sidebar', 'main', 'right'];
-        const currentIdx = order.indexOf(ctx.activeFocus);
-        if (e.shiftKey) {
-           const next = currentIdx === 0 ? order.length - 1 : currentIdx - 1;
-           ctx.setActiveFocus(order[next]);
-        } else {
-           const next = currentIdx === order.length - 1 ? 0 : currentIdx + 1;
-           ctx.setActiveFocus(order[next]);
-        }
-        return;
-      }
+      // Tab navigation between panels
+      if (ctx.handleTabNavigation(e)) return;
 
       // Escape in main area focuses terminal output
-      if (ctx.activeFocus === 'main' && e.key === 'Escape' && document.activeElement === ctx.inputRef.current) {
-        e.preventDefault();
-        ctx.inputRef.current?.blur();
-        ctx.terminalOutputRef.current?.focus();
-        return;
-      }
+      if (ctx.handleEscapeInMain(e)) return;
 
 
       // General shortcuts
@@ -3801,17 +3598,7 @@ export default function MaestroConsole() {
     };
   }, [showSessionJumpNumbers]);
 
-  // Sync selectedSidebarIndex with activeSessionId
-  // IMPORTANT: Only sync when activeSessionId changes, NOT when sortedSessions changes
-  // This allows keyboard navigation to move the selector independently of the active session
-  // The sync happens when user clicks a session or presses Enter to activate
-  useEffect(() => {
-    const currentIndex = sortedSessions.findIndex(s => s.id === activeSessionId);
-    if (currentIndex !== -1) {
-      setSelectedSidebarIndex(currentIndex);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId]); // Intentionally excluding sortedSessions - see comment above
+  // NOTE: Sync selectedSidebarIndex with activeSessionId is now handled by useKeyboardNavigation hook
 
   // Restore file tree scroll position when switching sessions
   useEffect(() => {
@@ -4455,7 +4242,9 @@ export default function MaestroConsole() {
     setRenameTabModalOpen, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab,
     setFileTreeFilterOpen, isShortcut, isTabShortcut, handleNavBack, handleNavForward, toggleUnreadFilter,
     setTabSwitcherOpen, showUnreadOnly, stagedImages, handleSetLightboxImage, setMarkdownEditMode,
-    toggleTabStar, setPromptComposerOpen, openWizardModal
+    toggleTabStar, setPromptComposerOpen, openWizardModal,
+    // Navigation handlers from useKeyboardNavigation hook
+    handleSidebarNavigation, handleTabNavigation, handleEnterToActivate, handleEscapeInMain
   };
 
   const toggleGroup = (groupId: string) => {

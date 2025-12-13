@@ -18,6 +18,7 @@ export { useSessionViewer } from './useSessionViewer';
 export { useSessionPagination } from './useSessionPagination';
 export { useFilteredAndSortedSessions } from './useFilteredAndSortedSessions';
 export { useKeyboardShortcutHelpers } from './useKeyboardShortcutHelpers';
+export { useKeyboardNavigation } from './useKeyboardNavigation';
 
 export type { UseSettingsReturn } from './useSettings';
 export type { UseSessionManagerReturn } from './useSessionManager';
@@ -45,3 +46,7 @@ export type {
   UseKeyboardShortcutHelpersDeps,
   UseKeyboardShortcutHelpersReturn,
 } from './useKeyboardShortcutHelpers';
+export type {
+  UseKeyboardNavigationDeps,
+  UseKeyboardNavigationReturn,
+} from './useKeyboardNavigation';

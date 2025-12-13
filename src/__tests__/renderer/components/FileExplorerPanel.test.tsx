@@ -18,6 +18,23 @@ vi.mock('lucide-react', () => ({
     <span data-testid="refresh-icon" className={className} style={style}>🔄</span>,
   Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) =>
     <span data-testid="check-icon" className={className} style={style}>✓</span>,
+  Eye: ({ className, style }: { className?: string; style?: React.CSSProperties }) =>
+    <span data-testid="eye-icon" className={className} style={style}>👁</span>,
+  EyeOff: ({ className, style }: { className?: string; style?: React.CSSProperties }) =>
+    <span data-testid="eye-off-icon" className={className} style={style}>👁‍🗨</span>,
+}));
+
+// Mock @tanstack/react-virtual for virtualization
+vi.mock('@tanstack/react-virtual', () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getVirtualItems: () => Array.from({ length: count }, (_, i) => ({
+      index: i,
+      start: i * 28,
+      size: 28,
+      key: i,
+    })),
+    getTotalSize: () => count * 28,
+  }),
 }));
 
 // Mock createPortal
@@ -163,6 +180,8 @@ describe('FileExplorerPanel', () => {
       setSessions: vi.fn(),
       onAutoRefreshChange: vi.fn(),
       onShowFlash: vi.fn(),
+      showHiddenFiles: false,
+      setShowHiddenFiles: vi.fn(),
     };
   });
 
@@ -691,11 +710,14 @@ describe('FileExplorerPanel', () => {
       expect(screen.queryByText('index.ts')).not.toBeInTheDocument();
     });
 
-    it('applies indentation to nested items', () => {
+    it('applies indentation to nested items via paddingLeft', () => {
       const session = createMockSession({ fileExplorerExpanded: ['src'] });
       const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
-      const nestedItems = container.querySelectorAll('.ml-3.border-l.pl-2');
-      expect(nestedItems.length).toBeGreaterThan(0);
+      // Virtualized tree uses paddingLeft for indentation
+      // index.ts is at depth 1, so paddingLeft should be 8 + 1*16 = 24px
+      const nestedItem = Array.from(container.querySelectorAll('[data-file-index]'))
+        .find(el => el.textContent?.includes('index.ts'));
+      expect(nestedItem).toHaveStyle({ paddingLeft: '24px' });
     });
 
     it('displays file name with truncate class', () => {
@@ -1253,6 +1275,50 @@ describe('FileExplorerPanel', () => {
       expect(mockRegisterLayer).toHaveBeenCalledWith(
         expect.objectContaining({ ariaLabel: 'File Tree Filter' })
       );
+    });
+  });
+
+  describe('Virtualization', () => {
+    it('renders items with absolute positioning', () => {
+      const { container } = render(<FileExplorerPanel {...defaultProps} />);
+      const items = container.querySelectorAll('[data-file-index]');
+      items.forEach(item => {
+        expect(item).toHaveClass('absolute');
+      });
+    });
+
+    it('applies transform translateY for virtual positioning', () => {
+      const { container } = render(<FileExplorerPanel {...defaultProps} />);
+      const firstItem = container.querySelector('[data-file-index="0"]');
+      expect(firstItem).toHaveStyle({ transform: 'translateY(0px)' });
+    });
+
+    it('renders indent guides for nested items', () => {
+      const session = createMockSession({ fileExplorerExpanded: ['src'] });
+      const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+      // index.ts is at depth 1, should have 1 indent guide
+      const nestedItem = Array.from(container.querySelectorAll('[data-file-index]'))
+        .find(el => el.textContent?.includes('index.ts'));
+      const indentGuides = nestedItem?.querySelectorAll('.w-px');
+      expect(indentGuides?.length).toBe(1);
+    });
+
+    it('renders multiple indent guides for deeply nested items', () => {
+      const session = createMockSession({ fileExplorerExpanded: ['src', 'src/utils'] });
+      const { container } = render(<FileExplorerPanel {...defaultProps} session={session} />);
+      // helpers.ts is at depth 2, should have 2 indent guides
+      const deepItem = Array.from(container.querySelectorAll('[data-file-index]'))
+        .find(el => el.textContent?.includes('helpers.ts'));
+      const indentGuides = deepItem?.querySelectorAll('.w-px');
+      expect(indentGuides?.length).toBe(2);
+    });
+
+    it('uses fixed row height of 28px', () => {
+      const { container } = render(<FileExplorerPanel {...defaultProps} />);
+      const items = container.querySelectorAll('[data-file-index]');
+      items.forEach(item => {
+        expect(item).toHaveStyle({ height: '28px' });
+      });
     });
   });
 });

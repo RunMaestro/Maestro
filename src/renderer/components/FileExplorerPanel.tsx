@@ -207,6 +207,7 @@ export function FileExplorerPanel(props: FileExplorerPanelProps) {
 
   // Filter hidden files from the tree based on showHiddenFiles setting
   const filterHiddenFiles = useCallback((nodes: FileNode[]): FileNode[] => {
+    if (!nodes) return [];
     if (showHiddenFiles) return nodes;
     return nodes
       .filter(node => !node.name.startsWith('.'))
@@ -218,12 +219,14 @@ export function FileExplorerPanel(props: FileExplorerPanelProps) {
 
   // Apply hidden file filtering to the already-filtered tree
   const displayTree = useMemo(() => {
-    return filterHiddenFiles(filteredFileTree);
+    return filterHiddenFiles(filteredFileTree || []);
   }, [filteredFileTree, filterHiddenFiles]);
 
   // Flatten tree for virtualization - only includes visible nodes (respects expanded state)
+  // When filtering, auto-expand all folders to show matches
   const flattenedTree = useMemo(() => {
     const expandedSet = new Set(session.fileExplorerExpanded || []);
+    const isFiltering = fileTreeFilter.length > 0;
     const result: FlattenedNode[] = [];
     let globalIndex = 0;
 
@@ -233,16 +236,20 @@ export function FileExplorerPanel(props: FileExplorerPanelProps) {
         result.push({ node, path: fullPath, depth, globalIndex });
         globalIndex++;
 
-        // Only include children if folder is expanded
-        if (node.type === 'folder' && expandedSet.has(fullPath) && node.children) {
-          flatten(node.children, fullPath, depth + 1);
+        // When filtering, auto-expand all folders to reveal matches
+        // Otherwise, only include children if folder is manually expanded
+        const shouldShowChildren = node.type === 'folder' && node.children &&
+          (isFiltering || expandedSet.has(fullPath));
+
+        if (shouldShowChildren) {
+          flatten(node.children!, fullPath, depth + 1);
         }
       }
     };
 
     flatten(displayTree);
     return result;
-  }, [displayTree, session.fileExplorerExpanded]);
+  }, [displayTree, session.fileExplorerExpanded, fileTreeFilter]);
 
   // Virtualization setup
   const parentRef = useRef<HTMLDivElement>(null);
@@ -293,12 +300,21 @@ export function FileExplorerPanel(props: FileExplorerPanelProps) {
           borderLeftColor: isKeyboardSelected ? theme.colors.accent : 'transparent',
           backgroundColor: isKeyboardSelected ? theme.colors.bgActivity : (isSelected ? 'rgba(255,255,255,0.1)' : 'transparent')
         }}
+        onMouseDown={(e) => {
+          // Prevent focus from leaving the filter input when filtering
+          if (fileTreeFilter.length > 0) {
+            e.preventDefault();
+          }
+        }}
         onClick={() => {
           if (isFolder) {
             toggleFolder(fullPath, session.id, setSessions);
           } else {
             setSelectedFileIndex(globalIndex);
-            setActiveFocus('right');
+            // Only change focus if not filtering
+            if (fileTreeFilter.length === 0) {
+              setActiveFocus('right');
+            }
           }
         }}
         onDoubleClick={() => {
@@ -326,7 +342,7 @@ export function FileExplorerPanel(props: FileExplorerPanelProps) {
         )}
       </div>
     );
-  }, [session.fullPath, session.changedFiles, session.fileExplorerExpanded, session.id, previewFile?.path, activeFocus, activeRightTab, selectedFileIndex, theme, toggleFolder, setSessions, setSelectedFileIndex, setActiveFocus, handleFileClick]);
+  }, [session.fullPath, session.changedFiles, session.fileExplorerExpanded, session.id, previewFile?.path, activeFocus, activeRightTab, selectedFileIndex, theme, toggleFolder, setSessions, setSelectedFileIndex, setActiveFocus, handleFileClick, fileTreeFilter]);
 
   return (
     <div className="space-y-2 relative">
