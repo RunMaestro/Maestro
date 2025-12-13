@@ -4,6 +4,7 @@ import type { Theme, Session, LogEntry } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SessionActivityGraph, type ActivityEntry } from './SessionActivityGraph';
+import { SessionListItem } from './SessionListItem';
 import { formatSize, formatNumber, formatTokens, formatRelativeTime } from '../utils/formatters';
 import { useSessionViewer, type ClaudeSession } from '../hooks/useSessionViewer';
 import { useSessionPagination } from '../hooks/useSessionPagination';
@@ -1109,204 +1110,30 @@ export function AgentSessionsBrowser({
               </div>
             ) : (
               <div className="py-2">
-                {filteredSessions.map((session, i) => {
-                  const searchResultInfo = getSearchResultInfo(session.sessionId);
-                  const isStarred = starredSessions.has(session.sessionId);
-                  return (
-                    <div
-                      key={session.sessionId}
-                      ref={i === selectedIndex ? selectedItemRef : null}
-                      onClick={() => handleViewSession(session)}
-                      className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-white/5 transition-colors border-b group cursor-pointer"
-                      style={{
-                        backgroundColor: i === selectedIndex ? theme.colors.accent + '15' : 'transparent',
-                        borderColor: theme.colors.border + '50',
-                      }}
-                    >
-                      {/* Star button */}
-                      <button
-                        onClick={(e) => toggleStar(session.sessionId, e)}
-                        className="p-1 -ml-1 rounded hover:bg-white/10 transition-colors shrink-0"
-                        title={isStarred ? 'Remove from favorites' : 'Add to favorites'}
-                      >
-                        <Star
-                          className="w-4 h-4"
-                          style={{
-                            color: isStarred ? theme.colors.warning : theme.colors.textDim,
-                            fill: isStarred ? theme.colors.warning : 'transparent',
-                          }}
-                        />
-                      </button>
-                      {/* Quick Resume button */}
-                      <button
-                        onClick={(e) => handleQuickResume(session, e)}
-                        className="p-1 rounded hover:bg-white/10 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
-                        title="Resume session in new tab"
-                      >
-                        <Play
-                          className="w-4 h-4"
-                          style={{ color: theme.colors.success }}
-                        />
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        {/* Line 1: Session name (if available) - or inline rename input */}
-                        {renamingSessionId === session.sessionId ? (
-                          <div className="flex items-center gap-1.5 mb-1">
-                            <input
-                              ref={renameInputRef}
-                              type="text"
-                              value={renameValue}
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              onKeyDown={(e) => {
-                                e.stopPropagation();
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  submitRename(session.sessionId);
-                                } else if (e.key === 'Escape') {
-                                  e.preventDefault();
-                                  cancelRename();
-                                }
-                              }}
-                              onClick={(e) => e.stopPropagation()}
-                              onBlur={() => submitRename(session.sessionId)}
-                              placeholder="Enter session name..."
-                              className="flex-1 bg-transparent outline-none text-sm font-semibold px-2 py-0.5 rounded border min-w-0"
-                              style={{
-                                color: theme.colors.accent,
-                                borderColor: theme.colors.accent,
-                                backgroundColor: theme.colors.bgActivity,
-                              }}
-                            />
-                          </div>
-                        ) : session.sessionName ? (
-                          <div className="flex items-center gap-1.5 mb-1 group/name">
-                            <span
-                              className="font-semibold text-sm truncate"
-                              style={{ color: theme.colors.accent }}
-                            >
-                              {session.sessionName}
-                            </span>
-                            <button
-                              onClick={(e) => startRename(session, e)}
-                              className="p-0.5 rounded opacity-0 group-hover/name:opacity-100 hover:bg-white/10 transition-all"
-                              title="Rename session"
-                            >
-                              <Edit3 className="w-3 h-3" style={{ color: theme.colors.accent }} />
-                            </button>
-                          </div>
-                        ) : null}
-                        {/* Line 2: First message / title with optional rename button */}
-                        <div
-                          className={`flex items-center gap-1.5 ${session.sessionName ? 'mb-1' : 'mb-1.5'} group/title`}
-                        >
-                          <span
-                            className="font-medium truncate text-sm flex-1 min-w-0"
-                            style={{ color: session.sessionName ? theme.colors.textDim : theme.colors.textMain }}
-                          >
-                            {session.firstMessage || `Session ${session.sessionId.slice(0, 8)}...`}
-                          </span>
-                          {/* Rename button for sessions without a name (shows on hover) */}
-                          {!session.sessionName && renamingSessionId !== session.sessionId && (
-                            <button
-                              onClick={(e) => startRename(session, e)}
-                              className="p-0.5 rounded opacity-0 group-hover/title:opacity-100 hover:bg-white/10 transition-all shrink-0"
-                              title="Add session name"
-                            >
-                              <Edit3 className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-                            </button>
-                          )}
-                        </div>
-                        {/* Line 2: Session origin pill + Session ID + stats + match info */}
-                        <div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
-                          {/* Session origin pill - shows source of session */}
-                          {session.origin === 'user' && (
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                              style={{ backgroundColor: theme.colors.accent + '30', color: theme.colors.accent }}
-                              title="User-initiated through Maestro"
-                            >
-                              MAESTRO
-                            </span>
-                          )}
-                          {session.origin === 'auto' && (
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                              style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
-                              title="Auto-batch session through Maestro"
-                            >
-                              AUTO
-                            </span>
-                          )}
-                          {!session.origin && (
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-                              style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
-                              title="Claude Code CLI session"
-                            >
-                              CLI
-                            </span>
-                          )}
-                          {/* Session ID pill */}
-                          <span
-                            className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-                            style={{ backgroundColor: theme.colors.border + '60', color: theme.colors.textDim }}
-                          >
-                            {session.sessionId.startsWith('agent-')
-                              ? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
-                              : session.sessionId.split('-')[0].toUpperCase()}
-                          </span>
-                          {/* Stats */}
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {formatRelativeTime(session.modifiedAt)}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <MessageSquare className="w-3 h-3" />
-                            {session.messageCount}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <HardDrive className="w-3 h-3" />
-                            {formatSize(session.sizeBytes)}
-                          </span>
-                          {/* Cost per session */}
-                          {session.costUsd > 0 && (
-                            <span className="flex items-center gap-1 font-mono" style={{ color: theme.colors.success }}>
-                              <DollarSign className="w-3 h-3" />
-                              {session.costUsd.toFixed(2)}
-                            </span>
-                          )}
-                          {/* Show match count for content searches */}
-                          {searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
-                            <span
-                              className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-                              style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
-                            >
-                              <Search className="w-3 h-3" />
-                              {searchResultInfo.matchCount}
-                            </span>
-                          )}
-                          {/* Show match preview for content searches */}
-                          {searchResultInfo && searchResultInfo.matchPreview && searchMode !== 'title' && (
-                            <span
-                              className="truncate italic max-w-[400px]"
-                              style={{ color: theme.colors.accent }}
-                            >
-                              "{searchResultInfo.matchPreview}"
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {activeClaudeSessionId === session.sessionId && (
-                        <span
-                          className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-                          style={{ backgroundColor: theme.colors.success + '20', color: theme.colors.success }}
-                        >
-                          ACTIVE
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
+                {filteredSessions.map((session, i) => (
+                  <SessionListItem
+                    key={session.sessionId}
+                    session={session}
+                    index={i}
+                    selectedIndex={selectedIndex}
+                    isStarred={starredSessions.has(session.sessionId)}
+                    activeClaudeSessionId={activeClaudeSessionId}
+                    renamingSessionId={renamingSessionId}
+                    renameValue={renameValue}
+                    searchMode={searchMode}
+                    searchResultInfo={getSearchResultInfo(session.sessionId)}
+                    theme={theme}
+                    selectedItemRef={selectedItemRef}
+                    renameInputRef={renameInputRef}
+                    onSessionClick={handleViewSession}
+                    onToggleStar={toggleStar}
+                    onQuickResume={handleQuickResume}
+                    onStartRename={startRename}
+                    onRenameChange={setRenameValue}
+                    onSubmitRename={submitRename}
+                    onCancelRename={cancelRename}
+                  />
+                ))}
                 {/* Pagination indicator */}
                 {(isLoadingMoreSessions || hasMoreSessions) && !search && (
                   <div className="py-4 flex justify-center items-center">
