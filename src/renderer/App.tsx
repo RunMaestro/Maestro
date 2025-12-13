@@ -36,7 +36,7 @@ import { EmptyStateView } from './components/EmptyStateView';
 
 // Import custom hooks
 import { useBatchProcessor } from './hooks/useBatchProcessor';
-import { useSettings, useActivityTracker, useMobileLandscape, useNavigationHistory, useAutoRunHandlers } from './hooks';
+import { useSettings, useActivityTracker, useMobileLandscape, useNavigationHistory, useAutoRunHandlers, useInputSync } from './hooks';
 import type { AutoRunTreeNode } from './hooks';
 import { useTabCompletion, TabCompletionSuggestion, TabCompletionFilter } from './hooks/useTabCompletion';
 import { useAtMentionCompletion } from './hooks/useAtMentionCompletion';
@@ -2031,32 +2031,10 @@ export default function MaestroConsole() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab?.id]);
 
-  // Function to persist AI input to session state (called on blur/submit)
-  const syncAiInputToSession = useCallback((value: string) => {
-    if (!activeSession) return;
-    setSessions(prev => prev.map(s => {
-      if (s.id !== activeSession.id) return s;
-      const currentActiveTab = getActiveTab(s);
-      if (!currentActiveTab) return s;
-      return {
-        ...s,
-        aiTabs: s.aiTabs.map(tab =>
-          tab.id === currentActiveTab.id
-            ? { ...tab, inputValue: value }
-            : tab
-        )
-      };
-    }));
-  }, [activeSession]);
-
-  // Function to persist terminal input to session state (called on blur/session switch)
-  const syncTerminalInputToSession = useCallback((value: string, sessionId?: string) => {
-    const targetSessionId = sessionId || activeSession?.id;
-    if (!targetSessionId) return;
-    setSessions(prev => prev.map(s =>
-      s.id === targetSessionId ? { ...s, terminalDraftInput: value } : s
-    ));
-  }, [activeSession?.id]);
+  // Input sync handlers (extracted to useInputSync hook)
+  const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(activeSession, {
+    setSessions,
+  });
 
   // Sync terminal input when switching sessions
   // Save current terminal input to old session, load from new session
