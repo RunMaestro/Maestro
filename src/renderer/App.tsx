@@ -36,7 +36,7 @@ import { EmptyStateView } from './components/EmptyStateView';
 
 // Import custom hooks
 import { useBatchProcessor } from './hooks/useBatchProcessor';
-import { useSettings, useActivityTracker, useMobileLandscape, useNavigationHistory, useAutoRunHandlers, useInputSync } from './hooks';
+import { useSettings, useActivityTracker, useMobileLandscape, useNavigationHistory, useAutoRunHandlers, useInputSync, useSessionNavigation } from './hooks';
 import type { AutoRunTreeNode } from './hooks';
 import { useTabCompletion, TabCompletionSuggestion, TabCompletionFilter } from './hooks/useTabCompletion';
 import { useAtMentionCompletion } from './hooks/useAtMentionCompletion';
@@ -2034,6 +2034,15 @@ export default function MaestroConsole() {
   // Input sync handlers (extracted to useInputSync hook)
   const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(activeSession, {
     setSessions,
+  });
+
+  // Session navigation handlers (extracted to useSessionNavigation hook)
+  const { handleNavBack, handleNavForward } = useSessionNavigation(sessions, {
+    navigateBack,
+    navigateForward,
+    setActiveSessionId: setActiveSessionIdInternal,
+    setSessions,
+    cyclePositionRef,
   });
 
   // Sync terminal input when switching sessions
@@ -4500,54 +4509,6 @@ export default function MaestroConsole() {
       setGitDiffPreview(diff.diff);
     }
   };
-
-  // Navigate back in history (through sessions and tabs)
-  const handleNavBack = useCallback(() => {
-    const entry = navigateBack();
-    if (entry) {
-      // Check if session still exists
-      const sessionExists = sessions.some(s => s.id === entry.sessionId);
-      if (sessionExists) {
-        // Navigate to the session
-        setActiveSessionIdInternal(entry.sessionId);
-        cyclePositionRef.current = -1;
-
-        // If there's a tab ID, also switch to that tab
-        if (entry.tabId) {
-          setSessions(prev => prev.map(s => {
-            if (s.id === entry.sessionId && s.aiTabs?.some(t => t.id === entry.tabId)) {
-              return { ...s, activeTabId: entry.tabId };
-            }
-            return s;
-          }));
-        }
-      }
-    }
-  }, [navigateBack, sessions]);
-
-  // Navigate forward in history (through sessions and tabs)
-  const handleNavForward = useCallback(() => {
-    const entry = navigateForward();
-    if (entry) {
-      // Check if session still exists
-      const sessionExists = sessions.some(s => s.id === entry.sessionId);
-      if (sessionExists) {
-        // Navigate to the session
-        setActiveSessionIdInternal(entry.sessionId);
-        cyclePositionRef.current = -1;
-
-        // If there's a tab ID, also switch to that tab
-        if (entry.tabId) {
-          setSessions(prev => prev.map(s => {
-            if (s.id === entry.sessionId && s.aiTabs?.some(t => t.id === entry.tabId)) {
-              return { ...s, activeTabId: entry.tabId };
-            }
-            return s;
-          }));
-        }
-      }
-    }
-  }, [navigateForward, sessions]);
 
   // Update keyboardHandlerRef synchronously during render (before effects run)
   // This must be placed after all handler functions are defined to avoid TDZ errors
