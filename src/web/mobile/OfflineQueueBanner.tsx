@@ -17,6 +17,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import { Badge } from '../components/Badge';
 import type { QueuedCommand, QueueStatus } from '../hooks/useOfflineQueue';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { formatRelativeTime } from '../../shared/formatters';
 
 export interface OfflineQueueBannerProps {
   /** Queued commands */
@@ -43,20 +44,7 @@ function truncateCommand(command: string, maxLength: number = 40): string {
   return command.substring(0, maxLength - 3) + '...';
 }
 
-/**
- * Format timestamp to relative time
- */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return 'Just now';
-}
+// formatRelativeTime imported from ../../shared/formatters
 
 export function OfflineQueueBanner({
   queue,

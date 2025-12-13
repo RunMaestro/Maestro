@@ -7,6 +7,7 @@
  */
 import React, { memo, useState, useEffect } from 'react';
 import type { Session, Theme, AITab, BatchRunState } from '../types';
+import { formatTokensCompact } from '../utils/formatters';
 
 // Helper to get the write-mode (busy) tab from a session
 function getWriteModeTab(session: Session): AITab | undefined {
@@ -93,13 +94,7 @@ function getSessionDisplayName(session: Session, namedSessions?: Record<string, 
   return session.name;
 }
 
-// Helper to format tokens compactly
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}k`;
-  }
-  return tokens.toString();
-}
+// formatTokensCompact imported from ../utils/formatters
 
 // Single session row for the expanded dropdown (Thinking Pill dropdown)
 const SessionRow = memo(({
@@ -139,7 +134,7 @@ const SessionRow = memo(({
       </div>
       <div className="flex items-center gap-2 shrink-0 text-xs" style={{ color: theme.colors.textDim }}>
         {tokens > 0 && (
-          <span>{formatTokens(tokens)}</span>
+          <span>{formatTokensCompact(tokens)}</span>
         )}
         {session.thinkingStartTime && (
           <ElapsedTimeDisplay
@@ -372,7 +367,7 @@ function ThinkingStatusPillInner({ sessions, theme, onSessionClick, namedSession
           <div className="flex items-center gap-1 shrink-0 text-xs" style={{ color: theme.colors.textDim }}>
             <span>Tokens:</span>
             <span className="font-medium" style={{ color: theme.colors.textMain }}>
-              {formatTokens(primaryTokens)}
+              {formatTokensCompact(primaryTokens)}
             </span>
           </div>
         )}

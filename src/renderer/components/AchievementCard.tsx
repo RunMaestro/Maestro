@@ -12,6 +12,7 @@ import {
   type ConductorBadge,
 } from '../constants/conductorBadges';
 import { MaestroSilhouette } from './MaestroSilhouette';
+import { formatTokensCompact } from '../utils/formatters';
 
 /**
  * Circular progress ring with 11 segments that fill as badges are unlocked
@@ -358,16 +359,7 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
     return lines;
   };
 
-  // Format token count with K/M suffix
-  const formatTokens = (count: number): string => {
-    if (count >= 1_000_000) {
-      return `${(count / 1_000_000).toFixed(1)}M`;
-    }
-    if (count >= 1_000) {
-      return `${(count / 1_000).toFixed(1)}K`;
-    }
-    return count.toString();
-  };
+  // formatTokensCompact imported from ../utils/formatters
 
   // Generate shareable achievement card as canvas
   const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
@@ -511,7 +503,7 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
     const totalTokens = globalStats
       ? globalStats.totalInputTokens + globalStats.totalOutputTokens
       : 0;
-    const tokensValue = totalTokens > 0 ? formatTokens(totalTokens) : '—';
+    const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '—';
     drawStat(30 + statsColWidth * 3.5, tokensValue, 'Total Tokens');
 
     // Footer with branding and GitHub

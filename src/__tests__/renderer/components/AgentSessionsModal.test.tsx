@@ -672,8 +672,8 @@ describe('AgentSessionsModal', () => {
       );
 
       await waitFor(() => {
-        // Should show locale date string
-        const dateStr = date.toLocaleDateString();
+        // Should show short date format (e.g., "Nov 13")
+        const dateStr = date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         expect(screen.getByText(dateStr)).toBeInTheDocument();
       });
     });

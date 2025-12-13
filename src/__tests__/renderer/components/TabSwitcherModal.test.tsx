@@ -263,7 +263,7 @@ describe('TabSwitcherModal', () => {
     });
 
     describe('formatRelativeTime', () => {
-      it('formats "Now" for < 1 minute ago', () => {
+      it('formats "just now" for < 1 minute ago', () => {
         const tab = createTestTab({
           logs: [{ id: '1', timestamp: Date.now() - 30000, source: 'stdout', text: 'test' }],
         });
@@ -280,7 +280,7 @@ describe('TabSwitcherModal', () => {
           />
         );
 
-        expect(screen.getByText('Now')).toBeInTheDocument();
+        expect(screen.getByText('just now')).toBeInTheDocument();
       });
 
       it('formats minutes ago', () => {

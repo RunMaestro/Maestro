@@ -165,7 +165,7 @@ describe('ThinkingStatusPill', () => {
       expect(screen.getByText('500')).toBeInTheDocument();
     });
 
-    it('displays tokens at exactly 1000 in k notation', () => {
+    it('displays tokens at exactly 1000 in K notation', () => {
       const session = createThinkingSession({ currentCycleTokens: 1000 });
       render(
         <ThinkingStatusPill
@@ -173,10 +173,10 @@ describe('ThinkingStatusPill', () => {
           theme={mockTheme}
         />
       );
-      expect(screen.getByText('1.0k')).toBeInTheDocument();
+      expect(screen.getByText('1.0K')).toBeInTheDocument();
     });
 
-    it('displays tokens over 1000 in k notation with decimal', () => {
+    it('displays tokens over 1000 in K notation with decimal', () => {
       const session = createThinkingSession({ currentCycleTokens: 2500 });
       render(
         <ThinkingStatusPill
@@ -184,7 +184,7 @@ describe('ThinkingStatusPill', () => {
           theme={mockTheme}
         />
       );
-      expect(screen.getByText('2.5k')).toBeInTheDocument();
+      expect(screen.getByText('2.5K')).toBeInTheDocument();
     });
 
     it('displays large tokens correctly', () => {
@@ -195,7 +195,7 @@ describe('ThinkingStatusPill', () => {
           theme={mockTheme}
         />
       );
-      expect(screen.getByText('15.7k')).toBeInTheDocument();
+      expect(screen.getByText('15.7K')).toBeInTheDocument();
     });
 
     it('shows "Thinking..." when tokens are 0', () => {
@@ -681,8 +681,8 @@ describe('ThinkingStatusPill', () => {
       const indicator = screen.getByText('+1').parentElement!;
       fireEvent.mouseEnter(indicator);
 
-      // 5000 tokens = 5.0k
-      expect(screen.getByText('5.0k')).toBeInTheDocument();
+      // 5000 tokens = 5.0K
+      expect(screen.getByText('5.0K')).toBeInTheDocument();
     });
 
     it('shows elapsed time in session row', () => {
@@ -1126,7 +1126,7 @@ describe('ThinkingStatusPill', () => {
         />
       );
 
-      expect(screen.getByText('1.5k')).toBeInTheDocument();
+      expect(screen.getByText('1.5K')).toBeInTheDocument();
     });
 
     it('re-renders when theme changes', () => {
@@ -1272,7 +1272,7 @@ describe('ThinkingStatusPill', () => {
           theme={mockTheme}
         />
       );
-      expect(screen.getByText('1000.0k')).toBeInTheDocument();
+      expect(screen.getByText('1000.0K')).toBeInTheDocument();
     });
 
     it('handles session with empty aiTabs array', () => {

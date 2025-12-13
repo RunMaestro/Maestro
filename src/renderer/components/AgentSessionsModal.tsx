@@ -3,6 +3,7 @@ import { Search, Clock, MessageSquare, HardDrive, Play, ChevronLeft, Loader2, St
 import type { Theme, Session } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { formatSize, formatRelativeTime } from '../utils/formatters';
 
 interface ClaudeSession {
   sessionId: string;
@@ -332,28 +333,7 @@ export function AgentSessionsModal({
     }
   }, [viewingSession, onResumeSession, onClose]);
 
-  // Format file size
-  const formatSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  // Format relative time
-  const formatRelativeTime = (dateStr: string) => {
-    const date = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - date.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    const diffHours = Math.floor(diffMins / 60);
-    const diffDays = Math.floor(diffHours / 24);
-
-    if (diffMins < 1) return 'just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
-    return date.toLocaleDateString();
-  };
+  // formatSize and formatRelativeTime imported from ../utils/formatters
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start justify-center pt-24 z-[9999] animate-in fade-in duration-100">

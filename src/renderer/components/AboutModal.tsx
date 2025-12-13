@@ -5,6 +5,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import pedramAvatar from '../assets/pedram-avatar.png';
 import { AchievementCard } from './AchievementCard';
+import { formatTokensCompact, formatSize } from '../utils/formatters';
 
 interface ClaudeGlobalStats {
   totalSessions: number;
@@ -65,16 +66,7 @@ export function AboutModal({ theme, sessions, autoRunStats, onClose, onOpenLeade
   // Calculate active time from current sessions
   const totalActiveTimeMs = sessions.reduce((sum, s) => sum + (s.activeTimeMs || 0), 0);
 
-  // Format token count with K/M suffix
-  const formatTokens = (count: number): string => {
-    if (count >= 1_000_000) {
-      return `${(count / 1_000_000).toFixed(1)}M`;
-    }
-    if (count >= 1_000) {
-      return `${(count / 1_000).toFixed(1)}K`;
-    }
-    return count.toString();
-  };
+  // formatTokensCompact and formatSize imported from ../utils/formatters
 
   // Format duration from milliseconds
   const formatDuration = (ms: number): string => {
@@ -234,21 +226,21 @@ export function AboutModal({ theme, sessions, autoRunStats, onClose, onOpenLeade
                 {/* Sessions & Messages */}
                 <div className="flex justify-between">
                   <span style={{ color: theme.colors.textDim }}>Sessions</span>
-                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalSessions)}</span>
+                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalSessions)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span style={{ color: theme.colors.textDim }}>Messages</span>
-                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalMessages)}</span>
+                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalMessages)}</span>
                 </div>
 
                 {/* Tokens */}
                 <div className="flex justify-between">
                   <span style={{ color: theme.colors.textDim }}>Input Tokens</span>
-                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalInputTokens)}</span>
+                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalInputTokens)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span style={{ color: theme.colors.textDim }}>Output Tokens</span>
-                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalOutputTokens)}</span>
+                  <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalOutputTokens)}</span>
                 </div>
 
                 {/* Cache Tokens (if any) */}
@@ -256,11 +248,11 @@ export function AboutModal({ theme, sessions, autoRunStats, onClose, onOpenLeade
                   <>
                     <div className="flex justify-between">
                       <span style={{ color: theme.colors.textDim }}>Cache Read</span>
-                      <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalCacheReadTokens)}</span>
+                      <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalCacheReadTokens)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span style={{ color: theme.colors.textDim }}>Cache Creation</span>
-                      <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokens(globalStats.totalCacheCreationTokens)}</span>
+                      <span className="font-mono font-bold" style={{ color: theme.colors.textMain }}>{formatTokensCompact(globalStats.totalCacheCreationTokens)}</span>
                     </div>
                   </>
                 )}

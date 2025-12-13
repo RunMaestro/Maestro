@@ -2,6 +2,9 @@ import React from 'react';
 import { FilePlus, Trash2, FileCode, FileText } from 'lucide-react';
 import type { Theme, SessionState, FileChangeType } from '../types';
 
+// Re-export formatActiveTime from formatters for backwards compatibility
+export { formatActiveTime } from './formatters';
+
 // Get color based on context usage percentage
 export const getContextColor = (usage: number, theme: Theme): string => {
   if (usage >= 80) return theme.colors.error;
@@ -23,28 +26,6 @@ export const getStatusColor = (state: SessionState, theme: Theme): string => {
     case 'error': return theme.colors.error;       // Red - no connection
     case 'connecting': return '#ff8800';           // Orange - attempting to connect
     default: return theme.colors.success;
-  }
-};
-
-// Format active time for display (compact format: 1D, 2H, 30M)
-export const formatActiveTime = (ms: number): string => {
-  const totalSeconds = Math.floor(ms / 1000);
-  const totalMinutes = Math.floor(totalSeconds / 60);
-  const totalHours = Math.floor(totalMinutes / 60);
-  const totalDays = Math.floor(totalHours / 24);
-
-  if (totalDays > 0) {
-    return `${totalDays}D`;
-  } else if (totalHours > 0) {
-    const remainingMinutes = totalMinutes % 60;
-    if (remainingMinutes > 0) {
-      return `${totalHours}H ${remainingMinutes}M`;
-    }
-    return `${totalHours}H`;
-  } else if (totalMinutes > 0) {
-    return `${totalMinutes}M`;
-  } else {
-    return '<1M';
   }
 };
 

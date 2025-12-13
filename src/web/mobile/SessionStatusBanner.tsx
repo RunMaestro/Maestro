@@ -24,6 +24,7 @@ import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, UsageStats, LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
+import { formatRelativeTime } from '../../shared/formatters';
 
 /**
  * Props for SessionStatusBanner component
@@ -397,18 +398,7 @@ function TokenCount({ usageStats }: { usageStats?: UsageStats | null }) {
   );
 }
 
-/**
- * Format relative time for last response timestamp
- */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return `${Math.floor(diff / 86400000)}d ago`;
-}
+// formatRelativeTime imported from ../../shared/formatters
 
 /**
  * Props for LastResponsePreviewSection component

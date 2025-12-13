@@ -18,6 +18,7 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS, GESTURE_THRESHOLDS } from './constants';
+import { formatRelativeTime } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
 
@@ -51,23 +52,7 @@ export interface CommandHistoryDrawerProps {
   onClearHistory?: () => void;
 }
 
-/**
- * Format timestamp to relative time string
- */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = now - timestamp;
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days}d ago`;
-  if (hours > 0) return `${hours}h ago`;
-  if (minutes > 0) return `${minutes}m ago`;
-  return 'just now';
-}
+// formatRelativeTime imported from ../../shared/formatters
 
 /**
  * Truncate command text for display

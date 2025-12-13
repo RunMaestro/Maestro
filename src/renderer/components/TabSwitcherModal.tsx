@@ -6,6 +6,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 
 /** Named session from the store (not currently open) */
 interface NamedSession {
@@ -32,41 +33,7 @@ interface TabSwitcherModalProps {
   onClose: () => void;
 }
 
-/**
- * Format token count with K suffix for thousands
- */
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000) {
-    return (tokens / 1000).toFixed(1) + 'K';
-  }
-  return tokens.toString();
-}
-
-/**
- * Format cost as USD with appropriate precision
- */
-function formatCost(cost: number): string {
-  if (cost === 0) return '$0.00';
-  if (cost < 0.01) return '<$0.01';
-  return '$' + cost.toFixed(2);
-}
-
-/**
- * Format a timestamp as relative time (e.g., "5m ago", "2h ago", "Dec 3")
- */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diffMs = now - timestamp;
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return 'Now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return new Date(timestamp).toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
+// formatTokensCompact, formatRelativeTime, and formatCost imported from ../utils/formatters
 
 /**
  * Get the last activity timestamp from a tab's logs
@@ -600,7 +567,7 @@ export function TabSwitcherModal({
                     <div className="flex items-center gap-3 text-[10px] opacity-60">
                       {tab.usageStats && (
                         <>
-                          <span>{formatTokens(tab.usageStats.inputTokens + tab.usageStats.outputTokens)} tokens</span>
+                          <span>{formatTokensCompact(tab.usageStats.inputTokens + tab.usageStats.outputTokens)} tokens</span>
                           <span>{formatCost(cost)}</span>
                         </>
                       )}
