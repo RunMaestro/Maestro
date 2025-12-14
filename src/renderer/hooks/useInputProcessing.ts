@@ -215,6 +215,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
               );
 
               // Process immediately after state is set up
+              // 50ms delay allows React to flush the setState above, ensuring the session
+              // is marked 'busy' before processQueuedItem runs (prevents duplicate processing)
               setTimeout(() => {
                 processQueuedItemRef.current?.(activeSessionId, queuedItem);
               }, 50);
