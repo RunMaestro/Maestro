@@ -32,9 +32,16 @@ export interface UseGitStatusPollingOptions {
    * Default: true
    */
   pauseWhenHidden?: boolean;
+  /**
+   * Inactivity timeout in milliseconds. Polling stops after this duration
+   * of no user activity and resumes when activity is detected.
+   * Default: 60000 (60 seconds)
+   */
+  inactivityTimeout?: number;
 }
 
 const DEFAULT_POLL_INTERVAL = 30000; // 30 seconds
+const DEFAULT_INACTIVITY_TIMEOUT = 60000; // 60 seconds
 
 /**
  * Hook that polls git status for all git repository sessions.
@@ -42,8 +49,12 @@ const DEFAULT_POLL_INTERVAL = 30000; // 30 seconds
  * Features:
  * - Only polls sessions marked as git repos
  * - Pauses polling when the app is in background (document hidden)
+ * - Pauses polling after user inactivity to save CPU
  * - Parallelizes git status calls for better performance
  * - Returns a map of session ID to changed file count
+ *
+ * CPU optimization: Polling stops after 60s of user inactivity and
+ * resumes immediately when user activity is detected.
  *
  * Extracted from SessionList.tsx to reduce file size and improve maintainability.
  *
@@ -58,6 +69,7 @@ export function useGitStatusPolling(
   const {
     pollInterval = DEFAULT_POLL_INTERVAL,
     pauseWhenHidden = true,
+    inactivityTimeout = DEFAULT_INACTIVITY_TIMEOUT,
   } = options;
 
   const [gitFileCounts, setGitFileCounts] = useState<Map<string, number>>(new Map());
@@ -65,6 +77,11 @@ export function useGitStatusPolling(
   // Use ref to track sessions to avoid stale closure issues in interval callback
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  // Activity tracking refs
+  const lastActivityRef = useRef<number>(Date.now());
+  const isActiveRef = useRef<boolean>(true);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Poll git status for all Git sessions
   const pollGitStatus = useCallback(async () => {
@@ -100,27 +117,41 @@ export function useGitStatusPolling(
     setGitFileCounts(newCounts);
   }, [pauseWhenHidden]);
 
-  useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
-
-    const startPolling = () => {
+  const startPolling = useCallback(() => {
+    if (!intervalRef.current && !document.hidden) {
       pollGitStatus();
-      intervalId = setInterval(pollGitStatus, pollInterval);
-    };
+      intervalRef.current = setInterval(() => {
+        const now = Date.now();
+        const timeSinceLastActivity = now - lastActivityRef.current;
 
-    const stopPolling = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
+        // Check if user is still active
+        if (timeSinceLastActivity < inactivityTimeout) {
+          pollGitStatus();
+        } else {
+          // User inactive - stop polling to save CPU
+          isActiveRef.current = false;
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+        }
+      }, pollInterval);
+    }
+  }, [pollInterval, inactivityTimeout, pollGitStatus]);
 
-    // Handle visibility changes - pause polling when app is in background
+  const stopPolling = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  // Handle visibility changes
+  useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
         stopPolling();
-      } else {
-        // Resume polling and immediately refresh when becoming visible
+      } else if (isActiveRef.current) {
         startPolling();
       }
     };
@@ -129,18 +160,49 @@ export function useGitStatusPolling(
       document.addEventListener('visibilitychange', handleVisibilityChange);
     }
 
-    // Start polling if document is visible (or if we don't pause when hidden)
+    return () => {
+      if (pauseWhenHidden) {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [pauseWhenHidden, startPolling, stopPolling]);
+
+  // Listen for user activity to restart polling if inactive
+  useEffect(() => {
+    const handleActivity = () => {
+      lastActivityRef.current = Date.now();
+      const wasInactive = !isActiveRef.current;
+      isActiveRef.current = true;
+
+      // Restart polling if it was stopped due to inactivity
+      if (wasInactive && !document.hidden) {
+        startPolling();
+      }
+    };
+
+    window.addEventListener('keydown', handleActivity);
+    window.addEventListener('mousedown', handleActivity);
+    window.addEventListener('wheel', handleActivity);
+    window.addEventListener('touchstart', handleActivity);
+
+    return () => {
+      window.removeEventListener('keydown', handleActivity);
+      window.removeEventListener('mousedown', handleActivity);
+      window.removeEventListener('wheel', handleActivity);
+      window.removeEventListener('touchstart', handleActivity);
+    };
+  }, [startPolling]);
+
+  // Initial start and cleanup
+  useEffect(() => {
     if (!pauseWhenHidden || !document.hidden) {
       startPolling();
     }
 
     return () => {
       stopPolling();
-      if (pauseWhenHidden) {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
     };
-  }, [pollInterval, pauseWhenHidden, pollGitStatus]);
+  }, [pauseWhenHidden, startPolling, stopPolling]);
 
   return {
     gitFileCounts,

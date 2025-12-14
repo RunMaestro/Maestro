@@ -201,8 +201,7 @@ let agentDetector: AgentDetector | null = null;
 let historyFileWatcherInterval: NodeJS.Timeout | null = null;
 let lastHistoryFileMtime: number = 0;
 let historyNeedsReload: boolean = false;
-let cliActivityWatcherInterval: NodeJS.Timeout | null = null;
-let lastCliActivityMtime: number = 0;
+let cliActivityWatcher: fsSync.FSWatcher | null = null;
 
 /**
  * Create and configure the web server with all necessary callbacks.
@@ -668,9 +667,9 @@ app.on('before-quit', async () => {
     historyFileWatcherInterval = null;
   }
   // Stop CLI activity watcher
-  if (cliActivityWatcherInterval) {
-    clearInterval(cliActivityWatcherInterval);
-    cliActivityWatcherInterval = null;
+  if (cliActivityWatcher) {
+    cliActivityWatcher.close();
+    cliActivityWatcher = null;
   }
   // Clean up all running processes
   logger.info('Killing all running processes', 'Shutdown');
@@ -721,44 +720,37 @@ function startHistoryFileWatcher() {
 
 /**
  * Start CLI activity file watcher
- * Polls cli-activity.json every 2 seconds to detect when CLI is running playbooks
+ * Uses fs.watch() for event-driven detection when CLI is running playbooks
  */
 function startCliActivityWatcher() {
   const cliActivityPath = path.join(app.getPath('userData'), 'cli-activity.json');
+  const cliActivityDir = path.dirname(cliActivityPath);
 
-  // Get initial mtime
-  try {
-    const stats = fsSync.statSync(cliActivityPath);
-    lastCliActivityMtime = stats.mtimeMs;
-  } catch {
-    lastCliActivityMtime = 0;
+  // Ensure directory exists for watching
+  if (!fsSync.existsSync(cliActivityDir)) {
+    fsSync.mkdirSync(cliActivityDir, { recursive: true });
   }
 
-  // Poll every 2 seconds (more frequent for responsive UI)
-  cliActivityWatcherInterval = setInterval(() => {
-    try {
-      const stats = fsSync.statSync(cliActivityPath);
-      if (stats.mtimeMs > lastCliActivityMtime) {
-        lastCliActivityMtime = stats.mtimeMs;
-        // File was modified, notify renderer
+  // Watch the directory for file changes (handles file creation/deletion)
+  // Using directory watch because fs.watch on non-existent file throws
+  try {
+    cliActivityWatcher = fsSync.watch(cliActivityDir, (_eventType, filename) => {
+      if (filename === 'cli-activity.json') {
         logger.debug('CLI activity file changed, notifying renderer', 'CliActivityWatcher');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('cli:activityChange');
         }
       }
-    } catch {
-      // File might not exist, that's fine - means no CLI activity
-      // Check if we had activity before and now it's gone (file deleted or process ended)
-      if (lastCliActivityMtime > 0) {
-        lastCliActivityMtime = 0;
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('cli:activityChange');
-        }
-      }
-    }
-  }, 2000); // 2 seconds
+    });
 
-  logger.info('CLI activity watcher started', 'Startup');
+    cliActivityWatcher.on('error', (error) => {
+      logger.error(`CLI activity watcher error: ${error.message}`, 'CliActivityWatcher');
+    });
+
+    logger.info('CLI activity watcher started', 'Startup');
+  } catch (error) {
+    logger.error(`Failed to start CLI activity watcher: ${error}`, 'CliActivityWatcher');
+  }
 }
 
 function setupIpcHandlers() {

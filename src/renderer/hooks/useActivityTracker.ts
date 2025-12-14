@@ -17,6 +17,9 @@ export interface UseActivityTrackerReturn {
  * Note: To avoid causing re-renders every second (which can reset scroll positions
  * in virtualized lists), we accumulate time locally and only batch-update the
  * session state every 30 seconds.
+ *
+ * CPU optimization: The interval stops after 60s of inactivity and restarts
+ * when user activity is detected. This means zero CPU usage when truly idle.
  */
 export function useActivityTracker(
   activeSessionId: string | null,
@@ -26,87 +29,92 @@ export function useActivityTracker(
   const isActiveRef = useRef<boolean>(false);
   const accumulatedTimeRef = useRef<number>(0);
   const lastBatchUpdateRef = useRef<number>(Date.now());
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const setSessionsRef = useRef(setSessions);
+  const activeSessionIdRef = useRef(activeSessionId);
 
-  // Mark activity occurred
-  const onActivity = useCallback(() => {
-    lastActivityRef.current = Date.now();
-    isActiveRef.current = true;
+  // Keep refs in sync
+  setSessionsRef.current = setSessions;
+  activeSessionIdRef.current = activeSessionId;
+
+  const startInterval = useCallback(() => {
+    if (!intervalRef.current && !document.hidden) {
+      intervalRef.current = setInterval(() => {
+        const now = Date.now();
+        const timeSinceLastActivity = now - lastActivityRef.current;
+
+        // Check if still active (activity within the last minute)
+        if (timeSinceLastActivity < ACTIVITY_TIMEOUT_MS && isActiveRef.current) {
+          // Accumulate time locally instead of updating state every second
+          accumulatedTimeRef.current += TICK_INTERVAL_MS;
+
+          // Only batch-update state every 30 seconds to avoid causing re-renders
+          const timeSinceLastBatchUpdate = now - lastBatchUpdateRef.current;
+          if (timeSinceLastBatchUpdate >= BATCH_UPDATE_INTERVAL_MS && activeSessionIdRef.current) {
+            const accumulatedTime = accumulatedTimeRef.current;
+            accumulatedTimeRef.current = 0;
+            lastBatchUpdateRef.current = now;
+
+            setSessionsRef.current(prev => prev.map(session => {
+              if (session.id === activeSessionIdRef.current) {
+                return {
+                  ...session,
+                  activeTimeMs: (session.activeTimeMs || 0) + accumulatedTime
+                };
+              }
+              return session;
+            }));
+          }
+        } else {
+          // Mark as inactive and stop the interval to save CPU
+          isActiveRef.current = false;
+          if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+          }
+        }
+      }, TICK_INTERVAL_MS);
+    }
   }, []);
 
-  // Tick every second to accumulate time, but only update state every 30 seconds
-  // Pauses when window is hidden to save CPU
+  const stopInterval = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, []);
+
+  // Handle visibility changes
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
-
-    const tick = () => {
-      const now = Date.now();
-      const timeSinceLastActivity = now - lastActivityRef.current;
-
-      // Check if still active (activity within the last minute)
-      if (timeSinceLastActivity < ACTIVITY_TIMEOUT_MS && isActiveRef.current) {
-        // Accumulate time locally instead of updating state every second
-        accumulatedTimeRef.current += TICK_INTERVAL_MS;
-
-        // Only batch-update state every 30 seconds to avoid causing re-renders
-        const timeSinceLastBatchUpdate = now - lastBatchUpdateRef.current;
-        if (timeSinceLastBatchUpdate >= BATCH_UPDATE_INTERVAL_MS && activeSessionId) {
-          const accumulatedTime = accumulatedTimeRef.current;
-          accumulatedTimeRef.current = 0;
-          lastBatchUpdateRef.current = now;
-
-          setSessions(prev => prev.map(session => {
-            if (session.id === activeSessionId) {
-              return {
-                ...session,
-                activeTimeMs: (session.activeTimeMs || 0) + accumulatedTime
-              };
-            }
-            return session;
-          }));
-        }
-      } else {
-        // Mark as inactive if timeout exceeded
-        isActiveRef.current = false;
-      }
-    };
-
-    const startInterval = () => {
-      if (!interval) {
-        interval = setInterval(tick, TICK_INTERVAL_MS);
-      }
-    };
-
-    const stopInterval = () => {
-      if (interval) {
-        clearInterval(interval);
-        interval = null;
-      }
-    };
-
     const handleVisibilityChange = () => {
       if (document.hidden) {
         stopInterval();
-      } else {
+      } else if (isActiveRef.current) {
+        // Only restart if user was active
         startInterval();
       }
     };
 
-    // Start interval if visible
-    if (!document.hidden) {
-      startInterval();
-    }
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
-      stopInterval();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [startInterval, stopInterval]);
+
+  // Cleanup on unmount or session change
+  useEffect(() => {
+    // Capture the current session ID for cleanup
+    const sessionIdAtMount = activeSessionId;
+
+    return () => {
+      stopInterval();
       // Flush any accumulated time when effect cleans up (e.g., session change)
-      if (accumulatedTimeRef.current > 0 && activeSessionId) {
+      if (accumulatedTimeRef.current > 0 && sessionIdAtMount) {
         const accumulatedTime = accumulatedTimeRef.current;
         accumulatedTimeRef.current = 0;
-        setSessions(prev => prev.map(session => {
-          if (session.id === activeSessionId) {
+        setSessionsRef.current(prev => prev.map(session => {
+          if (session.id === sessionIdAtMount) {
             return {
               ...session,
               activeTimeMs: (session.activeTimeMs || 0) + accumulatedTime
@@ -116,13 +124,31 @@ export function useActivityTracker(
         }));
       }
     };
-  }, [activeSessionId, setSessions]);
+  }, [activeSessionId, stopInterval]);
+
+  // Mark activity occurred and restart interval if needed
+  const onActivity = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    const wasInactive = !isActiveRef.current;
+    isActiveRef.current = true;
+
+    // Restart interval if it was stopped due to inactivity
+    if (wasInactive) {
+      startInterval();
+    }
+  }, [startInterval]);
 
   // Listen to global activity events
   useEffect(() => {
     const handleActivity = () => {
       lastActivityRef.current = Date.now();
+      const wasInactive = !isActiveRef.current;
       isActiveRef.current = true;
+
+      // Restart interval if it was stopped due to inactivity
+      if (wasInactive) {
+        startInterval();
+      }
     };
 
     // Listen for various user interactions
@@ -139,7 +165,7 @@ export function useActivityTracker(
       window.removeEventListener('wheel', handleActivity);
       window.removeEventListener('touchstart', handleActivity);
     };
-  }, []);
+  }, [startInterval]);
 
   return { onActivity };
 }

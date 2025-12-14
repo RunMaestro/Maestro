@@ -462,9 +462,14 @@ describe('useActivityTracker', () => {
     it('clears interval on unmount', () => {
       const clearIntervalSpy = vi.spyOn(global, 'clearInterval');
 
-      const { unmount } = renderHook(() =>
+      const { result, unmount } = renderHook(() =>
         useActivityTracker('session-1', mockSetSessions)
       );
+
+      // Trigger activity to start the interval
+      act(() => {
+        result.current.onActivity();
+      });
 
       unmount();
 
@@ -622,21 +627,17 @@ describe('useActivityTracker', () => {
         { initialProps: { sessionId: null as string | null } }
       );
 
-      act(() => {
-        result.current.onActivity();
-      });
-
       // Change to valid session
       rerender({ sessionId: 'session-1' });
 
-      // New activity
+      // New activity after session is valid
       act(() => {
         result.current.onActivity();
       });
 
-      // Advance to batch update
+      // Advance to batch update (need time to accumulate first, then hit batch interval)
       act(() => {
-        vi.advanceTimersByTime(BATCH_UPDATE_INTERVAL_MS);
+        vi.advanceTimersByTime(BATCH_UPDATE_INTERVAL_MS + TICK_INTERVAL_MS);
       });
 
       // Should track for the new session
@@ -764,7 +765,12 @@ describe('useActivityTracker', () => {
     it('tick interval is 1 second', () => {
       const setIntervalSpy = vi.spyOn(global, 'setInterval');
 
-      renderHook(() => useActivityTracker('session-1', mockSetSessions));
+      const { result } = renderHook(() => useActivityTracker('session-1', mockSetSessions));
+
+      // Interval only starts on activity (CPU optimization)
+      act(() => {
+        result.current.onActivity();
+      });
 
       expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), TICK_INTERVAL_MS);
     });
