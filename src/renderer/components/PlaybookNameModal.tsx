@@ -3,6 +3,7 @@ import { Save } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
+import { FormInput } from './ui/FormInput';
 
 interface PlaybookNameModalProps {
   theme: Theme;
@@ -64,33 +65,17 @@ export function PlaybookNameModal({
         />
       }
     >
-      <label
-        className="block text-xs mb-2 font-medium"
-        style={{ color: theme.colors.textDim }}
-      >
-        Playbook Name
-      </label>
-      <input
+      <FormInput
         ref={inputRef}
-        type="text"
+        theme={theme}
+        label="Playbook Name"
         value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && isValid) {
-            e.preventDefault();
-            handleSave();
-          }
-        }}
+        onChange={setName}
+        onSubmit={handleSave}
+        submitEnabled={isValid}
         placeholder="Enter playbook name..."
-        className="w-full p-3 rounded border bg-transparent outline-none focus:ring-1"
-        style={{
-          borderColor: theme.colors.border,
-          color: theme.colors.textMain
-        }}
+        helperText="Give your playbook a descriptive name to easily identify it later."
       />
-      <p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-        Give your playbook a descriptive name to easily identify it later.
-      </p>
     </Modal>
   );
 }
