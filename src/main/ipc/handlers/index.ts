@@ -17,6 +17,7 @@ import { registerAgentsHandlers, AgentsHandlerDependencies } from './agents';
 import { registerProcessHandlers, ProcessHandlerDependencies } from './process';
 import { registerPersistenceHandlers, PersistenceHandlerDependencies, MaestroSettings, SessionsData, GroupsData } from './persistence';
 import { registerSystemHandlers, setupLoggerEventForwarding, SystemHandlerDependencies } from './system';
+import { registerClaudeHandlers, ClaudeHandlerDependencies } from './claude';
 import { AgentDetector } from '../../agent-detector';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -34,10 +35,12 @@ export { registerAgentsHandlers };
 export { registerProcessHandlers };
 export { registerPersistenceHandlers };
 export { registerSystemHandlers, setupLoggerEventForwarding };
+export { registerClaudeHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
 export type { SystemHandlerDependencies };
+export type { ClaudeHandlerDependencies };
 export type { MaestroSettings, SessionsData, GroupsData };
 
 /**
@@ -45,6 +48,19 @@ export type { MaestroSettings, SessionsData, GroupsData };
  */
 interface AgentConfigsData {
   configs: Record<string, Record<string, any>>;
+}
+
+/**
+ * Interface for Claude session origins store
+ */
+type ClaudeSessionOrigin = 'user' | 'auto';
+interface ClaudeSessionOriginInfo {
+  origin: ClaudeSessionOrigin;
+  sessionName?: string;
+  starred?: boolean;
+}
+interface ClaudeSessionOriginsData {
+  origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;
 }
 
 /**
@@ -66,6 +82,8 @@ export interface HandlerDependencies {
   getWebServer: () => WebServer | null;
   // System-specific dependencies
   tunnelManager: TunnelManagerType;
+  // Claude-specific dependencies
+  claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
 }
 
 /**
@@ -99,6 +117,10 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
     settingsStore: deps.settingsStore,
     tunnelManager: deps.tunnelManager,
     getWebServer: deps.getWebServer,
+  });
+  registerClaudeHandlers({
+    claudeSessionOriginsStore: deps.claudeSessionOriginsStore,
+    getMainWindow: deps.getMainWindow,
   });
   // Setup logger event forwarding to renderer
   setupLoggerEventForwarding(deps.getMainWindow);
