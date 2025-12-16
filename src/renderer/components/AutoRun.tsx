@@ -1481,8 +1481,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
             }}
           >
             <style>{proseStyles}</style>
-            {searchOpen && searchQuery.trim() ? (
-              // When searching, show raw text with highlights for easy search navigation
+            {searchOpen && searchQuery.trim() && totalMatches > 0 ? (
+              // When searching with matches, show raw text with highlights for easy search navigation
               <SearchHighlightedContent
                 content={localContent || '*No content yet.*'}
                 searchQuery={searchQuery}

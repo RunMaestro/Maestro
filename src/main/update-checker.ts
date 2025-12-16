@@ -76,9 +76,10 @@ async function fetchReleases(): Promise<Release[]> {
 
   const releases = (await response.json()) as Release[];
 
-  // Filter out drafts and prereleases, sort by version
+  // Filter out drafts, prereleases, and tags with prerelease suffixes (-rc, -beta, -alpha)
+  const prereleasePattern = /-(rc|beta|alpha|dev|canary)/i;
   return releases
-    .filter(r => !r.draft && !r.prerelease)
+    .filter(r => !r.draft && !r.prerelease && !prereleasePattern.test(r.tag_name))
     .sort((a, b) => compareVersions(b.tag_name, a.tag_name));
 }
 
