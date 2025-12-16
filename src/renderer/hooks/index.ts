@@ -34,6 +34,7 @@ export { useModalLayer } from './useModalLayer';
 export { useClickOutside } from './useClickOutside';
 export { useListNavigation } from './useListNavigation';
 export { useExpandedSet } from './useExpandedSet';
+export { useScrollPosition } from './useScrollPosition';
 
 export type { UseSettingsReturn } from './useSettings';
 export type { UseSessionManagerReturn } from './useSessionManager';
@@ -119,3 +120,4 @@ export type { UseModalLayerOptions } from './useModalLayer';
 export type { UseClickOutsideOptions } from './useClickOutside';
 export type { UseListNavigationOptions, UseListNavigationReturn } from './useListNavigation';
 export type { UseExpandedSetOptions, UseExpandedSetReturn } from './useExpandedSet';
+export type { UseScrollPositionOptions, UseScrollPositionReturn, ScrollMetrics } from './useScrollPosition';
