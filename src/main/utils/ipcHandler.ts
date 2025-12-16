@@ -168,6 +168,80 @@ export function withErrorLogging<TArgs extends unknown[], TResult>(
 }
 
 /**
+ * Creates a wrapped IPC handler for use with ipcMain.handle().
+ *
+ * This is the same as createHandler but returns a function compatible with
+ * ipcMain.handle, which passes (event, ...args) to the callback. The event
+ * argument is stripped before calling the handler.
+ *
+ * Usage:
+ * ```typescript
+ * ipcMain.handle('autorun:listDocs', createIpcHandler(
+ *   { context: '[AutoRun]', operation: 'listDocs' },
+ *   async (folderPath: string) => {
+ *     const files = await scanDirectory(folderPath);
+ *     return { files, tree: files };
+ *   }
+ * ));
+ * ```
+ *
+ * @param options - Handler options including log context and operation name
+ * @param handler - Async handler function that receives IPC arguments (without event)
+ * @returns Wrapped handler function compatible with ipcMain.handle
+ */
+export function createIpcHandler<TArgs extends unknown[], TResult extends Record<string, unknown>>(
+  options: CreateHandlerOptions,
+  handler: (...args: TArgs) => Promise<TResult>
+): (_event: unknown, ...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
+  const { context, operation, logSuccess = true, successLogData } = options;
+
+  return async (_event: unknown, ...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
+    try {
+      const result = await handler(...args);
+
+      if (logSuccess) {
+        logger.info(`${operation} success`, context, successLogData);
+      }
+
+      return { success: true, ...result };
+    } catch (error) {
+      logger.error(`${operation} error`, context, error);
+      return { success: false, error: String(error) };
+    }
+  };
+}
+
+/**
+ * Creates a wrapped IPC handler for use with ipcMain.handle() that returns
+ * data in the standard { success, data } format.
+ *
+ * @param options - Handler options including log context and operation name
+ * @param handler - Async handler function that receives IPC arguments (without event)
+ * @returns Wrapped handler function compatible with ipcMain.handle
+ */
+export function createIpcDataHandler<TArgs extends unknown[], TData>(
+  options: CreateHandlerOptions,
+  handler: (...args: TArgs) => Promise<TData>
+): (_event: unknown, ...args: TArgs) => Promise<IpcResponse<TData>> {
+  const { context, operation, logSuccess = true, successLogData } = options;
+
+  return async (_event: unknown, ...args: TArgs): Promise<IpcResponse<TData>> => {
+    try {
+      const data = await handler(...args);
+
+      if (logSuccess) {
+        logger.info(`${operation} success`, context, successLogData);
+      }
+
+      return { success: true, data };
+    } catch (error) {
+      logger.error(`${operation} error`, context, error);
+      return { success: false, error: String(error) };
+    }
+  };
+}
+
+/**
  * Gets the ProcessManager instance and throws if not initialized.
  *
  * This replaces the repeated pattern:

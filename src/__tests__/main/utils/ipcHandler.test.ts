@@ -9,6 +9,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createHandler,
   createDataHandler,
+  createIpcHandler,
+  createIpcDataHandler,
   withErrorLogging,
   requireProcessManager,
   requireDependency,
@@ -581,6 +583,169 @@ describe('ipcHandler.ts', () => {
       expect(result.success).toBe(false);
       // String() on an object returns '[object Object]'
       expect((result as any).error).toBe('[object Object]');
+    });
+  });
+
+  describe('createIpcHandler', () => {
+    it('should strip event argument and pass remaining args to handler', async () => {
+      const handler = createIpcHandler(
+        { context: '[AutoRun]', operation: 'listDocs' },
+        async (folderPath: string) => ({ files: [folderPath], tree: [] })
+      );
+
+      // ipcMain.handle passes (event, ...args), simulate this
+      const mockEvent = { sender: {} };
+      const result = await handler(mockEvent, '/test/path');
+
+      expect(result).toEqual({
+        success: true,
+        files: ['/test/path'],
+        tree: [],
+      });
+    });
+
+    it('should handle multiple arguments after event', async () => {
+      const handler = createIpcHandler(
+        { context: '[Test]', operation: 'multi' },
+        async (a: string, b: number, c: boolean) => ({
+          combined: `${a}-${b}-${c}`,
+        })
+      );
+
+      const result = await handler({}, 'str', 42, true);
+
+      expect(result).toEqual({
+        success: true,
+        combined: 'str-42-true',
+      });
+    });
+
+    it('should return error response on handler failure', async () => {
+      const handler = createIpcHandler(
+        { context: '[Test]', operation: 'failOp' },
+        async () => {
+          throw new Error('Handler failed');
+        }
+      );
+
+      const result = await handler({});
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Error: Handler failed',
+      });
+    });
+
+    it('should log success with context and operation', async () => {
+      const handler = createIpcHandler(
+        { context: '[AutoRun]', operation: 'readDoc' },
+        async () => ({ content: 'test' })
+      );
+
+      await handler({});
+
+      expect(logger.info).toHaveBeenCalledWith('readDoc success', '[AutoRun]', undefined);
+    });
+
+    it('should log error with context and error object', async () => {
+      const error = new Error('Test error');
+      const handler = createIpcHandler(
+        { context: '[AutoRun]', operation: 'writeDoc' },
+        async () => {
+          throw error;
+        }
+      );
+
+      await handler({});
+
+      expect(logger.error).toHaveBeenCalledWith('writeDoc error', '[AutoRun]', error);
+    });
+
+    it('should not log success when logSuccess is false', async () => {
+      const handler = createIpcHandler(
+        { context: '[Test]', operation: 'op', logSuccess: false },
+        async () => ({ data: 'value' })
+      );
+
+      await handler({});
+
+      expect(logger.info).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('createIpcDataHandler', () => {
+    it('should strip event argument and wrap result in { success, data }', async () => {
+      const handler = createIpcDataHandler(
+        { context: '[Test]', operation: 'getData' },
+        async (id: string) => ({ id, name: 'test' })
+      );
+
+      const mockEvent = { sender: {} };
+      const result = await handler(mockEvent, '123');
+
+      expect(result).toEqual({
+        success: true,
+        data: { id: '123', name: 'test' },
+      });
+    });
+
+    it('should handle multiple arguments after event', async () => {
+      const handler = createIpcDataHandler(
+        { context: '[Test]', operation: 'combine' },
+        async (a: string, b: number) => `${a}-${b}`
+      );
+
+      const result = await handler({}, 'prefix', 42);
+
+      expect(result).toEqual({
+        success: true,
+        data: 'prefix-42',
+      });
+    });
+
+    it('should return error response on failure', async () => {
+      const handler = createIpcDataHandler(
+        { context: '[Test]', operation: 'failData' },
+        async () => {
+          throw new Error('Data fetch failed');
+        }
+      );
+
+      const result = await handler({});
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Error: Data fetch failed',
+      });
+    });
+
+    it('should log success with context', async () => {
+      const handler = createIpcDataHandler(
+        { context: '[Settings]', operation: 'get' },
+        async () => 'value'
+      );
+
+      await handler({});
+
+      expect(logger.info).toHaveBeenCalledWith('get success', '[Settings]', undefined);
+    });
+
+    it('should handle null and undefined data', async () => {
+      const nullHandler = createIpcDataHandler(
+        { context: '[Test]', operation: 'nullData' },
+        async () => null
+      );
+
+      const undefinedHandler = createIpcDataHandler(
+        { context: '[Test]', operation: 'undefinedData' },
+        async () => undefined
+      );
+
+      const nullResult = await nullHandler({});
+      const undefinedResult = await undefinedHandler({});
+
+      expect(nullResult).toEqual({ success: true, data: null });
+      expect(undefinedResult).toEqual({ success: true, data: undefined });
     });
   });
 
