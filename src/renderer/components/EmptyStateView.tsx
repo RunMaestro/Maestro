@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Wand2, Bot, Menu, Settings, HelpCircle, Info, RefreshCw, Compass } from 'lucide-react';
 import type { Theme, Shortcut } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { useClickOutside } from '../hooks';
 
 interface EmptyStateViewProps {
   theme: Theme;
@@ -30,17 +31,7 @@ export function EmptyStateView({
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    };
-    if (menuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [menuOpen]);
+  useClickOutside(menuRef, () => setMenuOpen(false), menuOpen);
 
   // Close menu on Escape
   useEffect(() => {
