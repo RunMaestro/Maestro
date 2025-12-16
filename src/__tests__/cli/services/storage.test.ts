@@ -1190,7 +1190,7 @@ describe('storage service', () => {
         );
       });
 
-      it('should use _orphaned for entries without sessionId', () => {
+      it('should skip entries without sessionId', () => {
         vi.mocked(fs.existsSync).mockImplementation((filepath: fs.PathLike) => {
           const pathStr = String(filepath);
           if (pathStr.includes('history-migrated.json')) {
@@ -1207,9 +1207,8 @@ describe('storage service', () => {
         delete (newEntry as { sessionId?: string }).sessionId;
         addHistoryEntry(newEntry);
 
-        expect(fs.writeFileSync).toHaveBeenCalled();
-        const writeCall = vi.mocked(fs.writeFileSync).mock.calls[0];
-        expect(writeCall[0]).toContain('_orphaned.json');
+        // Should not write anything - entries without sessionId are skipped
+        expect(fs.writeFileSync).not.toHaveBeenCalled();
       });
 
       it('should enforce max entries limit (5000)', () => {

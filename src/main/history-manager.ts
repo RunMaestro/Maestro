@@ -19,7 +19,6 @@ import { HistoryEntry } from '../shared/types';
 import {
   HISTORY_VERSION,
   MAX_ENTRIES_PER_SESSION,
-  ORPHANED_SESSION_ID,
   HistoryFileData,
   MigrationMarker,
   PaginationOptions,
@@ -104,9 +103,9 @@ export class HistoryManager {
       const legacyData = JSON.parse(fs.readFileSync(this.legacyFilePath, 'utf-8'));
       const entries: HistoryEntry[] = legacyData.entries || [];
 
-      // Group entries by sessionId
+      // Group entries by sessionId (skip entries without sessionId)
       const entriesBySession = new Map<string, HistoryEntry[]>();
-      const orphanedEntries: HistoryEntry[] = [];
+      let skippedCount = 0;
 
       for (const entry of entries) {
         const sessionId = entry.sessionId;
@@ -116,9 +115,13 @@ export class HistoryManager {
           }
           entriesBySession.get(sessionId)!.push(entry);
         } else {
-          // Entries without sessionId go to orphaned
-          orphanedEntries.push(entry);
+          // Skip orphaned entries - they can't be properly associated with a session
+          skippedCount++;
         }
+      }
+
+      if (skippedCount > 0) {
+        logger.info(`Skipped ${skippedCount} orphaned entries (no sessionId)`, LOG_CONTEXT);
       }
 
       // Write per-session files
@@ -135,23 +138,6 @@ export class HistoryManager {
         fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
         sessionsMigrated++;
         logger.debug(`Migrated ${sessionEntries.length} entries for session ${sessionId}`, LOG_CONTEXT);
-      }
-
-      // Handle orphaned entries (entries without sessionId)
-      if (orphanedEntries.length > 0) {
-        const orphanedFileData: HistoryFileData = {
-          version: HISTORY_VERSION,
-          sessionId: ORPHANED_SESSION_ID,
-          projectPath: '',
-          entries: orphanedEntries.slice(0, MAX_ENTRIES_PER_SESSION),
-        };
-        fs.writeFileSync(
-          this.getSessionFilePath(ORPHANED_SESSION_ID),
-          JSON.stringify(orphanedFileData, null, 2),
-          'utf-8'
-        );
-        sessionsMigrated++;
-        logger.info(`Migrated ${orphanedEntries.length} orphaned entries`, LOG_CONTEXT);
       }
 
       // Write migration marker

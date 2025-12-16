@@ -278,12 +278,9 @@ function createWebServer(): WebServer {
     if (sessionId) {
       // Get entries for specific session
       const entries = historyManager.getEntries(sessionId);
-      // Also include orphaned entries (legacy entries without sessionId)
-      const orphanedEntries = historyManager.getEntries('_orphaned');
-      const combined = [...entries, ...orphanedEntries];
       // Sort by timestamp descending
-      combined.sort((a, b) => b.timestamp - a.timestamp);
-      return combined;
+      entries.sort((a, b) => b.timestamp - a.timestamp);
+      return entries;
     }
 
     if (projectPath) {

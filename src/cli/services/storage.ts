@@ -8,7 +8,6 @@ import type { Group, SessionInfo, HistoryEntry } from '../../shared/types';
 import {
   HISTORY_VERSION,
   MAX_ENTRIES_PER_SESSION,
-  ORPHANED_SESSION_ID,
   HistoryFileData,
   PaginationOptions,
   PaginatedResult,
@@ -376,8 +375,12 @@ export function getConfigDirectory(): string {
 export function addHistoryEntry(entry: HistoryEntry): void {
   try {
     if (hasMigrated()) {
-      // Use new per-session format
-      const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
+      // Use new per-session format - skip entries without sessionId
+      if (!entry.sessionId) {
+        // Cannot store entries without a sessionId in per-session format
+        return;
+      }
+      const sessionId = entry.sessionId;
       const historyDir = getHistoryDir();
 
       // Ensure history directory exists
