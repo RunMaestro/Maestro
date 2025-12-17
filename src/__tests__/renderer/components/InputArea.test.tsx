@@ -670,32 +670,9 @@ describe('InputArea', () => {
       expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
     });
 
-    it('hides slash command autocomplete when agent does not support slash commands', async () => {
-      // Mock capabilities to return false for supportsSlashCommands
-      const useAgentCapabilitiesMock = await import('../../../renderer/hooks/useAgentCapabilities');
-      vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
-        capabilities: {
-          supportsResume: true,
-          supportsReadOnlyMode: true,
-          supportsJsonOutput: true,
-          supportsSessionId: true,
-          supportsImageInput: true,
-          supportsSlashCommands: false, // Not supported
-          supportsSessionStorage: false,
-          supportsCostTracking: false,
-          supportsUsageStats: false,
-          supportsBatchMode: false,
-          supportsStreaming: true,
-          supportsResultMessages: true,
-          supportsModelSelection: false,
-          requiresPromptToStart: false,
-        },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-        hasCapability: vi.fn((cap: string) => cap !== 'supportsSlashCommands'),
-      });
-
+    it('shows slash command autocomplete for all agents (built-in commands always available)', async () => {
+      // Slash commands are now always available regardless of agent capability
+      // Built-in commands like /clear are shown for all agents
       const props = createDefaultProps({
         session: createMockSession({ inputMode: 'ai', toolType: 'opencode' }),
         slashCommandOpen: true,
@@ -703,37 +680,12 @@ describe('InputArea', () => {
       });
       render(<InputArea {...props} />);
 
-      // Slash command autocomplete should not be shown
-      expect(screen.queryByText('/clear')).not.toBeInTheDocument();
-      expect(screen.queryByText('/help')).not.toBeInTheDocument();
+      // Slash command autocomplete should be shown for all agents
+      expect(screen.getByText('/clear')).toBeInTheDocument();
     });
 
-    it('does not open slash command autocomplete when agent does not support slash commands', async () => {
-      // Mock capabilities to return false for supportsSlashCommands
-      const useAgentCapabilitiesMock = await import('../../../renderer/hooks/useAgentCapabilities');
-      vi.mocked(useAgentCapabilitiesMock.useAgentCapabilities).mockReturnValueOnce({
-        capabilities: {
-          supportsResume: true,
-          supportsReadOnlyMode: true,
-          supportsJsonOutput: true,
-          supportsSessionId: true,
-          supportsImageInput: true,
-          supportsSlashCommands: false, // Not supported
-          supportsSessionStorage: false,
-          supportsCostTracking: false,
-          supportsUsageStats: false,
-          supportsBatchMode: false,
-          supportsStreaming: true,
-          supportsResultMessages: true,
-          supportsModelSelection: false,
-          requiresPromptToStart: false,
-        },
-        loading: false,
-        error: null,
-        refresh: vi.fn(),
-        hasCapability: vi.fn((cap: string) => cap !== 'supportsSlashCommands'),
-      });
-
+    it('opens slash command autocomplete when typing / for any agent', async () => {
+      // Slash commands are now always available regardless of supportsSlashCommands capability
       const setSlashCommandOpen = vi.fn();
       const setSelectedSlashCommandIndex = vi.fn();
       const props = createDefaultProps({
@@ -746,9 +698,8 @@ describe('InputArea', () => {
       // Type "/" to trigger slash command detection
       fireEvent.change(screen.getByRole('textbox'), { target: { value: '/' } });
 
-      // Should NOT open slash command autocomplete
-      expect(setSlashCommandOpen).toHaveBeenCalledWith(false);
-      expect(setSelectedSlashCommandIndex).not.toHaveBeenCalled();
+      // Should open slash command autocomplete for all agents
+      expect(setSlashCommandOpen).toHaveBeenCalledWith(true);
     });
   });
 

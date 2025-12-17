@@ -554,7 +554,7 @@ describe('useSessionManager', () => {
       expect(typeof result.current.createNewSession).toBe('function');
     });
 
-    it('should create a new session for claude-code (batch mode)', async () => {
+    it('should create a new session for claude-code (spawns process)', async () => {
       vi.mocked(window.maestro.agents.get).mockResolvedValue({
         id: 'claude-code',
         name: 'Claude Code',
@@ -576,8 +576,8 @@ describe('useSessionManager', () => {
         expect(result.current.sessions[0].name).toBe('New Session');
         expect(result.current.sessions[0].cwd).toBe('/test/path');
         expect(result.current.sessions[0].toolType).toBe('claude-code');
-        // Batch mode skips spawning, so pid should be 0
-        expect(result.current.sessions[0].aiPid).toBe(0);
+        // Claude Code has requiresPromptToStart: false, so it spawns immediately
+        expect(result.current.sessions[0].aiPid).toBe(12345);
       });
     });
 
