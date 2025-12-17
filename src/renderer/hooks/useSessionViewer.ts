@@ -44,6 +44,8 @@ export type ClaudeSession = AgentSession;
 export interface UseSessionViewerDeps {
   /** Current working directory for the active session */
   cwd: string | undefined;
+  /** Agent ID for the session (e.g., 'claude-code', 'opencode') */
+  agentId?: string;
 }
 
 /**
@@ -104,7 +106,7 @@ export interface UseSessionViewerReturn {
  * clearViewingSession();
  * ```
  */
-export function useSessionViewer({ cwd }: UseSessionViewerDeps): UseSessionViewerReturn {
+export function useSessionViewer({ cwd, agentId = 'claude-code' }: UseSessionViewerDeps): UseSessionViewerReturn {
   const [viewingSession, setViewingSession] = useState<AgentSession | null>(null);
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [messagesLoading, setMessagesLoading] = useState(false);
@@ -124,7 +126,9 @@ export function useSessionViewer({ cwd }: UseSessionViewerDeps): UseSessionViewe
 
     setMessagesLoading(true);
     try {
-      const result = await window.maestro.claude.readSessionMessages(
+      // Use the generic agentSessions API with agentId parameter
+      const result = await window.maestro.agentSessions.read(
+        agentId,
         cwd,
         session.sessionId,
         { offset, limit: 20 }
@@ -151,7 +155,7 @@ export function useSessionViewer({ cwd }: UseSessionViewerDeps): UseSessionViewe
     } finally {
       setMessagesLoading(false);
     }
-  }, [cwd]);
+  }, [cwd, agentId]);
 
   /**
    * Start viewing a session - resets state and loads messages

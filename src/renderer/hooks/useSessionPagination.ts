@@ -7,6 +7,8 @@ import type { ClaudeSession } from './useSessionViewer';
 export interface UseSessionPaginationDeps {
   /** Current working directory for loading sessions */
   cwd: string | undefined;
+  /** Agent ID for the session (e.g., 'claude-code', 'opencode') */
+  agentId?: string;
   /** Callback to update starred sessions from origins data */
   onStarredSessionsLoaded?: (starredIds: Set<string>) => void;
 }
@@ -66,6 +68,7 @@ export interface UseSessionPaginationReturn {
  */
 export function useSessionPagination({
   cwd,
+  agentId = 'claude-code',
   onStarredSessionsLoaded,
 }: UseSessionPaginationDeps): UseSessionPaginationReturn {
   // Session list state
@@ -81,7 +84,7 @@ export function useSessionPagination({
   // Container ref for scroll handling
   const sessionsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Load sessions on mount or when cwd changes
+  // Load sessions on mount or when cwd/agentId changes
   useEffect(() => {
     // Reset pagination state
     setSessions([]);
@@ -97,6 +100,7 @@ export function useSessionPagination({
 
       try {
         // Load session metadata (starred status) from Claude session origins
+        // Note: Origin/starred tracking is currently Claude-specific; other agents will get empty results
         const origins = await window.maestro.claude.getSessionOrigins(cwd);
         const starredFromOrigins = new Set<string>();
         for (const [sessionId, originData] of Object.entries(origins)) {
@@ -106,15 +110,18 @@ export function useSessionPagination({
         }
         onStarredSessionsLoaded?.(starredFromOrigins);
 
-        // Use paginated API for better performance with many sessions
-        const result = await window.maestro.claude.listSessionsPaginated(cwd, { limit: 100 });
+        // Use generic agentSessions API with agentId parameter for paginated loading
+        const result = await window.maestro.agentSessions.listPaginated(agentId, cwd, { limit: 100 });
         setSessions(result.sessions);
         setHasMoreSessions(result.hasMore);
         setTotalSessionCount(result.totalCount);
         nextCursorRef.current = result.nextCursor;
 
         // Start fetching aggregate stats for ALL sessions (runs in background with progressive updates)
-        window.maestro.claude.getProjectStats(cwd);
+        // Note: Stats tracking is currently Claude-specific; other agents will need their own implementation
+        if (agentId === 'claude-code') {
+          window.maestro.claude.getProjectStats(cwd);
+        }
       } catch (error) {
         console.error('Failed to load sessions:', error);
       } finally {
@@ -123,7 +130,7 @@ export function useSessionPagination({
     };
 
     loadSessions();
-  }, [cwd, onStarredSessionsLoaded]);
+  }, [cwd, agentId, onStarredSessionsLoaded]);
 
   // Load more sessions when scrolling near bottom
   const loadMoreSessions = useCallback(async () => {
@@ -131,7 +138,8 @@ export function useSessionPagination({
 
     setIsLoadingMoreSessions(true);
     try {
-      const result = await window.maestro.claude.listSessionsPaginated(cwd, {
+      // Use generic agentSessions API with agentId parameter
+      const result = await window.maestro.agentSessions.listPaginated(agentId, cwd, {
         cursor: nextCursorRef.current,
         limit: 100,
       });
@@ -149,7 +157,7 @@ export function useSessionPagination({
     } finally {
       setIsLoadingMoreSessions(false);
     }
-  }, [cwd, hasMoreSessions, isLoadingMoreSessions]);
+  }, [cwd, agentId, hasMoreSessions, isLoadingMoreSessions]);
 
   // Handle scroll for sessions list pagination - load more at 70% scroll
   const handleSessionsScroll = useCallback(() => {

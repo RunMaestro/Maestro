@@ -39,6 +39,9 @@ export function AgentSessionsBrowser({
   onNewSession,
   onUpdateTab,
 }: AgentSessionsBrowserProps) {
+  // Get agentId from the active session's toolType
+  const agentId = activeSession?.toolType || 'claude-code';
+
   // Session viewer hook for detail view state and handlers
   const {
     viewingSession,
@@ -52,7 +55,7 @@ export function AgentSessionsBrowser({
     handleMessagesScroll,
     clearViewingSession,
     setViewingSession,
-  } = useSessionViewer({ cwd: activeSession?.cwd });
+  } = useSessionViewer({ cwd: activeSession?.cwd, agentId });
 
   // Starred sessions state (needs to be before pagination hook for callback)
   const [starredSessions, setStarredSessions] = useState<Set<string>>(new Set());
@@ -69,6 +72,7 @@ export function AgentSessionsBrowser({
     updateSession,
   } = useSessionPagination({
     cwd: activeSession?.cwd,
+    agentId,
     onStarredSessionsLoaded: setStarredSessions,
   });
 
@@ -318,7 +322,9 @@ export function AgentSessionsBrowser({
       }
 
       try {
-        const results = await window.maestro.claude.searchSessions(
+        // Use generic agentSessions API with agentId parameter
+        const results = await window.maestro.agentSessions.search(
+          agentId,
           activeSession.cwd,
           search,
           searchMode
@@ -337,7 +343,7 @@ export function AgentSessionsBrowser({
         clearTimeout(searchTimeoutRef.current);
       }
     };
-  }, [search, searchMode, activeSession?.cwd]);
+  }, [search, searchMode, activeSession?.cwd, agentId]);
 
   // Use hook for filtering and sorting sessions
   const {
@@ -631,7 +637,7 @@ export function AgentSessionsBrowser({
             <>
               <List className="w-5 h-5" style={{ color: theme.colors.textDim }} />
               <span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-                Claude Sessions for {activeSession?.name || 'Agent'}
+                {agentId === 'claude-code' ? 'Claude' : 'Agent'} Sessions for {activeSession?.name || 'Agent'}
               </span>
               {activeClaudeSessionId && (
                 <span
@@ -1097,7 +1103,7 @@ export function AgentSessionsBrowser({
                 <List className="w-12 h-12 mb-4 opacity-30" style={{ color: theme.colors.textDim }} />
                 <p className="text-sm text-center" style={{ color: theme.colors.textDim }}>
                   {sessions.length === 0
-                    ? 'No Claude sessions found for this project'
+                    ? `No ${agentId === 'claude-code' ? 'Claude' : 'agent'} sessions found for this project`
                     : 'No sessions match your search'}
                 </p>
               </div>
