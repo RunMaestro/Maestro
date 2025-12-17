@@ -270,6 +270,55 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
     })
   );
 
+  // Set custom CLI arguments for an agent - arbitrary args appended to all agent invocations
+  ipcMain.handle(
+    'agents:setCustomArgs',
+    withIpcErrorLogging(
+      handlerOpts('setCustomArgs', CONFIG_LOG_CONTEXT),
+      async (agentId: string, customArgs: string | null) => {
+        const allConfigs = agentConfigsStore.get('configs', {});
+        if (!allConfigs[agentId]) {
+          allConfigs[agentId] = {};
+        }
+
+        if (customArgs && customArgs.trim()) {
+          allConfigs[agentId].customArgs = customArgs.trim();
+          logger.info(`Set custom args for agent ${agentId}: ${customArgs}`, CONFIG_LOG_CONTEXT);
+        } else {
+          delete allConfigs[agentId].customArgs;
+          logger.info(`Cleared custom args for agent ${agentId}`, CONFIG_LOG_CONTEXT);
+        }
+
+        agentConfigsStore.set('configs', allConfigs);
+        return true;
+      }
+    )
+  );
+
+  // Get custom CLI arguments for an agent
+  ipcMain.handle(
+    'agents:getCustomArgs',
+    withIpcErrorLogging(handlerOpts('getCustomArgs', CONFIG_LOG_CONTEXT), async (agentId: string) => {
+      const allConfigs = agentConfigsStore.get('configs', {});
+      return allConfigs[agentId]?.customArgs || null;
+    })
+  );
+
+  // Get all custom CLI arguments for agents
+  ipcMain.handle(
+    'agents:getAllCustomArgs',
+    withIpcErrorLogging(handlerOpts('getAllCustomArgs', CONFIG_LOG_CONTEXT), async () => {
+      const allConfigs = agentConfigsStore.get('configs', {});
+      const customArgs: Record<string, string> = {};
+      for (const [agentId, config] of Object.entries(allConfigs)) {
+        if (config && typeof config === 'object' && 'customArgs' in config && config.customArgs) {
+          customArgs[agentId] = config.customArgs as string;
+        }
+      }
+      return customArgs;
+    })
+  );
+
   // Discover available models for an agent that supports model selection
   ipcMain.handle(
     'agents:getModels',

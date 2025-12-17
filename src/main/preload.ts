@@ -394,6 +394,13 @@ contextBridge.exposeInMainWorld('maestro', {
     getCustomPath: (agentId: string) =>
       ipcRenderer.invoke('agents:getCustomPath', agentId),
     getAllCustomPaths: () => ipcRenderer.invoke('agents:getAllCustomPaths'),
+    // Custom CLI arguments that are appended to all agent invocations
+    setCustomArgs: (agentId: string, customArgs: string | null) =>
+      ipcRenderer.invoke('agents:setCustomArgs', agentId, customArgs),
+    getCustomArgs: (agentId: string) =>
+      ipcRenderer.invoke('agents:getCustomArgs', agentId) as Promise<string | null>,
+    getAllCustomArgs: () =>
+      ipcRenderer.invoke('agents:getAllCustomArgs') as Promise<Record<string, string>>,
     // Discover available models for agents that support model selection (e.g., OpenCode with Ollama)
     getModels: (agentId: string, forceRefresh?: boolean) =>
       ipcRenderer.invoke('agents:getModels', agentId, forceRefresh) as Promise<string[]>,

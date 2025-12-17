@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import type { Session, SessionState, UsageStats, QueuedItem, LogEntry } from '../types';
+import type { Session, SessionState, UsageStats, QueuedItem, LogEntry, ToolType } from '../types';
 import { getActiveTab } from '../utils/tabHelpers';
 import { generateId } from '../utils/ids';
 
@@ -39,12 +39,13 @@ export interface UseAgentExecutionReturn {
   spawnAgentForSession: (sessionId: string, prompt: string, cwdOverride?: string) => Promise<AgentSpawnResult>;
   /** Spawn an agent with a prompt for the active session */
   spawnAgentWithPrompt: (prompt: string) => Promise<AgentSpawnResult>;
-  /** Spawn a background synopsis agent (resumes an old Claude session) */
+  /** Spawn a background synopsis agent (resumes an old agent session) */
   spawnBackgroundSynopsis: (
     sessionId: string,
     cwd: string,
-    resumeClaudeSessionId: string,
-    prompt: string
+    resumeAgentSessionId: string,
+    prompt: string,
+    toolType?: ToolType
   ) => Promise<AgentSpawnResult>;
   /** Ref to spawnBackgroundSynopsis for use in callbacks that need latest version */
   spawnBackgroundSynopsisRef: React.MutableRefObject<typeof useAgentExecution extends (...args: infer _) => { spawnBackgroundSynopsis: infer R } ? R : never>;
@@ -323,22 +324,24 @@ export function useAgentExecution(
   }, [activeSession, spawnAgentForSession]);
 
   /**
-   * Spawn a background synopsis agent that resumes an old Claude session.
+   * Spawn a background synopsis agent that resumes an old agent session.
    * Used for generating summaries without affecting main session state.
    *
    * @param sessionId - The Maestro session ID (for logging/tracking)
    * @param cwd - Working directory for the agent
-   * @param resumeClaudeSessionId - The Claude session ID to resume
+   * @param resumeAgentSessionId - The agent session ID to resume
    * @param prompt - The prompt to send to the resumed session
+   * @param toolType - The agent type (defaults to claude-code for backwards compatibility)
    */
   const spawnBackgroundSynopsis = useCallback(async (
     sessionId: string,
     cwd: string,
-    resumeClaudeSessionId: string,
-    prompt: string
+    resumeAgentSessionId: string,
+    prompt: string,
+    toolType: ToolType = 'claude-code'
   ): Promise<AgentSpawnResult> => {
     try {
-      const agent = await window.maestro.agents.get('claude-code');
+      const agent = await window.maestro.agents.get(toolType);
       if (!agent) return { success: false };
 
       // Use a unique target ID for background synopsis
@@ -399,16 +402,16 @@ export function useAgentExecution(
           }
         });
 
-        // Spawn with --resume to continue the old session
+        // Spawn with session resume - the IPC handler will use the agent's resumeArgs builder
         const commandToUse = agent.path || agent.command;
-        const spawnArgs = [...(agent.args || []), '--resume', resumeClaudeSessionId];
         window.maestro.process.spawn({
           sessionId: targetSessionId,
-          toolType: 'claude-code',
+          toolType,
           cwd,
           command: commandToUse,
-          args: spawnArgs,
-          prompt
+          args: agent.args || [],
+          prompt,
+          agentSessionId: resumeAgentSessionId, // This triggers the agent's resume mechanism
         }).catch(() => {
           cleanup();
           resolve({ success: false });
