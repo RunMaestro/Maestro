@@ -1554,9 +1554,17 @@ export default function MaestroConsole() {
       }
     });
 
+    const unsubParticipants = window.maestro.groupChat.onParticipantsChanged((id, participants) => {
+      // Update the group chat's participants list
+      setGroupChats(prev => prev.map(chat =>
+        chat.id === id ? { ...chat, participants } : chat
+      ));
+    });
+
     return () => {
       unsubMessage();
       unsubState();
+      unsubParticipants();
     };
   }, [activeGroupChatId]);
 
@@ -5157,10 +5165,11 @@ export default function MaestroConsole() {
             setEditAgentSession(session);
             setEditAgentModalOpen(true);
           }}
+          groupChats={groupChats}
           onNewGroupChat={() => setShowNewGroupChatModal(true)}
+          onOpenGroupChat={handleOpenGroupChat}
           onCloseGroupChat={handleCloseGroupChat}
           activeGroupChatId={activeGroupChatId}
-          isLiveMode={isLiveMode}
           onToggleRemoteControl={async () => {
             await toggleGlobalLive();
             // Show flash notification based on the NEW state (opposite of current)
@@ -5622,6 +5631,7 @@ export default function MaestroConsole() {
             isOpen={rightPanelOpen}
             onToggle={() => setRightPanelOpen(!rightPanelOpen)}
             width={rightPanelWidth}
+            setWidthState={setRightPanelWidth}
             shortcuts={shortcuts}
           />
         </>

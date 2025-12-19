@@ -130,7 +130,7 @@ export function GroupChatMessages({
   return (
     <div
       ref={containerRef}
-      className="group-chat-messages flex-1 overflow-y-auto py-2"
+      className="group-chat-messages flex-1 overflow-y-auto scrollbar-thin py-2"
     >
       {/* Prose styles for markdown rendering */}
       <style>{proseStyles}</style>

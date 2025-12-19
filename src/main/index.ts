@@ -14,7 +14,7 @@ import Store from 'electron-store';
 import { getHistoryManager } from './history-manager';
 import { registerGitHandlers, registerAutorunHandlers, registerPlaybooksHandlers, registerHistoryHandlers, registerAgentsHandlers, registerProcessHandlers, registerPersistenceHandlers, registerSystemHandlers, registerClaudeHandlers, registerAgentSessionsHandlers, registerGroupChatHandlers, setupLoggerEventForwarding } from './ipc/handlers';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
-import { routeModeratorResponse } from './group-chat/group-chat-router';
+import { routeModeratorResponse, setGetSessionsCallback } from './group-chat/group-chat-router';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
@@ -901,6 +901,17 @@ function setupIpcHandlers() {
     getMainWindow: () => mainWindow,
     getProcessManager: () => processManager,
     getAgentDetector: () => agentDetector,
+  });
+
+  // Set up callback for group chat router to lookup sessions for auto-add @mentions
+  setGetSessionsCallback(() => {
+    const sessions = sessionsStore.get('sessions', []);
+    return sessions.map((s: any) => ({
+      id: s.id,
+      name: s.name,
+      toolType: s.toolType,
+      cwd: s.cwd || s.fullPath || process.env.HOME || '/tmp',
+    }));
   });
 
   // Setup logger event forwarding to renderer

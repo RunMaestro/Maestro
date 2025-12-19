@@ -945,6 +945,16 @@ contextBridge.exposeInMainWorld('maestro', {
       ipcRenderer.on('groupChat:stateChange', handler);
       return () => ipcRenderer.removeListener('groupChat:stateChange', handler);
     },
+    onParticipantsChanged: (callback: (groupChatId: string, participants: Array<{
+      name: string;
+      agentId: string;
+      sessionId: string;
+      addedAt: number;
+    }>) => void) => {
+      const handler = (_: any, groupChatId: string, participants: any[]) => callback(groupChatId, participants);
+      ipcRenderer.on('groupChat:participantsChanged', handler);
+      return () => ipcRenderer.removeListener('groupChat:participantsChanged', handler);
+    },
   },
 
   // Leaderboard API (runmaestro.ai integration)
@@ -1736,6 +1746,12 @@ export interface MaestroAPI {
       content: string;
     }) => void) => () => void;
     onStateChange: (callback: (groupChatId: string, state: 'idle' | 'moderator-thinking' | 'agent-working') => void) => () => void;
+    onParticipantsChanged: (callback: (groupChatId: string, participants: Array<{
+      name: string;
+      agentId: string;
+      sessionId: string;
+      addedAt: number;
+    }>) => void) => () => void;
   };
   leaderboard: {
     submit: (data: {

@@ -17,6 +17,7 @@ import {
   MODERATOR_SYSTEM_PROMPT,
 } from './group-chat-moderator';
 import {
+  addParticipant,
   getParticipantSessionId,
   isParticipantActive,
 } from './group-chat-agent';
@@ -24,6 +25,32 @@ import { AgentDetector } from '../agent-detector';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
+
+/**
+ * Session info for matching @mentions to available Maestro sessions.
+ */
+export interface SessionInfo {
+  id: string;
+  name: string;
+  toolType: string;
+  cwd: string;
+}
+
+/**
+ * Callback type for getting available sessions from the renderer.
+ */
+export type GetSessionsCallback = () => SessionInfo[];
+
+// Module-level callback for session lookup
+let getSessionsCallback: GetSessionsCallback | null = null;
+
+/**
+ * Sets the callback for getting available sessions.
+ * Called from index.ts during initialization.
+ */
+export function setGetSessionsCallback(callback: GetSessionsCallback): void {
+  getSessionsCallback = callback;
+}
 
 /**
  * Extracts @mentions from text that match known participants.
@@ -46,6 +73,29 @@ export function extractMentions(
   while ((match = mentionPattern.exec(text)) !== null) {
     const name = match[1];
     if (participantNames.has(name) && !mentions.includes(name)) {
+      mentions.push(name);
+    }
+  }
+
+  return mentions;
+}
+
+/**
+ * Extracts ALL @mentions from text (regardless of whether they're participants).
+ *
+ * @param text - The text to search for mentions
+ * @returns Array of unique names that were mentioned (without @ prefix)
+ */
+export function extractAllMentions(text: string): string[] {
+  const mentions: string[] = [];
+
+  // Match @Name patterns (alphanumeric and underscores)
+  const mentionPattern = /@(\w+)/g;
+  let match;
+
+  while ((match = mentionPattern.exec(text)) !== null) {
+    const name = match[1];
+    if (!mentions.includes(name)) {
       mentions.push(name);
     }
   }
@@ -117,6 +167,19 @@ export async function routeUserMessage(
         ? chat.participants.map(p => `- @${p.name} (${p.agentId} session)`).join('\n')
         : '(No agents currently in this group chat)';
 
+      // Build available sessions context (sessions that could be added)
+      let availableSessionsContext = '';
+      if (getSessionsCallback) {
+        const sessions = getSessionsCallback();
+        const participantNames = new Set(chat.participants.map(p => p.name));
+        const availableSessions = sessions.filter(s =>
+          s.toolType !== 'terminal' && !participantNames.has(s.name)
+        );
+        if (availableSessions.length > 0) {
+          availableSessionsContext = `\n\n## Available Maestro Sessions (can be added via @mention):\n${availableSessions.map(s => `- @${s.name} (${s.toolType})`).join('\n')}`;
+        }
+      }
+
       // Build the prompt with context
       const chatHistory = await readLog(chat.logPath);
       const historyContext = chatHistory.slice(-20).map(m =>
@@ -125,8 +188,8 @@ export async function routeUserMessage(
 
       const fullPrompt = `${MODERATOR_SYSTEM_PROMPT}
 
-## Available Agents (Maestro Sessions):
-${participantContext}
+## Current Participants:
+${participantContext}${availableSessionsContext}
 
 ## Chat History:
 ${historyContext}
@@ -160,7 +223,8 @@ ${message}`;
  * Routes a moderator response, forwarding to mentioned agents.
  *
  * - Logs the message as coming from 'moderator'
- * - Extracts @mentions and forwards to those participants
+ * - Extracts @mentions and auto-adds new participants from available sessions
+ * - Forwards message to mentioned participants
  *
  * @param groupChatId - The ID of the group chat
  * @param message - The message from the moderator
@@ -179,8 +243,58 @@ export async function routeModeratorResponse(
   // Log the message as coming from moderator
   await appendToLog(chat.logPath, 'moderator', message);
 
-  // Extract mentions and forward to those participants
-  const mentions = extractMentions(message, chat.participants);
+  // Extract ALL mentions from the message
+  const allMentions = extractAllMentions(message);
+  const existingParticipantNames = new Set(chat.participants.map(p => p.name));
+
+  // Check for mentions that aren't already participants but match available sessions
+  if (processManager && getSessionsCallback) {
+    const sessions = getSessionsCallback();
+
+    for (const mentionedName of allMentions) {
+      // Skip if already a participant
+      if (existingParticipantNames.has(mentionedName)) {
+        continue;
+      }
+
+      // Find matching session by name
+      const matchingSession = sessions.find(s =>
+        s.name === mentionedName && s.toolType !== 'terminal'
+      );
+
+      if (matchingSession) {
+        try {
+          console.log(`[GroupChatRouter] Auto-adding participant @${mentionedName} from session ${matchingSession.id}`);
+          await addParticipant(
+            groupChatId,
+            mentionedName,
+            matchingSession.toolType,
+            processManager,
+            matchingSession.cwd
+          );
+          existingParticipantNames.add(mentionedName);
+
+          // Emit participant changed event so UI updates
+          const updatedChatForEmit = await loadGroupChat(groupChatId);
+          if (updatedChatForEmit) {
+            groupChatEmitters.emitParticipantsChanged?.(groupChatId, updatedChatForEmit.participants);
+          }
+        } catch (error) {
+          console.error(`[GroupChatRouter] Failed to auto-add participant ${mentionedName}:`, error);
+          // Continue with other participants even if one fails
+        }
+      }
+    }
+  }
+
+  // Now extract mentions that are actual participants (including newly added ones)
+  // Reload chat to get updated participants list
+  const updatedChat = await loadGroupChat(groupChatId);
+  if (!updatedChat) {
+    return;
+  }
+
+  const mentions = extractMentions(message, updatedChat.participants);
 
   if (processManager) {
     for (const participantName of mentions) {

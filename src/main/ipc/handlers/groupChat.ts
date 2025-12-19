@@ -68,6 +68,7 @@ const LOG_CONTEXT = '[GroupChat]';
 export const groupChatEmitters: {
   emitMessage?: (groupChatId: string, message: GroupChatMessage) => void;
   emitStateChange?: (groupChatId: string, state: GroupChatState) => void;
+  emitParticipantsChanged?: (groupChatId: string, participants: GroupChatParticipant[]) => void;
 } = {};
 
 // Helper to create handler options with consistent context
@@ -353,6 +354,17 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
     const mainWindow = getMainWindow();
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('groupChat:stateChange', groupChatId, state);
+    }
+  };
+
+  /**
+   * Emit a participants changed event to the renderer.
+   * Called when participants are added or removed from a group chat.
+   */
+  groupChatEmitters.emitParticipantsChanged = (groupChatId: string, participants: GroupChatParticipant[]): void => {
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('groupChat:participantsChanged', groupChatId, participants);
     }
   };
 

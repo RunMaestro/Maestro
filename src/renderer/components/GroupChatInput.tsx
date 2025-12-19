@@ -172,10 +172,21 @@ export function GroupChatInput({
         onOpenLightbox(stagedImages[0], stagedImages);
         return;
       }
+      // Cmd+Enter: Send message (when enterToSend is false) or ignore (when enterToSend is true)
+      // Either way, we must stop propagation to prevent global handler from switching views
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!enterToSend) {
+          handleSend();
+        }
+        // When enterToSend is true, Cmd+Enter does nothing (plain Enter sends)
+        return;
+      }
+      // Let global shortcuts bubble up (Cmd+K, Cmd+,, Cmd+/, etc.)
+      // Don't stop propagation for meta/ctrl key combinations not handled above
+      return;
     }
-
-    // Stop propagation for other key events to prevent global handlers from interfering
-    e.stopPropagation();
 
     if (showMentions && filteredAgents.length > 0) {
       if (e.key === 'ArrowDown') {
@@ -204,14 +215,9 @@ export function GroupChatInput({
       }
     }
 
-    // Handle send based on enterToSend setting
+    // Handle send based on enterToSend setting (plain Enter, no modifier)
     if (enterToSend) {
       if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    } else {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         handleSend();
       }

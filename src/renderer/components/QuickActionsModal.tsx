@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Group, Theme, Shortcut } from '../types';
+import type { GroupChat } from '../../shared/group-chat-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
@@ -70,7 +71,9 @@ interface QuickActionsModalProps {
   setFuzzyFileSearchOpen?: (open: boolean) => void;
   onEditAgent?: (session: Session) => void;
   // Group Chat
+  groupChats?: GroupChat[];
   onNewGroupChat?: () => void;
+  onOpenGroupChat?: (id: string) => void;
   onCloseGroupChat?: () => void;
   activeGroupChatId?: string | null;
 }
@@ -88,7 +91,7 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     setAgentSessionsOpen, setActiveAgentSessionId, setGitDiffPreview, setGitLogOpen,
     onRenameTab, onToggleReadOnlyMode, onOpenTabSwitcher, tabShortcuts, isAiMode, setPlaygroundOpen, onRefreshGitFileState,
     onDebugReleaseQueuedItem, markdownEditMode, onToggleMarkdownEditMode, setUpdateCheckModalOpen, openWizard, wizardGoToStep, setDebugWizardModalOpen, startTour, setFuzzyFileSearchOpen, onEditAgent,
-    onNewGroupChat, onCloseGroupChat, activeGroupChatId
+    groupChats, onNewGroupChat, onOpenGroupChat, onCloseGroupChat, activeGroupChatId
   } = props;
 
   const [search, setSearch] = useState('');
@@ -201,8 +204,22 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     subtext: s.state.toUpperCase()
   }));
 
+  // Group chat jump actions
+  const groupChatActions: QuickAction[] = (groupChats && onOpenGroupChat)
+    ? groupChats.map(gc => ({
+        id: `groupchat-${gc.id}`,
+        label: `Group Chat: ${gc.name}`,
+        action: () => {
+          onOpenGroupChat(gc.id);
+          setQuickActionOpen(false);
+        },
+        subtext: `${gc.participants.length} participant${gc.participants.length !== 1 ? 's' : ''}`
+      }))
+    : [];
+
   const mainActions: QuickAction[] = [
     ...sessionActions,
+    ...groupChatActions,
     { id: 'new', label: 'Create New Agent', shortcut: shortcuts.newInstance, action: addNewSession },
     ...(openWizard ? [{ id: 'wizard', label: 'New Agent Wizard', shortcut: shortcuts.openWizard, action: () => { openWizard(); setQuickActionOpen(false); } }] : []),
     ...(activeSession ? [{ id: 'rename', label: `Rename Agent: ${activeSession.name}`, action: () => {

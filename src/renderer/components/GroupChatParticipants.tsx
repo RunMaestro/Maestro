@@ -18,6 +18,7 @@ interface GroupChatParticipantsProps {
   isOpen: boolean;
   onToggle: () => void;
   width: number;
+  setWidthState: (width: number) => void;
   shortcuts: Record<string, Shortcut>;
 }
 
@@ -28,22 +29,48 @@ export function GroupChatParticipants({
   isOpen,
   onToggle,
   width,
+  setWidthState,
   shortcuts,
 }: GroupChatParticipantsProps): JSX.Element {
   if (!isOpen) return null;
 
   return (
     <div
-      className="border-l flex flex-col transition-all duration-300"
+      className="relative border-l flex flex-col transition-all duration-300"
       style={{
         width: `${width}px`,
         backgroundColor: theme.colors.bgSidebar,
         borderColor: theme.colors.border,
       }}
     >
-        {/* Header with collapse button */}
+      {/* Resize Handle */}
+      <div
+        className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-blue-500 transition-colors z-20"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          const startX = e.clientX;
+          const startWidth = width;
+          let currentWidth = startWidth;
+
+          const handleMouseMove = (moveEvent: MouseEvent) => {
+            const delta = startX - moveEvent.clientX; // Reversed for right panel
+            currentWidth = Math.max(200, Math.min(600, startWidth + delta));
+            setWidthState(currentWidth);
+          };
+
+          const handleMouseUp = () => {
+            window.maestro.settings.set('rightPanelWidth', currentWidth);
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+          };
+
+          document.addEventListener('mousemove', handleMouseMove);
+          document.addEventListener('mouseup', handleMouseUp);
+        }}
+      />
+        {/* Header with collapse button - h-16 matches GroupChatHeader height */}
         <div
-          className="px-4 py-3 border-b flex items-center justify-between"
+          className="px-4 h-16 border-b flex items-center justify-between shrink-0"
           style={{ borderColor: theme.colors.border }}
         >
           <h2

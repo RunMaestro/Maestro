@@ -13,9 +13,12 @@
  * - Agent-specific config options (contextWindow, model, etc.)
  */
 
-import React, { useState } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { RefreshCw, Plus, Trash2, HelpCircle } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../types';
+
+// Counter for generating stable IDs for env vars
+let envVarIdCounter = 0;
 
 // Built-in environment variables that Maestro sets automatically
 const BUILT_IN_ENV_VARS: { key: string; description: string; value: string }[] = [
@@ -95,6 +98,60 @@ export function AgentConfigPanel({
   const spacing = compact ? 'space-y-2' : 'space-y-3';
   // Track which built-in env var tooltip is showing
   const [showingTooltip, setShowingTooltip] = useState<string | null>(null);
+
+  // Track stable IDs for env var entries to prevent focus loss when keys change
+  // Only key edits are deferred to blur - value edits update immediately
+  const envVarIdsRef = useRef<Map<string, number>>(new Map());
+  const pendingKeyEditsRef = useRef<Map<string, string>>(new Map());
+  // Force re-render when pending key edits change
+  const [, forceUpdate] = useState(0);
+
+  // Get or create stable ID for an env var key
+  const getEnvVarId = (key: string): number => {
+    if (!envVarIdsRef.current.has(key)) {
+      envVarIdsRef.current.set(key, ++envVarIdCounter);
+    }
+    return envVarIdsRef.current.get(key)!;
+  };
+
+  // Clean up stale IDs when env vars change (only if not currently being edited)
+  useMemo(() => {
+    const currentKeys = new Set(Object.keys(customEnvVars));
+    for (const key of envVarIdsRef.current.keys()) {
+      if (!currentKeys.has(key) && !pendingKeyEditsRef.current.has(key)) {
+        envVarIdsRef.current.delete(key);
+        pendingKeyEditsRef.current.delete(key);
+      }
+    }
+  }, [customEnvVars]);
+
+  // Get current display value for env var key (pending edit or actual)
+  const getKeyDisplayValue = (originalKey: string): string => {
+    return pendingKeyEditsRef.current.get(originalKey) ?? originalKey;
+  };
+
+  // Handle key input change (local only, deferred to blur)
+  const handleKeyInputChange = (originalKey: string, newKey: string) => {
+    pendingKeyEditsRef.current.set(originalKey, newKey);
+    forceUpdate(n => n + 1);
+  };
+
+  // Commit pending key edit on blur
+  const handleKeyBlur = (originalKey: string, currentValue: string) => {
+    const pendingKey = pendingKeyEditsRef.current.get(originalKey);
+    pendingKeyEditsRef.current.delete(originalKey);
+
+    // Update the ID map if key changed
+    if (pendingKey !== undefined && pendingKey !== originalKey) {
+      const id = envVarIdsRef.current.get(originalKey);
+      if (id !== undefined) {
+        envVarIdsRef.current.delete(originalKey);
+        envVarIdsRef.current.set(pendingKey, id);
+      }
+      onEnvVarKeyChange(originalKey, pendingKey, currentValue);
+    }
+    onEnvVarsBlur();
+  };
 
   return (
     <div className={spacing}>
@@ -231,11 +288,13 @@ export function AgentConfigPanel({
                     {/* Tooltip */}
                     {showingTooltip === envVar.key && (
                       <div
-                        className="absolute left-0 bottom-full mb-1 z-50 p-2 rounded shadow-lg text-xs max-w-xs whitespace-normal"
+                        className="absolute left-1/2 bottom-full mb-1 z-50 p-3 rounded shadow-lg text-xs whitespace-normal leading-relaxed"
                         style={{
                           backgroundColor: theme.colors.bgMain,
                           border: `1px solid ${theme.colors.border}`,
                           color: theme.colors.textMain,
+                          width: '320px',
+                          transform: 'translateX(-50%)',
                         }}
                       >
                         {envVar.description}
@@ -259,12 +318,12 @@ export function AgentConfigPanel({
           ))}
           {/* User-defined env vars */}
           {Object.entries(customEnvVars).map(([key, value]) => (
-            <div key={key} className="flex gap-2">
+            <div key={`env-var-${getEnvVarId(key)}`} className="flex gap-2">
               <input
                 type="text"
-                value={key}
-                onChange={(e) => onEnvVarKeyChange(key, e.target.value, value)}
-                onBlur={onEnvVarsBlur}
+                value={getKeyDisplayValue(key)}
+                onChange={(e) => handleKeyInputChange(key, e.target.value)}
+                onBlur={() => handleKeyBlur(key, value)}
                 onClick={(e) => e.stopPropagation()}
                 placeholder="VARIABLE_NAME"
                 className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
