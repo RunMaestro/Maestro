@@ -133,33 +133,64 @@ export function ParticipantCard({
         )}
       </div>
 
-      {/* Agent type */}
+      {/* Stats row: message count + last time (left), agent type (right) */}
       <div
-        className="text-xs mt-1 ml-4"
+        className="text-xs mt-1 ml-4 flex items-center justify-between"
         style={{ color: theme.colors.textDim }}
       >
-        {participant.agentId}
+        <div className="flex items-center gap-2">
+          {(participant.messageCount !== undefined && participant.messageCount > 0) && (
+            <span className="flex items-center gap-1" title="Messages sent">
+              <MessageSquare className="w-3 h-3" />
+              {participant.messageCount}
+            </span>
+          )}
+          {participant.lastActivity && (
+            <span title="Last activity">
+              {formatTime(participant.lastActivity)}
+            </span>
+          )}
+        </div>
+        <span>{participant.agentId}</span>
       </div>
 
-      {/* Stats row: message count, last activity time, cost */}
-      <div
-        className="text-xs mt-2 flex items-center gap-3 flex-wrap"
-        style={{ color: theme.colors.textDim }}
-      >
-        {(participant.messageCount !== undefined && participant.messageCount > 0) && (
-          <span className="flex items-center gap-1" title="Messages sent">
-            <MessageSquare className="w-3 h-3" />
-            {participant.messageCount}
-          </span>
-        )}
-        {participant.lastActivity && (
-          <span title="Last activity">
-            {formatTime(participant.lastActivity)}
-          </span>
-        )}
+      {/* Context gauge + optional cost */}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span
+              className="text-[10px]"
+              style={{ color: theme.colors.textDim }}
+            >
+              Context
+            </span>
+            <span
+              className="text-[10px]"
+              style={{ color: theme.colors.textDim }}
+            >
+              {contextUsage}%
+            </span>
+          </div>
+          <div
+            className="h-1 rounded-full overflow-hidden"
+            style={{ backgroundColor: theme.colors.border }}
+          >
+            <div
+              className="h-full rounded-full transition-all"
+              style={{
+                width: `${contextUsage}%`,
+                backgroundColor:
+                  contextUsage > 80
+                    ? theme.colors.warning
+                    : theme.colors.accent,
+              }}
+            />
+          </div>
+        </div>
+        {/* Cost pill (optional) */}
         {(participant.totalCost !== undefined && participant.totalCost > 0) && (
           <span
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded"
+            className="flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded shrink-0"
             style={{
               backgroundColor: `${theme.colors.success}20`,
               color: theme.colors.success,
@@ -171,39 +202,6 @@ export function ParticipantCard({
           </span>
         )}
       </div>
-
-      {/* Context usage gauge */}
-      <div className="mt-2">
-        <div className="flex items-center justify-between mb-1">
-          <span
-            className="text-[10px]"
-            style={{ color: theme.colors.textDim }}
-          >
-            Context
-          </span>
-          <span
-            className="text-[10px]"
-            style={{ color: theme.colors.textDim }}
-          >
-            {contextUsage}%
-          </span>
-        </div>
-        <div
-          className="h-1 rounded-full overflow-hidden"
-          style={{ backgroundColor: theme.colors.border }}
-        >
-          <div
-            className="h-full rounded-full transition-all"
-            style={{
-              width: `${contextUsage}%`,
-              backgroundColor:
-                contextUsage > 80
-                  ? theme.colors.warning
-                  : theme.colors.accent,
-              }}
-            />
-          </div>
-        </div>
     </div>
   );
 }

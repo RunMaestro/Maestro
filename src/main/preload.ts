@@ -893,8 +893,12 @@ contextBridge.exposeInMainWorld('maestro', {
   // Group Chat API (multi-agent coordination)
   groupChat: {
     // Storage
-    create: (name: string, moderatorAgentId: string) =>
-      ipcRenderer.invoke('groupChat:create', name, moderatorAgentId),
+    create: (
+      name: string,
+      moderatorAgentId: string,
+      moderatorConfig?: { customPath?: string; customArgs?: string; customEnvVars?: Record<string, string> }
+    ) =>
+      ipcRenderer.invoke('groupChat:create', name, moderatorAgentId, moderatorConfig),
     list: () =>
       ipcRenderer.invoke('groupChat:list'),
     load: (id: string) =>

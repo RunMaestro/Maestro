@@ -567,7 +567,11 @@ export default function MaestroConsole() {
           aiLogs: [],  // Deprecated - logs are now in aiTabs
           shellLogs: correctedSession.shellLogs,  // Preserve existing Command Terminal logs
           executionQueue: correctedSession.executionQueue || [],  // Ensure backwards compatibility
-          activeTimeMs: correctedSession.activeTimeMs || 0  // Ensure backwards compatibility
+          activeTimeMs: correctedSession.activeTimeMs || 0,  // Ensure backwards compatibility
+          // Clear runtime-only error state - no agent is running yet so there can't be an error
+          agentError: undefined,
+          agentErrorPaused: false,
+          closedTabHistory: [],  // Runtime-only, reset on load
         };
       } else {
         // Process spawn failed
@@ -2703,8 +2707,12 @@ export default function MaestroConsole() {
     }
   }, [sessions]);
 
-  const handleCreateGroupChat = useCallback(async (name: string, moderatorAgentId: string) => {
-    const chat = await window.maestro.groupChat.create(name, moderatorAgentId);
+  const handleCreateGroupChat = useCallback(async (
+    name: string,
+    moderatorAgentId: string,
+    moderatorConfig?: { customPath?: string; customArgs?: string; customEnvVars?: Record<string, string> }
+  ) => {
+    const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
     setGroupChats(prev => [chat, ...prev]);
     setShowNewGroupChatModal(false);
     handleOpenGroupChat(chat.id);

@@ -254,10 +254,20 @@ export async function routeUserMessage(
         throw new Error(`Agent '${chat.moderatorAgentId}' is not available`);
       }
 
-      // Use the resolved path if available, otherwise fall back to command
-      const command = agent.path || agent.command;
+      // Use custom path from moderator config if set, otherwise use resolved path
+      const command = chat.moderatorConfig?.customPath || agent.path || agent.command;
       // Get the base args from the agent configuration
       const args = [...agent.args];
+      // Append custom args from moderator config if set
+      if (chat.moderatorConfig?.customArgs) {
+        // Parse custom args string into array (simple space-split, handles quoted strings)
+        const customArgsStr = chat.moderatorConfig.customArgs.trim();
+        if (customArgsStr) {
+          // Match quoted strings or non-space sequences
+          const customArgsArray = customArgsStr.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+          args.push(...customArgsArray.map(arg => arg.replace(/^["']|["']$/g, '')));
+        }
+      }
 
       // Build participant context
       const participantContext = chat.participants.length > 0

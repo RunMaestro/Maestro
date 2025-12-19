@@ -29,6 +29,18 @@ export interface GroupChatParticipant {
 }
 
 /**
+ * Custom configuration for an agent (moderator)
+ */
+export interface ModeratorConfig {
+  /** Custom path to the agent binary */
+  customPath?: string;
+  /** Custom CLI arguments */
+  customArgs?: string;
+  /** Custom environment variables */
+  customEnvVars?: Record<string, string>;
+}
+
+/**
  * Group chat metadata
  */
 export interface GroupChat {
@@ -38,6 +50,8 @@ export interface GroupChat {
   updatedAt?: number;
   moderatorAgentId: string;
   moderatorSessionId: string;
+  /** Custom configuration for the moderator agent */
+  moderatorConfig?: ModeratorConfig;
   participants: GroupChatParticipant[];
   logPath: string;
   imagesDir: string;

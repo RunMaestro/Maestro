@@ -14,6 +14,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import type { ToolType } from '../../shared/types';
+import type { ModeratorConfig } from '../../shared/group-chat-types';
 
 /**
  * Valid agent IDs that can be used as moderators.
@@ -56,6 +57,8 @@ export interface GroupChat {
   updatedAt: number;
   moderatorAgentId: string;
   moderatorSessionId: string;
+  /** Custom configuration for the moderator agent */
+  moderatorConfig?: ModeratorConfig;
   participants: GroupChatParticipant[];
   logPath: string;
   imagesDir: string;
@@ -136,12 +139,14 @@ function sanitizeChatName(name: string): string {
  *
  * @param name - Display name for the group chat
  * @param moderatorAgentId - ID of the agent to use as moderator (e.g., 'claude-code')
+ * @param moderatorConfig - Optional custom configuration for the moderator agent
  * @returns The created GroupChat object
  * @throws Error if moderatorAgentId is not a valid agent ID
  */
 export async function createGroupChat(
   name: string,
-  moderatorAgentId: string
+  moderatorAgentId: string,
+  moderatorConfig?: ModeratorConfig
 ): Promise<GroupChat> {
   // Validate agent ID against whitelist
   if (!VALID_MODERATOR_AGENT_IDS.includes(moderatorAgentId as ToolType)) {
@@ -174,6 +179,7 @@ export async function createGroupChat(
     updatedAt: now,
     moderatorAgentId,
     moderatorSessionId: '',  // Will be set when moderator is spawned
+    moderatorConfig,
     participants: [],
     logPath,
     imagesDir,

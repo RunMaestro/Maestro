@@ -126,9 +126,13 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
   // Create a new group chat
   ipcMain.handle(
     'groupChat:create',
-    withIpcErrorLogging(handlerOpts('create'), async (name: string, moderatorAgentId: string): Promise<GroupChat> => {
-      logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, { moderatorAgentId });
-      const chat = await createGroupChat(name, moderatorAgentId);
+    withIpcErrorLogging(handlerOpts('create'), async (
+      name: string,
+      moderatorAgentId: string,
+      moderatorConfig?: { customPath?: string; customArgs?: string; customEnvVars?: Record<string, string> }
+    ): Promise<GroupChat> => {
+      logger.info(`Creating group chat: ${name}`, LOG_CONTEXT, { moderatorAgentId, hasConfig: !!moderatorConfig });
+      const chat = await createGroupChat(name, moderatorAgentId, moderatorConfig);
       logger.info(`Created group chat: ${chat.id}`, LOG_CONTEXT);
       return chat;
     })

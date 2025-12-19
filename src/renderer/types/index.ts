@@ -13,6 +13,7 @@ export type {
   GroupChatParticipant,
   GroupChatMessage,
   GroupChatState,
+  ModeratorConfig,
 } from '../../shared/group-chat-types';
 // Import AgentError for use within this file
 import type { AgentError } from '../../shared/types';
