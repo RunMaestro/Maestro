@@ -80,7 +80,10 @@ export interface GroupChat {
   createdAt: number;
   updatedAt?: number;
   moderatorAgentId: string;
+  /** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
   moderatorSessionId: string;
+  /** Claude Code agent session UUID (set after first message is processed) */
+  moderatorAgentSessionId?: string;
   /** Custom configuration for the moderator agent */
   moderatorConfig?: ModeratorConfig;
   participants: GroupChatParticipant[];

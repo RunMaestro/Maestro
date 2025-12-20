@@ -1583,9 +1583,11 @@ export default function MaestroConsole() {
 
       // Parse sessionId to get actual session ID (strip -ai-tabId or -ai suffix)
       let actualSessionId: string;
+      let tabIdFromSession: string | undefined;
       const aiTabMatch = sessionId.match(/^(.+)-ai(?:-(.+))?$/);
       if (aiTabMatch) {
         actualSessionId = aiTabMatch[1];
+        tabIdFromSession = aiTabMatch[2];
       } else if (sessionId.endsWith('-batch')) {
         // Batch process errors - strip -batch suffix
         actualSessionId = sessionId.replace(/-batch.*$/, '');
@@ -1610,21 +1612,26 @@ export default function MaestroConsole() {
         agentError, // Include full error for "View Details" functionality
       };
 
-      // Update session with error state and add error log entry to active tab
+      // Update session with error state and add error log entry to the originating tab
       setSessions(prev => prev.map(s => {
         if (s.id !== actualSessionId) return s;
 
-        // Add error log entry to the active tab
-        const activeTabIndex = s.aiTabs.findIndex(tab => tab.id === s.activeTabId);
-        const updatedAiTabs = activeTabIndex >= 0
-          ? s.aiTabs.map((tab, i) =>
-              i === activeTabIndex ? { ...tab, logs: [...tab.logs, errorLogEntry] } : tab
+        // Prefer explicit tab ID from the sessionId; fall back to active tab
+        const targetTab = tabIdFromSession
+          ? s.aiTabs.find(tab => tab.id === tabIdFromSession)
+          : getActiveTab(s);
+        const updatedAiTabs = targetTab
+          ? s.aiTabs.map(tab =>
+              tab.id === targetTab.id
+                ? { ...tab, logs: [...tab.logs, errorLogEntry], agentError }
+                : tab
             )
           : s.aiTabs;
 
         return {
           ...s,
           agentError,
+          agentErrorTabId: targetTab?.id,
           agentErrorPaused: true, // Block new operations until resolved
           state: 'error' as SessionState,
           aiTabs: updatedAiTabs,
@@ -1718,10 +1725,10 @@ export default function MaestroConsole() {
       }
     });
 
-    const unsubModeratorSessionId = window.maestro.groupChat.onModeratorSessionIdChanged?.((id, sessionId) => {
-      // Update the group chat's moderator session ID
+    const unsubModeratorSessionId = window.maestro.groupChat.onModeratorSessionIdChanged?.((id, agentSessionId) => {
+      // Update the group chat's moderator agent session ID (the Claude Code session UUID)
       setGroupChats(prev => prev.map(chat =>
-        chat.id === id ? { ...chat, moderatorSessionId: sessionId } : chat
+        chat.id === id ? { ...chat, moderatorAgentSessionId: agentSessionId } : chat
       ));
     });
 
@@ -1825,6 +1832,9 @@ export default function MaestroConsole() {
     sessions.find(s => s.id === activeSessionId) || sessions[0] || null,
     [sessions, activeSessionId]
   );
+  const activeTabForError = useMemo(() => (
+    activeSession ? getActiveTab(activeSession) : null
+  ), [activeSession]);
 
   // Discover slash commands when a session becomes active and doesn't have them yet
   // This spawns Claude briefly to get the init message with available commands
@@ -1949,14 +1959,22 @@ export default function MaestroConsole() {
   }, []);
 
   // Handler to clear agent error and resume operations
-  const handleClearAgentError = useCallback((sessionId: string) => {
+  const handleClearAgentError = useCallback((sessionId: string, tabId?: string) => {
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
+      const targetTabId = tabId ?? s.agentErrorTabId;
+      const updatedAiTabs = targetTabId
+        ? s.aiTabs.map(tab =>
+            tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+          )
+        : s.aiTabs;
       return {
         ...s,
         agentError: undefined,
+        agentErrorTabId: undefined,
         agentErrorPaused: false,
         state: 'idle' as SessionState,
+        aiTabs: updatedAiTabs,
       };
     }));
     setAgentErrorModalSessionId(null);
@@ -2117,6 +2135,17 @@ export default function MaestroConsole() {
   // For terminal mode: use local state (shared across tabs)
   const isAiMode = activeSession?.inputMode === 'ai';
   const activeTab = activeSession ? getActiveTab(activeSession) : undefined;
+  const isResumingSession = !!activeTab?.agentSessionId;
+  const canAttachImages = useMemo(() => {
+    if (!activeSession || activeSession.inputMode !== 'ai') return false;
+    return isResumingSession
+      ? hasActiveSessionCapability('supportsImageInputOnResume')
+      : hasActiveSessionCapability('supportsImageInput');
+  }, [activeSession, isResumingSession, hasActiveSessionCapability]);
+  const blockCodexResumeImages = !!activeSession
+    && activeSession.toolType === 'codex'
+    && isResumingSession
+    && !hasActiveSessionCapability('supportsImageInputOnResume');
 
   // Track previous active tab to detect tab switches
   const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
@@ -2876,11 +2905,8 @@ export default function MaestroConsole() {
     if (!sessionId) return;
     skipCurrentDocument(sessionId);
     // Clear the session error state as well
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId ? { ...s, agentError: undefined, agentErrorPaused: false, state: 'idle' as SessionState } : s
-    ));
-    setAgentErrorModalSessionId(null);
-  }, [activeBatchSessionIds, activeSession, skipCurrentDocument]);
+    handleClearAgentError(sessionId);
+  }, [activeBatchSessionIds, activeSession, skipCurrentDocument, handleClearAgentError]);
 
   const handleResumeAfterError = useCallback(() => {
     const sessionId = activeBatchSessionIds.length > 0
@@ -2889,11 +2915,8 @@ export default function MaestroConsole() {
     if (!sessionId) return;
     resumeAfterError(sessionId);
     // Clear the session error state as well
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId ? { ...s, agentError: undefined, agentErrorPaused: false, state: 'idle' as SessionState } : s
-    ));
-    setAgentErrorModalSessionId(null);
-  }, [activeBatchSessionIds, activeSession, resumeAfterError]);
+    handleClearAgentError(sessionId);
+  }, [activeBatchSessionIds, activeSession, resumeAfterError, handleClearAgentError]);
 
   const handleAbortBatchOnError = useCallback(() => {
     const sessionId = activeBatchSessionIds.length > 0
@@ -2902,11 +2925,8 @@ export default function MaestroConsole() {
     if (!sessionId) return;
     abortBatchOnError(sessionId);
     // Clear the session error state as well
-    setSessions(prev => prev.map(s =>
-      s.id === sessionId ? { ...s, agentError: undefined, agentErrorPaused: false, state: 'idle' as SessionState } : s
-    ));
-    setAgentErrorModalSessionId(null);
-  }, [activeBatchSessionIds, activeSession, abortBatchOnError]);
+    handleClearAgentError(sessionId);
+  }, [activeBatchSessionIds, activeSession, abortBatchOnError, handleClearAgentError]);
 
   // Handler for toast navigation - switches to session and optionally to a specific tab
   const handleToastSessionClick = useCallback((sessionId: string, tabId?: string) => {
@@ -5082,6 +5102,12 @@ export default function MaestroConsole() {
   };
 
   // Image Handlers
+  const showImageAttachBlockedNotice = useCallback(() => {
+    const message = 'Images are only available in the initial message to Claude. Please start a new session if you want to include an image.';
+    setSuccessFlashNotification(message);
+    setTimeout(() => setSuccessFlashNotification(null), 4000);
+  }, [setSuccessFlashNotification]);
+
   const handlePaste = (e: React.ClipboardEvent) => {
     // Allow image pasting in group chat or direct AI mode
     const isGroupChatActive = !!activeGroupChatId;
@@ -5090,6 +5116,14 @@ export default function MaestroConsole() {
     if (!isGroupChatActive && !isDirectAIMode) return;
 
     const items = e.clipboardData.items;
+    const hasImage = Array.from(items).some(item => item.type.startsWith('image/'));
+
+    if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
+      e.preventDefault();
+      showImageAttachBlockedNotice();
+      return;
+    }
+
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
         e.preventDefault();
@@ -5137,6 +5171,13 @@ export default function MaestroConsole() {
     if (!isGroupChatActive && !isDirectAIMode) return;
 
     const files = e.dataTransfer.files;
+    const hasImage = Array.from(files).some(file => file.type.startsWith('image/'));
+
+    if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
+      showImageAttachBlockedNotice();
+      return;
+    }
+
     for (let i = 0; i < files.length; i++) {
       if (files[i].type.startsWith('image/')) {
         const reader = new FileReader();
@@ -6270,6 +6311,7 @@ export default function MaestroConsole() {
             shortcuts={shortcuts}
             moderatorAgentId={groupChats.find(c => c.id === activeGroupChatId)?.moderatorAgentId || 'claude-code'}
             moderatorSessionId={groupChats.find(c => c.id === activeGroupChatId)?.moderatorSessionId || ''}
+            moderatorAgentSessionId={groupChats.find(c => c.id === activeGroupChatId)?.moderatorAgentSessionId}
             moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
             moderatorUsage={moderatorUsage}
             activeTab={groupChatRightTab}
@@ -6800,8 +6842,8 @@ export default function MaestroConsole() {
             setPreviewFile(filePreviewHistory[index]);
           }
         }}
-        onClearAgentError={activeSession?.agentError ? () => handleClearAgentError(activeSession.id) : undefined}
-        onShowAgentErrorModal={activeSession?.agentError ? () => setAgentErrorModalSessionId(activeSession.id) : undefined}
+        onClearAgentError={activeTabForError?.agentError && activeSession ? () => handleClearAgentError(activeSession.id, activeTabForError.id) : undefined}
+        onShowAgentErrorModal={activeTabForError?.agentError && activeSession ? () => setAgentErrorModalSessionId(activeSession.id) : undefined}
         showFlashNotification={(message: string) => {
           setSuccessFlashNotification(message);
           setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -6995,8 +7037,9 @@ export default function MaestroConsole() {
           : activeSession?.name
         }
         // Image attachment props - context-aware
-        stagedImages={activeGroupChatId ? groupChatStagedImages : stagedImages}
-        setStagedImages={activeGroupChatId ? setGroupChatStagedImages : setStagedImages}
+        stagedImages={activeGroupChatId ? groupChatStagedImages : (canAttachImages ? stagedImages : [])}
+        setStagedImages={activeGroupChatId ? setGroupChatStagedImages : (canAttachImages ? setStagedImages : undefined)}
+        onImageAttachBlocked={activeGroupChatId || !blockCodexResumeImages ? undefined : showImageAttachBlockedNotice}
         onOpenLightbox={handleSetLightboxImage}
         // Bottom bar toggles - context-aware (History not applicable for group chat)
         tabSaveToHistory={activeGroupChatId ? false : (activeSession ? getActiveTab(activeSession)?.saveToHistory ?? false : false)}

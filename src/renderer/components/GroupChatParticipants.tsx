@@ -24,8 +24,10 @@ interface GroupChatParticipantsProps {
   shortcuts: Record<string, Shortcut>;
   /** Moderator agent ID (e.g., 'claude-code') */
   moderatorAgentId: string;
-  /** Moderator session ID */
+  /** Moderator internal session ID (for routing) */
   moderatorSessionId: string;
+  /** Moderator agent session ID (Claude Code session UUID for display) */
+  moderatorAgentSessionId?: string;
   /** Moderator state for status indicator */
   moderatorState: SessionState;
   /** Moderator usage stats (context, cost, tokens) */
@@ -43,6 +45,7 @@ export function GroupChatParticipants({
   shortcuts,
   moderatorAgentId,
   moderatorSessionId,
+  moderatorAgentSessionId,
   moderatorState,
   moderatorUsage,
 }: GroupChatParticipantsProps): JSX.Element | null {
@@ -52,19 +55,19 @@ export function GroupChatParticipants({
   }, [participants, theme]);
 
   // Create a synthetic moderator participant for display
-  // The moderator works in batch mode (spawns per-message), so we use the session ID prefix
-  // as the agentSessionId to indicate the moderator is ready (not "pending")
+  // The moderator works in batch mode (spawns per-message), so the agentSessionId
+  // is set after the first message is processed and Claude Code reports its session UUID
   const moderatorParticipant: GroupChatParticipant = useMemo(() => ({
     name: 'Moderator',
     agentId: moderatorAgentId,
     sessionId: moderatorSessionId,
-    // Use moderatorSessionId as agentSessionId so the card shows "ready" instead of "pending"
-    agentSessionId: moderatorSessionId || undefined,
+    // Use the real Claude Code agent session ID for display (set after first message)
+    agentSessionId: moderatorAgentSessionId,
     addedAt: Date.now(),
     contextUsage: moderatorUsage?.contextUsage,
     tokenCount: moderatorUsage?.tokenCount,
     totalCost: moderatorUsage?.totalCost,
-  }), [moderatorAgentId, moderatorSessionId, moderatorUsage]);
+  }), [moderatorAgentId, moderatorSessionId, moderatorAgentSessionId, moderatorUsage]);
 
   // Sort participants alphabetically by name
   const sortedParticipants = useMemo(() => {

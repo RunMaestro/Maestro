@@ -2191,11 +2191,12 @@ function setupProcessListeners() {
       if (moderatorMatch) {
         const groupChatId = moderatorMatch[1];
         // Update the group chat with the moderator's real agent session ID
-        updateGroupChat(groupChatId, { moderatorSessionId: agentSessionId }).then(() => {
+        // Store in moderatorAgentSessionId (not moderatorSessionId which is the routing prefix)
+        updateGroupChat(groupChatId, { moderatorAgentSessionId: agentSessionId }).then(() => {
           // Emit session ID change event so UI updates with the new session ID
           groupChatEmitters.emitModeratorSessionIdChanged?.(groupChatId, agentSessionId);
         }).catch((err: unknown) => {
-          logger.error('[GroupChat] Failed to update moderator session ID', 'ProcessListener', { error: String(err), groupChatId });
+          logger.error('[GroupChat] Failed to update moderator agent session ID', 'ProcessListener', { error: String(err), groupChatId });
         });
         // Don't return - still send to renderer for logging purposes
       }

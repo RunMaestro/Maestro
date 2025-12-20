@@ -231,6 +231,7 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
   const activeTab = activeSession?.aiTabs?.find(tab => tab.id === activeSession.activeTabId)
     ?? activeSession?.aiTabs?.[0]
     ?? null;
+  const activeTabError = activeTab?.agentError;
 
   // Resolve the configured context window from session override or agent settings.
   useEffect(() => {
@@ -867,7 +868,7 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
           )}
 
           {/* Agent Error Banner */}
-          {activeSession.agentError && (
+          {activeTabError && (
             <div
               className="flex items-center gap-3 px-4 py-2 border-b shrink-0"
               style={{
@@ -878,7 +879,7 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
               <AlertCircle className="w-4 h-4 shrink-0" style={{ color: theme.colors.error }} />
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium" style={{ color: theme.colors.error }}>
-                  {activeSession.agentError.message}
+                  {activeTabError.message}
                 </span>
               </div>
               <div className="flex items-center gap-2 shrink-0">
@@ -894,7 +895,7 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
                     View Details
                   </button>
                 )}
-                {props.onClearAgentError && activeSession.agentError.recoverable && (
+                {props.onClearAgentError && activeTabError.recoverable && (
                   <button
                     onClick={props.onClearAgentError}
                     className="p-1 rounded hover:bg-white/10 transition-colors"

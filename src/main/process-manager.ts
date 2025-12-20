@@ -82,6 +82,14 @@ interface ManagedProcess {
   streamedText?: string; // Buffer for accumulating streamed text from partial events (OpenCode, Codex)
   contextWindow?: number; // Configured context window size (0 or undefined = not configured)
   tempImageFiles?: string[]; // Temp files to clean up when process exits (for file-based image args)
+  lastUsageTotals?: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    reasoningTokens: number;
+  };
+  usageIsCumulative?: boolean;
 }
 
 /**
@@ -94,6 +102,72 @@ function parseDataUrl(dataUrl: string): { base64: string; mediaType: string } | 
   return {
     mediaType: match[1],
     base64: match[2],
+  };
+}
+
+function normalizeCodexUsage(
+  managedProcess: ManagedProcess,
+  usageStats: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadInputTokens: number;
+    cacheCreationInputTokens: number;
+    totalCostUsd: number;
+    contextWindow: number;
+    reasoningTokens?: number;
+  }
+): typeof usageStats {
+  const totals = {
+    inputTokens: usageStats.inputTokens,
+    outputTokens: usageStats.outputTokens,
+    cacheReadInputTokens: usageStats.cacheReadInputTokens,
+    cacheCreationInputTokens: usageStats.cacheCreationInputTokens,
+    reasoningTokens: usageStats.reasoningTokens || 0,
+  };
+
+  const last = managedProcess.lastUsageTotals;
+  const cumulativeFlag = managedProcess.usageIsCumulative;
+
+  if (cumulativeFlag === false) {
+    managedProcess.lastUsageTotals = totals;
+    return usageStats;
+  }
+
+  if (!last) {
+    managedProcess.lastUsageTotals = totals;
+    return usageStats;
+  }
+
+  const delta = {
+    inputTokens: totals.inputTokens - last.inputTokens,
+    outputTokens: totals.outputTokens - last.outputTokens,
+    cacheReadInputTokens: totals.cacheReadInputTokens - last.cacheReadInputTokens,
+    cacheCreationInputTokens: totals.cacheCreationInputTokens - last.cacheCreationInputTokens,
+    reasoningTokens: totals.reasoningTokens - last.reasoningTokens,
+  };
+
+  const isMonotonic =
+    delta.inputTokens >= 0 &&
+    delta.outputTokens >= 0 &&
+    delta.cacheReadInputTokens >= 0 &&
+    delta.cacheCreationInputTokens >= 0 &&
+    delta.reasoningTokens >= 0;
+
+  if (!isMonotonic) {
+    managedProcess.usageIsCumulative = false;
+    managedProcess.lastUsageTotals = totals;
+    return usageStats;
+  }
+
+  managedProcess.usageIsCumulative = true;
+  managedProcess.lastUsageTotals = totals;
+  return {
+    ...usageStats,
+    inputTokens: delta.inputTokens,
+    outputTokens: delta.outputTokens,
+    cacheReadInputTokens: delta.cacheReadInputTokens,
+    cacheCreationInputTokens: delta.cacheCreationInputTokens,
+    reasoningTokens: delta.reasoningTokens,
   };
 }
 
@@ -577,7 +651,10 @@ export class ProcessManager extends EventEmitter {
                         contextWindow: managedProcess.contextWindow || usage.contextWindow || 0,
                         reasoningTokens: usage.reasoningTokens,
                       };
-                      this.emit('usage', sessionId, usageStats);
+                      const normalizedUsageStats = managedProcess.toolType === 'codex'
+                        ? normalizeCodexUsage(managedProcess, usageStats)
+                        : usageStats;
+                      this.emit('usage', sessionId, normalizedUsageStats);
                     }
 
                     // Extract session ID from parsed event (thread_id for Codex, session_id for Claude)

@@ -44,11 +44,12 @@ const prepareSessionForPersistence = (session: Session): Session => {
     // Reset runtime-only tab state - processes don't survive app restart
     state: 'idle' as const,
     thinkingStartTime: undefined,
+    agentError: undefined,
   }));
 
   // Return session without runtime-only fields
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { closedTabHistory, agentError, agentErrorPaused, ...sessionWithoutRuntimeFields } = session;
+  const { closedTabHistory, agentError, agentErrorPaused, agentErrorTabId, ...sessionWithoutRuntimeFields } = session;
 
   return {
     ...sessionWithoutRuntimeFields,

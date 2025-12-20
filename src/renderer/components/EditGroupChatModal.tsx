@@ -356,6 +356,7 @@ export function EditGroupChatModal({
             onRefreshAgent={handleRefreshAgent}
             refreshingAgent={refreshingAgent}
             compact
+            showBuiltInEnvVars
           />
         </div>
       </Modal>

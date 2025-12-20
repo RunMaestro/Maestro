@@ -294,6 +294,7 @@ export interface AITab {
   name: string | null;             // User-defined name (null = show UUID octet)
   starred: boolean;                // Whether session is starred (for pill display)
   logs: LogEntry[];                // Conversation history
+  agentError?: AgentError;         // Tab-specific agent error (shown in banner)
   inputValue: string;              // Pending input text for this tab
   stagedImages: string[];          // Staged images (base64) for this tab
   usageStats?: UsageStats;         // Token usage for this tab
@@ -432,6 +433,8 @@ export interface Session {
   // Agent error state - set when an agent error is detected
   // Cleared when user dismisses the error or takes recovery action
   agentError?: AgentError;
+  // Tab ID where the agent error originated (used for tab-scoped banners)
+  agentErrorTabId?: string;
 
   // Whether operations are paused due to an agent error
   // When true, new messages are blocked until the error is resolved

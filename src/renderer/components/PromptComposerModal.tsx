@@ -15,6 +15,7 @@ interface PromptComposerModalProps {
   // Image attachment props
   stagedImages?: string[];
   setStagedImages?: React.Dispatch<React.SetStateAction<string[]>>;
+  onImageAttachBlocked?: () => void;
   onOpenLightbox?: (image: string, contextImages?: string[], source?: 'staged' | 'history') => void;
   // Bottom bar toggles
   tabSaveToHistory?: boolean;
@@ -41,6 +42,7 @@ export function PromptComposerModal({
   sessionName = 'Claude',
   stagedImages = [],
   setStagedImages,
+  onImageAttachBlocked,
   onOpenLightbox,
   tabSaveToHistory = false,
   onToggleTabSaveToHistory,
@@ -153,9 +155,16 @@ export function PromptComposerModal({
 
   // Handle paste for images
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!setStagedImages) return;
-
     const items = e.clipboardData.items;
+    const hasImage = Array.from(items).some(item => item.type.startsWith('image/'));
+    if (!setStagedImages) {
+      if (hasImage) {
+        e.preventDefault();
+        onImageAttachBlocked?.();
+      }
+      return;
+    }
+
     for (let i = 0; i < items.length; i++) {
       if (items[i].type.indexOf('image') !== -1) {
         e.preventDefault();

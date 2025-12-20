@@ -70,7 +70,10 @@ export interface GroupChat {
   createdAt: number;
   updatedAt: number;
   moderatorAgentId: string;
+  /** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
   moderatorSessionId: string;
+  /** Claude Code agent session UUID (set after first message is processed) */
+  moderatorAgentSessionId?: string;
   /** Custom configuration for the moderator agent */
   moderatorConfig?: ModeratorConfig;
   participants: GroupChatParticipant[];
@@ -81,7 +84,7 @@ export interface GroupChat {
 /**
  * Partial update for group chat metadata
  */
-export type GroupChatUpdate = Partial<Pick<GroupChat, 'name' | 'moderatorSessionId' | 'moderatorAgentId' | 'moderatorConfig' | 'participants' | 'updatedAt'>>;
+export type GroupChatUpdate = Partial<Pick<GroupChat, 'name' | 'moderatorSessionId' | 'moderatorAgentSessionId' | 'moderatorAgentId' | 'moderatorConfig' | 'participants' | 'updatedAt'>>;
 
 /**
  * Get the Maestro config directory path.
