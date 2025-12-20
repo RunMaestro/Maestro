@@ -42,20 +42,21 @@ export const gitService = {
    * Get git status (porcelain format) and current branch
    */
   async getStatus(cwd: string): Promise<GitStatus> {
-    try {
-      const [statusResult, branchResult] = await Promise.all([
-        window.maestro.git.status(cwd),
-        window.maestro.git.branch(cwd)
-      ]);
+    return createIpcMethod({
+      call: async () => {
+        const [statusResult, branchResult] = await Promise.all([
+          window.maestro.git.status(cwd),
+          window.maestro.git.branch(cwd),
+        ]);
 
-      const files = parseGitStatusPorcelain(statusResult.stdout || '');
-      const branch = branchResult.stdout?.trim() || undefined;
+        const files = parseGitStatusPorcelain(statusResult.stdout || '');
+        const branch = branchResult.stdout?.trim() || undefined;
 
-      return { files, branch };
-    } catch (error) {
-      console.error('Git status error:', error);
-      return { files: [] };
-    }
+        return { files, branch };
+      },
+      errorContext: 'Git status',
+      defaultValue: { files: [] },
+    });
   },
 
   /**
