@@ -146,7 +146,10 @@ export function useGitStatusPolling(
     if (pauseWhenHidden && document.hidden) return;
 
     const gitSessions = sessionsRef.current.filter(s => s.isGitRepo);
-    if (gitSessions.length === 0) return;
+    if (gitSessions.length === 0) {
+      setGitStatusMap(prev => (prev.size === 0 ? prev : new Map()));
+      return;
+    }
 
     setIsLoading(true);
 
@@ -262,7 +265,7 @@ export function useGitStatusPolling(
   }, [pauseWhenHidden]);
 
   const startPolling = useCallback(() => {
-    if (!intervalRef.current && !document.hidden) {
+    if (!intervalRef.current && (!pauseWhenHidden || !document.hidden)) {
       pollGitStatus();
       intervalRef.current = setInterval(() => {
         const now = Date.now();
@@ -319,7 +322,7 @@ export function useGitStatusPolling(
       isActiveRef.current = true;
 
       // Restart polling if it was stopped due to inactivity
-      if (wasInactive && !document.hidden) {
+      if (wasInactive && (!pauseWhenHidden || !document.hidden)) {
         startPolling();
       }
     };
