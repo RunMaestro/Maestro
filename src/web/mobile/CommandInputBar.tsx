@@ -719,7 +719,7 @@ export function CommandInputBar({
               $
             </span>
             <input
-              ref={textareaRef as React.RefObject<HTMLInputElement>}
+              ref={textareaRef as unknown as React.RefObject<HTMLInputElement>}
               type="text"
               value={value}
               onChange={(e) => handleChange(e as unknown as React.ChangeEvent<HTMLTextAreaElement>)}

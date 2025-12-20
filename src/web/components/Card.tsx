@@ -261,8 +261,8 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
  * </Card>
  * ```
  */
-export interface CardHeaderProps extends HTMLAttributes<HTMLDivElement> {
-  /** Main title text */
+export interface CardHeaderProps extends Omit<HTMLAttributes<HTMLDivElement>, 'title'> {
+  /** Main title text (overrides HTML title attribute to support ReactNode) */
   title?: ReactNode;
   /** Subtitle or secondary text */
   subtitle?: ReactNode;

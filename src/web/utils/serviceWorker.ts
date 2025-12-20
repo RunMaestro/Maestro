@@ -159,7 +159,8 @@ export async function pingServiceWorker(): Promise<boolean> {
 
   try {
     const registration = await navigator.serviceWorker.ready;
-    if (!registration.active) return false;
+    const activeWorker = registration.active;
+    if (!activeWorker) return false;
 
     return new Promise((resolve) => {
       const messageChannel = new MessageChannel();
@@ -170,7 +171,7 @@ export async function pingServiceWorker(): Promise<boolean> {
       // Timeout after 1 second
       setTimeout(() => resolve(false), 1000);
 
-      registration.active.postMessage('ping', [messageChannel.port2]);
+      activeWorker.postMessage('ping', [messageChannel.port2]);
     });
   } catch {
     return false;

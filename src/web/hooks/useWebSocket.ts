@@ -105,6 +105,7 @@ export type ServerMessageType =
   | 'active_session_changed'
   | 'session_output'
   | 'session_exit'
+  | 'user_input'
   | 'theme'
   | 'custom_commands'
   | 'autorun_state'

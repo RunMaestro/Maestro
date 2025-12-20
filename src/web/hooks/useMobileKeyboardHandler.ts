@@ -25,15 +25,16 @@ import type { AITabData } from './useWebSocket';
 /**
  * Session type for the mobile keyboard handler
  * Only includes fields needed for keyboard handling
+ * Kept minimal to accept any object with these optional fields
  */
-export interface MobileKeyboardSession {
+export type MobileKeyboardSession = {
   /** Current input mode */
-  inputMode?: 'ai' | 'terminal';
+  inputMode?: string;
   /** Array of AI tabs */
   aiTabs?: AITabData[];
   /** Currently active tab ID */
   activeTabId?: string;
-}
+};
 
 /**
  * Input mode type for the handler

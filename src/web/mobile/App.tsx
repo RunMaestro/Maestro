@@ -406,10 +406,9 @@ export default function MobileApp() {
     const notification = showNotification(title, {
       body: firstLine,
       tag: `maestro-response-${session.id}`, // Prevent duplicate notifications for same session
-      renotify: true, // Allow notification to be re-shown if same tag
       silent: false,
       requireInteraction: false, // Auto-dismiss on mobile
-    });
+    } as NotificationOptions);
 
     if (notification) {
       webLogger.debug(`Notification shown for session: ${session.name}`, 'Mobile');
