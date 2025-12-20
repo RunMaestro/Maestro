@@ -40,6 +40,7 @@ import { AgentErrorModal } from './components/AgentErrorModal';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
+import { type GroupChatMessagesHandle } from './components/GroupChatMessages';
 import { GroupChatRightPanel, type GroupChatRightTab } from './components/GroupChatRightPanel';
 import { NewGroupChatModal } from './components/NewGroupChatModal';
 import { DeleteGroupChatModal } from './components/DeleteGroupChatModal';
@@ -315,7 +316,7 @@ export default function MaestroConsole() {
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
   const [lightboxImages, setLightboxImages] = useState<string[]>([]); // Context images for navigation
   const [lightboxSource, setLightboxSource] = useState<'staged' | 'history'>('history'); // Track source for delete permission
-  const [lightboxDeleteHandler, setLightboxDeleteHandler] = useState<((img: string) => void) | null>(null); // Captured delete handler
+  const lightboxIsGroupChatRef = useRef<boolean>(false); // Track if lightbox was opened from group chat
   const [aboutModalOpen, setAboutModalOpen] = useState(false);
   const [updateCheckModalOpen, setUpdateCheckModalOpen] = useState(false);
   const [leaderboardRegistrationOpen, setLeaderboardRegistrationOpen] = useState(false);
@@ -1777,6 +1778,7 @@ export default function MaestroConsole() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const groupChatInputRef = useRef<HTMLTextAreaElement>(null);
+  const groupChatMessagesRef = useRef<GroupChatMessagesHandle>(null);
   const terminalOutputRef = useRef<HTMLDivElement>(null);
   const sidebarContainerRef = useRef<HTMLDivElement>(null);
   const fileTreeContainerRef = useRef<HTMLDivElement>(null);
@@ -2955,26 +2957,14 @@ export default function MaestroConsole() {
 
   // Handler to open lightbox with optional context images for navigation
   // source: 'staged' allows deletion, 'history' is read-only
-  // When source is 'staged', we capture the appropriate delete handler at call time
   const handleSetLightboxImage = useCallback((image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') => {
+    // Capture group chat state SYNCHRONOUSLY in ref before any state updates
+    // This ensures the value is available immediately when the component re-renders
+    lightboxIsGroupChatRef.current = activeGroupChatId !== null;
+
     setLightboxImage(image);
     setLightboxImages(contextImages || []);
     setLightboxSource(source);
-    // Capture the delete handler at the moment the lightbox opens
-    // This ensures we use the correct setter based on the current context (group chat vs single chat)
-    if (source === 'staged') {
-      // Capture currentActiveGroupChatId at call time via closure
-      const isGroupChat = activeGroupChatId !== null;
-      setLightboxDeleteHandler(() => (img: string) => {
-        if (isGroupChat) {
-          setGroupChatStagedImages(prev => prev.filter(i => i !== img));
-        } else {
-          setStagedImages(prev => prev.filter(i => i !== img));
-        }
-      });
-    } else {
-      setLightboxDeleteHandler(null);
-    }
   }, [activeGroupChatId]);
 
   // --- GROUP CHAT HANDLERS ---
@@ -3041,34 +3031,9 @@ export default function MaestroConsole() {
 
   // Jump to a message in the group chat by timestamp
   const handleJumpToGroupChatMessage = useCallback((timestamp: number) => {
-    // Find the closest message by timestamp
-    const messages = groupChatMessages;
-    let closestMessage = messages[0];
-    let closestDiff = Math.abs(new Date(messages[0]?.timestamp || '').getTime() - timestamp);
-
-    for (const msg of messages) {
-      const msgTime = new Date(msg.timestamp).getTime();
-      const diff = Math.abs(msgTime - timestamp);
-      if (diff < closestDiff) {
-        closestDiff = diff;
-        closestMessage = msg;
-      }
-    }
-
-    if (closestMessage) {
-      // Find the element with this timestamp and scroll to it
-      const msgTime = new Date(closestMessage.timestamp).getTime();
-      const element = document.querySelector(`[data-message-timestamp="${msgTime}"]`);
-      if (element) {
-        element.scrollIntoView({ block: 'center', behavior: 'smooth' });
-        // Flash highlight effect
-        element.classList.add('ring-2', 'ring-yellow-400/50');
-        setTimeout(() => {
-          element.classList.remove('ring-2', 'ring-yellow-400/50');
-        }, 2000);
-      }
-    }
-  }, [groupChatMessages]);
+    // Use the messages ref to scroll to the target message
+    groupChatMessagesRef.current?.scrollToMessage(timestamp);
+  }, []);
 
   // Open the moderator session in the direct agent view
   const handleOpenModeratorSession = useCallback((moderatorSessionId: string) => {
@@ -5820,13 +5785,19 @@ export default function MaestroConsole() {
             setLightboxImage(null);
             setLightboxImages([]);
             setLightboxSource('history');
-            setLightboxDeleteHandler(null);
+            lightboxIsGroupChatRef.current = false;
             // Return focus to input after closing carousel
             setTimeout(() => inputRef.current?.focus(), 0);
           }}
           onNavigate={(img) => setLightboxImage(img)}
-          // Use the captured delete handler (set when lightbox opened with source='staged')
-          onDelete={lightboxDeleteHandler ?? undefined}
+          // Allow delete when source is 'staged' - use ref to determine which setter to use
+          onDelete={lightboxSource === 'staged' ? (img: string) => {
+            if (lightboxIsGroupChatRef.current) {
+              setGroupChatStagedImages(prev => prev.filter(i => i !== img));
+            } else {
+              setStagedImages(prev => prev.filter(i => i !== img));
+            }
+          } : undefined}
           theme={theme}
         />
       )}
@@ -6326,6 +6297,7 @@ export default function MaestroConsole() {
                 setTimeout(() => setSuccessFlashNotification(null), 2000);
               }}
               participantColors={groupChatParticipantColors}
+              messagesRef={groupChatMessagesRef}
             />
           </div>
           <GroupChatRightPanel

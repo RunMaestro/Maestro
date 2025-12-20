@@ -8,7 +8,7 @@
 
 import type { Theme, GroupChat, GroupChatMessage, GroupChatState, Shortcut, Session, QueuedItem } from '../types';
 import { GroupChatHeader } from './GroupChatHeader';
-import { GroupChatMessages } from './GroupChatMessages';
+import { GroupChatMessages, type GroupChatMessagesHandle } from './GroupChatMessages';
 import { GroupChatInput } from './GroupChatInput';
 
 interface GroupChatPanelProps {
@@ -59,6 +59,8 @@ interface GroupChatPanelProps {
   showFlashNotification?: (message: string) => void;
   /** Pre-computed participant colors for consistent colors across components */
   participantColors?: Record<string, string>;
+  /** Ref to expose scrollToMessage on the messages component */
+  messagesRef?: React.RefObject<GroupChatMessagesHandle>;
 }
 
 export function GroupChatPanel({
@@ -96,6 +98,7 @@ export function GroupChatPanel({
   setEnterToSendAI,
   showFlashNotification,
   participantColors,
+  messagesRef,
 }: GroupChatPanelProps): JSX.Element {
   return (
     <div
@@ -117,6 +120,7 @@ export function GroupChatPanel({
       />
 
       <GroupChatMessages
+        ref={messagesRef}
         theme={theme}
         messages={messages}
         participants={groupChat.participants}

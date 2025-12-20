@@ -5,7 +5,7 @@
  * chat layout with timestamps outside bubbles, consistent colors, and markdown support.
  */
 
-import { useRef, useEffect, useCallback, useMemo, useState } from 'react';
+import { useRef, useEffect, useCallback, useMemo, useState, forwardRef, useImperativeHandle } from 'react';
 import { Eye, FileText, Copy, ChevronDown, ChevronUp } from 'lucide-react';
 import type { GroupChatMessage, GroupChatParticipant, GroupChatState, Theme } from '../types';
 import { MarkdownRenderer } from './MarkdownRenderer';
@@ -24,7 +24,12 @@ interface GroupChatMessagesProps {
   participantColors?: Record<string, string>;
 }
 
-export function GroupChatMessages({
+/** Handle exposed via ref for scrolling to messages */
+export interface GroupChatMessagesHandle {
+  scrollToMessage: (timestamp: number) => void;
+}
+
+export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMessagesProps>(function GroupChatMessages({
   theme,
   messages,
   participants,
@@ -33,9 +38,62 @@ export function GroupChatMessages({
   onToggleMarkdownEditMode,
   maxOutputLines = 30,
   participantColors: externalColors,
-}: GroupChatMessagesProps): JSX.Element {
+}, ref) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
+
+  // Expose scrollToMessage method via ref
+  useImperativeHandle(ref, () => ({
+    scrollToMessage: (timestamp: number) => {
+      if (!containerRef.current) return;
+
+      // Find the message element by timestamp
+      // Try exact match first, then find closest message
+      let targetElement = containerRef.current.querySelector(
+        `[data-message-timestamp="${timestamp}"]`
+      );
+
+      // If no exact match, find the closest message by timestamp
+      if (!targetElement) {
+        const allMessages = containerRef.current.querySelectorAll('[data-message-timestamp]');
+        let closestElement: Element | null = null;
+        let closestDiff = Infinity;
+
+        allMessages.forEach(el => {
+          const msgTimestamp = el.getAttribute('data-message-timestamp');
+          if (msgTimestamp) {
+            // Handle both ISO string and numeric timestamp formats
+            const msgTime = isNaN(Number(msgTimestamp))
+              ? new Date(msgTimestamp).getTime()
+              : Number(msgTimestamp);
+            const diff = Math.abs(msgTime - timestamp);
+            if (diff < closestDiff) {
+              closestDiff = diff;
+              closestElement = el;
+            }
+          }
+        });
+
+        // Only use closest if within 5 seconds
+        if (closestElement && closestDiff < 5000) {
+          targetElement = closestElement;
+        }
+      }
+
+      if (targetElement) {
+        targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Flash highlight effect
+        const element = targetElement as HTMLElement;
+        element.style.transition = 'background-color 0.3s ease';
+        const originalBg = element.style.backgroundColor;
+        element.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+        setTimeout(() => {
+          element.style.backgroundColor = originalBg;
+        }, 1000);
+      }
+    },
+  }), []);
 
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard.writeText(text);
@@ -370,4 +428,4 @@ export function GroupChatMessages({
       )}
     </div>
   );
-}
+});
