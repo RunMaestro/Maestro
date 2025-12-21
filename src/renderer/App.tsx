@@ -1847,7 +1847,8 @@ export default function MaestroConsole() {
   ), [activeSession]);
 
   // Discover slash commands when a session becomes active and doesn't have them yet
-  // This spawns Claude briefly to get the init message with available commands
+  // Fetches custom Claude commands from .claude/commands/ directories (fast, file system read)
+  // Also spawns Claude briefly to get built-in commands from init message (slower)
   useEffect(() => {
     if (!activeSession) return;
     if (activeSession.toolType !== 'claude-code') return;
@@ -1856,46 +1857,87 @@ export default function MaestroConsole() {
 
     // Capture session ID to prevent race conditions when switching sessions
     const sessionId = activeSession.id;
+    const projectRoot = activeSession.projectRoot;
     let cancelled = false;
 
-    // Discover slash commands in background
-    const discoverCommands = async () => {
-      try {
-        const commands = await window.maestro.agents.discoverSlashCommands(
-          activeSession.toolType,
-          activeSession.cwd,
-          activeSession.customPath
-        );
+    // Helper to merge commands without duplicates
+    const mergeCommands = (
+      existing: { command: string; description: string }[],
+      newCmds: { command: string; description: string }[]
+    ) => {
+      const merged = [...existing];
+      for (const cmd of newCmds) {
+        if (!merged.some(c => c.command === cmd.command)) {
+          merged.push(cmd);
+        }
+      }
+      return merged;
+    };
 
-        // Don't update if effect was cancelled (session switched)
+    // Fetch custom Claude commands immediately (fast - just reads files)
+    const fetchCustomCommands = async () => {
+      try {
+        const customClaudeCommands = await window.maestro.claude.getCommands(projectRoot);
         if (cancelled) return;
 
-        if (commands && commands.length > 0) {
-          // Convert to command objects and store on session
-          const commandObjects = commands.map(cmd => ({
-            command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-            description: getSlashCommandDescription(cmd),
-          }));
+        // Custom Claude commands already have command and description from the handler
+        const customCommandObjects = (customClaudeCommands || []).map(cmd => ({
+          command: cmd.command,
+          description: cmd.description,
+        }));
 
-          setSessions(prev => prev.map(s =>
-            s.id === sessionId
-              ? { ...s, agentCommands: commandObjects }
-              : s
-          ));
+        if (customCommandObjects.length > 0) {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== sessionId) return s;
+            const existingCommands = s.agentCommands || [];
+            return { ...s, agentCommands: mergeCommands(existingCommands, customCommandObjects) };
+          }));
         }
       } catch (error) {
         if (!cancelled) {
-          console.error('[SlashCommandDiscovery] Failed to discover commands:', error);
+          console.error('[SlashCommandDiscovery] Failed to fetch custom commands:', error);
         }
       }
     };
 
-    discoverCommands();
+    // Discover built-in agent slash commands in background (slower - spawns Claude)
+    const discoverAgentCommands = async () => {
+      try {
+        const agentSlashCommands = await window.maestro.agents.discoverSlashCommands(
+          activeSession.toolType,
+          activeSession.cwd,
+          activeSession.customPath
+        );
+        if (cancelled) return;
+
+        // Convert agent slash commands to command objects
+        const agentCommandObjects = (agentSlashCommands || []).map(cmd => ({
+          command: cmd.startsWith('/') ? cmd : `/${cmd}`,
+          description: getSlashCommandDescription(cmd),
+        }));
+
+        if (agentCommandObjects.length > 0) {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== sessionId) return s;
+            const existingCommands = s.agentCommands || [];
+            return { ...s, agentCommands: mergeCommands(existingCommands, agentCommandObjects) };
+          }));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[SlashCommandDiscovery] Failed to discover agent commands:', error);
+        }
+      }
+    };
+
+    // Start both in parallel but don't wait for each other
+    fetchCustomCommands();
+    discoverAgentCommands();
 
     return () => {
       cancelled = true;
     };
-  }, [activeSession?.id, activeSession?.toolType, activeSession?.cwd, activeSession?.customPath, activeSession?.agentCommands]);
+  }, [activeSession?.id, activeSession?.toolType, activeSession?.cwd, activeSession?.customPath, activeSession?.agentCommands, activeSession?.projectRoot]);
 
   // File preview navigation history - derived from active session (per-agent history)
   const filePreviewHistory = useMemo(() =>
@@ -6420,6 +6462,7 @@ export default function MaestroConsole() {
         setMarkdownEditMode={setMarkdownEditMode}
         setAboutModalOpen={setAboutModalOpen}
         setRightPanelOpen={setRightPanelOpen}
+        setGitLogOpen={setGitLogOpen}
         inputRef={inputRef}
         logsEndRef={logsEndRef}
         terminalOutputRef={terminalOutputRef}

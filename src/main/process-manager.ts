@@ -681,10 +681,12 @@ export class ProcessManager extends EventEmitter {
                       this.emit('slash-commands', sessionId, slashCommands);
                     }
 
-                    // Accumulate text from partial streaming events (OpenCode text messages)
-                    // Skip error events - they're handled separately by detectErrorFromLine
+                    // Handle partial streaming events (assistant messages from Claude, text from OpenCode)
+                    // Emit immediately for real-time display AND accumulate for final result fallback
                     if (event.type === 'text' && event.isPartial && event.text) {
                       managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+                      // Emit partial text immediately for real-time streaming display
+                      this.emit('data', sessionId, event.text);
                     }
 
                     // Skip processing error events further - they're handled by agent-error emission
