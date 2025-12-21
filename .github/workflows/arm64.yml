@@ -1,0 +1,41 @@
+name: Build Maestro for Linux arm64
+
+on:
+  workflow_dispatch:  # Allows manual trigger
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm  # Free arm64 runner (use ubuntu-22.04-arm if needed)
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # Maestro uses Electron ~28, compatible with Node 20+
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+        # This triggers electron-rebuild → compiles node-pty for arm64
+
+      - name: Build app
+        run: npm run build
+
+      - name: Package for Linux arm64
+        run: npm run package:linux -- --arm64
+        # Creates artifacts in dist/ or release/ folder
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: maestro-linux-arm64
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.rpm
+            release/*
