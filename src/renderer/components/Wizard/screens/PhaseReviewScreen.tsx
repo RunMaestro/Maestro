@@ -896,6 +896,8 @@ function DocumentReview({
   const lastSavedContentRef = useRef<string>(localContent);
   const isSavingRef = useRef<boolean>(false);
   const pendingSaveContentRef = useRef<string | null>(null);
+  // Track previous document index to detect actual document switches
+  const prevDocumentIndexRef = useRef<number>(currentDocumentIndex);
 
   // Update local content when switching documents
   useEffect(() => {
@@ -904,7 +906,11 @@ function DocumentReview({
       : generatedDocuments[currentDocumentIndex]?.content || '';
     setLocalContent(newContent);
     lastSavedContentRef.current = newContent;
-    setMode('preview'); // Reset to preview when switching docs
+    // Only reset to preview when actually switching documents, not on every effect run
+    if (prevDocumentIndexRef.current !== currentDocumentIndex) {
+      setMode('preview');
+      prevDocumentIndexRef.current = currentDocumentIndex;
+    }
   }, [currentDocumentIndex, generatedDocuments, getPhase1Content]);
 
   // Handle document selection change
