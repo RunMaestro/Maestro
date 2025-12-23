@@ -337,6 +337,7 @@ describe('useSettings', () => {
 
       vi.mocked(window.maestro.settings.get).mockImplementation(async (key: string) => {
         if (key === 'autoRunStats') return savedStats;
+        if (key === 'concurrentAutoRunTimeMigrationApplied') return true; // Skip migration in tests
         return undefined;
       });
 
@@ -850,6 +851,7 @@ describe('useSettings', () => {
               badgeHistory: [],
             };
           }
+          if (key === 'concurrentAutoRunTimeMigrationApplied') return true; // Skip migration in tests
           return undefined;
         });
 
@@ -914,6 +916,7 @@ describe('useSettings', () => {
               badgeHistory: [],
             };
           }
+          if (key === 'concurrentAutoRunTimeMigrationApplied') return true; // Skip migration in tests
           return undefined;
         });
 

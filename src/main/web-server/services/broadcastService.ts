@@ -81,6 +81,9 @@ export interface SessionBroadcastData {
   groupId?: string | null;
   groupName?: string | null;
   groupEmoji?: string | null;
+  // Worktree subagent support
+  parentSessionId?: string | null;
+  worktreeBranch?: string | null;
 }
 
 /**

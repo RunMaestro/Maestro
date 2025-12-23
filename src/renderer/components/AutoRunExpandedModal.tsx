@@ -239,8 +239,7 @@ export function AutoRunExpandedModal({
               <Eye className="w-3.5 h-3.5" />
               Preview
             </button>
-            {/* Image upload button - hidden for now, can be re-enabled by removing false && */}
-            {false && (
+            {/* Image upload button - hidden for now, can be re-enabled when needed
             <button
               onClick={() => localMode === 'edit' && !isLocked && fileInputRef.current?.click()}
               disabled={localMode !== 'edit' || isLocked}
@@ -256,7 +255,7 @@ export function AutoRunExpandedModal({
             >
               <Image className="w-3.5 h-3.5" />
             </button>
-            )}
+            */}
             <input
               ref={fileInputRef}
               type="file"

@@ -41,6 +41,13 @@ vi.mock('../../../renderer/components/AICommandsPanel', () => ({
   ),
 }));
 
+// Mock SpecKitCommandsPanel
+vi.mock('../../../renderer/components/SpecKitCommandsPanel', () => ({
+  SpecKitCommandsPanel: ({ theme }: { theme: Theme }) => (
+    <div data-testid="spec-kit-commands-panel">Spec Kit Commands Panel</div>
+  ),
+}));
+
 // Mock CustomThemeBuilder
 vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
   CustomThemeBuilder: ({ isSelected, onSelect }: { isSelected: boolean; onSelect: () => void }) => (
@@ -147,6 +154,8 @@ const createDefaultProps = (overrides = {}) => ({
   setApiKey: vi.fn(),
   shortcuts: mockShortcuts,
   setShortcuts: vi.fn(),
+  tabShortcuts: {} as Record<string, Shortcut>,
+  setTabShortcuts: vi.fn(),
   fontFamily: 'Menlo',
   setFontFamily: vi.fn(),
   fontSize: 14,

@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
-import { X, Key, Moon, Sun, Keyboard, Check, Terminal, Bell, Cpu, Settings, Palette, Sparkles, History, Download, Bug, Cloud, FolderSync, RotateCcw, Folder, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { X, Key, Moon, Sun, Keyboard, Check, Terminal, Bell, Cpu, Settings, Palette, Sparkles, History, Download, Bug, Cloud, FolderSync, RotateCcw, Folder, ChevronDown, Plus, Trash2, Brain } from 'lucide-react';
 import type { Theme, ThemeColors, ThemeId, Shortcut, ShellInfo, CustomAICommand, LLMProvider } from '../types';
 import { CustomThemeBuilder } from './CustomThemeBuilder';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AICommandsPanel } from './AICommandsPanel';
+import { SpecKitCommandsPanel } from './SpecKitCommandsPanel';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { SettingCheckbox } from './SettingCheckbox';
@@ -168,6 +169,8 @@ interface SettingsModalProps {
   setApiKey: (key: string) => void;
   shortcuts: Record<string, Shortcut>;
   setShortcuts: (shortcuts: Record<string, Shortcut>) => void;
+  tabShortcuts: Record<string, Shortcut>;
+  setTabShortcuts: (shortcuts: Record<string, Shortcut>) => void;
   fontFamily: string;
   setFontFamily: (font: string) => void;
   fontSize: number;
@@ -196,6 +199,8 @@ interface SettingsModalProps {
   setEnterToSendTerminal: (value: boolean) => void;
   defaultSaveToHistory: boolean;
   setDefaultSaveToHistory: (value: boolean) => void;
+  defaultShowThinking: boolean;
+  setDefaultShowThinking: (value: boolean) => void;
   osNotificationsEnabled: boolean;
   setOsNotificationsEnabled: (value: boolean) => void;
   audioFeedbackEnabled: boolean;
@@ -533,7 +538,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
     }
   };
 
-  const handleRecord = (e: React.KeyboardEvent, actionId: string) => {
+  const handleRecord = (e: React.KeyboardEvent, actionId: string, isTabShortcut: boolean = false) => {
     e.preventDefault();
     e.stopPropagation();
 
@@ -565,10 +570,18 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
       }
     }
     keys.push(mainKey);
-    props.setShortcuts({
-      ...props.shortcuts,
-      [actionId]: { ...props.shortcuts[actionId], keys }
-    });
+
+    if (isTabShortcut) {
+      props.setTabShortcuts({
+        ...props.tabShortcuts,
+        [actionId]: { ...props.tabShortcuts[actionId], keys }
+      });
+    } else {
+      props.setShortcuts({
+        ...props.shortcuts,
+        [actionId]: { ...props.shortcuts[actionId], keys }
+      });
+    }
     setRecordingId(null);
   };
 
@@ -1098,6 +1111,17 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
                 theme={theme}
               />
 
+              {/* Default Thinking Toggle */}
+              <SettingCheckbox
+                icon={Brain}
+                sectionLabel="Default Thinking Toggle"
+                title="Enable &quot;Thinking&quot; by default for new tabs"
+                description="When enabled, new AI tabs will show streaming thinking/reasoning content as the AI works, instead of waiting for the final result"
+                checked={props.defaultShowThinking}
+                onChange={props.setDefaultShowThinking}
+                theme={theme}
+              />
+
               {/* Check for Updates on Startup */}
               <SettingCheckbox
                 icon={Download}
@@ -1376,10 +1400,46 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
           )}
 
           {activeTab === 'shortcuts' && (() => {
-            const totalShortcuts = Object.values(props.shortcuts).length;
-            const filteredShortcuts = Object.values(props.shortcuts)
-              .filter((sc: Shortcut) => sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase()));
+            const allShortcuts = [
+              ...Object.values(props.shortcuts).map(sc => ({ ...sc, isTabShortcut: false })),
+              ...Object.values(props.tabShortcuts).map(sc => ({ ...sc, isTabShortcut: true })),
+            ];
+            const totalShortcuts = allShortcuts.length;
+            const filteredShortcuts = allShortcuts
+              .filter((sc) => sc.label.toLowerCase().includes(shortcutsFilter.toLowerCase()));
             const filteredCount = filteredShortcuts.length;
+
+            // Group shortcuts by category
+            const generalShortcuts = filteredShortcuts.filter(sc => !sc.isTabShortcut);
+            const tabShortcutsFiltered = filteredShortcuts.filter(sc => sc.isTabShortcut);
+
+            const renderShortcutItem = (sc: Shortcut & { isTabShortcut: boolean }) => (
+              <div key={sc.id} className="flex items-center justify-between p-3 rounded border" style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}>
+                <span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>{sc.label}</span>
+                <button
+                  onClick={(e) => {
+                    setRecordingId(sc.id);
+                    e.currentTarget.focus();
+                  }}
+                  onKeyDownCapture={(e) => {
+                    if (recordingId === sc.id) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleRecord(e, sc.id, sc.isTabShortcut);
+                    }
+                  }}
+                  className={`px-3 py-1.5 rounded border text-xs font-mono min-w-[80px] text-center transition-colors ${recordingId === sc.id ? 'ring-2' : ''}`}
+                  style={{
+                    borderColor: recordingId === sc.id ? theme.colors.accent : theme.colors.border,
+                    backgroundColor: recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
+                    color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
+                    '--tw-ring-color': theme.colors.accent
+                  } as React.CSSProperties}
+                >
+                  {recordingId === sc.id ? 'Press keys...' : formatShortcutKeys(sc.keys)}
+                </button>
+              </div>
+            );
 
             return (
               <div className="flex flex-col" style={{ minHeight: '450px' }}>
@@ -1405,37 +1465,30 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
                 <p className="text-xs opacity-50 mb-3" style={{ color: theme.colors.textDim }}>
                   Not all shortcuts can be modified. Press <kbd className="px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: theme.colors.bgActivity }}>⌘/</kbd> from the main interface to view the full list of keyboard shortcuts.
                 </p>
-                <div className="space-y-2 flex-1 overflow-y-auto pr-2 scrollbar-thin">
-                  {filteredShortcuts.map((sc: Shortcut) => (
-                    <div key={sc.id} className="flex items-center justify-between p-3 rounded border" style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}>
-                      <span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>{sc.label}</span>
-                      <button
-                        onClick={(e) => {
-                          setRecordingId(sc.id);
-                          // Auto-focus the button so it immediately starts listening for keys
-                          e.currentTarget.focus();
-                        }}
-                        onKeyDownCapture={(e) => {
-                          if (recordingId === sc.id) {
-                            // Prevent default in capture phase to catch all key combinations
-                            // (including browser/system shortcuts like Option+Arrow)
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleRecord(e, sc.id);
-                          }
-                        }}
-                        className={`px-3 py-1.5 rounded border text-xs font-mono min-w-[80px] text-center transition-colors ${recordingId === sc.id ? 'ring-2' : ''}`}
-                        style={{
-                          borderColor: recordingId === sc.id ? theme.colors.accent : theme.colors.border,
-                          backgroundColor: recordingId === sc.id ? theme.colors.accentDim : theme.colors.bgActivity,
-                          color: recordingId === sc.id ? theme.colors.accent : theme.colors.textDim,
-                          '--tw-ring-color': theme.colors.accent
-                        } as React.CSSProperties}
-                      >
-                        {recordingId === sc.id ? 'Press keys...' : formatShortcutKeys(sc.keys)}
-                      </button>
+                <div className="space-y-4 flex-1 overflow-y-auto pr-2 scrollbar-thin">
+                  {/* General Shortcuts Section */}
+                  {generalShortcuts.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold uppercase mb-2 px-1" style={{ color: theme.colors.textDim }}>
+                        General
+                      </h3>
+                      <div className="space-y-2">
+                        {generalShortcuts.map(renderShortcutItem)}
+                      </div>
                     </div>
-                  ))}
+                  )}
+
+                  {/* AI Tab Shortcuts Section */}
+                  {tabShortcutsFiltered.length > 0 && (
+                    <div>
+                      <h3 className="text-xs font-bold uppercase mb-2 px-1" style={{ color: theme.colors.textDim }}>
+                        AI Tab
+                      </h3>
+                      <div className="space-y-2">
+                        {tabShortcutsFiltered.map(renderShortcutItem)}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -1458,11 +1511,22 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
           )}
 
           {activeTab === 'aicommands' && (
-            <AICommandsPanel
-              theme={theme}
-              customAICommands={props.customAICommands}
-              setCustomAICommands={props.setCustomAICommands}
-            />
+            <div className="space-y-8">
+              <AICommandsPanel
+                theme={theme}
+                customAICommands={props.customAICommands}
+                setCustomAICommands={props.setCustomAICommands}
+              />
+
+              {/* Divider */}
+              <div
+                className="border-t"
+                style={{ borderColor: theme.colors.border }}
+              />
+
+              {/* Spec Kit Commands Section */}
+              <SpecKitCommandsPanel theme={theme} />
+            </div>
           )}
         </div>
       </div>

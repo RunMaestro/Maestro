@@ -3,27 +3,28 @@ import { X } from 'lucide-react';
 import type { Theme, Shortcut } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 
 interface ShortcutsHelpModalProps {
   theme: Theme;
   shortcuts: Record<string, Shortcut>;
+  tabShortcuts: Record<string, Shortcut>;
   onClose: () => void;
   hasNoAgents?: boolean;
 }
 
-export function ShortcutsHelpModal({ theme, shortcuts, onClose, hasNoAgents }: ShortcutsHelpModalProps) {
+export function ShortcutsHelpModal({ theme, shortcuts, tabShortcuts, onClose, hasNoAgents }: ShortcutsHelpModalProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Combine all shortcuts for display: editable + tab + fixed (non-editable)
   const allShortcuts = useMemo(() => ({
     ...shortcuts,
-    ...TAB_SHORTCUTS,
+    ...tabShortcuts,
     ...FIXED_SHORTCUTS,
-  }), [shortcuts]);
+  }), [shortcuts, tabShortcuts]);
 
   const totalShortcuts = Object.values(allShortcuts).length;
   const filteredShortcuts = Object.values(allShortcuts)

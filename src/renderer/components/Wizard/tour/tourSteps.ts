@@ -28,9 +28,10 @@ import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
  * 5) Left panel hamburger menu - show menu options
  * 6) Left panel session list - explain sessions and groups
  * 7) Main terminal area - explain AI Terminal
- * 8) Input area - explain messaging the AI
- * 9) Terminal mode - teach Cmd+J shortcut
- * 10) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
+ * 8) Agent Sessions button - browse previous conversations
+ * 9) Input area - explain messaging the AI
+ * 10) Terminal mode - teach Cmd+J shortcut
+ * 11) Keyboard shortcuts - mention Cmd+/ for all shortcuts, end tour
  */
 export const tourSteps: TourStepConfig[] = [
   {
@@ -125,6 +126,17 @@ export const tourSteps: TourStepConfig[] = [
       'This is the AI Terminal where you communicate with your AI assistant. In "AI" mode, messages go to the AI. Switch to "Terminal" mode for direct shell commands.',
     selector: '[data-tour="main-terminal"]',
     position: 'center-overlay',
+    uiActions: [],
+  },
+  {
+    id: 'agent-sessions',
+    title: 'Agent Sessions',
+    description:
+      'The Agent Sessions button lets you browse previous conversations with your AI agent. Access it via Quick Actions ({{quickAction}}) or the {{agentSessions}} shortcut. Resume past sessions, search through history, and continue where you left off.',
+    descriptionGeneric:
+      'The Agent Sessions button lets you browse previous conversations with your AI agent. Access it via Quick Actions ({{quickAction}}) or the {{agentSessions}} shortcut. Resume past sessions, search through history, and continue where you left off.',
+    selector: '[data-tour="agent-sessions-button"]',
+    position: 'left',
     uiActions: [],
   },
   {

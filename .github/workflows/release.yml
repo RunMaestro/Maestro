@@ -53,11 +53,19 @@ jobs:
           sudo apt-get install -y libarchive-tools rpm
 
       # Linux ARM64: Install build dependencies for native modules and electron-builder
+      # Requires build-essential for compiling node-pty native module
       - name: Install Linux ARM64 build dependencies
         if: matrix.platform == 'linux-arm64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools rpm
+          sudo apt-get install -y libarchive-tools rpm build-essential
+
+      # Linux ARM64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
+      - name: Setup Python for node-gyp (Linux ARM64)
+        if: matrix.platform == 'linux-arm64'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
       # Windows: Setup for native module compilation
       - name: Setup Windows build tools
@@ -110,6 +118,27 @@ jobs:
         run: npm run postinstall
         env:
           npm_config_build_from_source: true
+
+      # Verify native module architecture (Linux ARM64 only)
+      - name: Verify node-pty architecture
+        if: matrix.platform == 'linux-arm64'
+        run: |
+          echo "Checking node-pty binary architecture..."
+          PTY_PATH=$(find node_modules/node-pty -name "pty.node" -type f 2>/dev/null | head -1)
+          if [ -n "$PTY_PATH" ]; then
+            file "$PTY_PATH"
+            # Verify it's ARM64, not x86_64
+            if file "$PTY_PATH" | grep -q "ARM aarch64\|aarch64"; then
+              echo "✓ node-pty is correctly built for ARM64"
+            else
+              echo "✗ ERROR: node-pty is NOT built for ARM64!"
+              file "$PTY_PATH"
+              exit 1
+            fi
+          else
+            echo "✗ ERROR: node-pty binary not found!"
+            exit 1
+          fi
 
       - name: Build application
         run: npm run build

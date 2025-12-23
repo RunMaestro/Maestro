@@ -21,6 +21,7 @@ import { registerClaudeHandlers, ClaudeHandlerDependencies } from './claude';
 import { registerAgentSessionsHandlers, AgentSessionsHandlerDependencies } from './agentSessions';
 import { registerGroupChatHandlers, GroupChatHandlerDependencies } from './groupChat';
 import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
+import { registerSpeckitHandlers } from './speckit';
 import { AgentDetector } from '../../agent-detector';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -42,6 +43,7 @@ export { registerClaudeHandlers };
 export { registerAgentSessionsHandlers };
 export { registerGroupChatHandlers };
 export { registerDebugHandlers };
+export { registerSpeckitHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -147,6 +149,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
     groupsStore: deps.groupsStore,
     // bootstrapStore is optional - not available in HandlerDependencies
   });
+  // Register spec-kit handlers (no dependencies needed)
+  registerSpeckitHandlers();
   // Setup logger event forwarding to renderer
   setupLoggerEventForwarding(deps.getMainWindow);
 }

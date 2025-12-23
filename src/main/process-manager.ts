@@ -755,10 +755,40 @@ export class ProcessManager extends EventEmitter {
                       this.emit('slash-commands', sessionId, slashCommands);
                     }
 
-                    // Accumulate text from partial streaming events (OpenCode text messages)
-                    // Skip error events - they're handled separately by detectErrorFromLine
+                    // Handle streaming text events (OpenCode, Codex reasoning)
+                    // Emit partial text to thinking-chunk for real-time display when showThinking is enabled
+                    // Accumulate for final result assembly - the result message will contain the complete response
+                    // NOTE: We do NOT emit partial text to 'data' because it causes streaming content
+                    // to appear in the main output even when thinking is disabled. The final 'result'
+                    // message contains the properly formatted complete response.
                     if (event.type === 'text' && event.isPartial && event.text) {
+                      // Emit thinking chunk for real-time display (renderer shows only if tab.showThinking is true)
+                      this.emit('thinking-chunk', sessionId, event.text);
+
+                      // Accumulate for result fallback (in case result message doesn't have text)
                       managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+                    }
+
+                    // Handle tool execution events (OpenCode, Codex)
+                    // Emit tool events so UI can display what the agent is doing
+                    if (event.type === 'tool_use' && event.toolName) {
+                      this.emit('tool-execution', sessionId, {
+                        toolName: event.toolName,
+                        state: event.toolState,
+                        timestamp: Date.now(),
+                      });
+                    }
+
+                    // Handle tool_use blocks embedded in text events (Claude Code mixed content)
+                    // Claude Code returns text with toolUseBlocks array attached
+                    if (event.toolUseBlocks?.length) {
+                      for (const tool of event.toolUseBlocks) {
+                        this.emit('tool-execution', sessionId, {
+                          toolName: tool.name,
+                          state: { status: 'running', input: tool.input },
+                          timestamp: Date.now(),
+                        });
+                      }
                     }
 
                     // Skip processing error events further - they're handled by agent-error emission

@@ -130,6 +130,19 @@ contextBridge.exposeInMainWorld('maestro', {
       ipcRenderer.on('process:slash-commands', handler);
       return () => ipcRenderer.removeListener('process:slash-commands', handler);
     },
+    // Thinking/streaming content chunks from AI agents
+    // Emitted when agents produce partial text events (isPartial: true)
+    // Renderer decides whether to display based on tab's showThinking setting
+    onThinkingChunk: (callback: (sessionId: string, content: string) => void) => {
+      const handler = (_: any, sessionId: string, content: string) => callback(sessionId, content);
+      ipcRenderer.on('process:thinking-chunk', handler);
+      return () => ipcRenderer.removeListener('process:thinking-chunk', handler);
+    },
+    onToolExecution: (callback: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void) => {
+      const handler = (_: any, sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => callback(sessionId, toolEvent);
+      ipcRenderer.on('process:tool-execution', handler);
+      return () => ipcRenderer.removeListener('process:tool-execution', handler);
+    },
     // Remote command execution from web interface
     // This allows web commands to go through the same code path as desktop commands
     // inputMode is optional - if provided, renderer should use it instead of session state
@@ -383,6 +396,13 @@ contextBridge.exposeInMainWorld('maestro', {
     unwatchWorktreeDirectory: (sessionId: string) =>
       ipcRenderer.invoke('git:unwatchWorktreeDirectory', sessionId) as Promise<{
         success: boolean;
+      }>,
+    // Remove a worktree directory from disk
+    removeWorktree: (worktreePath: string, force?: boolean) =>
+      ipcRenderer.invoke('git:removeWorktree', worktreePath, force) as Promise<{
+        success: boolean;
+        error?: string;
+        hasUncommittedChanges?: boolean;
       }>,
     // Listen for discovered worktrees
     onWorktreeDiscovered: (callback: (data: { sessionId: string; worktree: { path: string; name: string; branch: string | null } }) => void) => {
@@ -842,6 +862,75 @@ contextBridge.exposeInMainWorld('maestro', {
     },
   },
 
+  // Spec Kit API (bundled spec-kit slash commands)
+  speckit: {
+    // Get metadata (version, last refresh date)
+    getMetadata: () =>
+      ipcRenderer.invoke('speckit:getMetadata') as Promise<{
+        success: boolean;
+        metadata?: {
+          lastRefreshed: string;
+          commitSha: string;
+          sourceVersion: string;
+          sourceUrl: string;
+        };
+        error?: string;
+      }>,
+    // Get all spec-kit prompts
+    getPrompts: () =>
+      ipcRenderer.invoke('speckit:getPrompts') as Promise<{
+        success: boolean;
+        commands?: Array<{
+          id: string;
+          command: string;
+          description: string;
+          prompt: string;
+          isCustom: boolean;
+          isModified: boolean;
+        }>;
+        error?: string;
+      }>,
+    // Get a single command by slash command string
+    getCommand: (slashCommand: string) =>
+      ipcRenderer.invoke('speckit:getCommand', slashCommand) as Promise<{
+        success: boolean;
+        command?: {
+          id: string;
+          command: string;
+          description: string;
+          prompt: string;
+          isCustom: boolean;
+          isModified: boolean;
+        } | null;
+        error?: string;
+      }>,
+    // Save user's edit to a prompt
+    savePrompt: (id: string, content: string) =>
+      ipcRenderer.invoke('speckit:savePrompt', id, content) as Promise<{
+        success: boolean;
+        error?: string;
+      }>,
+    // Reset a prompt to bundled default
+    resetPrompt: (id: string) =>
+      ipcRenderer.invoke('speckit:resetPrompt', id) as Promise<{
+        success: boolean;
+        prompt?: string;
+        error?: string;
+      }>,
+    // Refresh prompts from GitHub
+    refresh: () =>
+      ipcRenderer.invoke('speckit:refresh') as Promise<{
+        success: boolean;
+        metadata?: {
+          lastRefreshed: string;
+          commitSha: string;
+          sourceVersion: string;
+          sourceUrl: string;
+        };
+        error?: string;
+      }>,
+  },
+
   // Notification API
   notification: {
     show: (title: string, body: string) =>
@@ -1181,6 +1270,8 @@ export interface MaestroAPI {
     onExit: (callback: (sessionId: string, code: number) => void) => () => void;
     onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
     onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+    onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
+    onToolExecution: (callback: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void) => () => void;
     onRemoteCommand: (callback: (sessionId: string, command: string) => void) => () => void;
     onRemoteSwitchMode: (callback: (sessionId: string, mode: 'ai' | 'terminal') => void) => () => void;
     onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
@@ -2115,6 +2206,61 @@ export interface MaestroAPI {
         longestRunMs: number;
         runDate: string;
       }>;
+      error?: string;
+    }>;
+  };
+  speckit: {
+    getMetadata: () => Promise<{
+      success: boolean;
+      metadata?: {
+        lastRefreshed: string;
+        commitSha: string;
+        sourceVersion: string;
+        sourceUrl: string;
+      };
+      error?: string;
+    }>;
+    getPrompts: () => Promise<{
+      success: boolean;
+      commands?: Array<{
+        id: string;
+        command: string;
+        description: string;
+        prompt: string;
+        isCustom: boolean;
+        isModified: boolean;
+      }>;
+      error?: string;
+    }>;
+    getCommand: (slashCommand: string) => Promise<{
+      success: boolean;
+      command?: {
+        id: string;
+        command: string;
+        description: string;
+        prompt: string;
+        isCustom: boolean;
+        isModified: boolean;
+      };
+      error?: string;
+    }>;
+    savePrompt: (id: string, content: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    resetPrompt: (id: string) => Promise<{
+      success: boolean;
+      prompt?: string;
+      error?: string;
+    }>;
+    refresh: () => Promise<{
+      success: boolean;
+      metadata?: {
+        lastRefreshed: string;
+        commitSha: string;
+        sourceVersion: string;
+        sourceUrl: string;
+      };
       error?: string;
     }>;
   };

@@ -18,7 +18,7 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS, GESTURE_THRESHOLDS } from './constants';
-import { formatRelativeTime } from '../../shared/formatters';
+import { formatRelativeTime, truncateCommand } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
 
@@ -37,6 +37,9 @@ const FLICK_VELOCITY_THRESHOLD = 0.5;
 /** Snap threshold - if dragged past this percentage, snap open/close */
 const SNAP_THRESHOLD = 0.3;
 
+/** Maximum length for truncated command display in drawer */
+const MAX_COMMAND_LENGTH = 60;
+
 export interface CommandHistoryDrawerProps {
   /** Whether the drawer is open */
   isOpen: boolean;
@@ -50,16 +53,6 @@ export interface CommandHistoryDrawerProps {
   onDeleteCommand?: (id: string) => void;
   /** Callback to clear all history */
   onClearHistory?: () => void;
-}
-
-// formatRelativeTime imported from ../../shared/formatters
-
-/**
- * Truncate command text for display
- */
-function truncateCommand(command: string, maxLength = 60): string {
-  if (command.length <= maxLength) return command;
-  return command.slice(0, maxLength - 3) + '...';
 }
 
 /** Width of the delete action button revealed on swipe */
@@ -276,7 +269,7 @@ function SwipeableHistoryItem({
               textOverflow: 'ellipsis',
             }}
           >
-            {truncateCommand(entry.command)}
+            {truncateCommand(entry.command, MAX_COMMAND_LENGTH)}
           </p>
           <p
             style={{

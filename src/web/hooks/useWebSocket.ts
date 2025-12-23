@@ -77,6 +77,9 @@ export interface SessionData {
   aiTabs?: AITabData[];
   activeTabId?: string;
   bookmarked?: boolean; // Whether session is bookmarked (shows in Bookmarks group)
+  // Worktree subagent support
+  parentSessionId?: string | null; // If this is a worktree child, links to parent session
+  worktreeBranch?: string | null; // Git branch for this worktree child
 }
 
 /**

@@ -58,6 +58,12 @@ export const SAFE_AREA_DEFAULTS = {
 } as const;
 
 /**
+ * Minimum touch target size per Apple HIG guidelines (44pt).
+ * Use this constant for all interactive elements to ensure accessibility.
+ */
+export const MIN_TOUCH_TARGET = 44;
+
+/**
  * Mobile gesture detection thresholds
  */
 export const GESTURE_THRESHOLDS = {

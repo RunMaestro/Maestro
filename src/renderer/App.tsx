@@ -40,6 +40,7 @@ import { AgentErrorModal } from './components/AgentErrorModal';
 import { WorktreeConfigModal } from './components/WorktreeConfigModal';
 import { CreateWorktreeModal } from './components/CreateWorktreeModal';
 import { CreatePRModal, PRDetails } from './components/CreatePRModal';
+import { DeleteWorktreeModal } from './components/DeleteWorktreeModal';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
@@ -81,6 +82,7 @@ import { ToastContainer } from './components/Toast';
 
 // Import services
 import { gitService } from './services/git';
+import { getSpeckitCommands } from './services/speckit';
 
 // Import prompts and synopsis parsing
 import { autorunSynopsisPrompt, maestroSystemPrompt } from '../prompts';
@@ -90,13 +92,13 @@ import { parseSynopsis } from '../shared/synopsis';
 import type {
   ToolType, SessionState, RightPanelTab, SettingsTab,
   FocusArea, LogEntry, Session, Group, AITab, UsageStats, QueuedItem, BatchRunConfig,
-  AgentError, BatchRunState, GroupChat, GroupChatMessage, GroupChatState
+  AgentError, BatchRunState, GroupChat, GroupChatMessage, GroupChatState,
+  SpecKitCommand
 } from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
 import { setActiveTab, createTab, closeTab, reopenClosedTab, getActiveTab, getWriteModeTab, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab, getInitialRenameValue, createFileTab } from './utils/tabHelpers';
-import { TAB_SHORTCUTS } from './constants/shortcuts';
 import { shouldOpenExternally, getAllFolderPaths, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
@@ -187,6 +189,7 @@ export default function MaestroConsole() {
     enterToSendAI, setEnterToSendAI,
     enterToSendTerminal, setEnterToSendTerminal,
     defaultSaveToHistory, setDefaultSaveToHistory,
+    defaultShowThinking, setDefaultShowThinking,
     leftSidebarWidth, setLeftSidebarWidth,
     rightPanelWidth, setRightPanelWidth,
     markdownEditMode, setMarkdownEditMode,
@@ -203,6 +206,7 @@ export default function MaestroConsole() {
     checkForUpdatesOnStartup, setCheckForUpdatesOnStartup,
     crashReportingEnabled, setCrashReportingEnabled,
     shortcuts, setShortcuts,
+    tabShortcuts, setTabShortcuts,
     customAICommands, setCustomAICommands,
     globalStats, updateGlobalStats,
     autoRunStats, recordAutoRunComplete, updateAutoRunProgress, acknowledgeBadge, getUnacknowledgedBadgeLevel,
@@ -214,11 +218,13 @@ export default function MaestroConsole() {
   } = settings;
 
   // --- KEYBOARD SHORTCUT HELPERS ---
-  const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({ shortcuts });
+  const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({ shortcuts, tabShortcuts });
 
   // --- STATE ---
   const [sessions, setSessions] = useState<Session[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
+  // Spec Kit commands (loaded from bundled prompts)
+  const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
   // Track worktree paths that were manually removed - prevents re-discovery during this session
   const [removedWorktreePaths, setRemovedWorktreePaths] = useState<Set<string>>(new Set());
   // Ref to always access current removed paths (avoids stale closure in async scanner)
@@ -399,6 +405,8 @@ export default function MaestroConsole() {
   const [createWorktreeSession, setCreateWorktreeSession] = useState<Session | null>(null);
   const [createPRModalOpen, setCreatePRModalOpen] = useState(false);
   const [createPRSession, setCreatePRSession] = useState<Session | null>(null);
+  const [deleteWorktreeModalOpen, setDeleteWorktreeModalOpen] = useState(false);
+  const [deleteWorktreeSession, setDeleteWorktreeSession] = useState<Session | null>(null);
 
   // Tab Switcher Modal State
   const [tabSwitcherOpen, setTabSwitcherOpen] = useState(false);
@@ -924,6 +932,19 @@ export default function MaestroConsole() {
     }
   }, [settingsLoaded, checkForUpdatesOnStartup]);
 
+  // Load spec-kit commands on startup
+  useEffect(() => {
+    const loadSpeckitCommands = async () => {
+      try {
+        const commands = await getSpeckitCommands();
+        setSpeckitCommands(commands);
+      } catch (error) {
+        console.error('[SpecKit] Failed to load commands:', error);
+      }
+    };
+    loadSpeckitCommands();
+  }, []);
+
   // Set up process event listeners for real-time output
   useEffect(() => {
     // Handle process output data (BATCHED for performance)
@@ -986,6 +1007,31 @@ export default function MaestroConsole() {
       batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
       batchedUpdater.markDelivered(actualSessionId, targetTabId);
       batchedUpdater.updateCycleBytes(actualSessionId, data.length);
+
+      // Clear error state if session had an error but is now receiving successful data
+      // This indicates the user fixed the issue (e.g., re-authenticated) and the agent is working
+      const sessionForErrorCheck = sessionsRef.current.find(s => s.id === actualSessionId);
+      if (sessionForErrorCheck?.agentError) {
+        setSessions(prev => prev.map(s => {
+          if (s.id !== actualSessionId) return s;
+          // Clear error from session and the specific tab
+          const updatedAiTabs = s.aiTabs.map(tab =>
+            tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+          );
+          return {
+            ...s,
+            agentError: undefined,
+            agentErrorTabId: undefined,
+            agentErrorPaused: false,
+            state: 'busy' as SessionState, // Keep busy since we're receiving data
+            aiTabs: updatedAiTabs,
+          };
+        }));
+        // Notify main process to clear error state
+        window.maestro.agentError.clearError(actualSessionId).catch(err => {
+          console.error('Failed to clear agent error on successful data:', err);
+        });
+      }
 
       // Determine if tab should be marked as unread
       // Mark as unread if user hasn't seen the new message:
@@ -1100,6 +1146,7 @@ export default function MaestroConsole() {
             : getActiveTab(currentSession);
           const logs = completedTab?.logs || [];
           const lastUserLog = logs.filter(log => log.source === 'user').pop();
+          // Find last AI response: 'stdout' or 'ai' source (note: 'thinking' logs are already excluded since they have a distinct source type)
           const lastAiLog = logs.filter(log => log.source === 'stdout' || log.source === 'ai').pop();
           // Use the completed tab's thinkingStartTime for accurate per-tab duration
           const completedTabData = currentSession.aiTabs?.find(tab => tab.id === tabIdFromSession);
@@ -1820,6 +1867,129 @@ export default function MaestroConsole() {
       setAgentErrorModalSessionId(actualSessionId);
     });
 
+    // Handle thinking/streaming content chunks from AI agents
+    // Only appends to logs if the tab has showThinking enabled
+    // THROTTLED: Uses requestAnimationFrame to batch rapid chunk arrivals (Phase 6.4)
+    const unsubscribeThinkingChunk = window.maestro.process.onThinkingChunk?.((sessionId: string, content: string) => {
+      // Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
+      const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+      if (!aiTabMatch) return; // Only handle AI tab messages
+
+      const actualSessionId = aiTabMatch[1];
+      const tabId = aiTabMatch[2];
+      const bufferKey = `${actualSessionId}:${tabId}`;
+
+      // Buffer the chunk - accumulate if there's already content for this session+tab
+      const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
+      thinkingChunkBufferRef.current.set(bufferKey, existingContent + content);
+
+      // Schedule a single RAF callback to process all buffered chunks
+      // This naturally throttles to ~60fps (16.67ms) and batches multiple rapid arrivals
+      if (thinkingChunkRafIdRef.current === null) {
+        thinkingChunkRafIdRef.current = requestAnimationFrame(() => {
+          // Process all buffered chunks in a single setSessions call
+          const buffer = thinkingChunkBufferRef.current;
+          if (buffer.size === 0) {
+            thinkingChunkRafIdRef.current = null;
+            return;
+          }
+
+          // Take a snapshot and clear the buffer
+          const chunksToProcess = new Map(buffer);
+          buffer.clear();
+          thinkingChunkRafIdRef.current = null;
+
+          setSessions(prev => prev.map(s => {
+            // Check if any buffered chunks are for this session
+            let hasChanges = false;
+            for (const [key] of chunksToProcess) {
+              if (key.startsWith(s.id + ':')) {
+                hasChanges = true;
+                break;
+              }
+            }
+            if (!hasChanges) return s;
+
+            // Process each chunk for this session
+            let updatedTabs = s.aiTabs;
+            for (const [key, bufferedContent] of chunksToProcess) {
+              const [chunkSessionId, chunkTabId] = key.split(':');
+              if (chunkSessionId !== s.id) continue;
+
+              const targetTab = updatedTabs.find(t => t.id === chunkTabId);
+              if (!targetTab) continue;
+
+              // Only append if thinking is enabled for this tab
+              if (!targetTab.showThinking) continue;
+
+              // Find the last log entry - if it's a thinking entry, append to it
+              const lastLog = targetTab.logs[targetTab.logs.length - 1];
+              if (lastLog?.source === 'thinking') {
+                // Append to existing thinking block
+                updatedTabs = updatedTabs.map(tab =>
+                  tab.id === chunkTabId
+                    ? { ...tab, logs: [...tab.logs.slice(0, -1), { ...lastLog, text: lastLog.text + bufferedContent }] }
+                    : tab
+                );
+              } else {
+                // Create new thinking block
+                const newLog: LogEntry = {
+                  id: generateId(),
+                  timestamp: Date.now(),
+                  source: 'thinking',
+                  text: bufferedContent
+                };
+                updatedTabs = updatedTabs.map(tab =>
+                  tab.id === chunkTabId
+                    ? { ...tab, logs: [...tab.logs, newLog] }
+                    : tab
+                );
+              }
+            }
+
+            return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
+          }));
+        });
+      }
+    });
+
+    // Handle tool execution events from AI agents
+    // Only appends to logs if the tab has showThinking enabled (tools shown alongside thinking)
+    const unsubscribeToolExecution = window.maestro.process.onToolExecution?.((sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
+      // Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
+      const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+      if (!aiTabMatch) return; // Only handle AI tab messages
+
+      const actualSessionId = aiTabMatch[1];
+      const tabId = aiTabMatch[2];
+
+      setSessions(prev => prev.map(s => {
+        if (s.id !== actualSessionId) return s;
+
+        const targetTab = s.aiTabs.find(t => t.id === tabId);
+        if (!targetTab?.showThinking) return s; // Only show if thinking enabled
+
+        const toolLog: LogEntry = {
+          id: `tool-${Date.now()}-${toolEvent.toolName}`,
+          timestamp: toolEvent.timestamp,
+          source: 'tool',
+          text: toolEvent.toolName,
+          metadata: {
+            toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
+          }
+        };
+
+        return {
+          ...s,
+          aiTabs: s.aiTabs.map(tab =>
+            tab.id === tabId
+              ? { ...tab, logs: [...tab.logs, toolLog] }
+              : tab
+          )
+        };
+      }));
+    });
+
     // Cleanup listeners on unmount
     return () => {
       unsubscribeData();
@@ -1830,6 +2000,14 @@ export default function MaestroConsole() {
       unsubscribeCommandExit();
       unsubscribeUsage();
       unsubscribeAgentError();
+      unsubscribeThinkingChunk?.();
+      unsubscribeToolExecution?.();
+      // Cancel any pending thinking chunk RAF and clear buffer (Phase 6.4)
+      if (thinkingChunkRafIdRef.current !== null) {
+        cancelAnimationFrame(thinkingChunkRafIdRef.current);
+        thinkingChunkRafIdRef.current = null;
+      }
+      thinkingChunkBufferRef.current.clear();
     };
   }, []);
 
@@ -1954,12 +2132,14 @@ export default function MaestroConsole() {
   const sessionsRef = useRef(sessions);
   const updateGlobalStatsRef = useRef(updateGlobalStats);
   const customAICommandsRef = useRef(customAICommands);
+  const speckitCommandsRef = useRef(speckitCommands);
   const activeSessionIdRef = useRef(activeSessionId);
   groupsRef.current = groups;
   addToastRef.current = addToast;
   sessionsRef.current = sessions;
   updateGlobalStatsRef.current = updateGlobalStats;
   customAICommandsRef.current = customAICommands;
+  speckitCommandsRef.current = speckitCommands;
   activeSessionIdRef.current = activeSessionId;
 
   // Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now provided by useAgentExecution hook
@@ -1975,6 +2155,11 @@ export default function MaestroConsole() {
   // These are populated after useBatchProcessor is called and used in the agent error handler
   const pauseBatchOnErrorRef = useRef<((sessionId: string, error: AgentError, documentIndex: number, taskDescription?: string) => void) | null>(null);
   const getBatchStateRef = useRef<((sessionId: string) => BatchRunState) | null>(null);
+
+  // Refs for throttled thinking chunk updates (Phase 6.4)
+  // Buffer chunks per session+tab and use requestAnimationFrame to batch UI updates
+  const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map()); // Key: "sessionId:tabId", Value: accumulated content
+  const thinkingChunkRafIdRef = useRef<number | null>(null);
 
   // Expose addToast to window for debugging/testing
   useEffect(() => {
@@ -2208,14 +2393,14 @@ export default function MaestroConsole() {
     // Create a new tab in the session to start fresh
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
-      const result = createTab(s);
+      const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
       if (!result) return s;
       return result.session;
     }));
 
     // Focus the input after creating new tab
     setTimeout(() => inputRef.current?.focus(), 0);
-  }, [sessions, handleClearAgentError]);
+  }, [sessions, handleClearAgentError, defaultSaveToHistory, defaultShowThinking]);
 
   // Handler to retry after error (recovery action)
   const handleRetryAfterError = useCallback((sessionId: string) => {
@@ -2302,6 +2487,7 @@ export default function MaestroConsole() {
     setSessions,
     setActiveSessionId,
     defaultSaveToHistory,
+    defaultShowThinking,
   });
 
   // Web broadcasting hook - handles external history change notifications
@@ -2322,7 +2508,7 @@ export default function MaestroConsole() {
   // Get capabilities for the active session's agent type
   const { hasCapability: hasActiveSessionCapability } = useAgentCapabilities(activeSession?.toolType);
 
-  // Combine built-in slash commands with custom AI commands AND agent-specific commands for autocomplete
+  // Combine built-in slash commands with custom AI commands, spec-kit commands, AND agent-specific commands for autocomplete
   const allSlashCommands = useMemo(() => {
     const customCommandsAsSlash = customAICommands
       .map(cmd => ({
@@ -2330,6 +2516,15 @@ export default function MaestroConsole() {
         description: cmd.description,
         aiOnly: true, // Custom AI commands are only available in AI mode
         prompt: cmd.prompt, // Include prompt for execution
+      }));
+    // Spec Kit commands (bundled from github/spec-kit)
+    const speckitCommandsAsSlash = speckitCommands
+      .map(cmd => ({
+        command: cmd.command,
+        description: cmd.description,
+        aiOnly: true, // Spec-kit commands are only available in AI mode
+        prompt: cmd.prompt, // Include prompt for execution
+        isSpeckit: true, // Mark as spec-kit command for special handling
       }));
     // Only include agent-specific commands if the agent supports slash commands
     // This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
@@ -2340,8 +2535,8 @@ export default function MaestroConsole() {
           aiOnly: true, // Agent commands are only available in AI mode
         }))
       : [];
-    return [...slashCommands, ...customCommandsAsSlash, ...agentCommands];
-  }, [customAICommands, activeSession?.agentCommands, hasActiveSessionCapability]);
+    return [...slashCommands, ...customCommandsAsSlash, ...speckitCommandsAsSlash, ...agentCommands];
+  }, [customAICommands, speckitCommands, activeSession?.agentCommands, hasActiveSessionCapability]);
 
   // Derive current input value and setter based on active session mode
   // For AI mode: use active tab's inputValue (stored per-tab)
@@ -2604,6 +2799,7 @@ export default function MaestroConsole() {
     setAgentSessionsOpen,
     rightPanelRef,
     defaultSaveToHistory,
+    defaultShowThinking,
   });
 
   // Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now updated in useAgentExecution hook
@@ -3028,8 +3224,12 @@ export default function MaestroConsole() {
     // Set up interval to update progress every minute
     const intervalId = setInterval(() => {
       const now = Date.now();
-      const deltaMs = now - autoRunProgressRef.current.lastUpdateTime;
+      const elapsedMs = now - autoRunProgressRef.current.lastUpdateTime;
       autoRunProgressRef.current.lastUpdateTime = now;
+
+      // Multiply by number of concurrent sessions so each active Auto Run contributes its time
+      // e.g., 2 sessions running for 1 minute = 2 minutes toward cumulative achievement time
+      const deltaMs = elapsedMs * activeBatchSessionIds.length;
 
       // Update achievement stats with the delta
       const { newBadgeLevel } = updateAutoRunProgress(deltaMs);
@@ -4176,140 +4376,8 @@ export default function MaestroConsole() {
     }
 
     try {
-      // First, check if this directory contains git-enabled subdirectories (worktrees)
-      // If so, we create sessions for each subdirectory instead of the parent
-      const scanResult = await window.maestro.git.scanWorktreeDirectory(workingDir);
-      const { gitSubdirs } = scanResult;
-
-      if (gitSubdirs.length > 0) {
-        // This is a worktree parent directory - create sessions for subdirectories only
-
-        // Create a group using the user-provided name
-        const groupId = generateId();
-        const worktreeGroup: Group = {
-          id: groupId,
-          name: name,
-          collapsed: false,
-          emoji: '🌳'
-        };
-        setGroups(prev => [...prev, worktreeGroup]);
-
-        // Create sessions for each git subdirectory
-        const newSessions: Session[] = [];
-        let firstSessionId: string | null = null;
-
-        for (const subdir of gitSubdirs) {
-          // Create session name from directory name and branch
-          const sessionName = subdir.branch
-            ? `${subdir.name} (${subdir.branch})`
-            : subdir.name;
-
-          // Check if session already exists for this path
-          const existingSession = sessions.find(s => s.cwd === subdir.path || s.projectRoot === subdir.path);
-          if (existingSession) {
-            continue;
-          }
-
-          const newId = generateId();
-          if (!firstSessionId) firstSessionId = newId;
-
-          const initialTabId = generateId();
-          const initialTab: AITab = {
-            id: initialTabId,
-            agentSessionId: null,
-            name: null,
-            starred: false,
-            logs: [],
-            inputValue: '',
-            stagedImages: [],
-            createdAt: Date.now(),
-            state: 'idle',
-            saveToHistory: defaultSaveToHistory
-          };
-
-          // Fetch git info for this subdirectory
-          let gitBranches: string[] | undefined;
-          let gitTags: string[] | undefined;
-          let gitRefsCacheTime: number | undefined;
-
-          try {
-            [gitBranches, gitTags] = await Promise.all([
-              gitService.getBranches(subdir.path),
-              gitService.getTags(subdir.path)
-            ]);
-            gitRefsCacheTime = Date.now();
-          } catch {
-            // Ignore errors fetching git info
-          }
-
-          const newSession: Session = {
-            id: newId,
-            name: sessionName,
-            groupId: groupId,
-            toolType: agentId as ToolType,
-            state: 'idle',
-            cwd: subdir.path,
-            fullPath: subdir.path,
-            projectRoot: subdir.path,
-            isGitRepo: true,
-            gitBranches,
-            gitTags,
-            gitRefsCacheTime,
-            worktreeParentPath: workingDir, // Track parent for dynamic scanning
-            aiLogs: [],
-            shellLogs: [{ id: generateId(), timestamp: Date.now(), source: 'system', text: 'Shell Session Ready.' }],
-            workLog: [],
-            contextUsage: 0,
-            inputMode: agentId === 'terminal' ? 'terminal' : 'ai',
-            aiPid: 0,
-            terminalPid: 0,
-            port: 3000 + Math.floor(Math.random() * 100),
-            isLive: false,
-            changedFiles: [],
-            fileTree: [],
-            fileExplorerExpanded: [],
-            fileExplorerScrollPos: 0,
-            fileTreeAutoRefreshInterval: 180,
-            shellCwd: subdir.path,
-            aiCommandHistory: [],
-            shellCommandHistory: [],
-            executionQueue: [],
-            activeTimeMs: 0,
-            aiTabs: [initialTab],
-            activeTabId: initialTabId,
-            closedTabHistory: [],
-            nudgeMessage,
-            customPath,
-            customArgs,
-            customEnvVars,
-            customModel
-          };
-
-          newSessions.push(newSession);
-        }
-
-        if (newSessions.length > 0) {
-          setSessions(prev => [...prev, ...newSessions]);
-          // Set the first worktree session as active
-          if (firstSessionId) {
-            setActiveSessionId(firstSessionId);
-          }
-          // Track session creation in global stats
-          updateGlobalStats({ totalSessions: newSessions.length });
-          addToast({
-            type: 'success',
-            title: 'Worktree Sessions Created',
-            message: `Created ${newSessions.length} agents for git worktrees`,
-          });
-        }
-
-        // Auto-focus the input
-        setActiveFocus('main');
-        setTimeout(() => inputRef.current?.focus(), 50);
-        return;
-      }
-
-      // No git subdirectories found - create a single session for this directory
+      // Always create a single session for the selected directory
+      // Worktree scanning/creation is now handled explicitly via the worktree config modal
       // Validate uniqueness before creating
       const validation = validateNewSession(name, workingDir, agentId as ToolType, sessions);
       if (!validation.valid) {
@@ -4878,8 +4946,15 @@ export default function MaestroConsole() {
           cmd => cmd.command === commandText
         );
 
-        if (matchingCustomCommand) {
-          console.log('[Remote] Found matching custom AI command:', matchingCustomCommand.command);
+        // Look up in spec-kit commands
+        const matchingSpeckitCommand = speckitCommandsRef.current.find(
+          cmd => cmd.command === commandText
+        );
+
+        const matchingCommand = matchingCustomCommand || matchingSpeckitCommand;
+
+        if (matchingCommand) {
+          console.log('[Remote] Found matching command:', matchingCommand.command, matchingSpeckitCommand ? '(spec-kit)' : '(custom)');
 
           // Get git branch for template substitution
           let gitBranch: string | undefined;
@@ -4894,12 +4969,12 @@ export default function MaestroConsole() {
 
           // Substitute template variables
           promptToSend = substituteTemplateVariables(
-            matchingCustomCommand.prompt,
+            matchingCommand.prompt,
             { session, gitBranch }
           );
           commandMetadata = {
-            command: matchingCustomCommand.command,
-            description: matchingCustomCommand.description
+            command: matchingCommand.command,
+            description: matchingCommand.description
           };
 
           console.log('[Remote] Substituted prompt (first 100 chars):', promptToSend.substring(0, 100));
@@ -5200,8 +5275,9 @@ export default function MaestroConsole() {
           sessionCustomContextWindow: session.customContextWindow,
         });
       } else if (item.type === 'command' && item.command) {
-        // Process a slash command - find the matching custom AI command
-        const matchingCommand = customAICommands.find(cmd => cmd.command === item.command);
+        // Process a slash command - find the matching custom AI command or speckit command
+        const matchingCommand = customAICommands.find(cmd => cmd.command === item.command)
+          || speckitCommands.find(cmd => cmd.command === item.command);
         if (matchingCommand) {
           // Substitute template variables
           let gitBranch: string | undefined;
@@ -5448,8 +5524,10 @@ export default function MaestroConsole() {
               return { ...tab, state: 'busy' as const, thinkingStartTime: Date.now() };
             }
             // Set any other busy tabs to idle (they were interrupted) and add canceled log
+            // Also clear any thinking/tool logs since the process was interrupted
             if (tab.state === 'busy') {
-              const updatedLogs = canceledLog ? [...tab.logs, canceledLog] : tab.logs;
+              const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+              const updatedLogs = canceledLog ? [...logsWithoutThinkingOrTools, canceledLog] : logsWithoutThinkingOrTools;
               return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: updatedLogs };
             }
             return tab;
@@ -5484,18 +5562,23 @@ export default function MaestroConsole() {
         }
 
         // No queued items, just go to idle and add canceled log to the active tab
+        // Also clear any thinking/tool logs since the process was interrupted
         const activeTabForCancel = getActiveTab(s);
         const updatedAiTabsForIdle = canceledLog && activeTabForCancel
-          ? s.aiTabs.map(tab =>
-              tab.id === activeTabForCancel.id
-                ? { ...tab, logs: [...tab.logs, canceledLog], state: 'idle' as const, thinkingStartTime: undefined }
-                : tab
-            )
-          : s.aiTabs.map(tab =>
-              tab.state === 'busy'
-                ? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-                : tab
-            );
+          ? s.aiTabs.map(tab => {
+              if (tab.id === activeTabForCancel.id) {
+                const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                return { ...tab, logs: [...logsWithoutThinkingOrTools, canceledLog], state: 'idle' as const, thinkingStartTime: undefined };
+              }
+              return tab;
+            })
+          : s.aiTabs.map(tab => {
+              if (tab.state === 'busy') {
+                const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
+              }
+              return tab;
+            });
 
         return {
           ...s,
@@ -5546,14 +5629,18 @@ export default function MaestroConsole() {
           setSessions(prev => prev.map(s => {
             if (s.id !== activeSession.id) return s;
 
-            // Add kill log to the appropriate place
+            // Add kill log to the appropriate place and clear thinking/tool logs
             let updatedSession = { ...s };
             if (currentMode === 'ai') {
               const tab = getActiveTab(s);
               if (tab) {
-                updatedSession.aiTabs = s.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, logs: [...t.logs, killLog] } : t
-                );
+                updatedSession.aiTabs = s.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, logs: [...logsWithoutThinkingOrTools, killLog] };
+                  }
+                  return t;
+                });
               }
             } else {
               updatedSession.shellLogs = [...s.shellLogs, killLog];
@@ -5576,13 +5663,14 @@ export default function MaestroConsole() {
                 };
               }
 
-              // Set tabs appropriately
+              // Set tabs appropriately and clear thinking/tool logs from interrupted tabs
               let updatedAiTabs = updatedSession.aiTabs.map(tab => {
                 if (tab.id === targetTab.id) {
                   return { ...tab, state: 'busy' as const, thinkingStartTime: Date.now() };
                 }
                 if (tab.state === 'busy') {
-                  return { ...tab, state: 'idle' as const, thinkingStartTime: undefined };
+                  const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                  return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
                 }
                 return tab;
               });
@@ -5615,7 +5703,7 @@ export default function MaestroConsole() {
               };
             }
 
-            // No queued items, just go to idle
+            // No queued items, just go to idle and clear thinking logs
             if (currentMode === 'ai') {
               const tab = getActiveTab(s);
               if (!tab) return { ...updatedSession, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -5624,9 +5712,13 @@ export default function MaestroConsole() {
                 state: 'idle',
                 busySource: undefined,
                 thinkingStartTime: undefined,
-                aiTabs: updatedSession.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, state: 'idle' as const, thinkingStartTime: undefined } : t
-                )
+                aiTabs: updatedSession.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
+                  }
+                  return t;
+                })
               };
             }
             return { ...updatedSession, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -5657,9 +5749,14 @@ export default function MaestroConsole() {
                 state: 'idle',
                 busySource: undefined,
                 thinkingStartTime: undefined,
-                aiTabs: s.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: [...t.logs, errorLog] } : t
-                )
+                aiTabs: s.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    // Clear thinking/tool logs even on error
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: [...logsWithoutThinkingOrTools, errorLog] };
+                  }
+                  return t;
+                })
               };
             }
             return { ...s, shellLogs: [...s.shellLogs, errorLog], state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -6134,7 +6231,7 @@ export default function MaestroConsole() {
     processMonitorOpen, logViewerOpen, createGroupModalOpen, confirmModalOpen, renameInstanceModalOpen,
     renameGroupModalOpen, activeSession, previewFile, fileTreeFilter, fileTreeFilterOpen, gitDiffPreview,
     gitLogOpen, lightboxImage, hasOpenLayers, hasOpenModal, visibleSessions, sortedSessions, groups,
-    bookmarksCollapsed, leftSidebarOpen, editingSessionId, editingGroupId, markdownEditMode, defaultSaveToHistory,
+    bookmarksCollapsed, leftSidebarOpen, editingSessionId, editingGroupId, markdownEditMode, defaultSaveToHistory, defaultShowThinking,
     setLeftSidebarOpen, setRightPanelOpen, addNewSession, deleteSession, setQuickActionInitialMode,
     setQuickActionOpen, cycleSession, toggleInputMode, setShortcutsHelpOpen, setSettingsModalOpen,
     setSettingsTab, setActiveRightTab, handleSetActiveRightTab, setActiveFocus, setBookmarksCollapsed, setGroups,
@@ -6450,7 +6547,7 @@ export default function MaestroConsole() {
           setGitDiffPreview={setGitDiffPreview}
           setGitLogOpen={setGitLogOpen}
           isAiMode={activeSession?.inputMode === 'ai'}
-          tabShortcuts={TAB_SHORTCUTS}
+          tabShortcuts={tabShortcuts}
           onRenameTab={() => {
             if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
               const activeTab = activeSession.aiTabs?.find(t => t.id === activeSession.activeTabId);
@@ -6471,6 +6568,28 @@ export default function MaestroConsole() {
                   aiTabs: s.aiTabs.map(tab =>
                     tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
                   )
+                };
+              }));
+            }
+          }}
+          onToggleTabShowThinking={() => {
+            if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
+              setSessions(prev => prev.map(s => {
+                if (s.id !== activeSession.id) return s;
+                return {
+                  ...s,
+                  aiTabs: s.aiTabs.map(tab => {
+                    if (tab.id !== s.activeTabId) return tab;
+                    // When turning OFF, clear any thinking/tool logs
+                    if (tab.showThinking) {
+                      return {
+                        ...tab,
+                        showThinking: false,
+                        logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool')
+                      };
+                    }
+                    return { ...tab, showThinking: true };
+                  })
                 };
               }));
             }
@@ -6596,6 +6715,7 @@ export default function MaestroConsole() {
         <ShortcutsHelpModal
           theme={theme}
           shortcuts={shortcuts}
+          tabShortcuts={tabShortcuts}
           onClose={() => setShortcutsHelpOpen(false)}
           hasNoAgents={hasNoAgents}
         />
@@ -7112,6 +7232,30 @@ export default function MaestroConsole() {
         />
       )}
 
+      {/* --- DELETE WORKTREE MODAL --- */}
+      {deleteWorktreeModalOpen && deleteWorktreeSession && (
+        <DeleteWorktreeModal
+          theme={theme}
+          session={deleteWorktreeSession}
+          onClose={() => {
+            setDeleteWorktreeModalOpen(false);
+            setDeleteWorktreeSession(null);
+          }}
+          onConfirm={() => {
+            // Remove the session but keep the worktree on disk
+            setSessions(prev => prev.filter(s => s.id !== deleteWorktreeSession.id));
+          }}
+          onConfirmAndDelete={async () => {
+            // Remove the session AND delete the worktree from disk
+            const result = await window.maestro.git.removeWorktree(deleteWorktreeSession.cwd, true);
+            if (!result.success) {
+              throw new Error(result.error || 'Failed to remove worktree');
+            }
+            setSessions(prev => prev.filter(s => s.id !== deleteWorktreeSession.id));
+          }}
+        />
+      )}
+
       {/* --- FIRST RUN CELEBRATION OVERLAY --- */}
       {firstRunCelebrationData && (
         <FirstRunCelebration
@@ -7436,10 +7580,9 @@ export default function MaestroConsole() {
               setWorktreeConfigModalOpen(true);
             }}
             onDeleteWorktree={(session) => {
-              // Show confirmation before deleting the worktree session
-              showConfirmation(`Delete worktree session "${session.name}"? This will remove the sub-agent but not the git worktree directory.`, () => {
-                setSessions(prev => prev.filter(s => s.id !== session.id));
-              });
+              // Show delete worktree modal with options
+              setDeleteWorktreeSession(session);
+              setDeleteWorktreeModalOpen(true);
             }}
             onToggleWorktreeExpanded={(sessionId) => {
               setSessions(prev => prev.map(s =>
@@ -7621,7 +7764,7 @@ export default function MaestroConsole() {
           if (activeSession) {
             setSessions(prev => prev.map(s => {
               if (s.id !== activeSession.id) return s;
-              const result = createTab(s, { saveToHistory: defaultSaveToHistory });
+              const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
               if (!result) return s;
               return result.session;
             }));
@@ -7821,7 +7964,7 @@ export default function MaestroConsole() {
           // Use functional setState to compute from fresh state (avoids stale closure issues)
           setSessions(prev => prev.map(s => {
             if (s.id !== activeSession.id) return s;
-            const result = createTab(s, { saveToHistory: defaultSaveToHistory });
+            const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
             if (!result) return s;
             return result.session;
           }));
@@ -7960,6 +8103,29 @@ export default function MaestroConsole() {
               aiTabs: s.aiTabs.map(tab =>
                 tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
               )
+            };
+          }));
+        }}
+        onToggleTabShowThinking={() => {
+          if (!activeSession) return;
+          const activeTab = getActiveTab(activeSession);
+          if (!activeTab) return;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSession.id) return s;
+            return {
+              ...s,
+              aiTabs: s.aiTabs.map(tab => {
+                if (tab.id !== activeTab.id) return tab;
+                // When turning OFF, clear any thinking/tool logs
+                if (tab.showThinking) {
+                  return {
+                    ...tab,
+                    showThinking: false,
+                    logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool')
+                  };
+                }
+                return { ...tab, showThinking: true };
+              })
             };
           }));
         }}
@@ -8211,7 +8377,7 @@ export default function MaestroConsole() {
           activeTabId={activeSession.activeTabId}
           projectRoot={activeSession.projectRoot}
           agentId={activeSession.toolType}
-          shortcut={TAB_SHORTCUTS.tabSwitcher}
+          shortcut={tabShortcuts.tabSwitcher}
           onTabSelect={(tabId) => {
             setSessions(prev => prev.map(s =>
               s.id === activeSession.id ? { ...s, activeTabId: tabId } : s
@@ -8408,6 +8574,8 @@ export default function MaestroConsole() {
         setApiKey={setApiKey}
         shortcuts={shortcuts}
         setShortcuts={setShortcuts}
+        tabShortcuts={tabShortcuts}
+        setTabShortcuts={setTabShortcuts}
         defaultShell={defaultShell}
         setDefaultShell={setDefaultShell}
         customShellPath={customShellPath}
@@ -8424,6 +8592,8 @@ export default function MaestroConsole() {
         setEnterToSendTerminal={setEnterToSendTerminal}
         defaultSaveToHistory={defaultSaveToHistory}
         setDefaultSaveToHistory={setDefaultSaveToHistory}
+        defaultShowThinking={defaultShowThinking}
+        setDefaultShowThinking={setDefaultShowThinking}
         fontFamily={fontFamily}
         setFontFamily={setFontFamily}
         fontSize={fontSize}

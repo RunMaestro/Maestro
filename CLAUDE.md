@@ -31,7 +31,8 @@ npm run dev        # Development with hot reload
 npm run dev:web    # Web interface development
 npm run build      # Full production build
 npm run clean      # Clean build artifacts
-npm run lint       # TypeScript type checking
+npm run lint       # TypeScript type checking (all configs)
+npm run lint:eslint # ESLint code quality checks
 npm run package    # Package for all platforms
 npm run test       # Run test suite
 npm run test:watch # Run tests in watch mode

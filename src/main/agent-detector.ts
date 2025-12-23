@@ -273,11 +273,25 @@ export class AgentDetector {
   }
 
   /**
+   * Expand tilde (~) to home directory in paths.
+   * This is necessary because Node.js fs functions don't understand shell tilde expansion.
+   */
+  private expandTilde(filePath: string): string {
+    if (filePath.startsWith('~/') || filePath === '~') {
+      return path.join(os.homedir(), filePath.slice(1));
+    }
+    return filePath;
+  }
+
+  /**
    * Check if a custom path points to a valid executable
    * On Windows, also tries .cmd and .exe extensions if the path doesn't exist as-is
    */
   private async checkCustomPath(customPath: string): Promise<{ exists: boolean; path?: string }> {
     const isWindows = process.platform === 'win32';
+
+    // Expand tilde to home directory (Node.js fs doesn't understand ~)
+    const expandedPath = this.expandTilde(customPath);
 
     // Helper to check if a specific path exists and is a file
     const checkPath = async (pathToCheck: string): Promise<boolean> => {
@@ -290,33 +304,34 @@ export class AgentDetector {
     };
 
     try {
-      // First, try the exact path provided
-      if (await checkPath(customPath)) {
+      // First, try the exact path provided (with tilde expanded)
+      if (await checkPath(expandedPath)) {
         // Check if file is executable (on Unix systems)
         if (!isWindows) {
           try {
-            await fs.promises.access(customPath, fs.constants.X_OK);
+            await fs.promises.access(expandedPath, fs.constants.X_OK);
           } catch {
             logger.warn(`Custom path exists but is not executable: ${customPath}`, 'AgentDetector');
             return { exists: false };
           }
         }
-        return { exists: true, path: customPath };
+        // Return the expanded path so it can be used directly
+        return { exists: true, path: expandedPath };
       }
 
       // On Windows, if the exact path doesn't exist, try with .cmd and .exe extensions
       if (isWindows) {
-        const lowerPath = customPath.toLowerCase();
+        const lowerPath = expandedPath.toLowerCase();
         // Only try extensions if the path doesn't already have one
         if (!lowerPath.endsWith('.cmd') && !lowerPath.endsWith('.exe')) {
           // Try .exe first (preferred), then .cmd
-          const exePath = customPath + '.exe';
+          const exePath = expandedPath + '.exe';
           if (await checkPath(exePath)) {
             logger.debug(`Custom path resolved with .exe extension`, 'AgentDetector', { original: customPath, resolved: exePath });
             return { exists: true, path: exePath };
           }
 
-          const cmdPath = customPath + '.cmd';
+          const cmdPath = expandedPath + '.cmd';
           if (await checkPath(cmdPath)) {
             logger.debug(`Custom path resolved with .cmd extension`, 'AgentDetector', { original: customPath, resolved: cmdPath });
             return { exists: true, path: cmdPath };
@@ -500,20 +515,101 @@ export class AgentDetector {
   }
 
   /**
+   * On macOS/Linux, directly probe known installation paths for a binary.
+   * This is necessary because packaged Electron apps don't inherit shell aliases,
+   * and 'which' may fail to find binaries in non-standard locations.
+   * Returns the first existing executable path found.
+   */
+  private async probeUnixPaths(binaryName: string): Promise<string | null> {
+    const home = os.homedir();
+
+    // Define known installation paths for each binary, in priority order
+    const knownPaths: Record<string, string[]> = {
+      claude: [
+        // Claude Code default installation location (irm https://claude.ai/install.ps1 equivalent on macOS)
+        path.join(home, '.claude', 'local', 'claude'),
+        // User local bin (pip, manual installs)
+        path.join(home, '.local', 'bin', 'claude'),
+        // Homebrew on Apple Silicon
+        '/opt/homebrew/bin/claude',
+        // Homebrew on Intel Mac
+        '/usr/local/bin/claude',
+        // npm global with custom prefix
+        path.join(home, '.npm-global', 'bin', 'claude'),
+        // User bin directory
+        path.join(home, 'bin', 'claude'),
+      ],
+      codex: [
+        // User local bin
+        path.join(home, '.local', 'bin', 'codex'),
+        // Homebrew paths
+        '/opt/homebrew/bin/codex',
+        '/usr/local/bin/codex',
+        // npm global
+        path.join(home, '.npm-global', 'bin', 'codex'),
+      ],
+      opencode: [
+        // Go install location
+        path.join(home, 'go', 'bin', 'opencode'),
+        // User local bin
+        path.join(home, '.local', 'bin', 'opencode'),
+        // Homebrew paths
+        '/opt/homebrew/bin/opencode',
+        '/usr/local/bin/opencode',
+      ],
+      gemini: [
+        // npm global paths
+        path.join(home, '.npm-global', 'bin', 'gemini'),
+        '/opt/homebrew/bin/gemini',
+        '/usr/local/bin/gemini',
+      ],
+      aider: [
+        // pip installation
+        path.join(home, '.local', 'bin', 'aider'),
+        // Homebrew paths
+        '/opt/homebrew/bin/aider',
+        '/usr/local/bin/aider',
+      ],
+    };
+
+    const pathsToCheck = knownPaths[binaryName] || [];
+
+    for (const probePath of pathsToCheck) {
+      try {
+        // Check both existence and executability
+        await fs.promises.access(probePath, fs.constants.F_OK | fs.constants.X_OK);
+        logger.debug(`Direct probe found ${binaryName}`, 'AgentDetector', { path: probePath });
+        return probePath;
+      } catch {
+        // Path doesn't exist or isn't executable, continue to next
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Check if a binary exists in PATH
    * On Windows, this also handles .cmd and .exe extensions properly
    */
   private async checkBinaryExists(binaryName: string): Promise<{ exists: boolean; path?: string }> {
     const isWindows = process.platform === 'win32';
 
-    // On Windows, first try direct file probing of known installation paths
-    // This is more reliable than `where` command in packaged Electron apps
+    // First try direct file probing of known installation paths
+    // This is more reliable than which/where in packaged Electron apps
     if (isWindows) {
       const probedPath = await this.probeWindowsPaths(binaryName);
       if (probedPath) {
         return { exists: true, path: probedPath };
       }
       logger.debug(`Direct probe failed for ${binaryName}, falling back to where`, 'AgentDetector');
+    } else {
+      // macOS/Linux: probe known paths first
+      const probedPath = await this.probeUnixPaths(binaryName);
+      if (probedPath) {
+        return { exists: true, path: probedPath };
+      }
+      logger.debug(`Direct probe failed for ${binaryName}, falling back to which`, 'AgentDetector');
     }
 
     try {

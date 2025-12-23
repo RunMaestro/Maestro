@@ -62,7 +62,7 @@ export interface FileArtifact {
 export interface LogEntry {
   id: string;
   timestamp: number;
-  source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error';
+  source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
   text: string;
   interactive?: boolean;
   options?: string[];
@@ -78,6 +78,14 @@ export interface LogEntry {
   readOnly?: boolean;
   // For error entries - stores the full AgentError for "View Details" functionality
   agentError?: AgentError;
+  // For tool execution entries - stores tool state and details
+  metadata?: {
+    toolState?: {
+      status?: 'running' | 'completed' | 'error';
+      input?: unknown;
+      output?: unknown;
+    };
+  };
 }
 
 // Queued item for the session-level execution queue
@@ -282,6 +290,7 @@ export interface AITab {
   state: 'idle' | 'busy';          // Tab-level state for write-mode tracking
   readOnlyMode?: boolean;          // When true, agent operates in plan/read-only mode
   saveToHistory?: boolean;         // When true, synopsis is requested after each completion and saved to History
+  showThinking?: boolean;          // When true, show streaming thinking/reasoning content in real-time
   awaitingSessionId?: boolean;     // True when this tab sent a message and is awaiting its session ID
   thinkingStartTime?: number;      // Timestamp when tab started thinking (for elapsed time display)
   scrollTop?: number;              // Saved scroll position for this tab's output view
@@ -476,6 +485,7 @@ export interface AgentCapabilities {
   supportsStreaming: boolean;
   supportsResultMessages: boolean;
   supportsModelSelection?: boolean;
+  supportsThinkingDisplay?: boolean;
 }
 
 export interface AgentConfig {
@@ -538,6 +548,24 @@ export interface CustomAICommand {
   description: string; // Short description shown in autocomplete
   prompt: string; // The actual prompt sent to the AI agent
   isBuiltIn?: boolean; // If true, cannot be deleted (only edited)
+}
+
+// Spec Kit command definition (bundled from github/spec-kit)
+export interface SpecKitCommand {
+  id: string; // e.g., 'constitution'
+  command: string; // e.g., '/speckit.constitution'
+  description: string;
+  prompt: string;
+  isCustom: boolean; // true only for 'implement' (our Maestro-specific version)
+  isModified: boolean; // true if user has edited
+}
+
+// Spec Kit metadata for tracking version and refresh status
+export interface SpecKitMetadata {
+  lastRefreshed: string; // ISO date
+  commitSha: string; // Git commit SHA or version tag
+  sourceVersion: string; // Semantic version (e.g., '0.0.90')
+  sourceUrl: string; // GitHub repo URL
 }
 
 // Leaderboard registration data for runmaestro.ai integration

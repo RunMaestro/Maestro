@@ -158,6 +158,11 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
             state: session.state,
             inputMode: session.inputMode,
             cwd: session.cwd,
+            groupId: session.groupId || null,
+            groupName: session.groupName || null,
+            groupEmoji: session.groupEmoji || null,
+            parentSessionId: session.parentSessionId || null,
+            worktreeBranch: session.worktreeBranch || null,
           });
         }
       }

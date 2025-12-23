@@ -155,6 +155,8 @@ interface MaestroAPI {
     onExit: (callback: (sessionId: string, code: number) => void) => () => void;
     onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
     onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+    onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
+    onToolExecution: (callback: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void) => () => void;
     onRemoteCommand: (callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void) => () => void;
     onRemoteSwitchMode: (callback: (sessionId: string, mode: 'ai' | 'terminal') => void) => () => void;
     onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;
@@ -306,6 +308,11 @@ interface MaestroAPI {
     }>;
     unwatchWorktreeDirectory: (sessionId: string) => Promise<{
       success: boolean;
+    }>;
+    removeWorktree: (worktreePath: string, force?: boolean) => Promise<{
+      success: boolean;
+      error?: string;
+      hasUncommittedChanges?: boolean;
     }>;
     onWorktreeDiscovered: (callback: (data: { sessionId: string; worktree: { path: string; name: string; branch: string | null } }) => void) => () => void;
   };
@@ -1125,6 +1132,61 @@ interface MaestroAPI {
         longestRunMs: number;
         runDate: string;
       }>;
+      error?: string;
+    }>;
+  };
+  speckit: {
+    getMetadata: () => Promise<{
+      success: boolean;
+      metadata?: {
+        lastRefreshed: string;
+        commitSha: string;
+        sourceVersion: string;
+        sourceUrl: string;
+      };
+      error?: string;
+    }>;
+    getPrompts: () => Promise<{
+      success: boolean;
+      commands?: Array<{
+        id: string;
+        command: string;
+        description: string;
+        prompt: string;
+        isCustom: boolean;
+        isModified: boolean;
+      }>;
+      error?: string;
+    }>;
+    getCommand: (slashCommand: string) => Promise<{
+      success: boolean;
+      command?: {
+        id: string;
+        command: string;
+        description: string;
+        prompt: string;
+        isCustom: boolean;
+        isModified: boolean;
+      };
+      error?: string;
+    }>;
+    savePrompt: (id: string, content: string) => Promise<{
+      success: boolean;
+      error?: string;
+    }>;
+    resetPrompt: (id: string) => Promise<{
+      success: boolean;
+      prompt?: string;
+      error?: string;
+    }>;
+    refresh: () => Promise<{
+      success: boolean;
+      metadata?: {
+        lastRefreshed: string;
+        commitSha: string;
+        sourceVersion: string;
+        sourceUrl: string;
+      };
       error?: string;
     }>;
   };

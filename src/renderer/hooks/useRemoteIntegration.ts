@@ -21,6 +21,8 @@ export interface UseRemoteIntegrationDeps {
   setActiveSessionId: (id: string) => void;
   /** Default value for saveToHistory on new tabs */
   defaultSaveToHistory: boolean;
+  /** Default value for showThinking on new tabs */
+  defaultShowThinking: boolean;
 }
 
 /**
@@ -57,6 +59,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
     setSessions,
     setActiveSessionId,
     defaultSaveToHistory,
+    defaultShowThinking,
   } = deps;
 
   // Broadcast active session change to web clients
@@ -227,7 +230,7 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
         if (s.id !== sessionId) return s;
 
         // Use createTab helper
-        const result = createTab(s, { saveToHistory: defaultSaveToHistory });
+        const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
         if (!result) return s;
         newTabId = result.tab.id;
         return result.session;

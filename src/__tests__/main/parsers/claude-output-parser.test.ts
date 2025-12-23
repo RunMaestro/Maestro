@@ -295,6 +295,125 @@ describe('ClaudeOutputParser', () => {
     });
   });
 
+  describe('toolUseBlocks extraction', () => {
+    it('should extract tool_use blocks from assistant messages', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        session_id: 'sess-abc123',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'Let me read that file' },
+            { type: 'tool_use', id: 'toolu_123', name: 'Read', input: { file: 'foo.ts' } },
+          ],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event).not.toBeNull();
+      expect(event?.type).toBe('text');
+      expect(event?.text).toBe('Let me read that file');
+      expect(event?.toolUseBlocks).toBeDefined();
+      expect(event?.toolUseBlocks).toHaveLength(1);
+      expect(event?.toolUseBlocks?.[0]).toEqual({
+        name: 'Read',
+        id: 'toolu_123',
+        input: { file: 'foo.ts' },
+      });
+    });
+
+    it('should extract multiple tool_use blocks', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'text', text: 'I will read and edit files' },
+            { type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file: 'a.ts' } },
+            { type: 'tool_use', id: 'toolu_2', name: 'Edit', input: { file: 'b.ts', changes: [] } },
+          ],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.toolUseBlocks).toHaveLength(2);
+      expect(event?.toolUseBlocks?.[0].name).toBe('Read');
+      expect(event?.toolUseBlocks?.[1].name).toBe('Edit');
+    });
+
+    it('should not include toolUseBlocks when there are no tool_use blocks', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'text', text: 'Just text, no tools' }],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.type).toBe('text');
+      expect(event?.text).toBe('Just text, no tools');
+      expect(event?.toolUseBlocks).toBeUndefined();
+    });
+
+    it('should not include toolUseBlocks for string content', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: 'String content, not array',
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.type).toBe('text');
+      expect(event?.text).toBe('String content, not array');
+      expect(event?.toolUseBlocks).toBeUndefined();
+    });
+
+    it('should handle tool_use blocks without id field', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', name: 'Bash', input: { command: 'ls' } }],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.toolUseBlocks).toHaveLength(1);
+      expect(event?.toolUseBlocks?.[0].name).toBe('Bash');
+      expect(event?.toolUseBlocks?.[0].id).toBeUndefined();
+      expect(event?.toolUseBlocks?.[0].input).toEqual({ command: 'ls' });
+    });
+
+    it('should skip tool_use blocks without name', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'toolu_valid', name: 'Read', input: {} },
+            { type: 'tool_use', id: 'toolu_invalid' }, // Missing name
+          ],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.toolUseBlocks).toHaveLength(1);
+      expect(event?.toolUseBlocks?.[0].name).toBe('Read');
+    });
+
+    it('should extract tool_use blocks even with no text content', () => {
+      const line = JSON.stringify({
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'toolu_1', name: 'Read', input: { file: 'x.ts' } }],
+        },
+      });
+
+      const event = parser.parseJsonLine(line);
+      expect(event?.type).toBe('text');
+      expect(event?.text).toBe('');
+      expect(event?.toolUseBlocks).toHaveLength(1);
+    });
+  });
+
   describe('edge cases', () => {
     it('should handle empty result string', () => {
       const event = parser.parseJsonLine(

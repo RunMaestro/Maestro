@@ -54,6 +54,7 @@ interface QuickActionsModalProps {
   setGitLogOpen: (open: boolean) => void;
   onRenameTab?: () => void;
   onToggleReadOnlyMode?: () => void;
+  onToggleTabShowThinking?: () => void;
   onOpenTabSwitcher?: () => void;
   tabShortcuts?: Record<string, Shortcut>;
   isAiMode?: boolean;
@@ -95,7 +96,7 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     deleteSession, addNewSession, setSettingsModalOpen, setSettingsTab,
     setShortcutsHelpOpen, setAboutModalOpen, setLogViewerOpen, setProcessMonitorOpen,
     setAgentSessionsOpen, setActiveAgentSessionId, setGitDiffPreview, setGitLogOpen,
-    onRenameTab, onToggleReadOnlyMode, onOpenTabSwitcher, tabShortcuts, isAiMode, setPlaygroundOpen, onRefreshGitFileState,
+    onRenameTab, onToggleReadOnlyMode, onToggleTabShowThinking, onOpenTabSwitcher, tabShortcuts, isAiMode, setPlaygroundOpen, onRefreshGitFileState,
     onDebugReleaseQueuedItem, markdownEditMode, onToggleMarkdownEditMode, setUpdateCheckModalOpen, openWizard, wizardGoToStep, setDebugWizardModalOpen, setDebugPackageModalOpen, startTour, setFuzzyFileSearchOpen, onEditAgent,
     groupChats, onNewGroupChat, onOpenGroupChat, onCloseGroupChat, onDeleteGroupChat, activeGroupChatId,
     hasActiveSessionCapability, onOpenCreatePR
@@ -277,6 +278,7 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     ...(isAiMode && onOpenTabSwitcher ? [{ id: 'tabSwitcher', label: 'Tab Switcher', shortcut: tabShortcuts?.tabSwitcher, action: () => { onOpenTabSwitcher(); setQuickActionOpen(false); } }] : []),
     ...(isAiMode && onRenameTab ? [{ id: 'renameTab', label: 'Rename Tab', shortcut: tabShortcuts?.renameTab, action: () => { onRenameTab(); setQuickActionOpen(false); } }] : []),
     ...(isAiMode && onToggleReadOnlyMode ? [{ id: 'toggleReadOnly', label: 'Toggle Read-Only Mode', shortcut: tabShortcuts?.toggleReadOnlyMode, action: () => { onToggleReadOnlyMode(); setQuickActionOpen(false); } }] : []),
+    ...(isAiMode && onToggleTabShowThinking ? [{ id: 'toggleShowThinking', label: 'Toggle Show Thinking', shortcut: tabShortcuts?.toggleShowThinking, action: () => { onToggleTabShowThinking(); setQuickActionOpen(false); } }] : []),
     ...(isAiMode && onToggleMarkdownEditMode ? [{ id: 'toggleMarkdown', label: 'Toggle Edit/Preview', shortcut: shortcuts.toggleMarkdownMode, subtext: markdownEditMode ? 'Currently in edit mode' : 'Currently in preview mode', action: () => { onToggleMarkdownEditMode(); setQuickActionOpen(false); } }] : []),
     ...(activeSession ? [{ id: 'clearTerminal', label: 'Clear Terminal History', action: () => {
       setSessions(prev => prev.map(s =>

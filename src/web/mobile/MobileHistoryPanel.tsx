@@ -19,6 +19,7 @@ import { buildApiUrl } from '../utils/config';
 import { webLogger } from '../utils/logger';
 import { HistoryEntry } from '../../shared/types';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+import { formatElapsedTime } from '../../shared/formatters';
 import { useSwipeGestures } from '../hooks/useSwipeGestures';
 
 /**
@@ -38,21 +39,6 @@ function formatTime(timestamp: number): string {
       date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     );
   }
-}
-
-/**
- * Format elapsed time in human-readable format
- */
-function formatElapsedTime(ms: number): string {
-  if (ms < 1000) return `${ms}ms`;
-  const seconds = Math.floor(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
-  if (minutes < 60) return `${minutes}m ${remainingSeconds}s`;
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return `${hours}h ${remainingMinutes}m`;
 }
 
 /**

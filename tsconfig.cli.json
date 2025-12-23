@@ -16,6 +16,7 @@
     "declaration": false,
     "sourceMap": true
   },
-  "include": ["src/cli/**/*", "src/shared/**/*"],
+  // CLI uses shared types, prompts for auto-run synopsis, and types for module declarations
+  "include": ["src/cli/**/*", "src/shared/**/*", "src/prompts/**/*", "src/types/**/*"],
   "exclude": ["node_modules", "dist", "release"]
 }

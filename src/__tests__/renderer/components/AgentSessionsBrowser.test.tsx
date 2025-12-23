@@ -25,6 +25,7 @@ vi.mock('lucide-react', () => ({
   HardDrive: () => <span data-testid="icon-hard-drive" />,
   Play: () => <span data-testid="icon-play" />,
   ChevronLeft: () => <span data-testid="icon-chevron-left" />,
+  ChevronRight: () => <span data-testid="icon-chevron-right" />,
   Loader2: ({ className }: { className?: string }) => (
     <span data-testid="icon-loader" className={className} />
   ),
@@ -46,6 +47,8 @@ vi.mock('lucide-react', () => ({
   ArrowDownToLine: () => <span data-testid="icon-arrow-down" />,
   ArrowUpFromLine: () => <span data-testid="icon-arrow-up" />,
   Edit3: () => <span data-testid="icon-edit" />,
+  CheckCircle2: () => <span data-testid="icon-check-circle" />,
+  AlertCircle: () => <span data-testid="icon-alert-circle" />,
 }));
 
 // Default theme
@@ -2781,7 +2784,8 @@ describe('AgentSessionsBrowser', () => {
         await vi.runAllTimersAsync();
       });
 
-      expect(screen.getByText('[Tool: file_read]')).toBeInTheDocument();
+      // ToolCallCard component displays tool name without brackets (collapsible card format)
+      expect(screen.getByText('Tool: file_read')).toBeInTheDocument();
     });
 
     it('displays no content placeholder for empty messages', async () => {

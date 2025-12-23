@@ -13,7 +13,7 @@ import {
 } from './agent-spawner';
 import { addHistoryEntry, readGroups } from './storage';
 import { substituteTemplateVariables, TemplateContext } from '../../shared/templateVariables';
-import { registerCliActivity, updateCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
+import { registerCliActivity, unregisterCliActivity } from '../../shared/cli-activity';
 import { logger } from '../../main/utils/logger';
 import { autorunSynopsisPrompt } from '../../prompts';
 import { parseSynopsis } from '../../shared/synopsis';

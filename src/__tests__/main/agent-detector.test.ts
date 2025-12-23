@@ -24,9 +24,14 @@ import * as os from 'os';
 describe('agent-detector', () => {
   let detector: AgentDetector;
   const mockExecFileNoThrow = vi.mocked(execFileNoThrow);
+  const originalPlatform = process.platform;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Mock fs.promises.access to always fail, simulating no direct path probing results.
+    // This ensures tests rely on 'which'/'where' command mocking instead of actual filesystem.
+    // The probeUnixPaths/probeWindowsPaths methods check paths directly before falling back to 'which'.
+    vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('ENOENT: no such file or directory'));
     detector = new AgentDetector();
     // Default: no binaries found
     mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
@@ -34,6 +39,9 @@ describe('agent-detector', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // Ensure process.platform is always restored to the original value
+    // This is critical because some tests modify it to test Windows/Unix behavior
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
   });
 
   describe('Type exports', () => {
@@ -437,6 +445,8 @@ describe('agent-detector', () => {
       vi.spyOn(fs.promises, 'stat').mockResolvedValue({
         isFile: () => false, // Directory
       } as fs.Stats);
+      // Ensure access mock is still active for path probing fallback
+      vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('ENOENT'));
 
       detector.setCustomPaths({ 'claude-code': '/custom/claude-dir' });
       const agents = await detector.detectAgents();
@@ -449,53 +459,62 @@ describe('agent-detector', () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 
-      vi.spyOn(fs.promises, 'stat').mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
-      vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('EACCES'));
+      try {
+        vi.spyOn(fs.promises, 'stat').mockResolvedValue({
+          isFile: () => true,
+        } as fs.Stats);
+        vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('EACCES'));
 
-      detector.setCustomPaths({ 'claude-code': '/custom/claude' });
-      const agents = await detector.detectAgents();
+        // Create a fresh detector to pick up the platform change
+        const unixDetector = new AgentDetector();
+        unixDetector.setCustomPaths({ 'claude-code': '/custom/claude' });
+        const agents = await unixDetector.detectAgents();
 
-      const claude = agents.find(a => a.id === 'claude-code');
-      expect(claude?.available).toBe(false);
+        const claude = agents.find(a => a.id === 'claude-code');
+        expect(claude?.available).toBe(false);
 
-      expect(logger.warn).toHaveBeenCalledWith(
-        expect.stringContaining('not executable'),
-        'AgentDetector'
-      );
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('not executable'),
+          'AgentDetector'
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      }
     });
 
     it('should skip executable check on Windows', async () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-      const accessMock = vi.spyOn(fs.promises, 'access');
-      vi.spyOn(fs.promises, 'stat').mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
+      try {
+        const accessMock = vi.spyOn(fs.promises, 'access');
+        vi.spyOn(fs.promises, 'stat').mockResolvedValue({
+          isFile: () => true,
+        } as fs.Stats);
 
-      // On Windows, custom path check uses stat().isFile() but not access(X_OK)
-      // However, the Windows path probing feature uses access(F_OK) to check if known paths exist
-      // We need to mock access to reject for the probe paths (so it uses custom path)
-      // and ensure stat check works for our custom path
-      accessMock.mockRejectedValue(new Error('ENOENT'));
+        // Create a fresh detector to pick up the platform change
+        const winDetector = new AgentDetector();
+        winDetector.setCustomPaths({ 'claude-code': 'C:\\custom\\claude.exe' });
+        const agents = await winDetector.detectAgents();
 
-      detector.setCustomPaths({ 'claude-code': 'C:\\custom\\claude.exe' });
-      const agents = await detector.detectAgents();
-
-      const claude = agents.find(a => a.id === 'claude-code');
-      expect(claude?.available).toBe(true);
-      // Note: access IS called now for Windows path probing, but not for X_OK permission check
-      // The key assertion is that the custom path is used and agent is available
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        const claude = agents.find(a => a.id === 'claude-code');
+        expect(claude?.available).toBe(true);
+        // On Windows, access should not be called with X_OK flag for custom paths
+        // Note: probeWindowsPaths may call access with F_OK for other agents,
+        // but the key is that the executable check (X_OK) is skipped for custom paths
+        const xokCalls = accessMock.mock.calls.filter(
+          call => call[1] === fs.constants.X_OK
+        );
+        expect(xokCalls).toHaveLength(0);
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      }
     });
 
     it('should fall back to PATH when custom path is invalid', async () => {
       vi.spyOn(fs.promises, 'stat').mockRejectedValue(new Error('ENOENT'));
+      // Ensure access mock is active for path probing fallback to use 'which' instead of finding real binary
+      vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('ENOENT'));
       mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
         if (args[0] === 'claude') {
           return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
@@ -554,39 +573,47 @@ describe('agent-detector', () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 
-      // Create a new detector to pick up the platform change
-      const unixDetector = new AgentDetector();
-      mockExecFileNoThrow.mockResolvedValue({ stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 });
+      try {
+        // Create a new detector to pick up the platform change
+        const unixDetector = new AgentDetector();
+        mockExecFileNoThrow.mockResolvedValue({ stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 });
 
-      await unixDetector.detectAgents();
+        await unixDetector.detectAgents();
 
-      expect(mockExecFileNoThrow).toHaveBeenCalledWith(
-        'which',
-        expect.any(Array),
-        undefined,
-        expect.any(Object)
-      );
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        expect(mockExecFileNoThrow).toHaveBeenCalledWith(
+          'which',
+          expect.any(Array),
+          undefined,
+          expect.any(Object)
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      }
     });
 
     it('should use where command on Windows', async () => {
       const originalPlatform = process.platform;
       Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-      const winDetector = new AgentDetector();
-      mockExecFileNoThrow.mockResolvedValue({ stdout: 'C:\\claude.exe\n', stderr: '', exitCode: 0 });
+      try {
+        // Mock fs.promises.access to reject so probeWindowsPaths doesn't find anything
+        // This forces fallback to 'where' command
+        vi.spyOn(fs.promises, 'access').mockRejectedValue(new Error('ENOENT'));
 
-      await winDetector.detectAgents();
+        const winDetector = new AgentDetector();
+        mockExecFileNoThrow.mockResolvedValue({ stdout: 'C:\\claude.exe\n', stderr: '', exitCode: 0 });
 
-      expect(mockExecFileNoThrow).toHaveBeenCalledWith(
-        'where',
-        expect.any(Array),
-        undefined,
-        expect.any(Object)
-      );
+        await winDetector.detectAgents();
 
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+        expect(mockExecFileNoThrow).toHaveBeenCalledWith(
+          'where',
+          expect.any(Array),
+          undefined,
+          expect.any(Object)
+        );
+      } finally {
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      }
     });
 
     it('should take first match when multiple paths returned', async () => {

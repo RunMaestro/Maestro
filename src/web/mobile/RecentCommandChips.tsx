@@ -17,6 +17,7 @@ import React, { useCallback, useRef, useEffect } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';
+import { truncateCommand } from '../../shared/formatters';
 
 /** Maximum characters to show in a chip before truncating */
 const MAX_CHIP_LENGTH = 30;
@@ -33,16 +34,6 @@ export interface RecentCommandChipsProps {
   maxChips?: number;
   /** Whether the chips are disabled */
   disabled?: boolean;
-}
-
-/**
- * Truncate command text for display in chip
- */
-function truncateCommand(command: string, maxLength: number = MAX_CHIP_LENGTH): string {
-  // Replace newlines with spaces for display
-  const singleLine = command.replace(/\n/g, ' ').trim();
-  if (singleLine.length <= maxLength) return singleLine;
-  return singleLine.slice(0, maxLength - 1) + '…';
 }
 
 /**
@@ -63,11 +54,6 @@ export function RecentCommandChips({
   // Get limited number of commands
   const displayCommands = commands.slice(0, maxChips);
 
-  // Don't render if no commands
-  if (displayCommands.length === 0) {
-    return null;
-  }
-
   /**
    * Handle chip tap
    */
@@ -79,6 +65,11 @@ export function RecentCommandChips({
     },
     [disabled, onSelectCommand]
   );
+
+  // Don't render if no commands
+  if (displayCommands.length === 0) {
+    return null;
+  }
 
   return (
     <div
@@ -204,7 +195,7 @@ export function RecentCommandChips({
               </svg>
             )}
             {/* Command text */}
-            <span>{truncateCommand(entry.command)}</span>
+            <span>{truncateCommand(entry.command, MAX_CHIP_LENGTH)}</span>
           </button>
         ))}
       </div>

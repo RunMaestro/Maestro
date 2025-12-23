@@ -24,7 +24,7 @@ import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, UsageStats, LastResponsePreview } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';
-import { formatRelativeTime, formatCost } from '../../shared/formatters';
+import { formatRelativeTime, formatCost, formatElapsedTimeColon, truncatePath } from '../../shared/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 
 /**
@@ -39,30 +39,6 @@ export interface SessionStatusBannerProps {
   style?: React.CSSProperties;
   /** Callback when user taps to expand the full response (for task 1.30) */
   onExpandResponse?: (lastResponse: LastResponsePreview) => void;
-}
-
-/**
- * Truncate a file path for display, preserving the most relevant parts
- * Shows ".../<parent>/<current>" format for long paths
- */
-function truncatePath(path: string, maxLength: number = 30): string {
-  if (!path) return '';
-  if (path.length <= maxLength) return path;
-
-  const parts = path.split('/').filter(Boolean);
-  if (parts.length === 0) return path;
-
-  // Show the last two parts with ellipsis
-  if (parts.length === 1) {
-    return `...${path.slice(-maxLength + 3)}`;
-  }
-
-  const lastTwo = parts.slice(-2).join('/');
-  if (lastTwo.length > maxLength - 4) {
-    return `.../${parts[parts.length - 1].slice(-(maxLength - 5))}`;
-  }
-
-  return `.../${lastTwo}`;
 }
 
 /**
@@ -253,20 +229,6 @@ function ThinkingIndicator() {
 }
 
 /**
- * Format elapsed time as mm:ss or hh:mm:ss
- */
-function formatElapsedTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
-
-  if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
-}
-
-/**
  * ElapsedTimeDisplay component - shows live elapsed time while AI is thinking
  * Displays time in mm:ss or hh:mm:ss format, updating every second.
  */
@@ -308,11 +270,11 @@ const ElapsedTimeDisplay = memo(function ElapsedTimeDisplay({
         lineHeight: 1,
         flexShrink: 0,
       }}
-      title={`Thinking for ${formatElapsedTime(elapsedSeconds)}`}
-      aria-label={`AI has been thinking for ${formatElapsedTime(elapsedSeconds)}`}
+      title={`Thinking for ${formatElapsedTimeColon(elapsedSeconds)}`}
+      aria-label={`AI has been thinking for ${formatElapsedTimeColon(elapsedSeconds)}`}
     >
       <span style={{ fontSize: '10px' }}>⏱</span>
-      <span>{formatElapsedTime(elapsedSeconds)}</span>
+      <span>{formatElapsedTimeColon(elapsedSeconds)}</span>
     </span>
   );
 });
@@ -686,7 +648,7 @@ export function SessionStatusBanner({
       ? sessionState as SessionStatus
       : 'error';
   const isThinking = sessionState === 'busy';
-  const truncatedCwd = truncatePath(session.cwd);
+  const truncatedCwd = truncatePath(session.cwd, 30);
 
   // Access lastResponse and thinkingStartTime from session (if available from web data)
   const lastResponse = (session as any).lastResponse as LastResponsePreview | undefined;

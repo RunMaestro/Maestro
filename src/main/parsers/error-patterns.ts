@@ -130,7 +130,8 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
       recoverable: false,
     },
     {
-      pattern: /usage limit/i,
+      // Matches: "usage limit" or "hit your limit"
+      pattern: /usage.?limit|hit your.*limit/i,
       message: 'Usage limit reached. Check your plan for available quota.',
       recoverable: false,
     },
@@ -360,6 +361,12 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
       pattern: /429/i,
       message: 'Rate limited. Please wait and try again.',
       recoverable: true,
+    },
+    {
+      // Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
+      pattern: /usage.?limit|hit your.*limit/i,
+      message: 'Usage limit reached. Please wait or check your plan quota.',
+      recoverable: false,
     },
   ],
 

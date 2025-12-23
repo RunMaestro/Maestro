@@ -427,6 +427,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
   const [editContent, setEditContent] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showUnsavedChangesModal, setShowUnsavedChangesModal] = useState(false);
+  const [copyNotificationMessage, setCopyNotificationMessage] = useState('');
   const searchInputRef = useRef<HTMLInputElement>(null);
   const codeContainerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -442,17 +443,18 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
 
   const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 
-  if (!file) return null;
-
-  const language = getLanguageFromFilename(file.name);
+  // Compute derived values - must be before any early returns but after hooks
+  const language = file ? getLanguageFromFilename(file.name) : '';
   const isMarkdown = language === 'markdown';
-  const isImage = isImageFile(file.name);
+  const isImage = file ? isImageFile(file.name) : false;
+
   // Check for binary files - either by extension or by content analysis
   // Memoize to avoid recalculating on every render (content analysis can be expensive)
   const isBinary = useMemo(() => {
+    if (!file) return false;
     if (isImage) return false;
     return isBinaryExtension(file.name) || isBinaryContent(file.content);
-  }, [isImage, file.name, file.content]);
+  }, [isImage, file]);
 
   // Calculate task counts for markdown files
   const taskCounts = useMemo(() => {
@@ -464,7 +466,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
   }, [isMarkdown, file?.content]);
 
   // Extract directory path without filename
-  const directoryPath = file.path.substring(0, file.path.lastIndexOf('/'));
+  const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
 
   // Fetch file stats when file changes
   useEffect(() => {
@@ -589,7 +591,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
   // Auto-focus on mount and when file changes so keyboard shortcuts work immediately
   useEffect(() => {
     containerRef.current?.focus();
-  }, [file.path]); // Run on mount and when navigating to a different file
+  }, [file?.path]); // Run on mount and when navigating to a different file
 
   // Helper to handle escape key - shows confirmation modal if there are unsaved changes
   const handleEscapeRequest = useCallback(() => {
@@ -726,7 +728,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
       });
       matchElementsRef.current = [];
     };
-  }, [searchQuery, file.content, isMarkdown, isImage, theme.colors.accent]);
+  }, [searchQuery, file?.content, isMarkdown, isImage, theme.colors.accent]);
 
   // Search matches in markdown preview mode - use CSS Custom Highlight API
   useEffect(() => {
@@ -808,7 +810,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
       };
     } else {
       // Fallback: count matches and scroll to location (no highlighting)
-      const matches = file.content.match(searchRegex);
+      const matches = file?.content?.match(searchRegex);
       const count = matches ? matches.length : 0;
       setTotalMatches(count);
 
@@ -838,11 +840,10 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
     }
 
     matchElementsRef.current = [];
-  }, [searchQuery, file.content, isMarkdown, markdownEditMode, currentMatchIndex, theme.colors.accent]);
-
-  const [copyNotificationMessage, setCopyNotificationMessage] = useState('');
+  }, [searchQuery, file?.content, isMarkdown, markdownEditMode, currentMatchIndex, theme.colors.accent]);
 
   const copyPathToClipboard = () => {
+    if (!file) return;
     navigator.clipboard.writeText(file.path);
     setCopyNotificationMessage('File Path Copied to Clipboard');
     setShowCopyNotification(true);
@@ -850,6 +851,7 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
   };
 
   const copyContentToClipboard = async () => {
+    if (!file) return;
     if (isImage) {
       // For images, copy the image to clipboard
       try {
@@ -1083,6 +1085,9 @@ export function FilePreview({ file, onClose, theme, markdownEditMode, setMarkdow
       onOpenFuzzySearch();
     }
   };
+
+  // Early return if no file - must be after all hooks
+  if (!file) return null;
 
   return (
     <div

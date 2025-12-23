@@ -3,6 +3,13 @@ import { GripVertical, Plus, Repeat, RotateCcw, X, AlertTriangle, RefreshCw, Che
 import type { Theme, BatchDocumentEntry } from '../types';
 import { generateId } from '../utils/ids';
 
+// Platform detection helper (userAgentData is newer but not in all TS types yet)
+const isMacPlatform = (): boolean => {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return nav.userAgentData?.platform?.toLowerCase().includes('mac')
+    ?? navigator.platform.toLowerCase().includes('mac');
+};
+
 // Tree node type for folder structure
 export interface DocTreeNode {
   name: string;
@@ -521,7 +528,18 @@ export function DocumentsPanel({
 
   // Drag state for reordering
   const [draggedId, setDraggedId] = useState<string | null>(null);
-  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null); // Index where item will be inserted (shown as line)
+  const [isCopyDrag, setIsCopyDrag] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState<{ x: number; y: number } | null>(null);
+
+  // Refs to access current values in event handlers (avoids stale closure issues)
+  const draggedIdRef = useRef(draggedId);
+  const dropTargetIndexRef = useRef(dropTargetIndex);
+  const isCopyDragRef = useRef(isCopyDrag);
+  const dropPerformedRef = useRef(false); // Prevents double execution if both handleDrop and handleDragEnd fire
+  draggedIdRef.current = draggedId;
+  dropTargetIndexRef.current = dropTargetIndex;
+  isCopyDragRef.current = isCopyDrag;
 
   // Calculate counts
   const totalTaskCount = documents.reduce((sum, doc) => {
@@ -589,35 +607,103 @@ export function DocumentsPanel({
 
   // Drag and drop handlers
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
+    dropPerformedRef.current = false; // Reset for new drag operation
+    const isCopy = e.ctrlKey || e.metaKey;
     setDraggedId(id);
-    e.dataTransfer.effectAllowed = 'move';
+    setIsCopyDrag(isCopy);
+    e.dataTransfer.effectAllowed = isCopy ? 'copy' : 'move';
+    setCursorPosition({ x: e.clientX, y: e.clientY });
   }, []);
 
-  const handleDragOver = useCallback((e: React.DragEvent, id: string) => {
-    e.preventDefault();
-    if (draggedId && draggedId !== id) {
-      setDragOverId(id);
+  const handleDrag = useCallback((e: React.DragEvent) => {
+    // Update cursor position during drag (for the floating plus icon)
+    if (e.clientX !== 0 || e.clientY !== 0) {
+      setCursorPosition({ x: e.clientX, y: e.clientY });
     }
-  }, [draggedId]);
+    // Update copy state based on current modifier keys
+    setIsCopyDrag(e.ctrlKey || e.metaKey);
+  }, []);
 
-  const handleDragEnd = useCallback(() => {
-    if (draggedId && dragOverId && draggedId !== dragOverId) {
+  const handleDragOver = useCallback((e: React.DragEvent, _id: string, index: number) => {
+    e.preventDefault();
+    const isCopy = e.ctrlKey || e.metaKey;
+    setIsCopyDrag(isCopy);
+    e.dataTransfer.dropEffect = isCopy ? 'copy' : 'move';
+
+    const currentDraggedId = draggedIdRef.current;
+    if (!currentDraggedId) return;
+
+    // Determine drop position based on cursor position relative to element midpoint
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dropIndex = e.clientY < rect.top + rect.height / 2 ? index : index + 1;
+
+    // For copy mode, always show indicator. For move mode, only if position changes.
+    if (isCopy) {
+      setDropTargetIndex(dropIndex);
+    } else {
+      const draggedIndex = documents.findIndex(d => d.id === currentDraggedId);
+      const isNewPosition = dropIndex !== draggedIndex && dropIndex !== draggedIndex + 1;
+      setDropTargetIndex(isNewPosition ? dropIndex : null);
+    }
+  }, [documents]);
+
+  // Note: We intentionally don't clear dropTargetIndex in dragLeave.
+  // The browser fires dragleave events during normal operations including right before drop.
+  // Cleanup happens in handleDrop or handleDragEnd.
+  const handleDragLeave = useCallback(() => {}, []);
+
+  // Shared logic for performing the drop operation (copy or move)
+  const performDropOperation = useCallback(() => {
+    const currentDraggedId = draggedIdRef.current;
+    const currentDropTargetIndex = dropTargetIndexRef.current;
+    const currentIsCopyDrag = isCopyDragRef.current;
+
+    if (currentDraggedId && currentDropTargetIndex !== null && !dropPerformedRef.current) {
+      dropPerformedRef.current = true;
       setDocuments(prev => {
+        const draggedIndex = prev.findIndex(d => d.id === currentDraggedId);
+        if (draggedIndex === -1) return prev;
+
         const items = [...prev];
-        const draggedIndex = items.findIndex(d => d.id === draggedId);
-        const targetIndex = items.findIndex(d => d.id === dragOverId);
-
-        if (draggedIndex !== -1 && targetIndex !== -1) {
+        if (currentIsCopyDrag) {
+          const original = items[draggedIndex];
+          items.splice(currentDropTargetIndex, 0, {
+            id: generateId(),
+            filename: original.filename,
+            resetOnCompletion: true,
+            isDuplicate: true
+          });
+        } else {
           const [removed] = items.splice(draggedIndex, 1);
-          items.splice(targetIndex, 0, removed);
+          const adjustedIndex = draggedIndex < currentDropTargetIndex
+            ? currentDropTargetIndex - 1
+            : currentDropTargetIndex;
+          items.splice(adjustedIndex, 0, removed);
         }
-
         return items;
       });
     }
+  }, [setDocuments]);
+
+  const resetDragState = useCallback(() => {
     setDraggedId(null);
-    setDragOverId(null);
-  }, [draggedId, dragOverId, setDocuments]);
+    setDropTargetIndex(null);
+    setIsCopyDrag(false);
+    setCursorPosition(null);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    performDropOperation();
+    resetDragState();
+  }, [performDropOperation, resetDragState]);
+
+  const handleDragEnd = useCallback(() => {
+    // Fallback: perform operation if handleDrop didn't fire (browser quirk)
+    performDropOperation();
+    resetDragState();
+  }, [performDropOperation, resetDragState]);
 
   // Sync showMaxLoopsSlider when maxLoops prop changes externally
   useEffect(() => {
@@ -706,56 +792,77 @@ export function DocumentsPanel({
             <p className="text-xs mt-1">Click "+ Add Docs" to select documents to run</p>
           </div>
         ) : (
-          <div className="divide-y" style={{ borderColor: theme.colors.border }}>
-            {documents.map((doc) => {
+          <div onDragLeave={handleDragLeave} onDrop={handleDrop} onDragOver={(e) => e.preventDefault()}>
+            {documents.map((doc, index) => {
               const docTaskCount = taskCounts[doc.filename] ?? 0;
               const isBeingDragged = draggedId === doc.id;
-              const isDragTarget = dragOverId === doc.id;
+              const showDropIndicatorBefore = dropTargetIndex === index && draggedId !== null;
+              const showDropIndicatorAfter = dropTargetIndex === index + 1 && index === documents.length - 1 && draggedId !== null;
 
               return (
-                <div
-                  key={doc.id}
-                  draggable={!doc.isMissing}
-                  onDragStart={(e) => !doc.isMissing && handleDragStart(e, doc.id)}
-                  onDragOver={(e) => handleDragOver(e, doc.id)}
-                  onDragEnd={handleDragEnd}
-                  className={`flex items-center gap-3 px-3 py-2 transition-all ${
-                    isBeingDragged ? 'opacity-50' : ''
-                  } ${isDragTarget ? 'bg-white/10' : 'hover:bg-white/5'} ${
-                    doc.isMissing ? 'opacity-60' : ''
-                  }`}
-                  style={{
-                    borderColor: theme.colors.border,
-                    backgroundColor: doc.isMissing ? theme.colors.error + '08' : undefined
-                  }}
-                >
-                  {/* Drag Handle */}
-                  <GripVertical
-                    className={`w-4 h-4 shrink-0 ${doc.isMissing ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
-                    style={{ color: doc.isMissing ? theme.colors.error + '60' : theme.colors.textDim }}
-                  />
-
-                  {/* Document Name */}
-                  <span
-                    className={`flex-1 text-sm font-medium truncate ${doc.isMissing ? 'line-through' : ''}`}
-                    style={{ color: doc.isMissing ? theme.colors.error : theme.colors.textMain }}
-                  >
-                    {doc.filename}.md
-                  </span>
-
-                  {/* Missing Indicator */}
-                  {doc.isMissing && (
-                    <span
-                      className="text-[10px] px-1.5 py-0.5 rounded shrink-0 uppercase font-bold"
-                      style={{
-                        backgroundColor: theme.colors.error + '20',
-                        color: theme.colors.error
-                      }}
-                      title="This document no longer exists in the folder"
+                <div key={doc.id} className="relative" style={index > 0 ? { borderTop: `1px solid ${theme.colors.border}22` } : undefined}>
+                  {/* Drop Indicator Line - Before */}
+                  {showDropIndicatorBefore && (
+                    <div
+                      className="absolute left-0 right-0 top-0 h-0.5 z-20 pointer-events-none"
+                      style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
                     >
-                      Missing
-                    </span>
+                      {/* Left circle */}
+                      <div
+                        className="absolute -left-1 -top-[3px] w-2 h-2 rounded-full"
+                        style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
+                      />
+                      {/* Right circle */}
+                      <div
+                        className="absolute -right-1 -top-[3px] w-2 h-2 rounded-full"
+                        style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
+                      />
+                    </div>
                   )}
+
+                  <div
+                    draggable={!doc.isMissing}
+                    onDragStart={(e) => !doc.isMissing && handleDragStart(e, doc.id)}
+                    onDrag={handleDrag}
+                    onDragOver={(e) => handleDragOver(e, doc.id, index)}
+                    onDrop={handleDrop}
+                    onDragEnd={handleDragEnd}
+                    className={`flex items-center gap-3 px-3 py-2 transition-all ${
+                      isBeingDragged ? 'opacity-50' : ''
+                    } hover:bg-white/5 ${
+                      doc.isMissing ? 'opacity-60' : ''
+                    }`}
+                    style={{
+                      backgroundColor: doc.isMissing ? theme.colors.error + '08' : undefined
+                    }}
+                  >
+                    {/* Drag Handle */}
+                    <GripVertical
+                      className={`w-4 h-4 shrink-0 ${doc.isMissing ? 'cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'}`}
+                      style={{ color: doc.isMissing ? theme.colors.error + '60' : theme.colors.textDim }}
+                    />
+
+                    {/* Document Name */}
+                    <span
+                      className={`flex-1 text-sm font-medium truncate ${doc.isMissing ? 'line-through' : ''}`}
+                      style={{ color: doc.isMissing ? theme.colors.error : theme.colors.textMain }}
+                    >
+                      {doc.filename}.md
+                    </span>
+
+                    {/* Missing Indicator */}
+                    {doc.isMissing && (
+                      <span
+                        className="text-[10px] px-1.5 py-0.5 rounded shrink-0 uppercase font-bold"
+                        style={{
+                          backgroundColor: theme.colors.error + '20',
+                          color: theme.colors.error
+                        }}
+                        title="This document no longer exists in the folder"
+                      >
+                        Missing
+                      </span>
+                    )}
 
                   {/* Task Count Badge (invisible placeholder for missing docs) */}
                   {!doc.isMissing ? (
@@ -777,6 +884,7 @@ export function DocumentsPanel({
                     const hasDuplicates = documents.filter(d => d.filename === doc.filename).length > 1;
                     const canDisableReset = !hasDuplicates;
 
+                    const modifierKey = isMacPlatform() ? '⌘' : 'Ctrl';
                     let tooltipText: string;
                     if (doc.resetOnCompletion) {
                       if (canDisableReset) {
@@ -785,7 +893,7 @@ export function DocumentsPanel({
                         tooltipText = 'Reset enabled: uncompleted tasks will be re-checked when done. Remove duplicates to disable.';
                       }
                     } else {
-                      tooltipText = 'Enable reset: uncompleted tasks will be re-checked when this document completes';
+                      tooltipText = `Enable reset, or ${modifierKey}+drag to copy`;
                     }
 
                     return (
@@ -840,6 +948,26 @@ export function DocumentsPanel({
                     </button>
                   ) : (
                     <span className="p-1 shrink-0 invisible"><X className="w-3.5 h-3.5" /></span>
+                  )}
+                  </div>
+
+                  {/* Drop Indicator Line - After (only for last item) */}
+                  {showDropIndicatorAfter && (
+                    <div
+                      className="absolute left-0 right-0 bottom-0 h-0.5 z-20 pointer-events-none"
+                      style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
+                    >
+                      {/* Left circle */}
+                      <div
+                        className="absolute -left-1 -top-[3px] w-2 h-2 rounded-full"
+                        style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
+                      />
+                      {/* Right circle */}
+                      <div
+                        className="absolute -right-1 -top-[3px] w-2 h-2 rounded-full"
+                        style={{ backgroundColor: isCopyDrag ? theme.colors.success : theme.colors.accent }}
+                      />
+                    </div>
                   )}
                 </div>
               );
@@ -989,6 +1117,24 @@ export function DocumentsPanel({
           onAdd={handleAddSelectedDocs}
           onRefresh={onRefreshDocuments}
         />
+      )}
+
+      {/* Floating Plus Icon (follows cursor during copy drag) */}
+      {isCopyDrag && cursorPosition && (
+        <div
+          className="fixed pointer-events-none z-[10001] flex items-center justify-center"
+          style={{
+            left: cursorPosition.x + 16,
+            top: cursorPosition.y + 16,
+            width: 24,
+            height: 24,
+            borderRadius: '50%',
+            backgroundColor: theme.colors.success,
+            boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          }}
+        >
+          <Plus className="w-4 h-4 stroke-2" style={{ color: theme.colors.bgMain }} />
+        </div>
       )}
     </div>
   );

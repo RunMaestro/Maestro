@@ -3,6 +3,7 @@ Auto\ Run\ Docs/
 Work\ Trees/
 community-data/
 .mcp.json
+specs/
 
 # Tests
 coverage/
@@ -35,6 +36,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ESLint
+.eslintcache
 
 # Electron
 out/

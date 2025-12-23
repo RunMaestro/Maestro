@@ -100,6 +100,17 @@ export interface ParsedEvent {
   isPartial?: boolean;
 
   /**
+   * Tool use blocks extracted from the message (for agents with mixed content)
+   * When a message contains both text and tool_use, text goes in 'text' field
+   * and tool_use blocks are here. Process-manager emits tool-execution for each.
+   */
+  toolUseBlocks?: Array<{
+    name: string;
+    id?: string;
+    input?: unknown;
+  }>;
+
+  /**
    * Original event data for debugging
    * Preserved unchanged from agent output
    */

@@ -411,8 +411,16 @@ describe('BatchRunnerModal', () => {
       // Test drag start - find the draggable container
       const dragContainers = document.querySelectorAll('[draggable="true"]');
       if (dragContainers.length >= 2) {
-        fireEvent.dragStart(dragContainers[0], { dataTransfer: { effectAllowed: 'move' } });
-        fireEvent.dragOver(dragContainers[1], { preventDefault: () => {} });
+        // Create a mock dataTransfer object with all required properties for copy-on-drag feature
+        const mockDataTransfer = {
+          effectAllowed: 'move',
+          dropEffect: 'move',
+        };
+        fireEvent.dragStart(dragContainers[0], { dataTransfer: mockDataTransfer });
+        fireEvent.dragOver(dragContainers[1], {
+          dataTransfer: mockDataTransfer,
+          clientY: 100, // Provide cursor position for drop indicator calculation
+        });
         fireEvent.dragEnd(dragContainers[0]);
       }
     });

@@ -12,7 +12,7 @@ import { tunnelManager } from './tunnel-manager';
 import { getThemeById } from './themes';
 import Store from 'electron-store';
 import { getHistoryManager } from './history-manager';
-import { registerGitHandlers, registerAutorunHandlers, registerPlaybooksHandlers, registerHistoryHandlers, registerAgentsHandlers, registerProcessHandlers, registerPersistenceHandlers, registerSystemHandlers, registerClaudeHandlers, registerAgentSessionsHandlers, registerGroupChatHandlers, registerDebugHandlers, setupLoggerEventForwarding } from './ipc/handlers';
+import { registerGitHandlers, registerAutorunHandlers, registerPlaybooksHandlers, registerHistoryHandlers, registerAgentsHandlers, registerProcessHandlers, registerPersistenceHandlers, registerSystemHandlers, registerClaudeHandlers, registerAgentSessionsHandlers, registerGroupChatHandlers, registerDebugHandlers, registerSpeckitHandlers, setupLoggerEventForwarding } from './ipc/handlers';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import { routeModeratorResponse, routeAgentResponse, setGetSessionsCallback, setGetCustomEnvVarsCallback, setGetAgentConfigCallback, markParticipantResponded, spawnModeratorSynthesis, getGroupChatReadOnlyState } from './group-chat/group-chat-router';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
@@ -269,6 +269,7 @@ function createWebServer(): WebServer {
       const tabLogs = activeTab?.logs || [];
       if (tabLogs.length > 0) {
         // Find the last stdout/stderr entry from the AI (not user messages)
+        // Note: 'thinking' logs are already excluded since they have a distinct source type
         const lastAiLog = [...tabLogs].reverse().find((log: any) =>
           log.source === 'stdout' || log.source === 'stderr'
         );
@@ -321,6 +322,9 @@ function createWebServer(): WebServer {
         aiTabs,
         activeTabId: s.activeTabId || (aiTabs.length > 0 ? aiTabs[0].id : undefined),
         bookmarked: s.bookmarked || false,
+        // Worktree subagent support
+        parentSessionId: s.parentSessionId || null,
+        worktreeBranch: s.worktreeBranch || null,
       };
     });
   });
@@ -948,6 +952,9 @@ function setupIpcHandlers() {
     groupsStore,
     bootstrapStore,
   });
+
+  // Register Spec Kit handlers (no dependencies needed)
+  registerSpeckitHandlers();
 
   // Set up callback for group chat router to lookup sessions for auto-add @mentions
   setGetSessionsCallback(() => {
@@ -2232,6 +2239,18 @@ function setupProcessListeners() {
     // Handle slash commands from Claude Code init message
     processManager.on('slash-commands', (sessionId: string, slashCommands: string[]) => {
       mainWindow?.webContents.send('process:slash-commands', sessionId, slashCommands);
+    });
+
+    // Handle thinking/streaming content chunks from AI agents
+    // Emitted when agents produce partial text events (isPartial: true)
+    // Renderer decides whether to display based on tab's showThinking setting
+    processManager.on('thinking-chunk', (sessionId: string, content: string) => {
+      mainWindow?.webContents.send('process:thinking-chunk', sessionId, content);
+    });
+
+    // Handle tool execution events (OpenCode, Codex)
+    processManager.on('tool-execution', (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
+      mainWindow?.webContents.send('process:tool-execution', sessionId, toolEvent);
     });
 
     // Handle stderr separately from runCommand (for clean command execution)

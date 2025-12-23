@@ -93,6 +93,18 @@ const createMockCommand = (overrides: Partial<CustomAICommand> = {}): CustomAICo
   ...overrides,
 });
 
+/**
+ * Helper to expand a command in the collapsible list.
+ * The new UI requires clicking on the command row to expand it before Edit/Delete buttons are visible.
+ */
+const expandCommand = (commandName: string) => {
+  // Find the button that contains the command name and click it to expand
+  const commandButton = screen.getByText(commandName).closest('button');
+  if (commandButton) {
+    fireEvent.click(commandButton);
+  }
+};
+
 describe('AICommandsPanel', () => {
   let mockSetCustomAICommands: ReturnType<typeof vi.fn>;
 
@@ -536,6 +548,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/editable');
+
       // Click edit button
       const editButton = screen.getByTitle('Edit command');
       fireEvent.click(editButton);
@@ -562,6 +577,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI)
+      expandCommand('/original');
 
       // Enter edit mode
       fireEvent.click(screen.getByTitle('Edit command'));
@@ -595,6 +613,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/original');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       const commandInput = screen.getByDisplayValue('/original');
@@ -618,6 +639,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI)
+      expandCommand('/original');
 
       fireEvent.click(screen.getByTitle('Edit command'));
 
@@ -647,6 +671,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the first command (new collapsible UI)
+      expandCommand('/first');
 
       // Edit first command
       const editButtons = screen.getAllByTitle('Edit command');
@@ -689,6 +716,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       expect(screen.getByRole('button', { name: /Save/i })).toBeInTheDocument();
@@ -710,6 +740,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/deletable');
+
       fireEvent.click(screen.getByTitle('Delete command'));
 
       expect(mockSetCustomAICommands).toHaveBeenCalled();
@@ -730,6 +763,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/builtin');
+
       // Built-in commands should not have delete button
       expect(screen.queryByTitle('Delete command')).not.toBeInTheDocument();
     });
@@ -749,9 +785,12 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the second command (new collapsible UI)
+      expandCommand('/second');
+
       // Delete second command
       const deleteButtons = screen.getAllByTitle('Delete command');
-      fireEvent.click(deleteButtons[1]);
+      fireEvent.click(deleteButtons[0]); // Now only the expanded command's delete button is visible
 
       const callArg = mockSetCustomAICommands.mock.calls[0][0];
       expect(callArg).toHaveLength(2);
@@ -771,6 +810,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
 
       // This tests the handleDelete function's guard clause
       fireEvent.click(screen.getByTitle('Delete command'));
@@ -826,6 +868,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/help');
+
       // Edit button should exist
       const editButton = screen.getByTitle('Edit command');
       expect(editButton).toBeInTheDocument();
@@ -854,6 +899,10 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand both commands (new collapsible UI)
+      expandCommand('/help');
+      expandCommand('/custom');
 
       // Only one delete button should exist (for custom command)
       const deleteButtons = screen.getAllByTitle('Delete command');
@@ -891,6 +940,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI) to see the prompt
+      expandCommand('/test');
 
       expect(screen.getByText('This is the prompt content')).toBeInTheDocument();
     });
@@ -979,6 +1031,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/original');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       const input = screen.getByDisplayValue('/original');
@@ -1000,6 +1055,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       const input = screen.getByDisplayValue('Original description');
@@ -1020,6 +1078,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
 
       fireEvent.click(screen.getByTitle('Edit command'));
 
@@ -1085,7 +1146,12 @@ describe('AICommandsPanel', () => {
         />
       );
 
-      expect(screen.getByText(longPrompt)).toBeInTheDocument();
+      // First expand the command (new collapsible UI) to see the prompt
+      expandCommand('/test');
+
+      // Prompt is truncated to 500 chars + '...' in the collapsed view
+      const truncatedPrompt = longPrompt.substring(0, 500) + '...';
+      expect(screen.getByText(truncatedPrompt)).toBeInTheDocument();
     });
 
     it('should handle empty commands array', () => {
@@ -1230,6 +1296,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       // Should render autocomplete dropdown (mocked)
@@ -1283,6 +1352,9 @@ describe('AICommandsPanel', () => {
         />
       );
 
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
+
       fireEvent.click(screen.getByTitle('Edit command'));
 
       const textarea = screen.getByDisplayValue('Original');
@@ -1321,6 +1393,9 @@ describe('AICommandsPanel', () => {
           setCustomAICommands={mockSetCustomAICommands}
         />
       );
+
+      // First expand the command (new collapsible UI)
+      expandCommand('/test');
 
       fireEvent.click(screen.getByTitle('Edit command'));
 

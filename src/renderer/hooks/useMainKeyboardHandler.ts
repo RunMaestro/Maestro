@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab } from '../types';
-import { TAB_SHORTCUTS } from '../constants/shortcuts';
 import { getInitialRenameValue } from '../utils/tabHelpers';
 
 /**
@@ -369,7 +368,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
         }
         if (ctx.isTabShortcut(e, 'newTab')) {
           e.preventDefault();
-          const result = ctx.createTab(ctx.activeSession, { saveToHistory: ctx.defaultSaveToHistory });
+          const result = ctx.createTab(ctx.activeSession, { saveToHistory: ctx.defaultSaveToHistory, showThinking: ctx.defaultShowThinking });
           if (result) {
             ctx.setSessions((prev: Session[]) => prev.map((s: Session) =>
               s.id === ctx.activeSession!.id ? result.session : s
@@ -433,6 +432,23 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
             };
           }));
         }
+        if (ctx.isTabShortcut(e, 'toggleShowThinking')) {
+          e.preventDefault();
+          ctx.setSessions((prev: Session[]) => prev.map((s: Session) => {
+            if (s.id !== ctx.activeSession!.id) return s;
+            return {
+              ...s,
+              aiTabs: s.aiTabs.map((tab: AITab) => {
+                if (tab.id !== s.activeTabId) return tab;
+                // When turning OFF, also clear any existing thinking/tool logs
+                if (tab.showThinking) {
+                  return { ...tab, showThinking: false, logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool') };
+                }
+                return { ...tab, showThinking: true };
+              })
+            };
+          }));
+        }
         if (ctx.isTabShortcut(e, 'filterUnreadTabs')) {
           e.preventDefault();
           ctx.toggleUnreadFilter();
@@ -462,7 +478,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
         // Cmd+1 through Cmd+9: Jump to specific tab by index (disabled in unread-only mode)
         if (!ctx.showUnreadOnly) {
           for (let i = 1; i <= 9; i++) {
-            if (ctx.isTabShortcut(e, `goToTab${i}` as keyof typeof TAB_SHORTCUTS)) {
+            if (ctx.isTabShortcut(e, `goToTab${i}`)) {
               e.preventDefault();
               const result = ctx.navigateToTabByIndex(ctx.activeSession, i - 1);
               if (result) {

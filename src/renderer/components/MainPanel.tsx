@@ -149,6 +149,7 @@ interface MainPanelProps {
   onToggleTabReadOnlyMode?: () => void;
   onToggleTabSaveToHistory?: () => void;
   onUpdateFileTabContent?: (tabId: string, content: string) => void;
+  onToggleTabShowThinking?: () => void;
   showUnreadOnly?: boolean;
   onToggleUnreadFilter?: () => void;
   onOpenTabSearch?: () => void;
@@ -805,6 +806,7 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
                   }}
                   className="p-2 rounded hover:bg-white/5"
                   title={`Agent Sessions (${shortcuts.agentSessions?.keys?.join('+').replace('Meta', 'Cmd').replace('Shift', '⇧') || 'Cmd+⇧+L'})`}
+                  data-tour="agent-sessions-button"
                 >
                   <List className="w-4 h-4" style={{ color: theme.colors.textDim }} />
                 </button>
@@ -1078,6 +1080,9 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
                 onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
                 tabSaveToHistory={activeTab?.saveToHistory ?? false}
                 onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
+                tabShowThinking={activeTab?.showThinking ?? false}
+                onToggleTabShowThinking={props.onToggleTabShowThinking}
+                supportsThinking={hasCapability('supportsThinkingDisplay')}
                 onOpenPromptComposer={props.onOpenPromptComposer}
                 showFlashNotification={showFlashNotification}
               />

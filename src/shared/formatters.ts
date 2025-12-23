@@ -10,8 +10,11 @@
  * - formatRelativeTime: Relative timestamps ("5m ago", "2h ago")
  * - formatActiveTime: Duration display (1D, 2H 30M, <1M)
  * - formatElapsedTime: Precise elapsed time (1h 10m, 30s, 500ms)
+ * - formatElapsedTimeColon: Timer-style elapsed time (mm:ss or hh:mm:ss)
  * - formatCost: USD currency display ($1.23, <$0.01)
  * - estimateTokenCount: Estimate token count from text (~4 chars/token)
+ * - truncatePath: Truncate file paths for display (.../<parent>/<current>)
+ * - truncateCommand: Truncate command text for display with ellipsis
  */
 
 /**
@@ -172,4 +175,68 @@ export function formatCost(cost: number): string {
 export function estimateTokenCount(text: string): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
+}
+
+/**
+ * Format elapsed time in seconds as timer-style display (mm:ss or hh:mm:ss).
+ * Useful for live countdown/timer displays.
+ *
+ * @param seconds - Duration in seconds
+ * @returns Formatted string (e.g., "5:12", "1:30:45")
+ */
+export function formatElapsedTimeColon(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+}
+
+/**
+ * Truncate a file path for display, preserving the most relevant parts.
+ * Shows ".../<parent>/<current>" format for long paths.
+ *
+ * @param path - The file path to truncate
+ * @param maxLength - Maximum length of the returned string (default: 35)
+ * @returns Truncated path string (e.g., ".../parent/current")
+ */
+export function truncatePath(path: string, maxLength: number = 35): string {
+  if (!path) return '';
+  if (path.length <= maxLength) return path;
+
+  // Detect path separator (Windows vs Unix)
+  const separator = path.includes('\\') ? '\\' : '/';
+  const parts = path.split(/[/\\]/).filter(Boolean);
+
+  if (parts.length === 0) return path;
+
+  // Show the last two parts with ellipsis
+  if (parts.length === 1) {
+    return `...${path.slice(-maxLength + 3)}`;
+  }
+
+  const lastTwo = parts.slice(-2).join(separator);
+  if (lastTwo.length > maxLength - 4) {
+    return `...${separator}${parts[parts.length - 1].slice(-(maxLength - 5))}`;
+  }
+
+  return `...${separator}${lastTwo}`;
+}
+
+/**
+ * Truncate command text for display.
+ * Replaces newlines with spaces, trims whitespace, and adds ellipsis if truncated.
+ *
+ * @param command - The command text to truncate
+ * @param maxLength - Maximum length of the returned string (default: 40)
+ * @returns Truncated command string (e.g., "npm run build --...")
+ */
+export function truncateCommand(command: string, maxLength: number = 40): string {
+  // Replace newlines with spaces for single-line display
+  const singleLine = command.replace(/\n/g, ' ').trim();
+  if (singleLine.length <= maxLength) return singleLine;
+  return singleLine.slice(0, maxLength - 1) + '…';
 }

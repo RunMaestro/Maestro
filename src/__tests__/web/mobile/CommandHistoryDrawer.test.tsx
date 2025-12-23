@@ -208,8 +208,8 @@ describe('truncateCommand (via component)', () => {
     const entry = createMockEntry({ command: longCommand });
     render(<CommandHistoryDrawer {...createDefaultProps({ history: [entry] })} />);
 
-    // Should truncate to 57 chars + '...'
-    const truncated = longCommand.slice(0, 57) + '...';
+    // Should truncate to 59 chars + '…' (unicode ellipsis) = 60 total (uses shared truncateCommand)
+    const truncated = longCommand.slice(0, 59) + '…';
     expect(screen.getByText(truncated)).toBeInTheDocument();
   });
 
@@ -226,7 +226,8 @@ describe('truncateCommand (via component)', () => {
     const entry = createMockEntry({ command });
     render(<CommandHistoryDrawer {...createDefaultProps({ history: [entry] })} />);
 
-    const truncated = 'a'.repeat(57) + '...';
+    // Should truncate to 59 chars + '…' (unicode ellipsis) = 60 total (uses shared truncateCommand)
+    const truncated = 'a'.repeat(59) + '…';
     expect(screen.getByText(truncated)).toBeInTheDocument();
   });
 });
@@ -924,11 +925,11 @@ describe('Edge cases', () => {
     const entry = createMockEntry({ command: '   ' });
     render(<CommandHistoryDrawer {...createDefaultProps({ history: [entry] })} />);
 
-    // Should render whitespace command - getByText normalizes whitespace
-    // Instead, find the paragraph element with monospace font that contains whitespace
+    // Shared truncateCommand trims whitespace, so whitespace-only becomes empty string
+    // The entry should still render with an empty command text
     const commandElements = document.querySelectorAll('p[style*="font-family: ui-monospace"]');
-    const whitespaceCommand = Array.from(commandElements).find(el => el.textContent === '   ');
-    expect(whitespaceCommand).toBeTruthy();
+    const emptyCommand = Array.from(commandElements).find(el => el.textContent === '');
+    expect(emptyCommand).toBeTruthy();
   });
 
   it('handles negative timestamp', () => {

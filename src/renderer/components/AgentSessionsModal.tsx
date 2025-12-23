@@ -5,6 +5,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { useListNavigation } from '../hooks/useListNavigation';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
+import { ToolCallCard } from './ToolCallCard';
 
 interface AgentSession {
   sessionId: string;
@@ -470,23 +471,36 @@ export function AgentSessionsModal({
                 key={msg.uuid || idx}
                 className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div
-                  className="max-w-[85%] rounded-lg px-4 py-2 text-sm"
-                  style={{
-                    backgroundColor: msg.type === 'user' ? theme.colors.accent : theme.colors.bgMain,
-                    color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textMain,
-                  }}
-                >
-                  <div className="whitespace-pre-wrap break-words">
-                    {msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]')}
+                {/* Tool call messages - render with ToolCallCard */}
+                {msg.toolUse && msg.toolUse.length > 0 ? (
+                  <div className="max-w-[85%]">
+                    <ToolCallCard
+                      theme={theme}
+                      toolUse={msg.toolUse}
+                      timestamp={formatRelativeTime(msg.timestamp)}
+                      defaultExpanded={false}
+                    />
                   </div>
+                ) : (
+                  /* Regular text messages */
                   <div
-                    className="text-[10px] mt-1 opacity-60"
-                    style={{ color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textDim }}
+                    className="max-w-[85%] rounded-lg px-4 py-2 text-sm"
+                    style={{
+                      backgroundColor: msg.type === 'user' ? theme.colors.accent : theme.colors.bgMain,
+                      color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textMain,
+                    }}
                   >
-                    {formatRelativeTime(msg.timestamp)}
+                    <div className="whitespace-pre-wrap break-words">
+                      {msg.content || '[No content]'}
+                    </div>
+                    <div
+                      className="text-[10px] mt-1 opacity-60"
+                      style={{ color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textDim }}
+                    >
+                      {formatRelativeTime(msg.timestamp)}
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ))}
 

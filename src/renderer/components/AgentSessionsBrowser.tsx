@@ -5,6 +5,7 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { SessionActivityGraph, type ActivityEntry } from './SessionActivityGraph';
 import { SessionListItem } from './SessionListItem';
+import { ToolCallCard, getToolName } from './ToolCallCard';
 import { formatSize, formatNumber, formatTokens, formatRelativeTime } from '../utils/formatters';
 import { useSessionViewer, type ClaudeSession } from '../hooks/useSessionViewer';
 import { useSessionPagination } from '../hooks/useSessionPagination';
@@ -498,7 +499,7 @@ export function AgentSessionsBrowser({
         id: msg.uuid || `${viewingSession.sessionId}-${idx}`,
         timestamp: new Date(msg.timestamp).getTime(),
         source: msg.type === 'user' ? 'user' as const : 'stdout' as const,
-        text: msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]'),
+        text: msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]'),
       }));
       // Pass session name and starred status for the new tab
       const isStarred = starredSessions.has(viewingSession.sessionId);
@@ -915,23 +916,36 @@ export function AgentSessionsBrowser({
               key={msg.uuid || idx}
               className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}
             >
-              <div
-                className="max-w-[75%] rounded-lg px-4 py-3 text-sm"
-                style={{
-                  backgroundColor: msg.type === 'user' ? theme.colors.accent : theme.colors.bgActivity,
-                  color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textMain,
-                }}
-              >
-                <div className="whitespace-pre-wrap break-words">
-                  {msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]')}
+              {/* Tool call messages - render with ToolCallCard */}
+              {msg.toolUse && msg.toolUse.length > 0 ? (
+                <div className="max-w-[85%]">
+                  <ToolCallCard
+                    theme={theme}
+                    toolUse={msg.toolUse}
+                    timestamp={formatRelativeTime(msg.timestamp)}
+                    defaultExpanded={false}
+                  />
                 </div>
+              ) : (
+                /* Regular text messages */
                 <div
-                  className="text-[10px] mt-2 opacity-60"
-                  style={{ color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textDim }}
+                  className="max-w-[75%] rounded-lg px-4 py-3 text-sm"
+                  style={{
+                    backgroundColor: msg.type === 'user' ? theme.colors.accent : theme.colors.bgActivity,
+                    color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textMain,
+                  }}
                 >
-                  {formatRelativeTime(msg.timestamp)}
+                  <div className="whitespace-pre-wrap break-words">
+                    {msg.content || '[No content]'}
+                  </div>
+                  <div
+                    className="text-[10px] mt-2 opacity-60"
+                    style={{ color: msg.type === 'user' ? (theme.mode === 'light' ? '#fff' : '#000') : theme.colors.textDim }}
+                  >
+                    {formatRelativeTime(msg.timestamp)}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ))}
 

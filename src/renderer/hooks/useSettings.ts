@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { LLMProvider, ThemeId, ThemeColors, Shortcut, CustomAICommand, GlobalStats, AutoRunStats, OnboardingStats, LeaderboardRegistration } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
-import { DEFAULT_SHORTCUTS } from '../constants/shortcuts';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../constants/shortcuts';
 import { commitCommandPrompt } from '../../prompts';
 
 // Default global stats
@@ -115,6 +115,10 @@ export interface UseSettingsReturn {
   setEnterToSendTerminal: (value: boolean) => void;
   defaultSaveToHistory: boolean;
   setDefaultSaveToHistory: (value: boolean) => void;
+
+  // Default thinking toggle
+  defaultShowThinking: boolean;
+  setDefaultShowThinking: (value: boolean) => void;
   leftSidebarWidth: number;
   rightPanelWidth: number;
   markdownEditMode: boolean;
@@ -163,6 +167,8 @@ export interface UseSettingsReturn {
   // Shortcuts
   shortcuts: Record<string, Shortcut>;
   setShortcuts: (value: Record<string, Shortcut>) => void;
+  tabShortcuts: Record<string, Shortcut>;
+  setTabShortcuts: (value: Record<string, Shortcut>) => void;
 
   // Custom AI Commands
   customAICommands: CustomAICommand[];
@@ -249,6 +255,7 @@ export function useSettings(): UseSettingsReturn {
   const [enterToSendAI, setEnterToSendAIState] = useState(false); // AI mode defaults to Command+Enter
   const [enterToSendTerminal, setEnterToSendTerminalState] = useState(true); // Terminal defaults to Enter
   const [defaultSaveToHistory, setDefaultSaveToHistoryState] = useState(true); // History toggle defaults to on
+  const [defaultShowThinking, setDefaultShowThinkingState] = useState(false); // Thinking toggle defaults to off
   const [leftSidebarWidth, setLeftSidebarWidthState] = useState(256);
   const [rightPanelWidth, setRightPanelWidthState] = useState(384);
   const [markdownEditMode, setMarkdownEditModeState] = useState(false);
@@ -281,6 +288,7 @@ export function useSettings(): UseSettingsReturn {
 
   // Shortcuts
   const [shortcuts, setShortcutsState] = useState<Record<string, Shortcut>>(DEFAULT_SHORTCUTS);
+  const [tabShortcuts, setTabShortcutsState] = useState<Record<string, Shortcut>>(TAB_SHORTCUTS);
 
   // Custom AI Commands
   const [customAICommands, setCustomAICommandsState] = useState<CustomAICommand[]>(DEFAULT_AI_COMMANDS);
@@ -390,6 +398,11 @@ export function useSettings(): UseSettingsReturn {
     window.maestro.settings.set('defaultSaveToHistory', value);
   }, []);
 
+  const setDefaultShowThinking = useCallback((value: boolean) => {
+    setDefaultShowThinkingState(value);
+    window.maestro.settings.set('defaultShowThinking', value);
+  }, []);
+
   const setLeftSidebarWidth = useCallback((width: number) => {
     const clampedWidth = Math.max(256, Math.min(600, width));
     setLeftSidebarWidthState(clampedWidth);
@@ -414,6 +427,11 @@ export function useSettings(): UseSettingsReturn {
   const setShortcuts = useCallback((value: Record<string, Shortcut>) => {
     setShortcutsState(value);
     window.maestro.settings.set('shortcuts', value);
+  }, []);
+
+  const setTabShortcuts = useCallback((value: Record<string, Shortcut>) => {
+    setTabShortcutsState(value);
+    window.maestro.settings.set('tabShortcuts', value);
   }, []);
 
   const setTerminalWidth = useCallback((value: number) => {
@@ -865,6 +883,7 @@ export function useSettings(): UseSettingsReturn {
       const savedEnterToSendAI = await window.maestro.settings.get('enterToSendAI');
       const savedEnterToSendTerminal = await window.maestro.settings.get('enterToSendTerminal');
       const savedDefaultSaveToHistory = await window.maestro.settings.get('defaultSaveToHistory');
+      const savedDefaultShowThinking = await window.maestro.settings.get('defaultShowThinking');
 
       const savedLlmProvider = await window.maestro.settings.get('llmProvider');
       const savedModelSlug = await window.maestro.settings.get('modelSlug');
@@ -881,6 +900,7 @@ export function useSettings(): UseSettingsReturn {
       const savedMarkdownEditMode = await window.maestro.settings.get('markdownEditMode');
       const savedShowHiddenFiles = await window.maestro.settings.get('showHiddenFiles');
       const savedShortcuts = await window.maestro.settings.get('shortcuts');
+      const savedTabShortcuts = await window.maestro.settings.get('tabShortcuts');
       const savedActiveThemeId = await window.maestro.settings.get('activeThemeId');
       const savedCustomThemeColors = await window.maestro.settings.get('customThemeColors');
       const savedCustomThemeBaseId = await window.maestro.settings.get('customThemeBaseId');
@@ -898,6 +918,7 @@ export function useSettings(): UseSettingsReturn {
       const savedCustomAICommands = await window.maestro.settings.get('customAICommands');
       const savedGlobalStats = await window.maestro.settings.get('globalStats');
       const savedAutoRunStats = await window.maestro.settings.get('autoRunStats');
+      const concurrentAutoRunTimeMigrationApplied = await window.maestro.settings.get('concurrentAutoRunTimeMigrationApplied');
       const savedUngroupedCollapsed = await window.maestro.settings.get('ungroupedCollapsed');
       const savedTourCompleted = await window.maestro.settings.get('tourCompleted');
       const savedFirstAutoRunCompleted = await window.maestro.settings.get('firstAutoRunCompleted');
@@ -909,6 +930,7 @@ export function useSettings(): UseSettingsReturn {
       if (savedEnterToSendAI !== undefined) setEnterToSendAIState(savedEnterToSendAI as boolean);
       if (savedEnterToSendTerminal !== undefined) setEnterToSendTerminalState(savedEnterToSendTerminal as boolean);
       if (savedDefaultSaveToHistory !== undefined) setDefaultSaveToHistoryState(savedDefaultSaveToHistory as boolean);
+      if (savedDefaultShowThinking !== undefined) setDefaultShowThinkingState(savedDefaultShowThinking as boolean);
 
       if (savedLlmProvider !== undefined) setLlmProviderState(savedLlmProvider as LLMProvider);
       if (savedModelSlug !== undefined) setModelSlugState(savedModelSlug as string);
@@ -999,6 +1021,46 @@ export function useSettings(): UseSettingsReturn {
         setShortcutsState(mergedShortcuts);
       }
 
+      // Merge saved tab shortcuts with defaults (in case new shortcuts were added)
+      if (savedTabShortcuts !== undefined) {
+        // Apply same macOS Alt+key migration
+        const macAltCharMap: Record<string, string> = {
+          '¬': 'l', 'π': 'p', '†': 't', '∫': 'b', '∂': 'd', 'ƒ': 'f',
+          '©': 'g', '˙': 'h', 'ˆ': 'i', '∆': 'j', '˚': 'k', '¯': 'm',
+          '˜': 'n', 'ø': 'o', '®': 'r', 'ß': 's', '√': 'v', '∑': 'w',
+          '≈': 'x', '¥': 'y', 'Ω': 'z',
+        };
+
+        const migratedTabShortcuts: Record<string, Shortcut> = {};
+        let needsTabMigration = false;
+
+        for (const [id, shortcut] of Object.entries(savedTabShortcuts as Record<string, Shortcut>)) {
+          const migratedKeys = shortcut.keys.map(key => {
+            if (macAltCharMap[key]) {
+              needsTabMigration = true;
+              return macAltCharMap[key];
+            }
+            return key;
+          });
+          migratedTabShortcuts[id] = { ...shortcut, keys: migratedKeys };
+        }
+
+        if (needsTabMigration) {
+          window.maestro.settings.set('tabShortcuts', migratedTabShortcuts);
+        }
+
+        // Merge: use default labels but preserve user's custom keys
+        const mergedTabShortcuts: Record<string, Shortcut> = {};
+        for (const [id, defaultShortcut] of Object.entries(TAB_SHORTCUTS)) {
+          const savedShortcut = migratedTabShortcuts[id];
+          mergedTabShortcuts[id] = {
+            ...defaultShortcut,
+            keys: savedShortcut?.keys ?? defaultShortcut.keys,
+          };
+        }
+        setTabShortcutsState(mergedTabShortcuts);
+      }
+
       // Merge saved AI commands with defaults (ensure built-in commands always exist)
       if (savedCustomAICommands !== undefined && Array.isArray(savedCustomAICommands)) {
         // Start with defaults, then merge saved commands (by ID to avoid duplicates)
@@ -1028,7 +1090,22 @@ export function useSettings(): UseSettingsReturn {
 
       // Load auto-run stats
       if (savedAutoRunStats !== undefined) {
-        setAutoRunStatsState({ ...DEFAULT_AUTO_RUN_STATS, ...(savedAutoRunStats as Partial<AutoRunStats>) });
+        let stats = { ...DEFAULT_AUTO_RUN_STATS, ...(savedAutoRunStats as Partial<AutoRunStats>) };
+
+        // One-time migration: Add 3 hours to compensate for bug where concurrent Auto Runs
+        // weren't being tallied correctly (fixed in v0.11.3)
+        if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
+          const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+          stats = {
+            ...stats,
+            cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
+          };
+          window.maestro.settings.set('autoRunStats', stats);
+          window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
+          console.log('[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time');
+        }
+
+        setAutoRunStatsState(stats);
       }
 
       // Load onboarding settings
@@ -1101,6 +1178,8 @@ export function useSettings(): UseSettingsReturn {
     setEnterToSendTerminal,
     defaultSaveToHistory,
     setDefaultSaveToHistory,
+    defaultShowThinking,
+    setDefaultShowThinking,
     leftSidebarWidth,
     rightPanelWidth,
     markdownEditMode,
@@ -1133,6 +1212,8 @@ export function useSettings(): UseSettingsReturn {
     setLogViewerSelectedLevels,
     shortcuts,
     setShortcuts,
+    tabShortcuts,
+    setTabShortcuts,
     customAICommands,
     setCustomAICommands,
     globalStats,
@@ -1186,6 +1267,7 @@ export function useSettings(): UseSettingsReturn {
     enterToSendAI,
     enterToSendTerminal,
     defaultSaveToHistory,
+    defaultShowThinking,
     leftSidebarWidth,
     rightPanelWidth,
     markdownEditMode,
@@ -1202,6 +1284,7 @@ export function useSettings(): UseSettingsReturn {
     crashReportingEnabled,
     logViewerSelectedLevels,
     shortcuts,
+    tabShortcuts,
     customAICommands,
     globalStats,
     autoRunStats,
@@ -1226,6 +1309,7 @@ export function useSettings(): UseSettingsReturn {
     setEnterToSendAI,
     setEnterToSendTerminal,
     setDefaultSaveToHistory,
+    setDefaultShowThinking,
     setLeftSidebarWidth,
     setRightPanelWidth,
     setMarkdownEditMode,
@@ -1242,6 +1326,7 @@ export function useSettings(): UseSettingsReturn {
     setCrashReportingEnabled,
     setLogViewerSelectedLevels,
     setShortcuts,
+    setTabShortcuts,
     setCustomAICommands,
     setGlobalStats,
     updateGlobalStats,

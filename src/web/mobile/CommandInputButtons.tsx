@@ -17,10 +17,7 @@
 import React from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { InputMode } from './CommandInputBar';
-import { triggerHaptic } from './constants';
-
-/** Minimum touch target size per Apple HIG guidelines (44pt) */
-const MIN_TOUCH_TARGET = 44;
+import { triggerHaptic, MIN_TOUCH_TARGET } from './constants';
 
 /** Default minimum height for the buttons */
 const MIN_INPUT_HEIGHT = 48;

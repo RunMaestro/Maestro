@@ -495,7 +495,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
         break;
 
       case 'Enter':
-      case ' ':
+      case ' ': {
         e.preventDefault();
         // Select the focused tile if supported and detected
         const tile = AGENT_TILES[currentIndex];
@@ -508,6 +508,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
           }
         }
         break;
+      }
     }
   }, [
     isNameFieldFocused,

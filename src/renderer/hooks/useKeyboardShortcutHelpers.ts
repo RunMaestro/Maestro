@@ -1,13 +1,14 @@
 import { useCallback } from 'react';
 import type { Shortcut } from '../types';
-import { TAB_SHORTCUTS } from '../constants/shortcuts';
 
 /**
  * Dependencies for useKeyboardShortcutHelpers hook
  */
 export interface UseKeyboardShortcutHelpersDeps {
-  /** User-configurable shortcuts (from useSettings) */
+  /** User-configurable global shortcuts (from useSettings) */
   shortcuts: Record<string, Shortcut>;
+  /** User-configurable tab shortcuts (from useSettings) */
+  tabShortcuts: Record<string, Shortcut>;
 }
 
 /**
@@ -33,7 +34,7 @@ export interface UseKeyboardShortcutHelpersReturn {
 export function useKeyboardShortcutHelpers(
   deps: UseKeyboardShortcutHelpersDeps
 ): UseKeyboardShortcutHelpersReturn {
-  const { shortcuts } = deps;
+  const { shortcuts, tabShortcuts } = deps;
 
   /**
    * Check if a keyboard event matches a shortcut by action ID.
@@ -94,11 +95,11 @@ export function useKeyboardShortcutHelpers(
   /**
    * Check if a keyboard event matches a tab shortcut (AI mode only).
    *
-   * Checks both TAB_SHORTCUTS (fixed tab shortcuts) and editable shortcuts
-   * (for prevTab/nextTab which can be customized).
+   * Uses user-configurable tabShortcuts, falling back to global shortcuts
+   * if a tab-specific shortcut isn't defined.
    */
   const isTabShortcut = useCallback((e: KeyboardEvent, actionId: string): boolean => {
-    const sc = TAB_SHORTCUTS[actionId] || shortcuts[actionId];
+    const sc = tabShortcuts[actionId] || shortcuts[actionId];
     if (!sc) return false;
     const keys = sc.keys.map(k => k.toLowerCase());
 
@@ -128,7 +129,7 @@ export function useKeyboardShortcutHelpers(
     }
 
     return key === mainKey;
-  }, [shortcuts]);
+  }, [tabShortcuts, shortcuts]);
 
   return { isShortcut, isTabShortcut };
 }

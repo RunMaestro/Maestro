@@ -17,7 +17,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import { Badge } from '../components/Badge';
 import type { QueuedCommand, QueueStatus } from '../hooks/useOfflineQueue';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
-import { formatRelativeTime } from '../../shared/formatters';
+import { formatRelativeTime, truncateCommand } from '../../shared/formatters';
 
 export interface OfflineQueueBannerProps {
   /** Queued commands */
@@ -36,16 +36,6 @@ export interface OfflineQueueBannerProps {
   isConnected: boolean;
 }
 
-/**
- * Truncate command text for display
- */
-function truncateCommand(command: string, maxLength: number = 40): string {
-  if (command.length <= maxLength) return command;
-  return command.substring(0, maxLength - 3) + '...';
-}
-
-// formatRelativeTime imported from ../../shared/formatters
-
 export function OfflineQueueBanner({
   queue,
   status,
@@ -57,11 +47,6 @@ export function OfflineQueueBanner({
 }: OfflineQueueBannerProps) {
   const colors = useThemeColors();
   const [isExpanded, setIsExpanded] = useState(false);
-
-  // Don't show if queue is empty
-  if (queue.length === 0) {
-    return null;
-  }
 
   const isProcessing = status === 'processing';
   const canRetry = !isOffline && isConnected && status !== 'processing';
@@ -87,6 +72,11 @@ export function OfflineQueueBanner({
     triggerHaptic(HAPTIC_PATTERNS.tap);
     onRemoveCommand(commandId);
   }, [onRemoveCommand]);
+
+  // Don't show if queue is empty
+  if (queue.length === 0) {
+    return null;
+  }
 
   return (
     <div

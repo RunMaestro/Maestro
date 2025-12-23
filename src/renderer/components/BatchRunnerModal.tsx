@@ -12,6 +12,13 @@ import { usePlaybookManagement } from '../hooks';
 import { autorunDefaultPrompt } from '../../prompts';
 import { generateId } from '../utils/ids';
 
+// Platform detection helper (userAgentData is newer but not in all TS types yet)
+const isMacPlatform = (): boolean => {
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  return nav.userAgentData?.platform?.toLowerCase().includes('mac')
+    ?? navigator.platform.toLowerCase().includes('mac');
+};
+
 // Default batch processing prompt
 export const DEFAULT_BATCH_PROMPT = autorunDefaultPrompt;
 
@@ -613,14 +620,24 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t flex justify-end gap-2 shrink-0" style={{ borderColor: theme.colors.border }}>
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
-            style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-          >
-            Cancel
-          </button>
+        <div className="p-4 border-t flex items-center justify-between shrink-0" style={{ borderColor: theme.colors.border }}>
+          {/* Left side: Hint */}
+          <div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
+            <span className="px-1.5 py-0.5 rounded border text-[10px] font-mono" style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}>
+              {isMacPlatform() ? '⌘' : 'Ctrl'} + Drag
+            </span>
+            <span>to copy document</span>
+          </div>
+
+          {/* Right side: Buttons */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded border hover:bg-white/5 transition-colors"
+              style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+            >
+              Cancel
+            </button>
           <button
             onClick={handleSave}
             disabled={!hasUnsavedChanges}
@@ -646,6 +663,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
             <Play className="w-4 h-4" />
             Go
           </button>
+          </div>
         </div>
       </div>
 

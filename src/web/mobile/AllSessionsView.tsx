@@ -19,6 +19,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, GroupInfo } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { truncatePath } from '../../shared/formatters';
 
 /**
  * Session card component for the All Sessions view
@@ -30,7 +31,12 @@ interface SessionCardProps {
   onSelect: (sessionId: string) => void;
 }
 
-function MobileSessionCard({ session, isActive, onSelect }: SessionCardProps) {
+interface MobileSessionCardPropsInternal extends SessionCardProps {
+  /** Display name (may include parent prefix for worktree children) */
+  displayName: string;
+}
+
+function MobileSessionCard({ session, isActive, onSelect, displayName }: MobileSessionCardPropsInternal) {
   const colors = useThemeColors();
 
   // Map session state to status for StatusDot
@@ -62,15 +68,6 @@ function MobileSessionCard({ session, isActive, onSelect }: SessionCardProps) {
     return toolTypeMap[session.toolType] || session.toolType;
   };
 
-  // Truncate path for display
-  const truncatePath = (path: string, maxLength: number = 40): string => {
-    if (path.length <= maxLength) return path;
-    const separator = path.includes('\\') ? '\\' : '/';
-    const parts = path.split(/[/\\]/).filter(Boolean);
-    if (parts.length <= 2) return `...${path.slice(-maxLength + 3)}`;
-    return `...${separator}${parts.slice(-2).join(separator)}`;
-  };
-
   const handleClick = useCallback(() => {
     triggerHaptic(HAPTIC_PATTERNS.tap);
     onSelect(session.id);
@@ -99,7 +96,7 @@ function MobileSessionCard({ session, isActive, onSelect }: SessionCardProps) {
         WebkitUserSelect: 'none',
       }}
       aria-pressed={isActive}
-      aria-label={`${session.name} session, ${getStatusLabel()}, ${session.inputMode} mode${isActive ? ', active' : ''}`}
+      aria-label={`${displayName} session, ${getStatusLabel()}, ${session.inputMode} mode${isActive ? ', active' : ''}`}
     >
       {/* Top row: Status dot, name, and mode badge */}
       <div
@@ -121,7 +118,7 @@ function MobileSessionCard({ session, isActive, onSelect }: SessionCardProps) {
             whiteSpace: 'nowrap',
           }}
         >
-          {session.name}
+          {displayName}
         </span>
         {/* Mode badge */}
         <span
@@ -189,10 +186,103 @@ function MobileSessionCard({ session, isActive, onSelect }: SessionCardProps) {
         }}
         title={session.cwd}
       >
-        {truncatePath(session.cwd)}
+        {truncatePath(session.cwd, 40)}
       </div>
     </button>
   );
+}
+
+/**
+ * Find the parent session for a worktree child by looking at path patterns.
+ * This handles legacy worktree sessions that don't have parentSessionId set.
+ *
+ * Worktree paths typically follow patterns like:
+ * - /path/to/Project-WorkTrees/branch-name
+ * - /path/to/ProjectWorkTrees/branch-name
+ *
+ * The parent would be at /path/to/Project
+ */
+function findParentSession(
+  session: Session,
+  sessions: Session[]
+): Session | null {
+  // If parentSessionId is set, use it directly
+  if (session.parentSessionId) {
+    const parent = sessions.find(s => s.id === session.parentSessionId) || null;
+    console.log(`[findParentSession] ${session.name}: parentSessionId=${session.parentSessionId}, found=${parent?.name || 'null'}`);
+    return parent;
+  }
+
+  // Try to infer parent from path patterns
+  const cwd = session.cwd;
+
+  // Check for worktree path patterns: ProjectName-WorkTrees/branch or ProjectNameWorkTrees/branch
+  const worktreeMatch = cwd.match(/^(.+?)[-]?WorkTrees[\/\\]([^\/\\]+)/i);
+  console.log(`[findParentSession] ${session.name}: cwd=${cwd}, worktreeMatch=${JSON.stringify(worktreeMatch)}`);
+
+  if (worktreeMatch) {
+    const basePath = worktreeMatch[1];
+    console.log(`[findParentSession] ${session.name}: basePath=${basePath}`);
+
+    // Log all potential parents
+    const potentialParents = sessions.filter(s => s.id !== session.id && !s.parentSessionId);
+    console.log(`[findParentSession] ${session.name}: potential parents:`, potentialParents.map(s => ({ name: s.name, cwd: s.cwd })));
+
+    // Find a session whose cwd matches the base path
+    const parent = sessions.find(s =>
+      s.id !== session.id &&
+      !s.parentSessionId && // Not itself a worktree child
+      (s.cwd === basePath || s.cwd.startsWith(basePath + '/') || s.cwd.startsWith(basePath + '\\'))
+    );
+    if (parent) {
+      console.log(`[findParentSession] ${session.name}: FOUND parent=${parent.name}`);
+      return parent;
+    }
+    console.log(`[findParentSession] ${session.name}: NO parent found for basePath=${basePath}`);
+  }
+
+  return null;
+}
+
+/**
+ * Compute display name for a session
+ * For worktree children, prefixes with parent name: "ParentName: branch-name"
+ */
+function getSessionDisplayName(
+  session: Session,
+  sessions: Session[]
+): string {
+  const parent = findParentSession(session, sessions);
+  if (parent) {
+    // Use worktreeBranch if available, otherwise use session name (which is typically the branch)
+    const branchName = session.worktreeBranch || session.name;
+    return `${parent.name}: ${branchName}`;
+  }
+  return session.name;
+}
+
+/**
+ * Get the effective group for a session
+ * Worktree children inherit their parent's group
+ */
+function getSessionEffectiveGroup(
+  session: Session,
+  sessions: Session[]
+): { groupId: string | null; groupName: string | null; groupEmoji: string | null } {
+  const parent = findParentSession(session, sessions);
+  if (parent) {
+    return {
+      groupId: parent.groupId || null,
+      groupName: parent.groupName || null,
+      groupEmoji: parent.groupEmoji || null,
+    };
+  }
+  // Use session's own group
+  return {
+    groupId: session.groupId || null,
+    groupName: session.groupName || null,
+    groupEmoji: session.groupEmoji || null,
+  };
 }
 
 /**
@@ -207,6 +297,8 @@ interface GroupSectionProps {
   onSelectSession: (sessionId: string) => void;
   isCollapsed: boolean;
   onToggleCollapse: (groupId: string) => void;
+  /** All sessions for parent lookup */
+  allSessions: Session[];
 }
 
 function GroupSection({
@@ -218,6 +310,7 @@ function GroupSection({
   onSelectSession,
   isCollapsed,
   onToggleCollapse,
+  allSessions,
 }: GroupSectionProps) {
   const colors = useThemeColors();
 
@@ -304,6 +397,7 @@ function GroupSection({
               session={session}
               isActive={session.id === activeSessionId}
               onSelect={onSelectSession}
+              displayName={getSessionDisplayName(session, allSessions)}
             />
           ))}
         </div>
@@ -346,19 +440,24 @@ export function AllSessionsView({
   const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Filter sessions by search query
+  // Filter sessions by search query (including worktree display names)
   const filteredSessions = useMemo(() => {
     if (!localSearchQuery.trim()) return sessions;
     const query = localSearchQuery.toLowerCase();
-    return sessions.filter(
-      (session) =>
+    return sessions.filter((session) => {
+      const displayName = getSessionDisplayName(session, sessions);
+      return (
+        displayName.toLowerCase().includes(query) ||
         session.name.toLowerCase().includes(query) ||
         session.cwd.toLowerCase().includes(query) ||
-        (session.toolType && session.toolType.toLowerCase().includes(query))
-    );
+        (session.toolType && session.toolType.toLowerCase().includes(query)) ||
+        (session.worktreeBranch && session.worktreeBranch.toLowerCase().includes(query))
+      );
+    });
   }, [sessions, localSearchQuery]);
 
   // Organize sessions by group, including a special "bookmarks" group
+  // Worktree children inherit their parent's group
   const sessionsByGroup = useMemo((): Record<string, GroupInfo> => {
     const groups: Record<string, GroupInfo> = {};
 
@@ -373,15 +472,17 @@ export function AllSessionsView({
       };
     }
 
-    // Organize remaining sessions by their actual groups
+    // Organize remaining sessions by their actual groups (or inherited group for worktree children)
     for (const session of filteredSessions) {
-      const groupKey = session.groupId || 'ungrouped';
+      // Get effective group (worktree children inherit from parent)
+      const effectiveGroup = getSessionEffectiveGroup(session, sessions);
+      const groupKey = effectiveGroup.groupId || 'ungrouped';
 
       if (!groups[groupKey]) {
         groups[groupKey] = {
-          id: session.groupId || null,
-          name: session.groupName || 'Ungrouped',
-          emoji: session.groupEmoji || null,
+          id: effectiveGroup.groupId,
+          name: effectiveGroup.groupName || 'Ungrouped',
+          emoji: effectiveGroup.groupEmoji,
           sessions: [],
         };
       }
@@ -389,7 +490,7 @@ export function AllSessionsView({
     }
 
     return groups;
-  }, [filteredSessions]);
+  }, [filteredSessions, sessions]);
 
   // Get sorted group keys (bookmarks first, ungrouped last)
   const sortedGroupKeys = useMemo(() => {
@@ -625,6 +726,7 @@ export function AllSessionsView({
                 session={session}
                 isActive={session.id === activeSessionId}
                 onSelect={handleSelectSession}
+                displayName={getSessionDisplayName(session, sessions)}
               />
             ))}
           </div>
@@ -643,6 +745,7 @@ export function AllSessionsView({
                 onSelectSession={handleSelectSession}
                 isCollapsed={collapsedGroups?.has(groupKey) ?? true}
                 onToggleCollapse={handleToggleCollapse}
+                allSessions={sessions}
               />
             );
           })

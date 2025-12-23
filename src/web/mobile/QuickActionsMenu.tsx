@@ -15,9 +15,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
-
-/** Minimum touch target size per Apple HIG guidelines (44pt) */
-const MIN_TOUCH_TARGET = 44;
+import { MIN_TOUCH_TARGET } from './constants';
 
 export type QuickAction = 'switch_mode';
 

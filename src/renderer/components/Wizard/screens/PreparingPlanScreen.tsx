@@ -112,8 +112,9 @@ function FactContent({
               onClick={(e) => {
                 e.preventDefault();
                 // Open in system browser
-                window.maestro?.shell?.openExternal?.(segment.url) ||
+                if (!window.maestro?.shell?.openExternal?.(segment.url)) {
                   window.open(segment.url, '_blank');
+                }
               }}
               className="underline hover:opacity-80 cursor-pointer transition-opacity"
               style={{ color: theme.colors.accent }}

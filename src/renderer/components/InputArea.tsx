@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo } from 'react';
-import { Terminal, Cpu, Keyboard, ImageIcon, X, ArrowUp, Eye, History, File, Folder, GitBranch, Tag, PenLine } from 'lucide-react';
+import { Terminal, Cpu, Keyboard, ImageIcon, X, ArrowUp, Eye, History, File, Folder, GitBranch, Tag, PenLine, Brain } from 'lucide-react';
 import type { Session, Theme, BatchRunState } from '../types';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks/useTabCompletion';
 import { ThinkingStatusPill } from './ThinkingStatusPill';
@@ -83,6 +83,10 @@ interface InputAreaProps {
   onOpenPromptComposer?: () => void;
   // Flash notification callback
   showFlashNotification?: (message: string) => void;
+  // Show Thinking toggle (per-tab)
+  tabShowThinking?: boolean;
+  onToggleTabShowThinking?: () => void;
+  supportsThinking?: boolean; // From agent capabilities
 }
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
@@ -110,7 +114,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
     tabReadOnlyMode = false, onToggleTabReadOnlyMode,
     tabSaveToHistory = false, onToggleTabSaveToHistory,
     onOpenPromptComposer,
-    showFlashNotification
+    showFlashNotification,
+    tabShowThinking = false, onToggleTabShowThinking, supportsThinking = false
   } = props;
 
   // Get agent capabilities for conditional feature rendering
@@ -728,6 +733,24 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
                 >
                   <Eye className="w-3 h-3" />
                   <span>Read-only</span>
+                </button>
+              )}
+              {/* Show Thinking toggle - AI mode only, for agents that support it */}
+              {session.inputMode === 'ai' && supportsThinking && onToggleTabShowThinking && (
+                <button
+                  onClick={onToggleTabShowThinking}
+                  className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+                    tabShowThinking ? '' : 'opacity-40 hover:opacity-70'
+                  }`}
+                  style={{
+                    backgroundColor: tabShowThinking ? `${theme.colors.accentText}25` : 'transparent',
+                    color: tabShowThinking ? theme.colors.accentText : theme.colors.textDim,
+                    border: tabShowThinking ? `1px solid ${theme.colors.accentText}50` : '1px solid transparent'
+                  }}
+                  title="Show Thinking - Stream AI reasoning in real-time"
+                >
+                  <Brain className="w-3 h-3" />
+                  <span>Thinking</span>
                 </button>
               )}
               <button

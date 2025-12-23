@@ -13,7 +13,10 @@ import path from 'path';
 
 export default defineConfig({
   test: {
-    include: ['src/__tests__/integration/**/*.integration.test.ts'],
+    include: [
+      'src/__tests__/integration/**/*.integration.test.ts',
+      'src/__tests__/integration/**/provider-integration.test.ts',
+    ],
     testTimeout: 180000, // 3 minutes per test
     hookTimeout: 60000, // 1 minute for setup/teardown
     pool: 'forks', // Use forks instead of threads for process isolation

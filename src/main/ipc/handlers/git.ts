@@ -850,5 +850,48 @@ export function registerGitHandlers(): void {
     }
   ));
 
+  // Remove a worktree directory from disk
+  // Uses `git worktree remove` if it's a git worktree, or falls back to recursive delete
+  ipcMain.handle('git:removeWorktree', withIpcErrorLogging(
+    handlerOpts('removeWorktree'),
+    async (worktreePath: string, force: boolean = false) => {
+      try {
+        // First check if the directory exists
+        await fs.access(worktreePath);
+
+        // Try to use git worktree remove first (cleanest approach)
+        const args = force ? ['worktree', 'remove', '--force', worktreePath] : ['worktree', 'remove', worktreePath];
+        const gitResult = await execFileNoThrow('git', args, worktreePath);
+
+        if (gitResult.exitCode === 0) {
+          logger.info(`${LOG_CONTEXT} Removed worktree via git: ${worktreePath}`);
+          return { success: true };
+        }
+
+        // If git worktree remove failed (maybe not a worktree or has changes), try force removal
+        if (!force) {
+          // Check if there are uncommitted changes
+          const statusResult = await execFileNoThrow('git', ['status', '--porcelain'], worktreePath);
+          if (statusResult.exitCode === 0 && statusResult.stdout.trim().length > 0) {
+            return {
+              success: false,
+              error: 'Worktree has uncommitted changes. Use force option to delete anyway.',
+              hasUncommittedChanges: true,
+            };
+          }
+        }
+
+        // Fall back to recursive directory removal
+        await fs.rm(worktreePath, { recursive: true, force: true });
+        logger.info(`${LOG_CONTEXT} Removed worktree directory: ${worktreePath}`);
+        return { success: true };
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        logger.error(`${LOG_CONTEXT} Failed to remove worktree ${worktreePath}: ${errorMessage}`);
+        return { success: false, error: errorMessage };
+      }
+    }
+  ));
+
   logger.debug(`${LOG_CONTEXT} Git IPC handlers registered`);
 }

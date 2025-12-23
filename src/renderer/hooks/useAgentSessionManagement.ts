@@ -37,6 +37,8 @@ export interface UseAgentSessionManagementDeps {
   rightPanelRef: React.RefObject<RightPanelHandle | null>;
   /** Default value for saveToHistory on new tabs */
   defaultSaveToHistory: boolean;
+  /** Default value for showThinking on new tabs */
+  defaultShowThinking: boolean;
 }
 
 /**
@@ -80,6 +82,7 @@ export function useAgentSessionManagement(
     setAgentSessionsOpen,
     rightPanelRef,
     defaultSaveToHistory,
+    defaultShowThinking,
   } = deps;
 
   // Refs for functions that need to be accessed from other callbacks
@@ -228,7 +231,8 @@ export function useAgentSessionManagement(
           name,
           starred: isStarred,
           usageStats,
-          saveToHistory: defaultSaveToHistory
+          saveToHistory: defaultSaveToHistory,
+          showThinking: defaultShowThinking
         });
         if (!result) return s;
 
@@ -238,7 +242,7 @@ export function useAgentSessionManagement(
     } catch (error) {
       console.error('Failed to resume session:', error);
     }
-  }, [activeSession?.projectRoot, activeSession?.id, activeSession?.aiTabs, activeSession?.toolType, setSessions, setActiveAgentSessionId, defaultSaveToHistory]);
+  }, [activeSession?.projectRoot, activeSession?.id, activeSession?.aiTabs, activeSession?.toolType, setSessions, setActiveAgentSessionId, defaultSaveToHistory, defaultShowThinking]);
 
   // Update refs for slash command functions (so other handlers can access latest versions)
   addHistoryEntryRef.current = addHistoryEntry;

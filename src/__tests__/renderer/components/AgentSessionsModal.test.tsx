@@ -1322,7 +1322,8 @@ describe('AgentSessionsModal', () => {
       });
 
       await waitFor(() => {
-        expect(screen.getByText('[Tool: read_file]')).toBeInTheDocument();
+        // ToolCallCard component displays tool name without brackets (collapsible card format)
+        expect(screen.getByText('Tool: read_file')).toBeInTheDocument();
       });
     });
 

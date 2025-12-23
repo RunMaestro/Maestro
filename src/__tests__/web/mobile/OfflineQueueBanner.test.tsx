@@ -113,9 +113,9 @@ describe('OfflineQueueBanner', () => {
       const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
       fireEvent.click(toggleButton);
 
-      // Should truncate to 40 chars total: substring(0, 37) + '...'
-      // longCommand.substring(0, 37) = "this is a very long command that shou"
-      expect(screen.getByText('this is a very long command that shou...')).toBeInTheDocument();
+      // Should truncate to 40 chars total: slice(0, 39) + '…' (unicode ellipsis)
+      // Uses shared truncateCommand function
+      expect(screen.getByText(longCommand.slice(0, 39) + '…')).toBeInTheDocument();
     });
 
     it('handles command exactly at truncation boundary', () => {
@@ -139,8 +139,8 @@ describe('OfflineQueueBanner', () => {
       const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
       fireEvent.click(toggleButton);
 
-      // Should truncate: 37 b's + '...'
-      expect(screen.getByText('b'.repeat(37) + '...')).toBeInTheDocument();
+      // Should truncate: 39 b's + '…' (unicode ellipsis) = 40 total
+      expect(screen.getByText('b'.repeat(39) + '…')).toBeInTheDocument();
     });
 
     it('handles empty command', () => {

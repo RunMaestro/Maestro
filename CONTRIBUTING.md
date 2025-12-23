@@ -158,13 +158,28 @@ src/__tests__/
 
 ## Linting
 
-Run TypeScript type checking to catch errors before building:
+Run TypeScript type checking and ESLint to catch errors before building:
 
 ```bash
-npm run lint           # Run type checking across the codebase
+npm run lint           # TypeScript type checking (all configs: renderer, main, cli)
+npm run lint:eslint    # ESLint code quality checks (React hooks, unused vars, etc.)
+npm run lint:eslint -- --fix  # Auto-fix ESLint issues where possible
 ```
 
-The linter uses a dedicated `tsconfig.lint.json` configuration that type-checks all source files without emitting output. This catches type errors, unused variables, and other TypeScript issues.
+### TypeScript Linting
+
+The TypeScript linter checks all three build configurations:
+- `tsconfig.lint.json` - Renderer, web, and shared code
+- `tsconfig.main.json` - Main process code
+- `tsconfig.cli.json` - CLI tooling
+
+### ESLint
+
+ESLint is configured with TypeScript and React plugins (`eslint.config.mjs`):
+- `react-hooks/rules-of-hooks` - Enforces React hooks rules
+- `react-hooks/exhaustive-deps` - Enforces correct hook dependencies
+- `@typescript-eslint/no-unused-vars` - Warns about unused variables
+- `prefer-const` - Suggests const for never-reassigned variables
 
 **When to run linting:**
 - Before committing changes
@@ -175,7 +190,8 @@ The linter uses a dedicated `tsconfig.lint.json` configuration that type-checks 
 - Unused imports or variables
 - Type mismatches in function calls
 - Missing required properties on interfaces
-- Incorrect generic type parameters
+- React hooks called conditionally (must be called in same order every render)
+- Missing dependencies in useEffect/useCallback/useMemo
 
 ## Common Development Tasks
 
@@ -548,6 +564,18 @@ Example: `feat: add context usage visualization`
 6. Wait for review
 
 ## Building for Release
+
+### 0. Refresh Spec Kit Prompts (Optional)
+
+Before releasing, check if GitHub's spec-kit has updates:
+
+```bash
+npm run refresh-speckit
+```
+
+This fetches the latest prompts from [github/spec-kit](https://github.com/github/spec-kit) and updates the bundled files in `src/prompts/speckit/`. The custom `/speckit.implement` prompt is never overwritten.
+
+Review any changes with `git diff` before committing.
 
 ### 1. Prepare Icons
 

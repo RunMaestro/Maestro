@@ -19,6 +19,7 @@ import { useThemeColors } from '../components/ThemeProvider';
 import { StatusDot, type SessionStatus } from '../components/Badge';
 import type { Session, GroupInfo } from '../hooks/useSessions';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { truncatePath } from '../../shared/formatters';
 
 /** Duration in ms to trigger long-press */
 const LONG_PRESS_DURATION = 500;
@@ -328,14 +329,6 @@ function SessionInfoPopover({ session, anchorRect, onClose }: SessionInfoPopover
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
-
-  // Truncate path for display
-  const truncatePath = (path: string, maxLength: number = 35): string => {
-    if (path.length <= maxLength) return path;
-    const parts = path.split('/');
-    if (parts.length <= 2) return `...${path.slice(-maxLength + 3)}`;
-    return `.../${parts.slice(-2).join('/')}`;
-  };
 
   return (
     <>
