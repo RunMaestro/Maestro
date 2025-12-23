@@ -193,10 +193,66 @@ export class ACPClient extends EventEmitter {
     // Log the init command for debugging
     acpDebugLog.setInitCommand(fullCommand);
 
+    // Build environment with extended PATH
+    // Electron doesn't inherit the user's shell PATH, so we need to add common paths
+    // where node, npm, and other tools are typically installed
+    const env = { ...process.env, ...this.config.env };
+    const isWin = process.platform === 'win32';
+    
+    if (isWin) {
+      const appData = process.env.APPDATA || '';
+      const localAppData = process.env.LOCALAPPDATA || '';
+      const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+      const standardPaths = [
+        `${appData}\\npm`,
+        `${localAppData}\\npm`,
+        `${programFiles}\\nodejs`,
+        `${programFiles}\\Git\\cmd`,
+      ].join(';');
+      env.PATH = env.PATH ? `${standardPaths};${env.PATH}` : standardPaths;
+    } else {
+      // macOS/Linux: Add Homebrew, nvm, volta, fnm, and standard paths
+      const home = process.env.HOME || '';
+      const standardPaths = [
+        '/opt/homebrew/bin',           // Homebrew on Apple Silicon
+        '/usr/local/bin',              // Homebrew on Intel, many CLI tools
+        `${home}/.nvm/versions/node`,  // nvm (we'll expand this below)
+        `${home}/.volta/bin`,          // Volta
+        `${home}/.fnm`,                // fnm
+        `${home}/.local/bin`,          // pipx, etc.
+        '/usr/bin',
+        '/bin',
+        '/usr/sbin',
+        '/sbin',
+      ].join(':');
+      
+      // Also try to detect the active nvm node version
+      const nvmDir = process.env.NVM_DIR || `${home}/.nvm`;
+      let nvmNodePath = '';
+      try {
+        // Try to read the default version
+        const fs = require('fs');
+        const path = require('path');
+        const defaultVersionFile = path.join(nvmDir, 'alias', 'default');
+        if (fs.existsSync(defaultVersionFile)) {
+          const version = fs.readFileSync(defaultVersionFile, 'utf8').trim();
+          const nodePath = path.join(nvmDir, 'versions', 'node', `v${version.replace(/^v/, '')}`, 'bin');
+          if (fs.existsSync(nodePath)) {
+            nvmNodePath = nodePath;
+          }
+        }
+      } catch {
+        // Ignore errors - nvm might not be installed
+      }
+      
+      const allPaths = nvmNodePath ? `${nvmNodePath}:${standardPaths}` : standardPaths;
+      env.PATH = env.PATH ? `${allPaths}:${env.PATH}` : allPaths;
+    }
+
     // Spawn the agent process
     this.process = spawn(this.config.command, this.config.args, {
       cwd: this.config.cwd,
-      env: { ...process.env, ...this.config.env },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
