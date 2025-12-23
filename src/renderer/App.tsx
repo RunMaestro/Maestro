@@ -112,6 +112,7 @@ import { shouldOpenExternally, getAllFolderPaths, flattenTree } from './utils/fi
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession } from './utils/sessionValidation';
+import { estimateContextUsage, DEFAULT_CONTEXT_WINDOWS } from './utils/contextUsage';
 
 /**
  * Known Claude Code tool names - used to detect concatenated tool name patterns
@@ -1778,13 +1779,21 @@ export default function MaestroConsole() {
       // Claude Code reports actual context size as input + cache tokens.
       // Codex/OpenCode cache tokens are subsets or not part of context size, so use input + output.
       const sessionForUsage = sessionsRef.current.find(s => s.id === actualSessionId);
-      const isClaudeUsage = sessionForUsage?.toolType === 'claude-code' || sessionForUsage?.toolType === 'claude';
+      const agentToolType = sessionForUsage?.toolType;
+      const isClaudeUsage = agentToolType === 'claude-code' || agentToolType === 'claude';
       const currentContextTokens = isClaudeUsage
         ? usageStats.inputTokens + usageStats.cacheReadInputTokens + usageStats.cacheCreationInputTokens
         : usageStats.inputTokens + usageStats.outputTokens;
-      const contextPercentage = usageStats.contextWindow > 0
-        ? Math.min(Math.round((currentContextTokens / usageStats.contextWindow) * 100), 100)
-        : 0;
+
+      // Calculate context percentage, falling back to agent-specific defaults if contextWindow not provided
+      let contextPercentage: number;
+      if (usageStats.contextWindow > 0) {
+        contextPercentage = Math.min(Math.round((currentContextTokens / usageStats.contextWindow) * 100), 100);
+      } else {
+        // Use fallback estimation with agent-specific default context window
+        const estimated = estimateContextUsage(usageStats, agentToolType);
+        contextPercentage = estimated ?? 0;
+      }
 
       // Batch the usage stats update, context percentage, and cycle tokens
       // The batched updater handles the accumulation logic internally
