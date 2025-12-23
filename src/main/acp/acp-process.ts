@@ -185,6 +185,9 @@ export class ACPProcess extends EventEmitter {
       return;
     }
 
+    // Clear any previous streamed text before starting new prompt
+    this.streamedText = '';
+
     try {
       logger.debug(`Sending prompt to ACP agent`, LOG_CONTEXT, {
         sessionId: this.config.sessionId,
