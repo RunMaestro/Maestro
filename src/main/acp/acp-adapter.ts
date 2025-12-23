@@ -15,19 +15,36 @@ import type {
 
 /**
  * Extract text from a ContentBlock
+ * Handles both ACP spec format and OpenCode's actual format:
+ * - ACP spec: { text: { text: '...' } }
+ * - OpenCode: { type: 'text', text: '...' }
  */
 function extractText(block: ContentBlock): string {
-  if ('text' in block) {
-    return block.text.text;
+  const content = block as any;
+  
+  // OpenCode format: { type: 'text', text: '...' }
+  if (content.type === 'text' && typeof content.text === 'string') {
+    return content.text;
   }
-  if ('image' in block) {
+  
+  // ACP spec format: { text: { text: '...' } }
+  if ('text' in content && content.text && typeof content.text === 'object' && 'text' in content.text) {
+    return content.text.text;
+  }
+  
+  // Simple text field
+  if ('text' in content && typeof content.text === 'string') {
+    return content.text;
+  }
+  
+  if ('image' in content) {
     return '[image]';
   }
-  if ('resource_link' in block) {
-    return `[resource: ${block.resource_link.name}]`;
+  if ('resource_link' in content) {
+    return `[resource: ${content.resource_link.name}]`;
   }
-  if ('resource' in block) {
-    const res = block.resource.resource;
+  if ('resource' in content) {
+    const res = content.resource.resource;
     if ('text' in res) {
       return res.text;
     }
