@@ -32,6 +32,7 @@ import { PlaygroundPanel } from './components/PlaygroundPanel';
 import { AutoRunSetupModal } from './components/AutoRunSetupModal';
 import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
+import { ACPDebugModal } from './components/ACPDebugModal';
 import { MaestroWizard, useWizard, WizardResumeModal, SerializableWizardState, AUTO_RUN_FOLDER_NAME } from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
@@ -405,6 +406,7 @@ export default function MaestroConsole() {
   const [playgroundOpen, setPlaygroundOpen] = useState(false);
   const [debugWizardModalOpen, setDebugWizardModalOpen] = useState(false);
   const [debugPackageModalOpen, setDebugPackageModalOpen] = useState(false);
+  const [acpDebugModalOpen, setACPDebugModalOpen] = useState(false);
 
   // Stable callbacks for memoized modals (prevents re-renders from callback reference changes)
   // NOTE: These must be declared AFTER the state they reference
@@ -412,6 +414,7 @@ export default function MaestroConsole() {
   const handleCloseGitLog = useCallback(() => setGitLogOpen(false), []);
   const handleCloseSettings = useCallback(() => setSettingsModalOpen(false), []);
   const handleCloseDebugPackage = useCallback(() => setDebugPackageModalOpen(false), []);
+  const handleCloseACPDebug = useCallback(() => setACPDebugModalOpen(false), []);
 
   // Confirmation Modal State
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
@@ -6702,6 +6705,7 @@ export default function MaestroConsole() {
           wizardGoToStep={wizardGoToStep}
           setDebugWizardModalOpen={setDebugWizardModalOpen}
           setDebugPackageModalOpen={setDebugPackageModalOpen}
+          setACPDebugModalOpen={setACPDebugModalOpen}
           startTour={() => {
             setTourFromWizard(false);
             setTourOpen(true);
@@ -6838,6 +6842,13 @@ export default function MaestroConsole() {
         theme={theme}
         isOpen={debugPackageModalOpen}
         onClose={handleCloseDebugPackage}
+      />
+
+      {/* --- ACP DEBUG MODAL --- */}
+      <ACPDebugModal
+        theme={theme}
+        isOpen={acpDebugModalOpen}
+        onClose={handleCloseACPDebug}
       />
 
       {/* --- AGENT ERROR MODAL --- */}

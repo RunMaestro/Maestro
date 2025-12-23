@@ -48,6 +48,58 @@ import { CURRENT_PROTOCOL_VERSION } from './types';
 const LOG_CONTEXT = '[ACPClient]';
 
 /**
+ * ACP Message Log Entry for debugging
+ */
+export interface ACPLogEntry {
+  timestamp: string;
+  direction: 'inbound' | 'outbound';
+  type: 'request' | 'response' | 'notification';
+  method?: string;
+  id?: RequestId;
+  data: unknown;
+}
+
+/**
+ * ACP Debug Log - singleton for storing ACP communication history
+ */
+class ACPDebugLog {
+  private entries: ACPLogEntry[] = [];
+  private initCommand: string | null = null;
+  private maxEntries = 1000; // Limit to prevent memory issues
+
+  setInitCommand(command: string): void {
+    this.initCommand = command;
+  }
+
+  getInitCommand(): string | null {
+    return this.initCommand;
+  }
+
+  addEntry(entry: Omit<ACPLogEntry, 'timestamp'>): void {
+    this.entries.push({
+      ...entry,
+      timestamp: new Date().toISOString(),
+    });
+    // Keep only the most recent entries
+    if (this.entries.length > this.maxEntries) {
+      this.entries = this.entries.slice(-this.maxEntries);
+    }
+  }
+
+  getEntries(): ACPLogEntry[] {
+    return [...this.entries];
+  }
+
+  clear(): void {
+    this.entries = [];
+    this.initCommand = null;
+  }
+}
+
+// Singleton instance
+export const acpDebugLog = new ACPDebugLog();
+
+/**
  * Events emitted by the ACP client
  */
 export interface ACPClientEvents {
@@ -135,7 +187,11 @@ export class ACPClient extends EventEmitter {
       throw new Error('Already connected');
     }
 
-    logger.info(`Starting ACP agent: ${this.config.command} ${this.config.args.join(' ')}`, LOG_CONTEXT);
+    const fullCommand = `${this.config.command} ${this.config.args.join(' ')}`;
+    logger.info(`Starting ACP agent: ${fullCommand}`, LOG_CONTEXT);
+    
+    // Log the init command for debugging
+    acpDebugLog.setInitCommand(fullCommand);
 
     // Spawn the agent process
     this.process = spawn(this.config.command, this.config.args, {
@@ -322,16 +378,36 @@ export class ACPClient extends EventEmitter {
     try {
       const message = JSON.parse(line);
 
+      // Log inbound message
       if ('id' in message && message.id !== null) {
-        // This is a response to a request we sent
         if ('result' in message || 'error' in message) {
+          // Response to our request
+          acpDebugLog.addEntry({
+            direction: 'inbound',
+            type: 'response',
+            id: message.id,
+            data: message,
+          });
           this.handleResponse(message as JsonRpcResponse);
         } else {
-          // This is a request from the agent to us
+          // Request from the agent to us
+          acpDebugLog.addEntry({
+            direction: 'inbound',
+            type: 'request',
+            method: message.method,
+            id: message.id,
+            data: message,
+          });
           this.handleAgentRequest(message as JsonRpcRequest);
         }
       } else if ('method' in message) {
-        // This is a notification
+        // Notification
+        acpDebugLog.addEntry({
+          direction: 'inbound',
+          type: 'notification',
+          method: message.method,
+          data: message,
+        });
         this.handleNotification(message as JsonRpcNotification);
       }
     } catch (error) {
@@ -450,6 +526,15 @@ export class ACPClient extends EventEmitter {
         params,
       };
 
+      // Log outbound request
+      acpDebugLog.addEntry({
+        direction: 'outbound',
+        type: 'request',
+        method,
+        id,
+        data: request,
+      });
+
       this.pendingRequests.set(id, { resolve, reject, method });
 
       const line = JSON.stringify(request) + '\n';
@@ -471,6 +556,14 @@ export class ACPClient extends EventEmitter {
       params,
     };
 
+    // Log outbound notification
+    acpDebugLog.addEntry({
+      direction: 'outbound',
+      type: 'notification',
+      method,
+      data: notification,
+    });
+
     const line = JSON.stringify(notification) + '\n';
     logger.debug(`Sending notification: ${method}`, LOG_CONTEXT);
 
@@ -485,6 +578,14 @@ export class ACPClient extends EventEmitter {
       id,
       result,
     };
+
+    // Log outbound response
+    acpDebugLog.addEntry({
+      direction: 'outbound',
+      type: 'response',
+      id,
+      data: response,
+    });
 
     const line = JSON.stringify(response) + '\n';
 

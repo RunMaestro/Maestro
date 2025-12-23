@@ -22,6 +22,7 @@ import { registerAgentSessionsHandlers, AgentSessionsHandlerDependencies } from 
 import { registerGroupChatHandlers, GroupChatHandlerDependencies } from './groupChat';
 import { registerDebugHandlers, DebugHandlerDependencies } from './debug';
 import { registerSpeckitHandlers } from './speckit';
+import { registerACPDebugHandlers } from './acp-debug';
 import { AgentDetector } from '../../agent-detector';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -44,6 +45,7 @@ export { registerAgentSessionsHandlers };
 export { registerGroupChatHandlers };
 export { registerDebugHandlers };
 export { registerSpeckitHandlers };
+export { registerACPDebugHandlers };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };
@@ -151,6 +153,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
   });
   // Register spec-kit handlers (no dependencies needed)
   registerSpeckitHandlers();
+  // Register ACP debug handlers (no dependencies needed)
+  registerACPDebugHandlers();
   // Setup logger event forwarding to renderer
   setupLoggerEventForwarding(deps.getMainWindow);
 }

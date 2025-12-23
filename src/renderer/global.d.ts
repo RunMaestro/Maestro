@@ -850,6 +850,29 @@ interface MaestroAPI {
       error?: string;
     }>;
   };
+  // ACP Debug API
+  acpDebug: {
+    getDebugInfo: () => Promise<{
+      initCommand: string | null;
+      messages: Array<{
+        timestamp: string;
+        direction: 'inbound' | 'outbound';
+        type: 'request' | 'response' | 'notification';
+        method?: string;
+        id?: number | string;
+        data: unknown;
+      }>;
+      stats: {
+        totalMessages: number;
+        inboundMessages: number;
+        outboundMessages: number;
+        requests: number;
+        responses: number;
+        notifications: number;
+      };
+    }>;
+    clearLog: () => Promise<void>;
+  };
   // Sync API (custom storage location)
   sync: {
     getDefaultPath: () => Promise<string>;

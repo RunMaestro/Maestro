@@ -1064,6 +1064,12 @@ contextBridge.exposeInMainWorld('maestro', {
     previewPackage: () => ipcRenderer.invoke('debug:previewPackage'),
   },
 
+  // ACP Debug API (inspect ACP protocol communication)
+  acpDebug: {
+    getDebugInfo: () => ipcRenderer.invoke('acp:getDebugInfo'),
+    clearLog: () => ipcRenderer.invoke('acp:clearDebugLog'),
+  },
+
   // Group Chat API (multi-agent coordination)
   groupChat: {
     // Storage
@@ -1988,6 +1994,28 @@ export interface MaestroAPI {
       }>;
       error?: string;
     }>;
+  };
+  acpDebug: {
+    getDebugInfo: () => Promise<{
+      initCommand: string | null;
+      messages: Array<{
+        timestamp: string;
+        direction: 'inbound' | 'outbound';
+        type: 'request' | 'response' | 'notification';
+        method?: string;
+        id?: number | string;
+        data: unknown;
+      }>;
+      stats: {
+        totalMessages: number;
+        inboundMessages: number;
+        outboundMessages: number;
+        requests: number;
+        responses: number;
+        notifications: number;
+      };
+    }>;
+    clearLog: () => Promise<void>;
   };
   groupChat: {
     // Storage

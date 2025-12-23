@@ -8,7 +8,7 @@
  * @see https://agentclientprotocol.com/
  */
 
-export { ACPClient, type ACPClientConfig, type ACPClientEvents } from './acp-client';
+export { ACPClient, type ACPClientConfig, type ACPClientEvents, acpDebugLog, type ACPLogEntry } from './acp-client';
 export * from './types';
 export {
   acpUpdateToParseEvent,
