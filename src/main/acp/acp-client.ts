@@ -128,6 +128,13 @@ export class ACPClient extends EventEmitter {
   }
 
   /**
+   * Get the underlying child process (for PID access)
+   */
+  getProcess(): ChildProcess | null {
+    return this.process;
+  }
+
+  /**
    * Start the agent process and initialize the connection
    */
   async connect(): Promise<InitializeResponse> {

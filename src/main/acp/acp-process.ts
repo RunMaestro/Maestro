@@ -89,10 +89,11 @@ export class ACPProcess extends EventEmitter {
   }
 
   /**
-   * Get simulated PID (we use negative to indicate ACP)
+   * Get the PID of the spawned OpenCode process
    */
   get pid(): number {
-    return -1; // Indicates ACP process
+    const process = this.client.getProcess();
+    return process?.pid ?? -1;
   }
 
   /**
