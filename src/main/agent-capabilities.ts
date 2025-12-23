@@ -63,6 +63,9 @@ export interface AgentCapabilities {
 
   /** Agent emits streaming thinking/reasoning content that can be displayed */
   supportsThinkingDisplay: boolean;
+
+  /** Agent supports ACP (Agent Client Protocol) for standardized communication */
+  supportsACP: boolean;
 }
 
 /**
@@ -87,6 +90,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
   supportsModelSelection: false,
   supportsStreamJsonInput: false,
   supportsThinkingDisplay: false,
+  supportsACP: false,
 };
 
 /**
@@ -123,6 +127,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: false, // Model is configured via Anthropic account
     supportsStreamJsonInput: true, // --input-format stream-json for images via stdin
     supportsThinkingDisplay: true, // Emits streaming assistant messages
+    supportsACP: false,          // ACP adapter available via @zed-industries/claude-code-acp but not native
   },
 
   /**
@@ -147,6 +152,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: false,
     supportsStreamJsonInput: false,
     supportsThinkingDisplay: false, // Terminal is not an AI agent
+    supportsACP: false,
   },
 
   /**
@@ -174,6 +180,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: true, // -m, --model flag - Documented
     supportsStreamJsonInput: false, // Uses -i, --image flag instead
     supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
+    supportsACP: false,           // ACP adapter available via Zed but not native
   },
 
   /**
@@ -200,6 +207,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: false, // Not yet investigated
     supportsStreamJsonInput: false,
     supportsThinkingDisplay: false, // Not yet investigated
+    supportsACP: false,          // Not investigated
   },
 
   /**
@@ -226,6 +234,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: false, // Not yet investigated
     supportsStreamJsonInput: false,
     supportsThinkingDisplay: false, // Not yet investigated
+    supportsACP: false,          // Not investigated
   },
 
   /**
@@ -253,6 +262,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: true, // --model flag
     supportsStreamJsonInput: false,
     supportsThinkingDisplay: false, // Not yet investigated
+    supportsACP: false,          // Not investigated
   },
 
   /**
@@ -280,6 +290,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
     supportsStreamJsonInput: false, // Uses -f, --file flag instead
     supportsThinkingDisplay: true, // Emits streaming text chunks
+    supportsACP: true,            // Native ACP via `opencode acp` command - Verified
   },
 };
 

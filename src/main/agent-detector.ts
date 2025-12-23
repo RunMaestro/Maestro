@@ -153,6 +153,13 @@ const AGENT_DEFINITIONS: Omit<AgentConfig, 'available' | 'path' | 'capabilities'
         description: 'Maximum context window size in tokens. Required for context usage display. Varies by model (e.g., 400000 for Claude/GPT-5.2, 128000 for GPT-4o).',
         default: 128000, // Default for common models (GPT-4, etc.)
       },
+      {
+        key: 'useACP',
+        type: 'checkbox',
+        label: 'Use ACP Protocol (Experimental)',
+        description: 'Enable Agent Client Protocol for standardized communication. This is experimental and may have different behavior than the default JSON output mode.',
+        default: false,
+      },
     ],
   },
   {
