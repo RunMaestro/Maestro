@@ -165,6 +165,103 @@ export function createTab(session: Session, options: CreateTabOptions = {}): Cre
 }
 
 /**
+ * Options for creating a new file tab.
+ */
+export interface CreateFileTabOptions {
+  filePath: string;    // Absolute file path
+  fileName: string;    // Display name (e.g., "App.tsx")
+  content: string;     // File content
+}
+
+/**
+ * Find an existing file tab by file path.
+ * Returns undefined if no tab exists for the given path.
+ *
+ * @param session - The Maestro session to search
+ * @param filePath - The absolute file path to find
+ * @returns The file tab if found, undefined otherwise
+ */
+export function findFileTab(session: Session, filePath: string): AITab | undefined {
+  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+    return undefined;
+  }
+
+  return session.aiTabs.find(tab => tab.type === 'file' && tab.filePath === filePath);
+}
+
+/**
+ * Create a new file tab for viewing a file.
+ * If a tab for this file already exists, switches to it instead of creating a duplicate.
+ *
+ * @param session - The Maestro session to add the tab to
+ * @param options - File tab configuration (filePath, fileName, content)
+ * @returns Object containing the new tab and updated session
+ *
+ * @example
+ * const { tab, session: updatedSession } = createFileTab(session, {
+ *   filePath: '/path/to/file.ts',
+ *   fileName: 'file.ts',
+ *   content: 'const x = 1;'
+ * });
+ */
+export function createFileTab(session: Session, options: CreateFileTabOptions): CreateTabResult | null {
+  if (!session) {
+    return null;
+  }
+
+  const { filePath, fileName, content } = options;
+
+  // Check if file is already open - return existing tab
+  const existingTab = findFileTab(session, filePath);
+  if (existingTab) {
+    // Update content in case file changed, then switch to it
+    const updatedTabs = session.aiTabs.map(tab =>
+      tab.id === existingTab.id
+        ? { ...tab, fileContent: content }
+        : tab
+    );
+    return {
+      tab: { ...existingTab, fileContent: content },
+      session: {
+        ...session,
+        aiTabs: updatedTabs,
+        activeTabId: existingTab.id
+      }
+    };
+  }
+
+  // Create the new file tab
+  const newTab: AITab = {
+    id: generateId(),
+    agentSessionId: null,
+    name: null,
+    starred: false,
+    logs: [],
+    inputValue: '',
+    stagedImages: [],
+    createdAt: Date.now(),
+    state: 'idle',
+    // File-specific fields
+    type: 'file',
+    fileContent: content,
+    filePath: filePath,
+    fileName: fileName
+  };
+
+  // Update the session with the new tab added and set as active
+  const updatedSession: Session = {
+    ...session,
+    aiTabs: [...(session.aiTabs || []), newTab],
+    activeTabId: newTab.id
+  };
+
+  return {
+    tab: newTab,
+    session: updatedSession
+  };
+}
+
+/**
  * Result of closing a tab - contains the closed tab info and updated session.
  */
 export interface CloseTabResult {

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Star, Copy, Edit2, Mail, Pencil, Search } from 'lucide-react';
+import { X, Plus, Star, Copy, Edit2, Mail, Pencil, Search, FileCode } from 'lucide-react';
 import type { AITab, Theme } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
 
@@ -44,7 +44,8 @@ interface TabProps {
 
 /**
  * Get the display name for a tab.
- * Priority: name > truncated session ID > "New"
+ * For file tabs: returns fileName
+ * For AI tabs: name > truncated session ID > "New Session"
  *
  * Handles different agent session ID formats:
  * - Claude UUID: "abc123-def456-ghi789" → "ABC123" (first octet)
@@ -52,6 +53,11 @@ interface TabProps {
  * - Codex: "thread_abc123..." → "THR_ABC1" (prefix + 4 chars)
  */
 function getTabDisplayName(tab: AITab): string {
+  // File tabs show the file name
+  if (tab.type === 'file' && tab.fileName) {
+    return tab.fileName;
+  }
+
   if (tab.name) {
     return tab.name;
   }
@@ -287,6 +293,14 @@ function Tab({
         >
           {shortcutHint}
         </span>
+      )}
+
+      {/* File icon for file tabs */}
+      {tab.type === 'file' && (
+        <FileCode
+          className="w-3 h-3 shrink-0"
+          style={{ color: theme.colors.textDim }}
+        />
       )}
 
       {/* Tab name - show full name for active tab, truncate inactive tabs */}

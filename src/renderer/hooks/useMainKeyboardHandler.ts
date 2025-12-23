@@ -82,10 +82,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
       //   - App.tsx handles this with modified behavior (cycle tabs not sessions)
 
       if (ctx.hasOpenLayers()) {
-        // Allow Tab for accessibility navigation within modals
-        if (e.key === 'Tab') return;
+        // Allow Tab for accessibility navigation within modals (but not Ctrl+Tab which switches tabs)
+        if (e.key === 'Tab' && !e.ctrlKey) return;
 
         const isCycleShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === '[' || e.key === ']');
+        // Allow Ctrl+Tab for tab switching even when modals/overlays are open
+        const isCtrlTabShortcut = e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab';
         // Allow sidebar toggle shortcuts (Alt+Cmd+Arrow) even when modals are open
         const isLayoutShortcut = e.altKey && (e.metaKey || e.ctrlKey) && (e.key === 'ArrowLeft' || e.key === 'ArrowRight');
         // Allow right panel tab shortcuts (Cmd+Shift+F/H/S) even when overlays are open
@@ -104,8 +106,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
         if (ctx.hasOpenModal()) {
           // TRUE MODAL is open - block most shortcuts from App.tsx
           // The modal's own handler will handle Cmd+Shift+[] if it supports it
-          // BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump, and jumpToBottom to work
-          if (!isLayoutShortcut && !isSystemUtilShortcut && !isSessionJumpShortcut && !isJumpToBottomShortcut) {
+          // BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump, jumpToBottom, and Ctrl+Tab to work
+          if (!isLayoutShortcut && !isSystemUtilShortcut && !isSessionJumpShortcut && !isJumpToBottomShortcut && !isCtrlTabShortcut) {
             return;
           }
           // Fall through to handle layout/system utility/session jump/jumpToBottom shortcuts below
@@ -114,7 +116,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
           // Allow Cmd+Shift+[] to fall through to App.tsx handler
           // (which will cycle right panel tabs when previewFile is set)
           // Also allow right panel tab shortcuts to switch tabs while overlay is open
-          if (!isCycleShortcut && !isLayoutShortcut && !isRightPanelShortcut && !isSystemUtilShortcut && !isSessionJumpShortcut && !isJumpToBottomShortcut) {
+          if (!isCycleShortcut && !isLayoutShortcut && !isRightPanelShortcut && !isSystemUtilShortcut && !isSessionJumpShortcut && !isJumpToBottomShortcut && !isCtrlTabShortcut) {
             return;
           }
           // Fall through to cyclePrev/cycleNext logic below
@@ -334,6 +336,29 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
             ctx.setLeftSidebarOpen(true);
           }
         }
+      }
+
+      // Ctrl+Tab: Next tab (browser-style) - works in any mode when tabs exist
+      if (ctx.activeSession?.aiTabs && ctx.activeSession.aiTabs.length > 1 && e.ctrlKey && !e.metaKey && !e.altKey && e.key === 'Tab') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          // Ctrl+Shift+Tab: Previous tab
+          const result = ctx.navigateToPrevTab(ctx.activeSession, ctx.showUnreadOnly);
+          if (result) {
+            ctx.setSessions((prev: Session[]) => prev.map((s: Session) =>
+              s.id === ctx.activeSession!.id ? result.session : s
+            ));
+          }
+        } else {
+          // Ctrl+Tab: Next tab
+          const result = ctx.navigateToNextTab(ctx.activeSession, ctx.showUnreadOnly);
+          if (result) {
+            ctx.setSessions((prev: Session[]) => prev.map((s: Session) =>
+              s.id === ctx.activeSession!.id ? result.session : s
+            ));
+          }
+        }
+        return; // Stop processing after handling Ctrl+Tab
       }
 
       // Tab shortcuts (AI mode only, requires an explicitly selected session, disabled in group chat view)

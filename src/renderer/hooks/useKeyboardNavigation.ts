@@ -327,6 +327,9 @@ export function useKeyboardNavigation(
   const handleTabNavigation = useCallback((e: KeyboardEvent): boolean => {
     if (e.key !== 'Tab') return false;
 
+    // Ctrl+Tab is for switching tabs, not pane navigation
+    if (e.ctrlKey) return false;
+
     // Skip global Tab handling when input is focused - let input handler handle it
     if (document.activeElement === inputRef.current) {
       return false;

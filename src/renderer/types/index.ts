@@ -267,7 +267,7 @@ export interface OnboardingStats {
 }
 
 // AI Tab for multi-tab support within a Maestro session
-// Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.)
+// Each tab represents a separate AI agent conversation (Claude Code, OpenCode, etc.) or a file preview
 export interface AITab {
   id: string;                      // Unique tab ID (generated UUID)
   agentSessionId: string | null;   // Agent session UUID (null for new tabs)
@@ -287,6 +287,14 @@ export interface AITab {
   scrollTop?: number;              // Saved scroll position for this tab's output view
   hasUnread?: boolean;             // True when tab has new messages user hasn't seen
   isAtBottom?: boolean;            // True when user is scrolled to bottom of output
+
+  // Tab type discriminator (undefined/'conversation' = AI conversation, 'file' = file preview)
+  type?: 'conversation' | 'file';
+
+  // File tab specific fields (only present when type === 'file')
+  fileContent?: string;            // File content for display
+  filePath?: string;               // Absolute file path
+  fileName?: string;               // Display name (e.g., "App.tsx")
 }
 
 // Closed tab entry for undo functionality (Cmd+Shift+T)

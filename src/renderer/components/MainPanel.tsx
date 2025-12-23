@@ -148,6 +148,7 @@ interface MainPanelProps {
   onUpdateTabByClaudeSessionId?: (agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => void;
   onToggleTabReadOnlyMode?: () => void;
   onToggleTabSaveToHistory?: () => void;
+  onUpdateFileTabContent?: (tabId: string, content: string) => void;
   showUnreadOnly?: boolean;
   onToggleUnreadFilter?: () => void;
   onOpenTabSearch?: () => void;
@@ -818,8 +819,8 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
           </div>
           )}
 
-          {/* Tab Bar - only shown in AI mode when we have tabs (hidden during file preview) */}
-          {!previewFile && activeSession.inputMode === 'ai' && activeSession.aiTabs && activeSession.aiTabs.length > 0 && onTabSelect && onTabClose && onNewTab && (
+          {/* Tab Bar - shown in AI mode or when any file tabs exist */}
+          {(activeSession.inputMode === 'ai' || activeSession.aiTabs?.some(tab => tab.type === 'file')) && activeSession.aiTabs && activeSession.aiTabs.length > 0 && onTabSelect && onTabClose && onNewTab && (
             <TabBar
               tabs={activeSession.aiTabs}
               activeTabId={activeSession.activeTabId}
@@ -878,8 +879,56 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
             </div>
           )}
 
-          {/* Show File Preview in main area when open, otherwise show terminal output and input */}
-          {previewFile ? (
+          {/* Show File Preview for file tabs or previewFile, otherwise show terminal output and input */}
+          {activeTab?.type === 'file' ? (
+            <div className="flex-1 overflow-hidden">
+              <FilePreview
+                file={{
+                  name: activeTab.fileName || 'Untitled',
+                  content: activeTab.fileContent || '',
+                  path: activeTab.filePath || ''
+                }}
+                onClose={() => {
+                  // Close the file tab
+                  if (onTabClose) {
+                    onTabClose(activeTab.id);
+                  }
+                }}
+                theme={theme}
+                markdownEditMode={markdownEditMode}
+                setMarkdownEditMode={setMarkdownEditMode}
+                onSave={async (path, content) => {
+                  await window.maestro.fs.writeFile(path, content);
+                  // Update the tab's file content after save
+                  if (props.onUpdateFileTabContent) {
+                    props.onUpdateFileTabContent(activeTab.id, content);
+                  }
+                }}
+                shortcuts={shortcuts}
+                fileTree={props.fileTree}
+                cwd={(() => {
+                  // Compute relative directory from file path for proximity matching
+                  const filePath = activeTab.filePath || '';
+                  if (!activeSession?.fullPath || !filePath.startsWith(activeSession.fullPath)) {
+                    return '';
+                  }
+                  const relativePath = filePath.slice(activeSession.fullPath.length + 1);
+                  const lastSlash = relativePath.lastIndexOf('/');
+                  return lastSlash > 0 ? relativePath.slice(0, lastSlash) : '';
+                })()}
+                onFileClick={props.onFileClick}
+                canGoBack={props.canGoBack}
+                canGoForward={props.canGoForward}
+                onNavigateBack={props.onNavigateBack}
+                onNavigateForward={props.onNavigateForward}
+                backHistory={props.backHistory}
+                forwardHistory={props.forwardHistory}
+                currentHistoryIndex={props.currentHistoryIndex}
+                onNavigateToIndex={props.onNavigateToIndex}
+                onOpenFuzzySearch={props.onOpenFuzzySearch}
+              />
+            </div>
+          ) : previewFile ? (
             <div className="flex-1 overflow-hidden">
               <FilePreview
                 file={previewFile}

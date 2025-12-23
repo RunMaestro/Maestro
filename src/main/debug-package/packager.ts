@@ -13,6 +13,7 @@ export interface PackageContents {
   'settings.json': unknown;
   'agents.json': unknown;
   'external-tools.json': unknown;
+  'windows-diagnostics.json': unknown;
   'sessions.json': unknown;
   'groups.json': unknown;
   'processes.json': unknown;

@@ -95,7 +95,7 @@ import type {
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
-import { setActiveTab, createTab, closeTab, reopenClosedTab, getActiveTab, getWriteModeTab, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab, getInitialRenameValue } from './utils/tabHelpers';
+import { setActiveTab, createTab, closeTab, reopenClosedTab, getActiveTab, getWriteModeTab, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab, getInitialRenameValue, createFileTab } from './utils/tabHelpers';
 import { TAB_SHORTCUTS } from './constants/shortcuts';
 import { shouldOpenExternally, getAllFolderPaths, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
@@ -5991,11 +5991,15 @@ export default function MaestroConsole() {
 
   // Recursive File Tree Renderer
 
-  const handleFileClick = async (node: any, path: string) => {
+  const handleFileClick = async (node: any, path: string, session?: Session) => {
     if (node.type === 'file') {
       try {
-        // Construct full file path
-        const fullPath = `${activeSession.fullPath}/${path}`;
+        // Use passed session or fall back to activeSession
+        const targetSession = session || activeSession;
+        if (!targetSession) return;
+
+        // path might already be a full path (from fuzzy search) or relative
+        const fullPath = path.startsWith('/') ? path : `${targetSession.fullPath}/${path}`;
 
         // Check if file should be opened externally
         if (shouldOpenExternally(node.name)) {
@@ -6010,23 +6014,19 @@ export default function MaestroConsole() {
         }
 
         const content = await window.maestro.fs.readFile(fullPath);
-        const newFile = {
-          name: node.name,
-          content: content,
-          path: fullPath
-        };
 
-        // Only add to history if it's a different file than the current one
-        const currentFile = filePreviewHistory[filePreviewHistoryIndex];
-        if (!currentFile || currentFile.path !== fullPath) {
-          // Add to navigation history (truncate forward history if we're not at the end)
-          const newHistory = filePreviewHistory.slice(0, filePreviewHistoryIndex + 1);
-          newHistory.push(newFile);
-          setFilePreviewHistory(newHistory);
-          setFilePreviewHistoryIndex(newHistory.length - 1);
-        }
+        // Create a file tab (or switch to existing one if already open)
+        // Use functional setState to compute from fresh state (avoids stale closure issues)
+        setSessions(prev => prev.map(s => {
+          if (s.id !== targetSession.id) return s;
+          const result = createFileTab(s, {
+            filePath: fullPath,
+            fileName: node.name,
+            content
+          });
+          return result ? result.session : s;
+        }));
 
-        setPreviewFile(newFile);
         setActiveFocus('main');
       } catch (error) {
         console.error('Failed to read file:', error);
@@ -7863,6 +7863,21 @@ export default function MaestroConsole() {
                       ...(updates.name !== undefined ? { name: updates.name } : {}),
                       ...(updates.starred !== undefined ? { starred: updates.starred } : {})
                     }
+                  : tab
+              )
+            };
+          }));
+        }}
+        onUpdateFileTabContent={(tabId: string, content: string) => {
+          // Update the file content for a file tab (called after saving)
+          if (!activeSession) return;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSession.id) return s;
+            return {
+              ...s,
+              aiTabs: s.aiTabs.map(tab =>
+                tab.id === tabId
+                  ? { ...tab, fileContent: content }
                   : tab
               )
             };
