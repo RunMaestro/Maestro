@@ -6,6 +6,16 @@ import { useListNavigation } from '../hooks/useListNavigation';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatSize, formatRelativeTime } from '../utils/formatters';
 
+/**
+ * Get tool name from toolUse array - supports both Claude (name) and OpenCode (tool) formats
+ */
+function getToolName(toolUse: any[] | undefined): string {
+  if (!toolUse || toolUse.length === 0) return 'unknown';
+  const firstTool = toolUse[0];
+  // Claude format uses 'name', OpenCode format uses 'tool'
+  return firstTool?.name || firstTool?.tool || 'unknown';
+}
+
 interface AgentSession {
   sessionId: string;
   projectPath: string;
@@ -478,7 +488,7 @@ export function AgentSessionsModal({
                   }}
                 >
                   <div className="whitespace-pre-wrap break-words">
-                    {msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]')}
+                    {msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]')}
                   </div>
                   <div
                     className="text-[10px] mt-1 opacity-60"

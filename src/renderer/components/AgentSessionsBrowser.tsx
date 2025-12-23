@@ -11,6 +11,16 @@ import { useSessionPagination } from '../hooks/useSessionPagination';
 import { useFilteredAndSortedSessions } from '../hooks/useFilteredAndSortedSessions';
 import { useClickOutside } from '../hooks';
 
+/**
+ * Get tool name from toolUse array - supports both Claude (name) and OpenCode (tool) formats
+ */
+function getToolName(toolUse: any[] | undefined): string {
+  if (!toolUse || toolUse.length === 0) return 'unknown';
+  const firstTool = toolUse[0];
+  // Claude format uses 'name', OpenCode format uses 'tool'
+  return firstTool?.name || firstTool?.tool || 'unknown';
+}
+
 type SearchMode = 'title' | 'user' | 'assistant' | 'all';
 
 interface SearchResult {
@@ -498,7 +508,7 @@ export function AgentSessionsBrowser({
         id: msg.uuid || `${viewingSession.sessionId}-${idx}`,
         timestamp: new Date(msg.timestamp).getTime(),
         source: msg.type === 'user' ? 'user' as const : 'stdout' as const,
-        text: msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]'),
+        text: msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]'),
       }));
       // Pass session name and starred status for the new tab
       const isStarred = starredSessions.has(viewingSession.sessionId);
@@ -923,7 +933,7 @@ export function AgentSessionsBrowser({
                 }}
               >
                 <div className="whitespace-pre-wrap break-words">
-                  {msg.content || (msg.toolUse ? `[Tool: ${msg.toolUse[0]?.name || 'unknown'}]` : '[No content]')}
+                  {msg.content || (msg.toolUse ? `[Tool: ${getToolName(msg.toolUse)}]` : '[No content]')}
                 </div>
                 <div
                   className="text-[10px] mt-2 opacity-60"
