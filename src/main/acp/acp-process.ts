@@ -15,11 +15,9 @@ import {
   acpUpdateToParseEvent,
   createSessionIdEvent,
   createResultEvent,
-  createErrorEvent,
 } from './acp-adapter';
-import type { SessionUpdate, SessionId, StopReason } from './types';
+import type { SessionUpdate, SessionId } from './types';
 import { logger } from '../utils/logger';
-import type { ParsedEvent } from '../parsers/agent-output-parser';
 
 const LOG_CONTEXT = '[ACPProcess]';
 
@@ -55,7 +53,6 @@ export class ACPProcess extends EventEmitter {
   private client: ACPClient;
   private config: ACPProcessConfig;
   private acpSessionId: SessionId | null = null;
-  private isConnected = false;
   private streamedText = '';
   private startTime: number;
 
@@ -137,7 +134,6 @@ export class ACPProcess extends EventEmitter {
 
       // Connect to the ACP agent
       const initResponse = await this.client.connect();
-      this.isConnected = true;
 
       logger.info(`ACP connected to ${initResponse.agentInfo?.name}`, LOG_CONTEXT, {
         version: initResponse.agentInfo?.version,
@@ -169,8 +165,11 @@ export class ACPProcess extends EventEmitter {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`Failed to start ACP process: ${message}`, LOG_CONTEXT);
 
-      const errorEvent = createErrorEvent(this.config.sessionId, message);
-      this.emit('agent-error', this.config.sessionId, errorEvent.error);
+      this.emit('agent-error', this.config.sessionId, {
+        type: 'unknown',
+        message,
+        recoverable: false,
+      });
       this.emit('exit', this.config.sessionId, 1);
 
       return { pid: -1, success: false };
@@ -222,8 +221,11 @@ export class ACPProcess extends EventEmitter {
       const message = error instanceof Error ? error.message : String(error);
       logger.error(`ACP prompt failed: ${message}`, LOG_CONTEXT);
 
-      const errorEvent = createErrorEvent(this.config.sessionId, message);
-      this.emit('agent-error', this.config.sessionId, errorEvent.error);
+      this.emit('agent-error', this.config.sessionId, {
+        type: 'unknown',
+        message,
+        recoverable: false,
+      });
     }
   }
 
@@ -283,7 +285,7 @@ export class ACPProcess extends EventEmitter {
 
       // Find allow option and auto-approve
       const allowOption = request.options.find(
-        (o) => o.kind === 'allow_once' || o.kind === 'allow_always'
+        (o: { kind: string; optionId: string }) => o.kind === 'allow_once' || o.kind === 'allow_always'
       );
       if (allowOption) {
         respond({ outcome: { selected: { optionId: allowOption.optionId } } });
@@ -298,7 +300,7 @@ export class ACPProcess extends EventEmitter {
         const fs = await import('fs');
         const content = fs.readFileSync(request.path, 'utf-8');
         respond({ content });
-      } catch (error) {
+      } catch {
         logger.error(`Failed to read file: ${request.path}`, LOG_CONTEXT);
         respond({ content: '' });
       }
@@ -310,7 +312,7 @@ export class ACPProcess extends EventEmitter {
         const fs = await import('fs');
         fs.writeFileSync(request.path, request.content, 'utf-8');
         respond({});
-      } catch (error) {
+      } catch {
         logger.error(`Failed to write file: ${request.path}`, LOG_CONTEXT);
         respond({});
       }
@@ -319,14 +321,16 @@ export class ACPProcess extends EventEmitter {
     // Handle disconnection
     this.client.on('disconnected', () => {
       logger.info('ACP client disconnected', LOG_CONTEXT);
-      this.isConnected = false;
     });
 
     // Handle errors
     this.client.on('error', (error) => {
       logger.error(`ACP client error: ${error.message}`, LOG_CONTEXT);
-      const errorEvent = createErrorEvent(this.config.sessionId, error.message);
-      this.emit('agent-error', this.config.sessionId, errorEvent.error);
+      this.emit('agent-error', this.config.sessionId, {
+        type: 'unknown',
+        message: error.message,
+        recoverable: false,
+      });
     });
   }
 }

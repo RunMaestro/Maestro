@@ -16,7 +16,6 @@ import type {
   JsonRpcRequest,
   JsonRpcResponse,
   JsonRpcNotification,
-  ProtocolVersion,
   Implementation,
   ClientCapabilities,
   AgentCapabilities,
@@ -122,7 +121,6 @@ export class ACPClient extends EventEmitter {
   private isConnected = false;
   private agentCapabilities: AgentCapabilities | null = null;
   private agentInfo: Implementation | null = null;
-  private protocolVersion: ProtocolVersion = CURRENT_PROTOCOL_VERSION;
 
   constructor(config: ACPClientConfig) {
     super();
@@ -193,7 +191,6 @@ export class ACPClient extends EventEmitter {
 
     this.agentCapabilities = response.agentCapabilities || null;
     this.agentInfo = response.agentInfo || null;
-    this.protocolVersion = response.protocolVersion;
     this.isConnected = true;
 
     logger.info(

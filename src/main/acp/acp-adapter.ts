@@ -10,8 +10,6 @@ import type {
   SessionUpdate,
   SessionId,
   ContentBlock,
-  ToolCall,
-  ToolCallUpdate,
   ToolCallStatus,
 } from './types';
 
@@ -71,17 +69,19 @@ export function acpUpdateToParseEvent(
       text,
       isPartial: true,
       sessionId,
+      raw: update,
     };
   }
 
-  // Agent thought chunk (thinking/reasoning)
+  // Agent thought chunk (thinking/reasoning) - map to 'text' type with marker
   if ('agent_thought_chunk' in update) {
     const text = extractText(update.agent_thought_chunk.content);
     return {
-      type: 'thinking',
-      text,
+      type: 'text',
+      text: `[thinking] ${text}`,
       isPartial: true,
       sessionId,
+      raw: update,
     };
   }
 
@@ -97,10 +97,13 @@ export function acpUpdateToParseEvent(
     return {
       type: 'tool_use',
       toolName: tc.title,
-      toolInput: tc.rawInput,
-      toolId: tc.toolCallId,
-      status: mapToolStatus(tc.status),
+      toolState: {
+        id: tc.toolCallId,
+        input: tc.rawInput,
+        status: mapToolStatus(tc.status),
+      },
       sessionId,
+      raw: update,
     };
   }
 
@@ -110,25 +113,25 @@ export function acpUpdateToParseEvent(
     return {
       type: 'tool_use',
       toolName: tc.title || '',
-      toolInput: tc.rawInput,
-      toolOutput: tc.rawOutput,
-      toolId: tc.toolCallId,
-      status: mapToolStatus(tc.status),
+      toolState: {
+        id: tc.toolCallId,
+        input: tc.rawInput,
+        output: tc.rawOutput,
+        status: mapToolStatus(tc.status),
+      },
       sessionId,
+      raw: update,
     };
   }
 
-  // Plan update
+  // Plan update - map to system message
   if ('plan' in update) {
-    const entries = update.plan.entries.map((e) => ({
-      content: e.content,
-      status: e.status,
-      priority: e.priority,
-    }));
+    const entries = update.plan.entries.map((e) => `- [${e.status}] ${e.content}`).join('\n');
     return {
-      type: 'plan',
-      entries,
+      type: 'system',
+      text: `Plan:\n${entries}`,
       sessionId,
+      raw: update,
     };
   }
 
@@ -139,6 +142,7 @@ export function acpUpdateToParseEvent(
       type: 'init',
       slashCommands: update.available_commands_update.availableCommands.map((c) => c.name),
       sessionId,
+      raw: update,
     };
   }
 
@@ -152,12 +156,13 @@ export function acpUpdateToParseEvent(
 }
 
 /**
- * Create a session_id event from ACP session creation
+ * Create an init event from ACP session creation
  */
 export function createSessionIdEvent(sessionId: SessionId): ParsedEvent {
   return {
-    type: 'session_id',
+    type: 'init',
     sessionId,
+    raw: { type: 'session_created', sessionId },
   };
 }
 
@@ -167,13 +172,13 @@ export function createSessionIdEvent(sessionId: SessionId): ParsedEvent {
 export function createResultEvent(
   sessionId: SessionId,
   text: string,
-  stopReason: string
+  _stopReason: string
 ): ParsedEvent {
   return {
     type: 'result',
     text,
     sessionId,
-    stopReason,
+    raw: { type: 'prompt_response', stopReason: _stopReason },
   };
 }
 
@@ -183,11 +188,8 @@ export function createResultEvent(
 export function createErrorEvent(sessionId: SessionId, message: string): ParsedEvent {
   return {
     type: 'error',
-    error: {
-      type: 'unknown',
-      message,
-      recoverable: false,
-    },
+    text: message,
     sessionId,
+    raw: { type: 'error', message },
   };
 }
