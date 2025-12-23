@@ -762,8 +762,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
               onConfigChange={(key, value) => {
                 setAgentConfig(prev => ({ ...prev, [key]: value }));
               }}
-              onConfigBlur={async () => {
-                await window.maestro.agents.setConfig(configuringAgentId!, agentConfig);
+              onConfigBlur={async (immediateConfig) => {
+                // Use immediate config if provided (for checkbox), otherwise use state
+                const configToSave = immediateConfig || agentConfig;
+                await window.maestro.agents.setConfig(configuringAgentId!, configToSave);
               }}
               availableModels={availableModels}
               loadingModels={loadingModels}

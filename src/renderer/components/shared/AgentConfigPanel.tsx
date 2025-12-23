@@ -243,7 +243,7 @@ export interface AgentConfigPanelProps {
   // Agent-specific config options
   agentConfig: Record<string, any>;
   onConfigChange: (key: string, value: any) => void;
-  onConfigBlur: () => void;
+  onConfigBlur: (immediateConfig?: Record<string, any>) => void;
   // Model selection (if supported)
   availableModels?: string[];
   loadingModels?: boolean;
@@ -601,9 +601,11 @@ export function AgentConfigPanel({
                 type="checkbox"
                 checked={agentConfig[option.key] ?? option.default}
                 onChange={(e) => {
-                  onConfigChange(option.key, e.target.checked);
-                  // Immediately persist checkbox changes
-                  onConfigBlur();
+                  const newValue = e.target.checked;
+                  onConfigChange(option.key, newValue);
+                  // Immediately persist checkbox changes with the new value
+                  // We pass the updated config directly since React state updates are async
+                  onConfigBlur({ ...agentConfig, [option.key]: newValue });
                 }}
                 className="w-4 h-4"
                 style={{ accentColor: theme.colors.accent }}
