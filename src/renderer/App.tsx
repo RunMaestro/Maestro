@@ -1523,8 +1523,7 @@ export default function MaestroConsole() {
 
       // Run synopsis in parallel if this was a custom AI command (like /commit)
       // This creates a USER history entry to track the work
-      // DISABLED: Causes duplicate toasts and needs rework for ACP mode
-      if (false && synopsisData && spawnBackgroundSynopsisRef.current && addHistoryEntryRef.current) {
+      if (synopsisData && spawnBackgroundSynopsisRef.current && addHistoryEntryRef.current) {
         const SYNOPSIS_PROMPT = 'Synopsize our recent work in 2-3 sentences max.';
         const startTime = Date.now();
 

@@ -379,17 +379,20 @@ export class ACPClient extends EventEmitter {
     try {
       const message = JSON.parse(line);
 
-      // Log inbound message
+      // Log all inbound messages at transport layer
       if ('id' in message && message.id !== null) {
         if ('result' in message || 'error' in message) {
           // Response to our request
+          logger.debug('[INBOUND RESPONSE]', '[ACP Transport]', { id: message.id, hasResult: 'result' in message, hasError: 'error' in message, data: message });
           this.handleResponse(message as JsonRpcResponse);
         } else {
           // Request from the agent to us
+          logger.debug('[INBOUND REQUEST]', '[ACP Transport]', { method: message.method, id: message.id, data: message });
           this.handleAgentRequest(message as JsonRpcRequest);
         }
       } else if ('method' in message) {
         // Notification
+        logger.debug('[INBOUND NOTIFICATION]', '[ACP Transport]', { method: message.method, data: message });
         this.handleNotification(message as JsonRpcNotification);
       }
     } catch (error) {
@@ -512,6 +515,7 @@ export class ACPClient extends EventEmitter {
 
       const line = JSON.stringify(request) + '\n';
       logger.debug(`Sending request: ${method} (id: ${id})`, LOG_CONTEXT);
+      logger.debug('[OUTBOUND REQUEST]', '[ACP Transport]', { method, id, data: request });
 
       if (!this.process?.stdin?.writable) {
         reject(new Error('Agent process is not writable'));
@@ -531,6 +535,7 @@ export class ACPClient extends EventEmitter {
 
     const line = JSON.stringify(notification) + '\n';
     logger.debug(`Sending notification: ${method}`, LOG_CONTEXT);
+    logger.debug('[OUTBOUND NOTIFICATION]', '[ACP Transport]', { method, data: notification });
 
     if (this.process?.stdin?.writable) {
       this.process.stdin.write(line);
@@ -545,6 +550,7 @@ export class ACPClient extends EventEmitter {
     };
 
     const line = JSON.stringify(response) + '\n';
+    logger.debug('[OUTBOUND RESPONSE]', '[ACP Transport]', { id, data: response });
 
     if (this.process?.stdin?.writable) {
       this.process.stdin.write(line);
@@ -559,6 +565,7 @@ export class ACPClient extends EventEmitter {
     };
 
     const line = JSON.stringify(response) + '\n';
+    logger.debug('[OUTBOUND ERROR RESPONSE]', '[ACP Transport]', { id, code, message, data: response });
 
     if (this.process?.stdin?.writable) {
       this.process.stdin.write(line);
