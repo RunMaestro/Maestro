@@ -91,6 +91,7 @@ export interface CreateTabOptions {
   starred?: boolean;                // Whether session is starred
   usageStats?: UsageStats;          // Token usage stats
   saveToHistory?: boolean;          // Whether to save synopsis to history after completions
+  showThinking?: boolean;           // Whether to show thinking/streaming content for this tab
 }
 
 /**
@@ -133,7 +134,8 @@ export function createTab(session: Session, options: CreateTabOptions = {}): Cre
     name = null,
     starred = false,
     usageStats,
-    saveToHistory = true
+    saveToHistory = true,
+    showThinking = false
   } = options;
 
   // Create the new tab with default values
@@ -148,7 +150,8 @@ export function createTab(session: Session, options: CreateTabOptions = {}): Cre
     usageStats,
     createdAt: Date.now(),
     state: 'idle',
-    saveToHistory
+    saveToHistory,
+    showThinking
   };
 
   // Update the session with the new tab added and set as active

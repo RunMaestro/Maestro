@@ -755,10 +755,39 @@ export class ProcessManager extends EventEmitter {
                       this.emit('slash-commands', sessionId, slashCommands);
                     }
 
-                    // Accumulate text from partial streaming events (OpenCode text messages)
-                    // Skip error events - they're handled separately by detectErrorFromLine
+                    // Handle streaming text events (OpenCode, Codex reasoning)
+                    // Emit partial text immediately for real-time streaming UX
+                    // Also accumulate for final result assembly if needed
                     if (event.type === 'text' && event.isPartial && event.text) {
+                      // Emit thinking chunk for real-time display (let renderer decide to display based on tab setting)
+                      this.emit('thinking-chunk', sessionId, event.text);
+
+                      // Existing: accumulate for result fallback
                       managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+                      // Emit streaming text immediately for real-time display
+                      this.emit('data', sessionId, event.text);
+                    }
+
+                    // Handle tool execution events (OpenCode, Codex)
+                    // Emit tool events so UI can display what the agent is doing
+                    if (event.type === 'tool_use' && event.toolName) {
+                      this.emit('tool-execution', sessionId, {
+                        toolName: event.toolName,
+                        state: event.toolState,
+                        timestamp: Date.now(),
+                      });
+                    }
+
+                    // Handle tool_use blocks embedded in text events (Claude Code mixed content)
+                    // Claude Code returns text with toolUseBlocks array attached
+                    if (event.toolUseBlocks?.length) {
+                      for (const tool of event.toolUseBlocks) {
+                        this.emit('tool-execution', sessionId, {
+                          toolName: tool.name,
+                          state: { status: 'running', input: tool.input },
+                          timestamp: Date.now(),
+                        });
+                      }
                     }
 
                     // Skip processing error events further - they're handled by agent-error emission

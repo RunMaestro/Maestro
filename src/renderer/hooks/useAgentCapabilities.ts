@@ -59,6 +59,9 @@ export interface AgentCapabilities {
 
   /** Agent supports --input-format stream-json for image input via stdin */
   supportsStreamJsonInput: boolean;
+
+  /** Agent emits streaming thinking/reasoning content that can be displayed */
+  supportsThinkingDisplay: boolean;
 }
 
 /**
@@ -82,6 +85,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
   supportsResultMessages: false,
   supportsModelSelection: false,
   supportsStreamJsonInput: false,
+  supportsThinkingDisplay: false,
 };
 
 /**

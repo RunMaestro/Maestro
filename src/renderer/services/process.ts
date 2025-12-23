@@ -90,5 +90,12 @@ export const processService = {
    */
   onSessionId(handler: ProcessSessionIdHandler): () => void {
     return window.maestro.process.onSessionId(handler);
+  },
+
+  /**
+   * Register handler for tool execution events (OpenCode, Codex)
+   */
+  onToolExecution(handler: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void): () => void {
+    return window.maestro.process.onToolExecution(handler);
   }
 };

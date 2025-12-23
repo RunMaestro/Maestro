@@ -42,7 +42,8 @@
     "test:e2e:ui": "npm run build:main && npm run build:renderer && playwright test --ui",
     "test:e2e:headed": "npm run build:main && npm run build:renderer && playwright test --headed",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:integration:watch": "vitest --config vitest.integration.config.ts"
+    "test:integration:watch": "vitest --config vitest.integration.config.ts",
+    "test:performance": "vitest run --config vitest.performance.config.mts"
   },
   "build": {
     "appId": "com.maestro.app",

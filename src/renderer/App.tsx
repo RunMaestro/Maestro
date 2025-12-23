@@ -187,6 +187,7 @@ export default function MaestroConsole() {
     enterToSendAI, setEnterToSendAI,
     enterToSendTerminal, setEnterToSendTerminal,
     defaultSaveToHistory, setDefaultSaveToHistory,
+    defaultShowThinking, setDefaultShowThinking,
     leftSidebarWidth, setLeftSidebarWidth,
     rightPanelWidth, setRightPanelWidth,
     markdownEditMode, setMarkdownEditMode,
@@ -1100,6 +1101,7 @@ export default function MaestroConsole() {
             : getActiveTab(currentSession);
           const logs = completedTab?.logs || [];
           const lastUserLog = logs.filter(log => log.source === 'user').pop();
+          // Find last AI response: 'stdout' or 'ai' source (note: 'thinking' logs are already excluded since they have a distinct source type)
           const lastAiLog = logs.filter(log => log.source === 'stdout' || log.source === 'ai').pop();
           // Use the completed tab's thinkingStartTime for accurate per-tab duration
           const completedTabData = currentSession.aiTabs?.find(tab => tab.id === tabIdFromSession);
@@ -1820,6 +1822,129 @@ export default function MaestroConsole() {
       setAgentErrorModalSessionId(actualSessionId);
     });
 
+    // Handle thinking/streaming content chunks from AI agents
+    // Only appends to logs if the tab has showThinking enabled
+    // THROTTLED: Uses requestAnimationFrame to batch rapid chunk arrivals (Phase 6.4)
+    const unsubscribeThinkingChunk = window.maestro.process.onThinkingChunk?.((sessionId: string, content: string) => {
+      // Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
+      const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+      if (!aiTabMatch) return; // Only handle AI tab messages
+
+      const actualSessionId = aiTabMatch[1];
+      const tabId = aiTabMatch[2];
+      const bufferKey = `${actualSessionId}:${tabId}`;
+
+      // Buffer the chunk - accumulate if there's already content for this session+tab
+      const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
+      thinkingChunkBufferRef.current.set(bufferKey, existingContent + content);
+
+      // Schedule a single RAF callback to process all buffered chunks
+      // This naturally throttles to ~60fps (16.67ms) and batches multiple rapid arrivals
+      if (thinkingChunkRafIdRef.current === null) {
+        thinkingChunkRafIdRef.current = requestAnimationFrame(() => {
+          // Process all buffered chunks in a single setSessions call
+          const buffer = thinkingChunkBufferRef.current;
+          if (buffer.size === 0) {
+            thinkingChunkRafIdRef.current = null;
+            return;
+          }
+
+          // Take a snapshot and clear the buffer
+          const chunksToProcess = new Map(buffer);
+          buffer.clear();
+          thinkingChunkRafIdRef.current = null;
+
+          setSessions(prev => prev.map(s => {
+            // Check if any buffered chunks are for this session
+            let hasChanges = false;
+            for (const [key] of chunksToProcess) {
+              if (key.startsWith(s.id + ':')) {
+                hasChanges = true;
+                break;
+              }
+            }
+            if (!hasChanges) return s;
+
+            // Process each chunk for this session
+            let updatedTabs = s.aiTabs;
+            for (const [key, bufferedContent] of chunksToProcess) {
+              const [chunkSessionId, chunkTabId] = key.split(':');
+              if (chunkSessionId !== s.id) continue;
+
+              const targetTab = updatedTabs.find(t => t.id === chunkTabId);
+              if (!targetTab) continue;
+
+              // Only append if thinking is enabled for this tab
+              if (!targetTab.showThinking) continue;
+
+              // Find the last log entry - if it's a thinking entry, append to it
+              const lastLog = targetTab.logs[targetTab.logs.length - 1];
+              if (lastLog?.source === 'thinking') {
+                // Append to existing thinking block
+                updatedTabs = updatedTabs.map(tab =>
+                  tab.id === chunkTabId
+                    ? { ...tab, logs: [...tab.logs.slice(0, -1), { ...lastLog, text: lastLog.text + bufferedContent }] }
+                    : tab
+                );
+              } else {
+                // Create new thinking block
+                const newLog: LogEntry = {
+                  id: generateId(),
+                  timestamp: Date.now(),
+                  source: 'thinking',
+                  text: bufferedContent
+                };
+                updatedTabs = updatedTabs.map(tab =>
+                  tab.id === chunkTabId
+                    ? { ...tab, logs: [...tab.logs, newLog] }
+                    : tab
+                );
+              }
+            }
+
+            return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
+          }));
+        });
+      }
+    });
+
+    // Handle tool execution events from AI agents
+    // Only appends to logs if the tab has showThinking enabled (tools shown alongside thinking)
+    const unsubscribeToolExecution = window.maestro.process.onToolExecution?.((sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
+      // Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
+      const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+      if (!aiTabMatch) return; // Only handle AI tab messages
+
+      const actualSessionId = aiTabMatch[1];
+      const tabId = aiTabMatch[2];
+
+      setSessions(prev => prev.map(s => {
+        if (s.id !== actualSessionId) return s;
+
+        const targetTab = s.aiTabs.find(t => t.id === tabId);
+        if (!targetTab?.showThinking) return s; // Only show if thinking enabled
+
+        const toolLog: LogEntry = {
+          id: `tool-${Date.now()}-${toolEvent.toolName}`,
+          timestamp: toolEvent.timestamp,
+          source: 'tool',
+          text: toolEvent.toolName,
+          metadata: {
+            toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
+          }
+        };
+
+        return {
+          ...s,
+          aiTabs: s.aiTabs.map(tab =>
+            tab.id === tabId
+              ? { ...tab, logs: [...tab.logs, toolLog] }
+              : tab
+          )
+        };
+      }));
+    });
+
     // Cleanup listeners on unmount
     return () => {
       unsubscribeData();
@@ -1830,6 +1955,14 @@ export default function MaestroConsole() {
       unsubscribeCommandExit();
       unsubscribeUsage();
       unsubscribeAgentError();
+      unsubscribeThinkingChunk?.();
+      unsubscribeToolExecution?.();
+      // Cancel any pending thinking chunk RAF and clear buffer (Phase 6.4)
+      if (thinkingChunkRafIdRef.current !== null) {
+        cancelAnimationFrame(thinkingChunkRafIdRef.current);
+        thinkingChunkRafIdRef.current = null;
+      }
+      thinkingChunkBufferRef.current.clear();
     };
   }, []);
 
@@ -1975,6 +2108,11 @@ export default function MaestroConsole() {
   // These are populated after useBatchProcessor is called and used in the agent error handler
   const pauseBatchOnErrorRef = useRef<((sessionId: string, error: AgentError, documentIndex: number, taskDescription?: string) => void) | null>(null);
   const getBatchStateRef = useRef<((sessionId: string) => BatchRunState) | null>(null);
+
+  // Refs for throttled thinking chunk updates (Phase 6.4)
+  // Buffer chunks per session+tab and use requestAnimationFrame to batch UI updates
+  const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map()); // Key: "sessionId:tabId", Value: accumulated content
+  const thinkingChunkRafIdRef = useRef<number | null>(null);
 
   // Expose addToast to window for debugging/testing
   useEffect(() => {
@@ -2208,14 +2346,14 @@ export default function MaestroConsole() {
     // Create a new tab in the session to start fresh
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
-      const result = createTab(s);
+      const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
       if (!result) return s;
       return result.session;
     }));
 
     // Focus the input after creating new tab
     setTimeout(() => inputRef.current?.focus(), 0);
-  }, [sessions, handleClearAgentError]);
+  }, [sessions, handleClearAgentError, defaultSaveToHistory, defaultShowThinking]);
 
   // Handler to retry after error (recovery action)
   const handleRetryAfterError = useCallback((sessionId: string) => {
@@ -2302,6 +2440,7 @@ export default function MaestroConsole() {
     setSessions,
     setActiveSessionId,
     defaultSaveToHistory,
+    defaultShowThinking,
   });
 
   // Web broadcasting hook - handles external history change notifications
@@ -2604,6 +2743,7 @@ export default function MaestroConsole() {
     setAgentSessionsOpen,
     rightPanelRef,
     defaultSaveToHistory,
+    defaultShowThinking,
   });
 
   // Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now updated in useAgentExecution hook
@@ -5452,8 +5592,10 @@ export default function MaestroConsole() {
               return { ...tab, state: 'busy' as const, thinkingStartTime: Date.now() };
             }
             // Set any other busy tabs to idle (they were interrupted) and add canceled log
+            // Also clear any thinking/tool logs since the process was interrupted
             if (tab.state === 'busy') {
-              const updatedLogs = canceledLog ? [...tab.logs, canceledLog] : tab.logs;
+              const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+              const updatedLogs = canceledLog ? [...logsWithoutThinkingOrTools, canceledLog] : logsWithoutThinkingOrTools;
               return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: updatedLogs };
             }
             return tab;
@@ -5488,18 +5630,23 @@ export default function MaestroConsole() {
         }
 
         // No queued items, just go to idle and add canceled log to the active tab
+        // Also clear any thinking/tool logs since the process was interrupted
         const activeTabForCancel = getActiveTab(s);
         const updatedAiTabsForIdle = canceledLog && activeTabForCancel
-          ? s.aiTabs.map(tab =>
-              tab.id === activeTabForCancel.id
-                ? { ...tab, logs: [...tab.logs, canceledLog], state: 'idle' as const, thinkingStartTime: undefined }
-                : tab
-            )
-          : s.aiTabs.map(tab =>
-              tab.state === 'busy'
-                ? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
-                : tab
-            );
+          ? s.aiTabs.map(tab => {
+              if (tab.id === activeTabForCancel.id) {
+                const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                return { ...tab, logs: [...logsWithoutThinkingOrTools, canceledLog], state: 'idle' as const, thinkingStartTime: undefined };
+              }
+              return tab;
+            })
+          : s.aiTabs.map(tab => {
+              if (tab.state === 'busy') {
+                const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
+              }
+              return tab;
+            });
 
         return {
           ...s,
@@ -5550,14 +5697,18 @@ export default function MaestroConsole() {
           setSessions(prev => prev.map(s => {
             if (s.id !== activeSession.id) return s;
 
-            // Add kill log to the appropriate place
+            // Add kill log to the appropriate place and clear thinking/tool logs
             let updatedSession = { ...s };
             if (currentMode === 'ai') {
               const tab = getActiveTab(s);
               if (tab) {
-                updatedSession.aiTabs = s.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, logs: [...t.logs, killLog] } : t
-                );
+                updatedSession.aiTabs = s.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, logs: [...logsWithoutThinkingOrTools, killLog] };
+                  }
+                  return t;
+                });
               }
             } else {
               updatedSession.shellLogs = [...s.shellLogs, killLog];
@@ -5580,13 +5731,14 @@ export default function MaestroConsole() {
                 };
               }
 
-              // Set tabs appropriately
+              // Set tabs appropriately and clear thinking/tool logs from interrupted tabs
               let updatedAiTabs = updatedSession.aiTabs.map(tab => {
                 if (tab.id === targetTab.id) {
                   return { ...tab, state: 'busy' as const, thinkingStartTime: Date.now() };
                 }
                 if (tab.state === 'busy') {
-                  return { ...tab, state: 'idle' as const, thinkingStartTime: undefined };
+                  const logsWithoutThinkingOrTools = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                  return { ...tab, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
                 }
                 return tab;
               });
@@ -5619,7 +5771,7 @@ export default function MaestroConsole() {
               };
             }
 
-            // No queued items, just go to idle
+            // No queued items, just go to idle and clear thinking logs
             if (currentMode === 'ai') {
               const tab = getActiveTab(s);
               if (!tab) return { ...updatedSession, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -5628,9 +5780,13 @@ export default function MaestroConsole() {
                 state: 'idle',
                 busySource: undefined,
                 thinkingStartTime: undefined,
-                aiTabs: updatedSession.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, state: 'idle' as const, thinkingStartTime: undefined } : t
-                )
+                aiTabs: updatedSession.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: logsWithoutThinkingOrTools };
+                  }
+                  return t;
+                })
               };
             }
             return { ...updatedSession, state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -5661,9 +5817,14 @@ export default function MaestroConsole() {
                 state: 'idle',
                 busySource: undefined,
                 thinkingStartTime: undefined,
-                aiTabs: s.aiTabs.map(t =>
-                  t.id === tab.id ? { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: [...t.logs, errorLog] } : t
-                )
+                aiTabs: s.aiTabs.map(t => {
+                  if (t.id === tab.id) {
+                    // Clear thinking/tool logs even on error
+                    const logsWithoutThinkingOrTools = t.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
+                    return { ...t, state: 'idle' as const, thinkingStartTime: undefined, logs: [...logsWithoutThinkingOrTools, errorLog] };
+                  }
+                  return t;
+                })
               };
             }
             return { ...s, shellLogs: [...s.shellLogs, errorLog], state: 'idle', busySource: undefined, thinkingStartTime: undefined };
@@ -6138,7 +6299,7 @@ export default function MaestroConsole() {
     processMonitorOpen, logViewerOpen, createGroupModalOpen, confirmModalOpen, renameInstanceModalOpen,
     renameGroupModalOpen, activeSession, previewFile, fileTreeFilter, fileTreeFilterOpen, gitDiffPreview,
     gitLogOpen, lightboxImage, hasOpenLayers, hasOpenModal, visibleSessions, sortedSessions, groups,
-    bookmarksCollapsed, leftSidebarOpen, editingSessionId, editingGroupId, markdownEditMode, defaultSaveToHistory,
+    bookmarksCollapsed, leftSidebarOpen, editingSessionId, editingGroupId, markdownEditMode, defaultSaveToHistory, defaultShowThinking,
     setLeftSidebarOpen, setRightPanelOpen, addNewSession, deleteSession, setQuickActionInitialMode,
     setQuickActionOpen, cycleSession, toggleInputMode, setShortcutsHelpOpen, setSettingsModalOpen,
     setSettingsTab, setActiveRightTab, handleSetActiveRightTab, setActiveFocus, setBookmarksCollapsed, setGroups,
@@ -6475,6 +6636,28 @@ export default function MaestroConsole() {
                   aiTabs: s.aiTabs.map(tab =>
                     tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
                   )
+                };
+              }));
+            }
+          }}
+          onToggleTabShowThinking={() => {
+            if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
+              setSessions(prev => prev.map(s => {
+                if (s.id !== activeSession.id) return s;
+                return {
+                  ...s,
+                  aiTabs: s.aiTabs.map(tab => {
+                    if (tab.id !== s.activeTabId) return tab;
+                    // When turning OFF, clear any thinking/tool logs
+                    if (tab.showThinking) {
+                      return {
+                        ...tab,
+                        showThinking: false,
+                        logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool')
+                      };
+                    }
+                    return { ...tab, showThinking: true };
+                  })
                 };
               }));
             }
@@ -7625,7 +7808,7 @@ export default function MaestroConsole() {
           if (activeSession) {
             setSessions(prev => prev.map(s => {
               if (s.id !== activeSession.id) return s;
-              const result = createTab(s, { saveToHistory: defaultSaveToHistory });
+              const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
               if (!result) return s;
               return result.session;
             }));
@@ -7825,7 +8008,7 @@ export default function MaestroConsole() {
           // Use functional setState to compute from fresh state (avoids stale closure issues)
           setSessions(prev => prev.map(s => {
             if (s.id !== activeSession.id) return s;
-            const result = createTab(s, { saveToHistory: defaultSaveToHistory });
+            const result = createTab(s, { saveToHistory: defaultSaveToHistory, showThinking: defaultShowThinking });
             if (!result) return s;
             return result.session;
           }));
@@ -7949,6 +8132,29 @@ export default function MaestroConsole() {
               aiTabs: s.aiTabs.map(tab =>
                 tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
               )
+            };
+          }));
+        }}
+        onToggleTabShowThinking={() => {
+          if (!activeSession) return;
+          const activeTab = getActiveTab(activeSession);
+          if (!activeTab) return;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSession.id) return s;
+            return {
+              ...s,
+              aiTabs: s.aiTabs.map(tab => {
+                if (tab.id !== activeTab.id) return tab;
+                // When turning OFF, clear any thinking/tool logs
+                if (tab.showThinking) {
+                  return {
+                    ...tab,
+                    showThinking: false,
+                    logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool')
+                  };
+                }
+                return { ...tab, showThinking: true };
+              })
             };
           }));
         }}
@@ -8413,6 +8619,8 @@ export default function MaestroConsole() {
         setEnterToSendTerminal={setEnterToSendTerminal}
         defaultSaveToHistory={defaultSaveToHistory}
         setDefaultSaveToHistory={setDefaultSaveToHistory}
+        defaultShowThinking={defaultShowThinking}
+        setDefaultShowThinking={setDefaultShowThinking}
         fontFamily={fontFamily}
         setFontFamily={setFontFamily}
         fontSize={fontSize}

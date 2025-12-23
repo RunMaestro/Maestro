@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
-import { X, Key, Moon, Sun, Keyboard, Check, Terminal, Bell, Cpu, Settings, Palette, Sparkles, History, Download, Bug, Cloud, FolderSync, RotateCcw, Folder, ChevronDown, Plus, Trash2 } from 'lucide-react';
+import { X, Key, Moon, Sun, Keyboard, Check, Terminal, Bell, Cpu, Settings, Palette, Sparkles, History, Download, Bug, Cloud, FolderSync, RotateCcw, Folder, ChevronDown, Plus, Trash2, Brain } from 'lucide-react';
 import type { Theme, ThemeColors, ThemeId, Shortcut, ShellInfo, CustomAICommand, LLMProvider } from '../types';
 import { CustomThemeBuilder } from './CustomThemeBuilder';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -196,6 +196,8 @@ interface SettingsModalProps {
   setEnterToSendTerminal: (value: boolean) => void;
   defaultSaveToHistory: boolean;
   setDefaultSaveToHistory: (value: boolean) => void;
+  defaultShowThinking: boolean;
+  setDefaultShowThinking: (value: boolean) => void;
   osNotificationsEnabled: boolean;
   setOsNotificationsEnabled: (value: boolean) => void;
   audioFeedbackEnabled: boolean;
@@ -1095,6 +1097,17 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
                 description="When enabled, new AI tabs will have the &quot;History&quot; toggle on by default, saving a synopsis after each completion"
                 checked={props.defaultSaveToHistory}
                 onChange={props.setDefaultSaveToHistory}
+                theme={theme}
+              />
+
+              {/* Default Thinking Toggle */}
+              <SettingCheckbox
+                icon={Brain}
+                sectionLabel="Default Thinking Toggle"
+                title="Enable &quot;Thinking&quot; by default for new tabs"
+                description="When enabled, new AI tabs will show streaming thinking/reasoning content as the AI works, instead of waiting for the final result"
+                checked={props.defaultShowThinking}
+                onChange={props.setDefaultShowThinking}
                 theme={theme}
               />
 

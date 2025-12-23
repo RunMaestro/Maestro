@@ -115,6 +115,10 @@ export interface UseSettingsReturn {
   setEnterToSendTerminal: (value: boolean) => void;
   defaultSaveToHistory: boolean;
   setDefaultSaveToHistory: (value: boolean) => void;
+
+  // Default thinking toggle
+  defaultShowThinking: boolean;
+  setDefaultShowThinking: (value: boolean) => void;
   leftSidebarWidth: number;
   rightPanelWidth: number;
   markdownEditMode: boolean;
@@ -249,6 +253,7 @@ export function useSettings(): UseSettingsReturn {
   const [enterToSendAI, setEnterToSendAIState] = useState(false); // AI mode defaults to Command+Enter
   const [enterToSendTerminal, setEnterToSendTerminalState] = useState(true); // Terminal defaults to Enter
   const [defaultSaveToHistory, setDefaultSaveToHistoryState] = useState(true); // History toggle defaults to on
+  const [defaultShowThinking, setDefaultShowThinkingState] = useState(false); // Thinking toggle defaults to off
   const [leftSidebarWidth, setLeftSidebarWidthState] = useState(256);
   const [rightPanelWidth, setRightPanelWidthState] = useState(384);
   const [markdownEditMode, setMarkdownEditModeState] = useState(false);
@@ -388,6 +393,11 @@ export function useSettings(): UseSettingsReturn {
   const setDefaultSaveToHistory = useCallback((value: boolean) => {
     setDefaultSaveToHistoryState(value);
     window.maestro.settings.set('defaultSaveToHistory', value);
+  }, []);
+
+  const setDefaultShowThinking = useCallback((value: boolean) => {
+    setDefaultShowThinkingState(value);
+    window.maestro.settings.set('defaultShowThinking', value);
   }, []);
 
   const setLeftSidebarWidth = useCallback((width: number) => {
@@ -865,6 +875,7 @@ export function useSettings(): UseSettingsReturn {
       const savedEnterToSendAI = await window.maestro.settings.get('enterToSendAI');
       const savedEnterToSendTerminal = await window.maestro.settings.get('enterToSendTerminal');
       const savedDefaultSaveToHistory = await window.maestro.settings.get('defaultSaveToHistory');
+      const savedDefaultShowThinking = await window.maestro.settings.get('defaultShowThinking');
 
       const savedLlmProvider = await window.maestro.settings.get('llmProvider');
       const savedModelSlug = await window.maestro.settings.get('modelSlug');
@@ -910,6 +921,7 @@ export function useSettings(): UseSettingsReturn {
       if (savedEnterToSendAI !== undefined) setEnterToSendAIState(savedEnterToSendAI as boolean);
       if (savedEnterToSendTerminal !== undefined) setEnterToSendTerminalState(savedEnterToSendTerminal as boolean);
       if (savedDefaultSaveToHistory !== undefined) setDefaultSaveToHistoryState(savedDefaultSaveToHistory as boolean);
+      if (savedDefaultShowThinking !== undefined) setDefaultShowThinkingState(savedDefaultShowThinking as boolean);
 
       if (savedLlmProvider !== undefined) setLlmProviderState(savedLlmProvider as LLMProvider);
       if (savedModelSlug !== undefined) setModelSlugState(savedModelSlug as string);
@@ -1117,6 +1129,8 @@ export function useSettings(): UseSettingsReturn {
     setEnterToSendTerminal,
     defaultSaveToHistory,
     setDefaultSaveToHistory,
+    defaultShowThinking,
+    setDefaultShowThinking,
     leftSidebarWidth,
     rightPanelWidth,
     markdownEditMode,
@@ -1202,6 +1216,7 @@ export function useSettings(): UseSettingsReturn {
     enterToSendAI,
     enterToSendTerminal,
     defaultSaveToHistory,
+    defaultShowThinking,
     leftSidebarWidth,
     rightPanelWidth,
     markdownEditMode,
@@ -1242,6 +1257,7 @@ export function useSettings(): UseSettingsReturn {
     setEnterToSendAI,
     setEnterToSendTerminal,
     setDefaultSaveToHistory,
+    setDefaultShowThinking,
     setLeftSidebarWidth,
     setRightPanelWidth,
     setMarkdownEditMode,

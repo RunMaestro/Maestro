@@ -62,7 +62,7 @@ export interface FileArtifact {
 export interface LogEntry {
   id: string;
   timestamp: number;
-  source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error';
+  source: 'stdout' | 'stderr' | 'system' | 'user' | 'ai' | 'error' | 'thinking' | 'tool';
   text: string;
   interactive?: boolean;
   options?: string[];
@@ -78,6 +78,14 @@ export interface LogEntry {
   readOnly?: boolean;
   // For error entries - stores the full AgentError for "View Details" functionality
   agentError?: AgentError;
+  // For tool execution entries - stores tool state and details
+  metadata?: {
+    toolState?: {
+      status?: 'running' | 'completed' | 'error';
+      input?: unknown;
+      output?: unknown;
+    };
+  };
 }
 
 // Queued item for the session-level execution queue
@@ -282,6 +290,7 @@ export interface AITab {
   state: 'idle' | 'busy';          // Tab-level state for write-mode tracking
   readOnlyMode?: boolean;          // When true, agent operates in plan/read-only mode
   saveToHistory?: boolean;         // When true, synopsis is requested after each completion and saved to History
+  showThinking?: boolean;          // When true, show streaming thinking/reasoning content in real-time
   awaitingSessionId?: boolean;     // True when this tab sent a message and is awaiting its session ID
   thinkingStartTime?: number;      // Timestamp when tab started thinking (for elapsed time display)
   scrollTop?: number;              // Saved scroll position for this tab's output view
@@ -468,6 +477,7 @@ export interface AgentCapabilities {
   supportsStreaming: boolean;
   supportsResultMessages: boolean;
   supportsModelSelection?: boolean;
+  supportsThinkingDisplay?: boolean;
 }
 
 export interface AgentConfig {

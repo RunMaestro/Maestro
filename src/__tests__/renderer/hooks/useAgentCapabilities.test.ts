@@ -23,6 +23,7 @@ const baseCapabilities = {
   supportsResultMessages: true,
   supportsModelSelection: false,
   supportsStreamJsonInput: true,
+  supportsThinkingDisplay: false, // Added in Show Thinking feature
 };
 
 describe('useAgentCapabilities', () => {

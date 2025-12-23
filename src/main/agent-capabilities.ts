@@ -60,6 +60,9 @@ export interface AgentCapabilities {
 
   /** Agent supports --input-format stream-json for image input via stdin */
   supportsStreamJsonInput: boolean;
+
+  /** Agent emits streaming thinking/reasoning content that can be displayed */
+  supportsThinkingDisplay: boolean;
 }
 
 /**
@@ -83,6 +86,7 @@ export const DEFAULT_CAPABILITIES: AgentCapabilities = {
   supportsResultMessages: false,
   supportsModelSelection: false,
   supportsStreamJsonInput: false,
+  supportsThinkingDisplay: false,
 };
 
 /**
@@ -118,6 +122,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: true, // "result" event type
     supportsModelSelection: false, // Model is configured via Anthropic account
     supportsStreamJsonInput: true, // --input-format stream-json for images via stdin
+    supportsThinkingDisplay: true, // Emits streaming assistant messages
   },
 
   /**
@@ -141,6 +146,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: false,
     supportsModelSelection: false,
     supportsStreamJsonInput: false,
+    supportsThinkingDisplay: false, // Terminal is not an AI agent
   },
 
   /**
@@ -167,6 +173,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: false, // All messages are agent_message type (no distinct result) - Verified
     supportsModelSelection: true, // -m, --model flag - Documented
     supportsStreamJsonInput: false, // Uses -i, --image flag instead
+    supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
   },
 
   /**
@@ -192,6 +199,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: false,
     supportsModelSelection: false, // Not yet investigated
     supportsStreamJsonInput: false,
+    supportsThinkingDisplay: false, // Not yet investigated
   },
 
   /**
@@ -217,6 +225,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: false,
     supportsModelSelection: false, // Not yet investigated
     supportsStreamJsonInput: false,
+    supportsThinkingDisplay: false, // Not yet investigated
   },
 
   /**
@@ -243,6 +252,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: false, // Not yet investigated
     supportsModelSelection: true, // --model flag
     supportsStreamJsonInput: false,
+    supportsThinkingDisplay: false, // Not yet investigated
   },
 
   /**
@@ -269,6 +279,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
     supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
     supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
     supportsStreamJsonInput: false, // Uses -f, --file flag instead
+    supportsThinkingDisplay: true, // Emits streaming text chunks
   },
 };
 

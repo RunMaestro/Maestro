@@ -148,6 +148,7 @@ interface MainPanelProps {
   onUpdateTabByClaudeSessionId?: (agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => void;
   onToggleTabReadOnlyMode?: () => void;
   onToggleTabSaveToHistory?: () => void;
+  onToggleTabShowThinking?: () => void;
   showUnreadOnly?: boolean;
   onToggleUnreadFilter?: () => void;
   onOpenTabSearch?: () => void;
@@ -1030,6 +1031,9 @@ export const MainPanel = forwardRef<MainPanelHandle, MainPanelProps>(function Ma
                 onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
                 tabSaveToHistory={activeTab?.saveToHistory ?? false}
                 onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
+                tabShowThinking={activeTab?.showThinking ?? false}
+                onToggleTabShowThinking={props.onToggleTabShowThinking}
+                supportsThinking={hasCapability('supportsThinkingDisplay')}
                 onOpenPromptComposer={props.onOpenPromptComposer}
                 showFlashNotification={showFlashNotification}
               />

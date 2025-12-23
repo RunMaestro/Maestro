@@ -59,6 +59,7 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
   renameTab: { id: 'renameTab', label: 'Rename Tab', keys: ['Meta', 'Shift', 'r'] },
   toggleReadOnlyMode: { id: 'toggleReadOnlyMode', label: 'Toggle Read-Only Mode', keys: ['Meta', 'r'] },
   toggleSaveToHistory: { id: 'toggleSaveToHistory', label: 'Toggle Save to History', keys: ['Meta', 's'] },
+  toggleShowThinking: { id: 'toggleShowThinking', label: 'Toggle Show Thinking', keys: ['Meta', 'Shift', 'k'] },
   filterUnreadTabs: { id: 'filterUnreadTabs', label: 'Filter Unread Tabs', keys: ['Meta', 'u'] },
   toggleTabUnread: { id: 'toggleTabUnread', label: 'Toggle Tab Unread', keys: ['Meta', 'Shift', 'u'] },
   goToTab1: { id: 'goToTab1', label: 'Go to Tab 1', keys: ['Meta', '1'] },

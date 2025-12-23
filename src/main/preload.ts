@@ -130,6 +130,19 @@ contextBridge.exposeInMainWorld('maestro', {
       ipcRenderer.on('process:slash-commands', handler);
       return () => ipcRenderer.removeListener('process:slash-commands', handler);
     },
+    // Thinking/streaming content chunks from AI agents
+    // Emitted when agents produce partial text events (isPartial: true)
+    // Renderer decides whether to display based on tab's showThinking setting
+    onThinkingChunk: (callback: (sessionId: string, content: string) => void) => {
+      const handler = (_: any, sessionId: string, content: string) => callback(sessionId, content);
+      ipcRenderer.on('process:thinking-chunk', handler);
+      return () => ipcRenderer.removeListener('process:thinking-chunk', handler);
+    },
+    onToolExecution: (callback: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void) => {
+      const handler = (_: any, sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => callback(sessionId, toolEvent);
+      ipcRenderer.on('process:tool-execution', handler);
+      return () => ipcRenderer.removeListener('process:tool-execution', handler);
+    },
     // Remote command execution from web interface
     // This allows web commands to go through the same code path as desktop commands
     // inputMode is optional - if provided, renderer should use it instead of session state
@@ -1181,6 +1194,8 @@ export interface MaestroAPI {
     onExit: (callback: (sessionId: string, code: number) => void) => () => void;
     onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;
     onSlashCommands: (callback: (sessionId: string, slashCommands: string[]) => void) => () => void;
+    onThinkingChunk: (callback: (sessionId: string, content: string) => void) => () => void;
+    onToolExecution: (callback: (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void) => () => void;
     onRemoteCommand: (callback: (sessionId: string, command: string) => void) => () => void;
     onRemoteSwitchMode: (callback: (sessionId: string, mode: 'ai' | 'terminal') => void) => () => void;
     onRemoteInterrupt: (callback: (sessionId: string) => void) => () => void;

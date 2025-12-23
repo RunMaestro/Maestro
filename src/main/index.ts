@@ -269,6 +269,7 @@ function createWebServer(): WebServer {
       const tabLogs = activeTab?.logs || [];
       if (tabLogs.length > 0) {
         // Find the last stdout/stderr entry from the AI (not user messages)
+        // Note: 'thinking' logs are already excluded since they have a distinct source type
         const lastAiLog = [...tabLogs].reverse().find((log: any) =>
           log.source === 'stdout' || log.source === 'stderr'
         );
@@ -2235,6 +2236,18 @@ function setupProcessListeners() {
     // Handle slash commands from Claude Code init message
     processManager.on('slash-commands', (sessionId: string, slashCommands: string[]) => {
       mainWindow?.webContents.send('process:slash-commands', sessionId, slashCommands);
+    });
+
+    // Handle thinking/streaming content chunks from AI agents
+    // Emitted when agents produce partial text events (isPartial: true)
+    // Renderer decides whether to display based on tab's showThinking setting
+    processManager.on('thinking-chunk', (sessionId: string, content: string) => {
+      mainWindow?.webContents.send('process:thinking-chunk', sessionId, content);
+    });
+
+    // Handle tool execution events (OpenCode, Codex)
+    processManager.on('tool-execution', (sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
+      mainWindow?.webContents.send('process:tool-execution', sessionId, toolEvent);
     });
 
     // Handle stderr separately from runCommand (for clean command execution)

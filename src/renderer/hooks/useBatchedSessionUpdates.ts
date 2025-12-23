@@ -201,7 +201,8 @@ export function useBatchedSessionUpdates(
                 const logData = aiTabLogs.get(tab.id);
                 if (!logData) return tab;
 
-                const existingLogs = tab.logs;
+                // Clear thinking/tool entries when new AI output arrives (final result replaces thinking)
+                const existingLogs = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
                 const lastLog = existingLogs[existingLogs.length - 1];
 
                 // Time-based grouping for AI output (500ms window)
