@@ -393,8 +393,8 @@ export interface UseMergeSessionWithSessionsDeps {
   sessions: Session[];
   /** Session setter for updating app state */
   setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
-  /** Callback after merge creates a new session */
-  onSessionCreated?: (sessionId: string) => void;
+  /** Callback after merge creates a new session. Receives session ID and name for notification purposes. */
+  onSessionCreated?: (sessionId: string, sessionName: string) => void;
 }
 
 /**
@@ -514,9 +514,9 @@ export function useMergeSessionWithSessions(
         // Add new session to state
         setSessions(prev => [...prev, newSession]);
 
-        // Notify caller
+        // Notify caller with session ID and name for notification purposes
         if (onSessionCreated) {
-          onSessionCreated(newSession.id);
+          onSessionCreated(newSession.id, mergedName);
         }
 
         // Return result with the actual new session ID

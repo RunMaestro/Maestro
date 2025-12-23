@@ -2599,15 +2599,23 @@ export default function MaestroConsole() {
   } = useMergeSessionWithSessions({
     sessions,
     setSessions,
-    onSessionCreated: (sessionId) => {
+    onSessionCreated: (sessionId, sessionName) => {
       // Navigate to the newly created merged session
       setActiveSessionId(sessionId);
       setMergeSessionModalOpen(false);
+
+      // Show toast notification in the UI
       addToast({
         type: 'success',
         title: 'Session Merged',
-        message: 'Context merged successfully',
+        message: `Created "${sessionName}" with merged context`,
       });
+
+      // Show desktop notification for visibility when app is not focused
+      window.maestro.notification.show(
+        'Session Merged',
+        `Created "${sessionName}" with merged context`
+      );
     },
   });
 
