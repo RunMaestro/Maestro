@@ -53,9 +53,11 @@ export class ACPProcess extends EventEmitter {
   private client: ACPClient;
   private config: ACPProcessConfig;
   private acpSessionId: SessionId | null = null;
-  private streamedText = ''; // Full accumulated text from this turn
-  private emittedTextLength = 0; // Track how much we've already emitted to avoid duplicates
+  private streamedText = ''; // Text accumulated during current prompt
+  private emittedTextLength = 0; // Track how much text we've emitted (for deduplication within a response)
+  private totalAccumulatedText = ''; // All text across all prompts (for cross-prompt deduplication)
   private startTime: number;
+  private isLoadingSession = false; // Track if we're loading a session (to ignore historical messages)
 
   constructor(config: ACPProcessConfig) {
     super();
@@ -145,8 +147,13 @@ export class ACPProcess extends EventEmitter {
       // Create or load session
       if (this.config.acpSessionId) {
         // Resume existing session
+        // Set flag to ignore historical messages during session load
+        this.isLoadingSession = true;
         await this.client.loadSession(this.config.acpSessionId, this.config.cwd);
         this.acpSessionId = this.config.acpSessionId;
+        // Clear flag after session load completes
+        this.isLoadingSession = false;
+        logger.debug('Session loaded, ignoring historical messages received during load', LOG_CONTEXT);
       } else {
         // Create new session
         const sessionResponse = await this.client.newSession(this.config.cwd);
@@ -187,7 +194,7 @@ export class ACPProcess extends EventEmitter {
       return;
     }
 
-    // Clear any previous streamed text before starting new prompt
+    // Clear streamed text for new prompt (but keep totalAccumulatedText for cross-prompt dedup)
     this.streamedText = '';
     this.emittedTextLength = 0; // Reset emission tracker for new prompt
 
@@ -208,17 +215,38 @@ export class ACPProcess extends EventEmitter {
         response = await this.client.prompt(this.acpSessionId, text);
       }
 
+      logger.debug('Received prompt response from ACP agent', LOG_CONTEXT, {
+        stopReason: response.stopReason,
+        hasUsage: !!response.usage,
+        usage: response.usage,
+      });
+
+      // Workaround for OpenCode bug: Remove previous response if it's repeated
+      // OpenCode may send cumulative text (all previous messages + new message)
+      let finalText = this.streamedText;
+      if (this.totalAccumulatedText && finalText.startsWith(this.totalAccumulatedText)) {
+        // Agent repeated the previous response - extract only the new part
+        const newContent = finalText.substring(this.totalAccumulatedText.length);
+        logger.debug('Detected cumulative response, extracting delta', LOG_CONTEXT, {
+          previousLength: this.totalAccumulatedText.length,
+          totalLength: finalText.length,
+          deltaLength: newContent.length,
+        });
+        finalText = newContent;
+      }
+
+      // Update total accumulated text for next deduplication check
+      this.totalAccumulatedText += finalText;
+
       // Emit final result event to signal completion
-      // Include streamedText so ProcessManager can emit it if streaming was disabled
+      // Include finalText (deduplicated) so ProcessManager can emit it if streaming was disabled
       const resultEvent = createResultEvent(
         this.config.sessionId,
-        this.streamedText, // Include accumulated text for non-streaming mode
-        response.stopReason
+        finalText, // Use deduplicated text
+        response.stopReason,
+        response.usage // Include usage stats from response
       );
       this.emit('data', this.config.sessionId, resultEvent);
-
-      // Clear streamed text for next prompt
-      this.streamedText = '';
 
       // If stop reason indicates completion, emit exit
       if (response.stopReason === 'end_turn' || response.stopReason === 'cancelled') {
@@ -274,18 +302,30 @@ export class ACPProcess extends EventEmitter {
   private setupEventHandlers(): void {
     // Handle session updates
     this.client.on('session:update', (sessionId: SessionId, update: SessionUpdate) => {
+      // Ignore updates during session load - these are historical messages
+      if (this.isLoadingSession) {
+        logger.debug('Ignoring session update during session load (historical message)', LOG_CONTEXT, {
+          updateKeys: Object.keys(update)
+        });
+        return;
+      }
+
       const event = acpUpdateToParseEvent(sessionId, update);
       if (event) {
         // Accumulate text for final result
         if (event.type === 'text' && event.text) {
           this.streamedText += event.text;
           
-          // Check if this text has already been emitted (OpenCode may send cumulative text)
-          const currentLength = this.streamedText.length;
-          if (currentLength > this.emittedTextLength) {
-            // Extract only the new portion
-            const newText = this.streamedText.substring(this.emittedTextLength);
-            this.emittedTextLength = currentLength;
+          // Deduplication: Check against totalAccumulatedText (cross-prompt) + within-prompt tracking
+          // Calculate the absolute position in the total accumulated text
+          const absolutePosition = this.totalAccumulatedText.length + this.emittedTextLength;
+          const totalCurrentLength = this.totalAccumulatedText.length + this.streamedText.length;
+          
+          if (totalCurrentLength > absolutePosition) {
+            // Extract only the new portion that hasn't been emitted yet
+            const fullText = this.totalAccumulatedText + this.streamedText;
+            const newText = fullText.substring(absolutePosition);
+            this.emittedTextLength = this.streamedText.length; // Update within-prompt tracker
             
             // Emit only the delta
             const deltaEvent = { ...event, text: newText };

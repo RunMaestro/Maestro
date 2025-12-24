@@ -173,22 +173,6 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
           ? finalArgs[sessionArgIndex + 1]
           : config.agentSessionId;
 
-      logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
-        sessionId: config.sessionId,
-        toolType: config.toolType,
-        cwd: config.cwd,
-        command: config.command,
-        fullCommand: `${config.command} ${finalArgs.join(' ')}`,
-        args: finalArgs,
-        requiresPty: agent?.requiresPty || false,
-        shell: shellToUse,
-        ...(agentSessionId && { agentSessionId }),
-        ...(config.readOnlyMode && { readOnlyMode: true }),
-        ...(config.yoloMode && { yoloMode: true }),
-        ...(config.modelId && { modelId: config.modelId }),
-        ...(config.prompt && { prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt })
-      });
-
       // Get contextWindow: session-level override takes priority over agent-level config
       // Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
       const contextWindow = getContextWindowValue(agent, agentConfigValues, config.sessionCustomContextWindow);
@@ -206,6 +190,29 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
         acpShowStreaming,
         agentConfigValues
       });
+
+      // Build command string for logging (ACP vs CLI format)
+      const fullCommand = useACP && config.prompt
+        ? `${config.command} acp`
+        : `${config.command} ${finalArgs.join(' ')}`;
+
+      logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
+        sessionId: config.sessionId,
+        toolType: config.toolType,
+        cwd: config.cwd,
+        command: config.command,
+        fullCommand,
+        args: useACP && config.prompt ? ['acp'] : finalArgs,
+        requiresPty: agent?.requiresPty || false,
+        shell: shellToUse,
+        ...(agentSessionId && { agentSessionId }),
+        ...(config.readOnlyMode && { readOnlyMode: true }),
+        ...(config.yoloMode && { yoloMode: true }),
+        ...(config.modelId && { modelId: config.modelId }),
+        ...(config.prompt && { prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt }),
+        ...(useACP && { useACP: true, acpShowStreaming })
+      });
+
       if (useACP) {
         logger.info('ACP mode enabled for agent', LOG_CONTEXT, { toolType: config.toolType, acpShowStreaming });
       }

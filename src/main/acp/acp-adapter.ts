@@ -210,13 +210,28 @@ export function createSessionIdEvent(sessionId: SessionId): ParsedEvent {
 export function createResultEvent(
   sessionId: SessionId,
   text: string,
-  _stopReason: string
+  _stopReason: string,
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number }
 ): ParsedEvent {
+  // Convert ACP usage format to Maestro's ParsedEvent usage format
+  const eventUsage = usage ? {
+    inputTokens: usage.inputTokens || 0,
+    outputTokens: usage.outputTokens || 0,
+    // ACP doesn't provide cache tokens, so default to 0
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    // ACP doesn't provide cost, calculated separately based on model
+    costUsd: 0,
+    // Context window should be configured in agent settings
+    contextWindow: 0,
+  } : undefined;
+
   return {
     type: 'result',
     text,
     sessionId,
-    raw: { type: 'prompt_response', stopReason: _stopReason },
+    usage: eventUsage,
+    raw: { type: 'prompt_response', stopReason: _stopReason, usage },
   };
 }
 

@@ -231,6 +231,11 @@ export type StopReason =
 
 export interface PromptResponse {
   stopReason: StopReason;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+  };
 }
 
 // ============================================================================

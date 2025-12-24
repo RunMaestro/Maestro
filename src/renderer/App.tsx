@@ -4341,6 +4341,33 @@ export default function MaestroConsole() {
           console.error('Failed to delete playbooks:', error);
         }
 
+        // Stop watching AutoRun folder if configured
+        // Only unwatch if no other session is using the same folder
+        if (session.autoRunFolderPath) {
+          const otherSessionsUsingSameFolder = sessions.filter(
+            s => s.id !== id && s.autoRunFolderPath === session.autoRunFolderPath
+          );
+          if (otherSessionsUsingSameFolder.length === 0) {
+            try {
+              await window.maestro.autorun.unwatchFolder(session.autoRunFolderPath);
+            } catch (error) {
+              console.error('Failed to unwatch AutoRun folder:', error);
+            }
+          }
+        }
+
+        // TODO: Delete agent's session storage (OpenCode/Codex sessions)
+        // Currently these sessions remain in the agent's storage (~/.local/share/opencode/storage/)
+        // even after the Maestro session is deleted, causing them to appear in Agent Sessions Browser.
+        // Once ACP supports session deletion, we should:
+        // if (session.agentSessionId && session.toolType) {
+        //   try {
+        //     await window.maestro.agentSessions.delete(session.toolType, session.agentSessionId);
+        //   } catch (error) {
+        //     console.error('Failed to delete agent session:', error);
+        //   }
+        // }
+
         // If this is a worktree session, track its path to prevent re-discovery
         if (session.worktreeParentPath && session.cwd) {
           setRemovedWorktreePaths(prev => new Set([...prev, session.cwd]));
@@ -4389,6 +4416,24 @@ export default function MaestroConsole() {
             await window.maestro.playbooks.deleteAll(session.id);
           } catch (error) {
             console.error('Failed to delete playbooks:', error);
+          }
+
+          // Stop watching AutoRun folder if configured
+          // Only unwatch if no other session is using the same folder
+          if (session.autoRunFolderPath) {
+            const otherSessionsUsingSameFolder = groupSessions.filter(
+              s => s.id !== session.id && s.autoRunFolderPath === session.autoRunFolderPath
+            );
+            const sessionsOutsideGroup = sessions.filter(
+              s => s.groupId !== groupId && s.autoRunFolderPath === session.autoRunFolderPath
+            );
+            if (otherSessionsUsingSameFolder.length === 0 && sessionsOutsideGroup.length === 0) {
+              try {
+                await window.maestro.autorun.unwatchFolder(session.autoRunFolderPath);
+              } catch (error) {
+                console.error('Failed to unwatch AutoRun folder:', error);
+              }
+            }
           }
         }
 
