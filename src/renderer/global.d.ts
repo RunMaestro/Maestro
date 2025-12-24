@@ -149,6 +149,9 @@ interface MaestroAPI {
   // Context merging API (for session context transfer and grooming)
   context: {
     getStoredSession: (agentId: string, projectRoot: string, sessionId: string) => Promise<SessionMessagesResult | null>;
+    // NEW: Single-call grooming (recommended) - spawns batch process and returns response
+    groomContext: (projectRoot: string, agentType: string, prompt: string) => Promise<string>;
+    // DEPRECATED: Use groomContext instead
     createGroomingSession: (projectRoot: string, agentType: string) => Promise<string>;
     sendGroomingPrompt: (sessionId: string, prompt: string) => Promise<string>;
     cleanupGroomingSession: (sessionId: string) => Promise<void>;

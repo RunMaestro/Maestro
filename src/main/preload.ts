@@ -286,10 +286,13 @@ contextBridge.exposeInMainWorld('maestro', {
         total: number;
         hasMore: boolean;
       } | null>,
-    // Create a temporary session for context grooming
+    // NEW: Single-call grooming (recommended) - spawns batch process and returns response
+    groomContext: (projectRoot: string, agentType: string, prompt: string) =>
+      ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt) as Promise<string>,
+    // DEPRECATED: Create a temporary session for context grooming
     createGroomingSession: (projectRoot: string, agentType: string) =>
       ipcRenderer.invoke('context:createGroomingSession', projectRoot, agentType) as Promise<string>,
-    // Send grooming prompt to a session and get response
+    // DEPRECATED: Send grooming prompt to a session and get response
     sendGroomingPrompt: (sessionId: string, prompt: string) =>
       ipcRenderer.invoke('context:sendGroomingPrompt', sessionId, prompt) as Promise<string>,
     // Clean up a temporary grooming session

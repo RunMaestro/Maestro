@@ -204,15 +204,14 @@ export class ContextSummarizationService {
         message: `Summarizing chunk ${i + 1}/${chunks.length}...`,
       });
 
-      const sessionId = await this.createSummarizationSession(request.projectRoot);
-
-      try {
-        const prompt = this.buildSummarizationPrompt(chunkText);
-        const summary = await this.sendSummarizationPrompt(sessionId, prompt);
-        chunkSummaries.push(summary);
-      } finally {
-        await this.cleanupSummarizationSession(sessionId);
-      }
+      const prompt = this.buildSummarizationPrompt(chunkText);
+      // Use the new single-call groomContext API (spawns batch process with prompt)
+      const summary = await window.maestro.context.groomContext(
+        request.projectRoot,
+        this.config.defaultAgentType,
+        prompt
+      );
+      chunkSummaries.push(summary);
     }
 
     // Combine chunk summaries

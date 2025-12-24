@@ -263,7 +263,8 @@ export class ContextGroomingService {
         message: 'Starting grooming session...',
       });
 
-      const groomingSessionId = await this.createGroomingSession(targetProjectRoot);
+      // Build the grooming prompt
+      const prompt = this.buildGroomingPrompt(formattedContexts, groomingPrompt);
 
       onProgress({
         stage: 'grooming',
@@ -271,9 +272,12 @@ export class ContextGroomingService {
         message: 'Sending contexts for consolidation...',
       });
 
-      // Stage 3: Send grooming prompt and get response
-      const prompt = this.buildGroomingPrompt(formattedContexts, groomingPrompt);
-      const groomedText = await this.sendGroomingPrompt(groomingSessionId, prompt);
+      // Use the new single-call groomContext API (spawns batch process with prompt)
+      const groomedText = await window.maestro.context.groomContext(
+        targetProjectRoot,
+        this.config.defaultAgentType,
+        prompt
+      );
 
       onProgress({
         stage: 'grooming',
@@ -281,19 +285,10 @@ export class ContextGroomingService {
         message: 'Processing groomed output...',
       });
 
-      // Stage 4: Parse the groomed output
+      // Parse the groomed output
       const groomedLogs = parseGroomedOutput(groomedText);
       const groomedTokenCount = this.estimateGroomedTokens(groomedLogs);
       const tokensSaved = Math.max(0, originalTokenCount - groomedTokenCount);
-
-      // Stage 5: Cleanup
-      onProgress({
-        stage: 'creating',
-        progress: 90,
-        message: 'Cleaning up grooming session...',
-      });
-
-      await this.cleanupGroomingSession(groomingSessionId);
 
       onProgress({
         stage: 'complete',
@@ -307,15 +302,6 @@ export class ContextGroomingService {
         success: true,
       };
     } catch (error) {
-      // Ensure cleanup on error
-      if (this.activeGroomingSessionId) {
-        try {
-          await this.cleanupGroomingSession(this.activeGroomingSessionId);
-        } catch {
-          // Ignore cleanup errors
-        }
-      }
-
       const errorMessage = error instanceof Error ? error.message : 'Unknown error during grooming';
 
       onProgress({
