@@ -512,8 +512,9 @@ export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSes
                                 }
                               }));
                             }}
-                            onConfigBlur={() => {
-                              const currentConfig = agentConfigs[agent.id] || {};
+                            onConfigBlur={(immediateConfig) => {
+                              // Use immediate config if provided (for checkbox), otherwise use state
+                              const currentConfig = immediateConfig || agentConfigs[agent.id] || {};
                               window.maestro.agents.setConfig(agent.id, currentConfig);
                             }}
                             availableModels={availableModels[agent.id] || []}
@@ -978,10 +979,12 @@ export function EditAgentModal({ isOpen, onClose, onSave, theme, session, existi
                 onConfigChange={(key, value) => {
                   setAgentConfig(prev => ({ ...prev, [key]: value }));
                 }}
-                onConfigBlur={() => {
+                onConfigBlur={(immediateConfig) => {
+                  // Use immediate config if provided (for checkbox), otherwise use state
+                  const configToSave = immediateConfig || agentConfig;
                   // Both model and contextWindow are now saved per-session on modal save
                   // Other config options (if any) can still be saved at agent level
-                  const { model: _model, contextWindow: _contextWindow, ...otherConfig } = agentConfig;
+                  const { model: _model, contextWindow: _contextWindow, ...otherConfig } = configToSave;
                   if (Object.keys(otherConfig).length > 0) {
                     window.maestro.agents.setConfig(session.toolType, otherConfig);
                   }

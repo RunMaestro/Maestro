@@ -258,6 +258,7 @@ describe('agent-capabilities', () => {
         'supportsModelSelection',
         'requiresPromptToStart',
         'supportsThinkingDisplay',
+        'supportsACP',
       ];
 
       const defaultKeys = Object.keys(DEFAULT_CAPABILITIES);

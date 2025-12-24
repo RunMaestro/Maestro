@@ -10,6 +10,7 @@ import { getOutputParser, type ParsedEvent, type AgentOutputParser } from './par
 import { aggregateModelUsage } from './parsers/usage-aggregator';
 import type { AgentError } from '../shared/types';
 import { getAgentCapabilities } from './agent-capabilities';
+import { ACPProcess, type ACPProcessConfig } from './acp';
 
 // Re-export parser types for consumers
 export type { ParsedEvent, AgentOutputParser } from './parsers';
@@ -58,6 +59,9 @@ interface ProcessConfig {
   contextWindow?: number; // Configured context window size (0 or undefined = not configured, hide UI)
   customEnvVars?: Record<string, string>; // Custom environment variables from user configuration
   noPromptSeparator?: boolean; // If true, don't add '--' before the prompt (e.g., OpenCode doesn't support it)
+  useACP?: boolean; // If true, use ACP protocol instead of stdout JSON parsing (for OpenCode)
+  acpShowStreaming?: boolean; // If true, show streaming text output in ACP mode (default: false to avoid duplicates)
+  acpSessionId?: string; // ACP session ID for resuming sessions
 }
 
 interface ManagedProcess {
@@ -65,11 +69,13 @@ interface ManagedProcess {
   toolType: string;
   ptyProcess?: pty.IPty;
   childProcess?: ChildProcess;
+  acpProcess?: ACPProcess; // ACP-based process (for OpenCode with useACP flag)
   cwd: string;
   pid: number;
   isTerminal: boolean;
   isBatchMode?: boolean; // True for agents that run in batch mode (exit after response)
   isStreamJsonMode?: boolean; // True when using stream-json input/output (for images)
+  isACPMode?: boolean; // True when using ACP protocol
   jsonBuffer?: string; // Buffer for accumulating JSON output in batch mode
   lastCommand?: string; // Last command sent to terminal (for filtering command echoes)
   sessionIdEmitted?: boolean; // True after session_id has been emitted (prevents duplicate emissions)
@@ -271,7 +277,120 @@ export class ProcessManager extends EventEmitter {
    * Spawn a new process for a session
    */
   spawn(config: ProcessConfig): { pid: number; success: boolean } {
-    const { sessionId, toolType, cwd, command, args, requiresPty, prompt, shell, shellArgs, shellEnvVars, images, imageArgs, contextWindow, customEnvVars, noPromptSeparator } = config;
+    const { sessionId, toolType, cwd, command, args, requiresPty, prompt, shell, shellArgs, shellEnvVars, images, imageArgs, contextWindow, customEnvVars, noPromptSeparator, useACP, acpShowStreaming, acpSessionId } = config;
+
+    // ========================================================================
+    // ACP Mode: Use Agent Client Protocol instead of stdout JSON parsing
+    // This is controlled by the useACP flag in agent config
+    // ========================================================================
+    if (useACP && prompt) {
+      logger.info('[ProcessManager] Using ACP mode for agent', 'ProcessManager', {
+        sessionId,
+        toolType,
+        command,
+      });
+
+      // Convert image data URLs to ACP format
+      const acpImages = images?.map(dataUrl => {
+        const match = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/);
+        if (match) {
+          return { data: match[2], mimeType: match[1] };
+        }
+        return null;
+      }).filter((img): img is { data: string; mimeType: string } => img !== null);
+
+      const acpConfig: ACPProcessConfig = {
+        sessionId,
+        toolType,
+        cwd,
+        command,
+        prompt,
+        images: acpImages,
+        acpSessionId,
+        customEnvVars,
+        contextWindow,
+      };
+
+      // Create ACP process
+      const acpProcess = new ACPProcess(acpConfig);
+
+      // Create managed process entry
+      const managedProcess: ManagedProcess = {
+        sessionId,
+        toolType,
+        acpProcess,
+        cwd,
+        pid: -1, // Will be updated after start
+        isTerminal: false,
+        isBatchMode: true,
+        isACPMode: true,
+        startTime: Date.now(),
+        contextWindow,
+        command,
+        args: ['acp'],
+      };
+
+      this.processes.set(sessionId, managedProcess);
+
+      // Wire up ACP events to ProcessManager events
+      // ACP emits ParsedEvent objects, but the renderer expects strings
+      // For text events, emit the text content; for other events, emit as JSON
+      // acpShowStreaming controls whether streaming text is shown (default: false to avoid duplicates)
+      acpProcess.on('data', (sid: string, event: ParsedEvent) => {
+        if (event.type === 'text' && event.text) {
+          // Only emit streaming text if acpShowStreaming is enabled
+          if (acpShowStreaming) {
+            this.emit('data', sid, event.text);
+          }
+          // Always emit as thinking chunk if partial (for showThinking mode)
+          if (event.isPartial) {
+            this.emit('thinking-chunk', sid, event.text);
+          }
+        } else if (event.type === 'result') {
+          // Emit result text only if streaming was disabled (otherwise it was already shown)
+          // This ensures text is displayed exactly once
+          if (!acpShowStreaming && event.text) {
+            this.emit('data', sid, event.text);
+          }
+          // Don't emit empty result events or JSON - just signal completion via exit event
+        } else if (event.type === 'init' && event.sessionId) {
+          // Emit session ID event
+          this.emit('session-id', sid, event.sessionId);
+        } else if (event.type === 'tool_use' || event.type === 'system' || event.type === 'error') {
+          // For actionable event types, emit as JSON for rendering
+          this.emit('data', sid, JSON.stringify(event));
+        }
+        // Ignore other event types (usage, etc.) - don't emit as raw JSON
+      });
+
+      acpProcess.on('agent-error', (sid: string, error: AgentError) => {
+        this.emit('agent-error', sid, error);
+      });
+
+      acpProcess.on('exit', (sid: string, code: number) => {
+        this.emit('exit', sid, code);
+        this.processes.delete(sid);
+      });
+
+      // Start the ACP process asynchronously
+      acpProcess.start().then(result => {
+        managedProcess.pid = result.pid;
+        if (!result.success) {
+          logger.error('[ProcessManager] ACP process failed to start', 'ProcessManager', { sessionId });
+        }
+      }).catch(error => {
+        logger.error('[ProcessManager] ACP process start error', 'ProcessManager', {
+          sessionId,
+          error: String(error),
+        });
+      });
+
+      return { pid: -1, success: true }; // Return immediately, events will follow
+    }
+
+    // ========================================================================
+    // Standard Mode: Spawn process and parse stdout JSON
+    // ========================================================================
 
     // For batch mode with images, use stream-json mode and send message via stdin
     // For batch mode without images, append prompt to args with -- separator (unless noPromptSeparator is true)
@@ -1065,15 +1184,24 @@ export class ProcessManager extends EventEmitter {
       sessionId,
       toolType: process.toolType,
       isTerminal: process.isTerminal,
+      isACPMode: process.isACPMode,
       pid: process.pid,
       hasPtyProcess: !!process.ptyProcess,
       hasChildProcess: !!process.childProcess,
+      hasACPProcess: !!process.acpProcess,
       hasStdin: !!process.childProcess?.stdin,
       dataLength: data.length,
       dataPreview: data.substring(0, 50)
     });
 
     try {
+      // Handle ACP process
+      if (process.isACPMode && process.acpProcess) {
+        logger.debug('[ProcessManager] Writing to ACP process', 'ProcessManager', { sessionId });
+        process.acpProcess.write(data);
+        return true;
+      }
+
       if (process.isTerminal && process.ptyProcess) {
         logger.debug('[ProcessManager] Writing to PTY process', 'ProcessManager', { sessionId, pid: process.pid });
         // Track the command for filtering echoes (remove trailing newline for comparison)
@@ -1124,6 +1252,13 @@ export class ProcessManager extends EventEmitter {
     }
 
     try {
+      // Handle ACP process
+      if (process.isACPMode && process.acpProcess) {
+        logger.debug('[ProcessManager] Cancelling ACP process', 'ProcessManager', { sessionId });
+        process.acpProcess.interrupt();
+        return true;
+      }
+
       if (process.isTerminal && process.ptyProcess) {
         // For PTY processes, send Ctrl+C character
         logger.debug('[ProcessManager] Sending Ctrl+C to PTY process', 'ProcessManager', { sessionId, pid: process.pid });
@@ -1151,7 +1286,10 @@ export class ProcessManager extends EventEmitter {
     if (!process) return false;
 
     try {
-      if (process.isTerminal && process.ptyProcess) {
+      // Handle ACP process
+      if (process.isACPMode && process.acpProcess) {
+        process.acpProcess.kill();
+      } else if (process.isTerminal && process.ptyProcess) {
         process.ptyProcess.kill();
       } else if (process.childProcess) {
         process.childProcess.kill('SIGTERM');

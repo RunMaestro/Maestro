@@ -409,17 +409,41 @@ export function useAgentExecution(
 
         // Spawn with session resume - the IPC handler will use the agent's resumeArgs builder
         const commandToUse = agent.path || agent.command;
-        window.maestro.process.spawn({
-          sessionId: targetSessionId,
-          toolType,
-          cwd,
-          command: commandToUse,
-          args: agent.args || [],
-          prompt,
-          agentSessionId: resumeAgentSessionId, // This triggers the agent's resume mechanism
-        }).catch(() => {
-          cleanup();
-          resolve({ success: false });
+        
+        // Get agent configuration to check if ACP is enabled
+        window.maestro.agentConfigs.get(toolType).then((agentConfig) => {
+          const useACP = agentConfig?.useACP ?? false;
+          const acpShowStreaming = agentConfig?.acpShowStreaming ?? false;
+          
+          window.maestro.process.spawn({
+            sessionId: targetSessionId,
+            toolType,
+            cwd,
+            command: commandToUse,
+            args: agent.args || [],
+            prompt,
+            agentSessionId: resumeAgentSessionId, // This triggers the agent's resume mechanism
+            useACP,
+            acpShowStreaming,
+          }).catch(() => {
+            cleanup();
+            resolve({ success: false });
+          });
+        }).catch((err) => {
+          console.error('[spawnBackgroundSynopsis] Failed to get agent config:', err);
+          // Fallback to spawn without ACP
+          window.maestro.process.spawn({
+            sessionId: targetSessionId,
+            toolType,
+            cwd,
+            command: commandToUse,
+            args: agent.args || [],
+            prompt,
+            agentSessionId: resumeAgentSessionId,
+          }).catch(() => {
+            cleanup();
+            resolve({ success: false });
+          });
         });
       });
     } catch (error) {

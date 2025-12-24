@@ -173,25 +173,49 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
           ? finalArgs[sessionArgIndex + 1]
           : config.agentSessionId;
 
+      // Get contextWindow: session-level override takes priority over agent-level config
+      // Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
+      const contextWindow = getContextWindowValue(agent, agentConfigValues, config.sessionCustomContextWindow);
+
+      // Check if ACP mode is enabled for this agent (currently only OpenCode supports it)
+      const supportsACP = agent?.capabilities?.supportsACP;
+      const useACPConfig = agentConfigValues.useACP;
+      const useACP = supportsACP && useACPConfig === true;
+      const acpShowStreaming = agentConfigValues.acpShowStreaming === true;
+      logger.debug('ACP mode check', LOG_CONTEXT, { 
+        toolType: config.toolType,
+        supportsACP,
+        useACPConfig,
+        useACP,
+        acpShowStreaming,
+        agentConfigValues
+      });
+
+      // Build command string for logging (ACP vs CLI format)
+      const fullCommand = useACP && config.prompt
+        ? `${config.command} acp`
+        : `${config.command} ${finalArgs.join(' ')}`;
+
       logger.info(`Spawning process: ${config.command}`, LOG_CONTEXT, {
         sessionId: config.sessionId,
         toolType: config.toolType,
         cwd: config.cwd,
         command: config.command,
-        fullCommand: `${config.command} ${finalArgs.join(' ')}`,
-        args: finalArgs,
+        fullCommand,
+        args: useACP && config.prompt ? ['acp'] : finalArgs,
         requiresPty: agent?.requiresPty || false,
         shell: shellToUse,
         ...(agentSessionId && { agentSessionId }),
         ...(config.readOnlyMode && { readOnlyMode: true }),
         ...(config.yoloMode && { yoloMode: true }),
         ...(config.modelId && { modelId: config.modelId }),
-        ...(config.prompt && { prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt })
+        ...(config.prompt && { prompt: config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt }),
+        ...(useACP && { useACP: true, acpShowStreaming })
       });
 
-      // Get contextWindow: session-level override takes priority over agent-level config
-      // Falls back to the agent's configOptions default (e.g., 400000 for Codex, 128000 for OpenCode)
-      const contextWindow = getContextWindowValue(agent, agentConfigValues, config.sessionCustomContextWindow);
+      if (useACP) {
+        logger.info('ACP mode enabled for agent', LOG_CONTEXT, { toolType: config.toolType, acpShowStreaming });
+      }
 
       const result = processManager.spawn({
         ...config,
@@ -205,6 +229,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
         customEnvVars: effectiveCustomEnvVars, // Pass custom env vars (session-level or agent-level)
         imageArgs: agent?.imageArgs,     // Function to build image CLI args (for Codex, OpenCode)
         noPromptSeparator: agent?.noPromptSeparator, // OpenCode doesn't support '--' before prompt
+        useACP,                          // Use ACP protocol if enabled in agent config
+        acpShowStreaming,                // Show streaming output in ACP mode
+        acpSessionId: config.agentSessionId, // ACP session ID for resume
       });
 
       logger.info(`Process spawned successfully`, LOG_CONTEXT, {

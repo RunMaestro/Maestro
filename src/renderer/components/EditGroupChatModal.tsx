@@ -343,10 +343,11 @@ export function EditGroupChatModal({
               agentConfigRef.current = newConfig;
               setConfigWasModified(true);
             }}
-            onConfigBlur={async () => {
+            onConfigBlur={async (immediateConfig) => {
               if (selectedAgent) {
-                // Use ref to get latest config (state may be stale in async callback)
-                await window.maestro.agents.setConfig(selectedAgent, agentConfigRef.current);
+                // Use immediate config if provided (for checkbox), otherwise use ref
+                const configToSave = immediateConfig || agentConfigRef.current;
+                await window.maestro.agents.setConfig(selectedAgent, configToSave);
                 setConfigWasModified(true);
               }
             }}

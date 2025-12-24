@@ -673,7 +673,9 @@ process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
 
 app.whenReady().then(async () => {
   // Load logger settings first
-  const logLevel = store.get('logLevel', 'info');
+  // Environment variable takes precedence over settings (useful for development)
+  const envLogLevel = process.env.MAESTRO_LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error' | undefined;
+  const logLevel = envLogLevel || store.get('logLevel', 'info');
   logger.setLogLevel(logLevel);
   const maxLogBuffer = store.get('maxLogBuffer', 1000);
   logger.setMaxLogBuffer(maxLogBuffer);
@@ -681,7 +683,8 @@ app.whenReady().then(async () => {
   logger.info('Maestro application starting', 'Startup', {
     version: app.getVersion(),
     platform: process.platform,
-    logLevel
+    logLevel,
+    ...(envLogLevel && { logLevelSource: 'env' })
   });
 
   // Initialize core services
