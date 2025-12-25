@@ -212,8 +212,7 @@ export function batchReducer(state: BatchState, action: BatchAction): BatchState
 
     case 'SET_STOPPING': {
       const { sessionId } = action;
-      const currentState = state[sessionId];
-      if (!currentState) return state;
+      const currentState = state[sessionId] || DEFAULT_BATCH_STATE;
 
       return {
         ...state,

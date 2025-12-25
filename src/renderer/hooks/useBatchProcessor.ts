@@ -1,20 +1,18 @@
 import { useState, useCallback, useRef, useReducer } from 'react';
-import type { BatchRunState, BatchRunConfig, BatchDocumentEntry, Session, HistoryEntry, UsageStats, Group, AutoRunStats, AgentError, ToolType } from '../types';
-import { substituteTemplateVariables, TemplateContext } from '../utils/templateVariables';
+import type { BatchRunState, BatchRunConfig, Session, HistoryEntry, UsageStats, Group, AutoRunStats, AgentError, ToolType } from '../types';
 import { getBadgeForTime, getNextBadge, formatTimeRemaining } from '../constants/conductorBadges';
-import { autorunSynopsisPrompt } from '../../prompts';
-import { parseSynopsis } from '../../shared/synopsis';
 import { formatElapsedTime } from '../../shared/formatters';
 import { gitService } from '../services/git';
 // Extracted batch processing modules
 import {
   countUnfinishedTasks,
-  countCheckedTasks,
   uncheckAllTasks,
   useSessionDebounce,
   batchReducer,
   DEFAULT_BATCH_STATE,
   useTimeTracking,
+  useWorktreeManager,
+  useDocumentProcessor,
 } from './batch';
 
 // Debounce delay for batch state updates (Quick Win 1)
@@ -163,9 +161,6 @@ export { countUnfinishedTasks, uncheckAllTasks };
 /**
  * Hook for managing batch processing of scratchpad tasks across multiple sessions
  */
-// Synopsis prompt for batch tasks - requests a two-part response
-const BATCH_SYNOPSIS_PROMPT = autorunSynopsisPrompt;
-
 export function useBatchProcessor({
   sessions,
   groups,
@@ -284,6 +279,12 @@ export function useBatchProcessor({
     }, [])
   });
 
+  // Use extracted worktree manager hook for git worktree operations
+  const worktreeManager = useWorktreeManager();
+
+  // Use extracted document processor hook for document processing
+  const documentProcessor = useDocumentProcessor();
+
   // Helper to get batch state for a session
   const getBatchState = useCallback((sessionId: string): BatchRunState => {
     return batchRunStates[sessionId] || DEFAULT_BATCH_STATE;
@@ -318,32 +319,9 @@ export function useBatchProcessor({
     scheduleDebouncedUpdate(sessionId, updater, immediate);
   }, [scheduleDebouncedUpdate])
 
-  /**
-   * Helper function to read a document and count its tasks
-   */
-  const readDocAndCountTasks = async (folderPath: string, filename: string): Promise<{ content: string; taskCount: number }> => {
-    const result = await window.maestro.autorun.readDoc(folderPath, filename + '.md');
-    if (!result.success || !result.content) {
-      return { content: '', taskCount: 0 };
-    }
-    return { content: result.content, taskCount: countUnfinishedTasks(result.content) };
-  };
-
-  /**
-   * Generate PR body from completed tasks
-   */
-  const generatePRBody = (documents: BatchDocumentEntry[], totalTasksCompleted: number): string => {
-    const docList = documents.map(d => `- ${d.filename}`).join('\n');
-    return `## Auto Run Summary
-
-**Documents processed:**
-${docList}
-
-**Total tasks completed:** ${totalTasksCompleted}
-
----
-*This PR was automatically created by Maestro Auto Run.*`;
-  };
+  // Use readDocAndCountTasks from the extracted documentProcessor hook
+  // This replaces the previous inline helper function
+  const readDocAndCountTasks = documentProcessor.readDocAndCountTasks;
 
   /**
    * Start a batch processing run for a specific session with multi-document support
@@ -385,91 +363,14 @@ ${docList}
     stopRequestedRefs.current[sessionId] = false;
     delete errorResolutionRefs.current[sessionId];
 
-    // Set up worktree if enabled
-    let effectiveCwd = session.cwd; // Default to session's cwd
-    let worktreeActive = false;
-    let worktreePath: string | undefined;
-    let worktreeBranch: string | undefined;
-
-    if (worktree?.enabled && worktree.path && worktree.branchName) {
-      console.log('[BatchProcessor] Setting up worktree at', worktree.path, 'with branch', worktree.branchName);
-      window.maestro.logger.log('info', 'Setting up worktree', 'BatchProcessor', {
-        worktreePath: worktree.path,
-        branchName: worktree.branchName,
-        sessionCwd: session.cwd
-      });
-
-      try {
-        // Set up or reuse the worktree
-        const setupResult = await window.maestro.git.worktreeSetup(
-          session.cwd,
-          worktree.path,
-          worktree.branchName
-        );
-
-        window.maestro.logger.log('info', 'worktreeSetup result', 'BatchProcessor', {
-          success: setupResult.success,
-          error: setupResult.error,
-          branchMismatch: setupResult.branchMismatch
-        });
-
-        if (!setupResult.success) {
-          console.error('[BatchProcessor] Failed to set up worktree:', setupResult.error);
-          window.maestro.logger.log('error', 'Failed to set up worktree', 'BatchProcessor', { error: setupResult.error });
-          return;
-        }
-
-        // If worktree exists but on different branch, checkout the requested branch
-        if (setupResult.branchMismatch) {
-          console.log('[BatchProcessor] Worktree exists with different branch, checking out', worktree.branchName);
-          window.maestro.logger.log('info', 'Worktree branch mismatch, checking out requested branch', 'BatchProcessor', { branchName: worktree.branchName });
-
-          const checkoutResult = await window.maestro.git.worktreeCheckout(
-            worktree.path,
-            worktree.branchName,
-            true // createIfMissing
-          );
-
-          window.maestro.logger.log('info', 'worktreeCheckout result', 'BatchProcessor', {
-            success: checkoutResult.success,
-            error: checkoutResult.error,
-            hasUncommittedChanges: checkoutResult.hasUncommittedChanges
-          });
-
-          if (!checkoutResult.success) {
-            if (checkoutResult.hasUncommittedChanges) {
-              console.error('[BatchProcessor] Cannot checkout: worktree has uncommitted changes');
-              window.maestro.logger.log('error', 'Cannot checkout: worktree has uncommitted changes', 'BatchProcessor', { worktreePath: worktree.path });
-              return;
-            } else {
-              console.error('[BatchProcessor] Failed to checkout branch:', checkoutResult.error);
-              window.maestro.logger.log('error', 'Failed to checkout branch', 'BatchProcessor', { error: checkoutResult.error });
-              return;
-            }
-          }
-        }
-
-        // Worktree is ready - use it as the working directory
-        effectiveCwd = worktree.path;
-        worktreeActive = true;
-        worktreePath = worktree.path;
-        worktreeBranch = worktree.branchName;
-
-        console.log('[BatchProcessor] Worktree ready at', effectiveCwd);
-        window.maestro.logger.log('info', 'Worktree ready', 'BatchProcessor', { effectiveCwd, worktreeBranch });
-
-      } catch (error) {
-        console.error('[BatchProcessor] Error setting up worktree:', error);
-        window.maestro.logger.log('error', 'Exception setting up worktree', 'BatchProcessor', { error: String(error) });
-        return;
-      }
-    } else if (worktree?.enabled) {
-      // Worktree enabled but missing path or branch
-      window.maestro.logger.log('warn', 'Worktree enabled but missing configuration', 'BatchProcessor', {
-        hasPath: !!worktree.path,
-        hasBranchName: !!worktree.branchName
-      });
+    // Set up worktree if enabled using extracted hook
+    const worktreeResult = await worktreeManager.setupWorktree(session.cwd, worktree);
+    if (!worktreeResult.success) {
+      console.error('[BatchProcessor] Worktree setup failed:', worktreeResult.error);
+      return;
     }
+
+    const { effectiveCwd, worktreeActive, worktreePath, worktreeBranch } = worktreeResult;
 
     // Get git branch for template variable substitution
     let gitBranch: string | undefined;
@@ -500,46 +401,58 @@ ${docList}
       return;
     }
 
-    // Initialize batch run state
-    // Lock all documents that are part of this batch run
+    // Initialize batch run state using START_BATCH action directly
+    // (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
     const lockedDocuments = documents.map(d => d.filename);
-    updateBatchStateAndBroadcast(sessionId, prev => ({
-      ...prev,
-      [sessionId]: {
-        isRunning: true,
-        isStopping: false,
-        // Multi-document progress
+    dispatch({
+      type: 'START_BATCH',
+      sessionId,
+      payload: {
         documents: documents.map(d => d.filename),
-        lockedDocuments, // All documents in this run are locked
-        currentDocumentIndex: 0,
-        currentDocTasksTotal: 0,
-        currentDocTasksCompleted: 0,
+        lockedDocuments,
         totalTasksAcrossAllDocs: initialTotalTasks,
-        completedTasksAcrossAllDocs: 0,
-        // Loop mode
         loopEnabled,
-        loopIteration: 0,
         maxLoops,
-        // Folder path for file operations
         folderPath,
-        // Worktree tracking
         worktreeActive,
         worktreePath,
         worktreeBranch,
-        // Legacy fields (for backwards compatibility)
-        totalTasks: initialTotalTasks,
-        completedTasks: 0,
-        currentTaskIndex: 0,
-        originalContent: '',
         customPrompt: prompt !== '' ? prompt : undefined,
-        sessionIds: [],
         startTime: batchStartTime,
         // Time tracking
         cumulativeTaskTimeMs: 0, // Sum of actual task durations (most accurate)
         accumulatedElapsedMs: 0, // Visibility-based time (excludes sleep/suspend)
         lastActiveTimestamp: batchStartTime
       }
-    }), true); // immediate: critical state change (isRunning: true)
+    });
+    // Broadcast state change
+    broadcastAutoRunState(sessionId, {
+      isRunning: true,
+      isStopping: false,
+      documents: documents.map(d => d.filename),
+      lockedDocuments,
+      currentDocumentIndex: 0,
+      currentDocTasksTotal: 0,
+      currentDocTasksCompleted: 0,
+      totalTasksAcrossAllDocs: initialTotalTasks,
+      completedTasksAcrossAllDocs: 0,
+      loopEnabled,
+      loopIteration: 0,
+      maxLoops,
+      folderPath,
+      worktreeActive,
+      worktreePath,
+      worktreeBranch,
+      totalTasks: initialTotalTasks,
+      completedTasks: 0,
+      currentTaskIndex: 0,
+      originalContent: '',
+      customPrompt: prompt !== '' ? prompt : undefined,
+      sessionIds: [],
+      startTime: batchStartTime,
+      accumulatedElapsedMs: 0,
+      lastActiveTimestamp: batchStartTime,
+    });
 
     // AUTORUN LOG: Start
     try {
@@ -736,20 +649,18 @@ ${docList}
         }
 
         const docEntry = documents[docIndex];
-        const docFilePath = `${folderPath}/${docEntry.filename}.md`;
 
         // Read document and count tasks
-        let { taskCount: remainingTasks, content: docContent } = await readDocAndCountTasks(folderPath, docEntry.filename);
-        let docCheckedCount = countCheckedTasks(docContent);
+        let { taskCount: remainingTasks, content: docContent, checkedCount: docCheckedCount } = await readDocAndCountTasks(folderPath, docEntry.filename);
         let docTasksTotal = remainingTasks;
 
         // Handle documents with no unchecked tasks
         if (remainingTasks === 0) {
           // For reset-on-completion documents, check if there are checked tasks that need resetting
           if (docEntry.resetOnCompletion && loopEnabled) {
-            const checkedTaskCount = countCheckedTasks(docContent);
-            if (checkedTaskCount > 0) {
-              console.log(`[BatchProcessor] Document ${docEntry.filename} has ${checkedTaskCount} checked tasks - resetting for next iteration`);
+            // Use docCheckedCount from readDocAndCountTasks instead of calling countCheckedTasks again
+            if (docCheckedCount > 0) {
+              console.log(`[BatchProcessor] Document ${docEntry.filename} has ${docCheckedCount} checked tasks - resetting for next iteration`);
               const resetContent = uncheckAllTasks(docContent);
               await window.maestro.autorun.writeDoc(folderPath, docEntry.filename + '.md', resetContent);
               // Update task count in state
@@ -836,64 +747,54 @@ ${docList}
             }
           }
 
-          // Build template context for this task
-          const templateContext: TemplateContext = {
-            session,
-            gitBranch,
-            groupName,
-            autoRunFolder: folderPath,
-            loopNumber: loopIteration + 1, // 1-indexed
-            documentName: docEntry.filename,
-            documentPath: docFilePath,
-          };
-
-          // Substitute template variables in the prompt
-          const finalPrompt = substituteTemplateVariables(prompt, templateContext);
-
-          // Read document content and expand template variables in it
-          const docReadResult = await window.maestro.autorun.readDoc(folderPath, docEntry.filename + '.md');
-          // Capture content before task run for stall detection
-          const contentBeforeTask = docReadResult.content || '';
-          if (docReadResult.success && docReadResult.content) {
-            const expandedDocContent = substituteTemplateVariables(docReadResult.content, templateContext);
-            // Write the expanded content back to the document temporarily
-            // (Claude will read this file, so it needs the expanded variables)
-            if (expandedDocContent !== docReadResult.content) {
-              await window.maestro.autorun.writeDoc(folderPath, docEntry.filename + '.md', expandedDocContent);
-            }
-          }
-
+          // Use extracted document processor hook for task processing
+          // This handles: template substitution, document expansion, agent spawning,
+          // session registration, re-reading document, and synopsis generation
           try {
-            // Capture start time for elapsed time tracking
-            const taskStartTime = Date.now();
+            const taskResult = await documentProcessor.processTask(
+              {
+                folderPath,
+                session,
+                gitBranch,
+                groupName,
+                loopIteration: loopIteration + 1, // 1-indexed
+                effectiveCwd,
+                customPrompt: prompt,
+              },
+              docEntry.filename,
+              docCheckedCount,
+              remainingTasks,
+              docContent,
+              {
+                onSpawnAgent,
+                onSpawnSynopsis,
+              }
+            );
 
-            // Spawn agent with the prompt, using worktree path if active
-            const result = await onSpawnAgent(sessionId, finalPrompt, worktreeActive ? effectiveCwd : undefined);
-
-            // Capture elapsed time
-            const elapsedTimeMs = Date.now() - taskStartTime;
-
-            if (result.agentSessionId) {
-              agentSessionIds.push(result.agentSessionId);
-              // Register as auto-initiated Maestro session
-              // Use effectiveCwd (worktree path when active) so session can be found later
-              window.maestro.agentSessions.registerSessionOrigin(effectiveCwd, result.agentSessionId, 'auto')
-                .catch(err => console.error('[BatchProcessor] Failed to register session origin:', err));
+            // Track agent session IDs
+            if (taskResult.agentSessionId) {
+              agentSessionIds.push(taskResult.agentSessionId);
             }
 
             anyTasksProcessedThisIteration = true;
 
-            // Re-read document to get updated task count and content
-            const { taskCount: newRemainingTasks, content: contentAfterTask } = await readDocAndCountTasks(folderPath, docEntry.filename);
-            const newCheckedCount = countCheckedTasks(contentAfterTask);
-            // Calculate tasks completed based on newly checked tasks.
-            // This remains accurate even if new unchecked tasks are added.
-            const tasksCompletedThisRun = Math.max(0, newCheckedCount - docCheckedCount);
-            const addedUncheckedTasks = Math.max(0, newRemainingTasks - remainingTasks);
+            // Extract results from processTask
+            const {
+              tasksCompletedThisRun,
+              addedUncheckedTasks,
+              newRemainingTasks,
+              documentChanged,
+              newCheckedCount,
+              shortSummary,
+              fullSynopsis,
+              usageStats,
+              elapsedTimeMs,
+              agentSessionId,
+              success,
+            } = taskResult;
 
             // Detect stalling: if document content is unchanged and no tasks were checked off
-            const documentUnchanged = contentBeforeTask === contentAfterTask;
-            if (documentUnchanged && tasksCompletedThisRun === 0) {
+            if (!documentChanged && tasksCompletedThisRun === 0) {
               consecutiveNoChangeCount++;
               console.log(`[BatchProcessor] Document unchanged, no tasks completed (${consecutiveNoChangeCount}/${MAX_CONSECUTIVE_NO_CHANGES} consecutive)`);
             } else {
@@ -907,14 +808,14 @@ ${docList}
             loopTasksCompleted += tasksCompletedThisRun;
 
             // Track token usage for loop summary and cumulative totals
-            if (result.usageStats) {
-              loopTotalInputTokens += result.usageStats.inputTokens || 0;
-              loopTotalOutputTokens += result.usageStats.outputTokens || 0;
-              loopTotalCost += result.usageStats.totalCostUsd || 0;
+            if (usageStats) {
+              loopTotalInputTokens += usageStats.inputTokens || 0;
+              loopTotalOutputTokens += usageStats.outputTokens || 0;
+              loopTotalCost += usageStats.totalCostUsd || 0;
               // Also track cumulative totals for final summary
-              totalInputTokens += result.usageStats.inputTokens || 0;
-              totalOutputTokens += result.usageStats.outputTokens || 0;
-              totalCost += result.usageStats.totalCostUsd || 0;
+              totalInputTokens += usageStats.inputTokens || 0;
+              totalOutputTokens += usageStats.outputTokens || 0;
+              totalCost += usageStats.totalCostUsd || 0;
             }
 
             // Track non-reset document completions for loop exit logic
@@ -928,7 +829,7 @@ ${docList}
             }
 
             updateBatchStateAndBroadcast(sessionId, prev => {
-              const prevState = prev[sessionId];
+              const prevState = prev[sessionId] || DEFAULT_BATCH_STATE;
               const nextTotalAcrossAllDocs = Math.max(0, prevState.totalTasksAcrossAllDocs + addedUncheckedTasks);
               const nextTotalTasks = Math.max(0, prevState.totalTasks + addedUncheckedTasks);
               return {
@@ -945,40 +846,10 @@ ${docList}
                   completedTasks: totalCompletedTasks,
                   totalTasks: nextTotalTasks,
                   currentTaskIndex: totalCompletedTasks,
-                  sessionIds: [...(prevState?.sessionIds || []), result.agentSessionId || '']
+                  sessionIds: [...(prevState?.sessionIds || []), agentSessionId || '']
                 }
               };
             });
-
-            // Generate synopsis for successful tasks with an agent session
-            let shortSummary = `[${docEntry.filename}] Task completed`;
-            let fullSynopsis = shortSummary;
-
-            if (result.success && result.agentSessionId) {
-              // Request a synopsis from the agent by resuming the session
-              // Use effectiveCwd (worktree path when active) to find the session
-              try {
-                console.log(`[BatchProcessor] Synopsis request: sessionId=${sessionId}, agentSessionId=${result.agentSessionId}, toolType=${session.toolType}`);
-                const synopsisResult = await onSpawnSynopsis(
-                  sessionId,
-                  effectiveCwd,
-                  result.agentSessionId,
-                  BATCH_SYNOPSIS_PROMPT,
-                  session.toolType // Pass the agent type for multi-provider support
-                );
-
-                if (synopsisResult.success && synopsisResult.response) {
-                  const parsed = parseSynopsis(synopsisResult.response);
-                  shortSummary = parsed.shortSummary;
-                  fullSynopsis = parsed.fullSynopsis;
-                }
-              } catch (err) {
-                console.error('[BatchProcessor] Synopsis generation failed:', err);
-              }
-            } else if (!result.success) {
-              shortSummary = `[${docEntry.filename}] Task failed`;
-              fullSynopsis = shortSummary;
-            }
 
             // Add history entry
             // Use effectiveCwd for projectPath so clicking the session link looks in the right place
@@ -987,11 +858,11 @@ ${docList}
               timestamp: Date.now(),
               summary: shortSummary,
               fullResponse: fullSynopsis,
-              agentSessionId: result.agentSessionId,
+              agentSessionId,
               projectPath: effectiveCwd,
               sessionId: sessionId,
-              success: result.success,
-              usageStats: result.usageStats,
+              success,
+              usageStats,
               elapsedTimeMs
             });
 
@@ -1060,6 +931,7 @@ ${docList}
 
             docCheckedCount = newCheckedCount;
             remainingTasks = newRemainingTasks;
+            docContent = taskResult.contentAfterTask;
             console.log(`[BatchProcessor] Document ${docEntry.filename}: ${remainingTasks} tasks remaining`);
 
           } catch (error) {
@@ -1351,66 +1223,23 @@ ${docList}
     // Create PR if worktree was used, PR creation is enabled, and not stopped
     const wasStopped = stopRequestedRefs.current[sessionId] || false;
     const sessionName = session.name || session.cwd.split('/').pop() || 'Unknown';
-    if (worktreeActive && worktree?.createPROnCompletion && !wasStopped && totalCompletedTasks > 0) {
-      console.log('[BatchProcessor] Creating PR from worktree branch', worktreeBranch);
+    if (worktreeActive && worktree?.createPROnCompletion && !wasStopped && totalCompletedTasks > 0 && worktreePath) {
+      const prResult = await worktreeManager.createPR({
+        worktreePath,
+        mainRepoCwd: session.cwd,
+        worktree,
+        documents,
+        totalCompletedTasks,
+      });
 
-      try {
-        // Use the user-selected target branch, or fall back to default branch detection
-        let baseBranch = worktree.prTargetBranch;
-        if (!baseBranch) {
-          const defaultBranchResult = await window.maestro.git.getDefaultBranch(session.cwd);
-          baseBranch = defaultBranchResult.success && defaultBranchResult.branch
-            ? defaultBranchResult.branch
-            : 'main';
-        }
-
-        // Generate PR title and body
-        const prTitle = `Auto Run: ${documents.length} document(s) processed`;
-        const prBody = generatePRBody(documents, totalCompletedTasks);
-
-        // Create the PR (pass ghPath if configured)
-        const prResult = await window.maestro.git.createPR(
-          effectiveCwd,
-          baseBranch,
-          prTitle,
-          prBody,
-          worktree.ghPath
-        );
-
-        if (prResult.success) {
-          console.log('[BatchProcessor] PR created successfully:', prResult.prUrl);
-          // Notify caller of successful PR creation
-          if (onPRResult) {
-            onPRResult({
-              sessionId,
-              sessionName,
-              success: true,
-              prUrl: prResult.prUrl
-            });
-          }
-        } else {
-          console.warn('[BatchProcessor] PR creation failed:', prResult.error);
-          // Notify caller of PR creation failure (doesn't fail the run)
-          if (onPRResult) {
-            onPRResult({
-              sessionId,
-              sessionName,
-              success: false,
-              error: prResult.error
-            });
-          }
-        }
-      } catch (error) {
-        console.error('[BatchProcessor] Error creating PR:', error);
-        // Notify caller of PR creation error (doesn't fail the run)
-        if (onPRResult) {
-          onPRResult({
-            sessionId,
-            sessionName,
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error'
-          });
-        }
+      if (onPRResult) {
+        onPRResult({
+          sessionId,
+          sessionName,
+          success: prResult.success,
+          prUrl: prResult.prUrl,
+          error: prResult.error,
+        });
       }
     }
 
@@ -1523,33 +1352,15 @@ ${docList}
       console.error('[BatchProcessor] Failed to add final Auto Run summary to history:', historyError);
     }
 
-    // Reset state for this session (clear worktree tracking)
-    updateBatchStateAndBroadcast(sessionId, prev => ({
-      ...prev,
-      [sessionId]: {
-        isRunning: false,
-        isStopping: false,
-        documents: [],
-        lockedDocuments: [],
-        currentDocumentIndex: 0,
-        currentDocTasksTotal: 0,
-        currentDocTasksCompleted: 0,
-        totalTasksAcrossAllDocs: 0,
-        completedTasksAcrossAllDocs: 0,
-        loopEnabled: false,
-        loopIteration: 0,
-        folderPath: '',
-        // Clear worktree tracking
-        worktreeActive: false,
-        worktreePath: undefined,
-        worktreeBranch: undefined,
-        totalTasks: 0,
-        completedTasks: 0,
-        currentTaskIndex: 0,
-        originalContent: '',
-        sessionIds: agentSessionIds
-      }
-    }), true); // immediate: critical state change (isRunning: false)
+    // Reset state for this session using COMPLETE_BATCH action
+    // (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+    dispatch({
+      type: 'COMPLETE_BATCH',
+      sessionId,
+      finalSessionIds: agentSessionIds
+    });
+    // Broadcast state change
+    broadcastAutoRunState(sessionId, null);
 
     // Call completion callback if provided
     if (onComplete) {
@@ -1578,14 +1389,14 @@ ${docList}
       errorResolution.resolve('abort');
       delete errorResolutionRefs.current[sessionId];
     }
-    updateBatchStateAndBroadcast(sessionId, prev => ({
-      ...prev,
-      [sessionId]: {
-        ...prev[sessionId],
-        isStopping: true
-      }
-    }), true); // immediate: critical state change (isStopping: true)
-  }, [updateBatchStateAndBroadcast]);
+    // Use SET_STOPPING action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+    dispatch({ type: 'SET_STOPPING', sessionId });
+    // Broadcast state change
+    const newState = batchRunStatesRef.current[sessionId];
+    if (newState) {
+      broadcastAutoRunState(sessionId, { ...newState, isStopping: true });
+    }
+  }, [broadcastAutoRunState]);
 
   /**
    * Pause the batch run due to an agent error (Phase 5.10)
@@ -1604,22 +1415,23 @@ ${docList}
       }
     );
 
-    updateBatchStateAndBroadcast(sessionId, prev => {
-      const currentState = prev[sessionId];
-      if (!currentState || !currentState.isRunning) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [sessionId]: {
-          ...currentState,
-          error,
-          errorPaused: true,
-          errorDocumentIndex: documentIndex,
-          errorTaskDescription: taskDescription
-        }
-      };
-    }, true); // immediate: critical state change (error)
+    // Use SET_ERROR action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+    dispatch({
+      type: 'SET_ERROR',
+      sessionId,
+      payload: { error, documentIndex, taskDescription }
+    });
+    // Broadcast state change
+    const currentState = batchRunStatesRef.current[sessionId];
+    if (currentState) {
+      broadcastAutoRunState(sessionId, {
+        ...currentState,
+        error,
+        errorPaused: true,
+        errorDocumentIndex: documentIndex,
+        errorTaskDescription: taskDescription
+      });
+    }
 
     if (!errorResolutionRefs.current[sessionId]) {
       let resolvePromise: ((action: ErrorResolutionAction) => void) | undefined;
@@ -1631,7 +1443,7 @@ ${docList}
         resolve: resolvePromise as (action: ErrorResolutionAction) => void
       };
     }
-  }, [updateBatchStateAndBroadcast]);
+  }, [broadcastAutoRunState]);
 
   /**
    * Skip the current document that caused an error and continue with the next one (Phase 5.10)
@@ -1644,25 +1456,19 @@ ${docList}
       {}
     );
 
-    updateBatchStateAndBroadcast(sessionId, prev => {
-      const currentState = prev[sessionId];
-      if (!currentState || !currentState.errorPaused) {
-        return prev;
-      }
-
-      // Mark for skip - the processing loop will detect this and move to next document
-      // We clear the error state and set a flag for the processing loop
-      return {
-        ...prev,
-        [sessionId]: {
-          ...currentState,
-          error: undefined,
-          errorPaused: false,
-          errorDocumentIndex: undefined,
-          errorTaskDescription: undefined
-        }
-      };
-    }, true); // immediate: critical state change (clearing error)
+    // Use CLEAR_ERROR action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+    dispatch({ type: 'CLEAR_ERROR', sessionId });
+    // Broadcast state change
+    const currentState = batchRunStatesRef.current[sessionId];
+    if (currentState) {
+      broadcastAutoRunState(sessionId, {
+        ...currentState,
+        error: undefined,
+        errorPaused: false,
+        errorDocumentIndex: undefined,
+        errorTaskDescription: undefined
+      });
+    }
 
     const errorResolution = errorResolutionRefs.current[sessionId];
     if (errorResolution) {
@@ -1671,7 +1477,7 @@ ${docList}
     }
 
     // Signal to skip the current document in the processing loop
-  }, [updateBatchStateAndBroadcast]);
+  }, [broadcastAutoRunState]);
 
   /**
    * Resume the batch run after an error has been resolved (Phase 5.10)
@@ -1685,29 +1491,26 @@ ${docList}
       {}
     );
 
-    updateBatchStateAndBroadcast(sessionId, prev => {
-      const currentState = prev[sessionId];
-      if (!currentState) {
-        return prev;
-      }
-      return {
-        ...prev,
-        [sessionId]: {
-          ...currentState,
-          error: undefined,
-          errorPaused: false,
-          errorDocumentIndex: undefined,
-          errorTaskDescription: undefined
-        }
-      };
-    }, true); // immediate: critical state change (resuming)
+    // Use CLEAR_ERROR action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
+    dispatch({ type: 'CLEAR_ERROR', sessionId });
+    // Broadcast state change
+    const currentState = batchRunStatesRef.current[sessionId];
+    if (currentState) {
+      broadcastAutoRunState(sessionId, {
+        ...currentState,
+        error: undefined,
+        errorPaused: false,
+        errorDocumentIndex: undefined,
+        errorTaskDescription: undefined
+      });
+    }
 
     const errorResolution = errorResolutionRefs.current[sessionId];
     if (errorResolution) {
       errorResolution.resolve('resume');
       delete errorResolutionRefs.current[sessionId];
     }
-  }, [updateBatchStateAndBroadcast]);
+  }, [broadcastAutoRunState]);
 
   /**
    * Abort the batch run completely due to an unrecoverable error (Phase 5.10)
