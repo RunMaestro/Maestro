@@ -382,6 +382,7 @@ export default function MaestroConsole() {
   // Drag and Drop State
   const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const dragCounterRef = useRef(0); // Track nested drag enter/leave events
 
   // Modals
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
@@ -6332,6 +6333,7 @@ export default function MaestroConsole() {
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
+    dragCounterRef.current = 0;
     setIsDraggingImage(false);
 
     // Allow image dropping in group chat or direct AI mode
@@ -6384,6 +6386,7 @@ export default function MaestroConsole() {
   const handleImageDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    dragCounterRef.current++;
     // Check if dragging files that include images
     if (e.dataTransfer.types.includes('Files')) {
       setIsDraggingImage(true);
@@ -6393,8 +6396,10 @@ export default function MaestroConsole() {
   const handleImageDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // Only hide overlay when leaving the root element
-    if (e.currentTarget === e.target) {
+    dragCounterRef.current--;
+    // Only hide overlay when all nested elements have been left
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
       setIsDraggingImage(false);
     }
   }, []);
@@ -6402,6 +6407,24 @@ export default function MaestroConsole() {
   const handleImageDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
+  }, []);
+
+  // Reset drag state when drag ends (e.g., user cancels by pressing Escape or dragging outside window)
+  useEffect(() => {
+    const handleDragEnd = () => {
+      dragCounterRef.current = 0;
+      setIsDraggingImage(false);
+    };
+
+    // dragend fires when the drag operation ends (drop or cancel)
+    document.addEventListener('dragend', handleDragEnd);
+    // Also listen for drop anywhere in case it's not on our drop zone
+    document.addEventListener('drop', handleDragEnd);
+
+    return () => {
+      document.removeEventListener('dragend', handleDragEnd);
+      document.removeEventListener('drop', handleDragEnd);
+    };
   }, []);
 
   // --- RENDER ---

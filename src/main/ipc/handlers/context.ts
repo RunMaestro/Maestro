@@ -24,7 +24,7 @@ import {
   getSessionStorage,
   type SessionMessagesResult,
 } from '../../agent-session-storage';
-import { buildAgentArgs } from '../../utils/agent-args';
+import { groomContext } from '../../utils/context-groomer';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agent-detector';
 
@@ -132,166 +132,18 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
         const processManager = requireDependency(getProcessManager, 'Process manager');
         const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
 
-        const groomerSessionId = `groomer-${uuidv4()}`;
+        // Use the shared groomContext utility
+        const result = await groomContext(
+          {
+            projectRoot,
+            agentType,
+            prompt,
+          },
+          processManager,
+          agentDetector
+        );
 
-        logger.info('Starting context grooming (single-call)', LOG_CONTEXT, {
-          groomerSessionId,
-          projectRoot,
-          agentType,
-          promptLength: prompt.length,
-        });
-        console.log('[ContextMerge] Starting grooming:', groomerSessionId, 'prompt length:', prompt.length);
-
-        // Get agent configuration
-        const agent = await agentDetector.getAgent(agentType);
-        if (!agent || !agent.available) {
-          throw new Error(`Agent ${agentType} is not available`);
-        }
-
-        // Build args using the unified buildAgentArgs utility
-        // This ensures consistent behavior across all agent types (batch mode, JSON output, etc.)
-        const finalArgs = buildAgentArgs(agent, {
-          baseArgs: agent.args || [],
-          prompt: prompt,
-          cwd: projectRoot,
-          // Grooming doesn't need read-only mode, model selection, or YOLO mode
-          readOnlyMode: false,
-          modelId: undefined,
-          yoloMode: false,
-          agentSessionId: undefined,
-        });
-
-        // Track this grooming session
-        activeGroomingSessions.set(groomerSessionId, {
-          groomerSessionId,
-          startTime: Date.now(),
-        });
-
-        // Create a promise that collects the response
-        return new Promise<string>((resolve, reject) => {
-          let responseBuffer = '';
-          let lastDataTime = Date.now();
-          let idleCheckInterval: NodeJS.Timeout | null = null;
-          let resolved = false;
-          let chunkCount = 0;
-
-          const cleanup = () => {
-            if (idleCheckInterval) {
-              clearInterval(idleCheckInterval);
-              idleCheckInterval = null;
-            }
-            processManager.off('data', onData);
-            processManager.off('exit', onExit);
-            processManager.off('agent-error', onError);
-            activeGroomingSessions.delete(groomerSessionId);
-          };
-
-          const finishWithResponse = (reason: string) => {
-            if (resolved) return;
-            resolved = true;
-            cleanup();
-
-            logger.info('Grooming response collected', LOG_CONTEXT, {
-              groomerSessionId,
-              responseLength: responseBuffer.length,
-              chunkCount,
-              reason,
-            });
-            console.log('[ContextMerge] Grooming complete:', reason, 'length:', responseBuffer.length);
-
-            resolve(responseBuffer);
-          };
-
-          const onData = (eventSessionId: string, data: string) => {
-            if (eventSessionId !== groomerSessionId) return;
-
-            chunkCount++;
-            responseBuffer += data;
-            lastDataTime = Date.now();
-
-            if (chunkCount % 10 === 0 || chunkCount === 1) {
-              console.log('[ContextMerge] Data chunk', chunkCount, 'total length:', responseBuffer.length);
-            }
-          };
-
-          const onExit = (eventSessionId: string, exitCode: number) => {
-            if (eventSessionId !== groomerSessionId) return;
-
-            logger.info('Grooming process exited', LOG_CONTEXT, {
-              groomerSessionId,
-              exitCode,
-              responseLength: responseBuffer.length,
-            });
-
-            finishWithResponse(`process exited with code ${exitCode}`);
-          };
-
-          const onError = (eventSessionId: string, error: unknown) => {
-            if (eventSessionId !== groomerSessionId) return;
-
-            cleanup();
-            if (!resolved) {
-              resolved = true;
-              const errorMsg = error instanceof Error ? error.message : String(error);
-              logger.error('Grooming error', LOG_CONTEXT, { groomerSessionId, error: errorMsg });
-              reject(new Error(`Grooming error: ${errorMsg}`));
-            }
-          };
-
-          // Listen for events BEFORE spawning
-          processManager.on('data', onData);
-          processManager.on('exit', onExit);
-          processManager.on('agent-error', onError);
-
-          // Spawn the process in batch mode using unified spawn config
-          // finalArgs already includes batch mode args from buildAgentArgs
-          const spawnResult = processManager.spawn({
-            sessionId: groomerSessionId,
-            toolType: agentType,
-            cwd: projectRoot,
-            command: agent.command,
-            args: finalArgs,
-            prompt: prompt, // Triggers batch mode (no PTY)
-            noPromptSeparator: agent.noPromptSeparator, // OpenCode doesn't use '--' before prompt
-          });
-
-          if (!spawnResult || spawnResult.pid <= 0) {
-            cleanup();
-            reject(new Error(`Failed to spawn grooming process for ${agentType}`));
-            return;
-          }
-
-          console.log('[ContextMerge] Spawned batch process, pid:', spawnResult.pid);
-
-          // Set up idle check
-          const IDLE_TIMEOUT_MS = 5000;
-          const MIN_RESPONSE_LENGTH = 100;
-
-          idleCheckInterval = setInterval(() => {
-            const idleTime = Date.now() - lastDataTime;
-            if (idleTime > IDLE_TIMEOUT_MS && responseBuffer.length >= MIN_RESPONSE_LENGTH) {
-              finishWithResponse('idle timeout with content');
-            }
-          }, 1000);
-
-          // Overall timeout
-          setTimeout(() => {
-            if (!resolved) {
-              logger.warn('Grooming timeout', LOG_CONTEXT, {
-                groomerSessionId,
-                responseLength: responseBuffer.length,
-              });
-
-              if (responseBuffer.length > 0) {
-                finishWithResponse('overall timeout with content');
-              } else {
-                cleanup();
-                resolved = true;
-                reject(new Error('Grooming timed out with no response'));
-              }
-            }
-          }, GROOMING_TIMEOUT_MS);
-        });
+        return result.response;
       }
     )
   );

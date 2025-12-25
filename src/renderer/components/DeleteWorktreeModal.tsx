@@ -60,51 +60,58 @@ export function DeleteWorktreeModal({
       headerIcon={<Trash2 className="w-4 h-4" style={{ color: theme.colors.error }} />}
       footer={
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={isDeleting}
-            className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
-            style={{
-              borderColor: theme.colors.border,
-              color: theme.colors.textMain,
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            ref={confirmButtonRef}
-            type="button"
-            onClick={handleConfirm}
-            disabled={isDeleting}
-            className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
-            style={{
-              backgroundColor: theme.colors.error,
-              color: '#ffffff',
-            }}
-          >
-            Confirm
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmAndDelete}
-            disabled={isDeleting}
-            className="px-3 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 flex items-center gap-1.5 text-xs whitespace-nowrap"
-            style={{
-              backgroundColor: theme.colors.error,
-              color: '#ffffff',
-              opacity: isDeleting ? 0.7 : 1,
-            }}
-          >
-            {isDeleting ? (
-              <>
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Deleting...
-              </>
-            ) : (
-              'Confirm and Delete on Disk'
-            )}
-          </button>
+          {isDeleting ? (
+            <button
+              type="button"
+              disabled
+              className="px-4 py-2 rounded transition-colors outline-none flex items-center justify-center gap-1.5 whitespace-nowrap"
+              style={{
+                backgroundColor: theme.colors.error,
+                color: '#ffffff',
+                opacity: 0.7,
+              }}
+            >
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Deleting...
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+                style={{
+                  borderColor: theme.colors.border,
+                  color: theme.colors.textMain,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                ref={confirmButtonRef}
+                type="button"
+                onClick={handleConfirm}
+                className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+                style={{
+                  backgroundColor: theme.colors.warning,
+                  color: '#ffffff',
+                }}
+              >
+                Remove
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmAndDelete}
+                className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 flex items-center justify-center gap-1.5 whitespace-nowrap"
+                style={{
+                  backgroundColor: theme.colors.error,
+                  color: '#ffffff',
+                }}
+              >
+                Remove and Delete
+              </button>
+            </>
+          )}
         </div>
       }
     >
@@ -114,10 +121,10 @@ export function DeleteWorktreeModal({
         </p>
         <div className="text-xs space-y-2" style={{ color: theme.colors.textDim }}>
           <p>
-            <strong style={{ color: theme.colors.textMain }}>Confirm:</strong> Removes the sub-agent from Maestro but keeps the git worktree directory on disk.
+            <strong style={{ color: theme.colors.textMain }}>Remove:</strong> Removes the sub-agent from Maestro but keeps the git worktree directory on disk.
           </p>
           <p>
-            <strong style={{ color: theme.colors.textMain }}>Confirm and Delete on Disk:</strong> Removes the sub-agent AND permanently deletes the worktree directory from disk.
+            <strong style={{ color: theme.colors.textMain }}>Remove and Delete:</strong> Removes the sub-agent AND permanently deletes the worktree directory from disk.
           </p>
         </div>
         {session.cwd && (
