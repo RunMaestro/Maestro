@@ -99,6 +99,7 @@ src/
 | Add keyboard shortcut | `src/renderer/constants/shortcuts.ts`, `App.tsx` |
 | Add theme | `src/renderer/constants/themes.ts` |
 | Add modal | Component + `src/renderer/constants/modalPriorities.ts` |
+| Add context menu | Use `ContextMenu` component from `src/renderer/components/ContextMenu.tsx` |
 | Add setting | `src/renderer/hooks/useSettings.ts`, `src/main/index.ts` |
 | Add template variable | `src/shared/templateVariables.ts`, `src/renderer/utils/templateVariables.ts` |
 | Modify system prompts | `src/prompts/*.md` (wizard, Auto Run, etc.) |
@@ -240,6 +241,60 @@ window.maestro.autorun.saveDocument(folderPath, filename, content);
 ```
 
 **Worktree Support:** Auto Run can operate in a git worktree, allowing users to continue interactive editing in the main repo while Auto Run processes tasks in the background. When `batchRunState.worktreeActive` is true, read-only mode is disabled and a git branch icon appears in the UI. See `useBatchProcessor.ts` for worktree setup logic.
+
+### 9. Context Menus
+
+Reusable context menu component with accessibility and keyboard navigation:
+```typescript
+// ContextMenu component props
+interface ContextMenuItem {
+  label: string;
+  icon?: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;        // Use error color for destructive actions
+  dividerAfter?: boolean;  // Add divider after this item
+}
+
+// Usage pattern
+const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+
+const handleContextMenu = (e: React.MouseEvent, tabId: string) => {
+  e.preventDefault();
+  setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+};
+
+// Render with Portal
+{contextMenu && createPortal(
+  <ContextMenu
+    x={contextMenu.x}
+    y={contextMenu.y}
+    theme={theme}
+    items={[
+      { label: 'Close', icon: <X />, onClick: () => handleClose(), disabled: hasOnlyOneTab },
+      { label: 'Close Others', icon: <X />, onClick: () => handleCloseOthers(), dividerAfter: true }
+    ]}
+    onClose={() => setContextMenu(null)}
+  />,
+  document.body
+)}
+```
+
+**Key Features:**
+- Viewport-aware positioning (adjusts if near edge)
+- Keyboard navigation (Arrow keys, Enter/Space, Escape, Tab)
+- ARIA attributes (role="menu", aria-disabled)
+- Theme-aware styling
+- Disabled item visual feedback (opacity-40, cursor-default)
+- Hybrid mouse+keyboard support
+
+**Example: Tab Context Menu**
+- Close (disabled if only one tab)
+- Close Others (disabled if only one tab)
+- Close Tabs to the Left (disabled if first tab)
+- Close Tabs to the Right (disabled if last tab)
+
+See `src/renderer/components/ContextMenu.tsx` and `src/renderer/components/TabBar.tsx` for implementation details.
 
 ## Code Conventions
 
