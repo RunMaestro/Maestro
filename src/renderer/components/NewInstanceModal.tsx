@@ -168,7 +168,6 @@ export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSes
         setWorkingDir(source.cwd);
         setInstanceName(`${source.name} (Copy)`);
         setNudgeMessage(source.nudgeMessage || '');
-        setExpandedAgent(source.toolType);
 
         // Pre-fill custom agent configuration
         setCustomAgentPaths(prev => ({
