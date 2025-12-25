@@ -71,6 +71,9 @@ interface QuickActionsModalProps {
   startTour?: () => void;
   setFuzzyFileSearchOpen?: (open: boolean) => void;
   onEditAgent?: (session: Session) => void;
+  // Duplicate agent
+  setNewInstanceModalOpen?: (open: boolean) => void;
+  setDuplicatingSessionId?: (id: string | null) => void;
   // Group Chat
   groupChats?: GroupChat[];
   onNewGroupChat?: () => void;
@@ -105,6 +108,7 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     setAgentSessionsOpen, setActiveAgentSessionId, setGitDiffPreview, setGitLogOpen,
     onRenameTab, onToggleReadOnlyMode, onToggleTabShowThinking, onOpenTabSwitcher, tabShortcuts, isAiMode, setPlaygroundOpen, onRefreshGitFileState,
     onDebugReleaseQueuedItem, markdownEditMode, onToggleMarkdownEditMode, setUpdateCheckModalOpen, openWizard, wizardGoToStep, setDebugWizardModalOpen, setDebugPackageModalOpen, startTour, setFuzzyFileSearchOpen, onEditAgent,
+    setNewInstanceModalOpen, setDuplicatingSessionId,
     groupChats, onNewGroupChat, onOpenGroupChat, onCloseGroupChat, onDeleteGroupChat, activeGroupChatId,
     hasActiveSessionCapability, onOpenMergeSession, onOpenSendToAgent, onOpenCreatePR,
     onSummarizeAndContinue, canSummarizeActiveTab
@@ -256,6 +260,11 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     } }] : []),
     ...(activeSession && onEditAgent ? [{ id: 'editAgent', label: `Edit Agent: ${activeSession.name}`, action: () => {
       onEditAgent(activeSession);
+      setQuickActionOpen(false);
+    } }] : []),
+    ...(activeSession && setNewInstanceModalOpen && setDuplicatingSessionId ? [{ id: 'duplicate', label: `Duplicate Agent: ${activeSession.name}`, action: () => {
+      setDuplicatingSessionId(activeSession.id);
+      setNewInstanceModalOpen(true);
       setQuickActionOpen(false);
     } }] : []),
     ...(activeSession ? [{ id: 'toggleBookmark', label: activeSession.bookmarked ? `Unbookmark: ${activeSession.name}` : `Bookmark: ${activeSession.name}`, action: () => {

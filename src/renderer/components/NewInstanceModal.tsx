@@ -33,10 +33,13 @@ interface NewInstanceModalProps {
     customPath?: string,
     customArgs?: string,
     customEnvVars?: Record<string, string>,
-    customModel?: string
+    customModel?: string,
+    customContextWindow?: number,
+    customProviderPath?: string
   ) => void;
   theme: any;
   existingSessions: Session[];
+  sourceSession?: Session; // Optional session to duplicate from
 }
 
 interface EditAgentModalProps {
@@ -60,7 +63,7 @@ interface EditAgentModalProps {
 // Supported agents that are fully implemented
 const SUPPORTED_AGENTS = ['claude-code', 'opencode', 'codex'];
 
-export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSessions }: NewInstanceModalProps) {
+export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSessions, sourceSession }: NewInstanceModalProps) {
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [selectedAgent, setSelectedAgent] = useState('');
   const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
@@ -202,8 +205,12 @@ export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSes
     const agentCustomEnvVars = customAgentEnvVars[selectedAgent] && Object.keys(customAgentEnvVars[selectedAgent]).length > 0
       ? customAgentEnvVars[selectedAgent]
       : undefined;
-    // Get model from agent config - this will become per-session
+    // Get model and other config from agent config
     const agentCustomModel = agentConfigs[selectedAgent]?.model?.trim() || undefined;
+    const agentCustomContextWindow = typeof agentConfigs[selectedAgent]?.contextWindow === 'number' && agentConfigs[selectedAgent]?.contextWindow > 0
+      ? agentConfigs[selectedAgent]?.contextWindow
+      : undefined;
+    const agentCustomProviderPath = agentConfigs[selectedAgent]?.providerPath?.trim() || undefined;
 
     onCreate(
       selectedAgent,
@@ -213,7 +220,9 @@ export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSes
       agentCustomPath,
       agentCustomArgs,
       agentCustomEnvVars,
-      agentCustomModel
+      agentCustomModel,
+      agentCustomContextWindow,
+      agentCustomProviderPath
     );
     onClose();
 
@@ -276,6 +285,61 @@ export function NewInstanceModal({ isOpen, onClose, onCreate, theme, existingSes
       setDirectoryWarningAcknowledged(false);
     }
   }, [isOpen]);
+
+  // Pre-fill form when duplicating from a source session
+  useEffect(() => {
+    if (isOpen && sourceSession) {
+      // Pre-fill basic fields
+      setSelectedAgent(sourceSession.toolType);
+      setWorkingDir(sourceSession.cwd);
+      setInstanceName(`${sourceSession.name} (Copy)`);
+      setNudgeMessage(sourceSession.nudgeMessage || '');
+
+      // Pre-fill custom agent configuration
+      if (sourceSession.customPath) {
+        setCustomAgentPaths(prev => ({
+          ...prev,
+          [sourceSession.toolType]: sourceSession.customPath || ''
+        }));
+      }
+
+      if (sourceSession.customArgs) {
+        setCustomAgentArgs(prev => ({
+          ...prev,
+          [sourceSession.toolType]: sourceSession.customArgs || ''
+        }));
+      }
+
+      if (sourceSession.customEnvVars && Object.keys(sourceSession.customEnvVars).length > 0) {
+        setCustomAgentEnvVars(prev => ({
+          ...prev,
+          [sourceSession.toolType]: sourceSession.customEnvVars || {}
+        }));
+      }
+
+      // Pre-fill agent config (model, context window, etc.)
+      const configUpdates: Record<string, any> = {};
+      if (sourceSession.customModel) {
+        configUpdates.model = sourceSession.customModel;
+      }
+      if (sourceSession.customContextWindow) {
+        configUpdates.contextWindow = sourceSession.customContextWindow;
+      }
+      if (sourceSession.customProviderPath) {
+        configUpdates.providerPath = sourceSession.customProviderPath;
+      }
+
+      if (Object.keys(configUpdates).length > 0) {
+        setAgentConfigs(prev => ({
+          ...prev,
+          [sourceSession.toolType]: {
+            ...(prev[sourceSession.toolType] || {}),
+            ...configUpdates
+          }
+        }));
+      }
+    }
+  }, [isOpen, sourceSession]);
 
   if (!isOpen) return null;
 

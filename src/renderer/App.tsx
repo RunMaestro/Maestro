@@ -391,6 +391,7 @@ export default function MaestroConsole() {
   // Modals
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [newInstanceModalOpen, setNewInstanceModalOpen] = useState(false);
+  const [duplicatingSessionId, setDuplicatingSessionId] = useState<string | null>(null);
   const [editAgentModalOpen, setEditAgentModalOpen] = useState(false);
   const [editAgentSession, setEditAgentSession] = useState<Session | null>(null);
   const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
@@ -4781,7 +4782,9 @@ export default function MaestroConsole() {
     customPath?: string,
     customArgs?: string,
     customEnvVars?: Record<string, string>,
-    customModel?: string
+    customModel?: string,
+    customContextWindow?: number,
+    customProviderPath?: string
   ) => {
     // Get agent definition to get correct command
     const agent = await window.maestro.agents.get(agentId);
@@ -4881,7 +4884,9 @@ export default function MaestroConsole() {
         customPath,
         customArgs,
         customEnvVars,
-        customModel
+        customModel,
+        customContextWindow,
+        customProviderPath
       };
       setSessions(prev => [...prev, newSession]);
       setActiveSessionId(newId);
@@ -7184,6 +7189,8 @@ export default function MaestroConsole() {
             setEditAgentSession(session);
             setEditAgentModalOpen(true);
           }}
+          setNewInstanceModalOpen={setNewInstanceModalOpen}
+          setDuplicatingSessionId={setDuplicatingSessionId}
           groupChats={groupChats}
           onNewGroupChat={() => setShowNewGroupChatModal(true)}
           onOpenGroupChat={handleOpenGroupChat}
@@ -8311,6 +8318,8 @@ export default function MaestroConsole() {
               setEditAgentSession(session);
               setEditAgentModalOpen(true);
             }}
+            onNewAgentSession={() => setNewInstanceModalOpen(true)}
+            setDuplicatingSessionId={setDuplicatingSessionId}
             onOpenCreatePR={(session) => {
               setCreatePRSession(session);
               setCreatePRModalOpen(true);
@@ -9378,10 +9387,14 @@ export default function MaestroConsole() {
       {/* --- NEW INSTANCE MODAL --- */}
       <NewInstanceModal
         isOpen={newInstanceModalOpen}
-        onClose={() => setNewInstanceModalOpen(false)}
+        onClose={() => {
+          setNewInstanceModalOpen(false);
+          setDuplicatingSessionId(null); // Clear duplication state on close
+        }}
         onCreate={createNewSession}
         theme={theme}
         existingSessions={sessionsForValidation}
+        sourceSession={duplicatingSessionId ? sessions.find(s => s.id === duplicatingSessionId) : undefined}
       />
 
       {/* --- EDIT AGENT MODAL --- */}
