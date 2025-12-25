@@ -6,6 +6,16 @@ Thank you for your interest in contributing to Maestro! This document provides g
 
 For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md). For quick reference while coding, see [CLAUDE.md](CLAUDE.md).
 
+## Core Goals
+
+**Snappy interface and reduced battery consumption are fundamental goals for Maestro.** Every contribution should consider:
+
+- **Responsiveness**: UI interactions should feel instant. Avoid blocking the main thread.
+- **Battery efficiency**: Minimize unnecessary timers, polling, and re-renders.
+- **Memory efficiency**: Clean up event listeners, timers, and subscriptions properly.
+
+See [Performance Guidelines](#performance-guidelines) for specific practices.
+
 ## Table of Contents
 
 - [Development Setup](#development-setup)
@@ -16,6 +26,7 @@ For architecture details, see [ARCHITECTURE.md](ARCHITECTURE.md). For quick refe
 - [Common Development Tasks](#common-development-tasks)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
 - [Code Style](#code-style)
+- [Performance Guidelines](#performance-guidelines)
 - [Debugging Guide](#debugging-guide)
 - [Commit Messages](#commit-messages)
 - [Pull Request Process](#pull-request-process)
@@ -496,6 +507,66 @@ For detailed implementation guide, see [AGENT_SUPPORT.md](AGENT_SUPPORT.md).
 - Use preload script for all IPC
 - Sanitize all user inputs
 - Use `spawn()` with `shell: false`
+
+## Performance Guidelines
+
+Maestro prioritizes a snappy interface and minimal battery consumption. Follow these guidelines:
+
+### React Rendering
+
+- **Memoize expensive computations** with `useMemo` - especially sorting, filtering, and transformations
+- **Use Maps for lookups** instead of `Array.find()` in loops (O(1) vs O(n))
+- **Batch state updates** - use the `useBatchedSessionUpdates` hook for high-frequency IPC updates
+- **Avoid creating objects/arrays in render** - move static objects outside components or memoize them
+
+```typescript
+// Bad: O(n) lookup in every iteration
+sessions.filter(s => {
+  const group = groups.find(g => g.id === s.groupId); // O(n) per session
+  return group && !group.collapsed;
+});
+
+// Good: O(1) lookup with memoized Map
+const groupsById = useMemo(() => new Map(groups.map(g => [g.id, g])), [groups]);
+sessions.filter(s => {
+  const group = groupsById.get(s.groupId); // O(1)
+  return group && !group.collapsed;
+});
+```
+
+### Timers & Intervals
+
+- **Prefer longer intervals** - 3 seconds instead of 1 second for non-critical updates
+- **Use `setTimeout` sparingly** - consider if the delay is truly necessary
+- **Clean up all timers** in `useEffect` cleanup functions
+- **Avoid polling** - use event-driven updates via IPC when possible
+
+```typescript
+// RightPanel.tsx uses 3-second intervals for elapsed time updates
+intervalRef.current = setInterval(updateElapsed, 3000); // Not 1000ms
+```
+
+### Memory & Cleanup
+
+- **Remove event listeners** in cleanup functions
+- **Clear Maps and Sets** when no longer needed
+- **Use WeakMap/WeakSet** for caches that should allow garbage collection
+- **Limit log buffer sizes** - truncate old entries when buffers grow large
+
+### IPC & Data Transfer
+
+- **Batch IPC calls** - combine multiple small calls into fewer larger ones
+- **Debounce persistence** - use `useDebouncedPersistence` for settings that change frequently
+- **Stream large data** - don't load entire files into memory when streaming is possible
+
+### Profiling
+
+When investigating performance issues:
+
+1. Use Chrome DevTools Performance tab (Cmd+Option+I → Performance)
+2. Record during the slow operation
+3. Look for long tasks (>50ms) blocking the main thread
+4. Check for excessive re-renders in React DevTools Profiler
 
 ## Debugging Guide
 

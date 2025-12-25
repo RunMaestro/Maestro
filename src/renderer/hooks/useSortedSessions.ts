@@ -49,10 +49,26 @@ export interface UseSortedSessionsReturn {
 export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSessionsReturn {
   const { sessions, groups, bookmarksCollapsed } = deps;
 
-  // Helper to get worktree children for a session
-  const getWorktreeChildren = (parentId: string) =>
-    sessions.filter(s => s.parentSessionId === parentId)
-      .sort((a, b) => compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name));
+  // Memoize worktree children lookup for O(1) access instead of O(n) per parent
+  // This reduces complexity from O(n²) to O(n) when building sorted sessions
+  const worktreeChildrenByParent = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    for (const s of sessions) {
+      if (s.parentSessionId) {
+        const existing = map.get(s.parentSessionId);
+        if (existing) {
+          existing.push(s);
+        } else {
+          map.set(s.parentSessionId, [s]);
+        }
+      }
+    }
+    // Sort each group once
+    for (const [, children] of map) {
+      children.sort((a, b) => compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name));
+    }
+    return map;
+  }, [sessions]);
 
   // Create sorted sessions array that matches visual display order (includes ALL sessions)
   // Note: sorting ignores leading emojis for proper alphabetization
@@ -60,7 +76,7 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
   const sortedSessions = useMemo(() => {
     const sorted: Session[] = [];
 
-    // Helper to add session with its worktree children
+    // Helper to add session with its worktree children - now O(1) lookup
     const addSessionWithWorktrees = (session: Session) => {
       // Skip worktree children - they're added with their parent
       if (session.parentSessionId) return;
@@ -69,8 +85,10 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 
       // Add worktree children if expanded
       if (session.worktreesExpanded !== false) {
-        const children = getWorktreeChildren(session.id);
-        sorted.push(...children);
+        const children = worktreeChildrenByParent.get(session.id);
+        if (children) {
+          sorted.push(...children);
+        }
       }
     };
 
@@ -90,8 +108,16 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
     ungroupedSessions.forEach(addSessionWithWorktrees);
 
     return sorted;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions, groups]);
+  }, [sessions, groups, worktreeChildrenByParent]);
+
+  // Create a Map for O(1) group lookup instead of O(n) find() calls
+  const groupsById = useMemo(() => {
+    const map = new Map<string, Group>();
+    for (const g of groups) {
+      map.set(g.id, g);
+    }
+    return map;
+  }, [groups]);
 
   // Create visible sessions array for session jump shortcuts (Opt+Cmd+NUMBER)
   // Order: Bookmarked sessions first (if bookmarks folder expanded), then groups/ungrouped
@@ -111,17 +137,18 @@ export function useSortedSessions(deps: UseSortedSessionsDeps): UseSortedSession
 
     // Add sessions from expanded groups and ungrouped sessions
     // Exclude worktree children (they don't show jump numbers)
+    // Use Map for O(1) group lookup instead of O(n) find()
     const groupAndUngrouped = sortedSessions.filter(session => {
       // Exclude worktree children - they're nested under parent and don't show jump badges
       if (session.parentSessionId) return false;
       if (!session.groupId) return true; // Ungrouped sessions always visible
-      const group = groups.find(g => g.id === session.groupId);
+      const group = groupsById.get(session.groupId);
       return group && !group.collapsed; // Only show if group is expanded
     });
     result.push(...groupAndUngrouped);
 
     return result;
-  }, [sortedSessions, groups, sessions, bookmarksCollapsed]);
+  }, [sortedSessions, groupsById, sessions, bookmarksCollapsed]);
 
   return {
     sortedSessions,
