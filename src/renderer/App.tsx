@@ -14,11 +14,11 @@ import { DEFAULT_BATCH_PROMPT } from './components/BatchRunnerModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 import { LogViewer } from './components/LogViewer';
-import { AppOverlays, type StandingOvationData, type FirstRunCelebrationData } from './components/AppOverlays';
+import { AppOverlays } from './components/AppOverlays';
 import { PlaygroundPanel } from './components/PlaygroundPanel';
 import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
-import { MaestroWizard, useWizard, WizardResumeModal, SerializableWizardState, AUTO_RUN_FOLDER_NAME } from './components/Wizard';
+import { MaestroWizard, useWizard, WizardResumeModal, AUTO_RUN_FOLDER_NAME } from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
 import { EmptyStateView } from './components/EmptyStateView';
@@ -96,7 +96,7 @@ import { parseSynopsis } from '../shared/synopsis';
 // Import types and constants
 // Note: GroupChat, GroupChatState are now imported via GroupChatContext; GroupChatMessage still used locally
 import type {
-  ToolType, SessionState, RightPanelTab, SettingsTab,
+  ToolType, SessionState, RightPanelTab,
   FocusArea, LogEntry, Session, AITab, UsageStats, QueuedItem, BatchRunConfig,
   AgentError, BatchRunState, GroupChatMessage,
   SpecKitCommand, LeaderboardRegistration
@@ -110,6 +110,7 @@ import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession } from './utils/sessionValidation';
 import { estimateContextUsage } from './utils/contextUsage';
+import { formatLogsAsXml } from './utils/contextExtractor';
 import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from './constants/app';
 
 // Note: DEFAULT_IMAGE_ONLY_PROMPT is now imported from useInputProcessing hook
@@ -276,6 +277,7 @@ function MaestroConsoleInner() {
     customAICommands, setCustomAICommands,
     globalStats: _globalStats, updateGlobalStats,
     autoRunStats, recordAutoRunComplete, updateAutoRunProgress, acknowledgeBadge, getUnacknowledgedBadgeLevel,
+    usageStats, updateUsageStats,
     tourCompleted: _tourCompleted, setTourCompleted,
     firstAutoRunCompleted, setFirstAutoRunCompleted,
     recordWizardStart, recordWizardComplete, recordWizardAbandon, recordWizardResume,
@@ -3656,6 +3658,61 @@ function MaestroConsoleInner() {
           sessionId: info.sessionId,
         });
       }
+    },
+    // Process queued items after batch completion/stop
+    // This ensures pending user messages are processed after Auto Run ends
+    onProcessQueueAfterCompletion: (sessionId) => {
+      const session = sessionsRef.current.find(s => s.id === sessionId);
+      if (session && session.executionQueue.length > 0 && processQueuedItemRef.current) {
+        // Pop first item and process it
+        const [nextItem, ...remainingQueue] = session.executionQueue;
+
+        // Update session state: set to busy, pop first item from queue
+        setSessions(prev => prev.map(s => {
+          if (s.id !== sessionId) return s;
+
+          const targetTab = s.aiTabs.find(tab => tab.id === nextItem.tabId) || getActiveTab(s);
+          if (!targetTab) {
+            return {
+              ...s,
+              state: 'busy' as SessionState,
+              busySource: 'ai',
+              executionQueue: remainingQueue,
+              thinkingStartTime: Date.now(),
+            };
+          }
+
+          // For message items, add a log entry to the target tab
+          let updatedAiTabs = s.aiTabs;
+          if (nextItem.type === 'message' && nextItem.text) {
+            const logEntry: LogEntry = {
+              id: generateId(),
+              timestamp: Date.now(),
+              source: 'user',
+              text: nextItem.text,
+              images: nextItem.images
+            };
+            updatedAiTabs = s.aiTabs.map(tab =>
+              tab.id === targetTab.id
+                ? { ...tab, logs: [...tab.logs, logEntry], state: 'busy' as const }
+                : tab
+            );
+          }
+
+          return {
+            ...s,
+            state: 'busy' as SessionState,
+            busySource: 'ai',
+            aiTabs: updatedAiTabs,
+            activeTabId: targetTab.id,
+            executionQueue: remainingQueue,
+            thinkingStartTime: Date.now(),
+          };
+        }));
+
+        // Process the item after state update
+        processQueuedItemRef.current(sessionId, nextItem);
+      }
     }
   });
 
@@ -3889,6 +3946,30 @@ function MaestroConsoleInner() {
       clearInterval(intervalId);
     };
   }, [activeBatchSessionIds.length, updateAutoRunProgress, autoRunStats.longestRunMs]);
+
+  // Track peak usage stats for achievements image
+  useEffect(() => {
+    // Count current active agents (non-terminal sessions)
+    const activeAgents = sessions.filter(s => s.toolType !== 'terminal').length;
+
+    // Count busy sessions (currently processing)
+    const busySessions = sessions.filter(s => s.state === 'busy').length;
+
+    // Count auto-run sessions (sessions with active batch runs)
+    const autoRunSessions = activeBatchSessionIds.length;
+
+    // Count total queue depth across all sessions
+    const totalQueueDepth = sessions.reduce((sum, s) => sum + (s.executionQueue?.length || 0), 0);
+
+    // Update usage stats (only updates if new values are higher)
+    updateUsageStats({
+      maxAgents: activeAgents,
+      maxDefinedAgents: activeAgents, // Same as active agents for now
+      maxSimultaneousAutoRuns: autoRunSessions,
+      maxSimultaneousQueries: busySessions,
+      maxQueueDepth: totalQueueDepth,
+    });
+  }, [sessions, activeBatchSessionIds, updateUsageStats]);
 
   // Memoize worktree config key to avoid complex expression in dependency array
   const worktreeConfigKey = useMemo(() =>
@@ -8008,6 +8089,7 @@ function MaestroConsoleInner() {
         aboutModalOpen={aboutModalOpen}
         onCloseAboutModal={handleCloseAboutModal}
         autoRunStats={autoRunStats}
+        usageStats={usageStats}
         onOpenLeaderboardRegistration={handleOpenLeaderboardRegistrationFromAbout}
         isLeaderboardRegistered={isLeaderboardRegistered}
         updateCheckModalOpen={updateCheckModalOpen}
@@ -9008,6 +9090,28 @@ function MaestroConsoleInner() {
             ));
           }
           setSendToAgentModalOpen(true);
+        }}
+        onCopyContext={(tabId: string) => {
+          // Copy tab conversation context to clipboard as XML
+          if (!activeSession) return;
+          const tab = activeSession.aiTabs.find(t => t.id === tabId);
+          if (!tab || !tab.logs || tab.logs.length === 0) return;
+
+          const xml = formatLogsAsXml(tab.logs);
+          navigator.clipboard.writeText(xml).then(() => {
+            addToast({
+              type: 'success',
+              title: 'Context Copied',
+              message: 'Conversation context copied to clipboard as XML.',
+            });
+          }).catch((err) => {
+            console.error('Failed to copy context:', err);
+            addToast({
+              type: 'error',
+              title: 'Copy Failed',
+              message: 'Failed to copy context to clipboard.',
+            });
+          });
         }}
         // Context warning sash settings (Phase 6)
         contextWarningsEnabled={contextManagementSettings.contextWarningsEnabled}

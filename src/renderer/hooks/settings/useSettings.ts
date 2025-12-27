@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import type { LLMProvider, ThemeId, ThemeColors, Shortcut, CustomAICommand, GlobalStats, AutoRunStats, OnboardingStats, LeaderboardRegistration, ContextManagementSettings, KeyboardMasteryStats } from '../../types';
+import type { LLMProvider, ThemeId, ThemeColors, Shortcut, CustomAICommand, GlobalStats, AutoRunStats, MaestroUsageStats, OnboardingStats, LeaderboardRegistration, ContextManagementSettings, KeyboardMasteryStats } from '../../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { getLevelIndex } from '../../constants/keyboardMastery';
@@ -40,6 +40,16 @@ const DEFAULT_AUTO_RUN_STATS: AutoRunStats = {
   lastBadgeUnlockLevel: 0,
   lastAcknowledgedBadgeLevel: 0,
   badgeHistory: [],
+};
+
+// Default usage stats (peak tracking for achievements)
+// New users start at 0, peaks are tracked as they use the app
+const DEFAULT_USAGE_STATS: MaestroUsageStats = {
+  maxAgents: 0,
+  maxDefinedAgents: 0,
+  maxSimultaneousAutoRuns: 0,
+  maxSimultaneousQueries: 0,
+  maxQueueDepth: 0,
 };
 
 // Default keyboard mastery stats
@@ -212,6 +222,11 @@ export interface UseSettingsReturn {
   acknowledgeBadge: (level: number) => void;
   getUnacknowledgedBadgeLevel: () => number | null;
 
+  // Usage Stats (peak tracking for achievements image)
+  usageStats: MaestroUsageStats;
+  setUsageStats: (value: MaestroUsageStats) => void;
+  updateUsageStats: (currentValues: Partial<MaestroUsageStats>) => void;
+
   // UI collapse states (persistent)
   ungroupedCollapsed: boolean;
   setUngroupedCollapsed: (value: boolean) => void;
@@ -335,6 +350,9 @@ export function useSettings(): UseSettingsReturn {
 
   // Auto-run Stats (persistent)
   const [autoRunStats, setAutoRunStatsState] = useState<AutoRunStats>(DEFAULT_AUTO_RUN_STATS);
+
+  // Usage Stats (peak tracking for achievements image)
+  const [usageStats, setUsageStatsState] = useState<MaestroUsageStats>(DEFAULT_USAGE_STATS);
 
   // UI collapse states (persistent)
   const [ungroupedCollapsed, setUngroupedCollapsedState] = useState(false);
@@ -569,6 +587,36 @@ export function useSettings(): UseSettingsReturn {
   const setAutoRunStats = useCallback((value: AutoRunStats) => {
     setAutoRunStatsState(value);
     window.maestro.settings.set('autoRunStats', value);
+  }, []);
+
+  // Usage Stats setters
+  const setUsageStats = useCallback((value: MaestroUsageStats) => {
+    setUsageStatsState(value);
+    window.maestro.settings.set('usageStats', value);
+  }, []);
+
+  // Update usage stats - only updates values if new value is higher (tracks peak usage)
+  const updateUsageStats = useCallback((currentValues: Partial<MaestroUsageStats>) => {
+    setUsageStatsState(prev => {
+      const updated: MaestroUsageStats = {
+        maxAgents: Math.max(prev.maxAgents, currentValues.maxAgents ?? 0),
+        maxDefinedAgents: Math.max(prev.maxDefinedAgents, currentValues.maxDefinedAgents ?? 0),
+        maxSimultaneousAutoRuns: Math.max(prev.maxSimultaneousAutoRuns, currentValues.maxSimultaneousAutoRuns ?? 0),
+        maxSimultaneousQueries: Math.max(prev.maxSimultaneousQueries, currentValues.maxSimultaneousQueries ?? 0),
+        maxQueueDepth: Math.max(prev.maxQueueDepth, currentValues.maxQueueDepth ?? 0),
+      };
+      // Only persist if any value actually changed
+      if (
+        updated.maxAgents !== prev.maxAgents ||
+        updated.maxDefinedAgents !== prev.maxDefinedAgents ||
+        updated.maxSimultaneousAutoRuns !== prev.maxSimultaneousAutoRuns ||
+        updated.maxSimultaneousQueries !== prev.maxSimultaneousQueries ||
+        updated.maxQueueDepth !== prev.maxQueueDepth
+      ) {
+        window.maestro.settings.set('usageStats', updated);
+      }
+      return updated;
+    });
   }, []);
 
   // Import badge calculation from constants (moved inline to avoid circular dependency)
@@ -1047,6 +1095,7 @@ export function useSettings(): UseSettingsReturn {
       const savedCustomAICommands = await window.maestro.settings.get('customAICommands');
       const savedGlobalStats = await window.maestro.settings.get('globalStats');
       const savedAutoRunStats = await window.maestro.settings.get('autoRunStats');
+      const savedUsageStats = await window.maestro.settings.get('usageStats');
       const concurrentAutoRunTimeMigrationApplied = await window.maestro.settings.get('concurrentAutoRunTimeMigrationApplied');
       const savedUngroupedCollapsed = await window.maestro.settings.get('ungroupedCollapsed');
       const savedTourCompleted = await window.maestro.settings.get('tourCompleted');
@@ -1239,6 +1288,11 @@ export function useSettings(): UseSettingsReturn {
         setAutoRunStatsState(stats);
       }
 
+      // Load usage stats
+      if (savedUsageStats !== undefined) {
+        setUsageStatsState({ ...DEFAULT_USAGE_STATS, ...(savedUsageStats as Partial<MaestroUsageStats>) });
+      }
+
       // Load onboarding settings
       // UI collapse states
       if (savedUngroupedCollapsed !== undefined) setUngroupedCollapsedState(savedUngroupedCollapsed as boolean);
@@ -1366,6 +1420,9 @@ export function useSettings(): UseSettingsReturn {
     updateAutoRunProgress,
     acknowledgeBadge,
     getUnacknowledgedBadgeLevel,
+    usageStats,
+    setUsageStats,
+    updateUsageStats,
     ungroupedCollapsed,
     setUngroupedCollapsed,
     tourCompleted,
@@ -1437,6 +1494,7 @@ export function useSettings(): UseSettingsReturn {
     customAICommands,
     globalStats,
     autoRunStats,
+    usageStats,
     ungroupedCollapsed,
     tourCompleted,
     firstAutoRunCompleted,

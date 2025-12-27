@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Trophy, Clock, Zap, Star, ExternalLink, ChevronDown, History, Share2, Copy, Download, Check } from 'lucide-react';
 import type { Theme } from '../types';
-import type { AutoRunStats } from '../types';
+import type { AutoRunStats, MaestroUsageStats } from '../types';
 import {
   CONDUCTOR_BADGES,
   getBadgeForTime,
@@ -146,6 +146,7 @@ interface AchievementCardProps {
   theme: Theme;
   autoRunStats: AutoRunStats;
   globalStats?: GlobalStatsSubset | null;
+  usageStats?: MaestroUsageStats | null;
 }
 
 interface BadgeTooltipProps {
@@ -260,7 +261,7 @@ function BadgeTooltip({ badge, theme, isUnlocked, position, onClose: _onClose }:
  * Achievement card component for displaying in the About modal
  * Shows current badge, progress to next level, and stats
  */
-export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWithBadgeOpen }: AchievementCardProps & { onEscapeWithBadgeOpen?: (handler: (() => boolean) | null) => void }) {
+export function AchievementCard({ theme, autoRunStats, globalStats, usageStats, onEscapeWithBadgeOpen }: AchievementCardProps & { onEscapeWithBadgeOpen?: (handler: (() => boolean) | null) => void }) {
   const [selectedBadge, setSelectedBadge] = useState<number | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
@@ -370,7 +371,7 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
     const ctx = canvas.getContext('2d')!;
 
     const width = 600;
-    const height = 380;
+    const height = 480;  // Increased height for additional stats
     canvas.width = width;
     canvas.height = height;
 
@@ -463,9 +464,9 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
       ctx.fillText('Complete 15 minutes of AutoRun to unlock first badge', width / 2, 185);
     }
 
-    // Stats container with dark background
+    // Primary stats container with dark background
     const statsY = 240;
-    const statsHeight = 85;
+    const statsHeight = 70;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     ctx.roundRect(30, statsY, width - 60, statsHeight, 12);
     ctx.fill();
@@ -481,33 +482,81 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
     const statsCenterY = statsY + statsHeight / 2;
 
     // Helper to draw a stat
-    const drawStat = (x: number, value: string, label: string) => {
-      ctx.font = 'bold 20px system-ui';
+    const drawStat = (x: number, value: string, label: string, fontSize: number = 20) => {
+      ctx.font = `bold ${fontSize}px system-ui`;
       ctx.fillStyle = '#FFFFFF';
       ctx.textAlign = 'center';
       ctx.fillText(value, x, statsCenterY - 5);
 
-      ctx.font = '11px system-ui';
+      ctx.font = '10px system-ui';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.fillText(label, x, statsCenterY + 15);
+      ctx.fillText(label, x, statsCenterY + 12);
     };
 
     // Column 1: Total AutoRun
-    drawStat(30 + statsColWidth * 0.5, formatCumulativeTime(autoRunStats.cumulativeTimeMs), 'Total AutoRun');
+    drawStat(30 + statsColWidth * 0.5, formatCumulativeTime(autoRunStats.cumulativeTimeMs), 'Total AutoRun', 18);
 
     // Column 2: Longest Run
-    drawStat(30 + statsColWidth * 1.5, formatCumulativeTime(autoRunStats.longestRunMs), 'Longest Run');
+    drawStat(30 + statsColWidth * 1.5, formatCumulativeTime(autoRunStats.longestRunMs), 'Longest Run', 18);
 
     // Column 3: Sessions (from globalStats)
     const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '—';
-    drawStat(30 + statsColWidth * 2.5, sessionsValue, 'Sessions');
+    drawStat(30 + statsColWidth * 2.5, sessionsValue, 'Sessions', 18);
 
     // Column 4: Total Tokens (from globalStats)
     const totalTokens = globalStats
       ? globalStats.totalInputTokens + globalStats.totalOutputTokens
       : 0;
     const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '—';
-    drawStat(30 + statsColWidth * 3.5, tokensValue, 'Total Tokens');
+    drawStat(30 + statsColWidth * 3.5, tokensValue, 'Total Tokens', 18);
+
+    // Secondary stats container (usage peaks)
+    const peakStatsY = statsY + statsHeight + 15;
+    const peakStatsHeight = 70;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.roundRect(30, peakStatsY, width - 60, peakStatsHeight, 12);
+    ctx.fill();
+
+    // Peak stats border
+    ctx.strokeStyle = 'rgba(139, 92, 246, 0.2)';
+    ctx.lineWidth = 1;
+    ctx.roundRect(30, peakStatsY, width - 60, peakStatsHeight, 12);
+    ctx.stroke();
+
+    // Peak stats header
+    ctx.font = 'bold 10px system-ui';
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.textAlign = 'center';
+    ctx.fillText('PEAK USAGE', width / 2, peakStatsY + 12);
+
+    // Peak stats - 5 columns
+    const peakColWidth = (width - 60) / 5;
+    const peakCenterY = peakStatsY + peakStatsHeight / 2 + 8;
+
+    // Helper to draw peak stat
+    const drawPeakStat = (x: number, value: string, label: string) => {
+      ctx.font = 'bold 16px system-ui';
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.fillText(value, x, peakCenterY - 3);
+
+      ctx.font = '9px system-ui';
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+      ctx.fillText(label, x, peakCenterY + 12);
+    };
+
+    // Get values from usageStats or show placeholder
+    const maxAgents = usageStats?.maxAgents?.toString() || '—';
+    const maxDefined = usageStats?.maxDefinedAgents?.toString() || '—';
+    const maxAutoRuns = usageStats?.maxSimultaneousAutoRuns?.toString() || '—';
+    const maxQueries = usageStats?.maxSimultaneousQueries?.toString() || '—';
+    const maxQueue = usageStats?.maxQueueDepth?.toString() || '—';
+
+    drawPeakStat(30 + peakColWidth * 0.5, maxAgents, 'Max Agents');
+    drawPeakStat(30 + peakColWidth * 1.5, maxDefined, 'Defined');
+    drawPeakStat(30 + peakColWidth * 2.5, maxAutoRuns, 'Auto Runs');
+    drawPeakStat(30 + peakColWidth * 3.5, maxQueries, 'Queries');
+    drawPeakStat(30 + peakColWidth * 4.5, maxQueue, 'Queue');
 
     // Footer with branding and GitHub
     ctx.font = 'bold 11px system-ui';
@@ -521,7 +570,7 @@ export function AchievementCard({ theme, autoRunStats, globalStats, onEscapeWith
     ctx.fillText('github.com/pedramamini/Maestro', width / 2, height - 14);
 
     return canvas;
-  }, [currentBadge, autoRunStats.cumulativeTimeMs, autoRunStats.longestRunMs, globalStats]);
+  }, [currentBadge, autoRunStats.cumulativeTimeMs, autoRunStats.longestRunMs, globalStats, usageStats]);
 
   // Copy to clipboard
   const copyToClipboard = useCallback(async () => {

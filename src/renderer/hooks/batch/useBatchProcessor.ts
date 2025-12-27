@@ -50,6 +50,9 @@ interface UseBatchProcessorProps {
   audioFeedbackCommand?: string;
   // Auto Run stats for achievement progress in final summary
   autoRunStats?: AutoRunStats;
+  // Callback to process queued items after batch completion/stop
+  // This ensures pending user messages are processed after Auto Run ends
+  onProcessQueueAfterCompletion?: (sessionId: string) => void;
 }
 
 interface UseBatchProcessorReturn {
@@ -176,7 +179,8 @@ export function useBatchProcessor({
   onPRResult,
   audioFeedbackEnabled,
   audioFeedbackCommand,
-  autoRunStats
+  autoRunStats,
+  onProcessQueueAfterCompletion
 }: UseBatchProcessorProps): UseBatchProcessorReturn {
   // Batch states per session using reducer pattern for predictable state transitions
   const [batchRunStates, dispatch] = useReducer(batchReducer, {});
@@ -1259,6 +1263,15 @@ export function useBatchProcessor({
           elapsedTimeMs: totalElapsedMs
         });
       }
+
+      // Process any queued items that were waiting during batch run
+      // This ensures pending user messages are processed after Auto Run ends
+      if (onProcessQueueAfterCompletion) {
+        // Use setTimeout to let state updates settle before processing queue
+        setTimeout(() => {
+          onProcessQueueAfterCompletion(sessionId);
+        }, 0);
+      }
     }
 
     // Clean up time tracking, error resolution, and stop request flag
@@ -1269,7 +1282,7 @@ export function useBatchProcessor({
     delete errorResolutionRefs.current[sessionId];
     delete stopRequestedRefs.current[sessionId];
   // Note: updateBatchStateAndBroadcast is accessed via ref to avoid stale closure in long-running async
-  }, [onUpdateSession, onSpawnAgent, onSpawnSynopsis, onAddHistoryEntry, onComplete, onPRResult, audioFeedbackEnabled, audioFeedbackCommand, timeTracking]);
+  }, [onUpdateSession, onSpawnAgent, onSpawnSynopsis, onAddHistoryEntry, onComplete, onPRResult, audioFeedbackEnabled, audioFeedbackCommand, timeTracking, onProcessQueueAfterCompletion]);
 
   /**
    * Request to stop the batch run for a specific session after current task completes

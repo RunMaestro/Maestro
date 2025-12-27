@@ -31,6 +31,7 @@ import type {
   Shortcut,
   KeyboardMasteryStats,
   AutoRunStats,
+  MaestroUsageStats,
   RightPanelTab,
   SettingsTab,
   BatchRunConfig,
@@ -119,6 +120,7 @@ export interface AppInfoModalsProps {
   onCloseAboutModal: () => void;
   sessions: Session[];
   autoRunStats: AutoRunStats;
+  usageStats?: MaestroUsageStats | null;
   onOpenLeaderboardRegistration: () => void;
   isLeaderboardRegistered: boolean;
 
@@ -161,6 +163,7 @@ export function AppInfoModals({
   onCloseAboutModal,
   sessions,
   autoRunStats,
+  usageStats,
   onOpenLeaderboardRegistration,
   isLeaderboardRegistered,
   // Update Check Modal
@@ -194,6 +197,7 @@ export function AppInfoModals({
           theme={theme}
           sessions={sessions}
           autoRunStats={autoRunStats}
+          usageStats={usageStats}
           onClose={onCloseAboutModal}
           onOpenLeaderboardRegistration={onOpenLeaderboardRegistration}
           isLeaderboardRegistered={isLeaderboardRegistered}
@@ -1561,6 +1565,7 @@ export interface AppModalsProps {
   aboutModalOpen: boolean;
   onCloseAboutModal: () => void;
   autoRunStats: AutoRunStats;
+  usageStats?: MaestroUsageStats | null;
   onOpenLeaderboardRegistration: () => void;
   isLeaderboardRegistered: boolean;
   updateCheckModalOpen: boolean;
@@ -1844,6 +1849,7 @@ export function AppModals(props: AppModalsProps) {
     aboutModalOpen,
     onCloseAboutModal,
     autoRunStats,
+    usageStats,
     onOpenLeaderboardRegistration,
     isLeaderboardRegistered,
     updateCheckModalOpen,
@@ -2083,6 +2089,7 @@ export function AppModals(props: AppModalsProps) {
         onCloseAboutModal={onCloseAboutModal}
         sessions={sessions}
         autoRunStats={autoRunStats}
+        usageStats={usageStats}
         onOpenLeaderboardRegistration={onOpenLeaderboardRegistration}
         isLeaderboardRegistered={isLeaderboardRegistered}
         updateCheckModalOpen={updateCheckModalOpen}

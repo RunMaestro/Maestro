@@ -35,6 +35,12 @@ vi.mock('lucide-react', () => ({
   Globe: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
     <span data-testid="globe-icon" className={className} style={style}>🌐</span>
   ),
+  Check: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+    <span data-testid="check-icon" className={className} style={style}>✓</span>
+  ),
+  BookOpen: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+    <span data-testid="book-open-icon" className={className} style={style}>📖</span>
+  ),
 }));
 
 // Mock the avatar import

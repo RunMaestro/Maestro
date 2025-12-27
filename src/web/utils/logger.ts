@@ -16,7 +16,10 @@
  *   webLogger.error('Failed to connect', 'WebSocket', errorData);
  */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import { type BaseLogLevel, LOG_LEVEL_PRIORITY } from '../../shared/logger-types';
+
+// Re-export for backwards compatibility
+export type LogLevel = BaseLogLevel;
 
 interface LoggerConfig {
   /** Minimum log level to display */
@@ -27,11 +30,12 @@ interface LoggerConfig {
   prefix: string;
 }
 
-const levelPriority: Record<LogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
+// Use only the base log levels for web logger
+const levelPriority: Record<BaseLogLevel, number> = {
+  debug: LOG_LEVEL_PRIORITY.debug,
+  info: LOG_LEVEL_PRIORITY.info,
+  warn: LOG_LEVEL_PRIORITY.warn,
+  error: LOG_LEVEL_PRIORITY.error,
 };
 
 // Default config - only show warnings and errors

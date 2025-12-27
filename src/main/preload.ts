@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { MainLogLevel, SystemLogEntry } from '../shared/logger-types';
 
 // Type definitions that match renderer types
 interface ProcessConfig {
@@ -621,12 +622,12 @@ contextBridge.exposeInMainWorld('maestro', {
 
   // Logger API
   logger: {
-    log: (level: string, message: string, context?: string, data?: unknown) =>
+    log: (level: MainLogLevel, message: string, context?: string, data?: unknown) =>
       ipcRenderer.invoke('logger:log', level, message, context, data),
-    getLogs: (filter?: { level?: string; context?: string; limit?: number }) =>
+    getLogs: (filter?: { level?: MainLogLevel; context?: string; limit?: number }) =>
       ipcRenderer.invoke('logger:getLogs', filter),
     clearLogs: () => ipcRenderer.invoke('logger:clearLogs'),
-    setLogLevel: (level: string) => ipcRenderer.invoke('logger:setLogLevel', level),
+    setLogLevel: (level: MainLogLevel) => ipcRenderer.invoke('logger:setLogLevel', level),
     getLogLevel: () => ipcRenderer.invoke('logger:getLogLevel'),
     setMaxLogBuffer: (max: number) => ipcRenderer.invoke('logger:setMaxLogBuffer', max),
     getMaxLogBuffer: () => ipcRenderer.invoke('logger:getMaxLogBuffer'),
@@ -637,8 +638,8 @@ contextBridge.exposeInMainWorld('maestro', {
     autorun: (message: string, context?: string, data?: unknown) =>
       ipcRenderer.invoke('logger:log', 'autorun', message, context || 'AutoRun', data),
     // Subscribe to new log entries in real-time
-    onNewLog: (callback: (log: { timestamp: number; level: string; message: string; context?: string; data?: unknown }) => void) => {
-      const handler = (_: any, log: any) => callback(log);
+    onNewLog: (callback: (log: SystemLogEntry) => void) => {
+      const handler = (_: Electron.IpcRendererEvent, log: SystemLogEntry) => callback(log);
       ipcRenderer.on('logger:newLog', handler);
       return () => ipcRenderer.removeListener('logger:newLog', handler);
     },
@@ -1593,20 +1594,16 @@ export interface MaestroAPI {
     }) => void) => () => void;
   };
   logger: {
-    log: (level: string, message: string, context?: string, data?: unknown) => Promise<void>;
-    getLogs: (filter?: { level?: string; context?: string; limit?: number }) => Promise<Array<{
-      timestamp: number;
-      level: string;
-      message: string;
-      context?: string;
-      data?: unknown;
-    }>>;
+    log: (level: MainLogLevel, message: string, context?: string, data?: unknown) => Promise<void>;
+    getLogs: (filter?: { level?: MainLogLevel; context?: string; limit?: number }) => Promise<SystemLogEntry[]>;
     clearLogs: () => Promise<void>;
-    setLogLevel: (level: string) => Promise<void>;
-    getLogLevel: () => Promise<string>;
+    setLogLevel: (level: MainLogLevel) => Promise<void>;
+    getLogLevel: () => Promise<MainLogLevel>;
     setMaxLogBuffer: (max: number) => Promise<void>;
     getMaxLogBuffer: () => Promise<number>;
-    onNewLog: (callback: (log: { timestamp: number; level: string; message: string; context?: string; data?: unknown }) => void) => () => void;
+    toast: (title: string, data?: unknown) => Promise<void>;
+    autorun: (message: string, context?: string, data?: unknown) => Promise<void>;
+    onNewLog: (callback: (log: SystemLogEntry) => void) => () => void;
   };
   claude: {
     listSessions: (projectPath: string) => Promise<Array<{

@@ -253,6 +253,16 @@ export interface AutoRunStats {
   badgeHistory: BadgeUnlockRecord[]; // History of badge unlocks with timestamps
 }
 
+// Maestro usage peak statistics (survives app restarts)
+// These track maximum usage peaks for achievement display
+export interface MaestroUsageStats {
+  maxAgents: number;                  // Maximum number of agents active at once
+  maxDefinedAgents: number;           // Maximum number of defined agents (ever configured)
+  maxSimultaneousAutoRuns: number;    // Maximum concurrent Auto Run sessions
+  maxSimultaneousQueries: number;     // Maximum concurrent AI queries
+  maxQueueDepth: number;              // Maximum number of queued queries at once
+}
+
 // Onboarding analytics statistics (survives app restarts)
 // These are stored locally only - no data is sent externally
 export interface OnboardingStats {

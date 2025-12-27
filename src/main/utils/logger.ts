@@ -4,40 +4,28 @@
  */
 
 import { EventEmitter } from 'events';
+import {
+  type MainLogLevel,
+  type SystemLogEntry,
+  LOG_LEVEL_PRIORITY,
+  DEFAULT_MAX_LOGS,
+} from '../../shared/logger-types';
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
-
-export interface LogEntry {
-  timestamp: number;
-  level: LogLevel;
-  message: string;
-  context?: string;
-  data?: unknown;
-}
+// Re-export types for backwards compatibility
+export type { MainLogLevel as LogLevel, SystemLogEntry as LogEntry };
 
 class Logger extends EventEmitter {
-  private logs: LogEntry[] = [];
-  private maxLogs = 1000; // Keep last 1000 log entries
-  private minLevel: LogLevel = 'info'; // Default log level
+  private logs: SystemLogEntry[] = [];
+  private maxLogs = DEFAULT_MAX_LOGS;
+  private minLevel: MainLogLevel = 'info'; // Default log level
 
-  constructor() {
-    super();
-  }
+  private levelPriority = LOG_LEVEL_PRIORITY;
 
-  private levelPriority: Record<LogLevel, number> = {
-    debug: 0,
-    info: 1,
-    warn: 2,
-    error: 3,
-    toast: 1, // Toast notifications always logged at info priority (always visible)
-    autorun: 1, // Auto Run logs always logged at info priority (always visible)
-  };
-
-  setLogLevel(level: LogLevel): void {
+  setLogLevel(level: MainLogLevel): void {
     this.minLevel = level;
   }
 
-  getLogLevel(): LogLevel {
+  getLogLevel(): MainLogLevel {
     return this.minLevel;
   }
 
@@ -53,11 +41,11 @@ class Logger extends EventEmitter {
     return this.maxLogs;
   }
 
-  private shouldLog(level: LogLevel): boolean {
+  private shouldLog(level: MainLogLevel): boolean {
     return this.levelPriority[level] >= this.levelPriority[this.minLevel];
   }
 
-  private addLog(entry: LogEntry): void {
+  private addLog(entry: SystemLogEntry): void {
     this.logs.push(entry);
 
     // Keep only the last maxLogs entries
@@ -163,7 +151,7 @@ class Logger extends EventEmitter {
     });
   }
 
-  getLogs(filter?: { level?: LogLevel; context?: string; limit?: number }): LogEntry[] {
+  getLogs(filter?: { level?: MainLogLevel; context?: string; limit?: number }): SystemLogEntry[] {
     let filtered = [...this.logs];
 
     if (filter?.level) {

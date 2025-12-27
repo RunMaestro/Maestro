@@ -193,6 +193,7 @@ interface MainPanelProps {
   onSummarizeAndContinue?: (tabId: string) => void;
   onMergeWith?: (tabId: string) => void;
   onSendToAgent?: (tabId: string) => void;
+  onCopyContext?: (tabId: string) => void;
 
   // Context warning sash settings (Phase 6)
   contextWarningsEnabled?: boolean;
@@ -248,6 +249,7 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
     onSummarizeAndContinue,
     onMergeWith,
     onSendToAgent,
+    onCopyContext,
     // Context warning sash settings (Phase 6)
     contextWarningsEnabled = false,
     contextWarningYellowThreshold = 60,
@@ -894,6 +896,7 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
               onMergeWith={onMergeWith}
               onSendToAgent={onSendToAgent}
               onSummarizeAndContinue={onSummarizeAndContinue}
+              onCopyContext={onCopyContext}
               showUnreadOnly={showUnreadOnly}
               onToggleUnreadFilter={onToggleUnreadFilter}
               onOpenTabSearch={onOpenTabSearch}

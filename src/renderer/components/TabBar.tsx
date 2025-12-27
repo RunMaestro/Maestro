@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Plus, Star, Copy, Edit2, Mail, Pencil, Search, GitMerge, ArrowRightCircle, Minimize2 } from 'lucide-react';
+import { X, Plus, Star, Copy, Edit2, Mail, Pencil, Search, GitMerge, ArrowRightCircle, Minimize2, Clipboard } from 'lucide-react';
 import type { AITab, Theme } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
 
@@ -21,6 +21,8 @@ interface TabBarProps {
   onSendToAgent?: (tabId: string) => void;
   /** Handler to summarize and continue in a new tab */
   onSummarizeAndContinue?: (tabId: string) => void;
+  /** Handler to copy conversation context to clipboard */
+  onCopyContext?: (tabId: string) => void;
   showUnreadOnly?: boolean;
   onToggleUnreadFilter?: () => void;
   onOpenTabSearch?: () => void;
@@ -49,6 +51,8 @@ interface TabProps {
   onSendToAgent?: () => void;
   /** Handler to summarize and continue in a new tab */
   onSummarizeAndContinue?: () => void;
+  /** Handler to copy conversation context to clipboard */
+  onCopyContext?: () => void;
   shortcutHint?: number | null;
   registerRef?: (el: HTMLDivElement | null) => void;
   hasDraft?: boolean;
@@ -118,6 +122,7 @@ function Tab({
   onMergeWith,
   onSendToAgent,
   onSummarizeAndContinue,
+  onCopyContext,
   shortcutHint,
   registerRef,
   hasDraft
@@ -225,6 +230,12 @@ function Tab({
   const handleSummarizeAndContinueClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     onSummarizeAndContinue?.();
+    setOverlayOpen(false);
+  };
+
+  const handleCopyContextClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onCopyContext?.();
     setOverlayOpen(false);
   };
 
@@ -445,8 +456,20 @@ function Tab({
             </button>
 
             {/* Context Management Section - divider and grouped options */}
-            {(tab.agentSessionId || (tab.logs?.length ?? 0) >= 5) && (onMergeWith || onSendToAgent || onSummarizeAndContinue) && (
+            {(tab.agentSessionId || (tab.logs?.length ?? 0) >= 1) && (onMergeWith || onSendToAgent || onSummarizeAndContinue || onCopyContext) && (
               <div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+            )}
+
+            {/* Context: Copy to Clipboard */}
+            {(tab.logs?.length ?? 0) >= 1 && onCopyContext && (
+              <button
+                onClick={handleCopyContextClick}
+                className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+                style={{ color: theme.colors.textMain }}
+              >
+                <Clipboard className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+                Context: Copy to Clipboard
+              </button>
             )}
 
             {/* Context: Compact */}
@@ -511,6 +534,7 @@ export function TabBar({
   onMergeWith,
   onSendToAgent,
   onSummarizeAndContinue,
+  onCopyContext,
   showUnreadOnly: showUnreadOnlyProp,
   onToggleUnreadFilter,
   onOpenTabSearch
@@ -708,6 +732,7 @@ export function TabBar({
               onMergeWith={onMergeWith && tab.agentSessionId ? () => onMergeWith(tab.id) : undefined}
               onSendToAgent={onSendToAgent && tab.agentSessionId ? () => onSendToAgent(tab.id) : undefined}
               onSummarizeAndContinue={onSummarizeAndContinue && (tab.logs?.length ?? 0) >= 5 ? () => onSummarizeAndContinue(tab.id) : undefined}
+              onCopyContext={onCopyContext && (tab.logs?.length ?? 0) >= 1 ? () => onCopyContext(tab.id) : undefined}
               shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}
               hasDraft={hasDraft(tab)}
               registerRef={(el) => {

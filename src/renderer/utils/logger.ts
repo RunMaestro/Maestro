@@ -3,7 +3,10 @@
  * Sends logs to the main process via IPC
  */
 
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+import { type BaseLogLevel } from '../../shared/logger-types';
+
+// Re-export for backwards compatibility
+export type LogLevel = BaseLogLevel;
 
 class RendererLogger {
   debug(message: string, context?: string, data?: unknown): void {

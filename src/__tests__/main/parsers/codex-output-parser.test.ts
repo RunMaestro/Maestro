@@ -57,7 +57,8 @@ describe('CodexOutputParser', () => {
         const event = parser.parseJsonLine(line);
         expect(event).not.toBeNull();
         expect(event?.type).toBe('text');
-        expect(event?.text).toBe('**Thinking about the task**\n\nI need to analyze...');
+        // formatReasoningText adds \n\n before **section** markers for readability
+        expect(event?.text).toBe('\n\n**Thinking about the task**\n\nI need to analyze...');
         expect(event?.isPartial).toBe(true);
       });
     });

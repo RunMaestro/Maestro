@@ -64,9 +64,10 @@ export function formatTokens(tokens: number): string {
  * Useful for precise token displays.
  *
  * @param tokens - The token count
- * @returns Formatted string (e.g., "500", "1.5K", "2.3M")
+ * @returns Formatted string (e.g., "500", "1.5K", "2.3M", "5.8B")
  */
 export function formatTokensCompact(tokens: number): string {
+  if (tokens >= 1_000_000_000) return `${(tokens / 1_000_000_000).toFixed(1)}B`;
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
   if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
   return tokens.toString();

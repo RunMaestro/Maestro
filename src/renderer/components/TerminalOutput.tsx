@@ -1175,7 +1175,7 @@ export const TerminalOutput = memo(forwardRef<HTMLDivElement, TerminalOutputProp
     flushResponseGroup();
 
     return result;
-  }, [activeLogs, session.inputMode]);
+  }, [activeLogs, session.inputMode, markdownEditMode]);
 
   // PERF: Debounce search query to avoid filtering on every keystroke
   const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);

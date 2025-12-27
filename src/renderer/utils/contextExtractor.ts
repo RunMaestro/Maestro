@@ -517,6 +517,56 @@ export function calculateTotalTokens(contexts: ContextSource[]): number {
 }
 
 /**
+ * Escape special XML characters in text.
+ */
+function escapeXml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Convert log entries to a simple XML format for clipboard copying.
+ * Only includes user messages and AI responses - excludes thinking, system prompts,
+ * tool calls, and other internal entries.
+ *
+ * @param logs - Array of log entries to convert
+ * @returns XML string with message/response pairs
+ *
+ * @example
+ * const xml = formatLogsAsXml(tab.logs);
+ * // Returns:
+ * // <conversation>
+ * //   <message>How do I implement feature X?</message>
+ * //   <response>To implement feature X, you should...</response>
+ * // </conversation>
+ */
+export function formatLogsAsXml(logs: LogEntry[]): string {
+  const lines: string[] = ['<conversation>'];
+
+  for (const log of logs) {
+    // Skip empty entries
+    if (!log.text || log.text.trim() === '') {
+      continue;
+    }
+
+    // Only include user messages and AI responses
+    if (log.source === 'user') {
+      lines.push(`  <message>${escapeXml(log.text)}</message>`);
+    } else if (log.source === 'ai') {
+      lines.push(`  <response>${escapeXml(log.text)}</response>`);
+    }
+    // Skip: thinking, tool, system, stdout, stderr, error
+  }
+
+  lines.push('</conversation>');
+  return lines.join('\n');
+}
+
+/**
  * Get a summary of context sources for display purposes.
  *
  * @param contexts - Array of context sources
