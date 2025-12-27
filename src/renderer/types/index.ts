@@ -48,6 +48,53 @@ export type SettingsTab = 'general' | 'shortcuts' | 'theme' | 'notifications' | 
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
 
+// Inline wizard types for per-session/per-tab wizard state
+export type WizardMode = 'new' | 'iterate' | null;
+
+/**
+ * Message in an inline wizard conversation.
+ * Stores conversation history for the /wizard command.
+ */
+export interface WizardMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  timestamp: number;
+  /** Parsed confidence from assistant responses */
+  confidence?: number;
+  /** Parsed ready flag from assistant responses */
+  ready?: boolean;
+}
+
+/**
+ * Previous UI state to restore when wizard ends.
+ * These settings are temporarily overridden during wizard mode.
+ */
+export interface WizardPreviousUIState {
+  readOnlyMode: boolean;
+  saveToHistory: boolean;
+  showThinking: boolean;
+}
+
+/**
+ * Per-session/per-tab wizard state.
+ * Keeps track of inline wizard state for the /wizard command.
+ */
+export interface SessionWizardState {
+  /** Whether wizard is currently active */
+  isActive: boolean;
+  /** Current wizard mode: 'new' for creating documents, 'iterate' for modifying existing */
+  mode: WizardMode;
+  /** Goal for iterate mode (what the user wants to add/change) */
+  goal?: string;
+  /** Confidence level from agent responses (0-100) */
+  confidence: number;
+  /** Conversation history for this wizard session */
+  conversationHistory: WizardMessage[];
+  /** Previous UI state to restore when wizard ends */
+  previousUIState: WizardPreviousUIState;
+}
+
 export interface Shortcut {
   id: string;
   label: string;
@@ -482,6 +529,10 @@ export interface Session {
   // SSH Remote context (session-wide, for all operations - file explorer, git, auto run, etc.)
   sshRemoteId?: string;           // ID of SSH remote config being used (flattened from sshRemote.id)
   remoteCwd?: string;             // Current working directory on remote host
+
+  // Inline wizard state for /wizard command
+  // Keeps per-session/per-tab wizard state for creating or iterating on Auto Run documents
+  wizardState?: SessionWizardState;
 
   // Per-session agent configuration overrides
   // These override the global agent-level settings for this specific session
