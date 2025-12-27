@@ -124,8 +124,20 @@
 
 **Prerequisite**: US1 complete (need config storage).
 
-- [ ] T024 [P] [US2] Create buildSshCommand function in src/main/utils/ssh-command-builder.ts
-- [ ] T025 [P] [US2] Create buildRemoteCommand function in src/main/utils/ssh-command-builder.ts
+- [x] T024 [P] [US2] Create buildSshCommand function in src/main/utils/ssh-command-builder.ts
+- [x] T025 [P] [US2] Create buildRemoteCommand function in src/main/utils/ssh-command-builder.ts
+
+**Phase 4 (T024-T025) Notes (2025-12-27):**
+- Created `src/main/utils/ssh-command-builder.ts` with:
+  - `buildRemoteCommand()`: Constructs escaped shell command string with optional cwd and env vars
+  - `buildSshCommand()`: Builds full SSH command with args for spawn(), merging config and command-specific options
+- Security considerations:
+  - Command name is NOT escaped (trusted, from agent config) to preserve PATH resolution
+  - All user-controllable values (args, cwd, env values) ARE escaped via shellEscape
+  - Environment variable names are validated (alphanumeric + underscore only)
+- Added 29 unit tests in `src/__tests__/main/utils/ssh-command-builder.test.ts`
+  - Tests cover: basic command building, cwd handling, env merging, tilde expansion
+  - Security tests: injection prevention via args, cwd, env values, invalid env names
 - [ ] T026 [US2] Add getSshRemoteConfig helper to resolve effective remote in src/main/process-manager.ts
 - [ ] T027 [US2] Modify spawn() to detect SSH remote config in src/main/process-manager.ts
 - [ ] T028 [US2] Wrap agent command with buildSshCommand when SSH enabled in src/main/process-manager.ts
