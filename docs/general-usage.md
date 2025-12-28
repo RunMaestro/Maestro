@@ -29,9 +29,31 @@ Each agent shows a color-coded status indicator:
 
 ## File Explorer and Preview
 
-Browse project files with syntax highlighting, markdown preview, and image viewing. Reference files in prompts with `@` mentions.
+The **File Explorer** (Right Panel → Files tab) lets you browse project files. Click any file to open it in the **File Preview** view.
 
 ![File viewer](./screenshots/file-viewer.png)
+
+**File Preview features:**
+- **Syntax highlighting** for code files
+- **Markdown rendering** with toggle between raw/preview (`Cmd+E` / `Ctrl+E`)
+- **Image viewing** for common image formats
+- **Line numbers** for easy reference
+- **Search within file** (`Cmd+F` / `Ctrl+F`)
+
+### Breadcrumb Navigation
+
+When you open a file, a **breadcrumb trail** appears showing your navigation history. Click any breadcrumb to jump back to a previously viewed file. This makes it easy to compare files or return to where you were.
+
+### File Editing
+
+Files can be edited directly in the preview. Changes are saved automatically when you navigate away or close the preview.
+
+### @ File Mentions
+
+Reference files in your AI prompts using `@` mentions:
+1. Type `@` followed by a filename
+2. Select from the autocomplete dropdown
+3. The file path is inserted, giving the AI context about that file
 
 ## Prompt Composer
 

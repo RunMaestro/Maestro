@@ -55,8 +55,8 @@
             "group": "Usage",
             "pages": [
               "general-usage",
-              "context-management",
               "history",
+              "context-management",
               "autorun-playbooks",
               "git-worktrees",
               "group-chat",

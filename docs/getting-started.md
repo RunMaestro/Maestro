@@ -10,9 +10,31 @@ This guide gets you from install to a first productive session with Maestro.
 
 Follow the [Installation](./installation) instructions for your platform, then launch Maestro.
 
-## 2. Create an agent
+## 2. Create an agent (or use the Wizard)
 
-Maestro supports **Claude Code**, **OpenAI Codex**, and **OpenCode** as providers. Make sure at least one is installed and authenticated, then create your first agent in the sidebar.
+Maestro supports **Claude Code**, **OpenAI Codex**, and **OpenCode** as providers. Make sure at least one is installed and authenticated.
+
+**Option A: Quick Setup**
+Create your first agent manually using the **+** button in the sidebar.
+
+**Option B: Onboarding Wizard** (Recommended for new users)
+Press `Cmd+Shift+N` / `Ctrl+Shift+N` to launch the **Onboarding Wizard**, which guides you through:
+1. Selecting an AI provider
+2. Choosing your project directory
+3. Having a discovery conversation where the AI learns about your project
+4. Generating an initial Auto Run document with tasks
+
+The Wizard creates a fully configured agent with an Auto Run document folder ready to go.
+
+### Introductory Tour
+
+After completing the Wizard, you'll be offered an **Introductory Tour** that highlights key UI elements:
+- The AI Terminal and how to interact with it
+- The Auto Run panel and how batch processing works
+- File Explorer and preview features
+- Keyboard shortcuts for power users
+
+You can skip the tour and access it later via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Start Tour".
 
 ## 3. Open a project
 

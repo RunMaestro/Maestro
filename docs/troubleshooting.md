@@ -1,8 +1,39 @@
 ---
 title: Troubleshooting & Support
-description: Debug packages, common issues, and how to get help with Maestro.
+description: System logs, process monitor, debug packages, and how to get help with Maestro.
 icon: life-buoy
 ---
+
+## System Logs
+
+Maestro maintains detailed system logs that help diagnose issues. Access them via:
+
+- **Keyboard:** `Opt+Cmd+L` (Mac) / `Alt+Ctrl+L` (Windows/Linux)
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "View System Logs"
+- **Menu:** Click the hamburger menu (☰) in the Left Panel → "System Logs"
+
+The **System Log Viewer** shows:
+- Timestamped log entries with severity levels (info, warn, error)
+- Filterable by log level and searchable text
+- Real-time updates as new logs are generated
+
+**Log levels** can be configured in **Settings** → **General** → **System Log Level**. Higher levels capture more detail but may impact performance.
+
+## Process Monitor
+
+Monitor all running processes spawned by Maestro:
+
+- **Keyboard:** `Opt+Cmd+P` (Mac) / `Alt+Ctrl+P` (Windows/Linux)
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "View System Processes"
+- **Menu:** Click the hamburger menu (☰) in the Left Panel → "Process Monitor"
+
+The **Process Monitor** displays:
+- All active AI agent processes and their PIDs
+- Terminal/shell processes for each agent
+- Process uptime and resource information
+- Ability to terminate stuck processes
+
+This is useful when an agent becomes unresponsive or you need to diagnose process-related issues.
 
 ## Debug Package
 

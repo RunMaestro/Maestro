@@ -1876,7 +1876,7 @@ describe('TabBar', () => {
       expect(screen.getByText('Close Tabs to the Right')).toBeInTheDocument();
     });
 
-    it('disables "Close" when only one tab exists', () => {
+    it('shows "Close" as always active even with only one tab', () => {
       const tabs = [createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' })];
 
       render(
@@ -1898,12 +1898,13 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
+      // Close is always active (not disabled)
       const closeItem = screen.getByText('Close').closest('button');
-      expect(closeItem).toHaveClass('opacity-40');
-      expect(closeItem).toHaveClass('cursor-default');
+      expect(closeItem).toBeInTheDocument();
+      expect(closeItem).not.toHaveClass('opacity-40');
     });
 
-    it('disables "Close Others" when only one tab exists', () => {
+    it('hides "Close Others" when only one tab exists', () => {
       const tabs = [createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' })];
 
       render(
@@ -1925,12 +1926,11 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
-      const closeOthersItem = screen.getByText('Close Others').closest('button');
-      expect(closeOthersItem).toHaveClass('opacity-40');
-      expect(closeOthersItem).toHaveClass('cursor-default');
+      // Close Others is hidden (not rendered) when only one tab exists
+      expect(screen.queryByText('Close Others')).not.toBeInTheDocument();
     });
 
-    it('disables "Close Tabs to the Left" when hovering first tab', () => {
+    it('hides "Close Tabs to the Left" when hovering first tab', () => {
       const tabs = [
         createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
         createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
@@ -1954,12 +1954,11 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
-      const closeLeftItem = screen.getByText('Close Tabs to the Left').closest('button');
-      expect(closeLeftItem).toHaveClass('opacity-40');
-      expect(closeLeftItem).toHaveClass('cursor-default');
+      // Close Tabs to the Left is hidden (not rendered) when hovering first tab
+      expect(screen.queryByText('Close Tabs to the Left')).not.toBeInTheDocument();
     });
 
-    it('disables "Close Tabs to the Right" when hovering last tab', () => {
+    it('hides "Close Tabs to the Right" when hovering last tab', () => {
       const tabs = [
         createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
         createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
@@ -1983,9 +1982,8 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
-      const closeRightItem = screen.getByText('Close Tabs to the Right').closest('button');
-      expect(closeRightItem).toHaveClass('opacity-40');
-      expect(closeRightItem).toHaveClass('cursor-default');
+      // Close Tabs to the Right is hidden (not rendered) when hovering last tab
+      expect(screen.queryByText('Close Tabs to the Right')).not.toBeInTheDocument();
     });
 
     it('closes tab when "Close" is clicked', () => {
@@ -2173,9 +2171,10 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
-      const closeLeft1 = screen.getByText('Close Tabs to the Left').closest('button');
-      expect(closeLeft1).toHaveClass('opacity-40');
-      expect(closeLeft1).toHaveClass('cursor-default');
+      // Close Tabs to the Left is hidden on first tab
+      expect(screen.queryByText('Close Tabs to the Left')).not.toBeInTheDocument();
+      // Close Tabs to the Right is shown on first tab (since there are tabs to the right)
+      expect(screen.getByText('Close Tabs to the Right')).toBeInTheDocument();
 
       // Close menu by hovering away
       fireEvent.mouseLeave(tab1);
@@ -2188,9 +2187,10 @@ describe('TabBar', () => {
         vi.advanceTimersByTime(450);
       });
 
-      const closeRight3 = screen.getByText('Close Tabs to the Right').closest('button');
-      expect(closeRight3).toHaveClass('opacity-40');
-      expect(closeRight3).toHaveClass('cursor-default');
+      // Close Tabs to the Right is hidden on last tab
+      expect(screen.queryByText('Close Tabs to the Right')).not.toBeInTheDocument();
+      // Close Tabs to the Left is shown on last tab (since there are tabs to the left)
+      expect(screen.getByText('Close Tabs to the Left')).toBeInTheDocument();
     });
 
     it('overlay menu works with many tabs', () => {

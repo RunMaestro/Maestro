@@ -1,8 +1,38 @@
 ---
 title: Configuration
-description: Storage locations, cross-device sync, and Maestro configuration options.
+description: Settings overview, updates, storage locations, and cross-device sync.
 icon: settings
 ---
+
+## Settings Overview
+
+Open Settings with `Cmd+,` / `Ctrl+,` or via **Quick Actions** (`Cmd+K` / `Ctrl+K`) → "Open Settings".
+
+Settings are organized into tabs:
+
+| Tab | Contents |
+|-----|----------|
+| **General** | Theme, input behavior, toggles defaults, context warnings, log level, storage location |
+| **Shortcuts** | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts)) |
+| **Appearance** | Font size, UI density |
+| **Notifications** | Sound alerts, text-to-speech settings |
+| **AI Commands** | View and edit slash commands and Spec-Kit prompts |
+
+## Checking for Updates
+
+Maestro checks for updates automatically on startup (configurable in Settings → General → **Check for updates on startup**).
+
+**To manually check for updates:**
+- **Quick Actions:** `Cmd+K` / `Ctrl+K` → "Check for Updates"
+- **Menu:** Click the hamburger menu (☰) → "Check for Updates"
+
+When an update is available, you'll see:
+- Current version and new version number
+- Release notes summary
+- **Download** button to get the latest release from GitHub
+- Option to enable/disable automatic update checks
+
+## Storage Location
 
 Settings are stored in:
 
