@@ -10032,6 +10032,18 @@ You are taking over this conversation. Based on the context above, provide a bri
             setIsGraphViewOpen(true);
           }
         }}
+        // Inline wizard completion callback - clears wizard state and refreshes Auto Run panel
+        onWizardComplete={() => {
+          if (!activeSession) return;
+          // Clear the wizard state from the session
+          setSessions(prev => prev.map(s =>
+            s.id === activeSession.id
+              ? { ...s, wizardState: undefined }
+              : s
+          ));
+          // Refresh the Auto Run panel to show newly generated documents
+          handleAutoRunRefresh();
+        }}
       />
       )}
 
