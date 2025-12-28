@@ -24,13 +24,13 @@ import {
   ChevronRight,
   X,
   Loader2,
-  FileText,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GeneratedDocument } from '../Wizard/WizardContext';
 import { MermaidRenderer } from '../MermaidRenderer';
 import { useClickOutside } from '../../hooks';
 import { AustinFactsDisplay } from './AustinFactsDisplay';
+import { StreamingDocumentPreview } from './StreamingDocumentPreview';
 
 // Memoize remarkPlugins array - it never changes
 const REMARK_PLUGINS = [remarkGfm];
@@ -321,74 +321,6 @@ function MarkdownImage({
   );
 }
 
-
-/**
- * StreamingDocumentPreview - Shows document content as it streams in
- */
-export function StreamingDocumentPreview({
-  theme,
-  content,
-  filename,
-  currentPhase,
-  totalPhases,
-}: {
-  theme: Theme;
-  content: string;
-  filename?: string;
-  currentPhase?: number;
-  totalPhases?: number;
-}): JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  // Auto-scroll to bottom as content streams
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [content]);
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header with filename and progress */}
-      <div
-        className="flex items-center justify-between px-4 py-2 border-b"
-        style={{
-          borderColor: theme.colors.border,
-          backgroundColor: theme.colors.bgActivity,
-        }}
-      >
-        <div className="flex items-center gap-2">
-          <FileText className="w-4 h-4" style={{ color: theme.colors.accent }} />
-          <span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-            {filename || 'Generating...'}
-          </span>
-        </div>
-        {currentPhase !== undefined && totalPhases !== undefined && totalPhases > 1 && (
-          <span className="text-xs" style={{ color: theme.colors.textDim }}>
-            Generating Phase {currentPhase} of {totalPhases}...
-          </span>
-        )}
-      </div>
-
-      {/* Streaming content */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-y-auto p-4 font-mono text-sm"
-        style={{
-          backgroundColor: theme.colors.bgMain,
-          color: theme.colors.textMain,
-        }}
-      >
-        <pre className="whitespace-pre-wrap break-words">
-          {content}
-          <span className="animate-pulse" style={{ color: theme.colors.accent }}>
-            ▊
-          </span>
-        </pre>
-      </div>
-    </div>
-  );
-}
 
 /**
  * GenerationCompleteOverlay - Shown when document generation finishes
@@ -1168,5 +1100,6 @@ export function DocumentGenerationView({
 // Export individual components for reuse
 export { DocumentSelector, DocumentEditor };
 
-// Re-export AustinFactsDisplay from standalone file
+// Re-export standalone components from their files
 export { AustinFactsDisplay } from './AustinFactsDisplay';
+export { StreamingDocumentPreview } from './StreamingDocumentPreview';
