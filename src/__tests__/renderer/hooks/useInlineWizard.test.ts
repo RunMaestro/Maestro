@@ -477,6 +477,91 @@ describe('useInlineWizard', () => {
     });
   });
 
+  describe('clearError', () => {
+    it('should clear the current error', async () => {
+      const { result } = renderHook(() => useInlineWizard());
+
+      // Set an error manually
+      act(() => {
+        result.current.setError('Something went wrong');
+      });
+
+      expect(result.current.error).toBe('Something went wrong');
+
+      // Clear the error
+      act(() => {
+        result.current.clearError();
+      });
+
+      expect(result.current.error).toBe(null);
+    });
+
+    it('should not affect other state when clearing error', async () => {
+      const { result } = renderHook(() => useInlineWizard());
+
+      // Start wizard and set some state
+      await act(async () => {
+        await result.current.startWizard('test', undefined, '/test/project');
+      });
+
+      act(() => {
+        result.current.setConfidence(50);
+        result.current.setError('Test error');
+      });
+
+      expect(result.current.isWizardActive).toBe(true);
+      expect(result.current.confidence).toBe(50);
+      expect(result.current.error).toBe('Test error');
+
+      // Clear error
+      act(() => {
+        result.current.clearError();
+      });
+
+      // Other state should be preserved
+      expect(result.current.isWizardActive).toBe(true);
+      expect(result.current.confidence).toBe(50);
+      expect(result.current.error).toBe(null);
+    });
+  });
+
+  describe('retryLastMessage', () => {
+    it('should not retry when there is no error', async () => {
+      const { result } = renderHook(() => useInlineWizard());
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await act(async () => {
+        await result.current.retryLastMessage();
+      });
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[useInlineWizard] Cannot retry: no last message or no error'
+      );
+
+      consoleSpy.mockRestore();
+    });
+
+    it('should not retry when there is no last message', async () => {
+      const { result } = renderHook(() => useInlineWizard());
+      const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Set an error but don't send a message
+      act(() => {
+        result.current.setError('Some error');
+      });
+
+      await act(async () => {
+        await result.current.retryLastMessage();
+      });
+
+      expect(consoleSpy).toHaveBeenCalledWith(
+        '[useInlineWizard] Cannot retry: no last message or no error'
+      );
+
+      consoleSpy.mockRestore();
+    });
+  });
+
   describe('generateDocuments', () => {
     it('should return error when agent type is missing', async () => {
       const { result } = renderHook(() => useInlineWizard());

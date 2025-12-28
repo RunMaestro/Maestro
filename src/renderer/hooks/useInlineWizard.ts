@@ -115,6 +115,8 @@ export interface InlineWizardState {
   previousUIState: PreviousUIState | null;
   /** Error message if something goes wrong */
   error: string | null;
+  /** Last user message content (for retry functionality) */
+  lastUserMessageContent: string | null;
   /** Project path used for document detection */
   projectPath: string | null;
   /** Agent type for the session */
@@ -203,6 +205,14 @@ export interface UseInlineWizardReturn {
   setExistingDocuments: (docs: ExistingDocument[]) => void;
   /** Set error message */
   setError: (error: string | null) => void;
+  /** Clear the current error */
+  clearError: () => void;
+  /**
+   * Retry sending the last user message that failed.
+   * Only works if there was a previous user message and an error occurred.
+   * @param callbacks - Optional callbacks for streaming progress
+   */
+  retryLastMessage: (callbacks?: ConversationCallbacks) => Promise<void>;
   /** Add an assistant response to the conversation */
   addAssistantMessage: (content: string, confidence?: number, ready?: boolean) => void;
   /** Clear conversation history */
@@ -242,6 +252,7 @@ const initialState: InlineWizardState = {
   existingDocuments: [],
   previousUIState: null,
   error: null,
+  lastUserMessageContent: null,
   projectPath: null,
   agentType: null,
   sessionName: null,
@@ -490,10 +501,11 @@ export function useInlineWizard(): UseInlineWizardReturn {
         timestamp: Date.now(),
       };
 
-      // Add user message to history and set waiting state
+      // Add user message to history, track it for retry, and set waiting state
       setState((prev) => ({
         ...prev,
         conversationHistory: [...prev.conversationHistory, userMessage],
+        lastUserMessageContent: content,
         isWaiting: true,
         error: null,
       }));
@@ -671,6 +683,53 @@ export function useInlineWizard(): UseInlineWizardReturn {
       error,
     }));
   }, []);
+
+  /**
+   * Clear the current error.
+   */
+  const clearError = useCallback(() => {
+    setState((prev) => ({
+      ...prev,
+      error: null,
+    }));
+  }, []);
+
+  /**
+   * Retry sending the last user message that failed.
+   * Removes the failed user message from history and re-sends it.
+   */
+  const retryLastMessage = useCallback(
+    async (callbacks?: ConversationCallbacks): Promise<void> => {
+      const lastContent = state.lastUserMessageContent;
+
+      // Only retry if we have a last message and there's an error
+      if (!lastContent || !state.error) {
+        console.warn('[useInlineWizard] Cannot retry: no last message or no error');
+        return;
+      }
+
+      // Remove the last user message from history (it failed, so we'll re-add it)
+      // Find the last user message in history
+      const historyWithoutLastUser = [...state.conversationHistory];
+      for (let i = historyWithoutLastUser.length - 1; i >= 0; i--) {
+        if (historyWithoutLastUser[i].role === 'user') {
+          historyWithoutLastUser.splice(i, 1);
+          break;
+        }
+      }
+
+      // Clear error and update history
+      setState((prev) => ({
+        ...prev,
+        conversationHistory: historyWithoutLastUser,
+        error: null,
+      }));
+
+      // Re-send the message
+      await sendMessage(lastContent, callbacks);
+    },
+    [state.lastUserMessageContent, state.error, state.conversationHistory, sendMessage]
+  );
 
   /**
    * Clear conversation history.
@@ -891,6 +950,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
     setGeneratedDocuments,
     setExistingDocuments,
     setError,
+    clearError,
+    retryLastMessage,
     addAssistantMessage,
     clearConversation,
     reset,

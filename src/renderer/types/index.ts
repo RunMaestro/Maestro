@@ -111,6 +111,10 @@ export interface SessionWizardState {
   /** Previous UI state to restore when wizard ends */
   previousUIState: WizardPreviousUIState;
 
+  // Error handling state
+  /** Error message if an error occurred during wizard conversation */
+  error?: string | null;
+
   // Document generation state
   /** Whether documents are currently being generated (triggers takeover view) */
   isGeneratingDocs?: boolean;

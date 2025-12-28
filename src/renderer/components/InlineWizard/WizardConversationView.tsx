@@ -45,6 +45,12 @@ export interface WizardConversationViewProps {
   ready?: boolean;
   /** Callback when user clicks the "Let's Go" button to start document generation */
   onLetsGo?: () => void;
+  /** Error message to display (if any) */
+  error?: string | null;
+  /** Callback when user clicks the retry button */
+  onRetry?: () => void;
+  /** Callback to clear the error */
+  onClearError?: () => void;
 }
 
 /**
@@ -208,6 +214,174 @@ function StreamingResponse({
 }
 
 /**
+ * Get a user-friendly error message from a raw error string.
+ * Maps technical errors to helpful messages.
+ */
+function getUserFriendlyErrorMessage(error: string): { title: string; description: string } {
+  const lowerError = error.toLowerCase();
+
+  // Network/timeout errors
+  if (lowerError.includes('timeout') || lowerError.includes('timed out')) {
+    return {
+      title: 'Response Timeout',
+      description: 'The AI agent took too long to respond. This can happen with complex requests or network issues.',
+    };
+  }
+
+  // Agent not available errors
+  if (lowerError.includes('not available') || lowerError.includes('not found')) {
+    return {
+      title: 'Agent Not Available',
+      description: 'The AI agent could not be started. Please check that it is properly installed and configured.',
+    };
+  }
+
+  // Session errors
+  if (lowerError.includes('session') && (lowerError.includes('not active') || lowerError.includes('no active'))) {
+    return {
+      title: 'Session Error',
+      description: 'The wizard session is no longer active. Please restart the wizard.',
+    };
+  }
+
+  // Failed to spawn errors
+  if (lowerError.includes('failed to spawn')) {
+    return {
+      title: 'Failed to Start Agent',
+      description: 'Could not start the AI agent. Please check your configuration and try again.',
+    };
+  }
+
+  // Exit code errors
+  if (lowerError.includes('exited with code')) {
+    return {
+      title: 'Agent Error',
+      description: 'The AI agent encountered an error and stopped unexpectedly.',
+    };
+  }
+
+  // Parse errors
+  if (lowerError.includes('parse') || lowerError.includes('failed to parse')) {
+    return {
+      title: 'Response Error',
+      description: 'Could not understand the response from the AI. Please try rephrasing your message.',
+    };
+  }
+
+  // Default generic error
+  return {
+    title: 'Something Went Wrong',
+    description: error || 'An unexpected error occurred. Please try again.',
+  };
+}
+
+/**
+ * ErrorDisplay - Shows error messages with a retry button
+ */
+function ErrorDisplay({
+  theme,
+  error,
+  onRetry,
+  onDismiss,
+}: {
+  theme: Theme;
+  error: string;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+}): JSX.Element {
+  const { title, description } = getUserFriendlyErrorMessage(error);
+
+  return (
+    <div className="flex justify-center mb-4" data-testid="wizard-error-display">
+      <div
+        className="max-w-md w-full rounded-lg px-4 py-4"
+        style={{
+          backgroundColor: `${theme.colors.error}15`,
+          border: `1px solid ${theme.colors.error}40`,
+        }}
+      >
+        {/* Error header with icon */}
+        <div className="flex items-start gap-3">
+          <div
+            className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ backgroundColor: `${theme.colors.error}20` }}
+          >
+            <span style={{ color: theme.colors.error, fontSize: '16px' }}>⚠️</span>
+          </div>
+          <div className="flex-1 min-w-0">
+            <h4
+              className="text-sm font-semibold mb-1"
+              style={{ color: theme.colors.error }}
+              data-testid="error-title"
+            >
+              {title}
+            </h4>
+            <p
+              className="text-xs mb-3"
+              style={{ color: theme.colors.textMain, opacity: 0.9 }}
+              data-testid="error-description"
+            >
+              {description}
+            </p>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2">
+              {onRetry && (
+                <button
+                  onClick={onRetry}
+                  className="px-3 py-1.5 rounded text-xs font-medium transition-all hover:scale-105"
+                  style={{
+                    backgroundColor: theme.colors.error,
+                    color: 'white',
+                  }}
+                  data-testid="error-retry-button"
+                >
+                  Try Again
+                </button>
+              )}
+              {onDismiss && (
+                <button
+                  onClick={onDismiss}
+                  className="px-3 py-1.5 rounded text-xs font-medium transition-colors hover:opacity-80"
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: theme.colors.textDim,
+                    border: `1px solid ${theme.colors.border}`,
+                  }}
+                  data-testid="error-dismiss-button"
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Technical details (collapsed by default, can be expanded for debugging) */}
+        <details className="mt-3">
+          <summary
+            className="text-[10px] cursor-pointer select-none"
+            style={{ color: theme.colors.textDim }}
+          >
+            Technical details
+          </summary>
+          <pre
+            className="mt-2 text-[10px] p-2 rounded overflow-x-auto whitespace-pre-wrap"
+            style={{
+              backgroundColor: theme.colors.bgActivity,
+              color: theme.colors.textDim,
+            }}
+            data-testid="error-technical-details"
+          >
+            {error}
+          </pre>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+/**
  * WizardConversationView - Scrollable conversation area for the inline wizard
  */
 export function WizardConversationView({
@@ -221,6 +395,9 @@ export function WizardConversationView({
   confidence = 0,
   ready = false,
   onLetsGo,
+  error = null,
+  onRetry,
+  onClearError,
 }: WizardConversationViewProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -233,7 +410,7 @@ export function WizardConversationView({
 
   useEffect(() => {
     scrollToBottom();
-  }, [conversationHistory, isLoading, streamingText, scrollToBottom]);
+  }, [conversationHistory, isLoading, streamingText, error, scrollToBottom]);
 
   // Get a new filler phrase when requested by the TypingIndicator
   const handleRequestNewPhrase = useCallback(() => {
@@ -282,6 +459,7 @@ export function WizardConversationView({
 
       {/* Streaming Response or Typing Indicator */}
       {isLoading &&
+        !error &&
         (streamingText ? (
           <StreamingResponse
             theme={theme}
@@ -296,6 +474,16 @@ export function WizardConversationView({
             onRequestNewPhrase={handleRequestNewPhrase}
           />
         ))}
+
+      {/* Error Display - shown when there's an error */}
+      {error && !isLoading && (
+        <ErrorDisplay
+          theme={theme}
+          error={error}
+          onRetry={onRetry}
+          onDismiss={onClearError}
+        />
+      )}
 
       {/* "Let's Go" Action Button - shown when ready and confidence threshold met */}
       {ready && confidence >= READY_CONFIDENCE_THRESHOLD && !isLoading && onLetsGo && (

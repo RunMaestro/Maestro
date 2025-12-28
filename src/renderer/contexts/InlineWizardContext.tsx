@@ -104,9 +104,14 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
     wizardState.setGeneratedDocuments,
     wizardState.setExistingDocuments,
     wizardState.setError,
+    wizardState.clearError,
+    wizardState.retryLastMessage,
     wizardState.addAssistantMessage,
     wizardState.clearConversation,
     wizardState.reset,
+    wizardState.generateDocuments,
+    wizardState.streamingContent,
+    wizardState.generationProgress,
   ]);
 
   return (
