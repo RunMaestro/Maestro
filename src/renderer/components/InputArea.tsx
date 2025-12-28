@@ -9,6 +9,7 @@ import { MergeProgressOverlay } from './MergeProgressOverlay';
 import { ExecutionQueueIndicator } from './ExecutionQueueIndicator';
 import { ContextWarningSash } from './ContextWarningSash';
 import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
+import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
 
@@ -113,6 +114,8 @@ interface InputAreaProps {
   mergeSourceName?: string;
   mergeTargetName?: string;
   onCancelMerge?: () => void;
+  // Inline wizard mode props
+  onExitWizard?: () => void;
 }
 
 export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
@@ -162,7 +165,9 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
     isMerging = false,
     mergeSourceName,
     mergeTargetName,
-    onCancelMerge
+    onCancelMerge,
+    // Inline wizard mode props
+    onExitWizard
   } = props;
 
   // Get agent capabilities for conditional feature rendering
@@ -294,6 +299,36 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
         targetName={mergeTargetName}
         onCancel={onCancelMerge}
         startTime={mergeStartTime}
+      />
+    );
+  }
+
+  // Show WizardInputPanel when wizard is active
+  if (session.wizardState?.isActive && onExitWizard) {
+    return (
+      <WizardInputPanel
+        session={session}
+        theme={theme}
+        inputValue={inputValue}
+        setInputValue={setInputValue}
+        inputRef={inputRef}
+        handleInputKeyDown={handleInputKeyDown}
+        handlePaste={handlePaste}
+        processInput={processInput}
+        stagedImages={stagedImages}
+        setStagedImages={setStagedImages}
+        onOpenPromptComposer={onOpenPromptComposer}
+        toggleInputMode={toggleInputMode}
+        confidence={session.wizardState.confidence}
+        canAttachImages={canAttachImages}
+        isBusy={session.state === 'busy'}
+        onExitWizard={onExitWizard}
+        enterToSend={enterToSend}
+        setEnterToSend={setEnterToSend}
+        onInputFocus={onInputFocus}
+        onInputBlur={onInputBlur}
+        showFlashNotification={showFlashNotification}
+        setLightboxImage={setLightboxImage}
       />
     );
   }

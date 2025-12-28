@@ -124,6 +124,7 @@ describe('autorun IPC handlers', () => {
     it('should register all autorun handlers', () => {
       const expectedChannels = [
         'autorun:listDocs',
+        'autorun:hasDocuments',
         'autorun:readDoc',
         'autorun:writeDoc',
         'autorun:saveImage',
@@ -292,6 +293,159 @@ describe('autorun IPC handlers', () => {
 
       expect(result.success).toBe(true);
       expect(result.files).toEqual(['visible']);
+    });
+  });
+
+  describe('autorun:hasDocuments', () => {
+    it('should return true when folder contains .md files', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      vi.mocked(fs.readdir).mockResolvedValue([
+        { name: 'doc1.md', isDirectory: () => false, isFile: () => true },
+      ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(true);
+    });
+
+    it('should return false when folder is empty', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      vi.mocked(fs.readdir).mockResolvedValue([]);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(false);
+    });
+
+    it('should return false when folder contains no .md files', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      vi.mocked(fs.readdir).mockResolvedValue([
+        { name: 'image.png', isDirectory: () => false, isFile: () => true },
+        { name: 'readme.txt', isDirectory: () => false, isFile: () => true },
+      ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(false);
+    });
+
+    it('should return false when folder does not exist', async () => {
+      vi.mocked(fs.stat).mockRejectedValue(new Error('ENOENT'));
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/nonexistent');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(false);
+    });
+
+    it('should return false when path is not a directory', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => false,
+        isFile: () => true,
+      } as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/file.txt');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(false);
+    });
+
+    it('should find .md files in subdirectories', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      // First call for root (no .md), second for subfolder (has .md)
+      vi.mocked(fs.readdir)
+        .mockResolvedValueOnce([
+          { name: 'subfolder', isDirectory: () => true, isFile: () => false },
+        ] as any)
+        .mockResolvedValueOnce([
+          { name: 'nested.md', isDirectory: () => false, isFile: () => true },
+        ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(true);
+    });
+
+    it('should skip dotfiles and dot directories', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      vi.mocked(fs.readdir).mockResolvedValue([
+        { name: '.hidden.md', isDirectory: () => false, isFile: () => true },
+        { name: '.git', isDirectory: () => true, isFile: () => false },
+      ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(false);
+    });
+
+    it('should handle case-insensitive .md extension', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      vi.mocked(fs.readdir).mockResolvedValue([
+        { name: 'doc1.MD', isDirectory: () => false, isFile: () => true },
+      ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(true);
+    });
+
+    it('should return early once first .md file is found', async () => {
+      vi.mocked(fs.stat).mockResolvedValue({
+        isDirectory: () => true,
+        isFile: () => false,
+      } as any);
+
+      // Root has a .md file, so we shouldn't recurse into subfolder
+      vi.mocked(fs.readdir).mockResolvedValue([
+        { name: 'first.md', isDirectory: () => false, isFile: () => true },
+        { name: 'subfolder', isDirectory: () => true, isFile: () => false },
+      ] as any);
+
+      const handler = handlers.get('autorun:hasDocuments');
+      const result = await handler!({} as any, '/test/folder');
+
+      expect(result.success).toBe(true);
+      expect(result.hasDocuments).toBe(true);
+      // readdir should only be called once (for root)
+      expect(fs.readdir).toHaveBeenCalledTimes(1);
     });
   });
 

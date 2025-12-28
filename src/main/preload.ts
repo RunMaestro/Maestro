@@ -1205,6 +1205,8 @@ contextBridge.exposeInMainWorld('maestro', {
   autorun: {
     listDocs: (folderPath: string, sshRemoteId?: string) =>
       ipcRenderer.invoke('autorun:listDocs', folderPath, sshRemoteId),
+    hasDocuments: (folderPath: string): Promise<{ hasDocuments: boolean }> =>
+      ipcRenderer.invoke('autorun:hasDocuments', folderPath),
     readDoc: (folderPath: string, filename: string, sshRemoteId?: string) =>
       ipcRenderer.invoke('autorun:readDoc', folderPath, filename, sshRemoteId),
     writeDoc: (folderPath: string, filename: string, content: string, sshRemoteId?: string) =>
@@ -2505,6 +2507,9 @@ export interface MaestroAPI {
     listDocs: (
       folderPath: string
     ) => Promise<{ success: boolean; files: string[]; error?: string }>;
+    hasDocuments: (
+      folderPath: string
+    ) => Promise<{ hasDocuments: boolean }>;
     readDoc: (
       folderPath: string,
       filename: string

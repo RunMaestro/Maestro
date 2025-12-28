@@ -71,6 +71,15 @@ vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
   )),
 }));
 
+vi.mock('../../../renderer/components/InlineWizard', () => ({
+  WizardInputPanel: vi.fn(({ theme, confidence, onExitWizard }) => (
+    <div data-testid="wizard-input-panel">
+      <span data-testid="wizard-confidence">{confidence}</span>
+      <button data-testid="wizard-exit" onClick={onExitWizard}>Exit Wizard</button>
+    </div>
+  )),
+}));
+
 // Default theme for tests
 const mockTheme: Theme = {
   id: 'dracula',
@@ -1811,6 +1820,239 @@ describe('InputArea', () => {
       expect(InputArea).toBeDefined();
       // React.memo wraps the component and has a $$typeof property
       expect((InputArea as any).$$typeof).toBe(Symbol.for('react.memo'));
+    });
+  });
+
+  describe('Wizard Mode', () => {
+    it('renders WizardInputPanel when wizard is active and onExitWizard is provided', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 75,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('wizard-confidence')).toHaveTextContent('75');
+    });
+
+    it('does NOT render WizardInputPanel when wizard is not active', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: false,
+            mode: null,
+            confidence: 0,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      expect(screen.queryByTestId('wizard-input-panel')).not.toBeInTheDocument();
+      // Should show normal input area
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+    });
+
+    it('does NOT render WizardInputPanel when onExitWizard is not provided', () => {
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 75,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        // No onExitWizard provided
+      });
+      render(<InputArea {...props} />);
+
+      expect(screen.queryByTestId('wizard-input-panel')).not.toBeInTheDocument();
+      // Should show normal input area
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+    });
+
+    it('does NOT render WizardInputPanel when wizardState is undefined', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          // No wizardState
+        }),
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      expect(screen.queryByTestId('wizard-input-panel')).not.toBeInTheDocument();
+      expect(screen.getByRole('textbox')).toBeInTheDocument();
+    });
+
+    it('calls onExitWizard when exit button is clicked', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 50,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      fireEvent.click(screen.getByTestId('wizard-exit'));
+
+      expect(onExitWizard).toHaveBeenCalled();
+    });
+
+    it('renders WizardInputPanel with iterate mode', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'iterate',
+            goal: 'Add a new feature',
+            confidence: 85,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: true,
+              saveToHistory: true,
+              showThinking: true,
+            },
+          },
+        }),
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('wizard-confidence')).toHaveTextContent('85');
+    });
+
+    it('hides normal input area components when wizard is active', () => {
+      const onExitWizard = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 60,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        sessions: [createMockSession()],
+        onExitWizard,
+        onToggleTabReadOnlyMode: vi.fn(),
+        onToggleTabSaveToHistory: vi.fn(),
+      });
+      render(<InputArea {...props} />);
+
+      // WizardInputPanel should be rendered
+      expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
+      // Normal components should NOT be rendered
+      expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Toggle Mode (Cmd+J)')).not.toBeInTheDocument();
+      expect(screen.queryByTitle('Send message')).not.toBeInTheDocument();
+    });
+
+    it('prioritizes summarization overlay over wizard mode', () => {
+      const onExitWizard = vi.fn();
+      const onCancelSummarize = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 75,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        isSummarizing: true,
+        onCancelSummarize,
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      // Summarization overlay takes precedence
+      expect(screen.queryByTestId('wizard-input-panel')).not.toBeInTheDocument();
+    });
+
+    it('prioritizes merge overlay over wizard mode', () => {
+      const onExitWizard = vi.fn();
+      const onCancelMerge = vi.fn();
+      const props = createDefaultProps({
+        session: createMockSession({
+          inputMode: 'ai',
+          wizardState: {
+            isActive: true,
+            mode: 'new',
+            confidence: 75,
+            conversationHistory: [],
+            previousUIState: {
+              readOnlyMode: false,
+              saveToHistory: false,
+              showThinking: false,
+            },
+          },
+        }),
+        isMerging: true,
+        onCancelMerge,
+        onExitWizard,
+      });
+      render(<InputArea {...props} />);
+
+      // Merge overlay takes precedence
+      expect(screen.queryByTestId('wizard-input-panel')).not.toBeInTheDocument();
     });
   });
 });

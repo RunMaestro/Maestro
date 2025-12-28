@@ -201,6 +201,36 @@ function validatePathWithinFolder(filePath: string, folderPath: string): boolean
 }
 
 /**
+ * Recursively check if a directory contains any markdown files.
+ * Optimized to return early as soon as one .md file is found.
+ */
+async function checkForMarkdownFiles(dirPath: string): Promise<boolean> {
+  const entries = await fs.readdir(dirPath, { withFileTypes: true });
+
+  for (const entry of entries) {
+    // Skip hidden files/folders
+    if (entry.name.startsWith('.')) {
+      continue;
+    }
+
+    if (entry.isFile() && entry.name.toLowerCase().endsWith('.md')) {
+      // Found a markdown file - return immediately
+      return true;
+    }
+
+    if (entry.isDirectory()) {
+      // Recursively check subdirectory
+      const hasFiles = await checkForMarkdownFiles(path.join(dirPath, entry.name));
+      if (hasFiles) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
+/**
  * Register all Auto Run-related IPC handlers.
  *
  * These handlers provide Auto Run document operations:
@@ -250,6 +280,27 @@ export function registerAutorunHandlers(deps: {
 
       logger.info(`Listed ${files.length} markdown files in ${folderPath} (with subfolders)`, LOG_CONTEXT);
       return { files, tree };
+    })
+  );
+
+  // Quick check if Auto Run Docs folder exists and contains any .md files
+  ipcMain.handle(
+    'autorun:hasDocuments',
+    createIpcHandler(handlerOpts('hasDocuments', false), async (folderPath: string) => {
+      try {
+        // First check if the folder exists
+        const folderStat = await fs.stat(folderPath);
+        if (!folderStat.isDirectory()) {
+          return { hasDocuments: false };
+        }
+
+        // Check for any .md files (recursively, but stop early once we find one)
+        const hasMarkdownFiles = await checkForMarkdownFiles(folderPath);
+        return { hasDocuments: hasMarkdownFiles };
+      } catch {
+        // Folder doesn't exist or other error - no documents
+        return { hasDocuments: false };
+      }
     })
   );
 
