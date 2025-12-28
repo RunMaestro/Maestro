@@ -113,6 +113,9 @@ describe('InlineWizardContext', () => {
         projectPath: null,
         agentType: null,
         sessionName: null,
+        streamingContent: '',
+        generationProgress: null,
+        lastUserMessageContent: null,
       });
     });
   });
@@ -284,6 +287,9 @@ describe('InlineWizardContext', () => {
         projectPath: null,
         agentType: null,
         sessionName: null,
+        streamingContent: '',
+        generationProgress: null,
+        lastUserMessageContent: null,
       });
     });
   });
