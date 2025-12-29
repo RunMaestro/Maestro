@@ -28,6 +28,20 @@ const renderWithProvider = (ui: React.ReactElement) => {
   };
 };
 
+// Custom text matcher for fragmented text nodes (e.g., "1 of 2 tasks completed" rendered across spans)
+// This normalizes whitespace and checks if the element's textContent matches the regex
+// We only match on span elements that directly contain the task count (has child spans for numbers)
+const getByNormalizedText = (text: RegExp) => {
+  return (_content: string, element: Element | null): boolean => {
+    if (!element || element.tagName !== 'SPAN') return false;
+    // Only match if this element directly contains the task count text (not nested)
+    const normalizedText = element.textContent?.replace(/\s+/g, ' ').trim() || '';
+    // Check if this is the direct container (has child spans for numbers)
+    const hasChildSpans = element.querySelector('span') !== null;
+    return hasChildSpans && text.test(normalizedText);
+  };
+};
+
 
 // Mock the external dependencies
 vi.mock('react-markdown', () => ({
@@ -2931,7 +2945,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/0 of 3 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/0 of 3 tasks completed/))).toBeInTheDocument();
   });
 
   it('displays task count with completed tasks', () => {
@@ -2939,7 +2953,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/2 of 3 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/2 of 3 tasks completed/))).toBeInTheDocument();
   });
 
   it('displays singular task text for single task', () => {
@@ -2947,7 +2961,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/0 of 1 task completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/0 of 1 task completed/))).toBeInTheDocument();
   });
 
   it('shows success color when all tasks completed', () => {
@@ -2955,8 +2969,10 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    const taskCountEl = screen.getByText(/2 of 2 tasks completed/);
-    expect(taskCountEl).toHaveStyle({ color: createMockTheme().colors.success });
+    const taskCountContainer = screen.getByText(getByNormalizedText(/2 of 2 tasks completed/));
+    // The success color is on the first child span (completed count), not the parent container
+    const completedCountSpan = taskCountContainer.querySelector('span');
+    expect(completedCountSpan).toHaveStyle({ color: createMockTheme().colors.success });
   });
 
   it('does not show task count when no tasks in content', () => {
@@ -2964,7 +2980,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.queryByText(/tasks completed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(getByNormalizedText(/tasks completed/))).not.toBeInTheDocument();
   });
 
   it('handles nested task lists', () => {
@@ -2972,7 +2988,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/2 of 4 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/2 of 4 tasks completed/))).toBeInTheDocument();
   });
 
   it('handles mixed markdown with tasks', () => {
@@ -2980,20 +2996,20 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/1 of 2 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();
   });
 
   it('updates task count as content changes', async () => {
     const props = createDefaultProps({ content: '- [ ] Task 1\n- [ ] Task 2' });
     const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/0 of 2 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/0 of 2 tasks completed/))).toBeInTheDocument();
 
     const textarea = screen.getByRole('textbox');
     fireEvent.change(textarea, { target: { value: '- [x] Task 1\n- [ ] Task 2' } });
 
     await waitFor(() => {
-      expect(screen.getByText(/1 of 2 tasks completed/)).toBeInTheDocument();
+      expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();
     });
   });
 
@@ -3002,7 +3018,7 @@ describe('Task Count Display', () => {
     const props = createDefaultProps({ content });
     renderWithProvider(<AutoRun {...props} />);
 
-    expect(screen.getByText(/1 of 2 tasks completed/)).toBeInTheDocument();
+    expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();
   });
 });
 

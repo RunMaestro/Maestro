@@ -179,6 +179,11 @@ const mockMaestro = {
       createdAt: '2024-01-01T00:00:00.000Z',
       modifiedAt: '2024-01-15T12:30:00.000Z',
     }),
+    directorySize: vi.fn().mockResolvedValue({
+      totalSize: 1024000,
+      fileCount: 50,
+      folderCount: 10,
+    }),
     homeDir: vi.fn().mockResolvedValue('/home/testuser'),
   },
   agents: {
