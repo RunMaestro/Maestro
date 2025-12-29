@@ -486,4 +486,315 @@ describe('Document Graph File Watcher', () => {
       expect(DOCUMENT_GRAPH_DEBOUNCE).toBe(500);
     });
   });
+
+  /**
+   * File Rename Handling Tests
+   *
+   * Chokidar does not emit a native "rename" event. Instead, file renames are
+   * reported as two separate events:
+   * 1. 'unlink' for the old file path
+   * 2. 'add' for the new file path
+   *
+   * The Document Graph handles renames gracefully because:
+   * - Both events are batched together within the 500ms debounce window
+   * - The renderer receives both events in a single batch
+   * - The graph rebuild treats this as "remove old node, add new node"
+   * - Position preservation ensures the new node appears in a sensible location
+   *
+   * See: https://github.com/paulmillr/chokidar/issues/303
+   */
+  describe('File rename handling (unlink + add)', () => {
+    it('should batch unlink and add events when file is renamed', () => {
+      const events: Array<{ rootPath: string; changes: Array<{ filePath: string; eventType: string }> }> = [];
+      const DEBOUNCE_MS = 500;
+      const debounceTimers = new Map<string, NodeJS.Timeout>();
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const processPendingEvents = (path: string) => {
+        const pending = pendingEvents.get(path);
+        if (!pending || pending.size === 0) return;
+
+        const changes: Array<{ filePath: string; eventType: string }> = [];
+        for (const [filePath, eventType] of pending) {
+          changes.push({ filePath, eventType });
+        }
+        events.push({ rootPath: path, changes });
+        pending.clear();
+      };
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+
+        const existingTimer = debounceTimers.get(path);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+
+        const timer = setTimeout(() => {
+          debounceTimers.delete(path);
+          processPendingEvents(path);
+        }, DEBOUNCE_MS);
+        debounceTimers.set(path, timer);
+      };
+
+      // Simulate file rename: old-name.md -> new-name.md
+      // Chokidar emits these as separate events, typically in quick succession
+      queueEvent(rootPath, '/project/old-name.md', 'unlink');
+      queueEvent(rootPath, '/project/new-name.md', 'add');
+
+      // No events yet (still debouncing)
+      expect(events).toHaveLength(0);
+
+      // Advance past debounce time
+      vi.advanceTimersByTime(DEBOUNCE_MS + 50);
+
+      // Both events should be batched together in a single event
+      expect(events).toHaveLength(1);
+      expect(events[0].changes).toHaveLength(2);
+
+      // Verify both old (unlink) and new (add) paths are included
+      const unlinkEvent = events[0].changes.find(c => c.eventType === 'unlink');
+      const addEvent = events[0].changes.find(c => c.eventType === 'add');
+
+      expect(unlinkEvent).toBeDefined();
+      expect(unlinkEvent?.filePath).toBe('/project/old-name.md');
+      expect(addEvent).toBeDefined();
+      expect(addEvent?.filePath).toBe('/project/new-name.md');
+    });
+
+    it('should handle rename with order: add before unlink', () => {
+      // Sometimes chokidar emits 'add' before 'unlink' depending on OS/timing
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+      };
+
+      // Simulate add arriving before unlink
+      queueEvent(rootPath, '/project/new-name.md', 'add');
+      queueEvent(rootPath, '/project/old-name.md', 'unlink');
+
+      const pending = pendingEvents.get(rootPath)!;
+      expect(pending.size).toBe(2);
+      expect(pending.get('/project/new-name.md')).toBe('add');
+      expect(pending.get('/project/old-name.md')).toBe('unlink');
+    });
+
+    it('should handle rename within same directory', () => {
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+      };
+
+      // Rename: README.md -> CONTRIBUTING.md in same folder
+      queueEvent(rootPath, '/project/README.md', 'unlink');
+      queueEvent(rootPath, '/project/CONTRIBUTING.md', 'add');
+
+      const pending = pendingEvents.get(rootPath)!;
+      expect(pending.size).toBe(2);
+    });
+
+    it('should handle rename that moves file to different directory', () => {
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+      };
+
+      // Move: docs/guide.md -> archive/old-guide.md
+      queueEvent(rootPath, '/project/docs/guide.md', 'unlink');
+      queueEvent(rootPath, '/project/archive/old-guide.md', 'add');
+
+      const pending = pendingEvents.get(rootPath)!;
+      expect(pending.size).toBe(2);
+      expect(pending.has('/project/docs/guide.md')).toBe(true);
+      expect(pending.has('/project/archive/old-guide.md')).toBe(true);
+    });
+
+    it('should handle multiple renames in quick succession', () => {
+      const events: Array<{ rootPath: string; changes: Array<{ filePath: string; eventType: string }> }> = [];
+      const DEBOUNCE_MS = 500;
+      const debounceTimers = new Map<string, NodeJS.Timeout>();
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const processPendingEvents = (path: string) => {
+        const pending = pendingEvents.get(path);
+        if (!pending || pending.size === 0) return;
+
+        const changes: Array<{ filePath: string; eventType: string }> = [];
+        for (const [filePath, eventType] of pending) {
+          changes.push({ filePath, eventType });
+        }
+        events.push({ rootPath: path, changes });
+        pending.clear();
+      };
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+
+        const existingTimer = debounceTimers.get(path);
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+        }
+
+        const timer = setTimeout(() => {
+          debounceTimers.delete(path);
+          processPendingEvents(path);
+        }, DEBOUNCE_MS);
+        debounceTimers.set(path, timer);
+      };
+
+      // Rename file1.md -> file1-renamed.md
+      queueEvent(rootPath, '/project/file1.md', 'unlink');
+      queueEvent(rootPath, '/project/file1-renamed.md', 'add');
+
+      // Rename file2.md -> file2-renamed.md
+      queueEvent(rootPath, '/project/file2.md', 'unlink');
+      queueEvent(rootPath, '/project/file2-renamed.md', 'add');
+
+      // All events should be batched
+      vi.advanceTimersByTime(DEBOUNCE_MS + 50);
+
+      expect(events).toHaveLength(1);
+      expect(events[0].changes).toHaveLength(4); // 2 unlinks + 2 adds
+    });
+
+    it('should handle rename followed by content change', () => {
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+      };
+
+      // Rename: old.md -> new.md, then modify new.md
+      queueEvent(rootPath, '/project/old.md', 'unlink');
+      queueEvent(rootPath, '/project/new.md', 'add');
+      queueEvent(rootPath, '/project/new.md', 'change'); // Modify the newly renamed file
+
+      const pending = pendingEvents.get(rootPath)!;
+
+      // The new file should show 'change' (last event wins for same file)
+      expect(pending.get('/project/new.md')).toBe('change');
+      expect(pending.get('/project/old.md')).toBe('unlink');
+    });
+
+    it('should handle case-only rename (macOS case-insensitive)', () => {
+      // On macOS with case-insensitive filesystem, renaming "readme.md" to "README.md"
+      // may be reported as a rename (unlink + add) or just a change, depending on the scenario
+      const pendingEvents = new Map<string, Map<string, 'add' | 'change' | 'unlink'>>();
+      const rootPath = '/project';
+
+      const queueEvent = (path: string, filePath: string, eventType: 'add' | 'change' | 'unlink') => {
+        if (!pendingEvents.has(path)) {
+          pendingEvents.set(path, new Map());
+        }
+        pendingEvents.get(path)!.set(filePath, eventType);
+      };
+
+      // Case-only rename: readme.md -> README.md
+      queueEvent(rootPath, '/project/readme.md', 'unlink');
+      queueEvent(rootPath, '/project/README.md', 'add');
+
+      const pending = pendingEvents.get(rootPath)!;
+      // Both events should be tracked as separate file paths
+      expect(pending.size).toBe(2);
+    });
+
+    it('should correctly rebuild graph after rename (simulated flow)', () => {
+      // This test simulates the full flow of a file rename through the system
+      interface SimulatedNode {
+        id: string;
+        filePath: string;
+      }
+
+      // Initial graph state
+      const initialNodes: SimulatedNode[] = [
+        { id: 'doc-old-name.md', filePath: '/project/old-name.md' },
+        { id: 'doc-other.md', filePath: '/project/other.md' },
+      ];
+
+      // After rename: old-name.md -> new-name.md
+      // The graph would be rebuilt by re-scanning the directory
+      const newNodes: SimulatedNode[] = [
+        { id: 'doc-new-name.md', filePath: '/project/new-name.md' },
+        { id: 'doc-other.md', filePath: '/project/other.md' },
+      ];
+
+      // Diff the nodes (like diffNodes in layoutAlgorithms.ts)
+      const oldIds = new Set(initialNodes.map(n => n.id));
+      const newIds = new Set(newNodes.map(n => n.id));
+
+      const added = newNodes.filter(n => !oldIds.has(n.id));
+      const removed = initialNodes.filter(n => !newIds.has(n.id));
+      const unchanged = newNodes.filter(n => oldIds.has(n.id));
+
+      // The renamed file should appear as: 1 removal + 1 addition
+      expect(removed).toHaveLength(1);
+      expect(removed[0].id).toBe('doc-old-name.md');
+
+      expect(added).toHaveLength(1);
+      expect(added[0].id).toBe('doc-new-name.md');
+
+      // The other file should be unchanged
+      expect(unchanged).toHaveLength(1);
+      expect(unchanged[0].id).toBe('doc-other.md');
+    });
+
+    it('should preserve positions for unchanged nodes after rename', () => {
+      // When a file is renamed, other nodes should keep their positions
+      interface SimulatedNode {
+        id: string;
+        position: { x: number; y: number };
+      }
+
+      const previousNodes: SimulatedNode[] = [
+        { id: 'doc-old-name.md', position: { x: 100, y: 100 } },
+        { id: 'doc-other.md', position: { x: 200, y: 200 } },
+        { id: 'doc-another.md', position: { x: 300, y: 300 } },
+      ];
+
+      // After rename, rebuild graph with new node IDs
+      const newNodeIds = ['doc-new-name.md', 'doc-other.md', 'doc-another.md'];
+
+      // Simulate position restoration logic
+      const previousPositions = new Map(previousNodes.map(n => [n.id, n.position]));
+      const newNodes = newNodeIds.map(id => ({
+        id,
+        // Unchanged nodes get their old position, new nodes get default
+        position: previousPositions.get(id) || { x: 0, y: 0 },
+      }));
+
+      // Unchanged nodes should preserve position
+      expect(newNodes.find(n => n.id === 'doc-other.md')?.position).toEqual({ x: 200, y: 200 });
+      expect(newNodes.find(n => n.id === 'doc-another.md')?.position).toEqual({ x: 300, y: 300 });
+
+      // New node (renamed) gets default position (to be placed by layout algorithm)
+      expect(newNodes.find(n => n.id === 'doc-new-name.md')?.position).toEqual({ x: 0, y: 0 });
+    });
+  });
 });

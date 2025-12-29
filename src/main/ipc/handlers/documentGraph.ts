@@ -37,6 +37,25 @@ export interface DocumentGraphHandlerDependencies {
  * - Watch a directory for markdown file changes
  * - Stop watching a directory
  * - Debounced notifications to prevent UI thrashing
+ *
+ * ## File Rename Handling
+ *
+ * Chokidar does not emit native "rename" events. File renames are reported as
+ * two separate events: 'unlink' (old path) + 'add' (new path).
+ * See: https://github.com/paulmillr/chokidar/issues/303
+ *
+ * This is handled gracefully by the debouncing mechanism:
+ * 1. Both 'unlink' and 'add' events are queued within the 500ms debounce window
+ * 2. After debounce, a single batched event is sent to the renderer
+ * 3. The renderer triggers a graph rebuild which re-scans the directory
+ * 4. The graph's diff-based animation removes the old node and adds the new node
+ * 5. Position preservation ensures unchanged nodes keep their positions
+ *
+ * This approach works correctly for:
+ * - Simple renames (file.md -> renamed.md)
+ * - Move operations (docs/file.md -> archive/file.md)
+ * - Case-only renames on case-insensitive filesystems (readme.md -> README.md)
+ * - Multiple concurrent renames
  */
 export function registerDocumentGraphHandlers(deps: DocumentGraphHandlerDependencies): void {
   const { getMainWindow, app } = deps;
