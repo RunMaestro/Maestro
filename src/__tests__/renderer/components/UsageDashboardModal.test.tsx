@@ -24,6 +24,7 @@ vi.mock('lucide-react', () => {
     Calendar: createIcon('calendar', '📅'),
     Download: createIcon('download', '⬇️'),
     RefreshCw: createIcon('refresh', '🔄'),
+    Database: createIcon('database', '💾'),
     // SummaryCards icons
     MessageSquare: createIcon('message-square', '💬'),
     Clock: createIcon('clock', '🕐'),
@@ -55,6 +56,7 @@ const mockExportCsv = vi.fn();
 const mockOnStatsUpdate = vi.fn(() => vi.fn()); // Returns unsubscribe function
 const mockGetAutoRunSessions = vi.fn(() => Promise.resolve([]));
 const mockGetAutoRunTasks = vi.fn(() => Promise.resolve([]));
+const mockGetDatabaseSize = vi.fn();
 
 // Mock dialog and fs API
 const mockSaveFile = vi.fn();
@@ -67,6 +69,7 @@ const mockMaestro = {
     onStatsUpdate: mockOnStatsUpdate,
     getAutoRunSessions: mockGetAutoRunSessions,
     getAutoRunTasks: mockGetAutoRunTasks,
+    getDatabaseSize: mockGetDatabaseSize,
   },
   dialog: {
     saveFile: mockSaveFile,
@@ -131,6 +134,7 @@ describe('UsageDashboardModal', () => {
     mockExportCsv.mockResolvedValue('date,count\n2024-01-15,25');
     mockSaveFile.mockResolvedValue(null); // User cancels by default
     mockWriteFile.mockResolvedValue({ success: true });
+    mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5); // 5 MB default
   });
 
   afterEach(() => {
@@ -1318,6 +1322,150 @@ describe('UsageDashboardModal', () => {
       // New subscription should work
       await waitFor(() => {
         expect(screen.getAllByText('175').length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe('Database Size Indicator', () => {
+    it('displays database size in footer when modal opens', async () => {
+      mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5); // 5 MB
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('database-size-indicator')).toBeInTheDocument();
+        expect(screen.getByText('5.0 MB')).toBeInTheDocument();
+      });
+    });
+
+    it('fetches database size alongside stats data', async () => {
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(mockGetDatabaseSize).toHaveBeenCalled();
+        expect(mockGetAggregation).toHaveBeenCalled();
+      });
+    });
+
+    it('updates database size when data is refreshed', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 5); // Start with 5 MB
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((cb: () => void) => {
+        updateCallback = cb;
+        return () => {};
+      });
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('5.0 MB')).toBeInTheDocument();
+      });
+
+      // Update size for next fetch
+      mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 10); // 10 MB
+
+      // Trigger real-time update
+      act(() => { updateCallback!(); });
+      await act(async () => { vi.advanceTimersByTime(1100); });
+
+      await waitFor(() => {
+        expect(screen.getByText('10.0 MB')).toBeInTheDocument();
+      });
+
+      vi.useRealTimers();
+    });
+
+    it('formats bytes correctly (< 1 KB)', async () => {
+      mockGetDatabaseSize.mockResolvedValue(500); // 500 bytes
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('500 B')).toBeInTheDocument();
+      });
+    });
+
+    it('formats kilobytes correctly', async () => {
+      mockGetDatabaseSize.mockResolvedValue(1024 * 512); // 512 KB
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('512.0 KB')).toBeInTheDocument();
+      });
+    });
+
+    it('formats megabytes correctly', async () => {
+      mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 25.7); // 25.7 MB
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('25.7 MB')).toBeInTheDocument();
+      });
+    });
+
+    it('formats gigabytes correctly', async () => {
+      mockGetDatabaseSize.mockResolvedValue(1024 * 1024 * 1024 * 1.5); // 1.5 GB
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('1.50 GB')).toBeInTheDocument();
+      });
+    });
+
+    it('shows database icon with correct tooltip', async () => {
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        const indicator = screen.getByTestId('database-size-indicator');
+        expect(indicator).toHaveAttribute('title', 'Stats database size');
+        expect(screen.getByTestId('database-icon')).toBeInTheDocument();
+      });
+    });
+
+    it('does not display indicator when database size is null', async () => {
+      mockGetDatabaseSize.mockResolvedValue(null);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId('database-size-indicator')).not.toBeInTheDocument();
+    });
+
+    it('handles zero database size', async () => {
+      mockGetDatabaseSize.mockResolvedValue(0);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('0 B')).toBeInTheDocument();
       });
     });
   });

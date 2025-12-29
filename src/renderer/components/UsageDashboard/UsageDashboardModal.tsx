@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, BarChart3, Calendar, Download, RefreshCw } from 'lucide-react';
+import { X, BarChart3, Calendar, Download, RefreshCw, Database } from 'lucide-react';
 import { SummaryCards } from './SummaryCards';
 import { ActivityHeatmap } from './ActivityHeatmap';
 import { AgentComparisonChart } from './AgentComparisonChart';
@@ -48,6 +48,23 @@ interface UsageDashboardModalProps {
   theme: Theme;
 }
 
+/**
+ * Format database size in human-readable format
+ * @param bytes - Size in bytes
+ * @returns Formatted string (e.g., "1.5 MB")
+ */
+function formatDatabaseSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  } else if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  } else if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  } else {
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
+}
+
 // Time range options for the dropdown
 const TIME_RANGE_OPTIONS: { value: StatsTimeRange; label: string }[] = [
   { value: 'day', label: 'Today' },
@@ -79,6 +96,7 @@ export function UsageDashboardModal({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [containerWidth, setContainerWidth] = useState(0);
   const [showNewDataIndicator, setShowNewDataIndicator] = useState(false);
+  const [databaseSize, setDatabaseSize] = useState<number | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -111,8 +129,13 @@ export function UsageDashboardModal({
     setError(null);
 
     try {
-      const stats = await window.maestro.stats.getAggregation(timeRange);
+      // Fetch stats and database size in parallel
+      const [stats, dbSize] = await Promise.all([
+        window.maestro.stats.getAggregation(timeRange),
+        window.maestro.stats.getDatabaseSize(),
+      ]);
       setData(stats);
+      setDatabaseSize(dbSize);
     } catch (err) {
       console.error('Failed to fetch usage stats:', err);
       setError(err instanceof Error ? err.message : 'Failed to load stats');
@@ -506,11 +529,25 @@ export function UsageDashboardModal({
             color: theme.colors.textDim,
           }}
         >
-          <span>
-            {data && data.totalQueries > 0
-              ? `Showing ${TIME_RANGE_OPTIONS.find(o => o.value === timeRange)?.label.toLowerCase()} data`
-              : 'No data for selected time range'}
-          </span>
+          <div className="flex items-center gap-4">
+            <span>
+              {data && data.totalQueries > 0
+                ? `Showing ${TIME_RANGE_OPTIONS.find(o => o.value === timeRange)?.label.toLowerCase()} data`
+                : 'No data for selected time range'}
+            </span>
+            {/* Database size indicator */}
+            {databaseSize !== null && (
+              <span
+                className="flex items-center gap-1"
+                style={{ opacity: 0.7 }}
+                title="Stats database size"
+                data-testid="database-size-indicator"
+              >
+                <Database className="w-3 h-3" />
+                {formatDatabaseSize(databaseSize)}
+              </span>
+            )}
+          </div>
           <span style={{ opacity: 0.7 }}>Press Esc to close</span>
         </div>
       </div>
