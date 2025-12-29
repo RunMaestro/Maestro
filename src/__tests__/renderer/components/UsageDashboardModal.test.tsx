@@ -928,4 +928,397 @@ describe('UsageDashboardModal', () => {
       }, { timeout: 2000 });
     });
   });
+
+  describe('Real-time Updates During Active AI Session', () => {
+    /**
+     * These tests verify the end-to-end flow of real-time updates when the
+     * Usage Dashboard is open while an AI session is actively recording stats.
+     *
+     * The flow being tested:
+     * 1. Main process writes to stats DB (via stats:record-query, stats:record-task, etc.)
+     * 2. Main process broadcasts 'stats:updated' event
+     * 3. Dashboard (via onStatsUpdate subscription) receives the update
+     * 4. Dashboard debounces multiple rapid updates (1 second)
+     * 5. Dashboard fetches fresh aggregation data
+     * 6. Dashboard updates UI with new data
+     * 7. "Updated" indicator appears briefly to signal fresh data
+     */
+
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('dashboard updates data when stats:updated is received (simulating active AI query)', async () => {
+      // Initial data - represents state before AI query starts
+      const initialData = createSampleData();
+      // Updated data - represents state after AI query completes (1 more query)
+      const afterQueryData = {
+        ...createSampleData(),
+        totalQueries: 151, // One more query was recorded
+        totalDuration: 3630000, // Added 30 seconds
+      };
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return vi.fn(); // Return unsubscribe function
+      });
+
+      mockGetAggregation.mockResolvedValueOnce(initialData);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      // Wait for initial load with original data
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Verify initial data is displayed
+      expect(screen.getAllByText('150').length).toBeGreaterThan(0);
+
+      // Setup next fetch to return updated data
+      mockGetAggregation.mockResolvedValueOnce(afterQueryData);
+
+      // Simulate what happens when main process records a query:
+      // stats:record-query IPC handler broadcasts 'stats:updated'
+      // which triggers our subscribed callback
+      expect(updateCallback).not.toBeNull();
+      act(() => {
+        updateCallback!();
+      });
+
+      // Advance past the 1-second debounce
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+      });
+
+      // Dashboard should have fetched new aggregation data
+      await waitFor(() => {
+        expect(mockGetAggregation).toHaveBeenCalledTimes(2);
+      });
+
+      // New data should be displayed (151 queries instead of 150)
+      await waitFor(() => {
+        expect(screen.getAllByText('151').length).toBeGreaterThan(0);
+      });
+    });
+
+    it('multiple rapid stats updates are debounced into single fetch', async () => {
+      const initialData = createSampleData();
+      const afterMultipleQueriesData = {
+        ...createSampleData(),
+        totalQueries: 155, // 5 more queries from rapid updates
+      };
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return vi.fn();
+      });
+
+      mockGetAggregation.mockResolvedValueOnce(initialData);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Setup next fetch
+      mockGetAggregation.mockResolvedValueOnce(afterMultipleQueriesData);
+
+      // Simulate 5 rapid stats updates (like an AI session processing multiple items quickly)
+      act(() => {
+        updateCallback!(); // Update 1 at t=0
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      act(() => {
+        updateCallback!(); // Update 2 at t=100ms
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      act(() => {
+        updateCallback!(); // Update 3 at t=200ms
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      act(() => {
+        updateCallback!(); // Update 4 at t=300ms
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
+      act(() => {
+        updateCallback!(); // Update 5 at t=400ms
+      });
+
+      // At this point, debounce timer keeps resetting
+      // So no fetch has happened yet (still only initial fetch)
+      expect(mockGetAggregation).toHaveBeenCalledTimes(1);
+
+      // Advance past 1-second debounce after last update
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+      });
+
+      // Should have made exactly 2 fetches total: initial + one debounced fetch
+      await waitFor(() => {
+        expect(mockGetAggregation).toHaveBeenCalledTimes(2);
+      });
+    });
+
+    it('stats updates during an Auto Run session update dashboard correctly', async () => {
+      // This simulates the Auto Run flow where stats are recorded for each task
+      const initialData = createSampleData();
+      const afterAutoRunData = {
+        ...createSampleData(),
+        totalQueries: 160,
+        bySource: { user: 100, auto: 60 }, // More auto queries from Auto Run
+      };
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return vi.fn();
+      });
+
+      mockGetAggregation.mockResolvedValueOnce(initialData);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Initial state shows 67% interactive (100/150)
+      expect(screen.getByText('67%')).toBeInTheDocument();
+
+      mockGetAggregation.mockResolvedValueOnce(afterAutoRunData);
+
+      // Simulate Auto Run recording a task (triggers stats:updated)
+      act(() => {
+        updateCallback!();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+      });
+
+      // Dashboard should update with new Auto Run data
+      await waitFor(() => {
+        expect(mockGetAggregation).toHaveBeenCalledTimes(2);
+      });
+
+      // Interactive percentage should update (100/160 = 62.5%, rounded to 63%)
+      await waitFor(() => {
+        expect(screen.getByText('63%')).toBeInTheDocument();
+      });
+    });
+
+    it('"Updated" indicator appears when real-time data arrives', async () => {
+      const initialData = createSampleData();
+      const updatedData = {
+        ...createSampleData(),
+        totalQueries: 151,
+      };
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return vi.fn();
+      });
+
+      mockGetAggregation.mockResolvedValueOnce(initialData);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Initially no indicator
+      expect(screen.queryByTestId('new-data-indicator')).not.toBeInTheDocument();
+
+      mockGetAggregation.mockResolvedValueOnce(updatedData);
+
+      // Simulate stats:updated from an active AI session
+      act(() => {
+        updateCallback!();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(1100);
+      });
+
+      // Indicator should appear
+      await waitFor(() => {
+        expect(screen.getByTestId('new-data-indicator')).toBeInTheDocument();
+        expect(screen.getByText('Updated')).toBeInTheDocument();
+      }, { timeout: 3000 });
+    });
+
+    it('dashboard continues working after multiple update cycles', async () => {
+      // Simulates a longer AI session with multiple rounds of updates
+      const data1 = createSampleData();
+      const data2 = { ...createSampleData(), totalQueries: 151 };
+      const data3 = { ...createSampleData(), totalQueries: 152 };
+      const data4 = { ...createSampleData(), totalQueries: 153 };
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return vi.fn();
+      });
+
+      mockGetAggregation
+        .mockResolvedValueOnce(data1)
+        .mockResolvedValueOnce(data2)
+        .mockResolvedValueOnce(data3)
+        .mockResolvedValueOnce(data4);
+
+      render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // First update cycle
+      act(() => { updateCallback!(); });
+      await act(async () => { vi.advanceTimersByTime(1100); });
+
+      await waitFor(() => {
+        expect(screen.getAllByText('151').length).toBeGreaterThan(0);
+      });
+
+      // Second update cycle
+      act(() => { updateCallback!(); });
+      await act(async () => { vi.advanceTimersByTime(1100); });
+
+      await waitFor(() => {
+        expect(screen.getAllByText('152').length).toBeGreaterThan(0);
+      });
+
+      // Third update cycle
+      act(() => { updateCallback!(); });
+      await act(async () => { vi.advanceTimersByTime(1100); });
+
+      await waitFor(() => {
+        expect(screen.getAllByText('153').length).toBeGreaterThan(0);
+      });
+
+      // Dashboard should have fetched 4 times total
+      expect(mockGetAggregation).toHaveBeenCalledTimes(4);
+    });
+
+    it('closing modal during active session properly unsubscribes', async () => {
+      const initialData = createSampleData();
+      const unsubscribeMock = vi.fn();
+
+      let updateCallback: (() => void) | null = null;
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        updateCallback = callback;
+        return unsubscribeMock;
+      });
+
+      mockGetAggregation.mockResolvedValue(initialData);
+
+      const { rerender } = render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Simulate user closing modal during active AI session
+      rerender(
+        <UsageDashboardModal isOpen={false} onClose={onClose} theme={theme} />
+      );
+
+      // Unsubscribe should be called - no more updates after close
+      expect(unsubscribeMock).toHaveBeenCalled();
+
+      // Any pending debounce timer should be cleared
+      // (verified by no errors when we advance time after close)
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      // No additional fetches after initial one
+      expect(mockGetAggregation).toHaveBeenCalledTimes(1);
+    });
+
+    it('reopening modal after close re-establishes subscription', async () => {
+      const initialData = createSampleData();
+      const afterReopenData = { ...createSampleData(), totalQueries: 175 };
+
+      let subscriptionCount = 0;
+      let latestCallback: (() => void) | null = null;
+
+      mockOnStatsUpdate.mockImplementation((callback: () => void) => {
+        subscriptionCount++;
+        latestCallback = callback;
+        return vi.fn();
+      });
+
+      mockGetAggregation
+        .mockResolvedValueOnce(initialData)
+        .mockResolvedValueOnce(initialData)
+        .mockResolvedValueOnce(afterReopenData);
+
+      const { rerender } = render(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      expect(subscriptionCount).toBe(1);
+
+      // Close modal
+      rerender(
+        <UsageDashboardModal isOpen={false} onClose={onClose} theme={theme} />
+      );
+
+      // Reopen modal
+      rerender(
+        <UsageDashboardModal isOpen={true} onClose={onClose} theme={theme} />
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId('usage-dashboard-content')).toBeInTheDocument();
+      });
+
+      // Should have subscribed again
+      expect(subscriptionCount).toBe(2);
+
+      // Trigger update on new subscription
+      act(() => { latestCallback!(); });
+      await act(async () => { vi.advanceTimersByTime(1100); });
+
+      // New subscription should work
+      await waitFor(() => {
+        expect(screen.getAllByText('175').length).toBeGreaterThan(0);
+      });
+    });
+  });
 });
