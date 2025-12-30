@@ -17,6 +17,13 @@
  */
 
 import type { AgentErrorType, ToolType } from '../../shared/types';
+import { logger } from '../utils/logger';
+
+/**
+ * Valid ToolType values that have error patterns registered.
+ * Used to validate input to getErrorPatterns and log warnings for unknown agents.
+ */
+const VALID_TOOL_TYPES = new Set<string>(['claude', 'claude-code', 'aider', 'opencode', 'codex', 'terminal']);
 
 /**
  * Error pattern definition with regex and user-friendly message
@@ -120,7 +127,8 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
       recoverable: true,
     },
     {
-      pattern: /529/i,
+      // HTTP 529 - Service overloaded. Word boundary prevents false positives from ports/versions
+      pattern: /\b529\b/,
       message: 'Service temporarily overloaded. Please wait and try again.',
       recoverable: true,
     },
@@ -389,7 +397,8 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
       recoverable: false,
     },
     {
-      pattern: /429/i,
+      // HTTP 429 - Rate limited. Word boundary prevents false positives from ports/versions
+      pattern: /\b429\b/,
       message: 'Rate limited. Please wait and try again.',
       recoverable: true,
     },
@@ -629,12 +638,29 @@ const patternRegistry = new Map<ToolType, AgentErrorPatterns>([
 ]);
 
 /**
- * Get error patterns for an agent
- * @param agentId - The agent ID
- * @returns Error patterns or empty object if not found
+ * Get error patterns for an agent.
+ *
+ * Returns the registered error patterns for the specified agent ID.
+ * If the agent ID is not recognized or has no patterns, returns an empty object.
+ * A warning is logged for unknown agent IDs to help catch typos during development.
+ *
+ * @param agentId - The agent ID (e.g., 'claude-code', 'opencode', 'codex')
+ * @returns Error patterns for the agent, or empty object if not found
  */
 export function getErrorPatterns(agentId: ToolType | string): AgentErrorPatterns {
-  return patternRegistry.get(agentId as ToolType) || {};
+  // Validate the agent ID against known ToolTypes
+  if (!VALID_TOOL_TYPES.has(agentId)) {
+    logger.warn(`getErrorPatterns: Unknown agent ID "${agentId}". Valid IDs: ${Array.from(VALID_TOOL_TYPES).join(', ')}`);
+  }
+
+  const patterns = patternRegistry.get(agentId as ToolType);
+
+  // Log debug info when no patterns are found for a valid-looking agent
+  if (!patterns && VALID_TOOL_TYPES.has(agentId)) {
+    logger.debug(`getErrorPatterns: No patterns registered for agent "${agentId}". This agent may not have error pattern support.`);
+  }
+
+  return patterns || {};
 }
 
 /**
@@ -677,7 +703,13 @@ export function matchErrorPattern(
 }
 
 /**
- * Register error patterns for an agent
+ * Register error patterns for an agent.
+ *
+ * @internal This function is primarily for testing purposes.
+ * In production, patterns are registered statically at module load time
+ * via the patternRegistry initialization. Use this function only in tests
+ * to add custom patterns for testing scenarios.
+ *
  * @param agentId - The agent ID
  * @param patterns - Error patterns for the agent
  */
@@ -689,7 +721,11 @@ export function registerErrorPatterns(
 }
 
 /**
- * Clear the pattern registry (primarily for testing)
+ * Clear the pattern registry.
+ *
+ * @internal This function is for testing purposes only.
+ * It clears all registered patterns from the registry to ensure test isolation.
+ * Never call this in production code as it would remove all error detection capability.
  */
 export function clearPatternRegistry(): void {
   patternRegistry.clear();
