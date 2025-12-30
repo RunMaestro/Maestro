@@ -92,8 +92,12 @@ describe('Git IPC handlers', () => {
       handlers.set(channel, handler);
     });
 
-    // Register handlers
-    registerGitHandlers();
+    // Register handlers with mock settings store
+    registerGitHandlers({
+      settingsStore: {
+        get: vi.fn().mockReturnValue([]),
+      },
+    });
   });
 
   afterEach(() => {

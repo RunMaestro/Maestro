@@ -985,7 +985,9 @@ function setupIpcHandlers() {
   });
 
   // Git operations - extracted to src/main/ipc/handlers/git.ts
-  registerGitHandlers();
+  registerGitHandlers({
+    settingsStore: store,
+  });
 
   // Auto Run operations - extracted to src/main/ipc/handlers/autorun.ts
   registerAutorunHandlers({

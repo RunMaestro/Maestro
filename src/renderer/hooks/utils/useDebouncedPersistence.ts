@@ -174,9 +174,12 @@ export function useDebouncedPersistence(
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      // Flush any pending sessions
-      const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
-      window.maestro.sessions.setAll(sessionsForPersistence);
+      // Only flush if initial load is complete - otherwise we might save an empty array
+      // before sessions have been loaded, wiping out the user's data
+      if (initialLoadComplete.current) {
+        const sessionsForPersistence = sessionsRef.current.map(prepareSessionForPersistence);
+        window.maestro.sessions.setAll(sessionsForPersistence);
+      }
     };
   }, []);
 

@@ -253,14 +253,15 @@ interface MaestroAPI {
       cwd?: string;
     }) => Promise<boolean>;
   };
+  // Git API - all methods accept optional sshRemoteId and remoteCwd for remote execution via SSH
   git: {
-    status: (cwd: string) => Promise<{ stdout: string; stderr: string }>;
-    diff: (cwd: string, file?: string) => Promise<{ stdout: string; stderr: string }>;
-    isRepo: (cwd: string) => Promise<boolean>;
-    numstat: (cwd: string) => Promise<{ stdout: string; stderr: string }>;
-    branch: (cwd: string) => Promise<{ stdout: string; stderr: string }>;
-    remote: (cwd: string) => Promise<{ stdout: string; stderr: string }>;
-    info: (cwd: string) => Promise<{
+    status: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ stdout: string; stderr: string }>;
+    diff: (cwd: string, file?: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ stdout: string; stderr: string }>;
+    isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<boolean>;
+    numstat: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ stdout: string; stderr: string }>;
+    branch: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ stdout: string; stderr: string }>;
+    remote: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ stdout: string; stderr: string }>;
+    info: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{
       branch: string;
       remote: string;
       behind: number;
@@ -280,8 +281,8 @@ interface MaestroAPI {
     }>;
     show: (cwd: string, hash: string) => Promise<{ stdout: string; stderr: string }>;
     showFile: (cwd: string, ref: string, filePath: string) => Promise<{ content?: string; error?: string }>;
-    branches: (cwd: string) => Promise<{ branches: string[] }>;
-    tags: (cwd: string) => Promise<{ tags: string[] }>;
+    branches: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ branches: string[] }>;
+    tags: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ tags: string[] }>;
     commitCount: (cwd: string) => Promise<{ count: number; error: string | null }>;
     checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
     createGist: (filename: string, content: string, description: string, isPublic: boolean, ghPath?: string) => Promise<{

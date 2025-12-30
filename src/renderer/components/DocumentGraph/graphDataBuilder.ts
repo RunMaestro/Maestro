@@ -1,5 +1,5 @@
 /**
- * graphDataBuilder - Builds React Flow compatible graph data from markdown documents.
+ * graphDataBuilder - Builds graph data from markdown documents.
  *
  * Scans a directory for markdown files, parses their links and stats, and builds
  * a node/edge graph representing document relationships.
@@ -7,7 +7,6 @@
  * Used by the DocumentGraphView component to visualize document connections.
  */
 
-import { Node, Edge } from 'reactflow';
 import { parseMarkdownLinks, ExternalLink } from '../../utils/markdownLinkParser';
 import { computeDocumentStats, DocumentStats } from '../../utils/documentStats';
 import { getRendererPerfMetrics } from '../../utils/logger';
@@ -91,7 +90,7 @@ export interface BuildOptions {
  * Data payload for document nodes
  */
 export interface DocumentNodeData extends DocumentStats {
-  /** Node type identifier for React Flow custom node rendering */
+  /** Node type identifier for custom node rendering */
   nodeType: 'document';
 }
 
@@ -99,7 +98,7 @@ export interface DocumentNodeData extends DocumentStats {
  * Data payload for external link nodes
  */
 export interface ExternalLinkNodeData {
-  /** Node type identifier for React Flow custom node rendering */
+  /** Node type identifier for custom node rendering */
   nodeType: 'external';
   /** Domain name (www. stripped) */
   domain: string;
@@ -110,18 +109,37 @@ export interface ExternalLinkNodeData {
 }
 
 /**
- * Combined node data type for React Flow
+ * Combined node data type
  */
 export type GraphNodeData = DocumentNodeData | ExternalLinkNodeData;
+
+/**
+ * Graph node structure
+ */
+export interface GraphNode {
+  id: string;
+  type: 'documentNode' | 'externalLinkNode';
+  data: GraphNodeData;
+}
+
+/**
+ * Graph edge structure
+ */
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  type?: 'default' | 'external';
+}
 
 /**
  * Result of building graph data
  */
 export interface GraphData {
-  /** React Flow nodes representing documents and optionally external domains */
-  nodes: Node<GraphNodeData>[];
-  /** React Flow edges representing links between documents */
-  edges: Edge[];
+  /** Nodes representing documents and optionally external domains */
+  nodes: GraphNode[];
+  /** Edges representing links between documents */
+  edges: GraphEdge[];
   /** Total number of markdown files found (for pagination info) */
   totalDocuments: number;
   /** Number of documents currently loaded (may be less than total if maxNodes is set) */
@@ -289,7 +307,7 @@ async function parseFile(rootPath: string, relativePath: string): Promise<Parsed
  * Build graph data from a directory of markdown files
  *
  * @param options - Build configuration options
- * @returns GraphData with nodes and edges for React Flow
+ * @returns GraphData with nodes and edges
  */
 export async function buildGraphData(options: BuildOptions): Promise<GraphData> {
   const { rootPath, includeExternalLinks, maxNodes, offset = 0, onProgress } = options;
@@ -351,8 +369,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
   const loadedPaths = new Set(parsedFiles.map((f) => f.relativePath));
 
   // Step 4: Build document nodes
-  const nodes: Node<GraphNodeData>[] = [];
-  const edges: Edge[] = [];
+  const nodes: GraphNode[] = [];
+  const edges: GraphEdge[] = [];
 
   // Track external domains for deduplication
   const externalDomains = new Map<string, { count: number; urls: string[] }>();
@@ -368,7 +386,6 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
     nodes.push({
       id: nodeId,
       type: 'documentNode',
-      position: { x: 0, y: 0 }, // Position will be set by layout algorithm
       data: {
         nodeType: 'document',
         ...file.stats,
@@ -425,7 +442,6 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
       nodes.push({
         id: `ext-${domain}`,
         type: 'externalLinkNode',
-        position: { x: 0, y: 0 }, // Position will be set by layout algorithm
         data: {
           nodeType: 'external',
           domain,

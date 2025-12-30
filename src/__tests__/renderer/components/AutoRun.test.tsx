@@ -2999,14 +2999,26 @@ describe('Task Count Display', () => {
     expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();
   });
 
-  it('updates task count as content changes', async () => {
-    const props = createDefaultProps({ content: '- [ ] Task 1\n- [ ] Task 2' });
+  it('updates task count when externalSavedContent changes', async () => {
+    // Task counts are computed from saved content, not live edits
+    // This reflects the intentional behavior where counts only update on save
+    // Use externalSavedContent prop to control the saved content state
+    const initialContent = '- [ ] Task 1\n- [ ] Task 2';
+    const props = createDefaultProps({
+      content: initialContent,
+      externalSavedContent: initialContent,
+    });
     const { rerender } = renderWithProvider(<AutoRun {...props} />);
 
     expect(screen.getByText(getByNormalizedText(/0 of 2 tasks completed/))).toBeInTheDocument();
 
-    const textarea = screen.getByRole('textbox');
-    fireEvent.change(textarea, { target: { value: '- [x] Task 1\n- [ ] Task 2' } });
+    // Simulate content being saved by updating externalSavedContent
+    const updatedContent = '- [x] Task 1\n- [ ] Task 2';
+    const updatedProps = createDefaultProps({
+      content: updatedContent,
+      externalSavedContent: updatedContent,
+    });
+    rerender(<AutoRun {...updatedProps} />);
 
     await waitFor(() => {
       expect(screen.getByText(getByNormalizedText(/1 of 2 tasks completed/))).toBeInTheDocument();

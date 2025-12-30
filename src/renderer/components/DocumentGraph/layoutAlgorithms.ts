@@ -315,7 +315,7 @@ export function applyHierarchicalLayout(
   // PHASE 2: Position external nodes in a row below the document tree
   if (externalNodes.length > 0) {
     const externalNodeWidth = 160;
-    const externalNodeHeight = 60;
+    const _externalNodeHeight = 60; // Reserved for future use
     const externalGap = 40;
 
     // Calculate total width needed for external nodes

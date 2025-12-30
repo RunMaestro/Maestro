@@ -556,16 +556,9 @@ describe('graphDataBuilder', () => {
       expect(result.nodes).toHaveLength(0);
     });
 
-    it('should set initial node positions to 0,0 for layout algorithm', async () => {
-      const result = await buildGraphData({
-        rootPath: '/test',
-        includeExternalLinks: false,
-      });
-
-      for (const node of result.nodes) {
-        expect(node.position).toEqual({ x: 0, y: 0 });
-      }
-    });
+    // Note: Node positions are no longer set by graphDataBuilder.
+    // Positions are computed by the D3 force simulation in ForceGraph.tsx.
+    // The graphDataBuilder now returns GraphNode[] without position property.
   });
 
   describe('progress callback', () => {

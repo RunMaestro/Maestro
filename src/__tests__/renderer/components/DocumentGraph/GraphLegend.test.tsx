@@ -286,73 +286,60 @@ describe('GraphLegend', () => {
     it('item descriptions use dim text color with opacity', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
-      const description = screen.getByText('Markdown file with title, stats, and description');
+      const description = screen.getByText('Markdown file (size = connections)');
       expect(description).toHaveStyle({ color: mockTheme.colors.textDim, opacity: '0.8' });
     });
   });
 
   describe('Node Preview Styling', () => {
-    it('document node preview has solid border', () => {
+    it('document node preview renders as SVG circle', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
       const docNode = screen.getByRole('img', { name: /^document node$/i });
-      // Check border properties individually since shorthand is computed differently
-      expect(docNode).toHaveStyle({ borderWidth: '1px', borderStyle: 'solid' });
+      const circle = docNode.querySelector('circle');
+      expect(circle).toBeInTheDocument();
+      // Document nodes have radius 8 when not selected
+      expect(circle).toHaveAttribute('r', '8');
     });
 
-    it('external node preview has dashed border', () => {
+    it('external node preview renders as smaller SVG circle', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
       const extNode = screen.getByRole('img', { name: /^external link node$/i });
-      // Check border properties individually since shorthand is computed differently
-      expect(extNode).toHaveStyle({ borderWidth: '1px', borderStyle: 'dashed' });
+      const circle = extNode.querySelector('circle');
+      expect(circle).toBeInTheDocument();
+      // External nodes have radius 5 when not selected
+      expect(circle).toHaveAttribute('r', '5');
     });
 
-    it('selected document node preview has accent border', () => {
+    it('selected document node preview has accent stroke', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
       const selectedNode = screen.getByRole('img', { name: /document node \(selected\)/i });
-      // Check border properties individually since shorthand is computed differently
-      expect(selectedNode).toHaveStyle({ borderWidth: '2px', borderStyle: 'solid' });
+      const circle = selectedNode.querySelector('circle');
+      expect(circle).toBeInTheDocument();
+      // Selected nodes have radius 9 and accent stroke
+      expect(circle).toHaveAttribute('r', '9');
+      expect(circle).toHaveAttribute('stroke', mockTheme.colors.accent);
+      expect(circle).toHaveAttribute('stroke-width', '2');
     });
 
-    it('selected node preview has glow box-shadow', () => {
-      render(<GraphLegend {...defaultProps} defaultExpanded />);
-
-      const selectedNode = screen.getByRole('img', { name: /document node \(selected\)/i });
-      expect(selectedNode).toHaveStyle({ boxShadow: `0 0 0 2px ${mockTheme.colors.accent}40` });
-    });
-
-    it('document node preview has FileText icon with accent color', () => {
+    it('document node preview uses accent fill color', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
       const docNode = screen.getByRole('img', { name: /^document node$/i });
-      const icon = docNode.querySelector('svg');
-      expect(icon).toBeInTheDocument();
-      expect(icon).toHaveStyle({ color: mockTheme.colors.accent });
+      const circle = docNode.querySelector('circle');
+      expect(circle).toBeInTheDocument();
+      expect(circle).toHaveAttribute('fill', `${mockTheme.colors.accent}BB`);
     });
 
-    it('external node preview has Globe icon with dim color', () => {
+    it('external node preview uses dim fill color', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
       const extNode = screen.getByRole('img', { name: /^external link node$/i });
-      const icon = extNode.querySelector('svg');
-      expect(icon).toBeInTheDocument();
-      expect(icon).toHaveStyle({ color: mockTheme.colors.textDim });
-    });
-
-    it('document node preview shows "Doc" label', () => {
-      render(<GraphLegend {...defaultProps} defaultExpanded />);
-
-      const docNode = screen.getByRole('img', { name: /^document node$/i });
-      expect(within(docNode).getByText('Doc')).toBeInTheDocument();
-    });
-
-    it('external node preview shows "site.com" label', () => {
-      render(<GraphLegend {...defaultProps} defaultExpanded />);
-
-      const extNode = screen.getByRole('img', { name: /^external link node$/i });
-      expect(within(extNode).getByText('site.com')).toBeInTheDocument();
+      const circle = extNode.querySelector('circle');
+      expect(circle).toBeInTheDocument();
+      expect(circle).toHaveAttribute('fill', `${mockTheme.colors.textDim}88`);
     });
   });
 
@@ -423,11 +410,17 @@ describe('GraphLegend', () => {
       expect(container.querySelector('.graph-legend')).toBeInTheDocument();
     });
 
-    it('is positioned absolutely in bottom-left corner', () => {
+    it('is positioned absolutely at bottom center', () => {
       const { container } = render(<GraphLegend {...defaultProps} />);
 
       const legend = container.querySelector('.graph-legend');
-      expect(legend).toHaveClass('absolute', 'bottom-4', 'left-4');
+      expect(legend).toHaveClass('absolute');
+      // Position is set via inline styles: bottom: 16, left: '50%', transform: 'translateX(-50%)'
+      expect(legend).toHaveStyle({
+        bottom: '16px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+      });
     });
 
     it('has max-width constraint', () => {
@@ -463,13 +456,13 @@ describe('GraphLegend', () => {
     it('document node has correct description', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
-      expect(screen.getByText('Markdown file with title, stats, and description')).toBeInTheDocument();
+      expect(screen.getByText('Markdown file (size = connections)')).toBeInTheDocument();
     });
 
     it('external node has correct description', () => {
       render(<GraphLegend {...defaultProps} defaultExpanded />);
 
-      expect(screen.getByText('External domain with aggregated link count')).toBeInTheDocument();
+      expect(screen.getByText('External domain (smaller, dimmer)')).toBeInTheDocument();
     });
 
     it('internal edge has correct description', () => {

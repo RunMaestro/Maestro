@@ -221,12 +221,13 @@ export function parseConfigContent(content: string, homeDir: string): SshConfigH
         case 'hostname':
           currentHost.hostName = value;
           break;
-        case 'port':
+        case 'port': {
           const port = parseInt(value, 10);
           if (!isNaN(port) && port > 0 && port <= 65535) {
             currentHost.port = port;
           }
           break;
+        }
         case 'user':
           currentHost.user = value;
           break;

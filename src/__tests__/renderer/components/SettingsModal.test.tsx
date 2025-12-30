@@ -385,14 +385,14 @@ describe('SettingsModal', () => {
     });
 
     it('should wrap around when navigating past last tab', async () => {
-      render(<SettingsModal {...createDefaultProps({ initialTab: 'aicommands' })} />);
+      render(<SettingsModal {...createDefaultProps({ initialTab: 'ssh' })} />);
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(50);
       });
 
-      // Start on AI Commands tab (last tab)
-      expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
+      // Start on SSH tab (last tab)
+      expect(screen.getByText('No SSH remotes configured')).toBeInTheDocument();
 
       // Press Cmd+Shift+] to wrap to general
       fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
@@ -414,14 +414,14 @@ describe('SettingsModal', () => {
       // Start on general tab (first tab)
       expect(screen.getByText('Font Size')).toBeInTheDocument();
 
-      // Press Cmd+Shift+[ to wrap to AI Commands
+      // Press Cmd+Shift+[ to wrap to SSH (now the last tab)
       fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(100);
       });
 
-      expect(screen.getByTestId('ai-commands-panel')).toBeInTheDocument();
+      expect(screen.getByText('No SSH remotes configured')).toBeInTheDocument();
     });
   });
 

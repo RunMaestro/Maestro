@@ -356,16 +356,26 @@ contextBridge.exposeInMainWorld('maestro', {
   },
 
   // Git API
+  // All methods accept optional sshRemoteId and remoteCwd for remote execution via SSH
   git: {
-    status: (cwd: string) => ipcRenderer.invoke('git:status', cwd),
-    diff: (cwd: string, file?: string) => ipcRenderer.invoke('git:diff', cwd, file),
-    isRepo: (cwd: string) => ipcRenderer.invoke('git:isRepo', cwd),
-    numstat: (cwd: string) => ipcRenderer.invoke('git:numstat', cwd),
-    branch: (cwd: string) => ipcRenderer.invoke('git:branch', cwd),
-    branches: (cwd: string) => ipcRenderer.invoke('git:branches', cwd),
-    tags: (cwd: string) => ipcRenderer.invoke('git:tags', cwd),
-    remote: (cwd: string) => ipcRenderer.invoke('git:remote', cwd),
-    info: (cwd: string) => ipcRenderer.invoke('git:info', cwd),
+    status: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:status', cwd, sshRemoteId, remoteCwd),
+    diff: (cwd: string, file?: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:diff', cwd, file, sshRemoteId, remoteCwd),
+    isRepo: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:isRepo', cwd, sshRemoteId, remoteCwd),
+    numstat: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:numstat', cwd, sshRemoteId, remoteCwd),
+    branch: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:branch', cwd, sshRemoteId, remoteCwd),
+    branches: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:branches', cwd, sshRemoteId, remoteCwd),
+    tags: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:tags', cwd, sshRemoteId, remoteCwd),
+    remote: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:remote', cwd, sshRemoteId, remoteCwd),
+    info: (cwd: string, sshRemoteId?: string, remoteCwd?: string) =>
+      ipcRenderer.invoke('git:info', cwd, sshRemoteId, remoteCwd),
     log: (cwd: string, options?: { limit?: number; search?: string }) =>
       ipcRenderer.invoke('git:log', cwd, options),
     commitCount: (cwd: string) =>

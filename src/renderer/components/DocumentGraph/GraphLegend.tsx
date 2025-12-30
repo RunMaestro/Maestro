@@ -12,7 +12,7 @@
  */
 
 import React, { useState, memo, useCallback } from 'react';
-import { ChevronDown, ChevronUp, FileText, Globe, ArrowRight, AlertTriangle } from 'lucide-react';
+import { ChevronDown, ChevronUp, ArrowRight, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../../types';
 
 /**
@@ -49,12 +49,12 @@ const NODE_ITEMS: NodeLegendItem[] = [
   {
     type: 'document',
     label: 'Document',
-    description: 'Markdown file with title, stats, and description',
+    description: 'Markdown file (size = connections)',
   },
   {
     type: 'external',
     label: 'External Link',
-    description: 'External domain with aggregated link count',
+    description: 'External domain (smaller, dimmer)',
   },
 ];
 
@@ -72,7 +72,7 @@ const EDGE_ITEMS: EdgeLegendItem[] = [
 ];
 
 /**
- * Mini preview of a document node for the legend
+ * Mini preview of a document node for the legend (force graph style)
  */
 const DocumentNodePreview = memo(function DocumentNodePreview({
   theme,
@@ -82,25 +82,27 @@ const DocumentNodePreview = memo(function DocumentNodePreview({
   selected?: boolean;
 }) {
   return (
-    <div
-      className="flex items-center gap-1.5 px-2 py-1.5 rounded"
-      style={{
-        backgroundColor: theme.colors.bgActivity,
-        border: `${selected ? 2 : 1}px solid ${selected ? theme.colors.accent : theme.colors.border}`,
-        boxShadow: selected ? `0 0 0 2px ${theme.colors.accent}40` : 'none',
-        minWidth: 80,
-      }}
+    <svg
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
       role="img"
       aria-label={`Document node${selected ? ' (selected)' : ''}`}
     >
-      <FileText size={12} style={{ color: theme.colors.accent, flexShrink: 0 }} />
-      <span style={{ color: theme.colors.textMain, fontSize: 10, fontWeight: 500 }}>Doc</span>
-    </div>
+      <circle
+        cx={12}
+        cy={12}
+        r={selected ? 9 : 8}
+        fill={`${theme.colors.accent}BB`}
+        stroke={selected ? theme.colors.accent : 'none'}
+        strokeWidth={selected ? 2 : 0}
+      />
+    </svg>
   );
 });
 
 /**
- * Mini preview of an external link node for the legend
+ * Mini preview of an external link node for the legend (force graph style)
  */
 const ExternalNodePreview = memo(function ExternalNodePreview({
   theme,
@@ -110,20 +112,22 @@ const ExternalNodePreview = memo(function ExternalNodePreview({
   selected?: boolean;
 }) {
   return (
-    <div
-      className="flex items-center gap-1.5 px-2 py-1 rounded-xl"
-      style={{
-        backgroundColor: theme.colors.bgSidebar,
-        border: `${selected ? 2 : 1}px dashed ${selected ? theme.colors.accent : theme.colors.border}`,
-        boxShadow: selected ? `0 0 0 2px ${theme.colors.accent}40` : 'none',
-        minWidth: 60,
-      }}
+    <svg
+      width={24}
+      height={24}
+      viewBox="0 0 24 24"
       role="img"
       aria-label={`External link node${selected ? ' (selected)' : ''}`}
     >
-      <Globe size={10} style={{ color: theme.colors.textDim, flexShrink: 0 }} />
-      <span style={{ color: theme.colors.textMain, fontSize: 9, fontWeight: 500 }}>site.com</span>
-    </div>
+      <circle
+        cx={12}
+        cy={12}
+        r={selected ? 6 : 5}
+        fill={`${theme.colors.textDim}88`}
+        stroke={selected ? theme.colors.accent : 'none'}
+        strokeWidth={selected ? 2 : 0}
+      />
+    </svg>
   );
 });
 

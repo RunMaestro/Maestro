@@ -119,7 +119,9 @@ export interface HandlerDependencies {
  * Call this once during app initialization.
  */
 export function registerAllHandlers(deps: HandlerDependencies): void {
-  registerGitHandlers();
+  registerGitHandlers({
+    settingsStore: deps.settingsStore,
+  });
   registerAutorunHandlers(deps);
   registerPlaybooksHandlers(deps);
   registerHistoryHandlers();

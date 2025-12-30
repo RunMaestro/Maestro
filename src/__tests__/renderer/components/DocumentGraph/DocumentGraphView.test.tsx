@@ -84,65 +84,46 @@ describe('DocumentGraphView', () => {
 
   describe('Component Type', () => {
     it('is a valid React component', () => {
-      // Verify it's a function that can accept props
-      const mockProps: DocumentGraphViewProps = {
-        isOpen: false,
-        onClose: vi.fn(),
-        theme: {
-          id: 'test',
-          name: 'Test',
-          mode: 'dark',
-          colors: {
-            bgMain: '#000',
-            bgSidebar: '#111',
-            bgActivity: '#222',
-            border: '#333',
-            textMain: '#fff',
-            textDim: '#888',
-            accent: '#00f',
-            accentDim: '#008',
-            accentText: '#0ff',
-            accentForeground: '#fff',
-            success: '#0f0',
-            warning: '#ff0',
-            error: '#f00',
-          },
-        },
-        rootPath: '/test',
-      };
-
-      // The component should accept these props without error
-      expect(() => DocumentGraphView(mockProps)).not.toThrow();
+      // Verify it's a function that can be rendered
+      expect(typeof DocumentGraphView).toBe('function');
+      // Function components should have length 1 (props parameter) or 2 (props, ref for forwardRef)
+      expect(DocumentGraphView.length).toBeLessThanOrEqual(2);
     });
 
-    it('returns null when isOpen is false', () => {
-      const result = DocumentGraphView({
-        isOpen: false,
-        onClose: vi.fn(),
-        theme: {
-          id: 'test',
-          name: 'Test',
-          mode: 'dark',
-          colors: {
-            bgMain: '#000',
-            bgSidebar: '#111',
-            bgActivity: '#222',
-            border: '#333',
-            textMain: '#fff',
-            textDim: '#888',
-            accent: '#00f',
-            accentDim: '#008',
-            accentText: '#0ff',
-            accentForeground: '#fff',
-            success: '#0f0',
-            warning: '#ff0',
-            error: '#f00',
-          },
-        },
-        rootPath: '/test',
-      });
+    it('renders nothing when isOpen is false', () => {
+      const { render } = require('@testing-library/react');
+      const React = require('react');
 
-      expect(result).toBeNull();
+      const { container } = render(
+        React.createElement(DocumentGraphView, {
+          isOpen: false,
+          onClose: vi.fn(),
+          theme: {
+            id: 'test',
+            name: 'Test',
+            mode: 'dark',
+            colors: {
+              bgMain: '#000',
+              bgSidebar: '#111',
+              bgActivity: '#222',
+              border: '#333',
+              textMain: '#fff',
+              textDim: '#888',
+              accent: '#00f',
+              accentDim: '#008',
+              accentText: '#0ff',
+              accentForeground: '#fff',
+              success: '#0f0',
+              warning: '#ff0',
+              error: '#f00',
+            },
+          },
+          rootPath: '/test',
+        })
+      );
+
+      // When isOpen is false, the component should not render any modal content
+      expect(container.innerHTML).toBe('');
     });
   });
 

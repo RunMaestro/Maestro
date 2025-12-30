@@ -44,6 +44,8 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
   BatchMode: 'yes', // Disable password prompts (key-only)
   StrictHostKeyChecking: 'accept-new', // Auto-accept new host keys
   ConnectTimeout: '10', // Connection timeout in seconds
+  ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
+  RequestTTY: 'no', // Don't request a TTY for command execution (avoids shell rc issues)
 };
 
 /**
