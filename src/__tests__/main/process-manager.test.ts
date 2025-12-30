@@ -22,9 +22,13 @@ vi.mock('../../main/utils/logger', () => ({
   },
 }));
 
+import * as fs from 'fs';
+
 import {
   aggregateModelUsage,
   ProcessManager,
+  detectNodeVersionManagerPaths,
+  buildUnixBasePath,
   type UsageStats,
   type ModelStats,
   type AgentError,
@@ -418,6 +422,110 @@ describe('process-manager.ts', () => {
         const event = processManager.parseLine('non-existent-session', '{"type":"test"}');
         expect(event).toBeNull();
       });
+    });
+  });
+
+  describe('detectNodeVersionManagerPaths', () => {
+    // Note: These tests use the real filesystem. On the test machine, they verify
+    // that the function returns an array (possibly empty) and doesn't throw.
+    // Full mocking would require restructuring the module to accept fs as a dependency.
+
+    describe('on Windows', () => {
+      it('should return empty array on Windows', () => {
+        const originalPlatform = process.platform;
+        Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+        const result = detectNodeVersionManagerPaths();
+
+        expect(result).toEqual([]);
+        Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+      });
+    });
+
+    describe('on Unix systems', () => {
+      it('should return an array of strings', () => {
+        // Skip on Windows
+        if (process.platform === 'win32') return;
+
+        const result = detectNodeVersionManagerPaths();
+
+        expect(Array.isArray(result)).toBe(true);
+        result.forEach(path => {
+          expect(typeof path).toBe('string');
+          expect(path.length).toBeGreaterThan(0);
+        });
+      });
+
+      it('should only return paths that exist', () => {
+        // Skip on Windows
+        if (process.platform === 'win32') return;
+
+        const result = detectNodeVersionManagerPaths();
+
+        // All returned paths should exist on the filesystem
+        result.forEach(path => {
+          expect(fs.existsSync(path)).toBe(true);
+        });
+      });
+
+      it('should respect NVM_DIR environment variable when set', () => {
+        // Skip on Windows
+        if (process.platform === 'win32') return;
+
+        const originalNvmDir = process.env.NVM_DIR;
+
+        // Set to a non-existent path
+        process.env.NVM_DIR = '/nonexistent/nvm/path';
+        const resultWithFakePath = detectNodeVersionManagerPaths();
+
+        // Should not include the fake path since it doesn't exist
+        expect(resultWithFakePath.some(p => p.includes('/nonexistent/'))).toBe(false);
+
+        process.env.NVM_DIR = originalNvmDir;
+      });
+    });
+  });
+
+  describe('buildUnixBasePath', () => {
+    it('should include standard paths', () => {
+      // Skip on Windows
+      if (process.platform === 'win32') return;
+
+      const result = buildUnixBasePath();
+
+      expect(result).toContain('/opt/homebrew/bin');
+      expect(result).toContain('/usr/local/bin');
+      expect(result).toContain('/usr/bin');
+      expect(result).toContain('/bin');
+      expect(result).toContain('/usr/sbin');
+      expect(result).toContain('/sbin');
+    });
+
+    it('should be a colon-separated path string', () => {
+      // Skip on Windows
+      if (process.platform === 'win32') return;
+
+      const result = buildUnixBasePath();
+
+      expect(typeof result).toBe('string');
+      expect(result.includes(':')).toBe(true);
+
+      // Should not have empty segments
+      const segments = result.split(':');
+      segments.forEach(segment => {
+        expect(segment.length).toBeGreaterThan(0);
+      });
+    });
+
+    it('should prepend version manager paths when available', () => {
+      // Skip on Windows
+      if (process.platform === 'win32') return;
+
+      const result = buildUnixBasePath();
+      const standardPaths = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+
+      // Result should end with standard paths (they come after version manager paths)
+      expect(result.endsWith(standardPaths) || result === standardPaths).toBe(true);
     });
   });
 });

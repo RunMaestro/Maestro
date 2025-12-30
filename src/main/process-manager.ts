@@ -23,6 +23,9 @@ export type { AgentError, AgentErrorType } from '../shared/types';
 export type { UsageStats, ModelStats } from './parsers/usage-aggregator';
 export { aggregateModelUsage } from './parsers/usage-aggregator';
 
+// Export Node version manager detection for testing
+export { detectNodeVersionManagerPaths, buildUnixBasePath };
+
 /**
  * Maximum buffer size for stdout/stderr error detection buffers.
  * Prevents memory exhaustion during extended process execution.
@@ -184,6 +187,178 @@ function normalizeCodexUsage(
 
 // UsageStats, ModelStats, and aggregateModelUsage are now imported from ./parsers/usage-aggregator
 // and re-exported above for backwards compatibility
+
+/**
+ * Detect Node version manager paths on Unix systems (macOS/Linux).
+ * Checks for nvm, fnm, volta, and mise installations and returns their bin paths.
+ * These paths are prepended to ensure node/npm are available even when launched from
+ * GUI applications (Electron) that don't inherit shell PATH configuration.
+ *
+ * @returns Array of existing bin paths from detected version managers
+ */
+function detectNodeVersionManagerPaths(): string[] {
+  if (process.platform === 'win32') {
+    return []; // Windows has different version manager paths handled elsewhere
+  }
+
+  const home = os.homedir();
+  const detectedPaths: string[] = [];
+
+  // nvm: Check for ~/.nvm and find the current default node version
+  const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+  if (fs.existsSync(nvmDir)) {
+    // Try to find current/default version
+    const nvmCurrentBin = path.join(nvmDir, 'current', 'bin');
+    const nvmAlias = path.join(nvmDir, 'alias', 'default');
+
+    if (fs.existsSync(nvmCurrentBin)) {
+      detectedPaths.push(nvmCurrentBin);
+    } else if (fs.existsSync(nvmAlias)) {
+      // Read the default alias and resolve to version
+      try {
+        let version = fs.readFileSync(nvmAlias, 'utf8').trim();
+        // Handle aliases like 'lts/*' or 'node' by checking versions dir
+        if (version.startsWith('lts/') || version === 'node' || version === 'stable') {
+          // Just find any installed version as fallback
+          const versionsDir = path.join(nvmDir, 'versions', 'node');
+          if (fs.existsSync(versionsDir)) {
+            const versions = fs.readdirSync(versionsDir).filter(v => v.startsWith('v'));
+            if (versions.length > 0) {
+              // Sort and get latest
+              versions.sort((a, b) => {
+                const aParts = a.slice(1).split('.').map(Number);
+                const bParts = b.slice(1).split('.').map(Number);
+                for (let i = 0; i < 3; i++) {
+                  if (aParts[i] !== bParts[i]) return bParts[i] - aParts[i];
+                }
+                return 0;
+              });
+              version = versions[0];
+            }
+          }
+        }
+        const versionBin = path.join(nvmDir, 'versions', 'node', version, 'bin');
+        if (fs.existsSync(versionBin)) {
+          detectedPaths.push(versionBin);
+        }
+      } catch {
+        // Ignore errors reading alias file
+      }
+    } else {
+      // Fallback: check versions directory for any installed version
+      const versionsDir = path.join(nvmDir, 'versions', 'node');
+      if (fs.existsSync(versionsDir)) {
+        try {
+          const versions = fs.readdirSync(versionsDir).filter(v => v.startsWith('v'));
+          if (versions.length > 0) {
+            // Sort and get latest
+            versions.sort((a, b) => {
+              const aParts = a.slice(1).split('.').map(Number);
+              const bParts = b.slice(1).split('.').map(Number);
+              for (let i = 0; i < 3; i++) {
+                if (aParts[i] !== bParts[i]) return bParts[i] - aParts[i];
+              }
+              return 0;
+            });
+            const versionBin = path.join(versionsDir, versions[0], 'bin');
+            if (fs.existsSync(versionBin)) {
+              detectedPaths.push(versionBin);
+            }
+          }
+        } catch {
+          // Ignore errors listing versions directory
+        }
+      }
+    }
+  }
+
+  // fnm: Fast Node Manager
+  // - macOS: ~/Library/Application Support/fnm (default) or ~/.fnm
+  // - Linux: ~/.local/share/fnm (default) or ~/.fnm
+  const fnmPaths = [
+    path.join(home, 'Library', 'Application Support', 'fnm'), // macOS default
+    path.join(home, '.local', 'share', 'fnm'), // Linux default
+    path.join(home, '.fnm'), // Legacy/custom location
+  ];
+  for (const fnmDir of fnmPaths) {
+    if (fs.existsSync(fnmDir)) {
+      // fnm uses aliases/current or node-versions/<version>
+      const fnmCurrentBin = path.join(fnmDir, 'aliases', 'default', 'bin');
+      const fnmNodeVersions = path.join(fnmDir, 'node-versions');
+
+      if (fs.existsSync(fnmCurrentBin)) {
+        detectedPaths.push(fnmCurrentBin);
+        break;
+      } else if (fs.existsSync(fnmNodeVersions)) {
+        try {
+          const versions = fs.readdirSync(fnmNodeVersions).filter(v => v.startsWith('v'));
+          if (versions.length > 0) {
+            versions.sort((a, b) => {
+              const aParts = a.slice(1).split('.').map(Number);
+              const bParts = b.slice(1).split('.').map(Number);
+              for (let i = 0; i < 3; i++) {
+                if (aParts[i] !== bParts[i]) return bParts[i] - aParts[i];
+              }
+              return 0;
+            });
+            const versionBin = path.join(fnmNodeVersions, versions[0], 'installation', 'bin');
+            if (fs.existsSync(versionBin)) {
+              detectedPaths.push(versionBin);
+              break;
+            }
+          }
+        } catch {
+          // Ignore errors
+        }
+      }
+    }
+  }
+
+  // volta: Uses ~/.volta/bin for shims
+  const voltaBin = path.join(home, '.volta', 'bin');
+  if (fs.existsSync(voltaBin)) {
+    detectedPaths.push(voltaBin);
+  }
+
+  // mise (formerly rtx): Uses ~/.local/share/mise/shims
+  const miseShims = path.join(home, '.local', 'share', 'mise', 'shims');
+  if (fs.existsSync(miseShims)) {
+    detectedPaths.push(miseShims);
+  }
+
+  // asdf: Uses ~/.asdf/shims
+  const asdfShims = path.join(home, '.asdf', 'shims');
+  if (fs.existsSync(asdfShims)) {
+    detectedPaths.push(asdfShims);
+  }
+
+  // n: Node version manager - uses /usr/local/n/versions or N_PREFIX
+  const nPrefix = process.env.N_PREFIX || '/usr/local';
+  const nBin = path.join(nPrefix, 'bin');
+  // Only add if n is actually managing node (check for n binary)
+  if (fs.existsSync(path.join(nPrefix, 'n', 'versions'))) {
+    if (fs.existsSync(nBin)) {
+      detectedPaths.push(nBin);
+    }
+  }
+
+  return detectedPaths;
+}
+
+/**
+ * Build the base PATH for macOS/Linux with detected Node version manager paths.
+ * Prepends version manager paths to ensure node/npm are available from GUI apps.
+ */
+function buildUnixBasePath(): string {
+  const standardPaths = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+  const versionManagerPaths = detectNodeVersionManagerPaths();
+
+  if (versionManagerPaths.length > 0) {
+    return versionManagerPaths.join(':') + ':' + standardPaths;
+  }
+
+  return standardPaths;
+}
 
 /**
  * Build a stream-json message for Claude Code with images and text
@@ -409,9 +584,10 @@ export class ProcessManager extends EventEmitter {
         let ptyEnv: NodeJS.ProcessEnv;
         if (isTerminal) {
           // Platform-specific base PATH for terminal sessions
+          // On Unix, include detected Node version manager paths (nvm, fnm, volta, etc.)
           const basePath = process.platform === 'win32'
             ? `${process.env.SystemRoot || 'C:\\Windows'}\\System32;${process.env.SystemRoot || 'C:\\Windows'};${process.env.ProgramFiles || 'C:\\Program Files'}\\Git\\cmd`
-            : '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+            : buildUnixBasePath();
 
           ptyEnv = {
             HOME: process.env.HOME || process.env.USERPROFILE,
@@ -521,7 +697,8 @@ export class ProcessManager extends EventEmitter {
           ].join(';');
           checkPath = path.join(appData, 'npm');
         } else {
-          standardPaths = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+          // Include detected Node version manager paths (nvm, fnm, volta, etc.)
+          standardPaths = buildUnixBasePath();
           checkPath = '/opt/homebrew/bin';
         }
 
@@ -1485,9 +1662,10 @@ export class ProcessManager extends EventEmitter {
       }
 
       // Platform-specific base PATH
+      // On Unix, include detected Node version manager paths (nvm, fnm, volta, etc.)
       const basePath = isWindows
         ? `${process.env.SystemRoot || 'C:\\Windows'}\\System32;${process.env.SystemRoot || 'C:\\Windows'};${process.env.ProgramFiles || 'C:\\Program Files'}\\Git\\cmd`
-        : '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+        : buildUnixBasePath();
 
       // Pass minimal environment with a base PATH for essential system commands.
       // Shell startup files will prepend user paths to this.
