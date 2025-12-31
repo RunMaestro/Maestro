@@ -1146,15 +1146,24 @@ function setupIpcHandlers() {
   // Set up callback for group chat router to lookup sessions for auto-add @mentions
   setGetSessionsCallback(() => {
     const sessions = sessionsStore.get('sessions', []);
-    return sessions.map((s: any) => ({
-      id: s.id,
-      name: s.name,
-      toolType: s.toolType,
-      cwd: s.cwd || s.fullPath || process.env.HOME || '/tmp',
-      customArgs: s.customArgs,
-      customEnvVars: s.customEnvVars,
-      customModel: s.customModel,
-    }));
+    return sessions.map((s: any) => {
+      // Resolve SSH remote name if session has SSH config
+      let sshRemoteName: string | undefined;
+      if (s.sessionSshRemoteConfig?.enabled && s.sessionSshRemoteConfig.remoteId) {
+        const sshConfig = getSshRemoteById(s.sessionSshRemoteConfig.remoteId);
+        sshRemoteName = sshConfig?.name;
+      }
+      return {
+        id: s.id,
+        name: s.name,
+        toolType: s.toolType,
+        cwd: s.cwd || s.fullPath || process.env.HOME || '/tmp',
+        customArgs: s.customArgs,
+        customEnvVars: s.customEnvVars,
+        customModel: s.customModel,
+        sshRemoteName,
+      };
+    });
   });
 
   // Set up callback for group chat router to lookup custom env vars for agents

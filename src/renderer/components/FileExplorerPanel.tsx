@@ -688,7 +688,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
           }}
         >
           <div className="p-1">
-            {/* Focus in Graph option - only for markdown files */}
+            {/* Document Graph option - only for markdown files */}
             {contextMenu.node.type === 'file' &&
              (contextMenu.node.name.endsWith('.md') || contextMenu.node.name.endsWith('.markdown')) &&
              onFocusFileInGraph && (
@@ -699,7 +699,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
                   style={{ color: theme.colors.textMain }}
                 >
                   <Target className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-                  <span>Focus in Graph</span>
+                  <span>Document Graph</span>
                 </button>
                 <div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
               </>

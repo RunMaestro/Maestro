@@ -78,14 +78,14 @@ export type ProgressCallback = (progress: ProgressData) => void;
  * Options for building the graph data
  */
 export interface BuildOptions {
-  /** Whether to include external link nodes in the graph */
-  includeExternalLinks: boolean;
   /** Root directory path to scan for markdown files */
   rootPath: string;
-  /** Maximum number of document nodes to include (for performance with large directories) */
+  /** Starting file path (relative to rootPath) - the center of the graph */
+  focusFile: string;
+  /** Maximum depth to traverse from the focus file (default: 3) */
+  maxDepth?: number;
+  /** Maximum number of document nodes to include (for performance) */
   maxNodes?: number;
-  /** Number of nodes to skip (for pagination/load more) */
-  offset?: number;
   /** Optional callback for progress updates during scanning and parsing */
   onProgress?: ProgressCallback;
 }
@@ -326,94 +326,135 @@ async function parseFile(rootPath: string, relativePath: string): Promise<Parsed
 }
 
 /**
- * Build graph data from a directory of markdown files
+ * Build graph data starting from a focus file and traversing outward via links.
+ * Uses BFS to discover connected documents up to maxDepth levels.
  *
  * @param options - Build configuration options
  * @returns GraphData with nodes and edges
  */
 export async function buildGraphData(options: BuildOptions): Promise<GraphData> {
-  const { rootPath, includeExternalLinks, maxNodes, offset = 0, onProgress } = options;
+  const { rootPath, focusFile, maxDepth = 3, maxNodes = 100, onProgress } = options;
 
   const buildStart = perfMetrics.start();
 
-  // Step 1: Scan for all markdown files
-  const scanStart = perfMetrics.start();
-  const markdownPaths = await scanMarkdownFiles(rootPath, onProgress);
-  const totalDocuments = markdownPaths.length;
-  perfMetrics.end(scanStart, 'buildGraphData:scan', {
-    totalDocuments,
-    rootPath: rootPath.split('/').slice(-2).join('/'), // Last 2 path segments for privacy
-  });
+  console.log('[DocumentGraph] Building graph from focus file:', { rootPath, focusFile, maxDepth, maxNodes });
 
-  // Step 2: Apply pagination if maxNodes is set
-  let pathsToProcess = markdownPaths;
-  if (maxNodes !== undefined && maxNodes > 0) {
-    pathsToProcess = markdownPaths.slice(offset, offset + maxNodes);
+  // Track parsed files by path for deduplication
+  const parsedFileMap = new Map<string, ParsedFile>();
+  // BFS queue: [relativePath, depth]
+  const queue: Array<{ path: string; depth: number }> = [];
+  // Track visited paths to avoid re-processing
+  const visited = new Set<string>();
+
+  // Step 1: Parse the focus file first
+  const focusParsed = await parseFile(rootPath, focusFile);
+  if (!focusParsed) {
+    console.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
+    return {
+      nodes: [],
+      edges: [],
+      totalDocuments: 0,
+      loadedDocuments: 0,
+      hasMore: false,
+      cachedExternalData: { externalNodes: [], externalEdges: [], domainCount: 0, totalLinkCount: 0 },
+      internalLinkCount: 0,
+    };
   }
 
-  // Step 3: Parse the files we're processing
-  // We yield to the event loop every BATCH_SIZE_BEFORE_YIELD files to prevent UI blocking
-  const parseStart = perfMetrics.start();
-  const parsedFiles: ParsedFile[] = [];
-  let runningInternalLinkCount = 0;
-  let runningExternalLinkCount = 0;
+  parsedFileMap.set(focusFile, focusParsed);
+  visited.add(focusFile);
 
-  for (let i = 0; i < pathsToProcess.length; i++) {
-    const relativePath = pathsToProcess[i];
-
-    const parsed = await parseFile(rootPath, relativePath);
-    if (parsed) {
-      parsedFiles.push(parsed);
-      // Update running link counts
-      runningInternalLinkCount += parsed.internalLinks.length;
-      runningExternalLinkCount += parsed.externalLinks.length;
+  // Add linked files to queue
+  for (const link of focusParsed.internalLinks) {
+    if (!visited.has(link)) {
+      queue.push({ path: link, depth: 1 });
+      visited.add(link);
     }
+  }
 
-    // Report parsing progress with link counts
+  // Report initial progress
+  if (onProgress) {
+    onProgress({
+      phase: 'parsing',
+      current: 1,
+      total: 1 + queue.length,
+      currentFile: focusFile,
+      internalLinksFound: focusParsed.internalLinks.length,
+      externalLinksFound: focusParsed.externalLinks.length,
+    });
+  }
+
+  // Step 2: BFS traversal to discover connected documents
+  let filesProcessed = 1;
+  let totalInternalLinks = focusParsed.internalLinks.length;
+  let totalExternalLinks = focusParsed.externalLinks.length;
+
+  while (queue.length > 0 && parsedFileMap.size < maxNodes) {
+    const { path, depth } = queue.shift()!;
+
+    // Skip if beyond max depth
+    if (depth > maxDepth) continue;
+
+    // Parse the file
+    const parsed = await parseFile(rootPath, path);
+    if (!parsed) continue; // File doesn't exist or failed to parse
+
+    parsedFileMap.set(path, parsed);
+    filesProcessed++;
+    totalInternalLinks += parsed.internalLinks.length;
+    totalExternalLinks += parsed.externalLinks.length;
+
+    // Report progress
     if (onProgress) {
       onProgress({
         phase: 'parsing',
-        current: i + 1,
-        total: pathsToProcess.length,
-        currentFile: relativePath,
-        internalLinksFound: runningInternalLinkCount,
-        externalLinksFound: runningExternalLinkCount,
+        current: filesProcessed,
+        total: filesProcessed + queue.length,
+        currentFile: path,
+        internalLinksFound: totalInternalLinks,
+        externalLinksFound: totalExternalLinks,
       });
     }
 
-    // Yield to event loop periodically to prevent UI blocking
-    // This is especially important when processing many files or large files
-    if ((i + 1) % BATCH_SIZE_BEFORE_YIELD === 0) {
+    // Add linked files to queue (if not at max depth)
+    if (depth < maxDepth) {
+      for (const link of parsed.internalLinks) {
+        if (!visited.has(link)) {
+          queue.push({ path: link, depth: depth + 1 });
+          visited.add(link);
+        }
+      }
+    }
+
+    // Yield to event loop periodically
+    if (filesProcessed % BATCH_SIZE_BEFORE_YIELD === 0) {
       await yieldToEventLoop();
     }
   }
-  perfMetrics.end(parseStart, 'buildGraphData:parse', {
-    fileCount: pathsToProcess.length,
-    parsedCount: parsedFiles.length,
+
+  const parsedFiles = Array.from(parsedFileMap.values());
+  const loadedPaths = new Set(parsedFileMap.keys());
+
+  console.log('[DocumentGraph] BFS traversal complete:', {
+    focusFile,
+    filesLoaded: parsedFiles.length,
+    maxDepth,
+    queueRemaining: queue.length,
   });
 
-  // Create a set of known file paths for validating internal links
-  // Note: We use ALL known paths (not just loaded ones) to allow edges to connect properly
-  const knownPaths = new Set(markdownPaths);
-  // Track which files we've loaded for edge filtering
-  const loadedPaths = new Set(parsedFiles.map((f) => f.relativePath));
-
-  // Step 4: Build document nodes and ALWAYS collect external link data (for caching)
+  // Step 3: Build document nodes and collect external link data
   const documentNodes: GraphNode[] = [];
   const internalEdges: GraphEdge[] = [];
-
-  // Always track external domains for caching (regardless of includeExternalLinks setting)
   const externalDomains = new Map<string, { count: number; urls: string[] }>();
   const externalEdges: GraphEdge[] = [];
   let totalExternalLinkCount = 0;
   let internalLinkCount = 0;
 
-  for (let i = 0; i < parsedFiles.length; i++) {
-    const file = parsedFiles[i];
+  for (const file of parsedFiles) {
     const nodeId = `doc-${file.relativePath}`;
 
-    // Identify broken links (links to files that don't exist in the scanned directory)
-    const brokenLinks = file.allInternalLinkPaths.filter((link) => !knownPaths.has(link));
+    // Identify broken links
+    const brokenLinks = file.allInternalLinkPaths.filter((link) => !loadedPaths.has(link) && !visited.has(link));
 
     // Create document node
     documentNodes.push({
@@ -422,15 +463,13 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
       data: {
         nodeType: 'document',
         ...file.stats,
-        // Only include brokenLinks if there are any
         ...(brokenLinks.length > 0 ? { brokenLinks } : {}),
       },
     });
 
-    // Create edges for internal links
+    // Create edges for internal links (only if target is loaded)
     for (const internalLink of file.internalLinks) {
-      // Only create edge if target file exists AND is loaded (to avoid dangling edges)
-      if (knownPaths.has(internalLink) && loadedPaths.has(internalLink)) {
+      if (loadedPaths.has(internalLink)) {
         const targetNodeId = `doc-${internalLink}`;
         internalEdges.push({
           id: `edge-${nodeId}-${targetNodeId}`,
@@ -442,7 +481,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
       }
     }
 
-    // Always collect external links for caching (even if not currently displayed)
+    // Collect external links
     for (const externalLink of file.externalLinks) {
       totalExternalLinkCount++;
       const existing = externalDomains.get(externalLink.domain);
@@ -452,13 +491,9 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
           existing.urls.push(externalLink.url);
         }
       } else {
-        externalDomains.set(externalLink.domain, {
-          count: 1,
-          urls: [externalLink.url],
-        });
+        externalDomains.set(externalLink.domain, { count: 1, urls: [externalLink.url] });
       }
 
-      // Create edge from document to external domain (cached for later use)
       const externalNodeId = `ext-${externalLink.domain}`;
       externalEdges.push({
         id: `edge-${nodeId}-${externalNodeId}`,
@@ -469,7 +504,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
     }
   }
 
-  // Step 5: Build external domain nodes (always, for caching)
+  // Step 4: Build external domain nodes
   const externalNodes: GraphNode[] = [];
   for (const [domain, data] of externalDomains) {
     externalNodes.push({
@@ -484,15 +519,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
     });
   }
 
-  // Step 6: Assemble final nodes/edges based on includeExternalLinks setting
-  const nodes: GraphNode[] = includeExternalLinks
-    ? [...documentNodes, ...externalNodes]
-    : documentNodes;
-  const edges: GraphEdge[] = includeExternalLinks
-    ? [...internalEdges, ...externalEdges]
-    : internalEdges;
-
-  // Build cached external data for instant toggling
+  // Build cached external data
   const cachedExternalData: CachedExternalData = {
     externalNodes,
     externalEdges,
@@ -500,36 +527,34 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
     totalLinkCount: totalExternalLinkCount,
   };
 
-  // Calculate pagination info
-  const loadedDocuments = parsedFiles.length;
-  const hasMore = maxNodes !== undefined && maxNodes > 0 && offset + loadedDocuments < totalDocuments;
+  // Determine if there are more documents (queue had remaining items or hit maxNodes)
+  const hasMore = queue.length > 0 || parsedFiles.length >= maxNodes;
 
   // Log total build time with performance threshold check
   const totalBuildTime = perfMetrics.end(buildStart, 'buildGraphData:total', {
-    totalDocuments,
-    loadedDocuments,
-    nodeCount: nodes.length,
-    edgeCount: edges.length,
-    includeExternalLinks,
+    totalDocuments: visited.size,
+    loadedDocuments: parsedFiles.length,
+    nodeCount: documentNodes.length,
+    edgeCount: internalEdges.length,
     externalDomainsCached: externalDomains.size,
   });
 
   // Warn if build time exceeds thresholds
-  const threshold = totalDocuments < 100
+  const threshold = parsedFiles.length < 100
     ? PERFORMANCE_THRESHOLDS.GRAPH_BUILD_SMALL
     : PERFORMANCE_THRESHOLDS.GRAPH_BUILD_LARGE;
   if (totalBuildTime > threshold) {
     console.warn(
       `[DocumentGraph] buildGraphData took ${totalBuildTime.toFixed(0)}ms (threshold: ${threshold}ms)`,
-      { totalDocuments, nodeCount: nodes.length, edgeCount: edges.length }
+      { totalDocuments: visited.size, nodeCount: documentNodes.length, edgeCount: internalEdges.length }
     );
   }
 
   return {
-    nodes,
-    edges,
-    totalDocuments,
-    loadedDocuments,
+    nodes: documentNodes,
+    edges: internalEdges,
+    totalDocuments: visited.size,
+    loadedDocuments: parsedFiles.length,
     hasMore,
     cachedExternalData,
     internalLinkCount,

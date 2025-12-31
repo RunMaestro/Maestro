@@ -347,7 +347,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
     // Track shell CWD changes when in terminal mode
     // For SSH sessions, use remoteCwd; for local sessions, use shellCwd
-    const isRemoteSession = !!activeSession.sshRemoteId;
+    // Check both sshRemoteId (set after spawn) and sessionSshRemoteConfig.enabled (set before spawn)
+    const isRemoteSession = !!activeSession.sshRemoteId || !!activeSession.sessionSshRemoteConfig?.enabled;
     let newShellCwd = activeSession.shellCwd || activeSession.cwd;
     let newRemoteCwd = activeSession.remoteCwd;
     let cwdChanged = false;
@@ -420,9 +421,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
         }
 
         // Verify the directory exists before updating CWD
-        // Pass SSH remote ID for remote sessions
+        // Pass SSH remote ID for remote sessions - use sessionSshRemoteConfig.remoteId as fallback
+        // because sshRemoteId is only set after AI agent spawns, not for terminal-only SSH sessions
+        const sshIdForVerify = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
         try {
-          await window.maestro.fs.readDir(candidatePath, activeSession.sshRemoteId);
+          await window.maestro.fs.readDir(candidatePath, sshIdForVerify);
           // Directory exists, update the appropriate CWD
           if (isRemoteSession) {
             remoteCwdChanged = true;
@@ -516,7 +519,9 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
     if (cwdChanged || remoteCwdChanged) {
       (async () => {
         const cwdToCheck = remoteCwdChanged && newRemoteCwd ? newRemoteCwd : newShellCwd;
-        const isGitRepo = await gitService.isRepo(cwdToCheck, activeSession.sshRemoteId);
+        // Use sessionSshRemoteConfig.remoteId as fallback for terminal-only SSH sessions
+        const sshIdForGit = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+        const isGitRepo = await gitService.isRepo(cwdToCheck, sshIdForGit);
         setSessions((prev) =>
           prev.map((s) => (s.id === activeSessionId ? { ...s, isGitRepo } : s))
         );
@@ -753,7 +758,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
       // This spawns a fresh shell with -l -c to run the command, ensuring aliases work
       // When SSH is enabled for the session, the command runs on the remote host
       // For SSH sessions, use remoteCwd (updated by cd commands); for local, use shellCwd
-      const commandCwd = activeSession.sshRemoteId
+      const isRemote = !!activeSession.sshRemoteId || !!activeSession.sessionSshRemoteConfig?.enabled;
+      const commandCwd = isRemote
         ? (activeSession.remoteCwd || activeSession.sessionSshRemoteConfig?.workingDirOverride || activeSession.cwd)
         : (activeSession.shellCwd || activeSession.cwd);
       window.maestro.process

@@ -39,7 +39,7 @@ import { GraphLegend } from './GraphLegend';
 /** Debounce delay for graph rebuilds when settings change (ms) */
 const GRAPH_REBUILD_DEBOUNCE_DELAY = 300;
 /** Default maximum number of nodes to load initially */
-const DEFAULT_MAX_NODES = 50;
+const DEFAULT_MAX_NODES = 200;
 /** Number of additional nodes to load when clicking "Load more" */
 const LOAD_MORE_INCREMENT = 25;
 
@@ -161,6 +161,9 @@ export function DocumentGraphView({
   // Initially set from props, but can change when user double-clicks a node
   const [activeFocusFile, setActiveFocusFile] = useState<string | null>(focusFilePath);
 
+  // Track if legend is expanded for layer stack
+  const [legendExpanded, setLegendExpanded] = useState(false);
+
   /**
    * Handle escape - show confirmation modal
    */
@@ -184,6 +187,42 @@ export function DocumentGraphView({
       return () => unregisterLayer(id);
     }
   }, [isOpen, registerLayer, unregisterLayer, handleEscapeRequest]);
+
+  /**
+   * Register depth slider dropdown with layer stack when open
+   */
+  useEffect(() => {
+    if (showDepthSlider) {
+      const id = registerLayer({
+        type: 'overlay',
+        priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
+        blocksLowerLayers: false,
+        capturesFocus: false,
+        focusTrap: 'none',
+        allowClickOutside: true,
+        onEscape: () => setShowDepthSlider(false),
+      });
+      return () => unregisterLayer(id);
+    }
+  }, [showDepthSlider, registerLayer, unregisterLayer]);
+
+  /**
+   * Register legend with layer stack when expanded
+   */
+  useEffect(() => {
+    if (legendExpanded) {
+      const id = registerLayer({
+        type: 'overlay',
+        priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
+        blocksLowerLayers: false,
+        capturesFocus: false,
+        focusTrap: 'none',
+        allowClickOutside: true,
+        onEscape: () => setLegendExpanded(false),
+      });
+      return () => unregisterLayer(id);
+    }
+  }, [legendExpanded, registerLayer, unregisterLayer]);
 
   /**
    * Focus container on open
@@ -239,7 +278,8 @@ export function DocumentGraphView({
 
       const graphData = await buildGraphData({
         rootPath,
-        includeExternalLinks,
+        focusFile: focusFilePath,
+        maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
         maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
         onProgress: handleProgress,
       });
@@ -308,7 +348,7 @@ export function DocumentGraphView({
     } finally {
       setLoading(false);
     }
-  }, [rootPath, includeExternalLinks, maxNodes, defaultMaxNodes, handleProgress, focusFilePath]);
+  }, [rootPath, includeExternalLinks, maxNodes, defaultMaxNodes, handleProgress, focusFilePath, neighborDepth]);
 
   /**
    * Debounced version of loadGraphData for settings changes
@@ -490,7 +530,8 @@ export function DocumentGraphView({
     try {
       const graphData = await buildGraphData({
         rootPath,
-        includeExternalLinks,
+        focusFile: activeFocusFile || focusFilePath,
+        maxDepth: neighborDepth > 0 ? neighborDepth : 10,
         maxNodes: newMaxNodes,
       });
 
@@ -510,7 +551,7 @@ export function DocumentGraphView({
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, maxNodes, rootPath, includeExternalLinks]);
+  }, [hasMore, loadingMore, maxNodes, rootPath, activeFocusFile, focusFilePath, neighborDepth]);
 
   /**
    * Handle context menu open
@@ -1046,7 +1087,12 @@ export function DocumentGraphView({
 
           {/* Graph Legend */}
           {!loading && !error && nodes.length > 0 && (
-            <GraphLegend theme={theme} showExternalLinks={includeExternalLinks} />
+            <GraphLegend
+              theme={theme}
+              showExternalLinks={includeExternalLinks}
+              isExpanded={legendExpanded}
+              onExpandedChange={setLegendExpanded}
+            />
           )}
 
           {/* Context Menu */}

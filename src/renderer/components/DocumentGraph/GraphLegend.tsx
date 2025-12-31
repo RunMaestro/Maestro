@@ -23,7 +23,11 @@ export interface GraphLegendProps {
   theme: Theme;
   /** Whether external links are currently shown in the graph */
   showExternalLinks: boolean;
-  /** Initial expanded state (default: false) */
+  /** Controlled expanded state (if provided, component is controlled) */
+  isExpanded?: boolean;
+  /** Callback when expanded state changes (required for controlled mode) */
+  onExpandedChange?: (expanded: boolean) => void;
+  /** Initial expanded state for uncontrolled mode (default: false) */
   defaultExpanded?: boolean;
 }
 
@@ -273,13 +277,24 @@ const KeyboardBadge = memo(function KeyboardBadge({
 export const GraphLegend = memo(function GraphLegend({
   theme,
   showExternalLinks,
+  isExpanded: controlledExpanded,
+  onExpandedChange,
   defaultExpanded = false,
 }: GraphLegendProps) {
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  // Support both controlled and uncontrolled modes
+  const [uncontrolledExpanded, setUncontrolledExpanded] = useState(defaultExpanded);
+  const isControlled = controlledExpanded !== undefined;
+  const isExpanded = isControlled ? controlledExpanded : uncontrolledExpanded;
 
   const toggleExpanded = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
+    const newValue = !isExpanded;
+    if (onExpandedChange) {
+      onExpandedChange(newValue);
+    }
+    if (!isControlled) {
+      setUncontrolledExpanded(newValue);
+    }
+  }, [isExpanded, onExpandedChange, isControlled]);
 
   return (
     <div

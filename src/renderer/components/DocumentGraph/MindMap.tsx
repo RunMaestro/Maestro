@@ -274,68 +274,83 @@ function calculateMindMapLayout(
   let centerNode: MindMapNode | undefined;
   let actualCenterNodeId: string = '';
 
-  // Try exact match first
-  const centerNodeId = `doc-${centerFilePath}`;
-  centerNode = allNodes.find(n => n.id === centerNodeId);
-  if (centerNode) {
-    actualCenterNodeId = centerNodeId;
-  }
+  // Get all document nodes for searching
+  const documentNodes = allNodes.filter(n => n.nodeType === 'document');
 
-  // Try without leading slashes
-  if (!centerNode) {
-    const normalizedPath = centerFilePath.replace(/^\/+/, '');
-    const normalizedNodeId = `doc-${normalizedPath}`;
-    centerNode = allNodes.find(n => n.id === normalizedNodeId);
-    if (centerNode) {
-      actualCenterNodeId = normalizedNodeId;
+  // Build a list of all node IDs and filePaths for matching
+  const nodeIdSet = new Set(documentNodes.map(n => n.id));
+  const filePathToNode = new Map<string, MindMapNode>();
+  documentNodes.forEach(n => {
+    if (n.filePath) {
+      // Index by full path
+      filePathToNode.set(n.filePath, n);
+      // Index by filename only
+      const filename = n.filePath.split('/').pop();
+      if (filename && !filePathToNode.has(filename)) {
+        filePathToNode.set(filename, n);
+      }
     }
-  }
+  });
 
-  // Try just the filename (last path segment)
-  if (!centerNode) {
-    const filename = centerFilePath.split('/').pop() || centerFilePath;
-    const filenameNodeId = `doc-${filename}`;
-    centerNode = allNodes.find(n => n.id === filenameNodeId);
-    if (centerNode) {
-      actualCenterNodeId = filenameNodeId;
-    }
-  }
+  // Generate all possible variations of the centerFilePath
+  const searchVariations = [
+    centerFilePath,
+    centerFilePath.replace(/^\/+/, ''),
+    centerFilePath.split('/').pop() || centerFilePath,
+  ];
 
-  // Try matching by filePath property with various normalizations
-  if (!centerNode) {
-    const pathVariations = [
-      centerFilePath,
-      centerFilePath.replace(/^\/+/, ''),
-      centerFilePath.split('/').pop() || centerFilePath,
-    ];
-
-    for (const variation of pathVariations) {
-      centerNode = allNodes.find(n =>
-        n.nodeType === 'document' &&
-        (n.filePath === variation ||
-         n.filePath?.replace(/^\/+/, '') === variation ||
-         n.filePath?.split('/').pop() === variation.split('/').pop())
-      );
+  // Try to find by node ID first
+  for (const variation of searchVariations) {
+    const nodeId = `doc-${variation}`;
+    if (nodeIdSet.has(nodeId)) {
+      centerNode = documentNodes.find(n => n.id === nodeId);
       if (centerNode) {
-        actualCenterNodeId = centerNode.id;
+        actualCenterNodeId = nodeId;
+        break;
+      }
+    }
+  }
+
+  // Try to find by filePath
+  if (!centerNode) {
+    for (const variation of searchVariations) {
+      const node = filePathToNode.get(variation);
+      if (node) {
+        centerNode = node;
+        actualCenterNodeId = node.id;
+        break;
+      }
+    }
+  }
+
+  // Try fuzzy filename match (case-insensitive, without extension)
+  if (!centerNode) {
+    const targetFilename = (centerFilePath.split('/').pop() || centerFilePath).toLowerCase();
+    const targetBasename = targetFilename.replace(/\.md$/i, '');
+
+    for (const node of documentNodes) {
+      const nodeFilename = (node.filePath?.split('/').pop() || node.label || '').toLowerCase();
+      const nodeBasename = nodeFilename.replace(/\.md$/i, '');
+
+      if (nodeFilename === targetFilename || nodeBasename === targetBasename) {
+        centerNode = node;
+        actualCenterNodeId = node.id;
         break;
       }
     }
   }
 
   // Fallback: if still not found and we have document nodes, use the first one
-  if (!centerNode) {
-    const documentNodes = allNodes.filter(n => n.nodeType === 'document');
-    if (documentNodes.length > 0) {
-      console.warn(
-        `[MindMap] Center node not found for path: "${centerFilePath}", falling back to first document`,
-        '\nAvailable document nodes:',
-        documentNodes.map(n => n.filePath).slice(0, 10),
-        documentNodes.length > 10 ? `... and ${documentNodes.length - 10} more` : ''
-      );
-      centerNode = documentNodes[0];
-      actualCenterNodeId = centerNode.id;
-    }
+  if (!centerNode && documentNodes.length > 0) {
+    console.warn(
+      `[MindMap] Center node not found for path: "${centerFilePath}"`,
+      '\nSearched variations:', searchVariations,
+      '\nAvailable document nodes:',
+      documentNodes.map(n => ({ id: n.id, filePath: n.filePath })).slice(0, 10),
+      documentNodes.length > 10 ? `... and ${documentNodes.length - 10} more` : ''
+    );
+    centerNode = documentNodes[0];
+    actualCenterNodeId = centerNode.id;
   }
 
   if (!centerNode) {
@@ -382,8 +397,8 @@ function calculateMindMapLayout(
     return visited.has(n.id);
   });
 
-  // Separate document and external nodes
-  const documentNodes = nodesInRange.filter(n => n.nodeType === 'document');
+  // Separate document and external nodes from the filtered set
+  const visibleDocumentNodes = nodesInRange.filter(n => n.nodeType === 'document');
   const externalNodes = nodesInRange.filter(n => n.nodeType === 'external');
 
   // Position center node
@@ -409,7 +424,7 @@ function calculateMindMapLayout(
 
   // Group nodes by depth
   const nodesByDepth = new Map<number, MindMapNode[]>();
-  documentNodes.forEach(node => {
+  visibleDocumentNodes.forEach(node => {
     if (node.id === actualCenterNodeId) return;
     const depth = visited.get(node.id) || 1;
     if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
@@ -738,13 +753,16 @@ export function MindMap({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // State
+  // State - combine zoom and pan into single transform state to avoid jitter
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
+  const [transform, setTransform] = useState({ zoom: 1, panX: 0, panY: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+
+  // Derived values for convenience
+  const zoom = transform.zoom;
+  const pan = { x: transform.panX, y: transform.panY };
 
   // Double-click detection
   const lastClickRef = useRef<{ nodeId: string; time: number } | null>(null);
@@ -969,13 +987,14 @@ export function MindMap({
       // Center on the center node
       const centerNode = layout.nodes.find(n => n.isFocused);
       if (centerNode) {
-        setPan({
-          x: width / 2 - centerNode.x * zoom,
-          y: height / 2 - centerNode.y * zoom,
-        });
+        setTransform(prev => ({
+          ...prev,
+          panX: width / 2 - centerNode.x * prev.zoom,
+          panY: height / 2 - centerNode.y * prev.zoom,
+        }));
       }
     }
-  }, [centerFilePath, width, height, layout.nodes, zoom]);
+  }, [centerFilePath, width, height, layout.nodes]);
 
   // Mouse event handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -1006,18 +1025,19 @@ export function MindMap({
     } else {
       // Click on background - start panning
       setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+      setDragStart({ x: e.clientX - transform.panX, y: e.clientY - transform.panY });
       onNodeSelect(null);
       setFocusedNodeId(null);
     }
-  }, [screenToCanvas, findNodeAtPoint, isClickOnOpenIcon, onOpenFile, onNodeDoubleClick, onNodeSelect, pan]);
+  }, [screenToCanvas, findNodeAtPoint, isClickOnOpenIcon, onOpenFile, onNodeDoubleClick, onNodeSelect, transform.panX, transform.panY]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (isDragging) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
-      });
+      setTransform(prev => ({
+        ...prev,
+        panX: e.clientX - dragStart.x,
+        panY: e.clientY - dragStart.y,
+      }));
     } else {
       const { x, y } = screenToCanvas(e.clientX, e.clientY);
       const node = findNodeAtPoint(x, y);
@@ -1052,7 +1072,9 @@ export function MindMap({
     }
   }, [screenToCanvas, findNodeAtPoint, onNodeContextMenu]);
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  // Wheel handler for zooming - must be attached manually with passive: false
+  // Uses functional updater to avoid stale closures and jitter
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
 
     const rect = canvasRef.current?.getBoundingClientRect();
@@ -1061,18 +1083,30 @@ export function MindMap({
     const mouseX = e.clientX - rect.left;
     const mouseY = e.clientY - rect.top;
 
-    // Calculate new zoom
-    const delta = -e.deltaY * 0.001;
-    const newZoom = Math.min(Math.max(zoom + delta * zoom, 0.2), 3);
+    setTransform(prev => {
+      // Calculate new zoom
+      const delta = -e.deltaY * 0.001;
+      const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, 0.2), 3);
 
-    // Adjust pan to zoom towards mouse position
-    const zoomRatio = newZoom / zoom;
-    const newPanX = mouseX - (mouseX - pan.x) * zoomRatio;
-    const newPanY = mouseY - (mouseY - pan.y) * zoomRatio;
+      // Adjust pan to zoom towards mouse position
+      const zoomRatio = newZoom / prev.zoom;
+      const newPanX = mouseX - (mouseX - prev.panX) * zoomRatio;
+      const newPanY = mouseY - (mouseY - prev.panY) * zoomRatio;
 
-    setZoom(newZoom);
-    setPan({ x: newPanX, y: newPanY });
-  }, [zoom, pan]);
+      return { zoom: newZoom, panX: newPanX, panY: newPanY };
+    });
+  }, []); // No dependencies - stable callback
+
+  // Attach wheel event listener with passive: false to allow preventDefault
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+    };
+  }, [handleWheel]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -1164,30 +1198,33 @@ export function MindMap({
       onNodeSelect(nextNode);
 
       // Pan to keep focused node visible
-      const nodeScreenX = nextNode.x * zoom + pan.x;
-      const nodeScreenY = nextNode.y * zoom + pan.y;
-      const padding = 100;
+      setTransform(prev => {
+        const nodeScreenX = nextNode.x * prev.zoom + prev.panX;
+        const nodeScreenY = nextNode.y * prev.zoom + prev.panY;
+        const padding = 100;
 
-      let newPanX = pan.x;
-      let newPanY = pan.y;
+        let newPanX = prev.panX;
+        let newPanY = prev.panY;
 
-      if (nodeScreenX < padding) {
-        newPanX = padding - nextNode.x * zoom;
-      } else if (nodeScreenX > width - padding) {
-        newPanX = width - padding - nextNode.x * zoom;
-      }
+        if (nodeScreenX < padding) {
+          newPanX = padding - nextNode.x * prev.zoom;
+        } else if (nodeScreenX > width - padding) {
+          newPanX = width - padding - nextNode.x * prev.zoom;
+        }
 
-      if (nodeScreenY < padding) {
-        newPanY = padding - nextNode.y * zoom;
-      } else if (nodeScreenY > height - padding) {
-        newPanY = height - padding - nextNode.y * zoom;
-      }
+        if (nodeScreenY < padding) {
+          newPanY = padding - nextNode.y * prev.zoom;
+        } else if (nodeScreenY > height - padding) {
+          newPanY = height - padding - nextNode.y * prev.zoom;
+        }
 
-      if (newPanX !== pan.x || newPanY !== pan.y) {
-        setPan({ x: newPanX, y: newPanY });
-      }
+        if (newPanX !== prev.panX || newPanY !== prev.panY) {
+          return { ...prev, panX: newPanX, panY: newPanY };
+        }
+        return prev;
+      });
     }
-  }, [focusedNodeId, nodesWithState, onNodeSelect, onNodeDoubleClick, onOpenFile, zoom, pan, width, height]);
+  }, [focusedNodeId, nodesWithState, onNodeSelect, onNodeDoubleClick, onOpenFile, width, height]);
 
   return (
     <div
@@ -1208,7 +1245,6 @@ export function MindMap({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onContextMenu={handleContextMenu}
-        onWheel={handleWheel}
       />
     </div>
   );

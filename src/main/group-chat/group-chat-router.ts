@@ -40,6 +40,8 @@ export interface SessionInfo {
   customArgs?: string;
   customEnvVars?: Record<string, string>;
   customModel?: string;
+  /** SSH remote name for display in participant card */
+  sshRemoteName?: string;
 }
 
 /**
@@ -276,11 +278,12 @@ export async function routeUserMessage(
             agentDetector,
             agentConfigValues,
             customEnvVars,
-            // Pass session-specific overrides (customModel, customArgs, customEnvVars from session)
+            // Pass session-specific overrides (customModel, customArgs, customEnvVars, sshRemoteName from session)
             {
               customModel: matchingSession.customModel,
               customArgs: matchingSession.customArgs,
               customEnvVars: matchingSession.customEnvVars,
+              sshRemoteName: matchingSession.sshRemoteName,
             }
           );
           existingParticipantNames.add(participantName);
@@ -565,11 +568,12 @@ export async function routeModeratorResponse(
             agentDetector,
             agentConfigValues,
             customEnvVars,
-            // Pass session-specific overrides (customModel, customArgs, customEnvVars from session)
+            // Pass session-specific overrides (customModel, customArgs, customEnvVars, sshRemoteName from session)
             {
               customModel: matchingSession.customModel,
               customArgs: matchingSession.customArgs,
               customEnvVars: matchingSession.customEnvVars,
+              sshRemoteName: matchingSession.sshRemoteName,
             }
           );
           existingParticipantNames.add(participantName);

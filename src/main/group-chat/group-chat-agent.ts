@@ -57,6 +57,8 @@ export interface SessionOverrides {
   customModel?: string;
   customArgs?: string;
   customEnvVars?: Record<string, string>;
+  /** SSH remote name for display in participant card */
+  sshRemoteName?: string;
 }
 
 /**
@@ -182,6 +184,7 @@ export async function addParticipant(
     agentId,
     sessionId,
     addedAt: Date.now(),
+    sshRemoteName: sessionOverrides?.sshRemoteName,
   };
 
   // Store the session mapping

@@ -66,6 +66,18 @@ export interface UseAutoRunHandlersReturn {
 }
 
 /**
+ * Get the SSH remote ID for a session, checking both runtime and config values.
+ * Returns undefined for local sessions.
+ *
+ * Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
+ * we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
+ */
+function getSshRemoteId(session: Session | null): string | undefined {
+  if (!session) return undefined;
+  return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+}
+
+/**
  * Hook that provides handlers for Auto Run operations.
  * Extracted from App.tsx to reduce file size and improve maintainability.
  *
@@ -96,11 +108,12 @@ export function useAutoRunHandlers(
   const handleAutoRunFolderSelected = useCallback(async (folderPath: string) => {
     if (!activeSession) return;
 
+    const sshRemoteId = getSshRemoteId(activeSession);
     let result: { success: boolean; files?: string[]; tree?: AutoRunTreeNode[] } | null = null;
 
     try {
-      // Load the document list from the folder
-      result = await window.maestro.autorun.listDocs(folderPath);
+      // Load the document list from the folder (use SSH if remote session)
+      result = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
     } catch {
       result = null;
     }
@@ -113,7 +126,7 @@ export function useAutoRunHandlers(
       // Load content of first document
       let firstFileContent = '';
       if (firstFile) {
-        const contentResult = await window.maestro.autorun.readDoc(folderPath, firstFile + '.md');
+        const contentResult = await window.maestro.autorun.readDoc(folderPath, firstFile + '.md', sshRemoteId);
         if (contentResult.success) {
           firstFileContent = contentResult.content || '';
         }
@@ -174,12 +187,13 @@ export function useAutoRunHandlers(
   // Memoized function to get task count for a document (used by BatchRunnerModal)
   const getDocumentTaskCount = useCallback(async (filename: string) => {
     if (!activeSession?.autoRunFolderPath) return 0;
-    const result = await window.maestro.autorun.readDoc(activeSession.autoRunFolderPath, filename + '.md');
+    const sshRemoteId = getSshRemoteId(activeSession);
+    const result = await window.maestro.autorun.readDoc(activeSession.autoRunFolderPath, filename + '.md', sshRemoteId);
     if (!result.success || !result.content) return 0;
     // Count unchecked tasks: - [ ] pattern
     const matches = result.content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
     return matches ? matches.length : 0;
-  }, [activeSession?.autoRunFolderPath]);
+  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig]);
 
   // Auto Run document content change handler
   // Updates content in the session state (per-session, not global)
@@ -222,10 +236,12 @@ export function useAutoRunHandlers(
   const handleAutoRunSelectDocument = useCallback(async (filename: string) => {
     if (!activeSession?.autoRunFolderPath) return;
 
+    const sshRemoteId = getSshRemoteId(activeSession);
     // Load new document content
     const result = await window.maestro.autorun.readDoc(
       activeSession.autoRunFolderPath,
-      filename + '.md'
+      filename + '.md',
+      sshRemoteId
     );
     const newContent = result.success ? (result.content || '') : '';
 
@@ -246,10 +262,11 @@ export function useAutoRunHandlers(
   // Auto Run refresh handler - reload document list and show flash notification
   const handleAutoRunRefresh = useCallback(async () => {
     if (!activeSession?.autoRunFolderPath) return;
+    const sshRemoteId = getSshRemoteId(activeSession);
     const previousCount = autoRunDocumentList.length;
     setAutoRunIsLoadingDocuments(true);
     try {
-      const result = await window.maestro.autorun.listDocs(activeSession.autoRunFolderPath);
+      const result = await window.maestro.autorun.listDocs(activeSession.autoRunFolderPath, sshRemoteId);
       if (result.success) {
         const newFiles = result.files || [];
         setAutoRunDocumentList(newFiles);
@@ -272,7 +289,7 @@ export function useAutoRunHandlers(
     } finally {
       setAutoRunIsLoadingDocuments(false);
     }
-  }, [activeSession?.autoRunFolderPath, autoRunDocumentList.length, setAutoRunDocumentList, setAutoRunDocumentTree, setAutoRunIsLoadingDocuments, setSuccessFlashNotification]);
+  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig, autoRunDocumentList.length, setAutoRunDocumentList, setAutoRunDocumentTree, setAutoRunIsLoadingDocuments, setSuccessFlashNotification]);
 
   // Auto Run open setup handler
   const handleAutoRunOpenSetup = useCallback(() => {
@@ -283,17 +300,19 @@ export function useAutoRunHandlers(
   const handleAutoRunCreateDocument = useCallback(async (filename: string): Promise<boolean> => {
     if (!activeSession?.autoRunFolderPath) return false;
 
+    const sshRemoteId = getSshRemoteId(activeSession);
     try {
       // Create the document with empty content so placeholder hint shows
       const result = await window.maestro.autorun.writeDoc(
         activeSession.autoRunFolderPath,
         filename + '.md',
-        ''
+        '',
+        sshRemoteId
       );
 
       if (result.success) {
         // Refresh the document list
-        const listResult = await window.maestro.autorun.listDocs(activeSession.autoRunFolderPath);
+        const listResult = await window.maestro.autorun.listDocs(activeSession.autoRunFolderPath, sshRemoteId);
         if (listResult.success) {
           setAutoRunDocumentList(listResult.files || []);
           setAutoRunDocumentTree(listResult.tree || []);
@@ -319,7 +338,7 @@ export function useAutoRunHandlers(
       console.error('Failed to create document:', error);
       return false;
     }
-  }, [activeSession, setSessions, setAutoRunDocumentList]);
+  }, [activeSession, setSessions, setAutoRunDocumentList, setAutoRunDocumentTree]);
 
   return {
     handleAutoRunFolderSelected,

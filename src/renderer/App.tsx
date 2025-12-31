@@ -6159,7 +6159,8 @@ function MaestroConsoleInner() {
         // This spawns a fresh shell with -l -c to run the command
         // When SSH is enabled for the session, the command runs on the remote host
         // For SSH sessions, use remoteCwd; for local, use shellCwd
-        const commandCwd = session.sshRemoteId
+        const isRemote = !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+        const commandCwd = isRemote
           ? (session.remoteCwd || session.sessionSshRemoteConfig?.workingDirOverride || session.cwd)
           : (session.shellCwd || session.cwd);
         try {

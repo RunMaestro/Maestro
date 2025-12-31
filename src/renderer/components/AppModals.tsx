@@ -1147,7 +1147,7 @@ export function AppUtilityModals({
           onFolderSelected={onAutoRunFolderSelected}
           currentFolder={activeSession?.autoRunFolderPath}
           sessionName={activeSession?.name}
-          sshRemoteId={activeSession?.sshRemoteId}
+          sshRemoteId={activeSession?.sshRemoteId || (activeSession?.sessionSshRemoteConfig?.enabled ? activeSession?.sessionSshRemoteConfig?.remoteId : undefined) || undefined}
           sshRemoteHost={activeSession?.sshRemote?.host}
         />
       )}

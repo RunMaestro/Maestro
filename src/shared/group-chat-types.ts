@@ -57,6 +57,8 @@ export interface GroupChatParticipant {
   processingTimeMs?: number;
   /** Total cost in USD (optional, depends on provider) */
   totalCost?: number;
+  /** SSH remote name (displayed as pill when running on SSH remote) */
+  sshRemoteName?: string;
 }
 
 /**

@@ -719,7 +719,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
               {session.inputMode === 'terminal' && (
                 <div className="text-xs font-mono opacity-60 px-2" style={{ color: theme.colors.textDim }}>
                   {/* For SSH sessions, show remoteCwd; for local sessions, show shellCwd */}
-                  {(session.sshRemoteId
+                  {((session.sshRemoteId || session.sessionSshRemoteConfig?.enabled)
                     ? (session.remoteCwd || session.sessionSshRemoteConfig?.workingDirOverride || session.cwd)
                     : (session.shellCwd || session.cwd)
                   )?.replace(/^\/Users\/[^\/]+/, '~').replace(/^\/home\/[^\/]+/, '~') || '~'}

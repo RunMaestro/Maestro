@@ -286,7 +286,19 @@ export const MarkdownRenderer = memo(({ content, theme, onCopy, className = '', 
                 sshRemoteId={sshRemoteId}
               />
             );
-          }
+          },
+          table: ({ node: _node, style, ...props }: any) => (
+            <div className="overflow-x-auto scrollbar-thin">
+              <table
+                {...props}
+                style={{
+                  minWidth: '100%',
+                  width: 'max-content',
+                  ...(style || {}),
+                }}
+              />
+            </div>
+          ),
         }}
       >
         {content}

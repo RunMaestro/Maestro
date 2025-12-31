@@ -319,6 +319,46 @@ const handleMouseEnter = () => {
 
 See `src/renderer/components/TabBar.tsx` (Tab component) for implementation details.
 
+### 10. SSH Remote Sessions
+
+Sessions can execute commands on remote hosts via SSH. **Critical:** There are two different SSH identifiers with different lifecycles:
+
+```typescript
+// Set AFTER AI agent spawns (via onSshRemote callback)
+session.sshRemoteId: string | undefined
+
+// Set BEFORE spawn (user configuration)
+session.sessionSshRemoteConfig: {
+  enabled: boolean;
+  remoteId: string | null;      // The SSH config ID
+  workingDirOverride?: string;
+}
+```
+
+**Common pitfall:** `sshRemoteId` is only populated after the AI agent spawns. For terminal-only SSH sessions (no AI agent), it remains `undefined`. Always use both as fallback:
+
+```typescript
+// WRONG - fails for terminal-only SSH sessions
+const sshId = session.sshRemoteId;
+
+// CORRECT - works for all SSH sessions
+const sshId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
+```
+
+This applies to any operation that needs to run on the remote:
+- `window.maestro.fs.readDir(path, sshId)`
+- `gitService.isRepo(path, sshId)`
+- Directory existence checks for `cd` command tracking
+
+Similarly for checking if a session is remote:
+```typescript
+// WRONG
+const isRemote = !!session.sshRemoteId;
+
+// CORRECT
+const isRemote = !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+```
+
 ## Code Conventions
 
 ### TypeScript
