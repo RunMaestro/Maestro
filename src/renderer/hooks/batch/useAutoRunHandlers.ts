@@ -193,7 +193,8 @@ export function useAutoRunHandlers(
     // Count unchecked tasks: - [ ] pattern
     const matches = result.content.match(/^[\s]*-\s*\[\s*\]\s*.+$/gm);
     return matches ? matches.length : 0;
-  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig]);
+  // Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
+  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId]);
 
   // Auto Run document content change handler
   // Updates content in the session state (per-session, not global)
@@ -289,7 +290,8 @@ export function useAutoRunHandlers(
     } finally {
       setAutoRunIsLoadingDocuments(false);
     }
-  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig, autoRunDocumentList.length, setAutoRunDocumentList, setAutoRunDocumentTree, setAutoRunIsLoadingDocuments, setSuccessFlashNotification]);
+  // Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
+  }, [activeSession?.autoRunFolderPath, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId, autoRunDocumentList.length, setAutoRunDocumentList, setAutoRunDocumentTree, setAutoRunIsLoadingDocuments, setSuccessFlashNotification]);
 
   // Auto Run open setup handler
   const handleAutoRunOpenSetup = useCallback(() => {

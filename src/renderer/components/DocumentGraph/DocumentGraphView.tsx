@@ -23,7 +23,6 @@ import {
   Loader2,
   ChevronDown,
   Sliders,
-  Focus,
   AlertCircle,
   RotateCcw,
   HelpCircle,

@@ -5280,7 +5280,8 @@ function MaestroConsoleInner() {
     };
 
     loadAutoRunData();
-  }, [activeSessionId, activeSession?.autoRunFolderPath, activeSession?.autoRunSelectedFile, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig, loadTaskCounts]);
+  // Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
+  }, [activeSessionId, activeSession?.autoRunFolderPath, activeSession?.autoRunSelectedFile, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId, loadTaskCounts]);
 
   // File watching for Auto Run - watch whenever a folder is configured
   // Updates reflect immediately whether from batch runs, terminal commands, or external editors
@@ -5344,7 +5345,8 @@ function MaestroConsoleInner() {
       window.maestro.autorun.unwatchFolder(folderPath);
       unsubscribe();
     };
-  }, [activeSession?.id, activeSession?.autoRunFolderPath, activeSession?.autoRunSelectedFile, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig, loadTaskCounts]);
+  // Note: Use primitive values (remoteId) not object refs (sessionSshRemoteConfig) to avoid infinite re-render loops
+  }, [activeSession?.id, activeSession?.autoRunFolderPath, activeSession?.autoRunSelectedFile, activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId, loadTaskCounts]);
 
   // Auto-scroll logs
   const activeTabLogs = activeSession ? getActiveTab(activeSession)?.logs : undefined;
@@ -6055,9 +6057,6 @@ function MaestroConsoleInner() {
     // Close any open dropdowns when switching modes
     setTabCompletionOpen(false);
     setSlashCommandOpen(false);
-    // Focus input after mode switch
-    setActiveFocus('main');
-    setTimeout(() => inputRef.current?.focus(), 0);
   };
 
   // Toggle unread tabs filter with save/restore of active tab
