@@ -729,20 +729,24 @@ export function DocumentGraphView({
     if (e.key === 'Escape') {
       e.stopPropagation(); // Prevent layer stack from handling
       if (searchQuery) {
-        // Clear search query
+        // First Escape: clear search query
         setSearchQuery('');
       } else {
-        // Blur search and focus the mind map container
+        // Second Escape (or first if empty): blur search, select center node, focus graph
         searchInputRef.current?.blur();
-        mindMapContainerRef.current?.focus();
 
-        // Select the center node (the focus file)
+        // Select the center node (the focus file) first
         if (activeFocusFile) {
           const centerNode = nodes.find(n => n.filePath === activeFocusFile);
           if (centerNode) {
             handleNodeSelect(centerNode);
           }
         }
+
+        // Focus the mind map container after state update
+        requestAnimationFrame(() => {
+          mindMapContainerRef.current?.focus();
+        });
       }
     }
   }, [searchQuery, activeFocusFile, nodes, handleNodeSelect]);
