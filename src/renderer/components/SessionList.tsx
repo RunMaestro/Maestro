@@ -3,7 +3,7 @@ import {
   Wand2, Plus, Settings, ChevronRight, ChevronDown, ChevronUp, X, Keyboard,
   Radio, Copy, ExternalLink, PanelLeftClose, PanelLeftOpen, Folder, FolderPlus, Info, GitBranch, Bot, Clock,
   ScrollText, Cpu, Menu, Bookmark, Trophy, Trash2, Edit3, FolderInput, Download, Compass, Globe,
-  GitPullRequest, BookOpen, BarChart3
+  GitPullRequest, BookOpen, BarChart3, Server
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Session, Group, Theme, Shortcut, AutoRunStats, GroupChat, GroupChatState, SettingsTab, FocusArea } from '../types';
@@ -577,29 +577,51 @@ function SessionTooltipContent({
       )}
       <div className="flex items-center gap-2 mb-2">
         <span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>{session.name}</span>
-        {/* Remote Indicator - shown for SSH sessions */}
-        {session.toolType !== 'terminal' && session.sessionSshRemoteConfig?.enabled && (
-          <span
-            className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-            style={{
-              backgroundColor: theme.colors.warning + '30',
-              color: theme.colors.warning
-            }}
-          >
-            REMOTE
-          </span>
-        )}
-        {/* Git vs Local Indicator */}
+        {/* Location Indicator Pills */}
         {session.toolType !== 'terminal' && (
-          <span
-            className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-            style={{
-              backgroundColor: session.isGitRepo ? theme.colors.accent + '30' : theme.colors.textDim + '20',
-              color: session.isGitRepo ? theme.colors.accent : theme.colors.textDim
-            }}
-          >
-            {session.isGitRepo ? 'GIT' : 'LOCAL'}
-          </span>
+          <>
+            {session.isGitRepo ? (
+              /* Git repo: Show server icon pill (if remote) + GIT pill */
+              <>
+                {session.sessionSshRemoteConfig?.enabled && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px] font-bold"
+                    style={{
+                      backgroundColor: theme.colors.warning + '30',
+                      color: theme.colors.warning
+                    }}
+                    title="Remote SSH"
+                  >
+                    <Server className="w-3 h-3" />
+                  </span>
+                )}
+                <span
+                  className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+                  style={{
+                    backgroundColor: theme.colors.accent + '30',
+                    color: theme.colors.accent
+                  }}
+                >
+                  GIT
+                </span>
+              </>
+            ) : (
+              /* Plain directory: Show REMOTE or LOCAL (not both) */
+              <span
+                className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+                style={{
+                  backgroundColor: session.sessionSshRemoteConfig?.enabled
+                    ? theme.colors.warning + '30'
+                    : theme.colors.textDim + '20',
+                  color: session.sessionSshRemoteConfig?.enabled
+                    ? theme.colors.warning
+                    : theme.colors.textDim
+                }}
+              >
+                {session.sessionSshRemoteConfig?.enabled ? 'REMOTE' : 'LOCAL'}
+              </span>
+            )}
+          </>
         )}
         {/* AUTO Mode Indicator */}
         {isInBatch && (
