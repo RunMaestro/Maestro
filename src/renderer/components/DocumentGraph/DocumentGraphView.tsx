@@ -28,6 +28,7 @@ import {
   HelpCircle,
   Calendar,
   CheckSquare,
+  Focus,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import { useLayerStack } from '../../contexts/LayerStackContext';

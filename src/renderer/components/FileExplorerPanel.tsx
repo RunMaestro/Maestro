@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ChevronRight, ChevronDown, ChevronUp, Folder, RefreshCw, Check, Eye, EyeOff, Target, Copy, ExternalLink, Server, GitBranch } from 'lucide-react';
+import { ChevronRight, ChevronDown, ChevronUp, Folder, RefreshCw, Check, Eye, EyeOff, Target, Copy, ExternalLink, Server, GitBranch, Clock, RotateCw } from 'lucide-react';
 import type { Session, Theme, FocusArea } from '../types';
 import type { FileNode } from '../types/fileTree';
 import type { FileTreeChanges } from '../utils/fileExplorer';
@@ -9,6 +9,49 @@ import { getFileIcon } from '../utils/theme';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+
+/**
+ * RetryCountdown component - shows time remaining until auto-retry.
+ */
+function RetryCountdown({
+  retryAt,
+  theme,
+  onRetryNow,
+}: {
+  retryAt: number;
+  theme: Theme;
+  onRetryNow: () => void;
+}) {
+  const [secondsLeft, setSecondsLeft] = useState(() =>
+    Math.max(0, Math.ceil((retryAt - Date.now()) / 1000))
+  );
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const remaining = Math.max(0, Math.ceil((retryAt - Date.now()) / 1000));
+      setSecondsLeft(remaining);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [retryAt]);
+
+  return (
+    <div className="flex flex-col items-center gap-2 mt-3">
+      <div className="flex items-center gap-1.5 text-xs" style={{ color: theme.colors.textDim }}>
+        <Clock className="w-3.5 h-3.5" />
+        <span>Retrying in {secondsLeft}s...</span>
+      </div>
+      <button
+        onClick={onRetryNow}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+        style={{ color: theme.colors.accent }}
+      >
+        <RotateCw className="w-3.5 h-3.5" />
+        Retry Now
+      </button>
+    </div>
+  );
+}
 
 // Auto-refresh interval options in seconds
 const AUTO_REFRESH_OPTIONS = [
@@ -547,17 +590,47 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
       {/* File tree content - virtualized */}
       {session.fileTreeError ? (
         <div className="flex flex-col items-center justify-center gap-3 py-8">
-          <div className="text-xs text-center" style={{ color: theme.colors.error }}>
+          <div className="text-xs text-center px-4" style={{ color: theme.colors.error }}>
             {session.fileTreeError}
           </div>
-          <button
-            onClick={() => updateSessionWorkingDirectory(session.id, setSessions)}
-            className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors text-xs"
-            style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-          >
-            <Folder className="w-4 h-4" />
-            Select New Directory
-          </button>
+          {/* Show retry countdown if scheduled */}
+          {session.fileTreeRetryAt && session.fileTreeRetryAt > Date.now() ? (
+            <RetryCountdown
+              retryAt={session.fileTreeRetryAt}
+              theme={theme}
+              onRetryNow={() => {
+                // Clear retry time and trigger immediate refresh
+                setSessions(prev => prev.map(s =>
+                  s.id === session.id ? { ...s, fileTreeRetryAt: undefined } : s
+                ));
+              }}
+            />
+          ) : (
+            <>
+              {/* Only show "Select New Directory" for terminal sessions, not agent sessions */}
+              {session.toolType === 'terminal' && (
+                <button
+                  onClick={() => updateSessionWorkingDirectory(session.id, setSessions)}
+                  className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors text-xs"
+                  style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+                >
+                  <Folder className="w-4 h-4" />
+                  Select New Directory
+                </button>
+              )}
+              {/* For agent sessions, show a refresh button instead */}
+              {session.toolType !== 'terminal' && (
+                <button
+                  onClick={() => refreshFileTree(session.id)}
+                  className="flex items-center gap-2 px-3 py-2 rounded border hover:bg-white/5 transition-colors text-xs"
+                  style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Retry Connection
+                </button>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <>

@@ -2005,8 +2005,8 @@ function MaestroConsoleInner() {
       }
 
       if (isFromAi && tabIdFromSession) {
-        // AI process stderr - route to the correct tab as a system log entry
-        batchedUpdater.appendLog(actualSessionId, tabIdFromSession, true, `[stderr] ${data}`, false);
+        // AI process stderr - route to the correct tab with stderr flag for red box styling
+        batchedUpdater.appendLog(actualSessionId, tabIdFromSession, true, data, true);
       } else {
         // Terminal command stderr - route to shell logs
         batchedUpdater.appendLog(actualSessionId, null, false, data, true);

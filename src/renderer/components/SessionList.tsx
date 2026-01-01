@@ -1133,12 +1133,19 @@ function SessionListInner(props: SessionListProps) {
     const globalIdx = sortedSessions.findIndex(s => s.id === session.id);
     const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
 
-    return (
-      <div key={`${options.keyPrefix}-${session.id}`}>
+    // In flat/ungrouped view, wrap sessions with worktrees in a left-bordered container
+    // to visually associate parent and worktrees together (similar to grouped view)
+    const needsWorktreeWrapper = hasWorktrees && (variant === 'flat' || variant === 'ungrouped');
+
+    // When wrapped, use 'ungrouped' styling for flat sessions (no mx-3, consistent with grouped look)
+    const effectiveVariant = needsWorktreeWrapper && variant === 'flat' ? 'ungrouped' : variant;
+
+    const content = (
+      <>
         {/* Parent session - no chevron, maintains alignment */}
         <SessionItem
           session={session}
-          variant={variant}
+          variant={effectiveVariant}
           theme={theme}
           isActive={activeSessionId === session.id && !activeGroupChatId}
           isKeyboardSelected={isKeyboardSelected}
@@ -1183,10 +1190,10 @@ function SessionListInner(props: SessionListProps) {
         {/* Worktree children drawer (when expanded) */}
         {hasWorktrees && worktreesExpanded && onToggleWorktreeExpanded && (
           <div
-            className="ml-1 rounded-bl overflow-hidden"
+            className={`rounded-bl overflow-hidden ${needsWorktreeWrapper ? '' : 'ml-1'}`}
             style={{
               backgroundColor: theme.colors.accent + '10',
-              borderLeft: `1px solid ${theme.colors.accent}30`,
+              borderLeft: needsWorktreeWrapper ? 'none' : `1px solid ${theme.colors.accent}30`,
               borderBottom: `1px solid ${theme.colors.accent}30`,
             }}
           >
@@ -1238,6 +1245,26 @@ function SessionListInner(props: SessionListProps) {
             </button>
           </div>
         )}
+      </>
+    );
+
+    // Wrap in left-bordered container for flat/ungrouped sessions with worktrees
+    // Use ml-3 to align left edge, mr-3 minus the extra px-1 from ungrouped (px-4 vs px-3)
+    if (needsWorktreeWrapper) {
+      return (
+        <div
+          key={`${options.keyPrefix}-${session.id}`}
+          className="border-l ml-3 mr-2 mb-1"
+          style={{ borderColor: theme.colors.accent + '50' }}
+        >
+          {content}
+        </div>
+      );
+    }
+
+    return (
+      <div key={`${options.keyPrefix}-${session.id}`}>
+        {content}
       </div>
     );
   };

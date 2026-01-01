@@ -378,6 +378,8 @@ export interface Session {
   fileExplorerExpanded: string[];
   fileExplorerScrollPos: number;
   fileTreeError?: string;
+  /** Timestamp when file tree should be retried after an error (for backoff) */
+  fileTreeRetryAt?: number;
   fileTreeStats?: {
     fileCount: number;
     folderCount: number;

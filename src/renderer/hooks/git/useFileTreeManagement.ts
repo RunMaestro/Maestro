@@ -1,10 +1,16 @@
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { RightPanelHandle } from '../../components/RightPanel';
 import type { Session } from '../../types';
 import type { FileNode } from '../../types/fileTree';
 import { loadFileTree, compareFileTrees, type FileTreeChanges, type SshContext } from '../../utils/fileExplorer';
 import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
+
+/**
+ * Retry delay for file tree errors (20 seconds).
+ * After an error, we wait this long before attempting to reload.
+ */
+const FILE_TREE_RETRY_DELAY_MS = 20000;
 
 /**
  * Extract SSH context from session for remote file operations.
@@ -133,6 +139,7 @@ export function useFileTreeManagement(
           ...s,
           fileTree: [],
           fileTreeError: `Cannot access directory: ${treeRoot}\n${errorMsg}`,
+          fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS,
           fileTreeStats: undefined
         } : s
       ));
@@ -206,15 +213,19 @@ export function useFileTreeManagement(
           ...s,
           fileTree: [],
           fileTreeError: `Cannot access directory: ${treeRoot}\n${errorMsg}`,
+          fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS,
           fileTreeStats: undefined
         } : s
       ));
     }
   }, [sessions, setSessions, rightPanelRef]);
 
+  // Ref to track pending retry timers per session
+  const retryTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
   /**
    * Load file tree when active session changes.
-   * Only loads if file tree is empty.
+   * Only loads if file tree is empty AND not in error backoff period.
    * Passes SSH context for remote sessions to enable remote operations (Phase 2+).
    */
   useEffect(() => {
@@ -223,6 +234,23 @@ export function useFileTreeManagement(
 
     // Only load if file tree is empty
     if (!session.fileTree || session.fileTree.length === 0) {
+      // Check if we're in a retry backoff period
+      if (session.fileTreeRetryAt && Date.now() < session.fileTreeRetryAt) {
+        // Schedule retry when backoff expires (if not already scheduled)
+        if (!retryTimersRef.current.has(session.id)) {
+          const delay = session.fileTreeRetryAt - Date.now();
+          const timerId = setTimeout(() => {
+            retryTimersRef.current.delete(session.id);
+            // Clear the retry time to allow the effect to trigger reload
+            setSessions(prev => prev.map(s =>
+              s.id === session.id ? { ...s, fileTreeRetryAt: undefined } : s
+            ));
+          }, delay);
+          retryTimersRef.current.set(session.id, timerId);
+        }
+        return; // Don't load now, wait for retry timer
+      }
+
       // Extract SSH context for remote file operations
       const sshContext = getSshContext(session);
 
@@ -238,6 +266,7 @@ export function useFileTreeManagement(
             ...s,
             fileTree: tree,
             fileTreeError: undefined,
+            fileTreeRetryAt: undefined,
             fileTreeStats: {
               fileCount: stats.fileCount,
               folderCount: stats.folderCount,
@@ -253,12 +282,21 @@ export function useFileTreeManagement(
             ...s,
             fileTree: [],
             fileTreeError: `Cannot access directory: ${treeRoot}\n${errorMsg}`,
+            fileTreeRetryAt: Date.now() + FILE_TREE_RETRY_DELAY_MS,
             fileTreeStats: undefined
           } : s
         ));
       });
     }
   }, [activeSessionId, sessions, setSessions]);
+
+  // Cleanup retry timers on unmount
+  useEffect(() => {
+    return () => {
+      retryTimersRef.current.forEach(timerId => clearTimeout(timerId));
+      retryTimersRef.current.clear();
+    };
+  }, []);
 
   /**
    * Filter file tree based on search query.

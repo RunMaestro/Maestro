@@ -68,6 +68,8 @@ export class SshRemoteManager {
     ConnectTimeout: '10', // Connection timeout in seconds
     ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
     RequestTTY: 'no', // Don't request a TTY for command execution (avoids shell rc issues)
+    ControlMaster: 'no', // Disable connection multiplexing to prevent "UNKNOWN port -1" errors when multiple agents connect to same server
+    ControlPath: 'none', // Ensure no ControlPath is used from ~/.ssh/config
   };
 
   /**

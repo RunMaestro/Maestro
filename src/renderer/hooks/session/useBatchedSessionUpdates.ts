@@ -205,9 +205,12 @@ export function useBatchedSessionUpdates(
                 const existingLogs = tab.logs.filter(log => log.source !== 'thinking' && log.source !== 'tool');
                 const lastLog = existingLogs[existingLogs.length - 1];
 
-                // Time-based grouping for AI output (500ms window)
+                // Determine the source based on stderr flag
+                const logSource = logData.isStderr ? 'stderr' : 'stdout';
+
+                // Time-based grouping for AI output (500ms window) - only group same source types
                 const shouldGroup = lastLog &&
-                  lastLog.source === 'stdout' &&
+                  lastLog.source === logSource &&
                   (logData.timestamp - lastLog.timestamp) < 500;
 
                 let updatedLogs: LogEntry[];
@@ -221,7 +224,7 @@ export function useBatchedSessionUpdates(
                   const newLog: LogEntry = {
                     id: generateId(),
                     timestamp: logData.timestamp,
-                    source: 'stdout',
+                    source: logSource,
                     text: logData.data
                   };
                   updatedLogs = [...existingLogs, newLog];
