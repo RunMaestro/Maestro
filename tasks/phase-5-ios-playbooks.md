@@ -250,7 +250,8 @@
 
 ### Configuration
 
-- [ ] Create `Crash-Hunt/playbook.yaml`
+- [x] Create `Crash-Hunt/playbook.yaml`
+  > Created at `~/.maestro/playbooks/iOS/Crash-Hunt/playbook.yaml` with full YAML configuration including inputs (app_path, project_path, scheme, bundle_id, simulator, duration, interaction_interval, max_depth, seed, action_weights, excluded_elements, capture_on_crash, reset_on_crash), variables (crashes_found, actions_performed, current_depth, start_time, elapsed_seconds, crash_detected), and comprehensive steps for boot → build → install → launch → log monitoring → random navigation loop (crash check, UI inspect, depth check, random action, record) → report generation. Also created README.md with CLI usage, Auto Run integration, crash detection patterns, reproducibility via seeds, and artifact structure.
   ```yaml
   name: iOS Crash Hunt
   description: Navigate randomly through app to find crashes
@@ -322,11 +323,21 @@
 
 ### Implementation
 
-- [ ] Create `src/main/ios-tools/playbooks/crash-hunt.ts`
-  - [ ] Implement random action selection
-  - [ ] Implement crash detection
-  - [ ] Implement action recording
-  - [ ] Implement crash report generation
+- [x] Create `src/main/ios-tools/playbooks/crash-hunt.ts`
+  - [x] Implement random action selection
+  - [x] Implement crash detection
+  - [x] Implement action recording
+  - [x] Implement crash report generation
+  > Created comprehensive Crash Hunt executor (`crash-hunt.ts`) with full implementation including:
+  > - `runCrashHunt()` - main executor that performs semi-random UI navigation to discover crashes
+  > - SeededRandom class for reproducible random action selection with configurable weights (tap: 60%, scroll: 20%, swipe: 10%, back: 10% by default)
+  > - Crash detection via log streaming for patterns (CRASH, SIGABRT, SIGSEGV, SIGBUS, EXC_BAD_ACCESS, EXC_CRASH, assertion failed, fatal error, precondition failed, Terminating app due to uncaught exception)
+  > - Action recording with RecordedAction tracking type, target, params, success, navigation, and depth
+  > - Crash evidence capture including screenshot, console log, UI tree, and steps to reproduce
+  > - HTML and JSON report generation with crash details and reproducibility info
+  > - Progress reporting via `onProgress` callback with phases: initializing, building, installing, hunting, recovering, generating_report, complete/failed
+  > - Result formatters: `formatCrashHuntResult()` (markdown), `formatCrashHuntResultAsJson()`, `formatCrashHuntResultCompact()`
+  > - 39 unit tests covering input validation, execution, progress reporting, action recording, crash detection, dry run, result formatting, simulator resolution, max depth, excluded elements, and report generation
 
 ---
 

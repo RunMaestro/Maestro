@@ -20,3 +20,39 @@ export type {
   FeatureShipLoopIterationResult,
   FeatureShipLoopResult,
 } from './feature-ship-loop';
+
+// Regression Check Playbook
+export {
+  runRegressionCheck,
+  formatRegressionCheckResult,
+  formatRegressionCheckResultAsJson,
+  formatRegressionCheckResultCompact,
+} from './regression-check';
+
+export type {
+  RegressionFlow,
+  RegressionCheckInputs,
+  RegressionCheckOptions,
+  RegressionCheckProgress,
+  ScreenshotComparisonResult,
+  RegressionFlowResult,
+  RegressionCheckResult,
+} from './regression-check';
+
+// Crash Hunt Playbook
+export {
+  runCrashHunt,
+  formatCrashHuntResult,
+  formatCrashHuntResultAsJson,
+  formatCrashHuntResultCompact,
+} from './crash-hunt';
+
+export type {
+  ActionWeights,
+  CrashHuntInputs,
+  CrashHuntOptions,
+  CrashHuntProgress,
+  RecordedAction,
+  CrashDetection,
+  CrashHuntResult,
+} from './crash-hunt';
