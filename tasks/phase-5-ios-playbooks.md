@@ -507,14 +507,19 @@
 
 ### Shared Flows
 
-- [ ] Create `Common/flows/login.yaml` - standard login flow
-- [ ] Create `Common/flows/logout.yaml` - logout flow
-- [ ] Create `Common/flows/navigate-to-settings.yaml`
-- [ ] Create `Common/flows/clear-data.yaml`
+- [x] Create `Common/flows/login.yaml` - standard login flow
+  > Created at `~/.maestro/playbooks/iOS/Common/flows/login.yaml` with environment variable support for LOGIN_EMAIL, LOGIN_PASSWORD, LOGIN_EMAIL_FIELD, LOGIN_PASSWORD_FIELD, LOGIN_BUTTON, LOGIN_SUCCESS_ELEMENT, and LOGIN_TIMEOUT. Includes eraseText before input, hideKeyboard, and extendedWaitUntil for success verification.
+- [x] Create `Common/flows/logout.yaml` - logout flow
+  > Created at `~/.maestro/playbooks/iOS/Common/flows/logout.yaml` with support for LOGOUT_VIA_SETTINGS navigation, LOGOUT_BUTTON, LOGOUT_CONFIRM_BUTTON (for confirmation dialogs), and LOGOUT_SUCCESS_ELEMENT. Supports both direct logout and logout via settings menu.
+- [x] Create `Common/flows/navigate-to-settings.yaml`
+  > Created at `~/.maestro/playbooks/iOS/Common/flows/navigate-to-settings.yaml` with conditional navigation via NAVIGATION_VIA_TAB, NAVIGATION_VIA_PROFILE, SETTINGS_TAB, PROFILE_BUTTON, and SETTINGS_BUTTON. Verifies settings screen with SETTINGS_SCREEN element.
+- [x] Create `Common/flows/clear-data.yaml`
+  > Created at `~/.maestro/playbooks/iOS/Common/flows/clear-data.yaml` with CLEAR_TYPE support for "cache", "data", or "all" options. Includes NAVIGATE_TO_SETTINGS option, STORAGE_SETTINGS_BUTTON navigation, and CONFIRM_CLEAR_BUTTON for confirmation dialogs.
 
 ### Shared Screen Definitions
 
-- [ ] Create `Common/screens/standard-screens.yaml`
+- [x] Create `Common/screens/standard-screens.yaml`
+  > Created at `~/.maestro/playbooks/iOS/Common/screens/standard-screens.yaml` with 15 screen definitions: splash, login, signup, home, profile, settings, search, detail, modal, alert, loading, error, empty, onboarding, and permissions. Each screen includes wait_for, timeout, elements (required), and optional_elements. Also includes tab_bar definitions (home, search, notifications, profile, settings) and navigation elements (back_button, close_button, menu_button, more_options).
   ```yaml
   screens:
     splash:
@@ -540,7 +545,8 @@
 
 ### Shared Assertions
 
-- [ ] Create `Common/assertions/standard-assertions.yaml`
+- [x] Create `Common/assertions/standard-assertions.yaml`
+  > Created at `~/.maestro/playbooks/iOS/Common/assertions/standard-assertions.yaml` with 25+ assertion groups: app_launched, app_responsive, user_logged_in, user_logged_out, login_error_shown, no_errors, no_crash, error_displayed, loading_complete, loading_in_progress, on_home_screen, on_settings_screen, on_profile_screen, can_navigate_back, content_loaded, empty_state_shown, list_has_items, offline_indicator_shown, online_state, form_valid, form_has_errors, submit_button_enabled, submit_button_disabled, modal_visible, modal_dismissed, alert_visible, alert_dismissed, permission_requested, permission_granted, success_toast_shown, action_completed, keyboard_visible, keyboard_hidden. Also includes composite assertions: healthy_app_state, ready_for_interaction, authenticated_session.
   ```yaml
   assertions:
     app_launched:
