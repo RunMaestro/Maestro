@@ -394,8 +394,22 @@
 
 ## Auto Run Integration
 
-- [ ] Add all assertions to Auto Run step types
-  - [ ] Example Auto Run document:
+- [x] Add all assertions to Auto Run step types ✅ *Implemented complete step parsing and execution infrastructure*
+  - [x] Created `src/cli/services/step-types.ts` - Type definitions for all iOS assertion step types
+  - [x] Created `src/cli/services/step-parser.ts` - Parse structured iOS steps from markdown documents
+    - Supports shorthand syntax: `#identifier`, `@label`, `"text"`, `Type#identifier`
+    - Supports object syntax for complex options: `{ target: "#btn", timeout: 5000 }`
+    - Parses all assertion types: visibility, text, value, state, log, crash, screen
+    - Parses action types: tap, type, scroll, swipe, snapshot, inspect
+    - Extracts unchecked iOS steps for execution
+  - [x] Created `src/cli/services/step-executor.ts` - Execute parsed steps via iOS tools
+    - Direct execution via iosTools API (no agent required)
+    - Supports batch execution with stopOnFailure option
+    - Auto-detects booted simulator
+    - Returns structured results with success/failure and artifacts
+  - [x] Created `src/cli/services/steps/index.ts` - Central export point
+  - [x] Created `src/cli/services/__tests__/step-parser.test.ts` - 51 tests covering all step types
+  - [x] Example Auto Run document:
     ```markdown
     # Feature: User Login
 
@@ -468,5 +482,5 @@
 - [x] No crash detection works with crash log scanning ✅
 - [x] Log assertions can search recent logs ✅ *Implemented via `assertLogContains` with multiple match modes*
 - [x] Screen assertions check multiple conditions ✅ *Implemented via `assertScreen` with elements, notVisible, enabled, disabled checks*
-- [ ] Auto Run documents can use all assertions *(partial - core assertions available)*
+- [x] Auto Run documents can use all assertions ✅ *Step parser and executor infrastructure complete - all assertion types supported*
 - [x] Agent can use assertions to "prove" feature works ✅ *Via IPC handlers and verification formatter*
