@@ -100,39 +100,45 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 
 ### XCUITest Action Runner
 
-- [ ] Create `src/main/ios-tools/xcuitest-driver/` directory
-- [ ] Create Swift action execution code
-  - [ ] `ActionRunner.swift` - main action executor
-  - [ ] `ActionTypes.swift` - action type definitions
-  - [ ] `ActionResult.swift` - result serialization
+- [x] Create `src/main/ios-tools/xcuitest-driver/` directory
+- [x] Create Swift action execution code
+  - [x] `ActionRunner.swift` - main action executor
+  - [x] `ActionTypes.swift` - action type definitions
+  - [x] `ActionResult.swift` - result serialization
 
-- [ ] Implement action types in Swift
-  - [ ] `tap(identifier)` - tap element by identifier
-  - [ ] `tap(label)` - tap element by label
-  - [ ] `tap(x, y)` - tap at coordinates
-  - [ ] `doubleTap(target)` - double tap
-  - [ ] `longPress(target, duration)` - long press
-  - [ ] `type(text)` - type text into focused element
-  - [ ] `typeInto(identifier, text)` - type into specific element
-  - [ ] `clearText(identifier)` - clear text field
-  - [ ] `scroll(direction, distance)` - scroll view
-  - [ ] `scrollTo(identifier)` - scroll until element visible
-  - [ ] `swipe(direction)` - swipe gesture
-  - [ ] `pinch(scale)` - pinch gesture
-  - [ ] `rotate(angle)` - rotation gesture
-  - [ ] `waitForElement(identifier, timeout)` - wait for visibility
-  - [ ] `waitForNotExist(identifier, timeout)` - wait for disappear
+- [x] Implement action types in Swift
+  - [x] `tap(identifier)` - tap element by identifier
+  - [x] `tap(label)` - tap element by label
+  - [x] `tap(x, y)` - tap at coordinates
+  - [x] `doubleTap(target)` - double tap
+  - [x] `longPress(target, duration)` - long press
+  - [x] `type(text)` - type text into focused element
+  - [x] `typeInto(identifier, text)` - type into specific element
+  - [x] `clearText(identifier)` - clear text field
+  - [x] `scroll(direction, distance)` - scroll view
+  - [x] `scrollTo(identifier)` - scroll until element visible
+  - [x] `swipe(direction)` - swipe gesture
+  - [x] `pinch(scale)` - pinch gesture
+  - [x] `rotate(angle)` - rotation gesture
+  - [x] `waitForElement(identifier, timeout)` - wait for visibility
+  - [x] `waitForNotExist(identifier, timeout)` - wait for disappear
+  - Note: Swift files in `src/main/ios-tools/xcuitest-driver/` - ActionTypes.swift defines action types and targets, ActionResult.swift handles result serialization with JSON output markers, ActionRunner.swift implements the main action executor with element finding and gesture execution
 
 ### Native Driver Service
 
-- [ ] Create `src/main/ios-tools/native-driver.ts` - TypeScript wrapper
-  - [ ] Implement `NativeDriverOptions` interface
-  - [ ] Implement `tap(options)` - execute tap action
-  - [ ] Implement `type(options)` - execute type action
-  - [ ] Implement `scroll(options)` - execute scroll action
-  - [ ] Implement `swipe(options)` - execute swipe action
-  - [ ] Implement `waitFor(options)` - wait for element
-  - [ ] Implement `runActions(actions)` - batch execute actions
+- [x] Create `src/main/ios-tools/native-driver.ts` - TypeScript wrapper
+  - [x] Implement `NativeDriverOptions` interface
+  - [x] Implement `tap(options)` - execute tap action
+  - [x] Implement `type(options)` - execute type action
+  - [x] Implement `scroll(options)` - execute scroll action
+  - [x] Implement `swipe(options)` - execute swipe action
+  - [x] Implement `waitFor(options)` - wait for element
+  - [x] Implement `runActions(actions)` - batch execute actions (via executeAll)
+  - [x] Target helpers: byId, byLabel, byText, byPredicate, byCoordinates, byType
+  - [x] Action helpers: tap, doubleTap, longPress, typeText, clearText, scroll, scrollTo, swipe, pinch, rotate, waitForElement, waitForNotExist, assertExists, assertNotExists, assertEnabled, assertDisabled
+  - [x] Convenience methods on NativeDriver class: tapById, tapByLabel, tapAt, type, typeInto, scrollDown, scrollUp, scrollToId, swipeDirection, waitFor, waitForGone, assertElementExists, assertElementNotExists
+  - [x] Unit tests (66 tests) in `src/__tests__/main/ios-tools/native-driver.test.ts`
+  - Note: Execution currently returns "not yet implemented" - full implementation requires building XCUITest project dynamically. Recommends using Maestro Mobile CLI (`/ios.run_flow`) for now.
 
 ### Slash Commands for Primitives
 
@@ -237,6 +243,7 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 - [x] Write unit tests for flow-generator.ts - 67+ tests covering all step types and generation
 - [x] Write unit tests for flow-runner.ts - batch execution, validation, retry logic
 - [x] Write unit tests for maestro-cli.ts - 18 tests covering detection, installation, validation
+- [x] Write unit tests for native-driver.ts - 66 tests covering target helpers, action helpers, driver class, convenience methods
 - [ ] Write unit tests for action-validator.ts
 - [ ] Write integration test with Maestro Mobile CLI
 - [ ] Write integration test with native driver

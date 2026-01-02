@@ -550,3 +550,50 @@ export type {
   RunInspectorOptions,
   RunInspectorResult,
 } from './xcuitest-project';
+
+// =============================================================================
+// Native XCUITest Driver
+// =============================================================================
+
+export {
+  // Driver class and factory
+  NativeDriver,
+  createNativeDriver,
+  // Target helpers
+  byId,
+  byLabel,
+  byText,
+  byPredicate,
+  byCoordinates,
+  byType,
+  // Action helpers
+  tap as nativeTap,
+  doubleTap as nativeDoubleTap,
+  longPress as nativeLongPress,
+  typeText as nativeTypeText,
+  clearText as nativeClearText,
+  scroll as nativeScroll,
+  scrollTo as nativeScrollTo,
+  swipe as nativeSwipe,
+  pinch as nativePinch,
+  rotate as nativeRotate,
+  waitForElement as nativeWaitForElement,
+  waitForNotExist as nativeWaitForNotExist,
+  assertExists as nativeAssertExists,
+  assertNotExists as nativeAssertNotExists,
+  assertEnabled as nativeAssertEnabled,
+  assertDisabled as nativeAssertDisabled,
+} from './native-driver';
+export type {
+  ActionTarget as NativeActionTarget,
+  SwipeDirection as NativeSwipeDirection,
+  SwipeVelocity as NativeSwipeVelocity,
+  ActionType as NativeActionType,
+  ActionStatus as NativeActionStatus,
+  ActionRequest as NativeActionRequest,
+  ActionResult as NativeActionResult,
+  BatchActionResult as NativeBatchActionResult,
+  ElementInfo as NativeElementInfo,
+  ActionDetails as NativeActionDetails,
+  NativeDriverOptions,
+} from './native-driver';
