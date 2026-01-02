@@ -1267,6 +1267,8 @@ contextBridge.exposeInMainWorld('maestro', {
     slashCommand: {
       snapshot: (commandText: string, sessionId: string) =>
         ipcRenderer.invoke('ios:slashCommand:snapshot', commandText, sessionId),
+      runFlow: (commandText: string, sessionId: string, cwd?: string) =>
+        ipcRenderer.invoke('ios:slashCommand:runFlow', commandText, sessionId, cwd),
     },
     // Artifacts
     artifacts: {
@@ -3290,6 +3292,10 @@ export interface MaestroAPI {
       capture: (options: { udid?: string; bundleId?: string; sessionId: string; logDuration?: number; includeCrashContent?: boolean }) => Promise<any>;
       format: (result: any) => Promise<any>;
       formatJson: (result: any) => Promise<any>;
+    };
+    slashCommand: {
+      snapshot: (commandText: string, sessionId: string) => Promise<any>;
+      runFlow: (commandText: string, sessionId: string, cwd?: string) => Promise<any>;
     };
     artifacts: {
       getDirectory: (sessionId: string) => Promise<any>;

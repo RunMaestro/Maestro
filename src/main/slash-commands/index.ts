@@ -4,8 +4,8 @@
  * This module provides handlers for slash commands that are executed
  * by the AI agent or intercepted by Maestro.
  *
- * iOS commands (like /ios.snapshot, /ios.inspect) are passed to the AI agent
- * which uses these handlers via IPC to execute the actual operations.
+ * iOS commands (like /ios.snapshot, /ios.inspect, /ios.run_flow) are passed
+ * to the AI agent which uses these handlers via IPC to execute the actual operations.
  */
 
 // iOS Snapshot Command
@@ -27,6 +27,15 @@ export {
   type InspectCommandResult,
 } from './ios-inspect';
 
+// iOS Run Flow Command
+export {
+  executeRunFlowCommand,
+  parseRunFlowArgs,
+  runFlowCommandMetadata,
+  type RunFlowCommandArgs,
+  type RunFlowCommandResult,
+} from './ios-run-flow';
+
 // Command registry for all slash commands
 export interface SlashCommandMetadata {
   command: string;
@@ -43,8 +52,10 @@ export interface SlashCommandMetadata {
 // Export command metadata for autocomplete
 import { snapshotCommandMetadata } from './ios-snapshot';
 import { inspectCommandMetadata } from './ios-inspect';
+import { runFlowCommandMetadata } from './ios-run-flow';
 
 export const iosSlashCommandMetadata: SlashCommandMetadata[] = [
   snapshotCommandMetadata,
   inspectCommandMetadata,
+  runFlowCommandMetadata,
 ];

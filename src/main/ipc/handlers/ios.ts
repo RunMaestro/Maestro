@@ -1280,6 +1280,18 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // Execute /ios.run_flow slash command
+  ipcMain.handle(
+    'ios:slashCommand:runFlow',
+    withIpcErrorLogging(
+      handlerOpts('executeRunFlowCommand'),
+      async (commandText: string, sessionId: string, cwd?: string) => {
+        const { executeRunFlowCommand } = await import('../../slash-commands/ios-run-flow');
+        return executeRunFlowCommand(commandText, sessionId, cwd);
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }
 

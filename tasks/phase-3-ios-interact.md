@@ -76,16 +76,23 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 
 ### Slash Command: /ios.run_flow
 
-- [ ] Create `src/main/slash-commands/ios-run-flow.ts`
-  - [ ] Implement `/ios.run_flow <path>` - run a YAML flow file
-  - [ ] Implement `/ios.run_flow --inline "<steps>"` - run inline steps
-  - [ ] Arguments:
+- [x] Create `src/main/slash-commands/ios-run-flow.ts`
+  - [x] Implement `/ios.run_flow <path>` - run a YAML flow file
+  - [x] Implement `/ios.run_flow --inline "<steps>"` - run inline steps
+  - [x] Arguments:
     - `--app <bundleId>` - target app
     - `--simulator <name|udid>` - target simulator
     - `--timeout <seconds>` - max execution time
     - `--screenshot-dir <path>` - output directory
-  - [ ] Display real-time progress
-  - [ ] Show pass/fail with evidence
+    - `--retry <count>` - retry attempts on failure
+    - `--continue` - continue on error
+    - `--debug` - verbose output mode
+  - [x] Show pass/fail with evidence (formatted markdown output)
+  - [x] Registered IPC handler in `src/main/ipc/handlers/ios.ts`
+  - [x] Added API surface in `src/main/preload.ts`
+  - [x] Exported from `src/main/slash-commands/index.ts`
+  - [x] Unit tests (45 tests) in `src/__tests__/main/slash-commands/ios-run-flow.test.ts`
+  - Note: Real-time progress display requires additional integration with Claude Code agent output streaming
 
 ---
 
