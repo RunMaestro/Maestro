@@ -44,6 +44,8 @@ export interface UIElement {
   enabled: boolean;
   /** Whether the element is visible */
   visible: boolean;
+  /** Whether the element is selected (for tabs, checkboxes, radio buttons, etc.) */
+  selected?: boolean;
   /** Accessibility traits (e.g., "Button", "StaticText") */
   traits: string[];
   /** Child elements */

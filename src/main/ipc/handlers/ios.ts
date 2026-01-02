@@ -1374,6 +1374,98 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Selected Assertions
+  // ==========================================================================
+
+  // Assert element is selected
+  ipcMain.handle(
+    'ios:assert:selected',
+    withIpcErrorLogging(
+      handlerOpts('assertSelected'),
+      async (options: iosTools.AssertSelectedOptions) => {
+        return iosTools.assertSelected(options);
+      }
+    )
+  );
+
+  // Assert element is selected by identifier
+  ipcMain.handle(
+    'ios:assert:selectedById',
+    withIpcErrorLogging(
+      handlerOpts('assertSelectedById'),
+      async (identifier: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertSelectedById(identifier, options);
+      }
+    )
+  );
+
+  // Assert element is selected by label
+  ipcMain.handle(
+    'ios:assert:selectedByLabel',
+    withIpcErrorLogging(
+      handlerOpts('assertSelectedByLabel'),
+      async (label: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertSelectedByLabel(label, options);
+      }
+    )
+  );
+
+  // Assert element is selected by text
+  ipcMain.handle(
+    'ios:assert:selectedByText',
+    withIpcErrorLogging(
+      handlerOpts('assertSelectedByText'),
+      async (text: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertSelectedByText(text, options);
+      }
+    )
+  );
+
+  // Assert element is NOT selected
+  ipcMain.handle(
+    'ios:assert:notSelected',
+    withIpcErrorLogging(
+      handlerOpts('assertNotSelected'),
+      async (options: iosTools.AssertSelectedOptions) => {
+        return iosTools.assertNotSelected(options);
+      }
+    )
+  );
+
+  // Assert element is NOT selected by identifier
+  ipcMain.handle(
+    'ios:assert:notSelectedById',
+    withIpcErrorLogging(
+      handlerOpts('assertNotSelectedById'),
+      async (identifier: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertNotSelectedById(identifier, options);
+      }
+    )
+  );
+
+  // Assert element is NOT selected by label
+  ipcMain.handle(
+    'ios:assert:notSelectedByLabel',
+    withIpcErrorLogging(
+      handlerOpts('assertNotSelectedByLabel'),
+      async (label: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertNotSelectedByLabel(label, options);
+      }
+    )
+  );
+
+  // Assert element is NOT selected by text
+  ipcMain.handle(
+    'ios:assert:notSelectedByText',
+    withIpcErrorLogging(
+      handlerOpts('assertNotSelectedByText'),
+      async (text: string, options: Omit<iosTools.AssertSelectedOptions, 'target'>) => {
+        return iosTools.assertNotSelectedByText(text, options);
+      }
+    )
+  );
+
   // Format verification result for agent
   ipcMain.handle(
     'ios:verify:formatResult',

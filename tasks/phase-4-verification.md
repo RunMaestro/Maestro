@@ -171,12 +171,22 @@
 
 ### /ios.assert_selected
 
-- [ ] Create `src/main/ios-tools/assertions/selected.ts`
-  - [ ] Implement `assertSelected(target, options)`
-  - [ ] Check isSelected property
-  - [ ] Useful for tabs, checkboxes, toggles
+- [x] Create `src/main/ios-tools/assertions/selected.ts` ✅ *Fully implemented with polling support*
+  - [x] Implement `assertSelected(target, options)` ✅
+  - [x] Implement `assertNotSelected(target, options)` ✅
+  - [x] Check isSelected property ✅
+  - [x] Useful for tabs, checkboxes, toggles ✅
+  - [x] Convenience functions: `assertSelectedById`, `assertSelectedByLabel`, `assertSelectedByText`, `assertNotSelectedById`, `assertNotSelectedByLabel`, `assertNotSelectedByText` ✅
 
-- [ ] Create slash command `/ios.assert_selected`
+- [x] Create slash command `/ios.assert_selected` ✅ *IPC handlers registered:*
+  - *`ios:assert:selected` - main assertion*
+  - *`ios:assert:selectedById` - by identifier*
+  - *`ios:assert:selectedByLabel` - by label*
+  - *`ios:assert:selectedByText` - by text*
+  - *`ios:assert:notSelected` - not selected assertion*
+  - *`ios:assert:notSelectedById` - by identifier*
+  - *`ios:assert:notSelectedByLabel` - by label*
+  - *`ios:assert:notSelectedByText` - by text*
 
 ### /ios.assert_hittable
 

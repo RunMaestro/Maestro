@@ -490,6 +490,15 @@ export {
   assertDisabledById,
   assertDisabledByLabel,
   assertDisabledByText,
+  // Selected assertions
+  assertSelected,
+  assertSelectedById,
+  assertSelectedByLabel,
+  assertSelectedByText,
+  assertNotSelected,
+  assertNotSelectedById,
+  assertNotSelectedByLabel,
+  assertNotSelectedByText,
   // Crash assertions
   assertNoCrash,
   hasCrashed,
@@ -519,6 +528,10 @@ export type {
   EnabledElementTarget,
   AssertEnabledOptions,
   EnabledAssertionData,
+  // Selected assertion types
+  SelectedElementTarget,
+  AssertSelectedOptions,
+  SelectedAssertionData,
   // Crash types
   AssertNoCrashOptions,
   NoCrashAssertionData,

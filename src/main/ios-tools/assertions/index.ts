@@ -104,6 +104,26 @@ export type {
 } from './enabled';
 
 // =============================================================================
+// Selected Assertions
+// =============================================================================
+
+export {
+  assertSelected,
+  assertSelectedById,
+  assertSelectedByLabel,
+  assertSelectedByText,
+  assertNotSelected,
+  assertNotSelectedById,
+  assertNotSelectedByLabel,
+  assertNotSelectedByText,
+} from './selected';
+export type {
+  SelectedElementTarget,
+  AssertSelectedOptions,
+  SelectedAssertionData,
+} from './selected';
+
+// =============================================================================
 // Crash Assertions
 // =============================================================================
 
