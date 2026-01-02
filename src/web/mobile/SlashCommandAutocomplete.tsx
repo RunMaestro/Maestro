@@ -50,6 +50,42 @@ export const DEFAULT_SLASH_COMMANDS: SlashCommand[] = [
     description: 'Jump to CWD in file tree',
     terminalOnly: true,
   },
+  // iOS development commands
+  {
+    command: '/ios.snapshot',
+    description: 'Capture screenshot, logs, and crash info from iOS simulator',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.inspect',
+    description: 'Inspect UI hierarchy of iOS simulator to find elements',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.run_flow',
+    description: 'Run a Maestro test flow on iOS simulator',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.assert_visible',
+    description: 'Assert that a UI element is visible on screen',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.assert_no_crash',
+    description: 'Assert that the app has not crashed',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.wait_for',
+    description: 'Wait for a UI element to become visible',
+    aiOnly: true,
+  },
+  {
+    command: '/ios.ship_feature',
+    description: 'Run closed-loop development: launch → flow → verify → snapshot',
+    aiOnly: true,
+  },
 ];
 
 export interface SlashCommandAutocompleteProps {

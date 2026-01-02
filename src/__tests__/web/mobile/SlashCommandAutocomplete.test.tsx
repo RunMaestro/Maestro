@@ -298,13 +298,13 @@ describe('SlashCommandAutocomplete', () => {
       const { rerender } = render(
         <SlashCommandAutocomplete
           {...defaultProps}
-          selectedIndex={5}
+          selectedIndex={50}
           onSelectedIndexChange={onSelectedIndexChange}
           inputMode="ai"
         />
       );
 
-      // Index 5 is out of range for default commands (only 2 in AI mode)
+      // Index 50 is out of range for default commands (9 in AI mode: 2 original + 7 iOS)
       // Effect should clamp to 0
       expect(onSelectedIndexChange).toHaveBeenCalledWith(0);
     });

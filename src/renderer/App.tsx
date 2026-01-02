@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { SettingsModal } from './components/SettingsModal';
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
-import { slashCommands } from './slashCommands';
+import { slashCommands, iosSlashCommands } from './slashCommands';
 import {
   AppModals,
   type PRDetails,
@@ -3489,7 +3489,7 @@ function MaestroConsoleInner() {
           aiOnly: true, // Agent commands are only available in AI mode
         }))
       : [];
-    return [...slashCommands, ...customCommandsAsSlash, ...speckitCommandsAsSlash, ...openspecCommandsAsSlash, ...agentCommands];
+    return [...slashCommands, ...iosSlashCommands, ...customCommandsAsSlash, ...speckitCommandsAsSlash, ...openspecCommandsAsSlash, ...agentCommands];
   }, [customAICommands, speckitCommands, openspecCommands, activeSession?.agentCommands, hasActiveSessionCapability]);
 
   // Derive current input value and setter based on active session mode
