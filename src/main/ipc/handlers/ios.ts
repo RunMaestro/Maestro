@@ -351,5 +351,93 @@ export function registerIOSHandlers(): void {
     })
   );
 
+  // ==========================================================================
+  // Snapshot
+  // ==========================================================================
+
+  // Capture full snapshot (screenshot + logs + crash detection)
+  ipcMain.handle(
+    'ios:snapshot:capture',
+    createIpcHandler(
+      handlerOpts('captureSnapshot'),
+      async (options: {
+        udid?: string;
+        bundleId?: string;
+        sessionId: string;
+        logDuration?: number;
+        includeCrashContent?: boolean;
+      }) => {
+        return iosTools.captureSnapshot(options);
+      }
+    )
+  );
+
+  // Format snapshot for agent output
+  ipcMain.handle(
+    'ios:snapshot:format',
+    createIpcHandler(
+      handlerOpts('formatSnapshot'),
+      async (result: iosTools.SnapshotResult) => {
+        const formatted = iosTools.formatSnapshotForAgent(result);
+        return { success: true, data: formatted };
+      }
+    )
+  );
+
+  // Format snapshot as JSON
+  ipcMain.handle(
+    'ios:snapshot:formatJson',
+    createIpcHandler(
+      handlerOpts('formatSnapshotJson'),
+      async (result: iosTools.SnapshotResult) => {
+        const json = iosTools.formatSnapshotAsJson(result);
+        return { success: true, data: json };
+      }
+    )
+  );
+
+  // ==========================================================================
+  // Artifact Management
+  // ==========================================================================
+
+  // Get artifact directory for session
+  ipcMain.handle(
+    'ios:artifacts:getDirectory',
+    createIpcHandler(handlerOpts('getArtifactDirectory'), async (sessionId: string) => {
+      const dir = await iosTools.getArtifactDirectory(sessionId);
+      return { success: true, data: dir };
+    })
+  );
+
+  // List artifacts for session
+  ipcMain.handle(
+    'ios:artifacts:list',
+    createIpcHandler(handlerOpts('listArtifacts'), async (sessionId: string) => {
+      const artifacts = await iosTools.listSessionArtifacts(sessionId);
+      return { success: true, data: artifacts };
+    })
+  );
+
+  // Prune old artifacts
+  ipcMain.handle(
+    'ios:artifacts:prune',
+    createIpcHandler(
+      handlerOpts('pruneArtifacts'),
+      async (sessionId: string, keepCount?: number) => {
+        await iosTools.pruneSessionArtifacts(sessionId, keepCount);
+        return { success: true };
+      }
+    )
+  );
+
+  // Get artifacts size
+  ipcMain.handle(
+    'ios:artifacts:size',
+    createIpcHandler(handlerOpts('getArtifactsSize'), async (sessionId: string) => {
+      const size = await iosTools.getSessionArtifactsSize(sessionId);
+      return { success: true, data: size };
+    })
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }

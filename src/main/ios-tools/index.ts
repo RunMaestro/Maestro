@@ -80,6 +80,37 @@ export {
 } from './logs';
 
 // =============================================================================
+// Snapshot Functions
+// =============================================================================
+
+export { captureSnapshot } from './snapshot';
+export type { SnapshotOptions, SnapshotResult } from './snapshot';
+
+// =============================================================================
+// Snapshot Formatters
+// =============================================================================
+
+export {
+  formatSnapshotForAgent,
+  formatSnapshotAsJson,
+  summarizeLog,
+} from './snapshot-formatter';
+export type { FormattedSnapshot } from './snapshot-formatter';
+
+// =============================================================================
+// Artifact Management
+// =============================================================================
+
+export {
+  getArtifactDirectory,
+  getSnapshotDirectory,
+  generateSnapshotId,
+  listSessionArtifacts,
+  pruneSessionArtifacts,
+  getSessionArtifactsSize,
+} from './artifacts';
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 
