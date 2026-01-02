@@ -74,3 +74,27 @@ export type {
   DeviceResult,
   DesignReviewResult,
 } from './design-review';
+
+// Performance Check Playbook
+export {
+  runPerformanceCheck,
+  formatPerformanceCheckResult,
+  formatPerformanceCheckResultAsJson,
+  formatPerformanceCheckResultCompact,
+} from './performance-check';
+
+export type {
+  PerformanceFlow,
+  PerformanceCheckInputs,
+  PerformanceCheckOptions,
+  PerformanceCheckProgress,
+  LaunchTimeMeasurement,
+  MemorySample,
+  FrameRateSample,
+  CpuSample,
+  FlowMetrics,
+  PerformanceRegression,
+  PerformanceMetrics,
+  PerformanceBaseline,
+  PerformanceCheckResult,
+} from './performance-check';
