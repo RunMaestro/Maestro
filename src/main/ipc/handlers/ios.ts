@@ -1304,6 +1304,18 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // Execute /ios.type slash command
+  ipcMain.handle(
+    'ios:slashCommand:type',
+    withIpcErrorLogging(
+      handlerOpts('executeTypeCommand'),
+      async (commandText: string, sessionId: string, cwd?: string) => {
+        const { executeTypeCommand } = await import('../../slash-commands/ios-type');
+        return executeTypeCommand(commandText, sessionId, cwd);
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }
 

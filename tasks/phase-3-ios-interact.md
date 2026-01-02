@@ -154,9 +154,20 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
   - [x] Unit tests (71 tests) in `src/__tests__/main/slash-commands/ios-tap.test.ts`
   - Note: Uses the NativeDriver from native-driver.ts. Currently returns "not yet implemented" since NativeDriver execution requires building XCUITest project dynamically. Recommends using Maestro Mobile CLI (`/ios.run_flow`) for actual interactions until NativeDriver is fully implemented.
 
-- [ ] Create `src/main/slash-commands/ios-type.ts`
-  - [ ] `/ios.type <text>` - type into focused element
-  - [ ] `/ios.type --into <target> <text>` - type into specific element
+- [x] Create `src/main/slash-commands/ios-type.ts`
+  - [x] `/ios.type <text>` - type into focused element
+  - [x] `/ios.type --into <target> <text>` - type into specific element
+  - [x] Arguments:
+    - `--into, -i <target>` - target element to type into (#identifier or "label")
+    - `--app, -a <bundleId>` - target app (required)
+    - `--simulator, -s <name|udid>` - target simulator
+    - `--clear, -c` - clear existing text before typing
+    - `--timeout <ms>` - element wait timeout (default: 10000)
+    - `--debug` - verbose output mode
+  - [x] Registered IPC handler in `src/main/ipc/handlers/ios.ts`
+  - [x] Exported from `src/main/slash-commands/index.ts`
+  - [x] Unit tests (66 tests) in `src/__tests__/main/slash-commands/ios-type.test.ts`
+  - Note: Uses the NativeDriver from native-driver.ts. Currently returns "not yet implemented" since NativeDriver execution requires building XCUITest project dynamically. Recommends using Maestro Mobile CLI (`/ios.run_flow`) for actual interactions until NativeDriver is fully implemented.
 
 - [ ] Create `src/main/slash-commands/ios-scroll.ts`
   - [ ] `/ios.scroll <direction>` - scroll up/down/left/right
