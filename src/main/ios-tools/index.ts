@@ -235,12 +235,20 @@ export {
   runXcodebuild,
   parseSimctlJson,
   parseJson,
+  parseXcodebuildOutput,
   waitFor,
   sleep,
   createError,
   createFailure,
   parseIOSVersionFromRuntime,
   parseDeviceTypeName,
+} from './utils';
+export type {
+  BuildDiagnostic,
+  BuildPhase,
+  CompilationStep,
+  LinkerStep,
+  ParsedXcodebuildOutput,
 } from './utils';
 
 // =============================================================================
