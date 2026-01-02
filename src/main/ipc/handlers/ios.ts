@@ -439,5 +439,186 @@ export function registerIOSHandlers(): void {
     })
   );
 
+  // ==========================================================================
+  // UI Inspection
+  // ==========================================================================
+
+  // Inspect UI hierarchy
+  ipcMain.handle(
+    'ios:inspect',
+    createIpcHandler(
+      handlerOpts('inspect'),
+      async (options: {
+        udid?: string;
+        bundleId?: string;
+        sessionId: string;
+        captureScreenshot?: boolean;
+        timeout?: number;
+      }) => {
+        return iosTools.inspect(options);
+      }
+    )
+  );
+
+  // Format inspection result for agent
+  ipcMain.handle(
+    'ios:inspect:format',
+    createIpcHandler(
+      handlerOpts('formatInspect'),
+      async (result: iosTools.InspectResult, options?: iosTools.FormatOptions) => {
+        const formatted = iosTools.formatInspectForAgent(result, options);
+        return { success: true, data: formatted };
+      }
+    )
+  );
+
+  // Format inspection result as JSON
+  ipcMain.handle(
+    'ios:inspect:formatJson',
+    createIpcHandler(
+      handlerOpts('formatInspectJson'),
+      async (result: iosTools.InspectResult) => {
+        const json = iosTools.formatInspectAsJson(result);
+        return { success: true, data: json };
+      }
+    )
+  );
+
+  // Format inspection result as element list
+  ipcMain.handle(
+    'ios:inspect:formatList',
+    createIpcHandler(
+      handlerOpts('formatInspectList'),
+      async (result: iosTools.InspectResult) => {
+        const list = iosTools.formatInspectAsElementList(result);
+        return { success: true, data: list };
+      }
+    )
+  );
+
+  // Format inspection result compact
+  ipcMain.handle(
+    'ios:inspect:formatCompact',
+    createIpcHandler(
+      handlerOpts('formatInspectCompact'),
+      async (result: iosTools.InspectResult) => {
+        const compact = iosTools.formatInspectCompact(result);
+        return { success: true, data: compact };
+      }
+    )
+  );
+
+  // ==========================================================================
+  // UI Analysis
+  // ==========================================================================
+
+  // Find elements matching query
+  ipcMain.handle(
+    'ios:ui:findElements',
+    createIpcHandler(
+      handlerOpts('findElements'),
+      async (tree: iosTools.UIElement, query: iosTools.ElementQuery) => {
+        const result = iosTools.findElements(tree, query);
+        return { success: true, data: result };
+      }
+    )
+  );
+
+  // Find single element
+  ipcMain.handle(
+    'ios:ui:findElement',
+    createIpcHandler(
+      handlerOpts('findElement'),
+      async (tree: iosTools.UIElement, query: iosTools.ElementQuery) => {
+        const element = iosTools.findElement(tree, query);
+        return { success: true, data: element };
+      }
+    )
+  );
+
+  // Find by identifier
+  ipcMain.handle(
+    'ios:ui:findByIdentifier',
+    createIpcHandler(
+      handlerOpts('findByIdentifier'),
+      async (tree: iosTools.UIElement, identifier: string) => {
+        const element = iosTools.findByIdentifier(tree, identifier);
+        return { success: true, data: element };
+      }
+    )
+  );
+
+  // Find by label
+  ipcMain.handle(
+    'ios:ui:findByLabel',
+    createIpcHandler(
+      handlerOpts('findByLabel'),
+      async (tree: iosTools.UIElement, label: string) => {
+        const element = iosTools.findByLabel(tree, label);
+        return { success: true, data: element };
+      }
+    )
+  );
+
+  // Get interactable elements
+  ipcMain.handle(
+    'ios:ui:getInteractables',
+    createIpcHandler(
+      handlerOpts('getInteractables'),
+      async (tree: iosTools.UIElement, visibleOnly?: boolean) => {
+        const elements = iosTools.getInteractableElements(tree, visibleOnly);
+        return { success: true, data: elements };
+      }
+    )
+  );
+
+  // Get buttons
+  ipcMain.handle(
+    'ios:ui:getButtons',
+    createIpcHandler(handlerOpts('getButtons'), async (tree: iosTools.UIElement) => {
+      const buttons = iosTools.getButtons(tree);
+      return { success: true, data: buttons };
+    })
+  );
+
+  // Get text fields
+  ipcMain.handle(
+    'ios:ui:getTextFields',
+    createIpcHandler(handlerOpts('getTextFields'), async (tree: iosTools.UIElement) => {
+      const fields = iosTools.getTextFields(tree);
+      return { success: true, data: fields };
+    })
+  );
+
+  // Get text elements
+  ipcMain.handle(
+    'ios:ui:getTextElements',
+    createIpcHandler(handlerOpts('getTextElements'), async (tree: iosTools.UIElement) => {
+      const texts = iosTools.getTextElements(tree);
+      return { success: true, data: texts };
+    })
+  );
+
+  // Describe element
+  ipcMain.handle(
+    'ios:ui:describeElement',
+    createIpcHandler(handlerOpts('describeElement'), async (element: iosTools.UIElement) => {
+      const description = iosTools.describeElement(element);
+      return { success: true, data: description };
+    })
+  );
+
+  // Get best identifier for element
+  ipcMain.handle(
+    'ios:ui:getBestIdentifier',
+    createIpcHandler(
+      handlerOpts('getBestIdentifier'),
+      async (element: iosTools.UIElement, elements?: iosTools.UIElement[]) => {
+        const identifier = iosTools.getBestIdentifier(element, elements);
+        return { success: true, data: identifier };
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }

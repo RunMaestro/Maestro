@@ -111,6 +111,64 @@ export {
 } from './artifacts';
 
 // =============================================================================
+// UI Inspection
+// =============================================================================
+
+export { inspect } from './inspect-simple';
+export type {
+  UIElement,
+  InspectOptions,
+  InspectResult,
+} from './inspect-simple';
+
+// =============================================================================
+// UI Analysis
+// =============================================================================
+
+export {
+  findElements,
+  findElement,
+  findByIdentifier,
+  findByLabel,
+  findByType,
+  findByText,
+  getInteractableElements,
+  getButtons,
+  getTextFields,
+  getTextElements,
+  getNavigationElements,
+  isInteractable,
+  isTextElement,
+  getSuggestedAction,
+  describeElement,
+  getBestIdentifier,
+  filterVisible,
+  filterEnabled,
+  filterActive,
+  sortByPosition,
+} from './ui-analyzer';
+export type {
+  ElementQuery,
+  QueryResult,
+  InteractableElement,
+} from './ui-analyzer';
+
+// =============================================================================
+// Inspect Formatters
+// =============================================================================
+
+export {
+  formatInspectForAgent,
+  formatInspectAsJson,
+  formatInspectAsElementList,
+  formatInspectCompact,
+} from './inspect-formatter';
+export type {
+  FormattedInspect,
+  FormatOptions,
+} from './inspect-formatter';
+
+// =============================================================================
 // Utility Functions
 // =============================================================================
 
