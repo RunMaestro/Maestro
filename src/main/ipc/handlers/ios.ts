@@ -2324,8 +2324,303 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Playbook Management
+  // ==========================================================================
+
+  // List available iOS playbooks
+  ipcMain.handle(
+    'ios:playbook:list',
+    withIpcErrorLogging(handlerOpts('listPlaybooks'), async () => {
+      const playbooks = iosTools.listPlaybooks();
+      return { success: true, data: playbooks };
+    })
+  );
+
+  // Get playbook info by ID
+  ipcMain.handle(
+    'ios:playbook:info',
+    withIpcErrorLogging(handlerOpts('getPlaybookInfo'), async (playbookId: string) => {
+      const info = iosTools.getPlaybookInfo(playbookId);
+      if (!info) {
+        return {
+          success: false,
+          error: `Playbook not found: ${playbookId}`,
+        };
+      }
+
+      // Also load and validate the full config
+      try {
+        const config = iosTools.loadPlaybook(playbookId);
+        const validation = iosTools.validatePlaybook(config);
+        return {
+          success: true,
+          data: {
+            ...info,
+            config,
+            validation,
+          },
+        };
+      } catch (e) {
+        return {
+          success: false,
+          error: `Failed to load playbook: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    })
+  );
+
+  // Run a playbook
+  ipcMain.handle(
+    'ios:playbook:run',
+    withIpcErrorLogging(
+      handlerOpts('runPlaybook'),
+      async (options: {
+        playbook: string;
+        inputs: Record<string, unknown>;
+        sessionId: string;
+        cwd?: string;
+        dryRun?: boolean;
+        continueOnError?: boolean;
+        stepTimeout?: number;
+      }) => {
+        const mainWindow = BrowserWindow.getAllWindows()[0];
+
+        // Store the running playbook in the active map
+        const runId = `playbook-${Date.now()}`;
+
+        // Track playbook execution for status/stop functionality
+        activePlaybookRuns.set(runId, {
+          startTime: new Date(),
+          playbook: options.playbook,
+          sessionId: options.sessionId,
+          status: 'running',
+        });
+
+        try {
+          const result = await iosTools.runPlaybook({
+            playbook: options.playbook,
+            inputs: options.inputs,
+            sessionId: options.sessionId,
+            cwd: options.cwd,
+            dryRun: options.dryRun,
+            continueOnError: options.continueOnError,
+            stepTimeout: options.stepTimeout,
+            onProgress: (progress) => {
+              // Send progress updates to renderer
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ios:playbook:progress', runId, progress);
+              }
+            },
+            onStep: (event) => {
+              // Send step events for debugging
+              if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.webContents.send('ios:playbook:step', runId, event);
+              }
+            },
+          });
+
+          // Update status
+          const runInfo = activePlaybookRuns.get(runId);
+          if (runInfo) {
+            runInfo.status = result.success && result.data?.passed ? 'completed' : 'failed';
+            runInfo.result = result;
+            runInfo.endTime = new Date();
+          }
+
+          return {
+            success: true,
+            data: {
+              runId,
+              ...result,
+            },
+          };
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+
+          // Update status on error
+          const runInfo = activePlaybookRuns.get(runId);
+          if (runInfo) {
+            runInfo.status = 'failed';
+            runInfo.error = error;
+            runInfo.endTime = new Date();
+          }
+
+          return {
+            success: false,
+            error: `Playbook execution failed: ${error}`,
+          };
+        }
+      }
+    )
+  );
+
+  // Stop a running playbook
+  ipcMain.handle(
+    'ios:playbook:stop',
+    withIpcErrorLogging(handlerOpts('stopPlaybook'), async (runId: string) => {
+      const runInfo = activePlaybookRuns.get(runId);
+
+      if (!runInfo) {
+        return {
+          success: false,
+          error: `Playbook run not found: ${runId}`,
+        };
+      }
+
+      if (runInfo.status !== 'running') {
+        return {
+          success: false,
+          error: `Playbook is not running (status: ${runInfo.status})`,
+        };
+      }
+
+      // Mark as stopped
+      runInfo.status = 'stopped';
+      runInfo.endTime = new Date();
+
+      // Note: Actual cancellation of the running playbook would require
+      // implementing a cancellation token pattern in the playbook runner.
+      // For now, we just update the status.
+      logger.info(`${LOG_CONTEXT} Playbook run ${runId} marked as stopped`);
+
+      return { success: true, data: { runId, status: 'stopped' } };
+    })
+  );
+
+  // Get status of a playbook run
+  ipcMain.handle(
+    'ios:playbook:status',
+    withIpcErrorLogging(handlerOpts('getPlaybookStatus'), async (runId?: string) => {
+      if (runId) {
+        // Get specific run status
+        const runInfo = activePlaybookRuns.get(runId);
+        if (!runInfo) {
+          return {
+            success: false,
+            error: `Playbook run not found: ${runId}`,
+          };
+        }
+        return {
+          success: true,
+          data: {
+            runId,
+            ...runInfo,
+          },
+        };
+      } else {
+        // Get all active runs
+        const runs: Array<{
+          runId: string;
+          playbook: string;
+          sessionId: string;
+          status: string;
+          startTime: Date;
+          endTime?: Date;
+        }> = [];
+
+        for (const [id, info] of activePlaybookRuns.entries()) {
+          runs.push({
+            runId: id,
+            playbook: info.playbook,
+            sessionId: info.sessionId,
+            status: info.status,
+            startTime: info.startTime,
+            endTime: info.endTime,
+          });
+        }
+
+        return { success: true, data: runs };
+      }
+    })
+  );
+
+  // Validate a playbook without running
+  ipcMain.handle(
+    'ios:playbook:validate',
+    withIpcErrorLogging(handlerOpts('validatePlaybook'), async (playbookId: string) => {
+      try {
+        const config = iosTools.loadPlaybook(playbookId);
+        const validation = iosTools.validatePlaybook(config);
+        return { success: true, data: validation };
+      } catch (e) {
+        return {
+          success: false,
+          error: `Failed to validate playbook: ${e instanceof Error ? e.message : String(e)}`,
+        };
+      }
+    })
+  );
+
+  // Ensure playbooks directory exists
+  ipcMain.handle(
+    'ios:playbook:ensureDirectory',
+    withIpcErrorLogging(handlerOpts('ensurePlaybooksDirectory'), async () => {
+      const dir = iosTools.ensurePlaybooksDirectory();
+      return { success: true, data: { directory: dir } };
+    })
+  );
+
+  // Format playbook result for display
+  ipcMain.handle(
+    'ios:playbook:formatResult',
+    withIpcErrorLogging(
+      handlerOpts('formatPlaybookResult'),
+      async (result: iosTools.PlaybookRunResult) => {
+        const formatted = iosTools.formatPlaybookResult(result);
+        return { success: true, data: formatted };
+      }
+    )
+  );
+
+  // Format playbook result as JSON
+  ipcMain.handle(
+    'ios:playbook:formatResultJson',
+    withIpcErrorLogging(
+      handlerOpts('formatPlaybookResultAsJson'),
+      async (result: iosTools.PlaybookRunResult) => {
+        const json = iosTools.formatPlaybookResultAsJson(result);
+        return { success: true, data: json };
+      }
+    )
+  );
+
+  // Format playbook result compact
+  ipcMain.handle(
+    'ios:playbook:formatResultCompact',
+    withIpcErrorLogging(
+      handlerOpts('formatPlaybookResultCompact'),
+      async (result: iosTools.PlaybookRunResult) => {
+        const compact = iosTools.formatPlaybookResultCompact(result);
+        return { success: true, data: compact };
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }
+
+// =============================================================================
+// Playbook Run Tracking
+// =============================================================================
+
+/**
+ * Active playbook run information
+ */
+interface PlaybookRunInfo {
+  startTime: Date;
+  endTime?: Date;
+  playbook: string;
+  sessionId: string;
+  status: 'running' | 'completed' | 'failed' | 'stopped';
+  result?: iosTools.IOSResult<iosTools.PlaybookRunResult>;
+  error?: string;
+}
+
+/**
+ * Map of active playbook runs (keyed by run ID)
+ */
+const activePlaybookRuns = new Map<string, PlaybookRunInfo>();
 
 // =============================================================================
 // Helper Functions

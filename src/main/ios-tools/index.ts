@@ -833,3 +833,58 @@ export type {
   FeatureShipLoopIterationResult,
   FeatureShipLoopResult,
 } from './playbooks';
+
+// =============================================================================
+// Playbook Loader
+// =============================================================================
+
+export {
+  ensurePlaybooksDirectory,
+  loadPlaybook,
+  listPlaybooks,
+  validatePlaybook,
+  getPlaybookInfo,
+  playbookExists,
+  getPlaybookTemplatesDir,
+  getPlaybookBaselinesDir,
+  getCommonFlowsDir,
+  getCommonScreensDir,
+  getCommonAssertionsDir,
+  BUILTIN_PLAYBOOKS,
+} from './playbook-loader';
+export type {
+  PlaybookInputDef,
+  PlaybookStepDef,
+  PlaybookVariables,
+  IOSPlaybookConfig,
+  PlaybookInfo,
+  PlaybookValidationResult,
+  BuiltInPlaybookId,
+} from './playbook-loader';
+
+// =============================================================================
+// Playbook Runner
+// =============================================================================
+
+export {
+  runPlaybook,
+  formatPlaybookResult,
+  formatPlaybookResultAsJson,
+  formatPlaybookResultAsText,
+  formatPlaybookResultCompact,
+  resolveValue,
+  resolveObject,
+  evaluateExpression,
+  evaluateCondition,
+} from './playbook-runner';
+export type {
+  ActionHandler,
+  ActionRegistry,
+  RunPlaybookOptions,
+  PlaybookProgress,
+  StepExecutionEvent,
+  ExecutionContext,
+  LoopContext,
+  PlaybookRunResult,
+  StepResult,
+} from './playbook-runner';

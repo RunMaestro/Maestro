@@ -633,11 +633,23 @@
 
 ## IPC Handlers
 
-- [ ] Add playbook IPC handlers to `src/main/ipc/handlers/ios.ts`
-  - [ ] Register `ios:playbook:list` handler
-  - [ ] Register `ios:playbook:run` handler
-  - [ ] Register `ios:playbook:stop` handler
-  - [ ] Register `ios:playbook:status` handler
+- [x] Add playbook IPC handlers to `src/main/ipc/handlers/ios.ts`
+  - [x] Register `ios:playbook:list` handler
+  - [x] Register `ios:playbook:run` handler
+  - [x] Register `ios:playbook:stop` handler
+  - [x] Register `ios:playbook:status` handler
+  > Added comprehensive IPC handlers for playbook management:
+  > - `ios:playbook:list` - Lists all available iOS playbooks from ~/.maestro/playbooks/iOS/
+  > - `ios:playbook:info` - Gets detailed playbook info including config and validation
+  > - `ios:playbook:run` - Executes a playbook with progress/step event broadcasting
+  > - `ios:playbook:stop` - Stops a running playbook (marks as stopped)
+  > - `ios:playbook:status` - Gets status of a specific run or all active runs
+  > - `ios:playbook:validate` - Validates a playbook without executing
+  > - `ios:playbook:ensureDirectory` - Ensures playbooks directory structure exists
+  > - `ios:playbook:formatResult` - Formats result as markdown
+  > - `ios:playbook:formatResultJson` - Formats result as JSON
+  > - `ios:playbook:formatResultCompact` - Formats result as single-line summary
+  > Also added exports for playbook-loader and playbook-runner types/functions to ios-tools/index.ts
 
 ---
 
