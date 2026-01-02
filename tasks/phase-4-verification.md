@@ -460,7 +460,15 @@
 
 ## Testing
 
-- [ ] Write unit tests for each assertion type
+- [x] Write unit tests for each assertion type ✅ *Created `src/main/ios-tools/assertions/__tests__/assertions.test.ts` with 53 unit tests covering:*
+  - *Visibility assertions (assertVisible, assertNotVisible, convenience functions)*
+  - *Text assertions (assertText with all match modes: exact, contains, regex, startsWith, endsWith, case-insensitive)*
+  - *Value assertions (assertValue, assertValueEmpty, assertValueNotEmpty)*
+  - *Enabled/Disabled assertions (assertEnabled, assertDisabled with requireVisible option)*
+  - *Selected assertions (assertSelected, assertNotSelected)*
+  - *Wait For assertions (waitFor, waitForNot, timeout handling)*
+  - *Verification infrastructure (pollUntil, generateVerificationId, result builders)*
+  - *Error handling (simulator not found, not booted, inspect failures)*
 - [ ] Write integration tests with sample app
 - [ ] Test timeout behavior
 - [ ] Test retry logic
