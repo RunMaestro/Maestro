@@ -469,7 +469,17 @@
   - *Wait For assertions (waitFor, waitForNot, timeout handling)*
   - *Verification infrastructure (pollUntil, generateVerificationId, result builders)*
   - *Error handling (simulator not found, not booted, inspect failures)*
-- [ ] Write integration tests with sample app
+- [x] Write integration tests with sample app ✅ *Created `src/__tests__/integration/ios-assertions.integration.test.ts` with 21 tests covering:*
+  - *Visibility assertions against real Settings app (NavigationBar, Cell, Label, Text)*
+  - *Wait For assertions with actual polling behavior and timeout verification*
+  - *State assertions (assertEnabled for enabled elements)*
+  - *Compound screen assertions (createScreenDefinition, assertScreen)*
+  - *Log assertions (assertNoCrash, assertNoErrors, assertLogContains)*
+  - *Verification formatter output formatting*
+  - *Performance tracking (timing thresholds, attempt recording)*
+  - *Error handling (invalid UDID, helpful error messages)*
+  - *Quick validation suite (API structure, type safety)*
+  - *Graceful handling of Electron context requirements in test environment*
 - [x] Test timeout behavior ✅ *Added 7 tests covering:*
   - *Custom timeout value handling*
   - *Early termination when condition is met*
