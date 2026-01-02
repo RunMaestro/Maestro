@@ -73,7 +73,9 @@ export type StepType =
   | 'ios.scroll'
   | 'ios.swipe'
   | 'ios.snapshot'
-  | 'ios.inspect';
+  | 'ios.inspect'
+  // Playbook execution
+  | 'ios.playbook';
 
 // =============================================================================
 // Step Definitions
@@ -233,6 +235,37 @@ export interface InspectStep extends BaseStep {
   captureScreenshot?: boolean;
 }
 
+/**
+ * Playbook execution step.
+ *
+ * Allows executing an iOS playbook inline in Auto Run documents.
+ *
+ * Syntax examples:
+ *   - ios.playbook: Regression-Check
+ *   - ios.playbook: { name: "Regression-Check", inputs: { flows: ["login.yaml"] } }
+ *   - [ ] Run regression check
+ *     - ios.playbook: Regression-Check
+ *       inputs:
+ *         flows:
+ *           - login_flow.yaml
+ *         baseline_dir: ./baselines
+ */
+export interface PlaybookStep extends BaseStep {
+  type: 'ios.playbook';
+  /** Playbook name (e.g., "Regression-Check", "Feature-Ship-Loop") */
+  playbookName: string;
+  /** Input values for the playbook */
+  inputs?: Record<string, unknown>;
+  /** Whether to run in dry-run mode (validate without executing) */
+  dryRun?: boolean;
+  /** Continue execution even if playbook fails */
+  continueOnError?: boolean;
+  /** Session ID for artifact storage (optional, defaults to current session) */
+  sessionId?: string;
+  /** Custom timeout for playbook execution in ms */
+  timeout?: number;
+}
+
 /** Union of all step types */
 export type IOSStep =
   | AssertVisibleStep
@@ -251,7 +284,8 @@ export type IOSStep =
   | ScrollStep
   | SwipeStep
   | SnapshotStep
-  | InspectStep;
+  | InspectStep
+  | PlaybookStep;
 
 // =============================================================================
 // Step Execution Results

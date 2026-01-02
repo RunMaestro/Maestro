@@ -30,6 +30,7 @@ import type {
   SwipeStep,
   SnapshotStep,
   InspectStep,
+  PlaybookStep,
 } from '../step-types';
 
 // =============================================================================
@@ -483,5 +484,134 @@ describe('extractUncheckedSteps', () => {
 
     expect(steps).toHaveLength(1);
     expect((steps[0] as TapStep).bundleId).toBe('com.test.app');
+  });
+});
+
+// =============================================================================
+// Playbook Step Tests
+// =============================================================================
+
+describe('playbook steps', () => {
+  describe('isIOSStep with playbook', () => {
+    it('should detect ios.playbook pattern', () => {
+      expect(isIOSStep('- ios.playbook: Regression-Check')).toBe(true);
+      expect(isIOSStep('  - ios.playbook: Feature-Ship-Loop')).toBe(true);
+      expect(isIOSStep('- ios.playbook: { "name": "Crash-Hunt" }')).toBe(true);
+    });
+  });
+
+  describe('parseLine with playbook', () => {
+    it('should parse ios.playbook with simple string (playbook name)', () => {
+      const result = parseLine('- ios.playbook: Regression-Check', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.type).toBe('ios.playbook');
+      expect(result.playbookName).toBe('Regression-Check');
+      expect(result.inputs).toBeUndefined();
+    });
+
+    it('should parse ios.playbook with object syntax (name and inputs)', () => {
+      const result = parseLine('- ios.playbook: { "name": "Regression-Check", "inputs": { "flows": ["login.yaml"] } }', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.type).toBe('ios.playbook');
+      expect(result.playbookName).toBe('Regression-Check');
+      expect(result.inputs).toEqual({ flows: ['login.yaml'] });
+    });
+
+    it('should parse ios.playbook with all options', () => {
+      const result = parseLine('- ios.playbook: { "name": "Feature-Ship-Loop", "inputs": { "build_command": "npm run build" }, "dryRun": true, "continueOnError": true, "timeout": 60000 }', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.playbookName).toBe('Feature-Ship-Loop');
+      expect(result.inputs).toEqual({ build_command: 'npm run build' });
+      expect(result.dryRun).toBe(true);
+      expect(result.continueOnError).toBe(true);
+      expect(result.timeout).toBe(60000);
+    });
+
+    it('should parse ios.playbook with snake_case options', () => {
+      const result = parseLine('- ios.playbook: { "name": "Crash-Hunt", "continue_on_error": true }', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.continueOnError).toBe(true);
+    });
+
+    it('should apply sessionId from context', () => {
+      const result = parseLine('- ios.playbook: Test-Playbook', 1, {
+        sessionId: 'session-123',
+      }) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.sessionId).toBe('session-123');
+    });
+
+    it('should override context sessionId with step sessionId', () => {
+      const result = parseLine('- ios.playbook: { "name": "Test-Playbook", "sessionId": "override-456" }', 1, {
+        sessionId: 'session-123',
+      }) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.sessionId).toBe('override-456');
+    });
+
+    it('should accept playbookName as alternative to name', () => {
+      const result = parseLine('- ios.playbook: { "playbookName": "Alt-Playbook" }', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.playbookName).toBe('Alt-Playbook');
+    });
+
+    it('should accept playbook as alternative to name', () => {
+      const result = parseLine('- ios.playbook: { "playbook": "Another-Playbook" }', 1) as PlaybookStep;
+      expect(result).not.toBeNull();
+      expect(result.playbookName).toBe('Another-Playbook');
+    });
+  });
+
+  describe('parseDocument with playbook', () => {
+    it('should parse playbook steps alongside other steps', () => {
+      const content = `
+# iOS Testing
+
+- ios.assert_visible: "#login"
+- ios.playbook: Regression-Check
+- ios.tap: "#submit"
+`;
+
+      const result = parseDocument(content);
+
+      expect(result.steps).toHaveLength(3);
+      expect(result.errors).toHaveLength(0);
+      expect(result.steps[0].type).toBe('ios.assert_visible');
+      expect(result.steps[1].type).toBe('ios.playbook');
+      expect((result.steps[1] as PlaybookStep).playbookName).toBe('Regression-Check');
+      expect(result.steps[2].type).toBe('ios.tap');
+    });
+
+    it('should parse playbook with inputs in document', () => {
+      const content = `
+- ios.playbook: { "name": "Performance-Check", "inputs": { "baseline_path": "./baselines" } }
+`;
+
+      const result = parseDocument(content);
+
+      expect(result.steps).toHaveLength(1);
+      expect(result.errors).toHaveLength(0);
+      const step = result.steps[0] as PlaybookStep;
+      expect(step.type).toBe('ios.playbook');
+      expect(step.playbookName).toBe('Performance-Check');
+      expect(step.inputs).toEqual({ baseline_path: './baselines' });
+    });
+  });
+
+  describe('extractUncheckedSteps with playbook', () => {
+    it('should extract unchecked playbook steps', () => {
+      const content = `
+- [ ] ios.playbook: Regression-Check
+- [x] ios.playbook: Already-Run
+- [ ] ios.tap: "#button"
+`;
+
+      const steps = extractUncheckedSteps(content);
+
+      expect(steps).toHaveLength(2);
+      expect(steps[0].type).toBe('ios.playbook');
+      expect((steps[0] as PlaybookStep).playbookName).toBe('Regression-Check');
+      expect(steps[1].type).toBe('ios.tap');
+    });
   });
 });

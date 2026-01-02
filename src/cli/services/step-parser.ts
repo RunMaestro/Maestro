@@ -27,6 +27,7 @@ import {
   SwipeStep,
   SnapshotStep,
   InspectStep,
+  PlaybookStep,
   STEP_PATTERN,
   IS_IOS_STEP_PATTERN,
 } from './step-types';
@@ -350,6 +351,10 @@ function resolveStep(raw: RawParsedStep, context?: ParseContext): IOSStep | null
       return resolveSnapshot(raw, base, context);
     case 'ios.inspect':
       return resolveInspect(raw, base, context);
+
+    // Playbook execution
+    case 'ios.playbook':
+      return resolvePlaybook(raw, base, context);
 
     default:
       throw new Error(`Unknown step type: ${raw.type}`);
@@ -867,5 +872,84 @@ function resolveInspect(
     type: 'ios.inspect',
     bundleId,
     captureScreenshot,
+  };
+}
+
+/**
+ * Resolve a playbook execution step.
+ *
+ * Supports multiple syntax formats:
+ *
+ * Simple string (playbook name only):
+ *   - ios.playbook: Regression-Check
+ *
+ * Object with full options:
+ *   - ios.playbook: { name: "Regression-Check", inputs: { flows: ["login.yaml"] } }
+ *
+ * YAML-style (for complex inputs):
+ *   - ios.playbook: Regression-Check
+ *     inputs:
+ *       flows:
+ *         - login_flow.yaml
+ *       baseline_dir: ./baselines
+ *
+ * Note: The YAML-style with indented inputs requires multi-line parsing
+ * which is handled at the document level, not in this single-line parser.
+ */
+function resolvePlaybook(
+  raw: RawParsedStep,
+  base: Pick<IOSStep, 'lineNumber' | 'rawText'>,
+  context?: ParseContext
+): PlaybookStep {
+  const value = raw.value;
+  let playbookName: string;
+  let inputs: Record<string, unknown> | undefined;
+  let dryRun: boolean | undefined;
+  let continueOnError: boolean | undefined;
+  let sessionId: string | undefined = context?.sessionId;
+  let timeout: number | undefined;
+
+  if (typeof value === 'string') {
+    // Simple format: ios.playbook: Regression-Check
+    playbookName = value.trim();
+  } else if (typeof value === 'object' && value !== null) {
+    const obj = value as Record<string, unknown>;
+    // Object format: ios.playbook: { name: "Regression-Check", inputs: {...} }
+    playbookName = (obj.name || obj.playbook || obj.playbookName || '') as string;
+    inputs = obj.inputs as Record<string, unknown> | undefined;
+    dryRun = obj.dryRun as boolean | undefined;
+    continueOnError = (obj.continueOnError || obj.continue_on_error) as boolean | undefined;
+    sessionId = (obj.sessionId as string | undefined) || sessionId;
+    timeout = obj.timeout as number | undefined;
+
+    // If playbook name is in the object value itself (e.g., first key is the name)
+    if (!playbookName) {
+      const keys = Object.keys(obj);
+      if (keys.length > 0 && !['inputs', 'dryRun', 'dry_run', 'continueOnError', 'continue_on_error', 'sessionId', 'session_id', 'timeout'].includes(keys[0])) {
+        playbookName = keys[0];
+        // The value might be the inputs
+        const firstValue = obj[keys[0]];
+        if (firstValue && typeof firstValue === 'object') {
+          inputs = firstValue as Record<string, unknown>;
+        }
+      }
+    }
+  } else {
+    throw new Error('ios.playbook requires a playbook name or configuration object');
+  }
+
+  if (!playbookName) {
+    throw new Error('ios.playbook requires a playbook name');
+  }
+
+  return {
+    ...base,
+    type: 'ios.playbook',
+    playbookName,
+    inputs,
+    dryRun,
+    continueOnError,
+    sessionId,
+    timeout,
   };
 }

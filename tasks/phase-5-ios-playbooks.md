@@ -610,7 +610,15 @@
 
 ### Auto Run Integration
 
-- [ ] Enable playbooks in Auto Run documents
+- [x] Enable playbooks in Auto Run documents
+  > Implemented `ios.playbook` step type in the step-parser. Changes include:
+  > - Added `PlaybookStep` interface to `step-types.ts` with support for `playbookName`, `inputs`, `dryRun`, `continueOnError`, `sessionId`, and `timeout` properties
+  > - Added `'ios.playbook'` to `StepType` union
+  > - Implemented `resolvePlaybook()` function in `step-parser.ts` supporting both simple string syntax (`ios.playbook: Regression-Check`) and object syntax (`ios.playbook: { name: "...", inputs: {...} }`)
+  > - Created `playbook-step-executor.ts` with `executePlaybookStep()` function that bridges parsed steps to the playbook runner
+  > - Added 14 unit tests for playbook parsing covering detection, various syntaxes, context inheritance, and document extraction
+  >
+  > Example usage in Auto Run documents:
   ```markdown
   - [ ] Run regression check
     - ios.playbook: Regression-Check
