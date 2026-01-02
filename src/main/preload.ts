@@ -1171,6 +1171,159 @@ contextBridge.exposeInMainWorld('maestro', {
       }>,
   },
 
+  // iOS Tools API (simulator, screenshot, logs, testing)
+  ios: {
+    // Xcode Detection
+    xcode: {
+      detect: () => ipcRenderer.invoke('ios:xcode:detect'),
+      version: () => ipcRenderer.invoke('ios:xcode:version'),
+      info: () => ipcRenderer.invoke('ios:xcode:info'),
+      validate: () => ipcRenderer.invoke('ios:xcode:validate'),
+      sdks: () => ipcRenderer.invoke('ios:xcode:sdks'),
+    },
+    // Simulator Management
+    simulator: {
+      list: () => ipcRenderer.invoke('ios:simulator:list'),
+      booted: () => ipcRenderer.invoke('ios:simulator:booted'),
+      get: (udid: string) => ipcRenderer.invoke('ios:simulator:get', udid),
+      boot: (udid: string, options?: { timeout?: number; waitForBoot?: boolean }) =>
+        ipcRenderer.invoke('ios:simulator:boot', udid, options),
+      shutdown: (udid: string) => ipcRenderer.invoke('ios:simulator:shutdown', udid),
+      erase: (udid: string) => ipcRenderer.invoke('ios:simulator:erase', udid),
+    },
+    // App Management
+    app: {
+      install: (udid: string, appPath: string) =>
+        ipcRenderer.invoke('ios:app:install', udid, appPath),
+      uninstall: (udid: string, bundleId: string) =>
+        ipcRenderer.invoke('ios:app:uninstall', udid, bundleId),
+      launch: (udid: string, bundleId: string, options?: { args?: string[]; env?: Record<string, string> }) =>
+        ipcRenderer.invoke('ios:app:launch', udid, bundleId, options),
+      terminate: (udid: string, bundleId: string) =>
+        ipcRenderer.invoke('ios:app:terminate', udid, bundleId),
+      container: (udid: string, bundleId: string, containerType?: 'app' | 'data' | 'groups') =>
+        ipcRenderer.invoke('ios:app:container', udid, bundleId, containerType),
+      openUrl: (udid: string, url: string) =>
+        ipcRenderer.invoke('ios:app:openurl', udid, url),
+    },
+    // Screenshot & Recording
+    capture: {
+      screenshot: (udid: string, outputPath: string, options?: { display?: 'internal' | 'external'; mask?: 'ignored' | 'alpha' | 'black' }) =>
+        ipcRenderer.invoke('ios:capture:screenshot', udid, outputPath, options),
+      screenshotAuto: (udid: string, directory: string, prefix?: string) =>
+        ipcRenderer.invoke('ios:capture:screenshotAuto', udid, directory, prefix),
+      startRecording: (udid: string, outputPath: string, options?: { codec?: 'h264' | 'hevc' }) =>
+        ipcRenderer.invoke('ios:capture:startRecording', udid, outputPath, options),
+      stopRecording: (udid: string) =>
+        ipcRenderer.invoke('ios:capture:stopRecording', udid),
+      isRecording: (udid: string) =>
+        ipcRenderer.invoke('ios:capture:isRecording', udid),
+      screenSize: (udid: string) =>
+        ipcRenderer.invoke('ios:capture:screenSize', udid),
+    },
+    // Log Collection
+    logs: {
+      system: (udid: string, options?: { since?: string; level?: 'default' | 'info' | 'debug' | 'error' | 'fault'; process?: string; predicate?: string; limit?: number }) =>
+        ipcRenderer.invoke('ios:logs:system', udid, options),
+      systemText: (udid: string, since?: string) =>
+        ipcRenderer.invoke('ios:logs:systemText', udid, since),
+      crash: (udid: string, options?: { bundleId?: string; since?: string; limit?: number; includeContent?: boolean }) =>
+        ipcRenderer.invoke('ios:logs:crash', udid, options),
+      hasRecentCrashes: (udid: string, bundleId: string, since: string) =>
+        ipcRenderer.invoke('ios:logs:hasRecentCrashes', udid, bundleId, since),
+      diagnostics: (udid: string, outputPath: string) =>
+        ipcRenderer.invoke('ios:logs:diagnostics', udid, outputPath),
+    },
+    // Snapshot
+    snapshot: {
+      capture: (options: { udid?: string; bundleId?: string; sessionId: string; logDuration?: number; includeCrashContent?: boolean }) =>
+        ipcRenderer.invoke('ios:snapshot:capture', options),
+      format: (result: any) => ipcRenderer.invoke('ios:snapshot:format', result),
+      formatJson: (result: any) => ipcRenderer.invoke('ios:snapshot:formatJson', result),
+    },
+    // Artifacts
+    artifacts: {
+      getDirectory: (sessionId: string) => ipcRenderer.invoke('ios:artifacts:getDirectory', sessionId),
+      list: (sessionId: string) => ipcRenderer.invoke('ios:artifacts:list', sessionId),
+      prune: (sessionId: string, keepCount?: number) => ipcRenderer.invoke('ios:artifacts:prune', sessionId, keepCount),
+      size: (sessionId: string) => ipcRenderer.invoke('ios:artifacts:size', sessionId),
+    },
+    // UI Inspection
+    inspect: {
+      run: (options: { udid?: string; bundleId?: string; sessionId: string; captureScreenshot?: boolean; timeout?: number }) =>
+        ipcRenderer.invoke('ios:inspect', options),
+      format: (result: any, options?: any) => ipcRenderer.invoke('ios:inspect:format', result, options),
+      formatJson: (result: any) => ipcRenderer.invoke('ios:inspect:formatJson', result),
+      formatList: (result: any) => ipcRenderer.invoke('ios:inspect:formatList', result),
+      formatCompact: (result: any) => ipcRenderer.invoke('ios:inspect:formatCompact', result),
+    },
+    // UI Analysis
+    ui: {
+      findElements: (tree: any, query: any) => ipcRenderer.invoke('ios:ui:findElements', tree, query),
+      findElement: (tree: any, query: any) => ipcRenderer.invoke('ios:ui:findElement', tree, query),
+      findByIdentifier: (tree: any, identifier: string) => ipcRenderer.invoke('ios:ui:findByIdentifier', tree, identifier),
+      findByLabel: (tree: any, label: string) => ipcRenderer.invoke('ios:ui:findByLabel', tree, label),
+      getInteractables: (tree: any, visibleOnly?: boolean) => ipcRenderer.invoke('ios:ui:getInteractables', tree, visibleOnly),
+      getButtons: (tree: any) => ipcRenderer.invoke('ios:ui:getButtons', tree),
+      getTextFields: (tree: any) => ipcRenderer.invoke('ios:ui:getTextFields', tree),
+      getTextElements: (tree: any) => ipcRenderer.invoke('ios:ui:getTextElements', tree),
+      describeElement: (element: any) => ipcRenderer.invoke('ios:ui:describeElement', element),
+      getBestIdentifier: (element: any, elements?: any[]) => ipcRenderer.invoke('ios:ui:getBestIdentifier', element, elements),
+    },
+    // Maestro CLI
+    maestro: {
+      detect: () => ipcRenderer.invoke('ios:maestro:detect'),
+      isAvailable: () => ipcRenderer.invoke('ios:maestro:isAvailable'),
+      info: () => ipcRenderer.invoke('ios:maestro:info'),
+      validateVersion: (minVersion: string) => ipcRenderer.invoke('ios:maestro:validateVersion', minVersion),
+      installInstructions: () => ipcRenderer.invoke('ios:maestro:installInstructions'),
+    },
+    // Flow Generation
+    flow: {
+      generate: (steps: any[], config?: any) => ipcRenderer.invoke('ios:flow:generate', steps, config),
+      generateFile: (steps: any[], outputPath: string, config?: any) =>
+        ipcRenderer.invoke('ios:flow:generateFile', steps, outputPath, config),
+      generateFromStrings: (actions: string[], config?: any) =>
+        ipcRenderer.invoke('ios:flow:generateFromStrings', actions, config),
+      parseAction: (actionString: string) => ipcRenderer.invoke('ios:flow:parseAction', actionString),
+      run: (options: any) => ipcRenderer.invoke('ios:flow:run', options),
+      runWithRetry: (options: any) => ipcRenderer.invoke('ios:flow:runWithRetry', options),
+      runBatch: (flowPaths: string[], options: any) => ipcRenderer.invoke('ios:flow:runBatch', flowPaths, options),
+      validate: (flowPath: string) => ipcRenderer.invoke('ios:flow:validate', flowPath),
+      validateWithMaestro: (flowPath: string) => ipcRenderer.invoke('ios:flow:validateWithMaestro', flowPath),
+      formatResult: (result: any, options?: any) => ipcRenderer.invoke('ios:flow:formatResult', result, options),
+      formatResultJson: (result: any) => ipcRenderer.invoke('ios:flow:formatResultJson', result),
+      formatResultCompact: (result: any) => ipcRenderer.invoke('ios:flow:formatResultCompact', result),
+      formatBatchResult: (result: any, options?: any) => ipcRenderer.invoke('ios:flow:formatBatchResult', result, options),
+    },
+    // Assertions
+    assert: {
+      visible: (options: any) => ipcRenderer.invoke('ios:assert:visible', options),
+      visibleById: (identifier: string, options: any) => ipcRenderer.invoke('ios:assert:visibleById', identifier, options),
+      visibleByLabel: (label: string, options: any) => ipcRenderer.invoke('ios:assert:visibleByLabel', label, options),
+      visibleByText: (text: string, options: any) => ipcRenderer.invoke('ios:assert:visibleByText', text, options),
+      notVisible: (options: any) => ipcRenderer.invoke('ios:assert:notVisible', options),
+      noCrash: (options: any) => ipcRenderer.invoke('ios:assert:noCrash', options),
+      hasCrashed: (bundleId: string, udid: string, since: string) =>
+        ipcRenderer.invoke('ios:assert:hasCrashed', bundleId, udid, since),
+      waitForNoCrash: (options: any) => ipcRenderer.invoke('ios:assert:waitForNoCrash', options),
+    },
+    // Verification Formatting
+    verify: {
+      formatResult: (result: any, options?: any) => ipcRenderer.invoke('ios:verify:formatResult', result, options),
+      formatResultJson: (result: any) => ipcRenderer.invoke('ios:verify:formatResultJson', result),
+      formatResultCompact: (result: any) => ipcRenderer.invoke('ios:verify:formatResultCompact', result),
+      formatBatch: (results: any[], options?: any) => ipcRenderer.invoke('ios:verify:formatBatch', results, options),
+    },
+    // Feature Ship Loop
+    shipLoop: {
+      run: (options: any) => ipcRenderer.invoke('ios:shipLoop:run', options),
+      formatResult: (result: any) => ipcRenderer.invoke('ios:shipLoop:formatResult', result),
+      formatResultJson: (result: any) => ipcRenderer.invoke('ios:shipLoop:formatResultJson', result),
+      formatResultCompact: (result: any) => ipcRenderer.invoke('ios:shipLoop:formatResultCompact', result),
+    },
+  },
+
   // Notification API
   notification: {
     show: (title: string, body: string) =>
@@ -3020,6 +3173,121 @@ export interface MaestroAPI {
       };
       error?: string;
     }>;
+  };
+  // iOS Tools API
+  ios: {
+    xcode: {
+      detect: () => Promise<any>;
+      version: () => Promise<any>;
+      info: () => Promise<any>;
+      validate: () => Promise<any>;
+      sdks: () => Promise<any>;
+    };
+    simulator: {
+      list: () => Promise<any>;
+      booted: () => Promise<any>;
+      get: (udid: string) => Promise<any>;
+      boot: (udid: string, options?: { timeout?: number; waitForBoot?: boolean }) => Promise<any>;
+      shutdown: (udid: string) => Promise<any>;
+      erase: (udid: string) => Promise<any>;
+    };
+    app: {
+      install: (udid: string, appPath: string) => Promise<any>;
+      uninstall: (udid: string, bundleId: string) => Promise<any>;
+      launch: (udid: string, bundleId: string, options?: { args?: string[]; env?: Record<string, string> }) => Promise<any>;
+      terminate: (udid: string, bundleId: string) => Promise<any>;
+      container: (udid: string, bundleId: string, containerType?: 'app' | 'data' | 'groups') => Promise<any>;
+      openUrl: (udid: string, url: string) => Promise<any>;
+    };
+    capture: {
+      screenshot: (udid: string, outputPath: string, options?: { display?: 'internal' | 'external'; mask?: 'ignored' | 'alpha' | 'black' }) => Promise<any>;
+      screenshotAuto: (udid: string, directory: string, prefix?: string) => Promise<any>;
+      startRecording: (udid: string, outputPath: string, options?: { codec?: 'h264' | 'hevc' }) => Promise<any>;
+      stopRecording: (udid: string) => Promise<any>;
+      isRecording: (udid: string) => Promise<any>;
+      screenSize: (udid: string) => Promise<any>;
+    };
+    logs: {
+      system: (udid: string, options?: { since?: string; level?: string; process?: string; predicate?: string; limit?: number }) => Promise<any>;
+      systemText: (udid: string, since?: string) => Promise<any>;
+      crash: (udid: string, options?: { bundleId?: string; since?: string; limit?: number; includeContent?: boolean }) => Promise<any>;
+      hasRecentCrashes: (udid: string, bundleId: string, since: string) => Promise<any>;
+      diagnostics: (udid: string, outputPath: string) => Promise<any>;
+    };
+    snapshot: {
+      capture: (options: { udid?: string; bundleId?: string; sessionId: string; logDuration?: number; includeCrashContent?: boolean }) => Promise<any>;
+      format: (result: any) => Promise<any>;
+      formatJson: (result: any) => Promise<any>;
+    };
+    artifacts: {
+      getDirectory: (sessionId: string) => Promise<any>;
+      list: (sessionId: string) => Promise<any>;
+      prune: (sessionId: string, keepCount?: number) => Promise<any>;
+      size: (sessionId: string) => Promise<any>;
+    };
+    inspect: {
+      run: (options: { udid?: string; bundleId?: string; sessionId: string; captureScreenshot?: boolean; timeout?: number }) => Promise<any>;
+      format: (result: any, options?: any) => Promise<any>;
+      formatJson: (result: any) => Promise<any>;
+      formatList: (result: any) => Promise<any>;
+      formatCompact: (result: any) => Promise<any>;
+    };
+    ui: {
+      findElements: (tree: any, query: any) => Promise<any>;
+      findElement: (tree: any, query: any) => Promise<any>;
+      findByIdentifier: (tree: any, identifier: string) => Promise<any>;
+      findByLabel: (tree: any, label: string) => Promise<any>;
+      getInteractables: (tree: any, visibleOnly?: boolean) => Promise<any>;
+      getButtons: (tree: any) => Promise<any>;
+      getTextFields: (tree: any) => Promise<any>;
+      getTextElements: (tree: any) => Promise<any>;
+      describeElement: (element: any) => Promise<any>;
+      getBestIdentifier: (element: any, elements?: any[]) => Promise<any>;
+    };
+    maestro: {
+      detect: () => Promise<any>;
+      isAvailable: () => Promise<any>;
+      info: () => Promise<any>;
+      validateVersion: (minVersion: string) => Promise<any>;
+      installInstructions: () => Promise<any>;
+    };
+    flow: {
+      generate: (steps: any[], config?: any) => Promise<any>;
+      generateFile: (steps: any[], outputPath: string, config?: any) => Promise<any>;
+      generateFromStrings: (actions: string[], config?: any) => Promise<any>;
+      parseAction: (actionString: string) => Promise<any>;
+      run: (options: any) => Promise<any>;
+      runWithRetry: (options: any) => Promise<any>;
+      runBatch: (flowPaths: string[], options: any) => Promise<any>;
+      validate: (flowPath: string) => Promise<any>;
+      validateWithMaestro: (flowPath: string) => Promise<any>;
+      formatResult: (result: any, options?: any) => Promise<any>;
+      formatResultJson: (result: any) => Promise<any>;
+      formatResultCompact: (result: any) => Promise<any>;
+      formatBatchResult: (result: any, options?: any) => Promise<any>;
+    };
+    assert: {
+      visible: (options: any) => Promise<any>;
+      visibleById: (identifier: string, options: any) => Promise<any>;
+      visibleByLabel: (label: string, options: any) => Promise<any>;
+      visibleByText: (text: string, options: any) => Promise<any>;
+      notVisible: (options: any) => Promise<any>;
+      noCrash: (options: any) => Promise<any>;
+      hasCrashed: (bundleId: string, udid: string, since: string) => Promise<any>;
+      waitForNoCrash: (options: any) => Promise<any>;
+    };
+    verify: {
+      formatResult: (result: any, options?: any) => Promise<any>;
+      formatResultJson: (result: any) => Promise<any>;
+      formatResultCompact: (result: any) => Promise<any>;
+      formatBatch: (results: any[], options?: any) => Promise<any>;
+    };
+    shipLoop: {
+      run: (options: any) => Promise<any>;
+      formatResult: (result: any) => Promise<any>;
+      formatResultJson: (result: any) => Promise<any>;
+      formatResultCompact: (result: any) => Promise<any>;
+    };
   };
 }
 
