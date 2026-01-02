@@ -317,7 +317,17 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
   - Tests performance (CLI detection < 5s, flow generation < 100ms)
   - Gracefully skips tests when Maestro CLI or simulators are unavailable
   - Run with: `npm run test:integration -- src/__tests__/integration/maestro-cli.integration.test.ts`
-- [ ] Write integration test with native driver
+- [x] Write integration test with native driver
+  - 88 tests in `src/__tests__/integration/native-driver.integration.test.ts`
+  - Tests target helpers (byId, byLabel, byText, byPredicate, byCoordinates, byType) with edge cases
+  - Tests action helpers (tap, doubleTap, longPress, typeText, clearText, scroll, scrollTo, swipe, pinch, rotate, wait, assert)
+  - Tests NativeDriver class (creation, initialization, auto-select simulator, batch execution)
+  - Tests convenience methods (tapById, tapByLabel, tapAt, type, typeInto, scrollDown, scrollUp, swipeDirection, waitFor, assertElementExists)
+  - Tests performance (target/action creation < 100ms, driver init < 5s)
+  - Tests error handling (initialization failure, error structure, batch failures)
+  - Tests type safety (action types, target types, direction types, velocity types)
+  - Gracefully handles "not yet implemented" state (execution requires XCUITest project building)
+  - Run with: `npm run test:integration -- src/__tests__/integration/native-driver.integration.test.ts`
 - [ ] Test error cases (missing elements, timeouts)
 
 ## Documentation
