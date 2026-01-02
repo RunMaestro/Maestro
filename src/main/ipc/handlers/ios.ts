@@ -1340,6 +1340,195 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Native Driver Actions
+  // ==========================================================================
+
+  // Execute tap action via native driver
+  ipcMain.handle(
+    'ios:action:tap',
+    withIpcErrorLogging(
+      handlerOpts('actionTap'),
+      async (options: {
+        bundleId: string;
+        udid?: string;
+        target: iosTools.NativeActionTarget;
+        double?: boolean;
+        long?: boolean;
+        longDuration?: number;
+        offsetX?: number;
+        offsetY?: number;
+        timeout?: number;
+        screenshotDir?: string;
+        debug?: boolean;
+      }) => {
+        const driver = iosTools.createNativeDriver({
+          bundleId: options.bundleId,
+          udid: options.udid,
+          timeout: options.timeout,
+          screenshotDir: options.screenshotDir,
+          debug: options.debug,
+        });
+
+        // Choose the appropriate tap variant
+        let action: iosTools.NativeActionRequest;
+        if (options.double) {
+          action = iosTools.nativeDoubleTap(options.target);
+        } else if (options.long) {
+          action = iosTools.nativeLongPress(options.target, options.longDuration ?? 1.0);
+        } else {
+          action = iosTools.nativeTap(options.target, {
+            offsetX: options.offsetX,
+            offsetY: options.offsetY,
+          });
+        }
+
+        return driver.execute(action);
+      }
+    )
+  );
+
+  // Execute type action via native driver
+  ipcMain.handle(
+    'ios:action:type',
+    withIpcErrorLogging(
+      handlerOpts('actionType'),
+      async (options: {
+        bundleId: string;
+        udid?: string;
+        text: string;
+        target?: iosTools.NativeActionTarget;
+        clearFirst?: boolean;
+        timeout?: number;
+        screenshotDir?: string;
+        debug?: boolean;
+      }) => {
+        const driver = iosTools.createNativeDriver({
+          bundleId: options.bundleId,
+          udid: options.udid,
+          timeout: options.timeout,
+          screenshotDir: options.screenshotDir,
+          debug: options.debug,
+        });
+
+        const action = iosTools.nativeTypeText(options.text, {
+          target: options.target,
+          clearFirst: options.clearFirst,
+        });
+
+        return driver.execute(action);
+      }
+    )
+  );
+
+  // Execute scroll action via native driver
+  ipcMain.handle(
+    'ios:action:scroll',
+    withIpcErrorLogging(
+      handlerOpts('actionScroll'),
+      async (options: {
+        bundleId: string;
+        udid?: string;
+        direction?: iosTools.NativeSwipeDirection;
+        distance?: number;
+        target?: iosTools.NativeActionTarget;
+        scrollToTarget?: iosTools.NativeActionTarget;
+        maxAttempts?: number;
+        timeout?: number;
+        screenshotDir?: string;
+        debug?: boolean;
+      }) => {
+        const driver = iosTools.createNativeDriver({
+          bundleId: options.bundleId,
+          udid: options.udid,
+          timeout: options.timeout,
+          screenshotDir: options.screenshotDir,
+          debug: options.debug,
+        });
+
+        // Either scroll to a target element or scroll in a direction
+        let action: iosTools.NativeActionRequest;
+        if (options.scrollToTarget) {
+          action = iosTools.nativeScrollTo(options.scrollToTarget, {
+            direction: options.direction,
+            maxAttempts: options.maxAttempts,
+          });
+        } else {
+          action = iosTools.nativeScroll(options.direction || 'down', {
+            target: options.target,
+            distance: options.distance,
+          });
+        }
+
+        return driver.execute(action);
+      }
+    )
+  );
+
+  // Execute swipe action via native driver
+  ipcMain.handle(
+    'ios:action:swipe',
+    withIpcErrorLogging(
+      handlerOpts('actionSwipe'),
+      async (options: {
+        bundleId: string;
+        udid?: string;
+        direction: iosTools.NativeSwipeDirection;
+        target?: iosTools.NativeActionTarget;
+        velocity?: iosTools.NativeSwipeVelocity;
+        timeout?: number;
+        screenshotDir?: string;
+        debug?: boolean;
+      }) => {
+        const driver = iosTools.createNativeDriver({
+          bundleId: options.bundleId,
+          udid: options.udid,
+          timeout: options.timeout,
+          screenshotDir: options.screenshotDir,
+          debug: options.debug,
+        });
+
+        const action = iosTools.nativeSwipe(options.direction, {
+          target: options.target,
+          velocity: options.velocity,
+        });
+
+        return driver.execute(action);
+      }
+    )
+  );
+
+  // Execute wait action via native driver
+  ipcMain.handle(
+    'ios:action:wait',
+    withIpcErrorLogging(
+      handlerOpts('actionWait'),
+      async (options: {
+        bundleId: string;
+        udid?: string;
+        target: iosTools.NativeActionTarget;
+        waitForNotExist?: boolean;
+        timeout?: number;
+        screenshotDir?: string;
+        debug?: boolean;
+      }) => {
+        const driver = iosTools.createNativeDriver({
+          bundleId: options.bundleId,
+          udid: options.udid,
+          timeout: options.timeout,
+          screenshotDir: options.screenshotDir,
+          debug: options.debug,
+        });
+
+        const action = options.waitForNotExist
+          ? iosTools.nativeWaitForNotExist(options.target, options.timeout)
+          : iosTools.nativeWaitForElement(options.target, options.timeout);
+
+        return driver.execute(action);
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }
 

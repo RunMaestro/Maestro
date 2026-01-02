@@ -21,6 +21,13 @@ vi.mock('electron', () => ({
   },
 }));
 
+// Mock native driver class and functions
+const mockExecute = vi.fn();
+const mockNativeDriver = {
+  execute: mockExecute,
+  initialize: vi.fn(),
+};
+
 // Mock the ios-tools module
 vi.mock('../../../../main/ios-tools', () => ({
   // Xcode
@@ -130,6 +137,22 @@ vi.mock('../../../../main/ios-tools', () => ({
   runUITests: vi.fn(),
   parseTestResults: vi.fn(),
   listTests: vi.fn(),
+  // Native Driver
+  createNativeDriver: vi.fn(() => mockNativeDriver),
+  NativeDriver: vi.fn(() => mockNativeDriver),
+  nativeTap: vi.fn((target, options) => ({ type: 'tap', target, ...options })),
+  nativeDoubleTap: vi.fn((target) => ({ type: 'doubleTap', target })),
+  nativeLongPress: vi.fn((target, duration) => ({ type: 'longPress', target, duration })),
+  nativeTypeText: vi.fn((text, options) => ({ type: 'typeText', text, ...options })),
+  nativeClearText: vi.fn((target) => ({ type: 'clearText', target })),
+  nativeScroll: vi.fn((direction, options) => ({ type: 'scroll', direction, ...options })),
+  nativeScrollTo: vi.fn((target, options) => ({ type: 'scrollTo', target, ...options })),
+  nativeSwipe: vi.fn((direction, options) => ({ type: 'swipe', direction, ...options })),
+  nativeWaitForElement: vi.fn((target, timeout) => ({ type: 'waitForElement', target, timeout })),
+  nativeWaitForNotExist: vi.fn((target, timeout) => ({ type: 'waitForNotExist', target, timeout })),
+  byId: vi.fn((id) => ({ type: 'identifier', value: id })),
+  byLabel: vi.fn((label) => ({ type: 'label', value: label })),
+  byCoordinates: vi.fn((x, y) => ({ type: 'coordinates', value: `${x},${y}` })),
 }));
 
 // Mock the logger
@@ -378,6 +401,393 @@ describe('iOS IPC handlers', () => {
       const result = await handler!({} as any, 'empty-session');
 
       expect(result).toEqual({ success: true, data: 0 });
+    });
+  });
+
+  // ===========================================================================
+  // Native Driver Action Handlers
+  // ===========================================================================
+
+  describe('ios:action:tap', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('should register the ios:action:tap handler', () => {
+      expect(handlers.has('ios:action:tap')).toBe(true);
+    });
+
+    it('should create a native driver and execute a tap action', async () => {
+      const mockResult = {
+        success: true,
+        data: {
+          success: true,
+          status: 'success',
+          actionType: 'tap',
+          duration: 150,
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+      };
+      mockExecute.mockResolvedValue(mockResult);
+
+      const handler = handlers.get('ios:action:tap');
+      const options = {
+        bundleId: 'com.example.app',
+        udid: 'test-udid',
+        target: { type: 'identifier', value: 'loginButton' },
+      };
+
+      const result = await handler!({} as any, options);
+
+      expect(iosTools.createNativeDriver).toHaveBeenCalledWith({
+        bundleId: 'com.example.app',
+        udid: 'test-udid',
+        timeout: undefined,
+        screenshotDir: undefined,
+        debug: undefined,
+      });
+      expect(iosTools.nativeTap).toHaveBeenCalledWith(options.target, {
+        offsetX: undefined,
+        offsetY: undefined,
+      });
+      expect(mockExecute).toHaveBeenCalled();
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should execute a double tap when double option is true', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:tap');
+      const options = {
+        bundleId: 'com.example.app',
+        target: { type: 'label', value: 'Submit' },
+        double: true,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeDoubleTap).toHaveBeenCalledWith(options.target);
+      expect(iosTools.nativeTap).not.toHaveBeenCalled();
+    });
+
+    it('should execute a long press when long option is true', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:tap');
+      const options = {
+        bundleId: 'com.example.app',
+        target: { type: 'identifier', value: 'item' },
+        long: true,
+        longDuration: 2.0,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeLongPress).toHaveBeenCalledWith(options.target, 2.0);
+      expect(iosTools.nativeTap).not.toHaveBeenCalled();
+    });
+
+    it('should use default duration of 1.0 for long press', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:tap');
+      const options = {
+        bundleId: 'com.example.app',
+        target: { type: 'identifier', value: 'item' },
+        long: true,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeLongPress).toHaveBeenCalledWith(options.target, 1.0);
+    });
+
+    it('should pass offset options to tap', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:tap');
+      const options = {
+        bundleId: 'com.example.app',
+        target: { type: 'identifier', value: 'button' },
+        offsetX: 10,
+        offsetY: -5,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeTap).toHaveBeenCalledWith(options.target, {
+        offsetX: 10,
+        offsetY: -5,
+      });
+    });
+  });
+
+  describe('ios:action:type', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('should register the ios:action:type handler', () => {
+      expect(handlers.has('ios:action:type')).toBe(true);
+    });
+
+    it('should create a native driver and execute a type action', async () => {
+      const mockResult = {
+        success: true,
+        data: {
+          success: true,
+          status: 'success',
+          actionType: 'typeText',
+          duration: 200,
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+      };
+      mockExecute.mockResolvedValue(mockResult);
+
+      const handler = handlers.get('ios:action:type');
+      const options = {
+        bundleId: 'com.example.app',
+        text: 'Hello World',
+      };
+
+      const result = await handler!({} as any, options);
+
+      expect(iosTools.createNativeDriver).toHaveBeenCalledWith({
+        bundleId: 'com.example.app',
+        udid: undefined,
+        timeout: undefined,
+        screenshotDir: undefined,
+        debug: undefined,
+      });
+      expect(iosTools.nativeTypeText).toHaveBeenCalledWith('Hello World', {
+        target: undefined,
+        clearFirst: undefined,
+      });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should pass target and clearFirst options', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:type');
+      const target = { type: 'identifier', value: 'emailField' };
+      const options = {
+        bundleId: 'com.example.app',
+        text: 'test@example.com',
+        target,
+        clearFirst: true,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeTypeText).toHaveBeenCalledWith('test@example.com', {
+        target,
+        clearFirst: true,
+      });
+    });
+  });
+
+  describe('ios:action:scroll', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('should register the ios:action:scroll handler', () => {
+      expect(handlers.has('ios:action:scroll')).toBe(true);
+    });
+
+    it('should execute a scroll in direction', async () => {
+      const mockResult = {
+        success: true,
+        data: {
+          success: true,
+          status: 'success',
+          actionType: 'scroll',
+          duration: 300,
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+      };
+      mockExecute.mockResolvedValue(mockResult);
+
+      const handler = handlers.get('ios:action:scroll');
+      const options = {
+        bundleId: 'com.example.app',
+        direction: 'down',
+        distance: 0.5,
+      };
+
+      const result = await handler!({} as any, options);
+
+      expect(iosTools.nativeScroll).toHaveBeenCalledWith('down', {
+        target: undefined,
+        distance: 0.5,
+      });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should default to down direction when not specified', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:scroll');
+      const options = {
+        bundleId: 'com.example.app',
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeScroll).toHaveBeenCalledWith('down', {
+        target: undefined,
+        distance: undefined,
+      });
+    });
+
+    it('should execute scrollTo when scrollToTarget is provided', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:scroll');
+      const scrollToTarget = { type: 'identifier', value: 'bottomElement' };
+      const options = {
+        bundleId: 'com.example.app',
+        scrollToTarget,
+        maxAttempts: 5,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeScrollTo).toHaveBeenCalledWith(scrollToTarget, {
+        direction: undefined,
+        maxAttempts: 5,
+      });
+      expect(iosTools.nativeScroll).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('ios:action:swipe', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('should register the ios:action:swipe handler', () => {
+      expect(handlers.has('ios:action:swipe')).toBe(true);
+    });
+
+    it('should execute a swipe action', async () => {
+      const mockResult = {
+        success: true,
+        data: {
+          success: true,
+          status: 'success',
+          actionType: 'swipe',
+          duration: 150,
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+      };
+      mockExecute.mockResolvedValue(mockResult);
+
+      const handler = handlers.get('ios:action:swipe');
+      const options = {
+        bundleId: 'com.example.app',
+        direction: 'left',
+        velocity: 'fast',
+      };
+
+      const result = await handler!({} as any, options);
+
+      expect(iosTools.nativeSwipe).toHaveBeenCalledWith('left', {
+        target: undefined,
+        velocity: 'fast',
+      });
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should pass target to swipe', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:swipe');
+      const target = { type: 'identifier', value: 'carousel' };
+      const options = {
+        bundleId: 'com.example.app',
+        direction: 'right',
+        target,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeSwipe).toHaveBeenCalledWith('right', {
+        target,
+        velocity: undefined,
+      });
+    });
+  });
+
+  describe('ios:action:wait', () => {
+    beforeEach(() => {
+      mockExecute.mockReset();
+    });
+
+    it('should register the ios:action:wait handler', () => {
+      expect(handlers.has('ios:action:wait')).toBe(true);
+    });
+
+    it('should execute a wait for element action', async () => {
+      const mockResult = {
+        success: true,
+        data: {
+          success: true,
+          status: 'success',
+          actionType: 'waitForElement',
+          duration: 1000,
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+      };
+      mockExecute.mockResolvedValue(mockResult);
+
+      const handler = handlers.get('ios:action:wait');
+      const target = { type: 'identifier', value: 'loadingSpinner' };
+      const options = {
+        bundleId: 'com.example.app',
+        target,
+        timeout: 5000,
+      };
+
+      const result = await handler!({} as any, options);
+
+      expect(iosTools.nativeWaitForElement).toHaveBeenCalledWith(target, 5000);
+      expect(result).toEqual(mockResult);
+    });
+
+    it('should execute wait for not exist when waitForNotExist is true', async () => {
+      mockExecute.mockResolvedValue({ success: true, data: {} });
+
+      const handler = handlers.get('ios:action:wait');
+      const target = { type: 'identifier', value: 'loadingSpinner' };
+      const options = {
+        bundleId: 'com.example.app',
+        target,
+        waitForNotExist: true,
+        timeout: 10000,
+      };
+
+      await handler!({} as any, options);
+
+      expect(iosTools.nativeWaitForNotExist).toHaveBeenCalledWith(target, 10000);
+      expect(iosTools.nativeWaitForElement).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('native driver action handler registration', () => {
+    it('should register all native driver action handlers', () => {
+      const actionChannels = [
+        'ios:action:tap',
+        'ios:action:type',
+        'ios:action:scroll',
+        'ios:action:swipe',
+        'ios:action:wait',
+      ];
+
+      for (const channel of actionChannels) {
+        expect(handlers.has(channel), `Missing handler: ${channel}`).toBe(true);
+      }
     });
   });
 });

@@ -239,14 +239,15 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 
 ### IPC Handlers
 
-- [ ] Add interaction IPC handlers to `src/main/ipc/handlers/ios.ts`
-  - [ ] Register `ios:flow:run` handler
-  - [ ] Register `ios:flow:generate` handler
-  - [ ] Register `ios:action:tap` handler
-  - [ ] Register `ios:action:type` handler
-  - [ ] Register `ios:action:scroll` handler
-  - [ ] Register `ios:action:swipe` handler
-  - [ ] Register `ios:action:wait` handler
+- [x] Add interaction IPC handlers to `src/main/ipc/handlers/ios.ts`
+  - [x] Register `ios:flow:run` handler
+  - [x] Register `ios:flow:generate` handler
+  - [x] Register `ios:action:tap` handler
+  - [x] Register `ios:action:type` handler
+  - [x] Register `ios:action:scroll` handler
+  - [x] Register `ios:action:swipe` handler
+  - [x] Register `ios:action:wait` handler
+  - Note: All handlers implemented in `src/main/ipc/handlers/ios.ts`. Flow handlers (`ios:flow:run`, `ios:flow:generate`) were already implemented; Native driver action handlers (`ios:action:tap`, `ios:action:type`, `ios:action:scroll`, `ios:action:swipe`, `ios:action:wait`) added with full support for all action variants (double tap, long press, scroll-to-element, wait for not exist, etc.). 20 new unit tests added to `src/__tests__/main/ipc/handlers/ios.test.ts` covering all action handlers.
 
 ### Auto Run Integration
 
