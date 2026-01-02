@@ -814,3 +814,22 @@ export type {
   InteractionErrorCode,
   InteractionError,
 } from './interaction-errors';
+
+// =============================================================================
+// Playbooks
+// =============================================================================
+
+export {
+  runFeatureShipLoop,
+  formatFeatureShipLoopResult,
+  formatFeatureShipLoopResultAsJson,
+  formatFeatureShipLoopResultCompact,
+} from './playbooks';
+export type {
+  PlaybookAssertion,
+  FeatureShipLoopInputs,
+  FeatureShipLoopOptions,
+  FeatureShipLoopProgress,
+  FeatureShipLoopIterationResult,
+  FeatureShipLoopResult,
+} from './playbooks';
