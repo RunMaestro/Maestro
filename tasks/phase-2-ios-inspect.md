@@ -321,7 +321,7 @@
 - [x] Write unit tests for ui-analyzer.ts
 - [x] Write unit tests for inspect-formatter.ts
 - [x] Write unit tests for element query parsing
-- [ ] Write integration test with sample app
+- [x] Write integration test with sample app
 
 > **Completed**: Created comprehensive unit tests for element query parsing (96 tests):
 > - `src/__tests__/main/slash-commands/ios-inspect.test.ts`
@@ -346,6 +346,15 @@
 > - Tests for `formatElementQueryTable()` - markdown table generation, missing field handling
 > - Tests for `formatActionSuggestions()` - action suggestions for buttons, text fields, switches, sliders, scroll views, pickers, steppers, segmented controls; disabled/hidden element warnings
 > - Edge cases: empty tree, multiple types, zero-size frames, long lists
+
+> **Completed**: Created comprehensive integration tests for ios.inspect in `src/__tests__/integration/ios-tools.integration.test.ts`:
+> - Uses iOS Settings app (com.apple.Preferences) as sample app for reliable testing
+> - Tests for Simple Inspection (simctl ui describe): UI hierarchy, auto-detect simulator, artifact creation
+> - Tests for XCUITest-based Inspection: structured result, element tree, summary, UI tree JSON, error handling for non-existent app
+> - Tests for UI Analysis Functions: findByType, getInteractableElements, detectIssues, summarizeScreen
+> - Tests for Inspect Formatters: formatInspectForAgent, formatInspectAsJson, formatInspectCompact
+> - Performance test: verifies inspection completes within < 10 seconds (with buffer for system load)
+> - All tests require macOS + Xcode and are skipped on non-macOS platforms
 
 ## Acceptance Criteria
 

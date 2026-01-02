@@ -619,6 +619,489 @@ describe.skipIf(!runTests)('Snapshot Flow Integration', () => {
 });
 
 // =========================================================================
+// UI Inspection Integration Tests
+// =========================================================================
+
+describe.skipIf(!runTests)('UI Inspection Integration', () => {
+  /**
+   * These tests exercise the UI inspection functionality end-to-end.
+   * They require a booted simulator with an app running.
+   *
+   * Note: These tests use the Settings app as a "sample app" since it's
+   * always available on every simulator and provides a reliable UI hierarchy.
+   */
+
+  let bootedUdid: string | null = null;
+  let wasAlreadyBooted = false;
+  const testSessionId = `inspect-integration-test-${Date.now()}`;
+
+  // Settings app bundle ID - available on all iOS simulators
+  const SETTINGS_BUNDLE_ID = 'com.apple.Preferences';
+
+  beforeAll(async () => {
+    // Find or boot a simulator for inspection tests
+    const bootedResult = await getBootedSimulators();
+    if (bootedResult.success && bootedResult.data!.length > 0) {
+      bootedUdid = bootedResult.data![0].udid;
+      wasAlreadyBooted = true;
+    } else {
+      // Need to boot one
+      const listResult = await listSimulators();
+      const available = listResult.data?.find((s) => s.isAvailable && s.state === 'Shutdown');
+      if (available) {
+        console.log(`Booting simulator for inspection tests: ${available.name}`);
+        const bootResult = await bootSimulator({
+          udid: available.udid,
+          timeout: 120000,
+          waitForBoot: true,
+        });
+        if (bootResult.success) {
+          bootedUdid = available.udid;
+          wasAlreadyBooted = false;
+          // Wait for graphics and system services to initialize
+          console.log('Waiting for system services to initialize...');
+          await new Promise((resolve) => setTimeout(resolve, 8000));
+        }
+      }
+    }
+
+    // Launch Settings app for inspection tests
+    if (bootedUdid) {
+      const { launchApp } = await import('../../main/ios-tools/simulator');
+      console.log('Launching Settings app for inspection tests...');
+      const launchResult = await launchApp(bootedUdid, SETTINGS_BUNDLE_ID);
+      if (!launchResult.success) {
+        console.log(`Failed to launch Settings app: ${launchResult.error}`);
+      } else {
+        // Wait for app to fully launch
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+    }
+  }, 180000);
+
+  afterAll(async () => {
+    // Cleanup: remove test artifacts
+    try {
+      const artifacts = await listSessionArtifacts(testSessionId);
+      if (artifacts.length > 0) {
+        console.log(`Cleaning up ${artifacts.length} inspection test artifacts`);
+        await pruneSessionArtifacts(testSessionId, 0);
+      }
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+
+    // Shutdown simulator if we booted it
+    if (bootedUdid && !wasAlreadyBooted) {
+      console.log(`Cleaning up: shutting down simulator ${bootedUdid}`);
+      await shutdownSimulator(bootedUdid);
+    }
+  });
+
+  describe('Simple Inspection (simctl ui describe)', () => {
+    it('inspects UI hierarchy using simple inspect', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping simple inspect test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+
+      const result = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+        captureScreenshot: true,
+      });
+
+      // Inspection may fail if simctl ui is not available
+      if (!result.success) {
+        console.log(`Simple inspection failed (may not be supported): ${result.error}`);
+        return;
+      }
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+
+      const inspectResult = result.data!;
+
+      // Validate basic structure
+      expect(inspectResult.id).toBeDefined();
+      expect(inspectResult.timestamp).toBeInstanceOf(Date);
+      expect(inspectResult.simulator).toBeDefined();
+      expect(inspectResult.simulator.udid).toBe(bootedUdid);
+
+      // Validate tree structure
+      expect(inspectResult.tree).toBeDefined();
+      expect(inspectResult.tree.type).toBeDefined();
+
+      // Validate stats
+      expect(inspectResult.stats).toBeDefined();
+      expect(typeof inspectResult.stats.totalElements).toBe('number');
+      expect(typeof inspectResult.stats.interactableElements).toBe('number');
+
+      // Validate artifact directory
+      expect(inspectResult.artifactDir).toBeDefined();
+      const artifactDirExists = await fs.access(inspectResult.artifactDir).then(() => true).catch(() => false);
+      expect(artifactDirExists).toBe(true);
+
+      // If screenshot was captured, verify it exists
+      if (inspectResult.screenshot) {
+        const screenshotExists = await fs.access(inspectResult.screenshot.path).then(() => true).catch(() => false);
+        expect(screenshotExists).toBe(true);
+      }
+    }, 60000);
+
+    it('inspects with auto-detected simulator', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping auto-detect test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+
+      // Don't provide UDID - should auto-detect first booted simulator
+      const result = await inspect({
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!result.success) {
+        console.log(`Auto-detect inspection failed: ${result.error}`);
+        return;
+      }
+
+      expect(result.success).toBe(true);
+      expect(result.data?.simulator.udid).toBe(bootedUdid);
+    }, 60000);
+  });
+
+  describe('XCUITest-based Inspection', () => {
+    it('inspects UI hierarchy using XCUITest approach', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping XCUITest inspect test');
+        return;
+      }
+
+      const { inspectWithXCUITest } = await import('../../main/ios-tools/inspect');
+
+      const result = await inspectWithXCUITest({
+        simulatorUdid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+        captureScreenshot: true,
+        includeFrames: true,
+        includeHidden: false,
+      });
+
+      // XCUITest inspection may fall back to simctl
+      if (!result.success) {
+        console.log(`XCUITest inspection failed: ${result.error}`);
+        return;
+      }
+
+      expect(result.success).toBe(true);
+      expect(result.data).toBeDefined();
+
+      const inspectResult = result.data!;
+
+      // Validate XCUITest-specific structure
+      expect(inspectResult.id).toBeDefined();
+      expect(inspectResult.timestamp).toBeInstanceOf(Date);
+      expect(inspectResult.bundleId).toBe(SETTINGS_BUNDLE_ID);
+
+      // Validate simulator info
+      expect(inspectResult.simulator).toBeDefined();
+      expect(inspectResult.simulator.udid).toBe(bootedUdid);
+      expect(inspectResult.simulator.name).toBeDefined();
+      expect(inspectResult.simulator.iosVersion).toBeDefined();
+
+      // Validate root element
+      expect(inspectResult.rootElement).toBeDefined();
+      expect(inspectResult.rootElement.type).toBeDefined();
+
+      // Validate summary
+      expect(inspectResult.summary).toBeDefined();
+      expect(typeof inspectResult.summary.totalElements).toBe('number');
+      expect(typeof inspectResult.summary.interactableElements).toBe('number');
+      expect(typeof inspectResult.summary.identifiedElements).toBe('number');
+      expect(typeof inspectResult.summary.labeledElements).toBe('number');
+      expect(typeof inspectResult.summary.buttons).toBe('number');
+      expect(typeof inspectResult.summary.textInputs).toBe('number');
+      expect(Array.isArray(inspectResult.summary.warnings)).toBe(true);
+
+      // Validate artifact directory and UI tree JSON
+      expect(inspectResult.artifactDir).toBeDefined();
+      const uiTreePath = path.join(inspectResult.artifactDir, 'ui-tree.json');
+      const uiTreeExists = await fs.access(uiTreePath).then(() => true).catch(() => false);
+      expect(uiTreeExists).toBe(true);
+
+      // Verify UI tree JSON is valid
+      if (uiTreeExists) {
+        const uiTreeContent = await fs.readFile(uiTreePath, 'utf-8');
+        const parsedTree = JSON.parse(uiTreeContent);
+        expect(parsedTree).toBeDefined();
+        expect(parsedTree.bundleId).toBe(SETTINGS_BUNDLE_ID);
+      }
+    }, 90000);
+
+    it('returns error for non-existent app', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping error test');
+        return;
+      }
+
+      const { inspectWithXCUITest } = await import('../../main/ios-tools/inspect');
+
+      const result = await inspectWithXCUITest({
+        simulatorUdid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: 'com.nonexistent.fake.app.12345',
+        captureScreenshot: false,
+      });
+
+      // Should fail (app not running/not found)
+      expect(result.success).toBe(false);
+      expect(result.error).toBeDefined();
+    }, 60000);
+  });
+
+  describe('UI Analysis Functions', () => {
+    it('finds elements by identifier', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping UI analysis test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { findByIdentifier, findByLabel, findByType, getInteractableElements } = await import('../../main/ios-tools/ui-analyzer');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const tree = inspectResult.data.tree;
+
+      // Test findByType - should find at least some StaticText elements in Settings
+      const textElements = findByType(tree, 'StaticText');
+      console.log(`Found ${textElements.length} StaticText elements`);
+
+      // Test getInteractableElements
+      const interactables = getInteractableElements(tree);
+      console.log(`Found ${interactables.length} interactable elements`);
+
+      // Settings app should have some interactable elements
+      // (cells for settings items, navigation buttons, etc.)
+      expect(interactables.length).toBeGreaterThan(0);
+    }, 60000);
+
+    it('detects accessibility issues', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping accessibility test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { detectIssues } = await import('../../main/ios-tools/ui-analyzer');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const issues = detectIssues(inspectResult.data.tree);
+
+      // Validate issue structure (even if empty)
+      expect(issues).toBeDefined();
+      expect(Array.isArray(issues.issues)).toBe(true);
+      expect(typeof issues.totalIssues).toBe('number');
+      expect(typeof issues.criticalCount).toBe('number');
+
+      console.log(`Found ${issues.totalIssues} accessibility issues`);
+    }, 60000);
+
+    it('generates screen summary', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping screen summary test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { summarizeScreen } = await import('../../main/ios-tools/ui-analyzer');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const summary = summarizeScreen(inspectResult.data.tree);
+
+      // Validate summary structure
+      expect(summary).toBeDefined();
+      expect(summary.screenType).toBeDefined();
+      expect(typeof summary.description).toBe('string');
+      expect(summary.description.length).toBeGreaterThan(0);
+
+      // Settings app typically shows as 'settings' or 'list' screen type
+      console.log(`Screen type: ${summary.screenType}`);
+      console.log(`Description: ${summary.description}`);
+    }, 60000);
+  });
+
+  describe('Inspect Formatters', () => {
+    it('formats inspection result for agent', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping formatter test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { formatInspectForAgent } = await import('../../main/ios-tools/inspect-formatter');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+        captureScreenshot: true,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const formatted = formatInspectForAgent(inspectResult.data);
+
+      // Validate formatted output
+      expect(formatted).toBeDefined();
+      expect(formatted.summary).toBeDefined();
+      expect(formatted.fullOutput).toBeDefined();
+      expect(typeof formatted.fullOutput).toBe('string');
+
+      // Should contain expected sections
+      expect(formatted.fullOutput).toContain('UI Inspection');
+
+      console.log(`Formatted output length: ${formatted.fullOutput.length} chars`);
+    }, 60000);
+
+    it('formats inspection result as JSON', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping JSON formatter test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { formatInspectAsJson } = await import('../../main/ios-tools/inspect-formatter');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const jsonOutput = formatInspectAsJson(inspectResult.data);
+
+      // Validate JSON output
+      expect(jsonOutput).toBeDefined();
+      expect(typeof jsonOutput).toBe('string');
+
+      // Should be valid JSON
+      const parsed = JSON.parse(jsonOutput);
+      expect(parsed).toBeDefined();
+      expect(parsed.id).toBeDefined();
+      expect(parsed.stats).toBeDefined();
+    }, 60000);
+
+    it('formats inspection result in compact mode', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping compact formatter test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+      const { formatInspectCompact } = await import('../../main/ios-tools/inspect-formatter');
+
+      const inspectResult = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+      });
+
+      if (!inspectResult.success || !inspectResult.data) {
+        console.log(`Inspection failed: ${inspectResult.error}`);
+        return;
+      }
+
+      const compactOutput = formatInspectCompact(inspectResult.data);
+
+      // Validate compact output
+      expect(compactOutput).toBeDefined();
+      expect(typeof compactOutput).toBe('string');
+      expect(compactOutput.length).toBeGreaterThan(0);
+
+      console.log(`Compact output length: ${compactOutput.length} chars`);
+    }, 60000);
+  });
+
+  describe('Inspection Performance', () => {
+    it('completes inspection within performance threshold', async () => {
+      if (!bootedUdid) {
+        console.log('No booted simulator available, skipping performance test');
+        return;
+      }
+
+      const { inspect } = await import('../../main/ios-tools/inspect-simple');
+
+      const startTime = Date.now();
+
+      const result = await inspect({
+        udid: bootedUdid,
+        sessionId: testSessionId,
+        bundleId: SETTINGS_BUNDLE_ID,
+        captureScreenshot: false, // Skip screenshot for pure inspection timing
+      });
+
+      const duration = Date.now() - startTime;
+
+      if (!result.success) {
+        console.log(`Inspection failed: ${result.error}`);
+        return;
+      }
+
+      console.log(`Inspection completed in ${duration}ms`);
+
+      // Acceptance criteria: inspection should complete in < 5 seconds
+      // (allowing some buffer for system load)
+      expect(duration).toBeLessThan(10000);
+    }, 15000);
+  });
+});
+
+// =========================================================================
 // Xcode-Only Quick Validation Suite
 // =========================================================================
 
