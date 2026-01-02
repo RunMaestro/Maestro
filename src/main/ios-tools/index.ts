@@ -202,6 +202,7 @@ export {
   getInteractableElements,
   getButtons,
   getTextFields,
+  getTextInputs,
   getTextElements,
   getNavigationElements,
   isInteractable,
@@ -213,11 +214,17 @@ export {
   filterEnabled,
   filterActive,
   sortByPosition,
+  detectIssues,
+  summarizeScreen,
 } from './ui-analyzer';
 export type {
   ElementQuery,
   QueryResult,
   InteractableElement,
+  AccessibilityIssueType,
+  AccessibilityIssue,
+  AccessibilityIssueResult,
+  ScreenSummary,
 } from './ui-analyzer';
 
 // =============================================================================
