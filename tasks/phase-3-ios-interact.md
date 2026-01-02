@@ -308,8 +308,15 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 - [x] Write unit tests for flow-runner.ts - batch execution, validation, retry logic
 - [x] Write unit tests for maestro-cli.ts - 18 tests covering detection, installation, validation
 - [x] Write unit tests for native-driver.ts - 66 tests covering target helpers, action helpers, driver class, convenience methods
-- [ ] Write unit tests for action-validator.ts
-- [ ] Write integration test with Maestro Mobile CLI
+- [x] Write unit tests for action-validator.ts - 63 tests covering validateTarget, suggestAlternatives, checkHittable, validateForAction, targetExists, getElementCenter, and edge cases
+- [x] Write integration test with Maestro Mobile CLI - 54 tests in `src/__tests__/integration/maestro-cli.integration.test.ts`
+  - Tests CLI detection, version validation, installation instructions
+  - Tests flow generation (step helpers, action string parsing, YAML generation, file writing)
+  - Tests flow validation (basic validation, Maestro CLI validation)
+  - Tests flow execution (simple flows, failure screenshots, env vars, auto-detect simulator, retry, batch execution)
+  - Tests performance (CLI detection < 5s, flow generation < 100ms)
+  - Gracefully skips tests when Maestro CLI or simulators are unavailable
+  - Run with: `npm run test:integration -- src/__tests__/integration/maestro-cli.integration.test.ts`
 - [ ] Write integration test with native driver
 - [ ] Test error cases (missing elements, timeouts)
 
