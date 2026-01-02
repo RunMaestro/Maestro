@@ -1675,6 +1675,20 @@ interface MaestroAPI {
       }>;
     }) => void) => () => void;
   };
+  // iOS Tools API (simulator, screenshot, logs, testing)
+  ios: {
+    snapshot: {
+      capture: (options: { udid?: string; bundleId?: string; sessionId: string; logDuration?: number; includeCrashContent?: boolean }) => Promise<any>;
+      format: (result: any) => Promise<any>;
+      formatJson: (result: any) => Promise<any>;
+    };
+    artifacts: {
+      getDirectory: (sessionId: string) => Promise<any>;
+      list: (sessionId: string) => Promise<any>;
+      prune: (sessionId: string, keepCount?: number) => Promise<any>;
+      size: (sessionId: string) => Promise<any>;
+    };
+  };
 }
 
 declare global {

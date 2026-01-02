@@ -173,10 +173,35 @@
 
 ## UI Components (Optional Phase 1 Stretch)
 
-- [ ] Create `src/renderer/components/iOSSnapshot/` directory
-- [ ] Create `SnapshotViewer.tsx` - display captured screenshot
-- [ ] Create `LogViewer.tsx` - display and search logs
+- [x] Create `src/renderer/components/iOSSnapshot/` directory
+- [x] Create `SnapshotViewer.tsx` - display captured screenshot
+  **Note (2026-01-01)**: Implemented with:
+  - Image display with fit-to-container sizing
+  - Click-to-zoom lightbox modal using existing LightboxModal component
+  - Error state handling for missing/invalid images
+  - Theme-aware styling
+  - External viewer button (opens in system image viewer)
+  - Metadata display (file size, timestamp)
+- [x] Create `IOSLogViewer.tsx` - display and search logs
+  **Note (2026-01-01)**: Implemented with:
+  - Log level filtering (error, fault, warning, info, debug, default)
+  - Full-text search across log messages with Cmd+F keyboard shortcut
+  - Expandable log entries with full details (message, subsystem, category, PID)
+  - Color-coded log levels matching theme colors
+  - Copy log entry to clipboard
+  - Scrollable log list with pagination
+- [x] Create `iOSSnapshotPanel.tsx` - main panel combining SnapshotViewer and IOSLogViewer
+  **Note (2026-01-01)**: Unified panel component with:
+  - Screenshot display with zoom capability
+  - Log viewer with filtering and search
+  - Crash log alert section with expandable details
+  - Capture new snapshot button with loading state
+  - Snapshot history dropdown with cleanup option
+  - Simulator info header showing device name, iOS version, and relative time
+- [x] Create `index.ts` - exports all components
+  **Note (2026-01-01)**: Exports SnapshotViewer, IOSLogViewer, iOSSnapshotPanel with types
 - [ ] Add snapshot tab to Right Bar for iOS sessions
+  **Note (2026-01-01)**: Left as optional stretch - requires iOS session detection and RightPanel modification. The `iOSSnapshotPanel` component is ready for integration.
 
 ## Error Handling
 
