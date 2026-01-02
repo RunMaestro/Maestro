@@ -1775,6 +1775,36 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Screen Assertions (Compound)
+  // ==========================================================================
+
+  // Assert screen matches definition
+  ipcMain.handle(
+    'ios:assert:screen',
+    withIpcErrorLogging(
+      handlerOpts('assertScreen'),
+      async (options: iosTools.AssertScreenOptions) => {
+        return iosTools.assertScreen(options);
+      }
+    )
+  );
+
+  // Assert screen by name from registry
+  ipcMain.handle(
+    'ios:assert:screenByName',
+    withIpcErrorLogging(
+      handlerOpts('assertScreenByName'),
+      async (
+        screenName: string,
+        screenRegistry: Record<string, iosTools.ScreenDefinition>,
+        options: Omit<iosTools.AssertScreenOptions, 'screen'>
+      ) => {
+        return iosTools.assertScreenByName(screenName, screenRegistry, options);
+      }
+    )
+  );
+
   // Format verification result for agent
   ipcMain.handle(
     'ios:verify:formatResult',

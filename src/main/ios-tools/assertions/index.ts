@@ -203,3 +203,21 @@ export type {
   AssertLogContainsOptions,
   LogContainsAssertionData,
 } from './log-contains';
+
+// =============================================================================
+// Screen Assertions (Compound)
+// =============================================================================
+
+export {
+  assertScreen,
+  assertScreenByName,
+  createScreenDefinition,
+  parseScreenDefinition,
+} from './screen';
+export type {
+  ElementSpec,
+  ScreenDefinition,
+  AssertScreenOptions,
+  ElementCheckResult,
+  ScreenAssertionData,
+} from './screen';

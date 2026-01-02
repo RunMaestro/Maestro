@@ -533,6 +533,11 @@ export {
   hasLogPattern,
   waitForLogPattern,
   waitForLogPatternGone,
+  // Screen assertions (compound)
+  assertScreen,
+  assertScreenByName,
+  createScreenDefinition,
+  parseScreenDefinition,
 } from './assertions';
 export type {
   // Visibility types
@@ -579,6 +584,12 @@ export type {
   MatchedLogEntry,
   AssertLogContainsOptions,
   LogContainsAssertionData,
+  // Screen assertion types
+  ElementSpec,
+  ScreenDefinition,
+  AssertScreenOptions,
+  ElementCheckResult,
+  ScreenAssertionData,
 } from './assertions';
 
 // =============================================================================

@@ -301,11 +301,16 @@
 
 ### /ios.assert_screen
 
-- [ ] Create `src/main/ios-tools/assertions/screen.ts`
-  - [ ] Implement `assertScreen(screenName, options)`
-  - [ ] Check multiple conditions that define a "screen"
-  - [ ] Configurable screen definitions
-  - [ ] Examples:
+- [x] Create `src/main/ios-tools/assertions/screen.ts` ✅ *Fully implemented*
+  - [x] Implement `assertScreen(screen, options)` ✅ *Compound assertion with polling support*
+  - [x] Check multiple conditions that define a "screen" ✅ *Checks visible, notVisible, enabled, disabled*
+  - [x] Configurable screen definitions ✅ *Via `ScreenDefinition` interface*
+  - [x] `ElementSpec` interface for flexible element targeting ✅ *Supports identifier, label, text, type, query*
+  - [x] `createScreenDefinition()` helper ✅ *Quick screen definition creation*
+  - [x] `parseScreenDefinition()` helper ✅ *Parse YAML-style config with # and @ prefixes*
+  - [x] `assertScreenByName()` convenience function ✅ *Lookup from registry*
+  - [x] Configurable require mode (all vs any) ✅ *Via `requireAll` option*
+  - [x] Examples:
     ```yaml
     screens:
       login:
@@ -321,8 +326,10 @@
           - "#profile_button"
     ```
 
-- [ ] Create slash command `/ios.assert_screen`
-  - [ ] Examples:
+- [x] Create slash command `/ios.assert_screen` ✅ *IPC handlers registered:*
+  - *`ios:assert:screen` - main assertion with full ScreenDefinition*
+  - *`ios:assert:screenByName` - lookup from registry*
+  - [x] Examples:
     - `/ios.assert_screen login`
     - `/ios.assert_screen home --timeout 10`
 
@@ -369,7 +376,7 @@
 
 ## IPC Handlers
 
-- [ ] Add verification IPC handlers to `src/main/ipc/handlers/ios.ts`
+- [x] Add verification IPC handlers to `src/main/ipc/handlers/ios.ts` ✅ *All handlers registered*
   - [x] Register `ios:assert:visible` handler ✅
   - [x] Register `ios:assert:notVisible` handler ✅
   - [x] Register `ios:assert:text` handler ✅ *All text assertion variants registered (text, textById, textByLabel, textContains, textMatches, textStartsWith, textEndsWith)*
@@ -380,7 +387,7 @@
   - [x] Register `ios:assert:noCrash` handler ✅
   - [x] Register `ios:assert:noErrors` handler ✅ *All noErrors variants registered (noErrors, noErrorsForApp, noHttpErrors, noCrashIndicators, countErrors, hasErrorPattern)*
   - [x] Register `ios:assert:logContains` handler ✅ *All logContains variants registered (logContains, logContainsPattern, logContainsExact, logMatches, logNotContains, logContainsForApp, countLogMatches, hasLogPattern, waitForLogPattern, waitForLogPatternGone)*
-  - [ ] Register `ios:assert:screen` handler
+  - [x] Register `ios:assert:screen` handler ✅ *Registered with screenByName variant (ios:assert:screen, ios:assert:screenByName)*
   - [x] Register `ios:wait:for` handler ✅ *Registered along with all convenience variants (forById, forByLabel, forByText, forNot, etc.)*
 
 ---
@@ -454,12 +461,12 @@
 
 ## Acceptance Criteria
 
-- [ ] All `/ios.assert_*` commands work reliably *(partial - visible, not-visible, no-crash implemented)*
-- [ ] `/ios.wait_for` polls until element appears or timeout *(implemented via `assertVisible` with polling)*
+- [x] All `/ios.assert_*` commands work reliably ✅ *All core assertions implemented: visible, not-visible, text, value, enabled, disabled, selected, hittable, no-crash, no-errors, log-contains, screen*
+- [x] `/ios.wait_for` polls until element appears or timeout ✅ *Implemented via `waitForElement` with polling*
 - [x] Assertions provide clear pass/fail with evidence ✅
 - [x] Failed assertions include suggestions ✅ *Error messages include hints*
 - [x] No crash detection works with crash log scanning ✅
 - [x] Log assertions can search recent logs ✅ *Implemented via `assertLogContains` with multiple match modes*
-- [ ] Screen assertions check multiple conditions *(not yet implemented)*
+- [x] Screen assertions check multiple conditions ✅ *Implemented via `assertScreen` with elements, notVisible, enabled, disabled checks*
 - [ ] Auto Run documents can use all assertions *(partial - core assertions available)*
 - [x] Agent can use assertions to "prove" feature works ✅ *Via IPC handlers and verification formatter*
