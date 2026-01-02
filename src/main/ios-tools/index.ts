@@ -481,6 +481,15 @@ export {
   assertValueEndsWith,
   assertValueEmpty,
   assertValueNotEmpty,
+  // Enabled/Disabled assertions
+  assertEnabled,
+  assertEnabledById,
+  assertEnabledByLabel,
+  assertEnabledByText,
+  assertDisabled,
+  assertDisabledById,
+  assertDisabledByLabel,
+  assertDisabledByText,
   // Crash assertions
   assertNoCrash,
   hasCrashed,
@@ -506,6 +515,10 @@ export type {
   ValueElementTarget,
   AssertValueOptions,
   ValueAssertionData,
+  // Enabled/Disabled assertion types
+  EnabledElementTarget,
+  AssertEnabledOptions,
+  EnabledAssertionData,
   // Crash types
   AssertNoCrashOptions,
   NoCrashAssertionData,

@@ -144,20 +144,30 @@
 
 ### /ios.assert_enabled
 
-- [ ] Create `src/main/ios-tools/assertions/enabled.ts`
-  - [ ] Implement `assertEnabled(target, options)`
-  - [ ] Verify element is enabled/interactable
-  - [ ] Check isEnabled property
+- [x] Create `src/main/ios-tools/assertions/enabled.ts` ✅ *Fully implemented with polling support*
+  - [x] Implement `assertEnabled(target, options)` ✅
+  - [x] Verify element is enabled/interactable ✅
+  - [x] Check isEnabled property ✅
+  - [x] Convenience functions: `assertEnabledById`, `assertEnabledByLabel`, `assertEnabledByText` ✅
 
-- [ ] Create slash command `/ios.assert_enabled`
+- [x] Create slash command `/ios.assert_enabled` ✅ *IPC handlers registered:*
+  - *`ios:assert:enabled` - main assertion*
+  - *`ios:assert:enabledById` - by identifier*
+  - *`ios:assert:enabledByLabel` - by label*
+  - *`ios:assert:enabledByText` - by text*
 
 ### /ios.assert_disabled
 
-- [ ] Create `src/main/ios-tools/assertions/disabled.ts`
-  - [ ] Implement `assertDisabled(target, options)`
-  - [ ] Verify element is disabled
+- [x] Create `src/main/ios-tools/assertions/enabled.ts` ✅ *Implemented in enabled.ts as `assertDisabled`*
+  - [x] Implement `assertDisabled(target, options)` ✅
+  - [x] Verify element is disabled ✅
+  - [x] Convenience functions: `assertDisabledById`, `assertDisabledByLabel`, `assertDisabledByText` ✅
 
-- [ ] Create slash command `/ios.assert_disabled`
+- [x] Create slash command `/ios.assert_disabled` ✅ *IPC handlers registered:*
+  - *`ios:assert:disabled` - main assertion*
+  - *`ios:assert:disabledById` - by identifier*
+  - *`ios:assert:disabledByLabel` - by label*
+  - *`ios:assert:disabledByText` - by text*
 
 ### /ios.assert_selected
 
@@ -301,7 +311,8 @@
   - [x] Register `ios:assert:notVisible` handler ✅
   - [x] Register `ios:assert:text` handler ✅ *All text assertion variants registered (text, textById, textByLabel, textContains, textMatches, textStartsWith, textEndsWith)*
   - [x] Register `ios:assert:value` handler ✅ *All value assertion variants registered (value, valueById, valueByLabel, valueContains, valueMatches, valueStartsWith, valueEndsWith, valueEmpty, valueNotEmpty)*
-  - [ ] Register `ios:assert:enabled` handler
+  - [x] Register `ios:assert:enabled` handler ✅ *All enabled assertion variants registered (enabled, enabledById, enabledByLabel, enabledByText)*
+  - [x] Register `ios:assert:disabled` handler ✅ *All disabled assertion variants registered (disabled, disabledById, disabledByLabel, disabledByText)*
   - [ ] Register `ios:assert:hittable` handler
   - [x] Register `ios:assert:noCrash` handler ✅
   - [ ] Register `ios:assert:noErrors` handler

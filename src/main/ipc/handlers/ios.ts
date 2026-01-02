@@ -1282,6 +1282,98 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Enabled/Disabled Assertions
+  // ==========================================================================
+
+  // Assert element is enabled
+  ipcMain.handle(
+    'ios:assert:enabled',
+    withIpcErrorLogging(
+      handlerOpts('assertEnabled'),
+      async (options: iosTools.AssertEnabledOptions) => {
+        return iosTools.assertEnabled(options);
+      }
+    )
+  );
+
+  // Assert element is enabled by identifier
+  ipcMain.handle(
+    'ios:assert:enabledById',
+    withIpcErrorLogging(
+      handlerOpts('assertEnabledById'),
+      async (identifier: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertEnabledById(identifier, options);
+      }
+    )
+  );
+
+  // Assert element is enabled by label
+  ipcMain.handle(
+    'ios:assert:enabledByLabel',
+    withIpcErrorLogging(
+      handlerOpts('assertEnabledByLabel'),
+      async (label: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertEnabledByLabel(label, options);
+      }
+    )
+  );
+
+  // Assert element is enabled by text
+  ipcMain.handle(
+    'ios:assert:enabledByText',
+    withIpcErrorLogging(
+      handlerOpts('assertEnabledByText'),
+      async (text: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertEnabledByText(text, options);
+      }
+    )
+  );
+
+  // Assert element is disabled
+  ipcMain.handle(
+    'ios:assert:disabled',
+    withIpcErrorLogging(
+      handlerOpts('assertDisabled'),
+      async (options: iosTools.AssertEnabledOptions) => {
+        return iosTools.assertDisabled(options);
+      }
+    )
+  );
+
+  // Assert element is disabled by identifier
+  ipcMain.handle(
+    'ios:assert:disabledById',
+    withIpcErrorLogging(
+      handlerOpts('assertDisabledById'),
+      async (identifier: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertDisabledById(identifier, options);
+      }
+    )
+  );
+
+  // Assert element is disabled by label
+  ipcMain.handle(
+    'ios:assert:disabledByLabel',
+    withIpcErrorLogging(
+      handlerOpts('assertDisabledByLabel'),
+      async (label: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertDisabledByLabel(label, options);
+      }
+    )
+  );
+
+  // Assert element is disabled by text
+  ipcMain.handle(
+    'ios:assert:disabledByText',
+    withIpcErrorLogging(
+      handlerOpts('assertDisabledByText'),
+      async (text: string, options: Omit<iosTools.AssertEnabledOptions, 'target'>) => {
+        return iosTools.assertDisabledByText(text, options);
+      }
+    )
+  );
+
   // Format verification result for agent
   ipcMain.handle(
     'ios:verify:formatResult',

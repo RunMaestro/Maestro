@@ -84,6 +84,26 @@ export type {
 } from './value';
 
 // =============================================================================
+// Enabled/Disabled Assertions
+// =============================================================================
+
+export {
+  assertEnabled,
+  assertEnabledById,
+  assertEnabledByLabel,
+  assertEnabledByText,
+  assertDisabled,
+  assertDisabledById,
+  assertDisabledByLabel,
+  assertDisabledByText,
+} from './enabled';
+export type {
+  EnabledElementTarget,
+  AssertEnabledOptions,
+  EnabledAssertionData,
+} from './enabled';
+
+// =============================================================================
 // Crash Assertions
 // =============================================================================
 
