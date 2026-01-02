@@ -1089,5 +1089,53 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Test Execution
+  // ==========================================================================
+
+  // Run XCTest unit tests
+  ipcMain.handle(
+    'ios:test:run',
+    createIpcHandler(
+      handlerOpts('runTests'),
+      async (options: iosTools.TestRunOptions) => {
+        return iosTools.runTests(options);
+      }
+    )
+  );
+
+  // Run XCUITest UI tests
+  ipcMain.handle(
+    'ios:test:runUI',
+    createIpcHandler(
+      handlerOpts('runUITests'),
+      async (options: iosTools.TestRunOptions) => {
+        return iosTools.runUITests(options);
+      }
+    )
+  );
+
+  // Parse test results from xcresult bundle
+  ipcMain.handle(
+    'ios:test:parseResults',
+    createIpcHandler(
+      handlerOpts('parseTestResults'),
+      async (resultBundlePath: string) => {
+        return iosTools.parseTestResults(resultBundlePath);
+      }
+    )
+  );
+
+  // List available tests in a project
+  ipcMain.handle(
+    'ios:test:list',
+    createIpcHandler(
+      handlerOpts('listTests'),
+      async (projectPath: string, scheme: string) => {
+        return iosTools.listTests(projectPath, scheme);
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }

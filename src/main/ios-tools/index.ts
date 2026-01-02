@@ -59,6 +59,26 @@ export type {
 } from './build';
 
 // =============================================================================
+// Test Functions
+// =============================================================================
+
+export {
+  runTests,
+  runUITests,
+  parseTestResults,
+  listTests,
+} from './testing';
+export type {
+  TestRunOptions,
+  TestCaseResult,
+  PerformanceMetric,
+  TestSuiteResult,
+  TestRunResult,
+  TestInfo,
+  XCResultInfo,
+} from './testing';
+
+// =============================================================================
 // Simulator Functions
 // =============================================================================
 

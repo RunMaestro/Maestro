@@ -1344,6 +1344,43 @@ contextBridge.exposeInMainWorld('maestro', {
       formatResultJson: (result: any) => ipcRenderer.invoke('ios:shipLoop:formatResultJson', result),
       formatResultCompact: (result: any) => ipcRenderer.invoke('ios:shipLoop:formatResultCompact', result),
     },
+    // Test Execution
+    test: {
+      run: (options: {
+        projectPath: string;
+        scheme: string;
+        destination?: string;
+        testClasses?: string[];
+        skipTests?: string[];
+        resultBundlePath?: string;
+        configuration?: 'Debug' | 'Release' | string;
+        derivedDataPath?: string;
+        buildForTesting?: boolean;
+        timeout?: number;
+        additionalArgs?: string[];
+        cwd?: string;
+        testEnv?: Record<string, string>;
+      }) => ipcRenderer.invoke('ios:test:run', options),
+      runUI: (options: {
+        projectPath: string;
+        scheme: string;
+        destination?: string;
+        testClasses?: string[];
+        skipTests?: string[];
+        resultBundlePath?: string;
+        configuration?: 'Debug' | 'Release' | string;
+        derivedDataPath?: string;
+        buildForTesting?: boolean;
+        timeout?: number;
+        additionalArgs?: string[];
+        cwd?: string;
+        testEnv?: Record<string, string>;
+      }) => ipcRenderer.invoke('ios:test:runUI', options),
+      parseResults: (resultBundlePath: string) =>
+        ipcRenderer.invoke('ios:test:parseResults', resultBundlePath),
+      list: (projectPath: string, scheme: string) =>
+        ipcRenderer.invoke('ios:test:list', projectPath, scheme),
+    },
   },
 
   // Notification API
@@ -3317,6 +3354,40 @@ export interface MaestroAPI {
       formatResult: (result: any) => Promise<any>;
       formatResultJson: (result: any) => Promise<any>;
       formatResultCompact: (result: any) => Promise<any>;
+    };
+    test: {
+      run: (options: {
+        projectPath: string;
+        scheme: string;
+        destination?: string;
+        testClasses?: string[];
+        skipTests?: string[];
+        resultBundlePath?: string;
+        configuration?: 'Debug' | 'Release' | string;
+        derivedDataPath?: string;
+        buildForTesting?: boolean;
+        timeout?: number;
+        additionalArgs?: string[];
+        cwd?: string;
+        testEnv?: Record<string, string>;
+      }) => Promise<any>;
+      runUI: (options: {
+        projectPath: string;
+        scheme: string;
+        destination?: string;
+        testClasses?: string[];
+        skipTests?: string[];
+        resultBundlePath?: string;
+        configuration?: 'Debug' | 'Release' | string;
+        derivedDataPath?: string;
+        buildForTesting?: boolean;
+        timeout?: number;
+        additionalArgs?: string[];
+        cwd?: string;
+        testEnv?: Record<string, string>;
+      }) => Promise<any>;
+      parseResults: (resultBundlePath: string) => Promise<any>;
+      list: (projectPath: string, scheme: string) => Promise<any>;
     };
   };
 }
