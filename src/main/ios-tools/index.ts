@@ -28,6 +28,37 @@ export {
 } from './xcode';
 
 // =============================================================================
+// Build Functions
+// =============================================================================
+
+export {
+  // Project detection
+  detectProject,
+  // Scheme/Target listing
+  listSchemes,
+  listTargets,
+  // Build operations
+  build,
+  buildForTesting,
+  // Derived data
+  getDefaultDerivedDataPath,
+  getDerivedDataPath,
+  getBuiltAppPath,
+  // Build settings
+  getBuildSettings,
+} from './build';
+export type {
+  ProjectType,
+  XcodeProject,
+  XcodeScheme,
+  XcodeTarget,
+  BuildOptions,
+  BuildResult,
+  BuildProgressCallback,
+  BuildProgress,
+} from './build';
+
+// =============================================================================
 // Simulator Functions
 // =============================================================================
 
