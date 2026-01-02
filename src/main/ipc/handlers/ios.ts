@@ -477,6 +477,27 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // List snapshots for a session (convenience alias for ios:artifacts:list)
+  ipcMain.handle(
+    'ios:snapshot:list',
+    createIpcHandler(handlerOpts('listSnapshots'), async (sessionId: string) => {
+      const snapshots = await iosTools.listSessionArtifacts(sessionId);
+      return { success: true, data: snapshots };
+    })
+  );
+
+  // Cleanup old snapshots (convenience alias for ios:artifacts:prune)
+  ipcMain.handle(
+    'ios:snapshot:cleanup',
+    createIpcHandler(
+      handlerOpts('cleanupSnapshots'),
+      async (sessionId: string, keepCount?: number) => {
+        await iosTools.pruneSessionArtifacts(sessionId, keepCount);
+        return { success: true };
+      }
+    )
+  );
+
   // ==========================================================================
   // Artifact Management
   // ==========================================================================
