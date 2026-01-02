@@ -368,3 +368,22 @@ export type {
   VerificationFormatOptions,
   FormattedVerification,
 } from './verification-formatter';
+
+// =============================================================================
+// Feature Ship Loop
+// =============================================================================
+
+export {
+  runShipLoop,
+  formatShipLoopResult,
+  formatShipLoopResultAsJson,
+  formatShipLoopResultCompact,
+} from './ship-loop';
+export type {
+  AssertionType,
+  AssertionSpec,
+  ShipLoopOptions,
+  IterationResult,
+  ShipLoopProgress,
+  ShipLoopResult,
+} from './ship-loop';

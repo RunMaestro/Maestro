@@ -957,5 +957,56 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Feature Ship Loop
+  // ==========================================================================
+
+  // Run the Feature Ship Loop
+  ipcMain.handle(
+    'ios:shipLoop:run',
+    createIpcHandler(
+      handlerOpts('runShipLoop'),
+      async (options: iosTools.ShipLoopOptions) => {
+        return iosTools.runShipLoop(options);
+      }
+    )
+  );
+
+  // Format ship loop result for agent output
+  ipcMain.handle(
+    'ios:shipLoop:formatResult',
+    createIpcHandler(
+      handlerOpts('formatShipLoopResult'),
+      async (result: iosTools.ShipLoopResult) => {
+        const formatted = iosTools.formatShipLoopResult(result);
+        return { success: true, data: formatted };
+      }
+    )
+  );
+
+  // Format ship loop result as JSON
+  ipcMain.handle(
+    'ios:shipLoop:formatResultJson',
+    createIpcHandler(
+      handlerOpts('formatShipLoopResultAsJson'),
+      async (result: iosTools.ShipLoopResult) => {
+        const json = iosTools.formatShipLoopResultAsJson(result);
+        return { success: true, data: json };
+      }
+    )
+  );
+
+  // Format ship loop result compact
+  ipcMain.handle(
+    'ios:shipLoop:formatResultCompact',
+    createIpcHandler(
+      handlerOpts('formatShipLoopResultCompact'),
+      async (result: iosTools.ShipLoopResult) => {
+        const compact = iosTools.formatShipLoopResultCompact(result);
+        return { success: true, data: compact };
+      }
+    )
+  );
+
   logger.debug(`${LOG_CONTEXT} iOS IPC handlers registered`);
 }
