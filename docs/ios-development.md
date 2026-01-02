@@ -653,3 +653,390 @@ maestro validate path/to/flow.yaml
 - Use `--retry` to automatically retry on failure
 - Add `wait` steps between rapid actions
 - Use `waitForAnimationToEnd` before assertions
+
+## Primitive Interaction Commands
+
+For direct UI interactions without YAML flow files, Maestro provides primitive commands that tap, type, scroll, and swipe on iOS simulator elements. These commands use the native XCUITest driver internally.
+
+<Note>
+The native XCUITest driver is not yet fully implemented. While these commands are available, they currently return "not yet implemented". For production use, prefer Maestro Mobile flows via `/ios.run_flow`.
+</Note>
+
+### The `/ios.tap` Command
+
+Tap an element on the iOS simulator by accessibility identifier, label, or coordinates.
+
+```
+/ios.tap <target> --app <bundleId>
+```
+
+#### Target Formats
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `#identifier` | Tap by accessibility ID | `/ios.tap #login_button --app com.example.app` |
+| `"label text"` | Tap by accessibility label | `/ios.tap "Sign In" --app com.example.app` |
+| `x,y` | Tap at screen coordinates | `/ios.tap 100,200 --app com.example.app` |
+
+#### Command Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app <bundleId>` | `-a` | App bundle ID (required) |
+| `--simulator <name\|udid>` | `-s` | Target simulator (default: first booted) |
+| `--double` | | Perform double tap instead of single tap |
+| `--long [seconds]` | | Perform long press (default: 1.0 seconds) |
+| `--offset <x,y>` | | Offset from element center for tap |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+| `--debug` | | Enable debug output |
+
+#### Examples
+
+**Tap by accessibility identifier**:
+```
+/ios.tap #submit_button --app com.example.app
+```
+
+**Tap by label**:
+```
+/ios.tap "Continue" -a com.example.app
+```
+
+**Tap at coordinates**:
+```
+/ios.tap 150,300 --app com.example.app
+```
+
+**Double tap**:
+```
+/ios.tap #image_view --double --app com.example.app
+```
+
+**Long press for 2 seconds**:
+```
+/ios.tap #delete_button --long 2 --app com.example.app
+```
+
+**Tap with offset from element center**:
+```
+/ios.tap #cell --offset 10,-5 --app com.example.app
+```
+
+### The `/ios.type` Command
+
+Type text into the focused element or a specific text field.
+
+```
+/ios.type "text" --app <bundleId>
+/ios.type --into <target> "text" --app <bundleId>
+```
+
+#### Target Formats (for --into)
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `#identifier` | Type into element by accessibility ID | `--into #email_field` |
+| `"label text"` | Type into element by label | `--into "Email"` |
+
+#### Command Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app <bundleId>` | `-a` | App bundle ID (required) |
+| `--into <target>` | `-i` | Target element to type into (default: focused element) |
+| `--simulator <name\|udid>` | `-s` | Target simulator (default: first booted) |
+| `--clear` | `-c` | Clear existing text before typing |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+| `--debug` | | Enable debug output |
+
+#### Examples
+
+**Type into focused element**:
+```
+/ios.type "hello world" --app com.example.app
+```
+
+**Type into specific field by ID**:
+```
+/ios.type --into #email_field "user@example.com" --app com.example.app
+```
+
+**Type into field by label**:
+```
+/ios.type -i "Password" "secret123" -a com.example.app
+```
+
+**Clear field before typing**:
+```
+/ios.type --into #search_field "new query" --clear --app com.example.app
+```
+
+### The `/ios.scroll` Command
+
+Scroll in a direction or scroll until an element is visible.
+
+```
+/ios.scroll <direction> --app <bundleId>
+/ios.scroll --to <target> --app <bundleId>
+```
+
+#### Directions
+
+| Direction | Aliases | Description |
+|-----------|---------|-------------|
+| `up` | `u` | Scroll up |
+| `down` | `d` | Scroll down |
+| `left` | `l` | Scroll left |
+| `right` | `r` | Scroll right |
+
+#### Target Formats (for --to)
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `#identifier` | Scroll to element by accessibility ID | `--to #footer` |
+| `"label text"` | Scroll to element by label | `--to "Terms of Service"` |
+
+#### Command Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app <bundleId>` | `-a` | App bundle ID (required) |
+| `--to <target>` | `-t` | Target element to scroll to |
+| `--simulator <name\|udid>` | `-s` | Target simulator (default: first booted) |
+| `--distance <n>` | | Scroll distance as fraction (0.0-1.0, default: 0.5) |
+| `--attempts <n>` | | Max scroll attempts when targeting element (default: 10) |
+| `--in <target>` | | Scroll within a specific container element |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+| `--debug` | | Enable debug output |
+
+#### Examples
+
+**Scroll down**:
+```
+/ios.scroll down --app com.example.app
+```
+
+**Scroll with custom distance**:
+```
+/ios.scroll up --distance 0.8 --app com.example.app
+```
+
+**Scroll to specific element**:
+```
+/ios.scroll --to #footer_element --app com.example.app
+```
+
+**Scroll to element by label**:
+```
+/ios.scroll --to "Privacy Policy" -a com.example.app
+```
+
+**Scroll within a container**:
+```
+/ios.scroll down --in #scroll_view --app com.example.app
+```
+
+**Scroll to element with more attempts**:
+```
+/ios.scroll --to #end_of_list --attempts 20 --app com.example.app
+```
+
+### The `/ios.swipe` Command
+
+Perform swipe gestures for navigation and UI interactions.
+
+```
+/ios.swipe <direction> --app <bundleId>
+```
+
+#### Directions
+
+| Direction | Aliases | Common Use Cases |
+|-----------|---------|-----------------|
+| `up` | `u` | Dismiss modal, pull to refresh |
+| `down` | `d` | Dismiss notification |
+| `left` | `l` | Delete action, next page |
+| `right` | `r` | Back navigation |
+
+#### Command Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app <bundleId>` | `-a` | App bundle ID (required) |
+| `--simulator <name\|udid>` | `-s` | Target simulator (default: first booted) |
+| `--velocity <v>` | `-v` | Swipe velocity: `slow`, `normal`, `fast` (default: normal) |
+| `--from <target>` | | Start swipe from specific element |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+| `--debug` | | Enable debug output |
+
+#### Target Formats (for --from)
+
+| Format | Description | Example |
+|--------|-------------|---------|
+| `#identifier` | Swipe from element by accessibility ID | `--from #carousel` |
+| `"label text"` | Swipe from element by label | `--from "Image Gallery"` |
+
+#### Examples
+
+**Swipe left (e.g., for delete action)**:
+```
+/ios.swipe left --app com.example.app
+```
+
+**Swipe right (e.g., for back navigation)**:
+```
+/ios.swipe right -a com.example.app
+```
+
+**Fast swipe up**:
+```
+/ios.swipe up --velocity fast --app com.example.app
+```
+
+**Swipe on a specific element**:
+```
+/ios.swipe left --from #carousel --app com.example.app
+```
+
+**Swipe from element by label**:
+```
+/ios.swipe right --from "Card View" -a com.example.app
+```
+
+### Auto Run Integration for Primitives
+
+Use primitive commands in playbook YAML files:
+
+```yaml
+name: iOS Interaction Workflow
+steps:
+  - action: ios.tap
+    inputs:
+      target: "#login_button"
+      app: com.example.myapp
+    store_as: tap_result
+
+  - action: ios.type
+    inputs:
+      into: "#email_field"
+      text: "user@example.com"
+      app: com.example.myapp
+      clear: true
+
+  - action: ios.type
+    inputs:
+      into: "#password_field"
+      text: "password123"
+      app: com.example.myapp
+
+  - action: ios.tap
+    inputs:
+      target: "#submit_button"
+      app: com.example.myapp
+
+  - action: ios.scroll
+    inputs:
+      direction: down
+      app: com.example.myapp
+      distance: 0.5
+
+  - action: ios.scroll
+    inputs:
+      to: "#footer_element"
+      app: com.example.myapp
+      attempts: 15
+
+  - action: ios.swipe
+    inputs:
+      direction: left
+      app: com.example.myapp
+      velocity: fast
+```
+
+#### Action Inputs
+
+**ios.tap**:
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `target` | string | Yes | - | Target element (#id, "label", or x,y) |
+| `app` | string | Yes | - | Bundle ID |
+| `simulator` | string | No | First booted | Simulator name or UDID |
+| `double_tap` | boolean | No | false | Perform double tap |
+| `long_press` | number | No | - | Long press duration in seconds |
+| `offset` | object | No | - | Offset from center (`{x, y}`) |
+| `timeout` | number | No | 10000 | Timeout in ms |
+
+**ios.type**:
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `text` | string | Yes | - | Text to type |
+| `into` | string | No | Focused | Target element (#id or "label") |
+| `app` | string | Yes | - | Bundle ID |
+| `simulator` | string | No | First booted | Simulator name or UDID |
+| `clear` | boolean | No | false | Clear existing text first |
+| `timeout` | number | No | 10000 | Timeout in ms |
+
+**ios.scroll**:
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `direction` | string | No* | - | Scroll direction (up/down/left/right) |
+| `to` | string | No* | - | Target element to scroll to |
+| `app` | string | Yes | - | Bundle ID |
+| `simulator` | string | No | First booted | Simulator name or UDID |
+| `distance` | number | No | 0.5 | Scroll distance (0.0-1.0) |
+| `attempts` | number | No | 10 | Max scroll attempts for --to |
+| `in` | string | No | - | Container to scroll within |
+| `timeout` | number | No | 10000 | Timeout in ms |
+
+*Either `direction` or `to` is required.
+
+**ios.swipe**:
+
+| Input | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `direction` | string | Yes | - | Swipe direction (up/down/left/right) |
+| `app` | string | Yes | - | Bundle ID |
+| `simulator` | string | No | First booted | Simulator name or UDID |
+| `velocity` | string | No | normal | Swipe velocity (slow/normal/fast) |
+| `from` | string | No | - | Element to start swipe from |
+| `timeout` | number | No | 10000 | Timeout in ms |
+
+### Troubleshooting Primitives
+
+#### Element Not Found
+
+- Use `/ios.inspect` to view the current UI hierarchy
+- Verify accessibility identifiers/labels match exactly (case-sensitive)
+- Increase timeout if elements appear after animations: `--timeout 15000`
+- Try alternate targeting (ID vs label)
+
+#### Element Not Hittable
+
+- Ensure element is visible on screen
+- Check if element is obscured by another view
+- Scroll to reveal the element first
+- Verify element is enabled for interaction
+
+#### Coordinator/Display Errors
+
+- Ensure the simulator is in foreground
+- Check that the app is running and responsive
+- Try restarting the simulator
+
+#### Using Maestro Mobile Instead
+
+Until the native driver is fully implemented, use Maestro Mobile flows for reliable interactions:
+
+```
+# Instead of: /ios.tap #login_button --app com.example.app
+/ios.run_flow --inline "tap:Login" --app com.example.app
+
+# Instead of: /ios.type "hello" --app com.example.app
+/ios.run_flow --inline "inputText:hello" --app com.example.app
+
+# Instead of: /ios.scroll down --app com.example.app
+/ios.run_flow --inline "scroll:down" --app com.example.app
+```

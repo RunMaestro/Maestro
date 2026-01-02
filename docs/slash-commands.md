@@ -96,6 +96,10 @@ For iOS development workflows, Maestro provides commands to capture simulator st
 |---------|-------------|
 | `/ios.snapshot` | Capture screenshot, logs, and crash data from iOS simulator |
 | `/ios.run_flow` | Run Maestro Mobile YAML test flows on iOS simulator |
+| `/ios.tap` | Tap an element by #id, "label", or coordinates |
+| `/ios.type` | Type text into focused element or specific target |
+| `/ios.scroll` | Scroll in a direction or scroll to an element |
+| `/ios.swipe` | Perform swipe gestures (left/right/up/down) |
 
 ### `/ios.run_flow` Options
 
@@ -139,6 +143,105 @@ For iOS development workflows, Maestro provides commands to capture simulator st
 /ios.snapshot
 /ios.snapshot --simulator "iPhone 15 Pro"
 /ios.snapshot --app com.example.myapp -d 120
+```
+
+### `/ios.tap` Options
+
+```
+/ios.tap <target> --app <bundleId> [--simulator <name|udid>]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app` | `-a` | App bundle ID (required) |
+| `--simulator` | `-s` | Target simulator name or UDID |
+| `--double` | | Perform double tap |
+| `--long [seconds]` | | Perform long press (default: 1s) |
+| `--offset <x,y>` | | Offset from element center |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+
+**Target formats**:
+- `#identifier` - by accessibility ID
+- `"label text"` - by label
+- `x,y` - by coordinates
+
+**Examples**:
+```
+/ios.tap #login_button --app com.example.app
+/ios.tap "Sign In" -a com.example.app
+/ios.tap 100,200 --app com.example.app
+/ios.tap #menu --double --app com.example.app
+/ios.tap #delete --long 2 --app com.example.app
+```
+
+### `/ios.type` Options
+
+```
+/ios.type "text" --app <bundleId> [--into <target>] [--simulator <name|udid>]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app` | `-a` | App bundle ID (required) |
+| `--into` | `-i` | Target element (#id or "label") |
+| `--simulator` | `-s` | Target simulator name or UDID |
+| `--clear` | `-c` | Clear existing text before typing |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+
+**Examples**:
+```
+/ios.type "hello world" --app com.example.app
+/ios.type --into #email_field "user@example.com" --app com.example.app
+/ios.type -i "Password" "secret123" -a com.example.app --clear
+```
+
+### `/ios.scroll` Options
+
+```
+/ios.scroll <direction> --app <bundleId>
+/ios.scroll --to <target> --app <bundleId>
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app` | `-a` | App bundle ID (required) |
+| `--to` | `-t` | Target element to scroll to |
+| `--simulator` | `-s` | Target simulator name or UDID |
+| `--distance <n>` | | Scroll distance (0.0-1.0, default: 0.5) |
+| `--attempts <n>` | | Max scroll attempts for --to (default: 10) |
+| `--in <target>` | | Scroll within a container element |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+
+**Directions**: `up` (u), `down` (d), `left` (l), `right` (r)
+
+**Examples**:
+```
+/ios.scroll down --app com.example.app
+/ios.scroll --to #footer --app com.example.app
+/ios.scroll down --in #scroll_view --app com.example.app
+```
+
+### `/ios.swipe` Options
+
+```
+/ios.swipe <direction> --app <bundleId> [--simulator <name|udid>]
+```
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--app` | `-a` | App bundle ID (required) |
+| `--simulator` | `-s` | Target simulator name or UDID |
+| `--velocity` | `-v` | Swipe velocity: slow, normal, fast |
+| `--from <target>` | | Start swipe from element (#id or "label") |
+| `--timeout <ms>` | | Element wait timeout (default: 10000) |
+
+**Directions**: `up` (u), `down` (d), `left` (l), `right` (r)
+
+**Examples**:
+```
+/ios.swipe left --app com.example.app
+/ios.swipe right --velocity fast --app com.example.app
+/ios.swipe left --from #carousel --app com.example.app
 ```
 
 See [iOS Development Tools](/ios-development) for complete documentation.

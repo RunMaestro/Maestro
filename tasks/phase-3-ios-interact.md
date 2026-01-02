@@ -340,8 +340,10 @@ In comments/docs, always use "Maestro Mobile (mobile-dev-inc)" when referring to
 
 ## Documentation
 
-- [ ] Document `/ios.run_flow` command
-- [ ] Document primitive commands (`/ios.tap`, `/ios.type`, etc.)
+- [x] Document `/ios.run_flow` command
+  - Note: Comprehensive documentation added to `docs/ios-development.md` including: command options, examples, agent output format, Maestro Mobile YAML syntax reference with all action types, inline action shortcuts table, Auto Run integration with inputs/outputs, and troubleshooting guide. Also added quick reference to `docs/slash-commands.md`.
+- [x] Document primitive commands (`/ios.tap`, `/ios.type`, etc.)
+  - Note: Comprehensive documentation added to `docs/ios-development.md` covering all primitive commands: `/ios.tap` (with target formats, double tap, long press, offset), `/ios.type` (with --into target, --clear), `/ios.scroll` (direction and scroll-to modes, container scrolling), `/ios.swipe` (velocity control, --from element). Includes Auto Run integration examples with YAML playbook syntax and action inputs/outputs tables. Also includes troubleshooting guide and Maestro Mobile fallback alternatives. Quick reference also added to `docs/slash-commands.md`.
 - [ ] Document Maestro Mobile YAML format
 - [ ] Document native driver Swift integration
 - [ ] Provide example flows for common scenarios
