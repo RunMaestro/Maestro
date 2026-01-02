@@ -323,3 +323,274 @@ export function getInstallInstructions(): {
     documentation: 'https://maestro.mobile.dev/getting-started/installing-maestro',
   };
 }
+
+// =============================================================================
+// Installation
+// =============================================================================
+
+/**
+ * Installation method for Maestro CLI
+ */
+export type MaestroInstallMethod = 'homebrew' | 'curl';
+
+/**
+ * Options for installing Maestro CLI
+ */
+export interface InstallMaestroOptions {
+  /** Installation method to use */
+  method: MaestroInstallMethod;
+}
+
+/**
+ * Result of Maestro CLI installation
+ */
+export interface InstallMaestroResult {
+  /** Whether installation was successful */
+  success: boolean;
+  /** Path to installed maestro binary */
+  path?: string;
+  /** Installed version */
+  version?: string;
+  /** Error message if installation failed */
+  error?: string;
+  /** Installation method used */
+  method: MaestroInstallMethod;
+  /** Installation output */
+  output: string;
+}
+
+/**
+ * Install Maestro CLI if not already installed.
+ *
+ * @param options - Installation options
+ * @returns Installation result
+ */
+export async function installMaestro(
+  options: InstallMaestroOptions
+): Promise<IOSResult<InstallMaestroResult>> {
+  const { method } = options;
+
+  logger.info(`${LOG_CONTEXT} Installing Maestro CLI via ${method}`, LOG_CONTEXT);
+
+  // Check if already installed
+  const alreadyInstalled = await isMaestroAvailable();
+  if (alreadyInstalled) {
+    const infoResult = await getMaestroInfo();
+    if (infoResult.success && infoResult.data) {
+      logger.info(`${LOG_CONTEXT} Maestro CLI already installed at ${infoResult.data.path}`, LOG_CONTEXT);
+      return {
+        success: true,
+        data: {
+          success: true,
+          path: infoResult.data.path,
+          version: infoResult.data.version,
+          method,
+          output: 'Already installed',
+        },
+      };
+    }
+  }
+
+  let result: ExecResult;
+
+  if (method === 'homebrew') {
+    // First tap the homebrew repository
+    logger.debug(`${LOG_CONTEXT} Tapping mobile-dev-inc/tap`, LOG_CONTEXT);
+    const tapResult = await execFileNoThrow('brew', ['tap', 'mobile-dev-inc/tap']);
+    if (tapResult.exitCode !== 0) {
+      return {
+        success: false,
+        error: `Failed to tap mobile-dev-inc/tap: ${tapResult.stderr}`,
+        errorCode: 'COMMAND_FAILED',
+      };
+    }
+
+    // Then install maestro
+    logger.debug(`${LOG_CONTEXT} Installing maestro via brew`, LOG_CONTEXT);
+    result = await execFileNoThrow('brew', ['install', 'maestro']);
+  } else {
+    // curl installation
+    // Note: We can't use execFileNoThrow for piped commands, so we need to use a shell
+    // However, for security, we'll download and then run separately
+    logger.debug(`${LOG_CONTEXT} Installing maestro via curl`, LOG_CONTEXT);
+
+    // Download the installer script to a temp file
+    const tempScript = `/tmp/maestro-install-${Date.now()}.sh`;
+    const curlResult = await execFileNoThrow(
+      'curl',
+      ['-Ls', '-o', tempScript, 'https://get.maestro.mobile.dev']
+    );
+
+    if (curlResult.exitCode !== 0) {
+      return {
+        success: false,
+        error: `Failed to download installer: ${curlResult.stderr}`,
+        errorCode: 'COMMAND_FAILED',
+      };
+    }
+
+    // Make script executable and run it
+    await execFileNoThrow('chmod', ['+x', tempScript]);
+    result = await execFileNoThrow('bash', [tempScript]);
+
+    // Clean up temp script
+    await execFileNoThrow('rm', ['-f', tempScript]);
+  }
+
+  const output = result.stdout + (result.stderr ? '\n' + result.stderr : '');
+
+  if (result.exitCode !== 0) {
+    logger.error(`${LOG_CONTEXT} Maestro installation failed: ${result.stderr}`, LOG_CONTEXT);
+    return {
+      success: false,
+      error: `Installation failed: ${result.stderr || 'Unknown error'}`,
+      errorCode: 'COMMAND_FAILED',
+    };
+  }
+
+  // Verify installation succeeded
+  const verifyResult = await detectMaestroCli();
+  if (!verifyResult.success || !verifyResult.data?.available) {
+    return {
+      success: false,
+      error: 'Installation completed but maestro binary not found. You may need to restart your terminal.',
+      errorCode: 'COMMAND_FAILED',
+    };
+  }
+
+  logger.info(
+    `${LOG_CONTEXT} Maestro CLI installed successfully: v${verifyResult.data.version}`,
+    LOG_CONTEXT
+  );
+
+  return {
+    success: true,
+    data: {
+      success: true,
+      path: verifyResult.data.path,
+      version: verifyResult.data.version,
+      method,
+      output,
+    },
+  };
+}
+
+// =============================================================================
+// Setup Validation
+// =============================================================================
+
+/**
+ * Result of Maestro setup validation
+ */
+export interface MaestroSetupValidation {
+  /** Whether setup is valid */
+  valid: boolean;
+  /** Whether CLI is installed */
+  cliInstalled: boolean;
+  /** CLI version if installed */
+  version?: string;
+  /** Whether iOS driver is working */
+  iosDriverWorking: boolean;
+  /** Whether a simulator is available for testing */
+  simulatorAvailable: boolean;
+  /** Issues found during validation */
+  issues: string[];
+  /** Recommendations to fix issues */
+  recommendations: string[];
+}
+
+/**
+ * Validate that Maestro Mobile is properly set up for iOS testing.
+ *
+ * Checks:
+ * 1. Maestro CLI is installed
+ * 2. iOS driver is functional
+ * 3. A simulator is available
+ *
+ * @returns Validation result with issues and recommendations
+ */
+export async function validateMaestroSetup(): Promise<IOSResult<MaestroSetupValidation>> {
+  logger.info(`${LOG_CONTEXT} Validating Maestro setup`, LOG_CONTEXT);
+
+  const issues: string[] = [];
+  const recommendations: string[] = [];
+  let cliInstalled = false;
+  let version: string | undefined;
+  let iosDriverWorking = false;
+  let simulatorAvailable = false;
+
+  // Check if CLI is installed
+  const detectResult = await detectMaestroCli();
+  if (detectResult.success && detectResult.data?.available) {
+    cliInstalled = true;
+    version = detectResult.data.version;
+    logger.debug(`${LOG_CONTEXT} CLI installed: v${version}`, LOG_CONTEXT);
+  } else {
+    issues.push('Maestro CLI is not installed');
+    recommendations.push('Install Maestro CLI: curl -Ls "https://get.maestro.mobile.dev" | bash');
+  }
+
+  // Check for booted simulators
+  const { getBootedSimulators } = await import('./simulator');
+  const simulatorsResult = await getBootedSimulators();
+  if (simulatorsResult.success && simulatorsResult.data && simulatorsResult.data.length > 0) {
+    simulatorAvailable = true;
+    logger.debug(
+      `${LOG_CONTEXT} Found ${simulatorsResult.data.length} booted simulator(s)`,
+      LOG_CONTEXT
+    );
+  } else {
+    issues.push('No booted iOS simulators found');
+    recommendations.push('Boot a simulator: xcrun simctl boot "iPhone 15 Pro"');
+  }
+
+  // Test iOS driver by running a simple command
+  if (cliInstalled && simulatorAvailable) {
+    // Use maestro doctor or a simple hierarchy dump to verify driver works
+    const doctorResult = await runMaestro(['doctor']);
+    if (doctorResult.exitCode === 0) {
+      iosDriverWorking = true;
+      logger.debug(`${LOG_CONTEXT} iOS driver is working`, LOG_CONTEXT);
+    } else {
+      // Check the output for iOS-specific errors
+      const output = doctorResult.stdout + doctorResult.stderr;
+      if (output.toLowerCase().includes('ios')) {
+        issues.push('iOS driver may have issues');
+        if (output.toLowerCase().includes('xcode')) {
+          recommendations.push('Ensure Xcode and command line tools are properly installed');
+        }
+      }
+
+      // Even if doctor fails, driver might still work for testing
+      // Try running hierarchy as a more direct test
+      const hierResult = await runMaestro(['hierarchy']);
+      if (hierResult.exitCode === 0 || hierResult.stdout.includes('View') || hierResult.stdout.includes('Window')) {
+        iosDriverWorking = true;
+      } else {
+        issues.push('iOS driver is not responding correctly');
+        recommendations.push('Ensure the iOS simulator is fully booted and an app is running');
+      }
+    }
+  }
+
+  const valid = cliInstalled && iosDriverWorking && simulatorAvailable;
+
+  if (valid) {
+    logger.info(`${LOG_CONTEXT} Maestro setup is valid`, LOG_CONTEXT);
+  } else {
+    logger.warn(`${LOG_CONTEXT} Maestro setup has issues: ${issues.join(', ')}`, LOG_CONTEXT);
+  }
+
+  return {
+    success: true,
+    data: {
+      valid,
+      cliInstalled,
+      version,
+      iosDriverWorking,
+      simulatorAvailable,
+      issues,
+      recommendations,
+    },
+  };
+}

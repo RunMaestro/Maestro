@@ -311,10 +311,16 @@ export {
   getMaestroInfo,
   validateMaestroVersion,
   getInstallInstructions,
+  installMaestro,
+  validateMaestroSetup,
 } from './maestro-cli';
 export type {
   MaestroInfo,
   MaestroDetectResult,
+  MaestroInstallMethod,
+  InstallMaestroOptions,
+  InstallMaestroResult,
+  MaestroSetupValidation,
 } from './maestro-cli';
 
 // =============================================================================
