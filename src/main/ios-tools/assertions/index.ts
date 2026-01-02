@@ -160,3 +160,23 @@ export type {
   AssertNoCrashOptions,
   NoCrashAssertionData,
 } from './no-crash';
+
+// =============================================================================
+// Error Log Assertions
+// =============================================================================
+
+export {
+  assertNoErrors,
+  countErrors,
+  hasErrorPattern,
+  assertNoErrorsForApp,
+  assertNoHttpErrors,
+  assertNoCrashIndicators,
+  DEFAULT_ERROR_PATTERNS,
+  DEFAULT_IGNORE_PATTERNS,
+} from './no-errors';
+export type {
+  AssertNoErrorsOptions,
+  NoErrorsAssertionData,
+  MatchedError,
+} from './no-errors';

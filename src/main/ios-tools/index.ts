@@ -513,6 +513,15 @@ export {
   hasCrashed,
   waitForNoCrash,
   assertNoCrashInWindow,
+  // Error log assertions
+  assertNoErrors,
+  countErrors,
+  hasErrorPattern,
+  assertNoErrorsForApp,
+  assertNoHttpErrors,
+  assertNoCrashIndicators,
+  DEFAULT_ERROR_PATTERNS,
+  DEFAULT_IGNORE_PATTERNS,
 } from './assertions';
 export type {
   // Visibility types
@@ -550,6 +559,10 @@ export type {
   // Crash types
   AssertNoCrashOptions,
   NoCrashAssertionData,
+  // Error log types
+  AssertNoErrorsOptions,
+  NoErrorsAssertionData,
+  MatchedError,
 } from './assertions';
 
 // =============================================================================

@@ -230,17 +230,34 @@
 
 ### /ios.assert_no_errors
 
-- [ ] Create `src/main/ios-tools/assertions/no-errors.ts`
-  - [ ] Implement `assertNoErrors(options)`
-  - [ ] Scan recent logs for error patterns
-  - [ ] Configurable error patterns
-  - [ ] Return any errors found
+- [x] Create `src/main/ios-tools/assertions/no-errors.ts` ✅ *Fully implemented*
+  - [x] Implement `assertNoErrors(options)` ✅ *Main assertion with comprehensive pattern matching*
+  - [x] Scan recent logs for error patterns ✅ *Uses `getSystemLog` with configurable timeframe*
+  - [x] Configurable error patterns ✅ *Supports custom patterns and ignore patterns*
+  - [x] Return any errors found ✅ *Returns `MatchedError[]` with context lines*
+  - [x] Default patterns for common errors ✅ *`DEFAULT_ERROR_PATTERNS` covers crashes, HTTP errors, Swift errors*
+  - [x] Default ignore patterns for false positives ✅ *`DEFAULT_IGNORE_PATTERNS` excludes "no error", "error = nil", etc.*
+  - [x] Convenience functions: ✅
+    - `countErrors(udid, since, bundleId?, patterns?)` - quick error count
+    - `hasErrorPattern(udid, pattern, since?, bundleId?)` - check specific pattern
+    - `assertNoErrorsForApp(bundleId, options)` - app-specific assertion
+    - `assertNoHttpErrors(options)` - HTTP 4xx/5xx detection
+    - `assertNoCrashIndicators(options)` - crash signal detection
 
-- [ ] Create slash command `/ios.assert_no_errors`
-  - [ ] Arguments:
-    - `--pattern <regex>` - custom error pattern
-    - `--since <timestamp>` - check since time
-    - `--ignore <patterns>` - patterns to ignore
+- [x] Create slash command `/ios.assert_no_errors` ✅ *IPC handlers registered:*
+  - *`ios:assert:noErrors` - main assertion*
+  - *`ios:assert:noErrorsForApp` - by bundle ID*
+  - *`ios:assert:noHttpErrors` - HTTP errors only*
+  - *`ios:assert:noCrashIndicators` - crash indicators only*
+  - *`ios:assert:countErrors` - count errors*
+  - *`ios:assert:hasErrorPattern` - check specific pattern*
+  - [x] Arguments:
+    - `--pattern <regex>` - custom error pattern ✅ *Via `patterns` array option*
+    - `--since <timestamp>` - check since time ✅ *Via `since` Date option*
+    - `--ignore <patterns>` - patterns to ignore ✅ *Via `ignorePatterns` array option*
+    - `--bundleId <id>` - filter logs by app ✅
+    - `--maxErrors <n>` - limit returned errors ✅
+    - `--contextLines <n>` - include surrounding log lines ✅
 
 ### /ios.assert_log_contains
 
@@ -335,9 +352,9 @@
   - [x] Register `ios:assert:value` handler ✅ *All value assertion variants registered (value, valueById, valueByLabel, valueContains, valueMatches, valueStartsWith, valueEndsWith, valueEmpty, valueNotEmpty)*
   - [x] Register `ios:assert:enabled` handler ✅ *All enabled assertion variants registered (enabled, enabledById, enabledByLabel, enabledByText)*
   - [x] Register `ios:assert:disabled` handler ✅ *All disabled assertion variants registered (disabled, disabledById, disabledByLabel, disabledByText)*
-  - [ ] Register `ios:assert:hittable` handler
+  - [x] Register `ios:assert:hittable` handler ✅ *All hittable variants registered*
   - [x] Register `ios:assert:noCrash` handler ✅
-  - [ ] Register `ios:assert:noErrors` handler
+  - [x] Register `ios:assert:noErrors` handler ✅ *All noErrors variants registered (noErrors, noErrorsForApp, noHttpErrors, noCrashIndicators, countErrors, hasErrorPattern)*
   - [ ] Register `ios:assert:logContains` handler
   - [ ] Register `ios:assert:screen` handler
   - [x] Register `ios:wait:for` handler ✅ *Registered along with all convenience variants (forById, forByLabel, forByText, forNot, etc.)*

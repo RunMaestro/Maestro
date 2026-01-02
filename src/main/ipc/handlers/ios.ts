@@ -1558,6 +1558,91 @@ export function registerIOSHandlers(): void {
     )
   );
 
+  // ==========================================================================
+  // Error Log Assertions
+  // ==========================================================================
+
+  // Assert no errors in logs
+  ipcMain.handle(
+    'ios:assert:noErrors',
+    withIpcErrorLogging(
+      handlerOpts('assertNoErrors'),
+      async (options: iosTools.AssertNoErrorsOptions) => {
+        return iosTools.assertNoErrors(options);
+      }
+    )
+  );
+
+  // Assert no errors for a specific app
+  ipcMain.handle(
+    'ios:assert:noErrorsForApp',
+    withIpcErrorLogging(
+      handlerOpts('assertNoErrorsForApp'),
+      async (bundleId: string, options: Omit<iosTools.AssertNoErrorsOptions, 'bundleId'>) => {
+        return iosTools.assertNoErrorsForApp(bundleId, options);
+      }
+    )
+  );
+
+  // Assert no HTTP errors in logs
+  ipcMain.handle(
+    'ios:assert:noHttpErrors',
+    withIpcErrorLogging(
+      handlerOpts('assertNoHttpErrors'),
+      async (options: Omit<iosTools.AssertNoErrorsOptions, 'patterns' | 'customPatternsOnly'>) => {
+        return iosTools.assertNoHttpErrors(options);
+      }
+    )
+  );
+
+  // Assert no crash indicators in logs
+  ipcMain.handle(
+    'ios:assert:noCrashIndicators',
+    withIpcErrorLogging(
+      handlerOpts('assertNoCrashIndicators'),
+      async (options: Omit<iosTools.AssertNoErrorsOptions, 'patterns' | 'customPatternsOnly'>) => {
+        return iosTools.assertNoCrashIndicators(options);
+      }
+    )
+  );
+
+  // Count errors in logs
+  ipcMain.handle(
+    'ios:assert:countErrors',
+    withIpcErrorLogging(
+      handlerOpts('countErrors'),
+      async (
+        udid: string,
+        since: string,
+        bundleId?: string,
+        patterns?: string[]
+      ) => {
+        return iosTools.countErrors(udid, new Date(since), bundleId, patterns);
+      }
+    )
+  );
+
+  // Check if specific error pattern exists in logs
+  ipcMain.handle(
+    'ios:assert:hasErrorPattern',
+    withIpcErrorLogging(
+      handlerOpts('hasErrorPattern'),
+      async (
+        udid: string,
+        pattern: string,
+        since?: string,
+        bundleId?: string
+      ) => {
+        return iosTools.hasErrorPattern(
+          udid,
+          pattern,
+          since ? new Date(since) : undefined,
+          bundleId
+        );
+      }
+    )
+  );
+
   // Format verification result for agent
   ipcMain.handle(
     'ios:verify:formatResult',
