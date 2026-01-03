@@ -138,7 +138,7 @@ describe('WizardConversationView', () => {
       expect(screen.getByText('🧙 Project Wizard')).toBeInTheDocument();
     });
 
-    it('shows description about Auto Run action plan', () => {
+    it('shows description about Auto Run Playbook', () => {
       render(
         <WizardConversationView
           theme={mockTheme}
@@ -146,7 +146,7 @@ describe('WizardConversationView', () => {
           isLoading={false}
         />
       );
-      expect(screen.getByText(/Auto Run action plan/)).toBeInTheDocument();
+      expect(screen.getByText(/Auto Run Playbook/)).toBeInTheDocument();
     });
 
     it('shows What You\'ll Get section with benefits', () => {
@@ -602,7 +602,7 @@ describe('WizardConversationView', () => {
       );
       expect(screen.getByTestId('wizard-lets-go-container')).toBeInTheDocument();
       expect(screen.getByTestId('wizard-lets-go-button')).toBeInTheDocument();
-      expect(screen.getByText("Let's create your action plan! 🚀")).toBeInTheDocument();
+      expect(screen.getByText("Let's create your Playbook! 🚀")).toBeInTheDocument();
     });
 
     it('does not show Lets Go button when ready=false', () => {

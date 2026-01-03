@@ -227,6 +227,25 @@ describe('error-patterns', () => {
     });
 
     describe('token_exhaustion patterns', () => {
+      it('should match "Prompt is too long"', () => {
+        const result = matchErrorPattern(
+          CLAUDE_ERROR_PATTERNS,
+          'Prompt is too long'
+        );
+        expect(result).not.toBeNull();
+        expect(result?.type).toBe('token_exhaustion');
+        expect(result?.recoverable).toBe(true);
+      });
+
+      it('should match "prompt too long" case-insensitively', () => {
+        const result = matchErrorPattern(
+          CLAUDE_ERROR_PATTERNS,
+          'Error: prompt too long for this model'
+        );
+        expect(result).not.toBeNull();
+        expect(result?.type).toBe('token_exhaustion');
+      });
+
       it('should match "context too long"', () => {
         const result = matchErrorPattern(
           CLAUDE_ERROR_PATTERNS,

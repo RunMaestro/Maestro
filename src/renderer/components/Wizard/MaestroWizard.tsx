@@ -60,9 +60,9 @@ function getStepTitle(step: WizardStep): string {
     case 'conversation':
       return 'Project Discovery';
     case 'preparing-plan':
-      return 'Preparing Action Plans';
+      return 'Preparing Playbooks';
     case 'phase-review':
-      return 'Review Your Action Plans';
+      return 'Review Your Playbooks';
     default:
       return 'Setup Wizard';
   }

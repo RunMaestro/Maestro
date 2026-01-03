@@ -73,6 +73,8 @@ export interface InlineWizardSendResult {
   error?: string;
   /** Raw output from the agent (for debugging) */
   rawOutput?: string;
+  /** The Claude agent session ID (session_id) extracted from output - can be used to resume */
+  agentSessionId?: string;
 }
 
 /**
@@ -314,6 +316,32 @@ export function parseWizardResponse(response: string): WizardResponse | null {
 }
 
 /**
+ * Extract the agent session ID (session_id) from Claude Code JSON output.
+ * This is the Claude-side session ID that can be used to resume the session.
+ * Returns the first session_id found in init or result messages.
+ */
+function extractAgentSessionIdFromOutput(output: string): string | null {
+  try {
+    const lines = output.split('\n');
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const msg = JSON.parse(line);
+        // session_id appears in init and result messages
+        if (msg.session_id) {
+          return msg.session_id;
+        }
+      } catch {
+        // Ignore non-JSON lines
+      }
+    }
+  } catch {
+    // Fallback
+  }
+  return null;
+}
+
+/**
  * Extract the result text from agent JSON output.
  * Handles different agent output formats (Claude Code stream-json, etc.)
  */
@@ -506,6 +534,9 @@ export async function sendWizardMessage(
             clearTimeout(timeoutId);
             cleanupListeners();
 
+            // Extract the Claude agent session ID from output (for resume capability)
+            const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
+
             if (code === 0) {
               // Extract result from stream-json format
               const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
@@ -519,12 +550,14 @@ export async function sendWizardMessage(
                   success: true,
                   response: parsedResponse,
                   rawOutput: outputBuffer,
+                  agentSessionId: agentSessionId || undefined,
                 });
               } else {
                 resolve({
                   success: false,
                   error: 'Failed to parse agent response',
                   rawOutput: outputBuffer,
+                  agentSessionId: agentSessionId || undefined,
                 });
               }
             } else {
@@ -532,6 +565,7 @@ export async function sendWizardMessage(
                 success: false,
                 error: `Agent exited with code ${code}`,
                 rawOutput: outputBuffer,
+                agentSessionId: agentSessionId || undefined,
               });
             }
           }

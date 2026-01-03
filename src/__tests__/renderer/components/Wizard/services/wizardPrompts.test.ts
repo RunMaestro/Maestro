@@ -213,7 +213,7 @@ describe('wizardPrompts', () => {
       });
 
       it('should detect ready status from "ready to create" text', () => {
-        const input = 'I am ready to create your action plan. confidence: 90';
+        const input = 'I am ready to create your Playbook. confidence: 90';
         const result = parseStructuredOutput(input);
 
         expect(result.parseSuccess).toBe(false);
@@ -657,16 +657,33 @@ describe('wizardPrompts', () => {
   });
 
   describe('getConfidenceColor', () => {
+    // Color mapping: green only at/above threshold (80)
+    // 0-39: red (0) -> orange (30)
+    // 40-79: orange (30) -> yellow (60)
+    // 80-100: green (120)
+
     it('should return red for confidence 0', () => {
       const color = getConfidenceColor(0);
       // Hue 0 is red
       expect(color).toContain('hsl(0');
     });
 
-    it('should return yellow for confidence 50', () => {
-      const color = getConfidenceColor(50);
-      // Hue 60 is yellow
-      expect(color).toContain('hsl(60');
+    it('should return orange for confidence 40', () => {
+      const color = getConfidenceColor(40);
+      // Hue 30 is orange (start of orange->yellow range)
+      expect(color).toContain('hsl(30');
+    });
+
+    it('should return yellow for confidence 79 (just below threshold)', () => {
+      const color = getConfidenceColor(79);
+      // Should be close to yellow (hue ~59), still not green
+      expect(color).toMatch(/hsl\(5\d\.?\d*, 80%, 45%\)/);
+    });
+
+    it('should return green for confidence 80 (at threshold)', () => {
+      const color = getConfidenceColor(80);
+      // At threshold: green (hue 120)
+      expect(color).toContain('hsl(120');
     });
 
     it('should return green for confidence 100', () => {
@@ -675,16 +692,16 @@ describe('wizardPrompts', () => {
       expect(color).toContain('hsl(120');
     });
 
-    it('should return orange for confidence 25', () => {
-      const color = getConfidenceColor(25);
-      // Hue 30 is orange
-      expect(color).toContain('hsl(30');
+    it('should return orange-ish for confidence 20', () => {
+      const color = getConfidenceColor(20);
+      // 20/40 * 30 = 15 (between red and orange)
+      expect(color).toContain('hsl(15');
     });
 
-    it('should return lime-green for confidence 75', () => {
-      const color = getConfidenceColor(75);
-      // Hue 90 is lime-green
-      expect(color).toContain('hsl(90');
+    it('should return yellow-ish for confidence 60', () => {
+      const color = getConfidenceColor(60);
+      // 30 + (20/40)*30 = 45 (between orange and yellow)
+      expect(color).toContain('hsl(45');
     });
 
     it('should clamp negative values to 0', () => {
@@ -692,15 +709,9 @@ describe('wizardPrompts', () => {
       expect(color).toContain('hsl(0');
     });
 
-    it('should clamp values above 100 to 100', () => {
+    it('should clamp values above 100 to 100 (green)', () => {
       const color = getConfidenceColor(150);
       expect(color).toContain('hsl(120');
-    });
-
-    it('should handle decimal values', () => {
-      const color = getConfidenceColor(50.5);
-      // Should be close to yellow (hue ~60)
-      expect(color).toMatch(/hsl\(60\.?\d*, 80%, 45%\)/);
     });
 
     it('should have consistent saturation and lightness', () => {
@@ -714,6 +725,22 @@ describe('wizardPrompts', () => {
     it('should produce valid HSL format', () => {
       const color = getConfidenceColor(50);
       expect(color).toMatch(/^hsl\(\d+(\.\d+)?, \d+%, \d+%\)$/);
+    });
+
+    it('should never show green below threshold', () => {
+      // Test all values from 0-79, none should be green (hue 120)
+      for (let confidence = 0; confidence < 80; confidence += 10) {
+        const color = getConfidenceColor(confidence);
+        expect(color).not.toContain('hsl(120');
+      }
+    });
+
+    it('should always show green at or above threshold', () => {
+      // Test all values from 80-100, all should be green (hue 120)
+      for (let confidence = 80; confidence <= 100; confidence += 5) {
+        const color = getConfidenceColor(confidence);
+        expect(color).toContain('hsl(120');
+      }
     });
   });
 
@@ -816,7 +843,7 @@ describe('wizardPrompts', () => {
     });
 
     it('should handle realistic ready-to-proceed response', () => {
-      const input = `{"confidence": 92, "ready": true, "message": "I have a clear picture now!\\n\\nYou want to build a React dashboard that:\\n- Connects to a fitness tracker API\\n- Displays daily steps, calories, and workout history\\n- Uses a clean, minimal design with dark mode support\\n- Includes charts for weekly/monthly trends\\n\\nI'm ready to create your action plan. Shall we proceed?"}`;
+      const input = `{"confidence": 92, "ready": true, "message": "I have a clear picture now!\\n\\nYou want to build a React dashboard that:\\n- Connects to a fitness tracker API\\n- Displays daily steps, calories, and workout history\\n- Uses a clean, minimal design with dark mode support\\n- Includes charts for weekly/monthly trends\\n\\nI'm ready to create your Playbook. Shall we proceed?"}`;
 
       const result = parseStructuredOutput(input);
 

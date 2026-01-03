@@ -321,7 +321,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
         toggleInputMode={toggleInputMode}
         confidence={session.wizardState.confidence}
         canAttachImages={canAttachImages}
-        isBusy={session.state === 'busy'}
+        isBusy={session.wizardState.isWaiting || session.state === 'busy'}
         onExitWizard={onExitWizard}
         enterToSend={enterToSend}
         setEnterToSend={setEnterToSend}

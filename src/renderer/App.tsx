@@ -4308,6 +4308,7 @@ You are taking over this conversation. Based on the context above, provide a bri
     clearError: clearInlineWizardError,
     retryLastMessage: retryInlineWizardMessage,
     generateDocuments: generateInlineWizardDocuments,
+    sendMessage: sendInlineWizardMessage,
     // State for syncing to session.wizardState
     isWizardActive: inlineWizardActive,
     isWaiting: inlineWizardIsWaiting,
@@ -4323,6 +4324,7 @@ You are taking over this conversation. Based on the context above, provide a bri
     generationProgress: inlineWizardGenerationProgress,
     state: inlineWizardState,
     wizardTabId: inlineWizardTabId,
+    agentSessionId: inlineWizardAgentSessionId,
   } = useInlineWizardContext();
 
   // Sync inline wizard context state to session.wizardState
@@ -4394,6 +4396,7 @@ You are taking over this conversation. Based on the context above, provide a bri
       autoRunFolderPath: inlineWizardState.projectPath
         ? `${inlineWizardState.projectPath}/Auto Run Docs`
         : undefined,
+      agentSessionId: inlineWizardAgentSessionId ?? undefined,
     };
 
     setSessions(prev => prev.map(s =>
@@ -4419,6 +4422,7 @@ You are taking over this conversation. Based on the context above, provide a bri
     inlineWizardGenerationProgress,
     inlineWizardState.previousUIState,
     inlineWizardState.projectPath,
+    inlineWizardAgentSessionId,
     setSessions,
   ]);
 
@@ -4621,6 +4625,15 @@ You are taking over this conversation. Based on the context above, provide a bri
     addLogToActiveTab(activeSession.id, wizardLog);
   }, [activeSession, startInlineWizard, addLogToActiveTab]);
 
+  // Determine if wizard is active for the current tab
+  // We need to check both the context state and that we're on the wizard's tab
+  // IMPORTANT: Include activeSession?.activeTabId in deps to recompute when user switches tabs
+  const isWizardActiveForCurrentTab = useMemo(() => {
+    if (!activeSession || !inlineWizardActive) return false;
+    const activeTab = getActiveTab(activeSession);
+    return activeTab?.id === inlineWizardTabId;
+  }, [activeSession, activeSession?.activeTabId, inlineWizardActive, inlineWizardTabId]);
+
   // Input processing hook - handles sending messages and commands
   const { processInput, processInputRef: _processInputRef } = useInputProcessing({
     activeSession,
@@ -4643,6 +4656,8 @@ You are taking over this conversation. Based on the context above, provide a bri
     flushBatchedUpdates: batchedUpdater.flushNow,
     onHistoryCommand: handleHistoryCommand,
     onWizardCommand: handleWizardCommand,
+    onWizardSendMessage: sendInlineWizardMessage,
+    isWizardActive: isWizardActiveForCurrentTab,
   });
 
   // Initialize activity tracker for per-session time tracking
@@ -10220,15 +10235,78 @@ You are taking over this conversation. Based on the context above, provide a bri
             setIsGraphViewOpen(true);
           }
         }}
-        // Inline wizard completion callback - clears wizard state and refreshes Auto Run panel
+        // Inline wizard completion callback - switches tab to wizard session for context continuity
         onWizardComplete={() => {
           if (!activeSession) return;
-          // Clear the wizard state from the session
-          setSessions(prev => prev.map(s =>
-            s.id === activeSession.id
-              ? { ...s, wizardState: undefined }
-              : s
-          ));
+          const wizardState = activeSession.wizardState;
+          if (!wizardState) return;
+
+          // Convert wizard conversation history to log entries
+          const wizardLogEntries: import('./types').LogEntry[] = wizardState.conversationHistory.map(msg => ({
+            id: `wizard-${msg.id}`,
+            timestamp: msg.timestamp,
+            source: msg.role === 'user' ? 'user' : 'ai',
+            text: msg.content,
+            delivered: true,
+          }));
+
+          // Create summary message with next steps
+          const generatedDocs = wizardState.generatedDocuments || [];
+          const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
+          const docNames = generatedDocs.map(d => d.filename).join(', ');
+
+          const summaryMessage: import('./types').LogEntry = {
+            id: `wizard-summary-${Date.now()}`,
+            timestamp: Date.now(),
+            source: 'ai',
+            text: `## Wizard Complete\n\n` +
+              `Created ${generatedDocs.length} document${generatedDocs.length !== 1 ? 's' : ''} with ${totalTasks} task${totalTasks !== 1 ? 's' : ''}:\n` +
+              `${docNames}\n\n` +
+              `**Next steps:**\n` +
+              `1. Open the **Auto Run** tab in the right panel to view your playbook\n` +
+              `2. Review and edit tasks as needed\n` +
+              `3. Click **Run** to start executing tasks automatically\n\n` +
+              `You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
+            delivered: true,
+          };
+
+          // Derive tab name from Auto Run folder path (e.g., "Auto Run Docs" -> "Wizard: Auto Run Docs")
+          const folderPath = wizardState.autoRunFolderPath || '';
+          const folderName = folderPath.split('/').pop() || 'Auto Run Docs';
+          const tabName = `Wizard: ${folderName}`;
+
+          // Get the wizard's agentSessionId for tab context switching
+          const wizardAgentSessionId = wizardState.agentSessionId;
+
+          // Add wizard logs to active tab, switch to wizard session, rename tab, and clear wizard state
+          setSessions(prev => prev.map(s => {
+            if (s.id !== activeSession.id) return s;
+
+            const activeTab = getActiveTab(s);
+            if (!activeTab) {
+              return { ...s, wizardState: undefined };
+            }
+
+            // Update tab: add logs, switch agentSessionId, and rename
+            const updatedTabs = s.aiTabs.map(tab => {
+              if (tab.id !== activeTab.id) return tab;
+              return {
+                ...tab,
+                logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
+                // Switch to wizard's agentSessionId so user can continue iterating with full context
+                agentSessionId: wizardAgentSessionId || tab.agentSessionId,
+                // Name the tab to indicate it's a wizard session
+                name: tabName,
+              };
+            });
+
+            return {
+              ...s,
+              aiTabs: updatedTabs,
+              wizardState: undefined,
+            };
+          }));
+
           // Refresh the Auto Run panel to show newly generated documents
           handleAutoRunRefresh();
         }}

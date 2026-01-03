@@ -1411,9 +1411,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
         <button
           onClick={() => !isLocked && switchMode('edit')}
           disabled={isLocked}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors ${
-            mode === 'edit' && !isLocked ? 'font-semibold' : ''
-          } ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
+          className={`flex items-center justify-center w-8 h-8 rounded transition-colors ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}
           style={{
             backgroundColor: mode === 'edit' && !isLocked ? theme.colors.bgActivity : 'transparent',
             color: isLocked ? theme.colors.textDim : (mode === 'edit' ? theme.colors.textMain : theme.colors.textDim),
@@ -1422,13 +1420,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
           title={isLocked ? 'Editing disabled while Auto Run active' : 'Edit document'}
         >
           <Edit className="w-3.5 h-3.5" />
-          Edit
         </button>
         <button
           onClick={() => switchMode('preview')}
-          className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors ${
-            mode === 'preview' || isLocked ? 'font-semibold' : ''
-          }`}
+          className="flex items-center justify-center w-8 h-8 rounded transition-colors"
           style={{
             backgroundColor: mode === 'preview' || isLocked ? theme.colors.bgActivity : 'transparent',
             color: mode === 'preview' || isLocked ? theme.colors.textMain : theme.colors.textDim,
@@ -1437,7 +1432,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
           title="Preview document"
         >
           <Eye className="w-3.5 h-3.5" />
-          Preview
         </button>
         <input
           ref={fileInputRef}
@@ -1489,18 +1483,20 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
             Run
           </button>
         )}
-        {/* Marketplace button */}
+        {/* Playbook Exchange button */}
         {onOpenMarketplace && (
           <button
             onClick={onOpenMarketplace}
-            className="flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
+            className="flex items-center gap-1.5 px-2 h-8 rounded transition-colors hover:opacity-90"
             style={{
-              color: theme.colors.textDim,
-              border: `1px solid ${theme.colors.border}`
+              color: theme.colors.accent,
+              border: `1px solid ${theme.colors.accent}40`,
+              backgroundColor: `${theme.colors.accent}15`
             }}
-            title="Browse Playbook Exchange"
+            title="Browse Playbook Exchange - discover and share community playbooks"
           >
             <LayoutGrid className="w-3.5 h-3.5" />
+            <span className="text-xs font-medium">Exchange</span>
           </button>
         )}
         {/* Help button */}

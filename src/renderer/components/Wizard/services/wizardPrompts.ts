@@ -71,7 +71,7 @@ export const STRUCTURED_OUTPUT_SCHEMA = {
     },
     ready: {
       type: 'boolean',
-      description: 'Whether you feel ready to create an action plan for this project',
+      description: 'Whether you feel ready to create a Playbook for this project',
     },
     message: {
       type: 'string',
@@ -336,21 +336,30 @@ export function isReadyToProceed(response: StructuredAgentResponse): boolean {
 /**
  * Get the color for the confidence meter based on the level
  *
+ * Green only appears at or above the ready threshold (80).
+ * Below that, it transitions from red -> orange -> yellow.
+ *
  * @param confidence The confidence level (0-100)
- * @returns HSL color string transitioning from red to yellow to green
+ * @returns HSL color string
  */
 export function getConfidenceColor(confidence: number): string {
   // Clamp confidence to 0-100
   const clampedConfidence = Math.max(0, Math.min(100, confidence));
 
-  // Map confidence to hue: 0 (red) -> 60 (yellow) -> 120 (green)
-  // 0-50 confidence: red (0) to yellow (60)
-  // 50-100 confidence: yellow (60) to green (120)
+  // Color mapping based on ready threshold (80):
+  // 0-40: red (0) -> orange (30)
+  // 40-80: orange (30) -> yellow (60)
+  // 80-100: green (120) - only green at/above threshold
   let hue: number;
-  if (clampedConfidence <= 50) {
-    hue = (clampedConfidence / 50) * 60; // 0 to 60
+  if (clampedConfidence >= READY_CONFIDENCE_THRESHOLD) {
+    // At or above threshold: green
+    hue = 120;
+  } else if (clampedConfidence >= 40) {
+    // 40-79: orange (30) -> yellow (60)
+    hue = 30 + ((clampedConfidence - 40) / 40) * 30;
   } else {
-    hue = 60 + ((clampedConfidence - 50) / 50) * 60; // 60 to 120
+    // 0-39: red (0) -> orange (30)
+    hue = (clampedConfidence / 40) * 30;
   }
 
   return `hsl(${hue}, 80%, 45%)`;

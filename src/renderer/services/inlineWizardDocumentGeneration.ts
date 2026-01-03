@@ -436,6 +436,9 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 
 /**
  * Build CLI args for the agent based on its type and capabilities.
+ * For document generation, we restrict tool usage to read-only operations
+ * to prevent the agent from directly writing files instead of outputting
+ * document markers for the application to save.
  */
 function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
   const agentId = agent.id;
@@ -445,6 +448,13 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
       const args = [...(agent.args || [])];
       if (!args.includes('--include-partial-messages')) {
         args.push('--include-partial-messages');
+      }
+      // Restrict to read-only tools during document generation
+      // The agent should output document markers (---BEGIN DOCUMENT--- / ---END DOCUMENT---)
+      // which the application parses and saves to the Auto Run folder.
+      // This prevents the agent from directly creating files in the project directory.
+      if (!args.includes('--allowedTools')) {
+        args.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS');
       }
       return args;
     }
@@ -529,7 +539,7 @@ export async function generateInlineDocuments(
   const subfolderPath = `${autoRunFolderPath}/${subfolderName}`;
 
   callbacks?.onStart?.();
-  callbacks?.onProgress?.('Preparing to generate your action plan...');
+  callbacks?.onProgress?.('Preparing to generate your Playbook...');
 
   try {
     // Get the agent configuration

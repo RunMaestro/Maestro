@@ -5,7 +5,7 @@
  * with no user input, automatically advances to review when complete.
  *
  * Features:
- * - Loading state during document generation with "Preparing Action Plans..."
+ * - Loading state during document generation with "Preparing Playbooks..."
  * - Error handling with retry option
  * - Real-time file creation display with expand/collapse
  * - Responsive file list that uses available space
@@ -676,7 +676,7 @@ function ErrorDisplay({
  *
  * This screen handles:
  * 1. Triggering document generation when mounted
- * 2. Showing loading state with "Preparing Action Plans..."
+ * 2. Showing loading state with "Preparing Playbooks..."
  * 3. Handling errors with retry option
  * 4. Auto-advancing to phase-review when generation completes
  */
@@ -726,7 +726,7 @@ export function PreparingPlanScreen({
     setGenerationStartTime(Date.now()); // Start elapsed time tracking
 
     // Announce generation start
-    setAnnouncement('Preparing your action plans. This may take a while.');
+    setAnnouncement('Preparing your Playbooks. This may take a while.');
     setAnnouncementKey((prev) => prev + 1);
 
     /**
@@ -783,7 +783,7 @@ export function PreparingPlanScreen({
                 // Announce success and auto-advance
                 const taskCount = genResult.documents[0]?.taskCount || 0;
                 setAnnouncement(
-                  `Action plans created successfully with ${taskCount} tasks. Proceeding to review.`
+                  `Playbooks created successfully with ${taskCount} tasks. Proceeding to review.`
                 );
                 setAnnouncementKey((prev) => prev + 1);
 
@@ -811,7 +811,7 @@ export function PreparingPlanScreen({
                 // Announce success
                 const taskCount = genResult.documents[0]?.taskCount || 0;
                 setAnnouncement(
-                  `Action plans created successfully with ${taskCount} tasks. Proceeding to review.`
+                  `Playbooks created successfully with ${taskCount} tasks. Proceeding to review.`
                 );
                 setAnnouncementKey((prev) => prev + 1);
 
@@ -832,7 +832,7 @@ export function PreparingPlanScreen({
             setGeneratingDocuments(false);
 
             // Announce error
-            setAnnouncement(`Error generating action plans: ${error}. You can try again or go back.`);
+            setAnnouncement(`Error generating Playbooks: ${error}. You can try again or go back.`);
             setAnnouncementKey((prev) => prev + 1);
           },
         }

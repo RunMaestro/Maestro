@@ -437,6 +437,112 @@ describe('useInlineWizard', () => {
 
       expect(result.current.wizardMode).toBe('iterate');
     });
+
+    it('should create conversation session when transitioning from ask to new mode', async () => {
+      const { startInlineWizardConversation } = await import(
+        '../../../renderer/services/inlineWizardConversation'
+      );
+      const mockStartConversation = vi.mocked(startInlineWizardConversation);
+      mockStartConversation.mockClear();
+
+      // Setup: existing docs exist, so we get 'ask' mode when starting with no input
+      mockHasExistingAutoRunDocs.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useInlineWizard());
+
+      // Start wizard - should be in 'ask' mode because existing docs exist
+      await act(async () => {
+        await result.current.startWizard(undefined, undefined, '/test/project', 'claude-code', 'Test Project');
+      });
+
+      expect(result.current.wizardMode).toBe('ask');
+
+      // Note how many times startInlineWizardConversation was called (should be 0 for 'ask' mode)
+      const callCountBefore = mockStartConversation.mock.calls.length;
+
+      // Now transition from 'ask' to 'new' - this should create the conversation session
+      act(() => {
+        result.current.setMode('new');
+      });
+
+      expect(result.current.wizardMode).toBe('new');
+      // Session should have been created
+      expect(mockStartConversation.mock.calls.length).toBe(callCountBefore + 1);
+      expect(mockStartConversation).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mode: 'new',
+          agentType: 'claude-code',
+          directoryPath: '/test/project',
+          projectName: 'Test Project',
+        })
+      );
+    });
+
+    it('should create conversation session when transitioning from ask to iterate mode', async () => {
+      const { startInlineWizardConversation } = await import(
+        '../../../renderer/services/inlineWizardConversation'
+      );
+      const mockStartConversation = vi.mocked(startInlineWizardConversation);
+      mockStartConversation.mockClear();
+
+      // Setup: existing docs exist, so we get 'ask' mode
+      mockHasExistingAutoRunDocs.mockResolvedValue(true);
+
+      const { result } = renderHook(() => useInlineWizard());
+
+      // Start wizard in 'ask' mode
+      await act(async () => {
+        await result.current.startWizard(undefined, undefined, '/test/project', 'claude-code', 'Test Project');
+      });
+
+      expect(result.current.wizardMode).toBe('ask');
+
+      const callCountBefore = mockStartConversation.mock.calls.length;
+
+      // Transition from 'ask' to 'iterate'
+      act(() => {
+        result.current.setMode('iterate');
+      });
+
+      expect(result.current.wizardMode).toBe('iterate');
+      expect(mockStartConversation.mock.calls.length).toBe(callCountBefore + 1);
+      expect(mockStartConversation).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          mode: 'iterate',
+        })
+      );
+    });
+
+    it('should not create duplicate session when transitioning from new to iterate', async () => {
+      const { startInlineWizardConversation } = await import(
+        '../../../renderer/services/inlineWizardConversation'
+      );
+      const mockStartConversation = vi.mocked(startInlineWizardConversation);
+      mockStartConversation.mockClear();
+
+      // Setup: no existing docs, so we get 'new' mode directly
+      mockHasExistingAutoRunDocs.mockResolvedValue(false);
+
+      const { result } = renderHook(() => useInlineWizard());
+
+      // Start wizard in 'new' mode - session is already created
+      await act(async () => {
+        await result.current.startWizard(undefined, undefined, '/test/project', 'claude-code', 'Test Project');
+      });
+
+      expect(result.current.wizardMode).toBe('new');
+      const callCountAfterStart = mockStartConversation.mock.calls.length;
+      expect(callCountAfterStart).toBe(1); // Session created once during start
+
+      // Transition from 'new' to 'iterate' - should NOT create another session
+      act(() => {
+        result.current.setMode('iterate');
+      });
+
+      expect(result.current.wizardMode).toBe('iterate');
+      // Should not have created a new session since we weren't in 'ask' mode
+      expect(mockStartConversation.mock.calls.length).toBe(callCountAfterStart);
+    });
   });
 
   describe('setGoal', () => {

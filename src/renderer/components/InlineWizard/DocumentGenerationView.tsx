@@ -947,14 +947,14 @@ export function DocumentGenerationView({
     );
   }
 
-  // If no documents yet, show loading state
+  // If no documents yet, show loading state with centered Austin Facts
   if (documents.length === 0) {
     return (
       <div
-        className="relative flex items-center justify-center h-full"
+        className="flex flex-col items-center justify-center h-full"
         style={{ backgroundColor: theme.colors.bgMain }}
       >
-        <div className="text-center">
+        <div className="text-center mb-6">
           <Loader2
             className="w-8 h-8 animate-spin mx-auto mb-4"
             style={{ color: theme.colors.accent }}
@@ -963,7 +963,7 @@ export function DocumentGenerationView({
             {progressMessage || 'Preparing documents...'}
           </p>
         </div>
-        <AustinFactsDisplay theme={theme} isVisible={true} />
+        <AustinFactsDisplay theme={theme} isVisible={true} centered />
       </div>
     );
   }

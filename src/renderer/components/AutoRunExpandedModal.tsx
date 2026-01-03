@@ -352,18 +352,20 @@ export function AutoRunExpandedModal({
                 Run
               </button>
             )}
-            {/* Marketplace button */}
+            {/* Exchange button */}
             {onOpenMarketplace && (
               <button
                 onClick={onOpenMarketplace}
-                className="flex items-center justify-center w-8 h-8 rounded transition-colors hover:bg-white/10"
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs transition-colors hover:opacity-90"
                 style={{
-                  color: theme.colors.textDim,
-                  border: `1px solid ${theme.colors.border}`
+                  color: theme.colors.accent,
+                  border: `1px solid ${theme.colors.accent}`,
+                  backgroundColor: `${theme.colors.accent}15`
                 }}
-                title="Browse Playbook Exchange"
+                title="Browse Playbook Exchange - discover and share community playbooks"
               >
                 <LayoutGrid className="w-3.5 h-3.5" />
+                Exchange
               </button>
             )}
           </div>

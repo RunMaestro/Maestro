@@ -112,6 +112,11 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 
   token_exhaustion: [
     {
+      pattern: /prompt.*too\s+long/i,
+      message: 'Prompt is too long. Try a shorter message or start a new session.',
+      recoverable: true,
+    },
+    {
       pattern: /context.*too long/i,
       message: 'The conversation has exceeded the context limit. Start a new session.',
       recoverable: true,

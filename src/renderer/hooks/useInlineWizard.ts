@@ -133,6 +133,8 @@ export interface InlineWizardState {
   streamingContent: string;
   /** Progress tracking for document generation */
   generationProgress: GenerationProgress | null;
+  /** The Claude agent session ID (from session_id in output) - used to switch tab after wizard completes */
+  agentSessionId: string | null;
 }
 
 /**
@@ -171,6 +173,8 @@ export interface UseInlineWizardReturn {
   generationProgress: GenerationProgress | null;
   /** Tab ID the wizard was started on (for per-tab isolation) */
   wizardTabId: string | null;
+  /** The Claude agent session ID (from session_id in output) - used to switch tab after wizard completes */
+  agentSessionId: string | null;
   /** Full wizard state */
   state: InlineWizardState;
   /**
@@ -273,6 +277,7 @@ const initialState: InlineWizardState = {
   initialGreetingSent: false,
   streamingContent: '',
   generationProgress: null,
+  agentSessionId: null,
 };
 
 /**
@@ -565,17 +570,19 @@ export function useInlineWizard(): UseInlineWizardReturn {
             ready: result.response.ready,
           };
 
-          // Update state with response
+          // Update state with response and capture agent session ID if available
           setState((prev) => ({
             ...prev,
             conversationHistory: [...prev.conversationHistory, assistantMessage],
             confidence: result.response!.confidence,
             ready: result.response!.ready,
             isWaiting: false,
+            // Capture the first agentSessionId we receive (subsequent messages may not have it)
+            agentSessionId: prev.agentSessionId || result.agentSessionId || null,
           }));
 
           console.log(
-            `[useInlineWizard] Response received - confidence: ${result.response.confidence}, ready: ${result.response.ready}`
+            `[useInlineWizard] Response received - confidence: ${result.response.confidence}, ready: ${result.response.ready}, agentSessionId: ${result.agentSessionId || 'none'}`
           );
         } else {
           // Handle error response
@@ -644,12 +651,36 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
   /**
    * Set the wizard mode.
+   * If transitioning from 'ask' mode to 'new' or 'iterate', this will also
+   * initialize the conversation session (since it wasn't created during startWizard).
    */
-  const setMode = useCallback((mode: InlineWizardMode) => {
-    setState((prev) => ({
-      ...prev,
-      mode,
-    }));
+  const setMode = useCallback((newMode: InlineWizardMode) => {
+    setState((prev) => {
+      // If transitioning from 'ask' to 'new' or 'iterate', we need to create the conversation session
+      if (prev.mode === 'ask' && (newMode === 'new' || newMode === 'iterate') && !conversationSessionRef.current) {
+        // Create conversation session if we have the required info
+        if (prev.agentType && prev.projectPath) {
+          const autoRunFolderPath = getAutoRunFolderPath(prev.projectPath);
+          const session = startInlineWizardConversation({
+            mode: newMode,
+            agentType: prev.agentType,
+            directoryPath: prev.projectPath,
+            projectName: prev.sessionName || 'Project',
+            goal: prev.goal || undefined,
+            existingDocs: undefined, // Will be loaded separately if needed
+            autoRunFolderPath,
+          });
+
+          conversationSessionRef.current = session;
+          console.log('[useInlineWizard] Conversation session started after mode selection:', session.sessionId);
+        }
+      }
+
+      return {
+        ...prev,
+        mode: newMode,
+      };
+    });
   }, []);
 
   /**
@@ -967,7 +998,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
       } else if (state.mode === 'iterate') {
         initialMessage = 'I want to iterate on my existing Auto Run documents.';
       } else {
-        initialMessage = 'Hello! I want to create a new action plan.';
+        initialMessage = 'Hello! I want to create a new Playbook.';
       }
 
       // Send the initial message to trigger the agent's greeting
@@ -1005,6 +1036,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
     streamingContent: state.streamingContent,
     generationProgress: state.generationProgress,
     wizardTabId: state.tabId,
+    agentSessionId: state.agentSessionId,
 
     // Full state
     state,

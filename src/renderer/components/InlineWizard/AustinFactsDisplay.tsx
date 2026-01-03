@@ -25,6 +25,8 @@ export interface AustinFactsDisplayProps {
   theme: Theme;
   /** Whether the facts display is visible (defaults to true) */
   isVisible?: boolean;
+  /** Whether to center the display instead of bottom-right corner */
+  centered?: boolean;
 }
 
 /**
@@ -151,6 +153,7 @@ function FactContent({
 export function AustinFactsDisplay({
   theme,
   isVisible = true,
+  centered = false,
 }: AustinFactsDisplayProps): JSX.Element | null {
   const [currentFact, setCurrentFact] = useState(() => getNextAustinFact());
   const [displayLength, setDisplayLength] = useState(0);
@@ -202,7 +205,9 @@ export function AustinFactsDisplay({
 
   return (
     <div
-      className="absolute bottom-4 right-4 px-4 py-3 rounded-lg"
+      className={centered
+        ? "px-4 py-3 rounded-lg"
+        : "absolute bottom-4 right-4 px-4 py-3 rounded-lg"}
       style={{
         backgroundColor: `${theme.colors.accent}10`,
         border: `1px solid ${theme.colors.accent}30`,

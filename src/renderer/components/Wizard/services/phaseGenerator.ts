@@ -550,7 +550,7 @@ class PhaseGenerator {
     wizardDebugLogger.startSession(config);
 
     callbacks?.onStart?.();
-    callbacks?.onProgress?.('Preparing to generate your action plan...');
+    callbacks?.onProgress?.('Preparing to generate your Playbook...');
 
     try {
       // Get the agent configuration
@@ -987,12 +987,27 @@ class PhaseGenerator {
 
       // Spawn the agent using the secure IPC channel
       console.log('[PhaseGenerator] Spawning agent...');
+
+      // Build args with read-only tool restrictions for document generation
+      // The agent should output document markers (---BEGIN DOCUMENT--- / ---END DOCUMENT---)
+      // which the application parses and saves to the Auto Run folder.
+      // This prevents the agent from directly creating files in the project directory.
+      const argsForSpawn = [...(agent.args || [])];
+      if (config.agentType === 'claude-code') {
+        if (!argsForSpawn.includes('--include-partial-messages')) {
+          argsForSpawn.push('--include-partial-messages');
+        }
+        if (!argsForSpawn.includes('--allowedTools')) {
+          argsForSpawn.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS');
+        }
+      }
+
       wizardDebugLogger.log('spawn', 'Calling process.spawn', {
         sessionId,
         toolType: config.agentType,
         cwd: config.directoryPath,
         command: agent.command,
-        argsCount: agent.args?.length || 0,
+        argsCount: argsForSpawn.length,
         promptLength: prompt.length,
       });
       window.maestro.process
@@ -1001,7 +1016,7 @@ class PhaseGenerator {
           toolType: config.agentType,
           cwd: config.directoryPath,
           command: agent.command,
-          args: [...(agent.args || [])],
+          args: argsForSpawn,
           prompt,
         })
         .then(() => {

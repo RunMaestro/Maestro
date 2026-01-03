@@ -2,7 +2,7 @@
  * GenerationCompleteOverlay.tsx
  *
  * Overlay shown when document generation finishes. Displays a celebratory
- * header ("Your action plan is ready!"), task count summary, and a prominent
+ * header ("Your Playbook is ready!"), task count summary, and a prominent
  * "Done" button. On click, triggers confetti animation and calls onComplete().
  */
 
@@ -26,7 +26,7 @@ export interface GenerationCompleteOverlayProps {
  * GenerationCompleteOverlay - Shown when document generation finishes
  *
  * Contains:
- * - Celebratory header ("Your action plan is ready!")
+ * - Celebratory header ("Your Playbook is ready!")
  * - Task count summary
  * - Prominent "Done" button with accent color
  *
@@ -66,7 +66,7 @@ export function GenerationCompleteOverlay({
           className="text-2xl font-bold mb-2"
           style={{ color: theme.colors.textMain }}
         >
-          Your action plan is ready!
+          Your Playbook is ready!
         </h2>
         <p
           className="text-sm"

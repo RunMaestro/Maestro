@@ -1122,7 +1122,7 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
             <>
               {/* Logs Area - Show DocumentGenerationView when generating docs, WizardConversationView when wizard is active, otherwise show TerminalOutput */}
               <div className="flex-1 overflow-hidden flex flex-col" data-tour="main-terminal">
-              {activeSession.wizardState?.isGeneratingDocs ? (
+              {activeSession.inputMode === 'ai' && activeSession.wizardState?.isGeneratingDocs ? (
                 <DocumentGenerationView
                   key={`wizard-gen-${activeSession.id}-${activeSession.activeTabId}`}
                   theme={theme}
@@ -1138,7 +1138,7 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
                   currentGeneratingIndex={activeSession.wizardState?.currentGeneratingIndex}
                   totalDocuments={activeSession.wizardState?.totalDocuments}
                 />
-              ) : activeSession.wizardState?.isActive ? (
+              ) : activeSession.inputMode === 'ai' && activeSession.wizardState?.isActive ? (
                 <WizardConversationView
                   key={`wizard-${activeSession.id}-${activeSession.activeTabId}`}
                   theme={theme}

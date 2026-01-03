@@ -584,7 +584,7 @@ export function PhaseReviewScreen({
         0
       );
       setAnnouncement(
-        `${state.generatedDocuments.length} action plans ready with ${totalTasks} tasks total. Review and edit your plans, then choose how to proceed.`
+        `${state.generatedDocuments.length} Playbooks ready with ${totalTasks} tasks total. Review and edit your Playbooks, then choose how to proceed.`
       );
       setAnnouncementKey((prev) => prev + 1);
     }

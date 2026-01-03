@@ -456,7 +456,7 @@ export function WizardConversationView({
             <div className="space-y-3">
               <p className="text-sm" style={{ color: theme.colors.textMain }}>
                 The wizard will help you create an{' '}
-                <span style={{ color: theme.colors.accent, fontWeight: 500 }}>Auto Run action plan</span>
+                <span style={{ color: theme.colors.accent, fontWeight: 500 }}>Auto Run Playbook</span>
                 {' '}for your project.
               </p>
 
@@ -557,7 +557,7 @@ export function WizardConversationView({
             className="text-sm font-medium mb-3"
             style={{ color: theme.colors.success }}
           >
-            I think I have a good understanding of your project. Ready to create your action plan?
+            I think I have a good understanding of your project. Ready to create your Playbook?
           </p>
           <button
             onClick={onLetsGo}
@@ -569,7 +569,7 @@ export function WizardConversationView({
             }}
             data-testid="wizard-lets-go-button"
           >
-            Let's create your action plan! 🚀
+            Let's create your Playbook! 🚀
           </button>
           <p
             className="text-xs mt-3"

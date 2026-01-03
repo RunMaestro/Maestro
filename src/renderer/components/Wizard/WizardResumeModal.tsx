@@ -33,7 +33,7 @@ function getStepDescription(step: WizardStep): string {
     case 'conversation':
       return 'Project Discovery';
     case 'preparing-plan':
-      return 'Preparing Action Plans';
+      return 'Preparing Playbooks';
     case 'phase-review':
       return 'Phase Review';
     default:

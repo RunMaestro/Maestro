@@ -431,7 +431,7 @@ describe('Wizard Integration Tests', () => {
 
       await waitFor(() => {
         expect(screen.getByText('Step 5 of 5')).toBeInTheDocument();
-        expect(screen.getByText('Review Your Action Plans')).toBeInTheDocument();
+        expect(screen.getByText('Review Your Playbooks')).toBeInTheDocument();
       });
     });
 
@@ -1284,7 +1284,7 @@ describe('Wizard Integration Tests', () => {
       renderWithProviders(<TestWrapper />);
 
       await waitFor(() => {
-        expect(screen.getByText('Review Your Action Plans')).toBeInTheDocument();
+        expect(screen.getByText('Review Your Playbooks')).toBeInTheDocument();
       });
     });
 

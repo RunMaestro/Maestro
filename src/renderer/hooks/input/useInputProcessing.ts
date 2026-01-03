@@ -55,6 +55,10 @@ export interface UseInputProcessingDeps {
   onHistoryCommand?: () => Promise<void>;
   /** Handler for the /wizard built-in command (starts the inline wizard for Auto Run documents) */
   onWizardCommand?: (args: string) => void;
+  /** Handler for sending messages to the wizard (when wizard is active) */
+  onWizardSendMessage?: (content: string) => Promise<void>;
+  /** Whether the wizard is currently active for the active tab */
+  isWizardActive?: boolean;
 }
 
 /**
@@ -107,6 +111,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
     flushBatchedUpdates,
     onHistoryCommand,
     onWizardCommand,
+    onWizardSendMessage,
+    isWizardActive,
   } = deps;
 
   // Ref for the processInput function so external code can access the latest version
@@ -276,6 +282,29 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
     }
 
     const currentMode = activeSession.inputMode;
+
+    // Handle wizard mode - route messages to wizard sendMessage instead of normal AI processing
+    // This allows the wizard to have its own conversation without affecting the regular AI queue
+    if (currentMode === 'ai' && isWizardActive && onWizardSendMessage) {
+      // Don't allow slash commands in wizard mode (except /wizard which ends/restarts it)
+      if (effectiveInputValue.trim().startsWith('/') && !effectiveInputValue.trim().startsWith('/wizard')) {
+        // Ignore slash commands in wizard mode
+        console.log('[processInput] Ignoring slash command in wizard mode:', effectiveInputValue.trim());
+        return;
+      }
+
+      // Clear input
+      setInputValue('');
+      setStagedImages([]);
+      syncAiInputToSession('');
+      if (inputRef.current) inputRef.current.style.height = 'auto';
+
+      // Send to wizard
+      onWizardSendMessage(effectiveInputValue).catch((error) => {
+        console.error('[processInput] Wizard message failed:', error);
+      });
+      return;
+    }
 
     // Queue messages when AI is busy (only in AI mode)
     // For read-only mode tabs: only queue if THIS TAB is busy (allows parallel execution)

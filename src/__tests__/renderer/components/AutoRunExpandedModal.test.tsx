@@ -59,6 +59,9 @@ vi.mock('lucide-react', () => ({
   RotateCcw: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
     <svg data-testid="rotate-ccw-icon" className={className} style={style} />
   ),
+  LayoutGrid: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+    <svg data-testid="layout-grid-icon" className={className} style={style} />
+  ),
 }));
 
 // Track AutoRun ref methods

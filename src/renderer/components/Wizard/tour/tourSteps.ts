@@ -38,7 +38,7 @@ export const tourSteps: TourStepConfig[] = [
     id: 'autorun-panel',
     title: 'Auto Run Panel',
     description:
-      'This is the Auto Run panel where your action plan is being executed right now. Each task from your Phase 1 document is being processed automatically by the AI agent. Watch as checkboxes get marked off! Press {{goToAutoRun}} to jump here anytime.',
+      'This is the Auto Run panel where your Playbook is being executed right now. Each task from your Phase 1 document is being processed automatically by the AI agent. Watch as checkboxes get marked off! Press {{goToAutoRun}} to jump here anytime.',
     descriptionGeneric:
       'This is the Auto Run panel. Place markdown documents with task lists here to have the AI execute them automatically. Tasks are checked off as they complete. Press {{goToAutoRun}} to jump here anytime.',
     selector: '[data-tour="autorun-tab"]',

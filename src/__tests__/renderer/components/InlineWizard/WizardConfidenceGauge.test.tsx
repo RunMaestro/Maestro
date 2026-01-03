@@ -5,7 +5,8 @@
  * - Percentage display with correct color
  * - Progress bar width based on confidence
  * - Glow effect when confidence >= 80
- * - Color transitions from red to yellow to green
+ * - Color transitions: red (0-39) -> orange (40) -> yellow (79) -> green (80+)
+ * - Green only appears at/above the ready threshold (80)
  */
 
 import { describe, it, expect } from 'vitest';

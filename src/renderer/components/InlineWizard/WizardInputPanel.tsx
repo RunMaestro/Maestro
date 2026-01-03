@@ -203,7 +203,7 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
           >
             {/* Wizard indicator row */}
             <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: `${theme.colors.accent}30` }}>
-              <WizardPill theme={theme} onClick={() => setShowExitConfirm(true)} />
+              <WizardPill theme={theme} onClick={() => setShowExitConfirm(true)} isThinking={isBusy} />
               <WizardConfidenceGauge confidence={confidence} theme={theme} />
             </div>
 

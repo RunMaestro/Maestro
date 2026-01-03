@@ -134,6 +134,8 @@ export interface SessionWizardState {
   totalDocuments?: number;
   /** Folder path for Auto Run docs */
   autoRunFolderPath?: string;
+  /** The Claude agent session ID (from session_id in output) - used to switch tab after wizard completes */
+  agentSessionId?: string;
 }
 
 export interface Shortcut {

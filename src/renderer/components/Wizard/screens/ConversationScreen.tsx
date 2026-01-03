@@ -106,7 +106,7 @@ function ConfidenceMeter({
           className="text-xs mt-1 text-center"
           style={{ color: theme.colors.success }}
         >
-          Ready to create your action plan!
+          Ready to create your Playbook!
         </p>
       )}
     </div>
@@ -522,7 +522,7 @@ export function ConversationScreen({ theme }: ConversationScreenProps): JSX.Elem
   useEffect(() => {
     if (state.isReadyToProceed && !prevReadyRef.current) {
       setAnnouncement(
-        `Confidence level ${state.confidenceLevel}%. Ready to proceed! You can now create your action plan.`
+        `Confidence level ${state.confidenceLevel}%. Ready to proceed! You can now create your Playbook.`
       );
       setAnnouncementKey((prev) => prev + 1);
     }
@@ -1117,7 +1117,7 @@ export function ConversationScreen({ theme }: ConversationScreenProps): JSX.Elem
               className="text-sm font-medium mb-3"
               style={{ color: theme.colors.success }}
             >
-              I think I have a good understanding of your project. Ready to create your action plan?
+              I think I have a good understanding of your project. Ready to create your Playbook?
             </p>
             <button
               onClick={handleLetsGo}

@@ -27,7 +27,8 @@ interface WizardConfidenceGaugeProps {
  * Features:
  * - Percentage number display
  * - Thin horizontal progress bar
- * - Color transitions from red (0) -> yellow (50) -> green (100)
+ * - Color transitions: red (0-39) -> orange (40) -> yellow (79) -> green (80+)
+ * - Green only appears at/above the ready threshold (80)
  * - Green glow effect when confidence >= 80
  */
 export function WizardConfidenceGauge({

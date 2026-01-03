@@ -576,7 +576,7 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
     }] : []),
     ...(setDebugWizardModalOpen ? [{
       id: 'debugWizardPhaseReview',
-      label: 'Debug: Wizard → Review Action Plans',
+      label: 'Debug: Wizard → Review Playbooks',
       subtext: 'Jump directly to Phase Review step (requires existing Auto Run docs)',
       action: () => {
         setDebugWizardModalOpen(true);
