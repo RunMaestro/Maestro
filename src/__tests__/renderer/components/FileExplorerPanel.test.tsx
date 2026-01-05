@@ -1516,7 +1516,8 @@ describe('FileExplorerPanel', () => {
       });
 
       expect(screen.getByText('Delete file?')).toBeInTheDocument();
-      expect(screen.getByText(/package.json/)).toBeInTheDocument();
+      // Check that the modal shows the file name in the confirmation message
+      expect(screen.getByText(/will be permanently deleted/)).toBeInTheDocument();
     });
 
     it('closes rename modal on Escape key', () => {

@@ -475,20 +475,21 @@ describe('graphDataBuilder', () => {
     });
 
     it('should discover backlinks when scanning', async () => {
-      // Build graph starting from getting-started.md
+      // Build graph starting from advanced/config.md
+      // This file has no outgoing internal links, so BFS only loads itself
       const result = await buildGraphData({
         rootPath: '/test',
-        focusFile: 'getting-started.md',
+        focusFile: 'advanced/config.md',
         maxDepth: 1,
       });
 
-      // Initially should not include readme.md (it's not linked FROM getting-started)
+      // Initially should only include config.md (it has no outgoing internal links)
       const nodeIds = result.nodes.map(n => n.id);
-      expect(nodeIds).toContain('doc-getting-started.md');
-      // advanced/config.md is linked FROM getting-started
       expect(nodeIds).toContain('doc-advanced/config.md');
+      // getting-started.md should NOT be in initial graph (it links TO config, not FROM)
+      expect(nodeIds).not.toContain('doc-getting-started.md');
 
-      // Start backlink scan - should discover readme.md which links TO getting-started
+      // Start backlink scan - should discover getting-started.md which links TO config.md
       const updates: BacklinkUpdateData[] = [];
       let scanComplete = false;
 
@@ -504,9 +505,9 @@ describe('graphDataBuilder', () => {
 
       expect(scanComplete).toBe(true);
 
-      // Check if readme.md was discovered as a backlink source
+      // Check if getting-started.md was discovered as a backlink source
       const newNodeIds = updates.flatMap(u => u.newNodes.map(n => n.id));
-      expect(newNodeIds).toContain('doc-readme.md');
+      expect(newNodeIds).toContain('doc-getting-started.md');
     });
 
     it('should create edges for backlinks', async () => {

@@ -1283,6 +1283,53 @@ function MaestroConsoleInner() {
     }
   }, [settingsLoaded, checkForUpdatesOnStartup, enableBetaUpdates]);
 
+  // Sync leaderboard stats from server on startup (Gap 2 fix for multi-device aggregation)
+  // This ensures a new device installation gets the aggregated stats from all devices
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const authToken = leaderboardRegistration?.authToken;
+    const email = leaderboardRegistration?.email;
+    if (!authToken || !email) return;
+
+    // Delay to let the app fully initialize
+    const timer = setTimeout(async () => {
+      try {
+        const result = await window.maestro.leaderboard.sync({
+          email,
+          authToken,
+        });
+
+        if (result.success && result.found && result.data) {
+          // Only update if server has more data than local
+          if (result.data.cumulativeTimeMs > autoRunStats.cumulativeTimeMs) {
+            const longestRunTimestamp = result.data.longestRunDate
+              ? new Date(result.data.longestRunDate).getTime()
+              : autoRunStats.longestRunTimestamp;
+
+            handleSyncAutoRunStats({
+              cumulativeTimeMs: result.data.cumulativeTimeMs,
+              totalRuns: result.data.totalRuns,
+              currentBadgeLevel: result.data.badgeLevel,
+              longestRunMs: result.data.longestRunMs ?? autoRunStats.longestRunMs,
+              longestRunTimestamp,
+            });
+
+            console.log('[Leaderboard] Startup sync: updated local stats from server', {
+              serverCumulativeMs: result.data.cumulativeTimeMs,
+              localCumulativeMs: autoRunStats.cumulativeTimeMs,
+            });
+          }
+        }
+        // Silent failure - startup sync is not critical
+      } catch (error) {
+        console.debug('[Leaderboard] Startup sync failed (non-critical):', error);
+      }
+    }, 3000); // Slightly longer delay than update check
+
+    return () => clearTimeout(timer);
+    // Deps intentionally limited - we only want this to run once on startup when user is registered
+  }, [settingsLoaded, leaderboardRegistration?.authToken]);
+
   // Load spec-kit commands on startup
   useEffect(() => {
     const loadSpeckitCommands = async () => {
@@ -4209,6 +4256,23 @@ You are taking over this conversation. Based on the context above, provide a bri
                   title: 'Leaderboard Updated',
                   message,
                 });
+              }
+
+              // Sync local stats from server response (Gap 1 fix for multi-device aggregation)
+              if (result.serverTotals) {
+                const serverCumulativeMs = result.serverTotals.cumulativeTimeMs;
+                // Only update if server has more data (aggregated from other devices)
+                if (serverCumulativeMs > updatedCumulativeTimeMs) {
+                  handleSyncAutoRunStats({
+                    cumulativeTimeMs: serverCumulativeMs,
+                    totalRuns: result.serverTotals.totalRuns,
+                    // Recalculate badge level from server cumulative time
+                    currentBadgeLevel: getBadgeForTime(serverCumulativeMs)?.level ?? 0,
+                    // Keep local longest run (server might not return this in submit response)
+                    longestRunMs: updatedLongestRunMs,
+                    longestRunTimestamp: autoRunStats.longestRunTimestamp,
+                  });
+                }
               }
             }
             // Silent failure - don't bother the user if submission fails
