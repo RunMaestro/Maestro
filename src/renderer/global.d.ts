@@ -701,6 +701,9 @@ interface MaestroAPI {
     addReason: (reason: string) => Promise<void>;
     removeReason: (reason: string) => Promise<void>;
   };
+  direnv: {
+    onWarning: (callback: (sessionId: string, warning: string) => void) => () => void;
+  };
   app: {
     onQuitConfirmationRequest: (callback: () => void) => () => void;
     confirmQuit: () => void;

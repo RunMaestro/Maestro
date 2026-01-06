@@ -194,6 +194,8 @@ interface SettingsModalProps {
   setShellArgs: (args: string) => void;
   shellEnvVars: Record<string, string>;
   setShellEnvVars: (vars: Record<string, string>) => void;
+  direnvEnabled: boolean;
+  setDirenvEnabled: (enabled: boolean) => void;
   ghPath: string;
   setGhPath: (path: string) => void;
   enterToSendAI: boolean;
@@ -1055,6 +1057,47 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
                       setEnvVars={props.setShellEnvVars}
                       theme={theme}
                     />
+
+                    {/* direnv Integration */}
+                    <div
+                      className="flex items-center justify-between cursor-pointer p-2 rounded hover:bg-white/5"
+                      onClick={() => props.setDirenvEnabled(!props.direnvEnabled)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          props.setDirenvEnabled(!props.direnvEnabled);
+                        }
+                      }}
+                    >
+                      <div className="flex-1 pr-3">
+                        <div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+                          direnv Integration
+                        </div>
+                        <div className="text-xs opacity-50 mt-0.5" style={{ color: theme.colors.textDim }}>
+                          Auto-activate project environments via direnv for AI agents
+                        </div>
+                      </div>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          props.setDirenvEnabled(!props.direnvEnabled);
+                        }}
+                        className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+                        style={{
+                          backgroundColor: props.direnvEnabled ? theme.colors.accent : theme.colors.bgActivity,
+                        }}
+                        role="switch"
+                        aria-checked={props.direnvEnabled}
+                      >
+                        <span
+                          className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                            props.direnvEnabled ? 'translate-x-5' : 'translate-x-0.5'
+                          }`}
+                        />
+                      </button>
+                    </div>
                   </div>
                 )}
 

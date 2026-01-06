@@ -126,6 +126,8 @@ export interface UseSettingsReturn {
   setShellArgs: (value: string) => void;
   shellEnvVars: Record<string, string>;
   setShellEnvVars: (value: Record<string, string>) => void;
+  direnvEnabled: boolean;
+  setDirenvEnabled: (value: boolean) => void;
 
   // GitHub CLI settings
   ghPath: string;
@@ -316,6 +318,7 @@ export function useSettings(): UseSettingsReturn {
   const [customShellPath, setCustomShellPathState] = useState('');
   const [shellArgs, setShellArgsState] = useState('');
   const [shellEnvVars, setShellEnvVarsState] = useState<Record<string, string>>({});
+  const [direnvEnabled, setDirenvEnabledState] = useState(true); // Default: on
 
   // GitHub CLI Config
   const [ghPath, setGhPathState] = useState('');
@@ -458,6 +461,11 @@ export function useSettings(): UseSettingsReturn {
   const setShellEnvVars = useCallback((value: Record<string, string>) => {
     setShellEnvVarsState(value);
     window.maestro.settings.set('shellEnvVars', value);
+  }, []);
+
+  const setDirenvEnabled = useCallback((value: boolean) => {
+    setDirenvEnabledState(value);
+    window.maestro.settings.set('direnvEnabled', value);
   }, []);
 
   const setGhPath = useCallback((value: string) => {
@@ -1187,6 +1195,7 @@ export function useSettings(): UseSettingsReturn {
       const savedCustomShellPath = allSettings['customShellPath'];
       const savedShellArgs = allSettings['shellArgs'];
       const savedShellEnvVars = allSettings['shellEnvVars'];
+      const savedDirenvEnabled = allSettings['direnvEnabled'];
       const savedGhPath = allSettings['ghPath'];
       const savedFontSize = allSettings['fontSize'];
       const savedFontFamily = allSettings['fontFamily'];
@@ -1246,6 +1255,7 @@ export function useSettings(): UseSettingsReturn {
       if (savedCustomShellPath !== undefined) setCustomShellPathState(savedCustomShellPath as string);
       if (savedShellArgs !== undefined) setShellArgsState(savedShellArgs as string);
       if (savedShellEnvVars !== undefined) setShellEnvVarsState(savedShellEnvVars as Record<string, string>);
+      if (savedDirenvEnabled !== undefined) setDirenvEnabledState(savedDirenvEnabled as boolean);
       if (savedGhPath !== undefined) setGhPathState(savedGhPath as string);
       if (savedFontSize !== undefined) setFontSizeState(savedFontSize as number);
       if (savedFontFamily !== undefined) setFontFamilyState(savedFontFamily as string);
@@ -1525,6 +1535,8 @@ export function useSettings(): UseSettingsReturn {
     setShellArgs,
     shellEnvVars,
     setShellEnvVars,
+    direnvEnabled,
+    setDirenvEnabled,
     ghPath,
     setGhPath,
     fontFamily,
@@ -1650,6 +1662,7 @@ export function useSettings(): UseSettingsReturn {
     customShellPath,
     shellArgs,
     shellEnvVars,
+    direnvEnabled,
     ghPath,
     fontFamily,
     fontSize,
@@ -1694,6 +1707,7 @@ export function useSettings(): UseSettingsReturn {
     setCustomShellPath,
     setShellArgs,
     setShellEnvVars,
+    setDirenvEnabled,
     setGhPath,
     setFontFamily,
     setFontSize,

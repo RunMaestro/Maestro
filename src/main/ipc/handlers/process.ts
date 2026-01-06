@@ -15,6 +15,7 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { buildSshCommand } from '../../utils/ssh-command-builder';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
+import { detectDirenvEnvironment } from '../../utils/direnv';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -170,9 +171,42 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
         logger.debug(`Appending custom args for ${config.toolType} (${configResolution.customArgsSource}-level)`, LOG_CONTEXT);
       }
 
-      const effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
+      let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
       if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
         logger.debug(`Custom env vars configured for ${config.toolType} (${configResolution.customEnvSource}-level)`, LOG_CONTEXT, { keys: Object.keys(effectiveCustomEnvVars) });
+      }
+
+      // ========================================================================
+      // direnv Integration: Auto-detect and set CLAUDE_ENV_FILE
+      // Only for non-terminal AI agent sessions, and skip for SSH remote sessions
+      // ========================================================================
+      if (config.toolType !== 'terminal' && !config.sessionSshRemoteConfig?.enabled) {
+        const direnvEnabled = settingsStore.get('direnvEnabled', true);
+
+        if (direnvEnabled) {
+          const direnvResult = await detectDirenvEnvironment(config.cwd);
+
+          if (direnvResult.envFilePath) {
+            // Inject CLAUDE_ENV_FILE (don't overwrite if user explicitly set one)
+            const envVars = { ...(effectiveCustomEnvVars || {}) };
+            if (!envVars['CLAUDE_ENV_FILE']) {
+              envVars['CLAUDE_ENV_FILE'] = direnvResult.envFilePath;
+              logger.info(`direnv environment configured`, LOG_CONTEXT, {
+                sessionId: config.sessionId,
+                envFile: direnvResult.envFilePath,
+              });
+              effectiveCustomEnvVars = envVars;
+            }
+          }
+
+          if (direnvResult.warning) {
+            // Emit warning to renderer (non-blocking)
+            const mainWindow = getMainWindow();
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('direnv:warning', config.sessionId, direnvResult.warning);
+            }
+          }
+        }
       }
 
       // If no shell is specified and this is a terminal session, use the default shell from settings

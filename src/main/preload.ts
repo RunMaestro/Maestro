@@ -708,6 +708,15 @@ contextBridge.exposeInMainWorld('maestro', {
     removeReason: (reason: string) => ipcRenderer.invoke('power:removeReason', reason) as Promise<void>,
   },
 
+  // direnv Integration API
+  direnv: {
+    onWarning: (callback: (sessionId: string, warning: string) => void) => {
+      const handler = (_: any, sessionId: string, warning: string) => callback(sessionId, warning);
+      ipcRenderer.on('direnv:warning', handler);
+      return () => ipcRenderer.removeListener('direnv:warning', handler);
+    },
+  },
+
   // Updates API
   updates: {
     check: (includePrerelease?: boolean) => ipcRenderer.invoke('updates:check', includePrerelease) as Promise<{
@@ -2105,6 +2114,9 @@ export interface MaestroAPI {
     open: () => Promise<void>;
     close: () => Promise<void>;
     toggle: () => Promise<void>;
+  };
+  direnv: {
+    onWarning: (callback: (sessionId: string, warning: string) => void) => () => void;
   };
   app: {
     onQuitConfirmationRequest: (callback: () => void) => () => void;
