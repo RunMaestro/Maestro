@@ -208,7 +208,9 @@ const CREATE_QUERY_EVENTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_query_start_time ON query_events(start_time);
   CREATE INDEX IF NOT EXISTS idx_query_agent_type ON query_events(agent_type);
   CREATE INDEX IF NOT EXISTS idx_query_source ON query_events(source);
-  CREATE INDEX IF NOT EXISTS idx_query_session ON query_events(session_id)
+  CREATE INDEX IF NOT EXISTS idx_query_session ON query_events(session_id);
+  CREATE INDEX IF NOT EXISTS idx_query_project_path ON query_events(project_path);
+  CREATE INDEX IF NOT EXISTS idx_query_agent_time ON query_events(agent_type, start_time)
 `;
 
 /**
@@ -360,9 +362,9 @@ export class StatsDB {
       this.initialized = true;
       logger.info(`Stats database initialized at ${this.dbPath}`, LOG_CONTEXT);
 
-      // Run VACUUM if database is large (>100MB) to maintain performance
-      // This is done after initialization to avoid blocking startup for small databases
-      this.vacuumIfNeeded();
+      // Schedule VACUUM to run weekly instead of on every startup
+      // This avoids blocking the main process during initialization
+      this.vacuumIfNeededWeekly();
     } catch (error) {
       logger.error(`Failed to initialize stats database: ${error}`, LOG_CONTEXT);
       throw error;
@@ -713,6 +715,51 @@ export class StatsDB {
 
     const result = this.vacuum();
     return { vacuumed: true, databaseSize, result };
+  }
+
+  /**
+   * Run VACUUM only if it hasn't been run in the last 7 days.
+   *
+   * This avoids blocking startup on every app launch. The last vacuum timestamp
+   * is stored in a separate file alongside the database.
+   *
+   * @param intervalMs - Minimum time between vacuums (default: 7 days)
+   */
+  private vacuumIfNeededWeekly(intervalMs: number = 7 * 24 * 60 * 60 * 1000): void {
+    const vacuumTimestampPath = path.join(path.dirname(this.dbPath), 'stats-vacuum-timestamp');
+
+    try {
+      // Check when we last ran VACUUM
+      let lastVacuum = 0;
+      if (fs.existsSync(vacuumTimestampPath)) {
+        const content = fs.readFileSync(vacuumTimestampPath, 'utf-8').trim();
+        lastVacuum = parseInt(content, 10) || 0;
+      }
+
+      const now = Date.now();
+      const timeSinceLastVacuum = now - lastVacuum;
+
+      if (timeSinceLastVacuum < intervalMs) {
+        const daysRemaining = ((intervalMs - timeSinceLastVacuum) / (24 * 60 * 60 * 1000)).toFixed(1);
+        logger.debug(
+          `Skipping VACUUM (last run ${((now - lastVacuum) / (24 * 60 * 60 * 1000)).toFixed(1)} days ago, next in ${daysRemaining} days)`,
+          LOG_CONTEXT
+        );
+        return;
+      }
+
+      // Run VACUUM if database is large enough
+      const result = this.vacuumIfNeeded();
+
+      if (result.vacuumed) {
+        // Update timestamp only if we actually ran VACUUM
+        fs.writeFileSync(vacuumTimestampPath, String(now), 'utf-8');
+        logger.info('Updated VACUUM timestamp for weekly scheduling', LOG_CONTEXT);
+      }
+    } catch (error) {
+      // Non-fatal - log and continue
+      logger.warn(`Failed to check/update VACUUM schedule: ${error}`, LOG_CONTEXT);
+    }
   }
 
   // ============================================================================

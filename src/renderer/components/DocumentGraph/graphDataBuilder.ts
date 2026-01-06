@@ -159,6 +159,8 @@ export interface BuildOptions {
   maxNodes?: number;
   /** Optional callback for progress updates during scanning and parsing */
   onProgress?: ProgressCallback;
+  /** Optional SSH remote ID for remote file operations */
+  sshRemoteId?: string;
 }
 
 /**
@@ -315,11 +317,13 @@ type ReverseLinkIndex = Map<string, Set<string>>;
  * Recursively scan a directory for all markdown files.
  * @param rootPath - Root directory to scan
  * @param onProgress - Optional callback for progress updates (reports number of directories scanned)
+ * @param sshRemoteId - Optional SSH remote ID for remote file operations
  * @returns Array of file paths relative to root
  */
 async function scanMarkdownFiles(
   rootPath: string,
-  onProgress?: ProgressCallback
+  onProgress?: ProgressCallback,
+  sshRemoteId?: string
 ): Promise<string[]> {
   const markdownFiles: string[] = [];
   let directoriesScanned = 0;
@@ -330,7 +334,7 @@ async function scanMarkdownFiles(
     isRootDirectory = false;
 
     try {
-      const entries = await window.maestro.fs.readDir(currentPath);
+      const entries = await window.maestro.fs.readDir(currentPath, sshRemoteId);
       directoriesScanned++;
 
       // Report scanning progress (total unknown during scanning, so use current as estimate)
@@ -377,16 +381,18 @@ async function scanMarkdownFiles(
 }
 
 /**
- * Parse a single markdown file and extract its data.
+ * Parse a single markdown file and extract its data (local files only).
  * For large files (>1MB), content is truncated to prevent UI blocking.
  *
  * Uses caching with mtime-based invalidation to avoid re-parsing unchanged files.
+ *
+ * Note: For SSH support, use parseFileWithSsh instead.
  *
  * @param rootPath - Root directory path
  * @param relativePath - Path relative to root
  * @returns Parsed file data or null if reading fails
  */
-async function parseFile(rootPath: string, relativePath: string): Promise<ParsedFile | null> {
+async function _parseFile(rootPath: string, relativePath: string): Promise<ParsedFile | null> {
   const fullPath = `${rootPath}/${relativePath}`;
 
   try {
@@ -523,11 +529,14 @@ async function parseFileLinksOnly(rootPath: string, relativePath: string): Promi
  * Build a reverse link index by scanning all markdown files in the directory.
  * The index maps each file path to the set of files that link TO it.
  *
+ * Note: This function is currently unused as backlink scanning is done
+ * incrementally via startBacklinkScan. Kept for potential future use.
+ *
  * @param rootPath - Root directory to scan
  * @param onProgress - Optional progress callback
  * @returns ReverseLinkIndex and set of all existing file paths
  */
-async function buildReverseLinkIndex(
+async function _buildReverseLinkIndex(
   rootPath: string,
   onProgress?: ProgressCallback
 ): Promise<{ reverseIndex: ReverseLinkIndex; existingFiles: Set<string> }> {
@@ -585,11 +594,11 @@ async function buildReverseLinkIndex(
  * @returns GraphData with nodes, edges, and a startBacklinkScan function for lazy backlink loading
  */
 export async function buildGraphData(options: BuildOptions): Promise<GraphData> {
-  const { rootPath, focusFile, maxDepth = 3, maxNodes = 100, onProgress } = options;
+  const { rootPath, focusFile, maxDepth = 3, maxNodes = 100, onProgress, sshRemoteId } = options;
 
   const buildStart = perfMetrics.start();
 
-  console.log('[DocumentGraph] Building graph from focus file (outgoing links only):', { rootPath, focusFile, maxDepth, maxNodes });
+  console.log('[DocumentGraph] Building graph from focus file (outgoing links only):', { rootPath, focusFile, maxDepth, maxNodes, sshRemoteId: !!sshRemoteId });
 
   // Track parsed files by path for deduplication
   const parsedFileMap = new Map<string, ParsedFile>();
@@ -598,8 +607,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
   // Track visited paths to avoid re-processing
   const visited = new Set<string>();
 
-  // Step 1: Parse the focus file first
-  const focusParsed = await parseFile(rootPath, focusFile);
+  // Step 1: Parse the focus file first (use SSH-aware parsing)
+  const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId);
   if (!focusParsed) {
     console.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
     return {
@@ -647,8 +656,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
     // Skip if beyond max depth
     if (depth > maxDepth) continue;
 
-    // Parse the file
-    const parsed = await parseFile(rootPath, path);
+    // Parse the file (use SSH-aware parsing)
+    const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId);
     if (!parsed) continue; // File doesn't exist or failed to parse
 
     parsedFileMap.set(path, parsed);
@@ -816,7 +825,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 
       try {
         // Scan all markdown files in the directory
-        const allFiles = await scanMarkdownFiles(rootPath);
+        const allFiles = await scanMarkdownFiles(rootPath, undefined, sshRemoteId);
         const totalFiles = allFiles.length;
 
         console.log(`[DocumentGraph] Backlink scan: found ${totalFiles} markdown files to check`);
@@ -842,8 +851,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
             continue;
           }
 
-          // Parse just the links from this file
-          const entry = await parseFileLinksOnly(rootPath, filePath);
+          // Parse just the links from this file (use SSH-aware parsing)
+          const entry = await parseFileLinksOnlyWithSsh(rootPath, filePath, sshRemoteId);
           if (!entry) {
             filesScanned++;
             continue;
@@ -855,8 +864,8 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
           if (linksToLoadedDocs.length > 0 && !discoveredBacklinkFiles.has(filePath)) {
             discoveredBacklinkFiles.add(filePath);
 
-            // Parse the full file to get stats for the node
-            const parsed = await parseFile(rootPath, filePath);
+            // Parse the full file to get stats for the node (use SSH-aware parsing)
+            const parsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId);
             if (parsed) {
               const nodeId = `doc-${filePath}`;
 
@@ -981,6 +990,354 @@ export function isExternalLinkNode(
   data: GraphNodeData
 ): data is ExternalLinkNodeData {
   return data.nodeType === 'external';
+}
+
+/**
+ * Options for expanding a node's outgoing links
+ */
+export interface ExpandNodeOptions {
+  /** Root directory path */
+  rootPath: string;
+  /** File path of the node to expand (relative to rootPath) */
+  filePath: string;
+  /** Set of file paths already loaded in the graph */
+  loadedPaths: Set<string>;
+  /** Maximum depth to traverse from the expanded node (default: 1) */
+  maxDepth?: number;
+  /** Optional SSH remote ID for remote file operations */
+  sshRemoteId?: string;
+}
+
+/**
+ * Result of expanding a node
+ */
+export interface ExpandNodeResult {
+  /** New nodes discovered (documents that weren't already loaded) */
+  newNodes: GraphNode[];
+  /** New edges discovered (links from expanded node and new nodes) */
+  newEdges: GraphEdge[];
+  /** New external nodes discovered */
+  newExternalNodes: GraphNode[];
+  /** New external edges discovered */
+  newExternalEdges: GraphEdge[];
+  /** Updated set of loaded paths (original + new) */
+  updatedLoadedPaths: Set<string>;
+  /** Whether any new nodes were discovered */
+  hasNewContent: boolean;
+}
+
+/**
+ * Expand a node's outgoing links to discover new documents.
+ * Used for "fan out" functionality when double-clicking an unexpanded node.
+ *
+ * @param options - Expansion options
+ * @returns ExpandNodeResult with new nodes and edges to add to the graph
+ */
+export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNodeResult> {
+  const { rootPath, filePath, loadedPaths, maxDepth = 1, sshRemoteId } = options;
+
+  console.log('[DocumentGraph] Expanding node:', { filePath, loadedPaths: loadedPaths.size, maxDepth });
+
+  const newNodes: GraphNode[] = [];
+  const newEdges: GraphEdge[] = [];
+  const newExternalNodes: GraphNode[] = [];
+  const newExternalEdges: GraphEdge[] = [];
+  const updatedLoadedPaths = new Set(loadedPaths);
+
+  // Track external domains found during expansion
+  const externalDomains = new Map<string, { count: number; urls: string[] }>();
+
+  // Parse the source node to get its outgoing links
+  const sourceParsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId);
+  if (!sourceParsed) {
+    console.warn('[DocumentGraph] Failed to parse source node for expansion:', filePath);
+    return {
+      newNodes,
+      newEdges,
+      newExternalNodes,
+      newExternalEdges,
+      updatedLoadedPaths,
+      hasNewContent: false,
+    };
+  }
+
+  // BFS queue for new nodes to parse
+  const queue: Array<{ path: string; depth: number }> = [];
+  const visited = new Set<string>();
+
+  // Add unloaded outgoing links to queue
+  for (const link of sourceParsed.internalLinks) {
+    if (!loadedPaths.has(link) && !visited.has(link)) {
+      queue.push({ path: link, depth: 1 });
+      visited.add(link);
+    }
+  }
+
+  // Process source node's external links
+  const sourceNodeId = `doc-${filePath}`;
+  for (const externalLink of sourceParsed.externalLinks) {
+    const existing = externalDomains.get(externalLink.domain);
+    if (existing) {
+      existing.count++;
+      if (!existing.urls.includes(externalLink.url)) {
+        existing.urls.push(externalLink.url);
+      }
+    } else {
+      externalDomains.set(externalLink.domain, { count: 1, urls: [externalLink.url] });
+    }
+
+    const externalNodeId = `ext-${externalLink.domain}`;
+    newExternalEdges.push({
+      id: `edge-${sourceNodeId}-${externalNodeId}`,
+      source: sourceNodeId,
+      target: externalNodeId,
+      type: 'external',
+    });
+  }
+
+  // BFS to parse new nodes
+  while (queue.length > 0) {
+    const { path, depth } = queue.shift()!;
+
+    // Skip if beyond max depth
+    if (depth > maxDepth) continue;
+
+    // Parse the file
+    const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId);
+    if (!parsed) continue; // File doesn't exist or failed to parse
+
+    // Add to loaded paths
+    updatedLoadedPaths.add(path);
+
+    // Create node
+    const nodeId = `doc-${path}`;
+    newNodes.push({
+      id: nodeId,
+      type: 'documentNode',
+      data: {
+        nodeType: 'document',
+        ...parsed.stats,
+      },
+    });
+
+    // Create edge from source or parent to this node
+    // We need to find which loaded node links to this one
+    // For simplicity, we create the edge from the source node
+    if (depth === 1) {
+      // Direct child of expanded node
+      newEdges.push({
+        id: `edge-${sourceNodeId}-${nodeId}`,
+        source: sourceNodeId,
+        target: nodeId,
+        type: 'default',
+      });
+    }
+
+    // Process this node's outgoing links
+    if (depth < maxDepth) {
+      for (const link of parsed.internalLinks) {
+        if (!loadedPaths.has(link) && !visited.has(link) && !updatedLoadedPaths.has(link)) {
+          queue.push({ path: link, depth: depth + 1 });
+          visited.add(link);
+        }
+      }
+    }
+
+    // Create edges to already-loaded nodes
+    for (const link of parsed.internalLinks) {
+      if (loadedPaths.has(link) || updatedLoadedPaths.has(link)) {
+        const targetNodeId = `doc-${link}`;
+        // Avoid duplicate edges
+        const edgeId = `edge-${nodeId}-${targetNodeId}`;
+        if (!newEdges.some(e => e.id === edgeId)) {
+          newEdges.push({
+            id: edgeId,
+            source: nodeId,
+            target: targetNodeId,
+            type: 'default',
+          });
+        }
+      }
+    }
+
+    // Process external links
+    for (const externalLink of parsed.externalLinks) {
+      const existing = externalDomains.get(externalLink.domain);
+      if (existing) {
+        existing.count++;
+        if (!existing.urls.includes(externalLink.url)) {
+          existing.urls.push(externalLink.url);
+        }
+      } else {
+        externalDomains.set(externalLink.domain, { count: 1, urls: [externalLink.url] });
+      }
+
+      const externalNodeId = `ext-${externalLink.domain}`;
+      newExternalEdges.push({
+        id: `edge-${nodeId}-${externalNodeId}`,
+        source: nodeId,
+        target: externalNodeId,
+        type: 'external',
+      });
+    }
+
+    // Yield to event loop periodically
+    if (newNodes.length % BATCH_SIZE_BEFORE_YIELD === 0) {
+      await yieldToEventLoop();
+    }
+  }
+
+  // Build external domain nodes
+  for (const [domain, data] of externalDomains) {
+    newExternalNodes.push({
+      id: `ext-${domain}`,
+      type: 'externalLinkNode',
+      data: {
+        nodeType: 'external',
+        domain,
+        linkCount: data.count,
+        urls: data.urls,
+      },
+    });
+  }
+
+  console.log('[DocumentGraph] Node expansion complete:', {
+    filePath,
+    newNodes: newNodes.length,
+    newEdges: newEdges.length,
+    newExternalNodes: newExternalNodes.length,
+  });
+
+  return {
+    newNodes,
+    newEdges,
+    newExternalNodes,
+    newExternalEdges,
+    updatedLoadedPaths,
+    hasNewContent: newNodes.length > 0 || newExternalNodes.length > 0,
+  };
+}
+
+/**
+ * Parse a file with optional SSH support.
+ * Wrapper around parseFile that handles SSH remote operations.
+ */
+async function parseFileWithSsh(rootPath: string, relativePath: string, sshRemoteId?: string): Promise<ParsedFile | null> {
+  const fullPath = `${rootPath}/${relativePath}`;
+
+  try {
+    // Get file stats
+    const stat = await window.maestro.fs.stat(fullPath, sshRemoteId);
+    if (!stat) {
+      return null;
+    }
+    const fileSize = stat.size ?? 0;
+    const fileMtime = stat.modifiedAt ? new Date(stat.modifiedAt).getTime() : 0;
+    const isLargeFile = fileSize > LARGE_FILE_THRESHOLD;
+
+    // Check cache (only for local files)
+    if (!sshRemoteId) {
+      const cached = parsedFileCache.get(fullPath);
+      if (cached && cached.mtime === fileMtime) {
+        return cached.data;
+      }
+    }
+
+    // Read file content
+    const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
+    if (content === null || content === undefined) {
+      return null;
+    }
+
+    // For large files, truncate content for parsing
+    let contentForParsing = content;
+    if (isLargeFile && content.length > LARGE_FILE_PARSE_LIMIT) {
+      contentForParsing = content.substring(0, LARGE_FILE_PARSE_LIMIT);
+    }
+
+    // Parse links from content
+    const { internalLinks, externalLinks } = parseMarkdownLinks(contentForParsing, relativePath);
+
+    // Compute document statistics
+    const stats = computeDocumentStats(contentForParsing, relativePath, fileSize);
+
+    if (isLargeFile) {
+      stats.isLargeFile = true;
+    }
+
+    const parsed: ParsedFile = {
+      relativePath,
+      fullPath,
+      fileSize,
+      internalLinks,
+      externalLinks,
+      stats,
+      allInternalLinkPaths: internalLinks,
+    };
+
+    // Cache the result (only for local files)
+    if (!sshRemoteId) {
+      parsedFileCache.set(fullPath, { data: parsed, mtime: fileMtime });
+    }
+
+    return parsed;
+  } catch (error) {
+    console.warn(`Failed to parse file ${fullPath}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Parse a file's links only with optional SSH support.
+ * Lightweight version that only extracts links, not full stats.
+ */
+async function parseFileLinksOnlyWithSsh(rootPath: string, relativePath: string, sshRemoteId?: string): Promise<LinkIndexEntry | null> {
+  const fullPath = `${rootPath}/${relativePath}`;
+
+  try {
+    // Get file stats
+    const stat = await window.maestro.fs.stat(fullPath, sshRemoteId);
+    if (!stat) {
+      return null;
+    }
+    const fileSize = stat.size ?? 0;
+    const fileMtime = stat.modifiedAt ? new Date(stat.modifiedAt).getTime() : 0;
+    const isLargeFile = fileSize > LARGE_FILE_THRESHOLD;
+
+    // Check cache (only for local files)
+    if (!sshRemoteId) {
+      const cached = parsedFileCache.get(fullPath);
+      if (cached && cached.mtime === fileMtime) {
+        return {
+          relativePath,
+          outgoingLinks: cached.data.internalLinks,
+        };
+      }
+    }
+
+    // Read file content
+    const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
+    if (content === null || content === undefined) {
+      return null;
+    }
+
+    // For large files, truncate content for parsing
+    let contentForParsing = content;
+    if (isLargeFile && content.length > LARGE_FILE_PARSE_LIMIT) {
+      contentForParsing = content.substring(0, LARGE_FILE_PARSE_LIMIT);
+    }
+
+    // Parse links from content (only need internal links for index)
+    const { internalLinks } = parseMarkdownLinks(contentForParsing, relativePath);
+
+    return {
+      relativePath,
+      outgoingLinks: internalLinks,
+    };
+  } catch {
+    // Silently fail - file may not exist or be unreadable
+    return null;
+  }
 }
 
 export default buildGraphData;

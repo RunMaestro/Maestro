@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SshRemoteConfig, SshRemoteTestResult } from '../../../shared/types';
+import { ipcCache } from '../../services/ipcWrapper';
 
 /**
  * Return type for the useSshRemotes hook
@@ -75,11 +76,15 @@ export function useSshRemotes(): UseSshRemotesReturn {
   const [testingConfigId, setTestingConfigId] = useState<string | null>(null);
 
   /**
-   * Load configurations from backend
+   * Load configurations from backend (with 30s cache to reduce IPC calls)
    */
   const loadConfigs = useCallback(async () => {
     try {
-      const result = await window.maestro.sshRemote.getConfigs();
+      const result = await ipcCache.getOrFetch(
+        'ssh-configs',
+        () => window.maestro.sshRemote.getConfigs(),
+        30000
+      );
       if (result.success && result.configs) {
         setConfigs(result.configs);
       } else {
@@ -108,11 +113,13 @@ export function useSshRemotes(): UseSshRemotesReturn {
   }, []);
 
   /**
-   * Refresh all data from backend
+   * Refresh all data from backend (invalidates cache)
    */
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // Invalidate cache to force fresh fetch
+    ipcCache.invalidate('ssh-configs');
     await Promise.all([loadConfigs(), loadDefaultId()]);
     setLoading(false);
   }, [loadConfigs, loadDefaultId]);
@@ -132,6 +139,8 @@ export function useSshRemotes(): UseSshRemotesReturn {
       try {
         const result = await window.maestro.sshRemote.saveConfig(config);
         if (result.success && result.config) {
+          // Invalidate cache since configs changed
+          ipcCache.invalidate('ssh-configs');
           // Update local state
           setConfigs((prev) => {
             const index = prev.findIndex((c) => c.id === result.config!.id);
@@ -170,6 +179,8 @@ export function useSshRemotes(): UseSshRemotesReturn {
       try {
         const result = await window.maestro.sshRemote.deleteConfig(id);
         if (result.success) {
+          // Invalidate cache since configs changed
+          ipcCache.invalidate('ssh-configs');
           // Update local state
           setConfigs((prev) => prev.filter((c) => c.id !== id));
           // If deleted config was the default, update default state

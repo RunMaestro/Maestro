@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import {
   buildGraphData,
+  expandNode,
   isDocumentNode,
   isExternalLinkNode,
   clearGraphDataCache,
@@ -692,6 +693,181 @@ describe('graphDataBuilder', () => {
 
       // Should have additional readFile calls for the changed file
       expect(mockReadFile.mock.calls.length).toBeGreaterThan(initialCallCount);
+    });
+  });
+
+  describe('expandNode (fan out)', () => {
+    it('should discover outgoing links from a node', async () => {
+      // First, build initial graph with depth 1 (only readme.md and getting-started.md)
+      const initialGraph = await buildGraphData({
+        rootPath: '/test',
+        focusFile: 'readme.md',
+        maxDepth: 1,
+      });
+
+      const initialPaths = new Set(
+        initialGraph.nodes
+          .filter(n => n.type === 'documentNode')
+          .map(n => (n.data as DocumentNodeData).filePath)
+          .filter((p): p is string => !!p)
+      );
+
+      // Expand getting-started.md which links to advanced/config.md
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'getting-started.md',
+        loadedPaths: initialPaths,
+        maxDepth: 1,
+      });
+
+      // Should discover advanced/config.md
+      expect(result.hasNewContent).toBe(true);
+      const newNodeIds = result.newNodes.map(n => n.id);
+      expect(newNodeIds).toContain('doc-advanced/config.md');
+    });
+
+    it('should create edges from expanded node to new nodes', async () => {
+      const loadedPaths = new Set(['readme.md', 'getting-started.md']);
+
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'getting-started.md',
+        loadedPaths,
+        maxDepth: 1,
+      });
+
+      // Should have edge from getting-started.md to advanced/config.md
+      const edge = result.newEdges.find(
+        e => e.source === 'doc-getting-started.md' && e.target === 'doc-advanced/config.md'
+      );
+      expect(edge).toBeDefined();
+    });
+
+    it('should return hasNewContent false when no new document nodes found', async () => {
+      // Load all connected nodes first
+      const initialGraph = await buildGraphData({
+        rootPath: '/test',
+        focusFile: 'readme.md',
+        maxDepth: 10, // Load everything connected
+      });
+
+      const allPaths = new Set(
+        initialGraph.nodes
+          .filter(n => n.type === 'documentNode')
+          .map(n => (n.data as DocumentNodeData).filePath)
+          .filter((p): p is string => !!p)
+      );
+
+      // Try to expand readme.md - all its document links should already be loaded
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'readme.md',
+        loadedPaths: allPaths,
+        maxDepth: 1,
+      });
+
+      // No new document nodes since getting-started.md is already loaded
+      // (External links may still be returned, but document nodes should be 0)
+      expect(result.newNodes.length).toBe(0);
+    });
+
+    it('should handle non-existent file gracefully', async () => {
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'nonexistent.md',
+        loadedPaths: new Set(['readme.md']),
+        maxDepth: 1,
+      });
+
+      expect(result.hasNewContent).toBe(false);
+      expect(result.newNodes.length).toBe(0);
+    });
+
+    it('should respect maxDepth when expanding', async () => {
+      // Build initial graph with only readme.md
+      const loadedPaths = new Set(['readme.md']);
+
+      // Expand with depth 1 - should get getting-started.md but NOT advanced/config.md
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'readme.md',
+        loadedPaths,
+        maxDepth: 1,
+      });
+
+      const newNodeIds = result.newNodes.map(n => n.id);
+      expect(newNodeIds).toContain('doc-getting-started.md');
+      expect(newNodeIds).not.toContain('doc-advanced/config.md');
+    });
+
+    it('should update loadedPaths with new paths', async () => {
+      const loadedPaths = new Set(['readme.md', 'getting-started.md']);
+
+      const result = await expandNode({
+        rootPath: '/test',
+        filePath: 'getting-started.md',
+        loadedPaths,
+        maxDepth: 1,
+      });
+
+      // Should include original paths plus new ones
+      expect(result.updatedLoadedPaths.has('readme.md')).toBe(true);
+      expect(result.updatedLoadedPaths.has('getting-started.md')).toBe(true);
+      expect(result.updatedLoadedPaths.has('advanced/config.md')).toBe(true);
+    });
+  });
+
+  describe('SSH support', () => {
+    it('should pass sshRemoteId to file operations in buildGraphData', async () => {
+      const testSshRemoteId = 'test-remote-123';
+
+      await buildGraphData({
+        rootPath: '/test',
+        focusFile: 'readme.md',
+        sshRemoteId: testSshRemoteId,
+      });
+
+      // Check that fs operations were called with sshRemoteId
+      const statCalls = mockStat.mock.calls;
+      const readFileCalls = mockReadFile.mock.calls;
+
+      // At least one stat call should have been made with sshRemoteId
+      expect(statCalls.some(call => call[1] === testSshRemoteId)).toBe(true);
+      // At least one readFile call should have been made with sshRemoteId
+      expect(readFileCalls.some(call => call[1] === testSshRemoteId)).toBe(true);
+    });
+
+    it('should pass sshRemoteId to file operations in expandNode', async () => {
+      const testSshRemoteId = 'test-remote-456';
+
+      await expandNode({
+        rootPath: '/test',
+        filePath: 'readme.md',
+        loadedPaths: new Set(['readme.md']),
+        maxDepth: 1,
+        sshRemoteId: testSshRemoteId,
+      });
+
+      // Check that fs operations were called with sshRemoteId
+      const statCalls = mockStat.mock.calls;
+      const readFileCalls = mockReadFile.mock.calls;
+
+      expect(statCalls.some(call => call[1] === testSshRemoteId)).toBe(true);
+      expect(readFileCalls.some(call => call[1] === testSshRemoteId)).toBe(true);
+    });
+
+    it('should not cache parsed files when using SSH', async () => {
+      clearGraphDataCache();
+
+      await buildGraphData({
+        rootPath: '/test',
+        focusFile: 'readme.md',
+        sshRemoteId: 'remote-host',
+      });
+
+      // SSH files should not be cached
+      const stats = getGraphCacheStats();
+      expect(stats.parsedFileCount).toBe(0);
     });
   });
 });

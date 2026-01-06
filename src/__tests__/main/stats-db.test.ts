@@ -67,6 +67,8 @@ const mockFsCopyFileSync = vi.fn();
 const mockFsUnlinkSync = vi.fn();
 const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
+const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
+const mockFsWriteFileSync = vi.fn();
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -76,6 +78,8 @@ vi.mock('fs', () => ({
   unlinkSync: (...args: unknown[]) => mockFsUnlinkSync(...args),
   renameSync: (...args: unknown[]) => mockFsRenameSync(...args),
   statSync: (...args: unknown[]) => mockFsStatSync(...args),
+  readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
+  writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
 }));
 
 // Mock logger
@@ -208,8 +212,9 @@ describe('stats-types.ts', () => {
     });
 
     it('should define proper SessionLifecycleEvent structure for closed session', () => {
-      const createdAt = Date.now() - 3600000; // 1 hour ago
-      const closedAt = Date.now();
+      // Use fixed timestamps to avoid race conditions from multiple Date.now() calls
+      const createdAt = 1700000000000; // Fixed timestamp
+      const closedAt = 1700003600000; // Exactly 1 hour later
       const event: SessionLifecycleEvent = {
         id: 'lifecycle-2',
         sessionId: 'session-2',
@@ -6048,18 +6053,22 @@ describe('Database VACUUM functionality', () => {
   });
 
   describe('initialize with vacuumIfNeeded integration', () => {
-    it('should call vacuumIfNeeded during initialization', async () => {
+    it('should call vacuumIfNeededWeekly during initialization', async () => {
       const { logger } = await import('../../main/utils/logger');
 
       // Clear logger mocks before test
       vi.mocked(logger.debug).mockClear();
+
+      // Mock timestamp file as old (0 = epoch, triggers vacuum check)
+      mockFsReadFileSync.mockReturnValue('0');
 
       const { StatsDB } = await import('../../main/stats-db');
       const db = new StatsDB();
 
       db.initialize();
 
-      // Should have logged the skip message during initialization (size is 0 in mock)
+      // With old timestamp, vacuumIfNeededWeekly should proceed to call vacuumIfNeeded
+      // which logs "below vacuum threshold" for small databases (mocked as 1024 bytes)
       expect(logger.debug).toHaveBeenCalledWith(
         expect.stringContaining('below vacuum threshold'),
         expect.any(String)

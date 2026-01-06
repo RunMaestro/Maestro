@@ -472,6 +472,132 @@ export const FilePreview = forwardRef<FilePreviewHandle, FilePreviewProps>(funct
     return counts;
   }, [isMarkdown, file?.content]);
 
+  // Memoize remarkPlugins to prevent infinite render loops
+  // Creating new arrays/objects on each render causes ReactMarkdown to re-render children
+  const remarkPlugins = useMemo(() => [
+    remarkGfm,
+    remarkFrontmatter,
+    remarkFrontmatterTable,
+    remarkHighlight,
+    ...(fileTree && fileTree.length > 0 && cwd !== undefined
+      ? [[remarkFileLinks, { fileTree, cwd }] as any]
+      : [])
+  ], [fileTree, cwd]);
+
+  // Memoize rehypePlugins array to prevent unnecessary re-renders
+  const rehypePlugins = useMemo(() => [rehypeRaw, rehypeSlug], []);
+
+  // Memoize ReactMarkdown components to prevent infinite render loops
+  // The img component was causing loops because MarkdownImage useEffect sets state,
+  // which triggers parent re-render, creating new components object, remounting MarkdownImage
+  const markdownComponents = useMemo(() => ({
+    a: ({ node: _node, href, children, ...props }: any) => {
+      // Check for maestro-file:// protocol OR data-maestro-file attribute
+      // (data attribute is fallback when rehype strips custom protocols)
+      const dataFilePath = (props as any)['data-maestro-file'];
+      const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
+      const filePath = dataFilePath || (href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
+
+      // Check for anchor links (same-page navigation)
+      const isAnchorLink = href?.startsWith('#') ?? false;
+      const anchorId = isAnchorLink && href ? href.slice(1) : null;
+
+      return (
+        <a
+          href={href}
+          {...props}
+          onClick={(e) => {
+            e.preventDefault();
+            if (isMaestroFile && filePath && onFileClick) {
+              onFileClick(filePath);
+            } else if (isAnchorLink && anchorId) {
+              // Handle anchor links - scroll to the target element
+              const targetElement = markdownContainerRef.current
+                ? markdownContainerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
+                : document.getElementById(anchorId);
+              if (targetElement) {
+                targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }
+            } else if (href) {
+              window.maestro.shell.openExternal(href);
+            }
+          }}
+          style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
+        >
+          {children}
+        </a>
+      );
+    },
+    code: ({ node: _node, inline, className, children, ...props }: any) => {
+      const match = (className || '').match(/language-(\w+)/);
+      const lang = match ? match[1] : 'text';
+      const codeContent = String(children).replace(/\n$/, '');
+
+      // Handle mermaid code blocks
+      if (!inline && lang === 'mermaid') {
+        return <MermaidRenderer chart={codeContent} theme={theme} />;
+      }
+
+      return !inline && match ? (
+        <SyntaxHighlighter
+          language={lang}
+          style={vscDarkPlus}
+          customStyle={{
+            margin: '0.5em 0',
+            padding: '1em',
+            background: theme.colors.bgActivity,
+            fontSize: '0.9em',
+            borderRadius: '6px',
+          }}
+          PreTag="div"
+        >
+          {codeContent}
+        </SyntaxHighlighter>
+      ) : (
+        <code className={className} {...props}>
+          {children}
+        </code>
+      );
+    },
+    img: ({ node: _node, src, alt, ...props }: any) => {
+      // Check if this image came from file tree (set by remarkFileLinks)
+      const isFromTree = (props as any)['data-maestro-from-tree'] === 'true';
+      // Get the project root from the markdown file path (directory containing the file tree root)
+      // For FilePreview, the file.path is absolute, so we extract the root from it
+      // If image is from file tree, we need the project root to resolve correctly
+      // The project root would be the common ancestor - we'll derive it from the file path
+      // For now, use the directory where the first folder in cwd would be located
+      let projectRootForImage: string | undefined;
+      if (isFromTree && cwd && file) {
+        // cwd is relative path like "People" or "OPSWAT/Meetings"
+        // We need to find where in file.path the cwd starts
+        const cwdIndex = file.path.indexOf(`/${cwd}/`);
+        if (cwdIndex !== -1) {
+          projectRootForImage = file.path.substring(0, cwdIndex);
+        } else {
+          // Try to find just the first segment of cwd
+          const firstCwdSegment = cwd.split('/')[0];
+          const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
+          if (segmentIndex !== -1) {
+            projectRootForImage = file.path.substring(0, segmentIndex);
+          }
+        }
+      }
+      return (
+        <MarkdownImage
+          src={src}
+          alt={alt}
+          markdownFilePath={file?.path || ''}
+          theme={theme}
+          showRemoteImages={showRemoteImages}
+          isFromFileTree={isFromTree}
+          projectRoot={projectRootForImage}
+          sshRemoteId={sshRemoteId}
+        />
+      );
+    }
+  }), [onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]);
+
   // Extract directory path without filename
   const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
 
@@ -1573,124 +1699,9 @@ export const FilePreview = forwardRef<FilePreviewHandle, FilePreviewProps>(funct
               .file-preview-content.prose img { display: block; max-width: 100%; height: auto; }
             `}</style>
             <ReactMarkdown
-              remarkPlugins={[
-                remarkGfm,
-                remarkFrontmatter,
-                remarkFrontmatterTable,
-                remarkHighlight,
-                ...(fileTree && fileTree.length > 0 && cwd !== undefined
-                  ? [[remarkFileLinks, { fileTree, cwd }] as any]
-                  : [])
-              ]}
-              rehypePlugins={[rehypeRaw, rehypeSlug]}
-              components={{
-                a: ({ node: _node, href, children, ...props }) => {
-                  // Check for maestro-file:// protocol OR data-maestro-file attribute
-                  // (data attribute is fallback when rehype strips custom protocols)
-                  const dataFilePath = (props as any)['data-maestro-file'];
-                  const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
-                  const filePath = dataFilePath || (href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
-
-                  // Check for anchor links (same-page navigation)
-                  const isAnchorLink = href?.startsWith('#') ?? false;
-                  const anchorId = isAnchorLink && href ? href.slice(1) : null;
-
-                  return (
-                    <a
-                      href={href}
-                      {...props}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        if (isMaestroFile && filePath && onFileClick) {
-                          onFileClick(filePath);
-                        } else if (isAnchorLink && anchorId) {
-                          // Handle anchor links - scroll to the target element
-                          const targetElement = markdownContainerRef.current
-                            ? markdownContainerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
-                            : document.getElementById(anchorId);
-                          if (targetElement) {
-                            targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                          }
-                        } else if (href) {
-                          window.maestro.shell.openExternal(href);
-                        }
-                      }}
-                      style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
-                    >
-                      {children}
-                    </a>
-                  );
-                },
-                code: ({ node: _node, inline, className, children, ...props }: any) => {
-                  const match = (className || '').match(/language-(\w+)/);
-                  const language = match ? match[1] : 'text';
-                  const codeContent = String(children).replace(/\n$/, '');
-
-                  // Handle mermaid code blocks
-                  if (!inline && language === 'mermaid') {
-                    return <MermaidRenderer chart={codeContent} theme={theme} />;
-                  }
-
-                  return !inline && match ? (
-                    <SyntaxHighlighter
-                      language={language}
-                      style={vscDarkPlus}
-                      customStyle={{
-                        margin: '0.5em 0',
-                        padding: '1em',
-                        background: theme.colors.bgActivity,
-                        fontSize: '0.9em',
-                        borderRadius: '6px',
-                      }}
-                      PreTag="div"
-                    >
-                      {codeContent}
-                    </SyntaxHighlighter>
-                  ) : (
-                    <code className={className} {...props}>
-                      {children}
-                    </code>
-                  );
-                },
-                img: ({ node: _node, src, alt, ...props }) => {
-                  // Check if this image came from file tree (set by remarkFileLinks)
-                  const isFromTree = (props as any)['data-maestro-from-tree'] === 'true';
-                  // Get the project root from the markdown file path (directory containing the file tree root)
-                  // For FilePreview, the file.path is absolute, so we extract the root from it
-                  const _markdownDir = file.path.substring(0, file.path.lastIndexOf('/'));
-                  // If image is from file tree, we need the project root to resolve correctly
-                  // The project root would be the common ancestor - we'll derive it from the file path
-                  // For now, use the directory where the first folder in cwd would be located
-                  let projectRootForImage: string | undefined;
-                  if (isFromTree && cwd) {
-                    // cwd is relative path like "People" or "OPSWAT/Meetings"
-                    // We need to find where in file.path the cwd starts
-                    const cwdIndex = file.path.indexOf(`/${cwd}/`);
-                    if (cwdIndex !== -1) {
-                      projectRootForImage = file.path.substring(0, cwdIndex);
-                    } else {
-                      // Try to find just the first segment of cwd
-                      const firstCwdSegment = cwd.split('/')[0];
-                      const segmentIndex = file.path.indexOf(`/${firstCwdSegment}/`);
-                      if (segmentIndex !== -1) {
-                        projectRootForImage = file.path.substring(0, segmentIndex);
-                      }
-                    }
-                  }
-                  return (
-                    <MarkdownImage
-                      src={src}
-                      alt={alt}
-                      markdownFilePath={file.path}
-                      theme={theme}
-                      showRemoteImages={showRemoteImages}
-                      isFromFileTree={isFromTree}
-                      projectRoot={projectRootForImage}
-                      sshRemoteId={sshRemoteId}
-                    />
-                  );
-                }
-              }}
+              remarkPlugins={remarkPlugins}
+              rehypePlugins={rehypePlugins}
+              components={markdownComponents}
             >
               {file.content}
             </ReactMarkdown>

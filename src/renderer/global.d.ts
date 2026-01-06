@@ -404,9 +404,9 @@ interface MaestroAPI {
       folderCount: number;
     }>;
     fetchImageAsBase64: (url: string) => Promise<string | null>;
-    rename: (oldPath: string, newPath: string) => Promise<{ success: boolean }>;
-    delete: (targetPath: string, options?: { recursive?: boolean }) => Promise<{ success: boolean }>;
-    countItems: (dirPath: string) => Promise<{ fileCount: number; folderCount: number }>;
+    rename: (oldPath: string, newPath: string, sshRemoteId?: string) => Promise<{ success: boolean }>;
+    delete: (targetPath: string, options?: { recursive?: boolean; sshRemoteId?: string }) => Promise<{ success: boolean }>;
+    countItems: (dirPath: string, sshRemoteId?: string) => Promise<{ fileCount: number; folderCount: number }>;
   };
   webserver: {
     getUrl: () => Promise<string>;

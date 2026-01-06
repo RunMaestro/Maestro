@@ -10371,8 +10371,12 @@ You are taking over this conversation. Based on the context above, provide a bri
           if (!activeSession) return;
           const filename = relativePath.split('/').pop() || relativePath;
 
-          // Check if file should be opened externally (PDF, etc.)
-          if (shouldOpenExternally(filename)) {
+          // Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
+          // (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
+          const sshRemoteId = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+
+          // Check if file should be opened externally (PDF, etc.) - only for local files
+          if (!sshRemoteId && shouldOpenExternally(filename)) {
             const fullPath = `${activeSession.fullPath}/${relativePath}`;
             window.maestro.shell.openExternal(`file://${fullPath}`);
             return;
@@ -10380,7 +10384,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
           try {
             const fullPath = `${activeSession.fullPath}/${relativePath}`;
-            const content = await window.maestro.fs.readFile(fullPath, activeSession.sshRemoteId);
+            const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
             const newFile = {
               name: filename,
               content,
@@ -10758,8 +10762,12 @@ You are taking over this conversation. Based on the context above, provide a bri
               if (!activeSession) return;
               const filename = relativePath.split('/').pop() || relativePath;
 
-              // Check if file should be opened externally (PDF, etc.)
-              if (shouldOpenExternally(filename)) {
+              // Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
+              // (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
+              const sshRemoteId = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+
+              // Check if file should be opened externally (PDF, etc.) - only for local files
+              if (!sshRemoteId && shouldOpenExternally(filename)) {
                 const fullPath = `${activeSession.fullPath}/${relativePath}`;
                 window.maestro.shell.openExternal(`file://${fullPath}`);
                 return;
@@ -10767,7 +10775,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
               try {
                 const fullPath = `${activeSession.fullPath}/${relativePath}`;
-                const content = await window.maestro.fs.readFile(fullPath, activeSession.sshRemoteId);
+                const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
                 const newFile = {
                   name: filename,
                   content,

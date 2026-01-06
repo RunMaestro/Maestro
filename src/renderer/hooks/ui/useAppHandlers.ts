@@ -171,8 +171,12 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
       const treeRoot = activeSession.projectRoot || activeSession.fullPath;
       const fullPath = `${treeRoot}/${path}`;
 
-      // Check if file should be opened externally
-      if (shouldOpenExternally(node.name)) {
+      // Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
+      // (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
+      const sshRemoteId = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
+
+      // Check if file should be opened externally (only for local files)
+      if (!sshRemoteId && shouldOpenExternally(node.name)) {
         // Show confirmation modal before opening externally
         setConfirmModalMessage(`Open "${node.name}" in external application?`);
         setConfirmModalOnConfirm(() => async () => {
@@ -184,13 +188,13 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
       }
 
       // Show loading state for remote files (SSH sessions may be slow)
-      if (activeSession.sshRemoteId && setFilePreviewLoading) {
+      if (sshRemoteId && setFilePreviewLoading) {
         setFilePreviewLoading({ name: node.name, path: fullPath });
       }
 
       try {
         // Pass SSH remote ID for remote sessions
-        const content = await window.maestro.fs.readFile(fullPath, activeSession.sshRemoteId);
+        const content = await window.maestro.fs.readFile(fullPath, sshRemoteId);
         const newFile = {
           name: node.name,
           content: content,

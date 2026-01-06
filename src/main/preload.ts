@@ -525,12 +525,12 @@ contextBridge.exposeInMainWorld('maestro', {
       }>,
     fetchImageAsBase64: (url: string) =>
       ipcRenderer.invoke('fs:fetchImageAsBase64', url) as Promise<string | null>,
-    rename: (oldPath: string, newPath: string) =>
-      ipcRenderer.invoke('fs:rename', oldPath, newPath) as Promise<{ success: boolean }>,
-    delete: (targetPath: string, options?: { recursive?: boolean }) =>
+    rename: (oldPath: string, newPath: string, sshRemoteId?: string) =>
+      ipcRenderer.invoke('fs:rename', oldPath, newPath, sshRemoteId) as Promise<{ success: boolean }>,
+    delete: (targetPath: string, options?: { recursive?: boolean; sshRemoteId?: string }) =>
       ipcRenderer.invoke('fs:delete', targetPath, options) as Promise<{ success: boolean }>,
-    countItems: (dirPath: string) =>
-      ipcRenderer.invoke('fs:countItems', dirPath) as Promise<{ fileCount: number; folderCount: number }>,
+    countItems: (dirPath: string, sshRemoteId?: string) =>
+      ipcRenderer.invoke('fs:countItems', dirPath, sshRemoteId) as Promise<{ fileCount: number; folderCount: number }>,
   },
 
   // Web Server API

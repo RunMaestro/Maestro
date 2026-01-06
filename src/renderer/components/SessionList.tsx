@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, memo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import {
   Wand2, Plus, Settings, ChevronRight, ChevronDown, ChevronUp, X, Keyboard,
   Radio, Copy, ExternalLink, PanelLeftClose, PanelLeftOpen, Folder, FolderPlus, Info, GitBranch, Bot, Clock,
@@ -1059,19 +1059,52 @@ function SessionListInner(props: SessionListProps) {
   // The context is provided by GitStatusProvider in App.tsx and handles all git polling
   const { gitStatusMap } = useGitStatus();
   // Create a simple Map<sessionId, fileCount> for backward compatibility with existing code
-  const gitFileCounts = new Map<string, number>();
-  gitStatusMap.forEach((status, sessionId) => {
-    gitFileCounts.set(sessionId, status.fileCount);
-  });
+  const gitFileCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    gitStatusMap.forEach((status, sessionId) => {
+      counts.set(sessionId, status.fileCount);
+    });
+    return counts;
+  }, [gitStatusMap]);
+
+  const worktreeChildrenByParentId = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    sessions.forEach(session => {
+      if (!session.parentSessionId) return;
+      const siblings = map.get(session.parentSessionId);
+      if (siblings) {
+        siblings.push(session);
+      } else {
+        map.set(session.parentSessionId, [session]);
+      }
+    });
+    return map;
+  }, [sessions]);
+
+  const sortedWorktreeChildrenByParentId = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    worktreeChildrenByParentId.forEach((children, parentId) => {
+      map.set(parentId, [...children].sort((a, b) => compareSessionNames(a.name, b.name)));
+    });
+    return map;
+  }, [worktreeChildrenByParentId]);
+
+  const sortedSessionIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    sortedSessions.forEach((session, index) => {
+      map.set(session.id, index);
+    });
+    return map;
+  }, [sortedSessions]);
 
   // Helper: Get worktree children for a parent session
   const getWorktreeChildren = (parentId: string): Session[] => {
-    return sessions.filter(s => s.parentSessionId === parentId);
+    return worktreeChildrenByParentId.get(parentId) || [];
   };
 
   // Helper: Check if a session has worktree children
   const _hasWorktreeChildren = (sessionId: string): boolean => {
-    return sessions.some(s => s.parentSessionId === sessionId);
+    return worktreeChildrenByParentId.has(sessionId);
   };
 
   // Helper component: Renders a collapsed session pill with subdivided parts for worktrees
@@ -1163,7 +1196,7 @@ function SessionListInner(props: SessionListProps) {
     const worktreeChildren = getWorktreeChildren(session.id);
     const hasWorktrees = worktreeChildren.length > 0;
     const worktreesExpanded = session.worktreesExpanded ?? true;
-    const globalIdx = sortedSessions.findIndex(s => s.id === session.id);
+    const globalIdx = sortedSessionIndexById.get(session.id) ?? -1;
     const isKeyboardSelected = activeFocus === 'sidebar' && globalIdx === selectedSidebarIndex;
 
     // In flat/ungrouped view, wrap sessions with worktrees in a left-bordered container
@@ -1232,8 +1265,8 @@ function SessionListInner(props: SessionListProps) {
           >
             {/* Worktree children list */}
             <div>
-              {worktreeChildren.sort((a, b) => compareSessionNames(a.name, b.name)).map(child => {
-                const childGlobalIdx = sortedSessions.findIndex(s => s.id === child.id);
+              {(sortedWorktreeChildrenByParentId.get(session.id) || []).map(child => {
+                const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
                 const isChildKeyboardSelected = activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
                 return (
                   <SessionItem
@@ -1304,23 +1337,91 @@ function SessionListInner(props: SessionListProps) {
 
   // Filter sessions based on search query (searches session name AND AI tab names)
   // Also filters out worktree children (they're rendered under their parents)
-  const filteredSessions = sessionFilter
-    ? sessions.filter(s => {
-        // Exclude worktree children from main list (they appear under parent)
-        if (s.parentSessionId) return false;
-        const query = sessionFilter.toLowerCase();
-        // Match session name
-        if (s.name.toLowerCase().includes(query)) return true;
-        // Match any AI tab name
-        if (s.aiTabs?.some(tab => tab.name?.toLowerCase().includes(query))) return true;
-        // Match worktree children branch names
-        if (getWorktreeChildren(s.id).some(child =>
-          child.worktreeBranch?.toLowerCase().includes(query) ||
-          child.name.toLowerCase().includes(query)
-        )) return true;
-        return false;
-      })
-    : sessions.filter(s => !s.parentSessionId); // Exclude worktree children from main list
+  const filteredSessions = useMemo(() => {
+    if (!sessionFilter) {
+      return sessions.filter(s => !s.parentSessionId);
+    }
+
+    const query = sessionFilter.toLowerCase();
+    return sessions.filter(s => {
+      // Exclude worktree children from main list (they appear under parent)
+      if (s.parentSessionId) return false;
+      // Match session name
+      if (s.name.toLowerCase().includes(query)) return true;
+      // Match any AI tab name
+      if (s.aiTabs?.some(tab => tab.name?.toLowerCase().includes(query))) return true;
+      // Match worktree children branch names
+      const worktreeChildren = worktreeChildrenByParentId.get(s.id);
+      if (worktreeChildren?.some(child =>
+        child.worktreeBranch?.toLowerCase().includes(query) ||
+        child.name.toLowerCase().includes(query)
+      )) return true;
+      return false;
+    });
+  }, [sessionFilter, sessions, worktreeChildrenByParentId]);
+
+  const bookmarkedSessions = useMemo(
+    () => filteredSessions.filter(s => s.bookmarked),
+    [filteredSessions]
+  );
+  const bookmarkedParentSessions = useMemo(
+    () => bookmarkedSessions.filter(s => !s.parentSessionId),
+    [bookmarkedSessions]
+  );
+  const sortedBookmarkedSessions = useMemo(
+    () => [...bookmarkedSessions].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [bookmarkedSessions]
+  );
+  const sortedBookmarkedParentSessions = useMemo(
+    () => [...bookmarkedParentSessions].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [bookmarkedParentSessions]
+  );
+
+  const groupedSessionsById = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    filteredSessions.forEach(session => {
+      if (!session.groupId) return;
+      const list = map.get(session.groupId);
+      if (list) {
+        list.push(session);
+      } else {
+        map.set(session.groupId, [session]);
+      }
+    });
+    return map;
+  }, [filteredSessions]);
+  const sortedGroupSessionsById = useMemo(() => {
+    const map = new Map<string, Session[]>();
+    groupedSessionsById.forEach((groupSessions, groupId) => {
+      map.set(groupId, [...groupSessions].sort((a, b) => compareSessionNames(a.name, b.name)));
+    });
+    return map;
+  }, [groupedSessionsById]);
+
+  const sortedGroups = useMemo(
+    () => [...groups].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [groups]
+  );
+  const ungroupedSessions = useMemo(
+    () => filteredSessions.filter(s => !s.groupId),
+    [filteredSessions]
+  );
+  const ungroupedParentSessions = useMemo(
+    () => ungroupedSessions.filter(s => !s.parentSessionId),
+    [ungroupedSessions]
+  );
+  const sortedUngroupedSessions = useMemo(
+    () => [...ungroupedSessions].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [ungroupedSessions]
+  );
+  const sortedUngroupedParentSessions = useMemo(
+    () => [...ungroupedParentSessions].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [ungroupedParentSessions]
+  );
+  const sortedFilteredSessions = useMemo(
+    () => [...filteredSessions].sort((a, b) => compareSessionNames(a.name, b.name)),
+    [filteredSessions]
+  );
 
   // When filter opens, apply filter mode preferences (or defaults on first open)
   // When filter closes, save current states as filter mode preferences and restore original states
@@ -1986,7 +2087,7 @@ function SessionListInner(props: SessionListProps) {
           )}
 
           {/* BOOKMARKS SECTION - only show if there are bookmarked sessions */}
-          {filteredSessions.some(s => s.bookmarked) && (
+          {bookmarkedSessions.length > 0 && (
             <div className="mb-1">
               <div
                 className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
@@ -2001,7 +2102,7 @@ function SessionListInner(props: SessionListProps) {
 
               {!bookmarksCollapsed ? (
                 <div className="flex flex-col border-l ml-4" style={{ borderColor: theme.colors.accent }}>
-                  {[...filteredSessions.filter(s => s.bookmarked)].sort((a, b) => compareSessionNames(a.name, b.name)).map(session => {
+                  {sortedBookmarkedSessions.map(session => {
                     const group = groups.find(g => g.id === session.groupId);
                     return renderSessionWithWorktrees(session, 'bookmark', {
                       keyPrefix: 'bookmark',
@@ -2015,7 +2116,7 @@ function SessionListInner(props: SessionListProps) {
                   className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
                   onClick={() => setBookmarksCollapsed(false)}
                 >
-                  {[...filteredSessions.filter(s => s.bookmarked && !s.parentSessionId)].sort((a, b) => compareSessionNames(a.name, b.name)).map(s =>
+                  {sortedBookmarkedParentSessions.map(s =>
                     renderCollapsedPill(s, 'bookmark-collapsed', () => setBookmarksCollapsed(false))
                   )}
                 </div>
@@ -2024,8 +2125,8 @@ function SessionListInner(props: SessionListProps) {
           )}
 
           {/* GROUPS */}
-          {[...groups].sort((a, b) => compareSessionNames(a.name, b.name)).map(group => {
-            const groupSessions = [...filteredSessions.filter(s => s.groupId === group.id)].sort((a, b) => compareSessionNames(a.name, b.name));
+          {sortedGroups.map(group => {
+            const groupSessions = sortedGroupSessionsById.get(group.id) || [];
             return (
               <div key={group.id} className="mb-1">
                 <div
@@ -2117,7 +2218,7 @@ function SessionListInner(props: SessionListProps) {
           {sessions.length > 0 && groups.length === 0 ? (
             /* FLAT LIST - No groups exist yet, show sessions directly */
             <div className="flex flex-col">
-              {[...filteredSessions].sort((a, b) => compareSessionNames(a.name, b.name)).map((session) =>
+              {sortedFilteredSessions.map((session) =>
                 renderSessionWithWorktrees(session, 'flat', { keyPrefix: 'flat' })
               )}
             </div>
@@ -2155,7 +2256,7 @@ function SessionListInner(props: SessionListProps) {
 
             {!ungroupedCollapsed ? (
               <div className="flex flex-col border-l ml-4" style={{ borderColor: theme.colors.border }}>
-                {[...filteredSessions.filter(s => !s.groupId)].sort((a, b) => compareSessionNames(a.name, b.name)).map((session) =>
+                {sortedUngroupedSessions.map((session) =>
                   renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
                 )}
               </div>
@@ -2165,7 +2266,7 @@ function SessionListInner(props: SessionListProps) {
                 className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
                 onClick={() => setUngroupedCollapsed(false)}
               >
-                {[...filteredSessions.filter(s => !s.groupId && !s.parentSessionId)].sort((a, b) => compareSessionNames(a.name, b.name)).map(s =>
+                {sortedUngroupedParentSessions.map(s =>
                   renderCollapsedPill(s, 'ungrouped-collapsed', () => setUngroupedCollapsed(false))
                 )}
               </div>

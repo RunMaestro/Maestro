@@ -25,7 +25,7 @@ import { initializeOutputParsers, getOutputParser } from './parsers';
 import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
 import type { SshRemoteConfig } from '../shared/types';
 import { initAutoUpdater } from './auto-updater';
-import { readDirRemote, readFileRemote, statRemote, directorySizeRemote } from './utils/remote-fs';
+import { readDirRemote, readFileRemote, statRemote, directorySizeRemote, renameRemote, deleteRemote, countItemsRemote } from './utils/remote-fs';
 import { checkWslEnvironment } from './utils/wslDetector';
 
 // ============================================================================
@@ -1394,9 +1394,23 @@ function setupIpcHandlers() {
     }
   });
 
-  // Rename a file or folder
-  ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string) => {
+  // Rename a file or folder (supports SSH remote)
+  ipcMain.handle('fs:rename', async (_, oldPath: string, newPath: string, sshRemoteId?: string) => {
     try {
+      // SSH remote: dispatch to remote fs operations
+      if (sshRemoteId) {
+        const sshConfig = getSshRemoteById(sshRemoteId);
+        if (!sshConfig) {
+          throw new Error(`SSH remote not found: ${sshRemoteId}`);
+        }
+        const result = await renameRemote(oldPath, newPath, sshConfig);
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to rename remote file');
+        }
+        return { success: true };
+      }
+
+      // Local: standard fs rename
       await fs.rename(oldPath, newPath);
       return { success: true };
     } catch (error) {
@@ -1404,9 +1418,25 @@ function setupIpcHandlers() {
     }
   });
 
-  // Delete a file or folder (with recursive option for folders)
-  ipcMain.handle('fs:delete', async (_, targetPath: string, options?: { recursive?: boolean }) => {
+  // Delete a file or folder (with recursive option for folders, supports SSH remote)
+  ipcMain.handle('fs:delete', async (_, targetPath: string, options?: { recursive?: boolean; sshRemoteId?: string }) => {
     try {
+      const sshRemoteId = options?.sshRemoteId;
+
+      // SSH remote: dispatch to remote fs operations
+      if (sshRemoteId) {
+        const sshConfig = getSshRemoteById(sshRemoteId);
+        if (!sshConfig) {
+          throw new Error(`SSH remote not found: ${sshRemoteId}`);
+        }
+        const result = await deleteRemote(targetPath, sshConfig, options?.recursive ?? true);
+        if (!result.success) {
+          throw new Error(result.error || 'Failed to delete remote file');
+        }
+        return { success: true };
+      }
+
+      // Local: standard fs delete
       const stat = await fs.stat(targetPath);
       if (stat.isDirectory()) {
         await fs.rm(targetPath, { recursive: options?.recursive ?? true, force: true });
@@ -1419,9 +1449,23 @@ function setupIpcHandlers() {
     }
   });
 
-  // Count items in a directory (for delete confirmation)
-  ipcMain.handle('fs:countItems', async (_, dirPath: string) => {
+  // Count items in a directory (for delete confirmation, supports SSH remote)
+  ipcMain.handle('fs:countItems', async (_, dirPath: string, sshRemoteId?: string) => {
     try {
+      // SSH remote: dispatch to remote fs operations
+      if (sshRemoteId) {
+        const sshConfig = getSshRemoteById(sshRemoteId);
+        if (!sshConfig) {
+          throw new Error(`SSH remote not found: ${sshRemoteId}`);
+        }
+        const result = await countItemsRemote(dirPath, sshConfig);
+        if (!result.success || !result.data) {
+          throw new Error(result.error || 'Failed to count remote items');
+        }
+        return result.data;
+      }
+
+      // Local: standard fs count
       let fileCount = 0;
       let folderCount = 0;
 

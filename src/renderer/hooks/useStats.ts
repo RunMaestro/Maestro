@@ -144,6 +144,18 @@ export function useStats(
     await fetchStats(true);
   }, [fetchStats]);
 
+  // Use refs to ensure debounce works correctly across re-renders
+  const fetchStatsRef = useRef(fetchStats);
+  fetchStatsRef.current = fetchStats;
+
+  // Create stable debounced function once
+  const debouncedFetchRef = useRef<(() => void) | null>(null);
+  if (!debouncedFetchRef.current) {
+    debouncedFetchRef.current = debounce(() => {
+      fetchStatsRef.current(true);
+    }, 1000);
+  }
+
   // Initial fetch and real-time updates subscription
   useEffect(() => {
     mountedRef.current = true;
@@ -155,14 +167,8 @@ export function useStats(
     // Initial fetch
     fetchStats();
 
-    // Create debounced fetch function for real-time updates
-    // 1 second debounce to prevent excessive re-renders
-    const debouncedFetch = debounce(() => {
-      fetchStats(true);
-    }, 1000);
-
-    // Subscribe to stats updates
-    const unsubscribe = window.maestro.stats.onStatsUpdate(debouncedFetch);
+    // Subscribe to stats updates with stable debounced function
+    const unsubscribe = window.maestro.stats.onStatsUpdate(debouncedFetchRef.current!);
 
     return () => {
       mountedRef.current = false;

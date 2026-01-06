@@ -100,3 +100,83 @@ export async function createIpcMethod<T>(options: IpcMethodOptions<T>): Promise<
   }
 }
 
+// ============================================================================
+// IPC Cache
+// ============================================================================
+
+interface CacheEntry<T> {
+  data: T;
+  timestamp: number;
+}
+
+/**
+ * Simple in-memory cache for IPC results.
+ * Reduces redundant IPC calls for data that changes infrequently.
+ */
+class IpcCache {
+  private cache = new Map<string, CacheEntry<unknown>>();
+  private defaultTTL = 30000; // 30 seconds
+
+  /**
+   * Get cached data or fetch fresh data if cache is stale/missing.
+   *
+   * @param key - Unique cache key
+   * @param fetcher - Function to fetch fresh data
+   * @param ttl - Time-to-live in milliseconds (default: 30s)
+   * @returns Cached or fresh data
+   *
+   * @example
+   * const configs = await ipcCache.getOrFetch(
+   *   'ssh-configs',
+   *   () => window.maestro.sshRemote.getConfigs(),
+   *   30000
+   * );
+   */
+  async getOrFetch<T>(key: string, fetcher: () => Promise<T>, ttl?: number): Promise<T> {
+    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
+    const effectiveTTL = ttl ?? this.defaultTTL;
+    const now = Date.now();
+
+    if (entry && now - entry.timestamp < effectiveTTL) {
+      return entry.data;
+    }
+
+    const data = await fetcher();
+    this.cache.set(key, { data, timestamp: now });
+    return data;
+  }
+
+  /**
+   * Invalidate a specific cache entry.
+   * Call this when you know the underlying data has changed.
+   */
+  invalidate(key: string): void {
+    this.cache.delete(key);
+  }
+
+  /**
+   * Invalidate all cache entries matching a prefix.
+   * Useful for invalidating related data (e.g., all 'ssh-*' entries).
+   */
+  invalidatePrefix(prefix: string): void {
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.cache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Clear all cached data.
+   */
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+/**
+ * Singleton IPC cache instance.
+ * Use this to cache frequently-accessed IPC data.
+ */
+export const ipcCache = new IpcCache();
+

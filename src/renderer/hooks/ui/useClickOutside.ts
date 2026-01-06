@@ -106,5 +106,8 @@ export function useClickOutside<T extends HTMLElement = HTMLElement>(
       document.addEventListener(eventType, handleClickOutside);
       return () => document.removeEventListener(eventType, handleClickOutside);
     }
-  }, [ref, onClickOutside, enabled, eventType, delay]);
+    // Note: ref is intentionally excluded from dependencies.
+    // Refs are stable across renders by design, and including them
+    // causes unnecessary listener re-registration when parent re-renders.
+  }, [onClickOutside, enabled, eventType, delay]);
 }

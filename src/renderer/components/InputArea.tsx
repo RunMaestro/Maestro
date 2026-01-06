@@ -765,11 +765,19 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
             <div className="flex gap-1 items-center">
               {session.inputMode === 'terminal' && (
                 <div className="text-xs font-mono opacity-60 px-2" style={{ color: theme.colors.textDim }}>
-                  {/* For SSH sessions, show remoteCwd; for local sessions, show shellCwd */}
-                  {((session.sshRemoteId || session.sessionSshRemoteConfig?.enabled)
-                    ? (session.remoteCwd || session.sessionSshRemoteConfig?.workingDirOverride || session.cwd)
-                    : (session.shellCwd || session.cwd)
-                  )?.replace(/^\/Users\/[^\/]+/, '~').replace(/^\/home\/[^\/]+/, '~') || '~'}
+                  {/* For SSH sessions, show hostname:remoteCwd; for local sessions, show shellCwd */}
+                  {(() => {
+                    const isRemote = !!(session.sshRemoteId || session.sessionSshRemoteConfig?.enabled);
+                    const path = isRemote
+                      ? (session.remoteCwd || session.sessionSshRemoteConfig?.workingDirOverride || session.cwd)
+                      : (session.shellCwd || session.cwd);
+                    const displayPath = path?.replace(/^\/Users\/[^\/]+/, '~').replace(/^\/home\/[^\/]+/, '~') || '~';
+                    // For SSH sessions, prefix with hostname (uppercase)
+                    if (isRemote && session.sshRemote?.name) {
+                      return `${session.sshRemote.name.toUpperCase()}:${displayPath}`;
+                    }
+                    return displayPath;
+                  })()}
                 </div>
               )}
               {session.inputMode === 'ai' && onOpenPromptComposer && (

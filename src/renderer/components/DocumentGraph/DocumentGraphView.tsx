@@ -35,7 +35,7 @@ import { useLayerStack } from '../../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 import { Modal, ModalFooter } from '../ui/Modal';
 import { useDebouncedCallback } from '../../hooks/utils';
-import { buildGraphData, ProgressData, GraphNodeData, CachedExternalData, invalidateCacheForFiles, BacklinkUpdateData, GraphData } from './graphDataBuilder';
+import { buildGraphData, ProgressData, GraphNodeData, CachedExternalData, invalidateCacheForFiles, BacklinkUpdateData, GraphData, expandNode } from './graphDataBuilder';
 import { MindMap, MindMapNode, MindMapLink, convertToMindMapData, NodePositionOverride } from './MindMap';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
@@ -225,6 +225,11 @@ export function DocumentGraphView({
   const abortBacklinkScanRef = useRef<(() => void) | null>(null);
   const currentGraphDataRef = useRef<GraphData | null>(null);
 
+  // Track loaded file paths for incremental node expansion
+  const [loadedPaths, setLoadedPaths] = useState<Set<string>>(new Set());
+  // Track if a node expansion is in progress
+  const [expandingNode, setExpandingNode] = useState<string | null>(null);
+
   /**
    * Handle escape - show confirmation modal
    */
@@ -358,6 +363,17 @@ export function DocumentGraphView({
       setAllLinksWithExternal(prev => [...prev, ...newMindMapLinks]);
       setLoadedDocuments(prev => prev + updateData.newNodes.length);
 
+      // Track newly loaded paths
+      setLoadedPaths(prev => {
+        const next = new Set(prev);
+        for (const node of newMindMapNodes) {
+          if (node.filePath) {
+            next.add(node.filePath);
+          }
+        }
+        return next;
+      });
+
       console.log('[DocumentGraph] Added backlinks:', {
         newNodes: updateData.newNodes.length,
         newEdges: updateData.newEdges.length,
@@ -397,7 +413,7 @@ export function DocumentGraphView({
     }
 
     try {
-      console.log('[DocumentGraph] Building graph data:', { rootPath, focusFilePath, includeExternalLinks });
+      console.log('[DocumentGraph] Building graph data:', { rootPath, focusFilePath, includeExternalLinks, sshRemoteId: !!sshRemoteId });
 
       const graphData = await buildGraphData({
         rootPath,
@@ -405,6 +421,7 @@ export function DocumentGraphView({
         maxDepth: neighborDepth > 0 ? neighborDepth : 10, // Use large depth for "all"
         maxNodes: resetPagination ? defaultMaxNodes : maxNodes,
         onProgress: handleProgress,
+        sshRemoteId,
       });
 
       // Store reference to current graph data for backlink scanning
@@ -468,6 +485,15 @@ export function DocumentGraphView({
       setNodes(mindMapNodes);
       setLinks(mindMapLinks);
 
+      // Track loaded paths for incremental expansion
+      const newLoadedPaths = new Set<string>();
+      for (const node of docMindMapNodes) {
+        if (node.filePath) {
+          newLoadedPaths.add(node.filePath);
+        }
+      }
+      setLoadedPaths(newLoadedPaths);
+
       // Set active focus file from the required focusFilePath prop
       setActiveFocusFile(focusFilePath);
 
@@ -485,7 +511,7 @@ export function DocumentGraphView({
     } finally {
       setLoading(false);
     }
-  }, [rootPath, includeExternalLinks, maxNodes, defaultMaxNodes, handleProgress, focusFilePath, neighborDepth, previewCharLimit, handleBacklinkUpdate, handleBacklinkComplete]);
+  }, [rootPath, includeExternalLinks, maxNodes, defaultMaxNodes, handleProgress, focusFilePath, neighborDepth, previewCharLimit, handleBacklinkUpdate, handleBacklinkComplete, sshRemoteId]);
 
   /**
    * Debounced version of loadGraphData for settings changes
@@ -633,21 +659,85 @@ export function DocumentGraphView({
   }, [selectedNode, rootPath]);
 
   /**
-   * Handle node double-click - recenter on this document
+   * Handle node double-click - expand to show outgoing links (fan out)
+   * If the node has already been fully expanded, this is a no-op (the links are already visible)
    */
-  const handleNodeDoubleClick = useCallback((node: MindMapNode) => {
-    if (node.nodeType === 'document' && node.filePath) {
-      // Set this node as the new center of the mind map
-      setActiveFocusFile(node.filePath);
-      // Ensure neighbor depth is set if it was 0 (show all)
-      if (neighborDepth === 0) {
-        setNeighborDepth(2);
-        onNeighborDepthChange?.(2);
-      }
+  const handleNodeDoubleClick = useCallback(async (node: MindMapNode) => {
+    if (node.nodeType !== 'document' || !node.filePath) {
+      return;
     }
-    // For external nodes, we could potentially show all documents linking to it
-    // For now, just select it
-  }, [neighborDepth, onNeighborDepthChange]);
+
+    // Don't allow concurrent expansions
+    if (expandingNode) {
+      return;
+    }
+
+    const filePath = node.filePath;
+
+    // Check if this node is in our loaded paths (it should be)
+    if (!loadedPaths.has(filePath)) {
+      console.warn('[DocumentGraph] Double-clicked node not in loaded paths:', filePath);
+      return;
+    }
+
+    setExpandingNode(filePath);
+
+    try {
+      // Expand the node to get its outgoing links
+      const result = await expandNode({
+        rootPath,
+        filePath,
+        loadedPaths,
+        maxDepth: neighborDepth > 0 ? neighborDepth : 2, // Use current depth setting
+        sshRemoteId,
+      });
+
+      if (result.hasNewContent) {
+        // Convert new nodes/edges to MindMap format
+        const { nodes: newMindMapNodes, links: newMindMapLinks } = convertToMindMapData(
+          result.newNodes.map(n => ({ id: n.id, data: n.data })),
+          result.newEdges.map(e => ({ source: e.source, target: e.target, type: e.type })),
+          previewCharLimit
+        );
+
+        // Convert external nodes/edges if we're showing external links
+        let newExternalMindMapNodes: MindMapNode[] = [];
+        let newExternalMindMapLinks: MindMapLink[] = [];
+        if (includeExternalLinks && (result.newExternalNodes.length > 0 || result.newExternalEdges.length > 0)) {
+          const externalConverted = convertToMindMapData(
+            result.newExternalNodes.map(n => ({ id: n.id, data: n.data })),
+            result.newExternalEdges.map(e => ({ source: e.source, target: e.target, type: e.type })),
+            previewCharLimit
+          );
+          newExternalMindMapNodes = externalConverted.nodes;
+          newExternalMindMapLinks = externalConverted.links;
+        }
+
+        // Update all states with new content
+        setNodes(prev => [...prev, ...newMindMapNodes, ...newExternalMindMapNodes]);
+        setLinks(prev => [...prev, ...newMindMapLinks, ...newExternalMindMapLinks]);
+        setDocumentOnlyNodes(prev => [...prev, ...newMindMapNodes]);
+        setDocumentOnlyLinks(prev => [...prev, ...newMindMapLinks]);
+        setAllNodesWithExternal(prev => [...prev, ...newMindMapNodes, ...newExternalMindMapNodes]);
+        setAllLinksWithExternal(prev => [...prev, ...newMindMapLinks, ...newExternalMindMapLinks]);
+        setLoadedDocuments(prev => prev + result.newNodes.length);
+        setLoadedPaths(result.updatedLoadedPaths);
+
+        console.log('[DocumentGraph] Node expanded:', {
+          filePath,
+          newNodes: result.newNodes.length,
+          newEdges: result.newEdges.length,
+          newExternalNodes: result.newExternalNodes.length,
+        });
+      } else {
+        console.log('[DocumentGraph] No new content from expansion (node fully expanded):', filePath);
+      }
+    } catch (err) {
+      console.error('[DocumentGraph] Failed to expand node:', err);
+    } finally {
+      setExpandingNode(null);
+    }
+  }, [expandingNode, loadedPaths, rootPath, neighborDepth, sshRemoteId, previewCharLimit, includeExternalLinks]);
 
   /**
    * Handle node context menu
@@ -722,6 +812,7 @@ export function DocumentGraphView({
         focusFile: activeFocusFile || focusFilePath,
         maxDepth: neighborDepth > 0 ? neighborDepth : 10,
         maxNodes: newMaxNodes,
+        sshRemoteId,
       });
 
       setTotalDocuments(graphData.totalDocuments);
@@ -741,7 +832,7 @@ export function DocumentGraphView({
     } finally {
       setLoadingMore(false);
     }
-  }, [hasMore, loadingMore, maxNodes, rootPath, activeFocusFile, focusFilePath, neighborDepth, previewCharLimit]);
+  }, [hasMore, loadingMore, maxNodes, rootPath, activeFocusFile, focusFilePath, neighborDepth, previewCharLimit, sshRemoteId]);
 
   /**
    * Handle context menu open
@@ -870,96 +961,6 @@ export function DocumentGraphView({
   }, []);
 
   if (!isOpen) return null;
-
-  // Show unavailable message for remote sessions - Document Graph cannot scan remote filesystems
-  if (sshRemoteId) {
-    return (
-      <div
-        className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
-        onClick={onClose}
-      >
-        <div
-          ref={containerRef}
-          tabIndex={-1}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Document Graph - Not Available"
-          className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
-          style={{
-            backgroundColor: theme.colors.bgActivity,
-            borderColor: theme.colors.border,
-            width: 480,
-            maxWidth: '90vw',
-          }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Header */}
-          <div
-            className="px-6 py-4 border-b flex items-center justify-between flex-shrink-0"
-            style={{ borderColor: theme.colors.border }}
-          >
-            <div className="flex items-center gap-3">
-              <Network className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-              <h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
-                Document Graph
-              </h2>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded transition-colors"
-              style={{ color: theme.colors.textDim }}
-              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)}
-              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-              title="Close (Esc)"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Content */}
-          <div className="px-6 py-8 flex flex-col items-center gap-4">
-            <div
-              className="p-4 rounded-full"
-              style={{ backgroundColor: `${theme.colors.accent}20` }}
-            >
-              <AlertCircle
-                className="w-8 h-8"
-                style={{ color: theme.colors.accent }}
-              />
-            </div>
-            <div className="text-center">
-              <h3 className="text-base font-medium mb-2" style={{ color: theme.colors.textMain }}>
-                Not Available for Remote Sessions
-              </h3>
-              <p className="text-sm" style={{ color: theme.colors.textDim }}>
-                Document Graph requires local filesystem access to scan and visualize markdown file relationships.
-                This feature is not available when connected to a remote host via SSH.
-              </p>
-            </div>
-          </div>
-
-          {/* Footer */}
-          <div
-            className="px-6 py-4 border-t flex justify-end"
-            style={{ borderColor: theme.colors.border }}
-          >
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded text-sm font-medium transition-colors"
-              style={{
-                backgroundColor: theme.colors.accent,
-                color: theme.colors.bgMain,
-              }}
-              onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
-              onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
-            >
-              Close
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const documentCount = nodes.filter(n => n.nodeType === 'document').length;
   const externalCount = nodes.filter(n => n.nodeType === 'external').length;
@@ -1527,6 +1528,20 @@ export function DocumentGraphView({
                 </span>
               </span>
             )}
+            {/* Node expansion indicator */}
+            {expandingNode && (
+              <span
+                className="flex items-center gap-1.5 px-2 py-1 rounded text-xs"
+                style={{
+                  backgroundColor: `${theme.colors.success}15`,
+                  color: theme.colors.success,
+                }}
+                title="Expanding node to show outgoing links"
+              >
+                <Loader2 className="w-3 h-3 animate-spin" />
+                <span>Expanding...</span>
+              </span>
+            )}
           </div>
 
           {/* Center: Selected node stats */}
@@ -1562,7 +1577,7 @@ export function DocumentGraphView({
           )}
 
           <span style={{ opacity: 0.7 }}>
-            Click to select • Double-click to recenter • O to open • Arrow keys to navigate • Esc to close
+            Click to select • Double-click to expand • O to open • Arrow keys to navigate • Esc to close
           </span>
         </div>
       </div>

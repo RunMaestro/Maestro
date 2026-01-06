@@ -9,6 +9,8 @@ import { getFileIcon } from '../utils/theme';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { Modal, ModalFooter } from './ui/Modal';
+import { FormInput } from './ui/FormInput';
 
 /**
  * RetryCountdown component - shows time remaining until auto-retry.
@@ -60,6 +62,70 @@ const AUTO_REFRESH_OPTIONS = [
   { label: 'Every 60 seconds', value: 60 },
   { label: 'Every 3 minutes', value: 180 },
 ];
+
+/**
+ * RenameFileModal - Modal for renaming files/folders in the file explorer
+ */
+interface RenameFileModalProps {
+  theme: Theme;
+  node: FileNode;
+  value: string;
+  setValue: (value: string) => void;
+  error: string | null;
+  onClose: () => void;
+  onRename: () => void;
+}
+
+function RenameFileModal({ theme, node, value, setValue, error, onClose, onRename }: RenameFileModalProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const isFolder = node.type === 'folder';
+  const title = isFolder ? 'Rename Folder' : 'Rename File';
+
+  // Select filename (without extension for files) on mount
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (inputRef.current) {
+        const name = node.name;
+        const dotIndex = !isFolder ? name.lastIndexOf('.') : -1;
+        if (dotIndex > 0) {
+          inputRef.current.setSelectionRange(0, dotIndex);
+        } else {
+          inputRef.current.select();
+        }
+      }
+    });
+  }, [node.name, isFolder]);
+
+  return (
+    <Modal
+      theme={theme}
+      title={title}
+      priority={MODAL_PRIORITIES.RENAME_INSTANCE}
+      onClose={onClose}
+      initialFocusRef={inputRef}
+      footer={
+        <ModalFooter
+          theme={theme}
+          onCancel={onClose}
+          onConfirm={onRename}
+          confirmLabel="Rename"
+          confirmDisabled={!value.trim() || value.trim() === node.name}
+        />
+      }
+    >
+      <FormInput
+        ref={inputRef}
+        theme={theme}
+        value={value}
+        onChange={setValue}
+        onSubmit={onRename}
+        placeholder={isFolder ? 'Enter folder name...' : 'Enter file name...'}
+        error={error || undefined}
+        submitEnabled={Boolean(value.trim() && value.trim() !== node.name)}
+      />
+    </Modal>
+  );
+}
 
 // Helper to format bytes into human-readable format
 function formatBytes(bytes: number): string {
@@ -151,7 +217,6 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
   } | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
-  const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Delete confirmation modal state
   const [deleteModal, setDeleteModal] = useState<{
@@ -331,6 +396,10 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
     setContextMenu(null);
   }, [contextMenu, session.fullPath]);
 
+  // Get SSH remote ID - use sshRemoteId (set after AI spawns) or fall back to sessionSshRemoteConfig
+  // (set before spawn). This ensures file operations work for both AI and terminal-only SSH sessions.
+  const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+
   // Execute rename
   const handleRename = useCallback(async () => {
     if (!renameModal || !renameValue.trim()) return;
@@ -350,7 +419,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
     try {
       const parentDir = renameModal.absolutePath.substring(0, renameModal.absolutePath.lastIndexOf('/'));
       const newPath = `${parentDir}/${newName}`;
-      await window.maestro.fs.rename(renameModal.absolutePath, newPath);
+      await window.maestro.fs.rename(renameModal.absolutePath, newPath, sshRemoteId);
       setRenameModal(null);
       // Refresh file tree
       refreshFileTree(session.id);
@@ -358,7 +427,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
     } catch (error) {
       setRenameError(error instanceof Error ? error.message : 'Rename failed');
     }
-  }, [renameModal, renameValue, refreshFileTree, session.id, onShowFlash]);
+  }, [renameModal, renameValue, refreshFileTree, session.id, onShowFlash, sshRemoteId]);
 
   // Open delete confirmation modal
   const handleOpenDelete = useCallback(async () => {
@@ -373,7 +442,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
       // For folders, count items inside
       if (contextMenu.node.type === 'folder') {
         try {
-          const count = await window.maestro.fs.countItems(absolutePath);
+          const count = await window.maestro.fs.countItems(absolutePath, sshRemoteId);
           modalData.itemCount = count;
         } catch {
           // If count fails, proceed without it
@@ -383,7 +452,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
       setDeleteModal(modalData);
     }
     setContextMenu(null);
-  }, [contextMenu, session.fullPath]);
+  }, [contextMenu, session.fullPath, sshRemoteId]);
 
   // Execute delete
   const handleDelete = useCallback(async () => {
@@ -391,7 +460,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
     setIsDeleting(true);
     try {
-      await window.maestro.fs.delete(deleteModal.absolutePath);
+      await window.maestro.fs.delete(deleteModal.absolutePath, { sshRemoteId });
       setDeleteModal(null);
       // Refresh file tree
       refreshFileTree(session.id);
@@ -401,22 +470,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteModal, refreshFileTree, session.id, onShowFlash]);
-
-  // Focus rename input when modal opens
-  useEffect(() => {
-    if (renameModal && renameInputRef.current) {
-      renameInputRef.current.focus();
-      // Select the filename without extension for files
-      const name = renameModal.node.name;
-      const dotIndex = renameModal.node.type === 'file' ? name.lastIndexOf('.') : -1;
-      if (dotIndex > 0) {
-        renameInputRef.current.setSelectionRange(0, dotIndex);
-      } else {
-        renameInputRef.current.select();
-      }
-    }
-  }, [renameModal]);
+  }, [deleteModal, refreshFileTree, session.id, onShowFlash, sshRemoteId]);
 
   // Focus cancel button when delete modal opens
   useEffect(() => {
@@ -992,59 +1046,19 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
       )}
 
       {/* Rename Modal */}
-      {renameModal && createPortal(
-        <div
-          className="fixed inset-0 z-[10001] flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-          onClick={() => setRenameModal(null)}
-        >
-          <div
-            className="rounded-lg shadow-xl border p-4 min-w-[320px] max-w-[400px]"
-            style={{
-              backgroundColor: theme.colors.bgSidebar,
-              borderColor: theme.colors.border,
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3
-              className="text-sm font-medium mb-3"
-              style={{ color: theme.colors.textMain }}
-            >
-              Rename {renameModal.node.type === 'folder' ? 'folder' : 'file'}
-            </h3>
-            <input
-              ref={renameInputRef}
-              type="text"
-              value={renameValue}
-              onChange={(e) => {
-                setRenameValue(e.target.value);
-                setRenameError(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleRename();
-                } else if (e.key === 'Escape') {
-                  setRenameModal(null);
-                }
-              }}
-              className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-              style={{
-                borderColor: renameError ? theme.colors.error : theme.colors.border,
-                color: theme.colors.textMain
-              }}
-              placeholder="Enter new name"
-            />
-            {renameError && (
-              <p className="text-xs mt-1" style={{ color: theme.colors.error }}>
-                {renameError}
-              </p>
-            )}
-            <p className="text-xs mt-2 opacity-60" style={{ color: theme.colors.textDim }}>
-              Press Enter to save, Esc to cancel
-            </p>
-          </div>
-        </div>,
-        document.body
+      {renameModal && (
+        <RenameFileModal
+          theme={theme}
+          node={renameModal.node}
+          value={renameValue}
+          setValue={(v) => {
+            setRenameValue(v);
+            setRenameError(null);
+          }}
+          error={renameError}
+          onClose={() => setRenameModal(null)}
+          onRename={handleRename}
+        />
       )}
 
       {/* Delete Confirmation Modal */}

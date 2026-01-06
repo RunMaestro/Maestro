@@ -13,7 +13,7 @@ import type { AgentError, SshRemoteConfig } from '../shared/types';
 import { detectNodeVersionManagerBinPaths, expandTilde } from '../shared/pathUtils';
 import { getAgentCapabilities } from './agent-capabilities';
 import { shellEscapeForDoubleQuotes } from './utils/shell-escape';
-import { getExpandedEnv } from './utils/cliDetection';
+import { getExpandedEnv, resolveSshPath } from './utils/cliDetection';
 
 // Re-export parser types for consumers
 export type { ParsedEvent, AgentOutputParser } from './parsers';
@@ -1721,14 +1721,14 @@ export class ProcessManager extends EventEmitter {
    * @param shellEnvVars - Additional environment variables to set on remote
    * @param resolve - Promise resolver function
    */
-  private runCommandViaSsh(
+  private async runCommandViaSsh(
     sessionId: string,
     command: string,
     cwd: string,
     sshConfig: SshRemoteConfig,
     shellEnvVars: Record<string, string> | undefined,
     resolve: (result: { exitCode: number }) => void
-  ): void {
+  ): Promise<void> {
     // Build SSH arguments
     const sshArgs: string[] = [];
 
@@ -1815,10 +1815,11 @@ export class ProcessManager extends EventEmitter {
     });
 
     // Spawn the SSH process
-    // Use getExpandedEnv() to ensure SSH can be found in packaged Electron apps
-    // where PATH may not include /usr/bin
+    // Use resolveSshPath() to get the full path to ssh binary, as spawn() does not
+    // search PATH. This is critical for packaged Electron apps where PATH may be limited.
+    const sshPath = await resolveSshPath();
     const expandedEnv = getExpandedEnv();
-    const childProcess = spawn('ssh', sshArgs, {
+    const childProcess = spawn(sshPath, sshArgs, {
       env: {
         ...expandedEnv,
         // Ensure SSH can find the key and config

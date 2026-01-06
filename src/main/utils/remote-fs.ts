@@ -573,3 +573,125 @@ export async function mkdirRemote(
 
   return { success: true };
 }
+
+/**
+ * Rename a file or directory on a remote host via SSH.
+ *
+ * @param oldPath Current path of the file/directory
+ * @param newPath New path for the file/directory
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns Success/failure result
+ */
+export async function renameRemote(
+  oldPath: string,
+  newPath: string,
+  sshRemote: SshRemoteConfig,
+  deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+  const escapedOldPath = shellEscape(oldPath);
+  const escapedNewPath = shellEscape(newPath);
+  const remoteCommand = `mv ${escapedOldPath} ${escapedNewPath}`;
+
+  const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+  if (result.exitCode !== 0) {
+    const error = result.stderr || `Failed to rename: ${oldPath}`;
+    return {
+      success: false,
+      error: error.includes('Permission denied')
+        ? `Permission denied: ${oldPath}`
+        : error.includes('No such file')
+          ? `Path not found: ${oldPath}`
+          : error,
+    };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Delete a file or directory on a remote host via SSH.
+ *
+ * @param targetPath Path to delete
+ * @param sshRemote SSH remote configuration
+ * @param recursive Whether to recursively delete directories (default: true)
+ * @param deps Optional dependencies for testing
+ * @returns Success/failure result
+ */
+export async function deleteRemote(
+  targetPath: string,
+  sshRemote: SshRemoteConfig,
+  recursive: boolean = true,
+  deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<void>> {
+  const escapedPath = shellEscape(targetPath);
+  // Use rm -rf for recursive delete (directories), rm -f for files
+  // The -f flag prevents errors if file doesn't exist
+  const rmFlags = recursive ? '-rf' : '-f';
+  const remoteCommand = `rm ${rmFlags} ${escapedPath}`;
+
+  const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+  if (result.exitCode !== 0) {
+    const error = result.stderr || `Failed to delete: ${targetPath}`;
+    return {
+      success: false,
+      error: error.includes('Permission denied')
+        ? `Permission denied: ${targetPath}`
+        : error.includes('No such file')
+          ? `Path not found: ${targetPath}`
+          : error,
+    };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Count files and folders in a directory on a remote host via SSH.
+ *
+ * @param dirPath Directory path to count items in
+ * @param sshRemote SSH remote configuration
+ * @param deps Optional dependencies for testing
+ * @returns File and folder counts
+ */
+export async function countItemsRemote(
+  dirPath: string,
+  sshRemote: SshRemoteConfig,
+  deps: RemoteFsDeps = defaultDeps
+): Promise<RemoteFsResult<{ fileCount: number; folderCount: number }>> {
+  const escapedPath = shellEscape(dirPath);
+  // Use find to count files and directories separately
+  // -type f for files, -type d for directories (excluding the root dir itself)
+  const remoteCommand = `echo "FILES:$(find ${escapedPath} -type f 2>/dev/null | wc -l)" && echo "DIRS:$(find ${escapedPath} -mindepth 1 -type d 2>/dev/null | wc -l)"`;
+
+  const result = await execRemoteCommand(sshRemote, remoteCommand, deps);
+
+  if (result.exitCode !== 0) {
+    const error = result.stderr || `Failed to count items: ${dirPath}`;
+    return {
+      success: false,
+      error: error.includes('Permission denied')
+        ? `Permission denied: ${dirPath}`
+        : error.includes('No such file')
+          ? `Directory not found: ${dirPath}`
+          : error,
+    };
+  }
+
+  // Parse output like:
+  // FILES:123
+  // DIRS:45
+  const output = result.stdout.trim();
+  const filesMatch = output.match(/FILES:\s*(\d+)/);
+  const dirsMatch = output.match(/DIRS:\s*(\d+)/);
+
+  const fileCount = filesMatch ? parseInt(filesMatch[1], 10) : 0;
+  const folderCount = dirsMatch ? parseInt(dirsMatch[1], 10) : 0;
+
+  return {
+    success: true,
+    data: { fileCount, folderCount },
+  };
+}
