@@ -28,6 +28,9 @@ scratch/
 .env
 .env.local
 
+# Nix/direnv
+.direnv/
+
 # OS
 .DS_Store
 Thumbs.db
