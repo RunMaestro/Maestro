@@ -198,10 +198,10 @@ export interface SymphonySessionMetadata {
   issueNumber: number;
   /** Issue title for display */
   issueTitle: string;
-  /** Draft PR number (created immediately to claim) */
-  draftPrNumber: number;
-  /** Draft PR URL */
-  draftPrUrl: string;
+  /** Draft PR number (set after first commit) */
+  draftPrNumber?: number;
+  /** Draft PR URL (set after first commit) */
+  draftPrUrl?: string;
   /** Auto Run document paths from the issue */
   documentPaths: string[];
   /** Contribution status */

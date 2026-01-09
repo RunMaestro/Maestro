@@ -36,6 +36,8 @@ import {
   FileText,
   Hash,
   ChevronDown,
+  HelpCircle,
+  Github,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import type {
@@ -59,11 +61,25 @@ import { generateProseStyles, createMarkdownComponents } from '../utils/markdown
 // Types
 // ============================================================================
 
+export interface SymphonyContributionData {
+  contributionId: string;
+  localPath: string;
+  autoRunPath?: string;
+  branchName?: string;
+  agentType: string;
+  sessionName: string;
+  repo: RegisteredRepository;
+  issue: SymphonyIssue;
+  customPath?: string;
+  customArgs?: string;
+  customEnvVars?: Record<string, string>;
+}
+
 export interface SymphonyModalProps {
   theme: Theme;
   isOpen: boolean;
   onClose: () => void;
-  onStartContribution: (contributionId: string, localPath: string) => void;
+  onStartContribution: (data: SymphonyContributionData) => void;
 }
 
 type ModalTab = 'projects' | 'active' | 'history' | 'stats';
@@ -424,39 +440,42 @@ function RepositoryDetailView({
   }, []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-4 px-4 py-3 border-b shrink-0" style={{ borderColor: theme.colors.border }}>
-        <button onClick={onBack} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Back (Esc)">
-          <ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-        </button>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span
-              className="px-2 py-0.5 rounded text-xs flex items-center gap-1"
-              style={{ backgroundColor: `${theme.colors.accent}20`, color: theme.colors.accent }}
-            >
-              <span>{categoryInfo.emoji}</span>
-              <span>{categoryInfo.label}</span>
-            </span>
+      <div className="flex items-center justify-between px-4 py-3 border-b shrink-0" style={{ borderColor: theme.colors.border }}>
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="p-1.5 rounded hover:bg-white/10 transition-colors" title="Back (Esc)">
+            <ArrowLeft className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+          </button>
+          <div className="flex items-center gap-2">
+            <Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+            <h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
+              Maestro Symphony: {repo.name}
+            </h2>
           </div>
-          <h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
-            {repo.name}
-          </h2>
         </div>
-        <a
-          href={repo.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="p-1.5 rounded hover:bg-white/10 transition-colors"
-          title="View on GitHub"
-          onClick={(e) => {
-            e.preventDefault();
-            handleOpenExternal(repo.url);
-          }}
-        >
-          <ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-        </a>
+        <div className="flex items-center gap-3">
+          <span
+            className="px-2 py-0.5 rounded text-xs flex items-center gap-1"
+            style={{ backgroundColor: `${theme.colors.accent}20`, color: theme.colors.accent }}
+          >
+            <span>{categoryInfo.emoji}</span>
+            <span>{categoryInfo.label}</span>
+          </span>
+          <a
+            href={repo.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="p-1.5 rounded hover:bg-white/10 transition-colors"
+            title="View repository on GitHub"
+            onClick={(e) => {
+              e.preventDefault();
+              handleOpenExternal(repo.url);
+            }}
+          >
+            <ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+          </a>
+        </div>
       </div>
 
       {/* Content */}
@@ -555,9 +574,26 @@ function RepositoryDetailView({
           {selectedIssue ? (
             <>
               <div className="px-4 py-3 border-b shrink-0" style={{ borderColor: theme.colors.border }}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-sm" style={{ color: theme.colors.textDim }}>#{selectedIssue.number}</span>
-                  <h3 className="font-semibold" style={{ color: theme.colors.textMain }}>{selectedIssue.title}</h3>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm" style={{ color: theme.colors.textDim }}>#{selectedIssue.number}</span>
+                    <h3 className="font-semibold" style={{ color: theme.colors.textMain }}>{selectedIssue.title}</h3>
+                  </div>
+                  <a
+                    href={selectedIssue.htmlUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs hover:underline flex items-center gap-1"
+                    style={{ color: theme.colors.accent }}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      handleOpenExternal(selectedIssue.htmlUrl);
+                    }}
+                    title="View issue on GitHub"
+                  >
+                    View Issue
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
                 </div>
                 <div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
                   <FileText className="w-3 h-3" />
@@ -997,9 +1033,14 @@ export function SymphonyModal({
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [showAgentDialog, setShowAgentDialog] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const tileGridRef = useRef<HTMLDivElement>(null);
+  const helpButtonRef = useRef<HTMLButtonElement>(null);
   const showDetailViewRef = useRef(showDetailView);
+  const showHelpRef = useRef(showHelp);
+  showHelpRef.current = showHelp;
   showDetailViewRef.current = showDetailView;
 
   // Reset on filter change
@@ -1029,7 +1070,9 @@ export function SymphonyModal({
         focusTrap: 'strict',
         ariaLabel: 'Maestro Symphony',
         onEscape: () => {
-          if (showDetailViewRef.current) {
+          if (showHelpRef.current) {
+            setShowHelp(false);
+          } else if (showDetailViewRef.current) {
             handleBackRef.current();
           } else {
             onCloseRef.current();
@@ -1040,13 +1083,13 @@ export function SymphonyModal({
     }
   }, [isOpen, registerLayer, unregisterLayer]);
 
-  // Focus search
+  // Focus tile grid for keyboard navigation (keyboard-first design)
   useEffect(() => {
-    if (isOpen && activeTab === 'projects') {
-      const timer = setTimeout(() => searchInputRef.current?.focus(), 50);
+    if (isOpen && activeTab === 'projects' && !showDetailView) {
+      const timer = setTimeout(() => tileGridRef.current?.focus(), 50);
       return () => clearTimeout(timer);
     }
-  }, [isOpen, activeTab]);
+  }, [isOpen, activeTab, showDetailView]);
 
   // Select repo
   const handleSelectRepo = useCallback(async (repo: RegisteredRepository) => {
@@ -1106,7 +1149,8 @@ export function SymphonyModal({
       config.repo,
       config.issue,
       config.agentType,
-      '' // session ID will be generated by the backend
+      '', // session ID will be generated by the backend
+      config.workingDirectory // Pass the working directory for cloning
     );
     setIsStarting(false);
 
@@ -1116,8 +1160,20 @@ export function SymphonyModal({
       // Switch to Active tab
       setActiveTab('active');
       handleBack();
-      // Notify parent with contribution ID and working directory
-      onStartContribution(result.contributionId, config.workingDirectory);
+      // Notify parent with all data needed to create the session
+      onStartContribution({
+        contributionId: result.contributionId,
+        localPath: config.workingDirectory,
+        autoRunPath: result.autoRunPath,
+        branchName: result.branchName,
+        agentType: config.agentType,
+        sessionName: config.sessionName,
+        repo: config.repo,
+        issue: config.issue,
+        customPath: config.customPath,
+        customArgs: config.customArgs,
+        customEnvVars: config.customEnvVars,
+      });
       return { success: true };
     }
 
@@ -1146,6 +1202,21 @@ export function SymphonyModal({
     const handleKeyDown = (e: KeyboardEvent) => {
       if (activeTab !== 'projects' || showDetailView) return;
 
+      // "/" to focus search (vim-style)
+      if (e.key === '/' && !(e.target instanceof HTMLInputElement)) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      // Escape from search returns focus to grid
+      if (e.key === 'Escape' && e.target instanceof HTMLInputElement) {
+        e.preventDefault();
+        (e.target as HTMLInputElement).blur();
+        tileGridRef.current?.focus();
+        return;
+      }
+
       const total = filteredRepositories.length;
       if (total === 0) return;
       if (e.target instanceof HTMLInputElement && !['ArrowDown', 'ArrowUp'].includes(e.key)) return;
@@ -1163,6 +1234,10 @@ export function SymphonyModal({
         case 'ArrowDown':
           e.preventDefault();
           setSelectedTileIndex((i) => Math.min(total - 1, i + gridColumns));
+          // If we're in the search box, move focus to grid
+          if (e.target instanceof HTMLInputElement) {
+            tileGridRef.current?.focus();
+          }
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -1223,6 +1298,84 @@ export function SymphonyModal({
                 <h2 id="symphony-modal-title" className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
                   Maestro Symphony
                 </h2>
+                {/* Help button */}
+                <div className="relative">
+                  <button
+                    ref={helpButtonRef}
+                    onClick={() => setShowHelp(!showHelp)}
+                    className="p-1 rounded hover:bg-white/10 transition-colors"
+                    title="About Maestro Symphony"
+                    aria-label="Help"
+                  >
+                    <HelpCircle className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+                  </button>
+                  {showHelp && (
+                    <div
+                      className="absolute top-full left-0 mt-2 w-80 p-4 rounded-lg shadow-xl z-50"
+                      style={{
+                        backgroundColor: theme.colors.bgSidebar,
+                        border: `1px solid ${theme.colors.border}`,
+                      }}
+                    >
+                      <h3
+                        className="text-sm font-semibold mb-2"
+                        style={{ color: theme.colors.textMain }}
+                      >
+                        About Maestro Symphony
+                      </h3>
+                      <p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
+                        Symphony connects Maestro users with open source projects seeking AI-assisted
+                        contributions. Browse projects, find issues labeled with <code className="px-1 py-0.5 rounded text-xs" style={{ backgroundColor: theme.colors.bgActivity }}>runmaestro.ai</code>,
+                        and contribute by running Auto Run documents that maintainers have prepared.
+                      </p>
+                      <h4
+                        className="text-xs font-semibold mb-1"
+                        style={{ color: theme.colors.textMain }}
+                      >
+                        Register Your Project
+                      </h4>
+                      <p className="text-xs mb-2" style={{ color: theme.colors.textDim }}>
+                        Want to receive Symphony contributions for your open source project?
+                        Add your repository to the registry:
+                      </p>
+                      <button
+                        onClick={() => {
+                          window.maestro.shell.openExternal(
+                            'https://docs.runmaestro.ai/symphony'
+                          );
+                          setShowHelp(false);
+                        }}
+                        className="text-xs hover:opacity-80 transition-colors"
+                        style={{ color: theme.colors.accent }}
+                      >
+                        docs.runmaestro.ai/symphony
+                      </button>
+                      <div className="mt-3 pt-3 border-t" style={{ borderColor: theme.colors.border }}>
+                        <button
+                          onClick={() => setShowHelp(false)}
+                          className="text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors"
+                          style={{ color: theme.colors.textDim }}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                {/* Register Project link */}
+                <button
+                  onClick={() => {
+                    window.maestro.shell.openExternal(
+                      'https://docs.runmaestro.ai/symphony'
+                    );
+                  }}
+                  className="px-2 py-1 rounded hover:bg-white/10 transition-colors flex items-center gap-1.5 text-xs"
+                  title="Register your project for Symphony contributions"
+                  style={{ color: theme.colors.textDim }}
+                >
+                  <Github className="w-3.5 h-3.5" />
+                  <span>Register Your Project</span>
+                </button>
               </div>
               <div className="flex items-center gap-3">
                 {activeTab === 'projects' && (
@@ -1354,7 +1507,13 @@ export function SymphonyModal({
                         </p>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-3 gap-4">
+                      <div
+                        ref={tileGridRef}
+                        tabIndex={0}
+                        className="grid grid-cols-3 gap-4 outline-none"
+                        role="grid"
+                        aria-label="Repository tiles"
+                      >
                         {filteredRepositories.map((repo, index) => (
                           <RepositoryTile
                             key={repo.slug}
@@ -1374,7 +1533,7 @@ export function SymphonyModal({
                     style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
                   >
                     <span>{filteredRepositories.length} repositories • Contribute to open source with AI</span>
-                    <span>Arrow keys to navigate • Enter to select</span>
+                    <span>↑↓←→ navigate • Enter select • / search</span>
                   </div>
                 </>
               )}

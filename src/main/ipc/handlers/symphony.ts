@@ -548,24 +548,31 @@ async function createDraftPR(
     return { success: false, error: authCheck.error };
   }
 
+  // Get current branch name
+  const branchResult = await execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], repoPath);
+  const branchName = branchResult.stdout.trim();
+  if (!branchName || branchResult.exitCode !== 0) {
+    return { success: false, error: 'Failed to determine current branch' };
+  }
+
   // First push the branch
-  const pushResult = await execFileNoThrow('git', ['push', '-u', 'origin', 'HEAD'], repoPath);
+  const pushResult = await execFileNoThrow('git', ['push', '-u', 'origin', branchName], repoPath);
 
   if (pushResult.exitCode !== 0) {
     return { success: false, error: `Failed to push: ${pushResult.stderr}` };
   }
 
-  // Create draft PR using gh CLI
+  // Create draft PR using gh CLI (use --head to explicitly specify the branch)
   const prResult = await execFileNoThrow(
     'gh',
-    ['pr', 'create', '--draft', '--base', baseBranch, '--title', title, '--body', body],
+    ['pr', 'create', '--draft', '--base', baseBranch, '--head', branchName, '--title', title, '--body', body],
     repoPath
   );
 
   if (prResult.exitCode !== 0) {
     // If PR creation failed after push, try to delete the remote branch
     logger.warn('PR creation failed, attempting to clean up remote branch', LOG_CONTEXT);
-    await execFileNoThrow('git', ['push', 'origin', '--delete', 'HEAD'], repoPath);
+    await execFileNoThrow('git', ['push', 'origin', '--delete', branchName], repoPath);
     return { success: false, error: `Failed to create PR: ${prResult.stderr}` };
   }
 
@@ -587,6 +594,66 @@ async function markPRReady(
   const result = await execFileNoThrow(
     'gh',
     ['pr', 'ready', String(prNumber)],
+    repoPath
+  );
+
+  if (result.exitCode !== 0) {
+    return { success: false, error: result.stderr };
+  }
+
+  return { success: true };
+}
+
+/**
+ * Post a comment to a PR with Symphony contribution stats.
+ */
+async function postPRComment(
+  repoPath: string,
+  prNumber: number,
+  stats: {
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCost: number;
+    timeSpentMs: number;
+    documentsProcessed: number;
+    tasksCompleted: number;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  // Format time spent
+  const hours = Math.floor(stats.timeSpentMs / 3600000);
+  const minutes = Math.floor((stats.timeSpentMs % 3600000) / 60000);
+  const seconds = Math.floor((stats.timeSpentMs % 60000) / 1000);
+  const timeStr = hours > 0
+    ? `${hours}h ${minutes}m ${seconds}s`
+    : minutes > 0
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
+
+  // Format token counts with commas
+  const formatNumber = (n: number) => n.toLocaleString('en-US');
+
+  // Build the comment body
+  const commentBody = `## Symphony Contribution Summary
+
+This pull request was created using [Maestro Symphony](https://runmaestro.ai/symphony) - connecting AI-powered contributors with open source projects.
+
+### Contribution Stats
+| Metric | Value |
+|--------|-------|
+| Input Tokens | ${formatNumber(stats.inputTokens)} |
+| Output Tokens | ${formatNumber(stats.outputTokens)} |
+| Total Tokens | ${formatNumber(stats.inputTokens + stats.outputTokens)} |
+| Estimated Cost | $${stats.estimatedCost.toFixed(2)} |
+| Time Spent | ${timeStr} |
+| Documents Processed | ${stats.documentsProcessed} |
+| Tasks Completed | ${stats.tasksCompleted} |
+
+---
+*Powered by [Maestro](https://runmaestro.ai) • [Learn about Symphony](https://docs.runmaestro.ai/symphony)*`;
+
+  const result = await execFileNoThrow(
+    'gh',
+    ['pr', 'comment', String(prNumber), '--body', commentBody],
     repoPath
   );
 
@@ -982,6 +1049,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 
   /**
    * Complete a contribution (mark PR as ready).
+   * Accepts optional stats from the frontend which override stored values.
    */
   ipcMain.handle(
     'symphony:complete',
@@ -990,8 +1058,16 @@ This PR will be updated automatically when the Auto Run completes.`;
       async (params: {
         contributionId: string;
         prBody?: string;
+        stats?: {
+          inputTokens: number;
+          outputTokens: number;
+          estimatedCost: number;
+          timeSpentMs: number;
+          documentsProcessed: number;
+          tasksCompleted: number;
+        };
       }): Promise<Omit<CompleteContributionResponse, 'success'>> => {
-        const { contributionId } = params;
+        const { contributionId, stats } = params;
         const state = await readState(app);
         const contributionIndex = state.active.findIndex(c => c.id === contributionId);
 
@@ -1012,6 +1088,38 @@ This PR will be updated automatically when the Auto Run completes.`;
           return { error: readyResult.error };
         }
 
+        // Post PR comment with stats (use provided stats or fall back to stored values)
+        const commentStats = stats || {
+          inputTokens: contribution.tokenUsage.inputTokens,
+          outputTokens: contribution.tokenUsage.outputTokens,
+          estimatedCost: contribution.tokenUsage.estimatedCost,
+          timeSpentMs: contribution.timeSpent,
+          documentsProcessed: contribution.progress.completedDocuments,
+          tasksCompleted: contribution.progress.completedTasks,
+        };
+
+        const commentResult = await postPRComment(
+          contribution.localPath,
+          contribution.draftPrNumber,
+          commentStats
+        );
+
+        if (!commentResult.success) {
+          // Log but don't fail - the PR is already ready, comment is just bonus
+          logger.warn('Failed to post PR comment', LOG_CONTEXT, {
+            contributionId,
+            error: commentResult.error,
+          });
+        }
+
+        // Use provided stats for the completed record if available
+        const finalInputTokens = stats?.inputTokens ?? contribution.tokenUsage.inputTokens;
+        const finalOutputTokens = stats?.outputTokens ?? contribution.tokenUsage.outputTokens;
+        const finalCost = stats?.estimatedCost ?? contribution.tokenUsage.estimatedCost;
+        const finalTimeSpent = stats?.timeSpentMs ?? contribution.timeSpent;
+        const finalDocsProcessed = stats?.documentsProcessed ?? contribution.progress.completedDocuments;
+        const finalTasksCompleted = stats?.tasksCompleted ?? contribution.progress.completedTasks;
+
         // Move to completed
         const completed: CompletedContribution = {
           id: contribution.id,
@@ -1024,13 +1132,13 @@ This PR will be updated automatically when the Auto Run completes.`;
           prUrl: contribution.draftPrUrl,
           prNumber: contribution.draftPrNumber,
           tokenUsage: {
-            inputTokens: contribution.tokenUsage.inputTokens,
-            outputTokens: contribution.tokenUsage.outputTokens,
-            totalCost: contribution.tokenUsage.estimatedCost,
+            inputTokens: finalInputTokens,
+            outputTokens: finalOutputTokens,
+            totalCost: finalCost,
           },
-          timeSpent: contribution.timeSpent,
-          documentsProcessed: contribution.progress.completedDocuments,
-          tasksCompleted: contribution.progress.completedTasks,
+          timeSpent: finalTimeSpent,
+          documentsProcessed: finalDocsProcessed,
+          tasksCompleted: finalTasksCompleted,
         };
 
         // Update state
@@ -1185,7 +1293,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 
   /**
    * Start the contribution workflow after session is created.
-   * Creates branch, empty commit, pushes, and creates draft PR.
+   * Creates branch and sets up Auto Run documents.
+   * Draft PR will be created on first real commit (deferred to avoid "no commits" error).
    */
   ipcMain.handle(
     'symphony:startContribution',
@@ -1226,14 +1335,14 @@ This PR will be updated automatically when the Auto Run completes.`;
           }
         }
 
-        // Check gh CLI authentication
+        // Check gh CLI authentication (needed later for PR creation)
         const authCheck = await checkGhAuthentication();
         if (!authCheck.authenticated) {
           return { success: false, error: authCheck.error };
         }
 
         try {
-          // 1. Create branch
+          // 1. Create branch and checkout
           const branchName = generateBranchName(issueNumber);
           const branchResult = await createBranch(localPath, branchName);
           if (!branchResult.success) {
@@ -1241,52 +1350,19 @@ This PR will be updated automatically when the Auto Run completes.`;
             return { success: false, error: `Failed to create branch: ${branchResult.error}` };
           }
 
-          // 2. Empty commit to enable push
-          const commitMessage = `[Symphony] Start contribution for #${issueNumber}`;
-          const commitResult = await execFileNoThrow('git', ['commit', '--allow-empty', '-m', commitMessage], localPath);
-          if (commitResult.exitCode !== 0) {
-            logger.error('Failed to create empty commit', LOG_CONTEXT, { localPath, error: commitResult.stderr });
-          }
+          // 2. Set up Auto Run documents directory
+          // External docs (GitHub attachments) go to cache dir to avoid polluting the repo
+          // Repo-internal docs are referenced in place
+          const symphonyDocsDir = path.join(getSymphonyDir(app), 'contributions', contributionId, 'docs');
+          await fs.mkdir(symphonyDocsDir, { recursive: true });
 
-          // 3. Push branch
-          const pushResult = await execFileNoThrow('git', ['push', '-u', 'origin', branchName], localPath);
-          if (pushResult.exitCode !== 0) {
-            logger.error('Failed to push branch', LOG_CONTEXT, { localPath, branchName, error: pushResult.stderr });
-            return { success: false, error: `Failed to push branch: ${pushResult.stderr}` };
-          }
-
-          // 4. Detect default branch for PR base
-          const baseBranch = await getDefaultBranch(localPath);
-
-          // 5. Create draft PR
-          const prTitle = `[WIP] Symphony: ${issueTitle}`;
-          const prBody = `## Symphony Contribution\n\nCloses #${issueNumber}\n\n*Work in progress via Maestro Symphony*`;
-          const prResult = await execFileNoThrow(
-            'gh',
-            ['pr', 'create', '--draft', '--base', baseBranch, '--title', prTitle, '--body', prBody],
-            localPath
-          );
-          if (prResult.exitCode !== 0) {
-            // Attempt to clean up the remote branch
-            logger.warn('PR creation failed, cleaning up remote branch', LOG_CONTEXT, { branchName });
-            await execFileNoThrow('git', ['push', 'origin', '--delete', branchName], localPath);
-            logger.error('Failed to create draft PR', LOG_CONTEXT, { localPath, error: prResult.stderr });
-            return { success: false, error: `Failed to create draft PR: ${prResult.stderr}` };
-          }
-
-          const prUrl = prResult.stdout.trim();
-          const prNumberMatch = prUrl.match(/\/pull\/(\d+)/);
-          const prNumber = prNumberMatch ? parseInt(prNumberMatch[1], 10) : 0;
-
-          // 6. Copy Auto Run documents to local folder
-          const autoRunDir = path.join(localPath, 'Auto Run Docs');
-          await fs.mkdir(autoRunDir, { recursive: true });
+          // Track resolved document paths for Auto Run
+          const resolvedDocs: { name: string; path: string; isExternal: boolean }[] = [];
 
           for (const doc of documentPaths) {
-            const destPath = path.join(autoRunDir, doc.name);
-
             if (doc.isExternal) {
-              // Download external file (GitHub attachment)
+              // Download external file (GitHub attachment) to cache directory
+              const destPath = path.join(symphonyDocsDir, doc.name);
               try {
                 logger.info('Downloading external document', LOG_CONTEXT, { name: doc.name, url: doc.path });
                 const response = await fetch(doc.path);
@@ -1296,52 +1372,72 @@ This PR will be updated automatically when the Auto Run completes.`;
                 }
                 const buffer = await response.arrayBuffer();
                 await fs.writeFile(destPath, Buffer.from(buffer));
-                logger.info('Downloaded document', LOG_CONTEXT, { name: doc.name, to: destPath });
+                logger.info('Downloaded document to cache', LOG_CONTEXT, { name: doc.name, to: destPath });
+                resolvedDocs.push({ name: doc.name, path: destPath, isExternal: true });
               } catch (e) {
                 logger.warn('Failed to download document', LOG_CONTEXT, { name: doc.name, error: e instanceof Error ? e.message : String(e) });
               }
             } else {
-              // Copy from repo - ensure the path doesn't escape the localPath
+              // Repo-internal doc - verify it exists and reference in place
               const resolvedSource = path.resolve(localPath, doc.path);
               if (!resolvedSource.startsWith(localPath)) {
-                logger.error('Attempted path traversal in document copy', LOG_CONTEXT, { docPath: doc.path });
+                logger.error('Attempted path traversal in document path', LOG_CONTEXT, { docPath: doc.path });
                 continue;
               }
               try {
-                await fs.copyFile(resolvedSource, destPath);
-                logger.info('Copied document', LOG_CONTEXT, { from: resolvedSource, to: destPath });
+                await fs.access(resolvedSource);
+                logger.info('Using repo document', LOG_CONTEXT, { name: doc.name, path: resolvedSource });
+                resolvedDocs.push({ name: doc.name, path: resolvedSource, isExternal: false });
               } catch (e) {
-                logger.warn('Failed to copy document', LOG_CONTEXT, { docPath: doc.path, error: e instanceof Error ? e.message : String(e) });
+                logger.warn('Document not found in repo', LOG_CONTEXT, { docPath: doc.path, error: e instanceof Error ? e.message : String(e) });
               }
             }
           }
 
-          // 7. Broadcast status update
+          // 3. Write contribution metadata for later PR creation
+          const metadataPath = path.join(symphonyDocsDir, '..', 'metadata.json');
+          await fs.writeFile(metadataPath, JSON.stringify({
+            contributionId,
+            sessionId,
+            repoSlug,
+            issueNumber,
+            issueTitle,
+            branchName,
+            localPath,
+            resolvedDocs,
+            startedAt: new Date().toISOString(),
+            prCreated: false,
+          }, null, 2));
+
+          // 4. Determine Auto Run path (use cache dir if we have external docs, otherwise repo path)
+          const hasExternalDocs = resolvedDocs.some(d => d.isExternal);
+          const autoRunPath = hasExternalDocs ? symphonyDocsDir : (resolvedDocs[0]?.path ? path.dirname(resolvedDocs[0].path) : localPath);
+
+          // 5. Broadcast status update (no PR yet - will be created on first commit)
           const mainWindow = getMainWindow?.();
           if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('symphony:contributionStarted', {
               contributionId,
               sessionId,
               branchName,
-              draftPrNumber: prNumber,
-              draftPrUrl: prUrl,
-              autoRunPath: autoRunDir,
+              autoRunPath,
+              // No PR yet - will be created on first commit
             });
           }
 
           logger.info('Symphony contribution started', LOG_CONTEXT, {
             contributionId,
             sessionId,
-            prNumber,
-            documentCount: documentPaths.length,
+            branchName,
+            documentCount: resolvedDocs.length,
+            hasExternalDocs,
           });
 
           return {
             success: true,
             branchName,
-            draftPrNumber: prNumber,
-            draftPrUrl: prUrl,
-            autoRunPath: autoRunDir,
+            autoRunPath,
+            // draftPrNumber and draftPrUrl will be set when PR is created on first commit
           };
         } catch (error) {
           logger.error('Symphony contribution failed', LOG_CONTEXT, { error });
@@ -1350,6 +1446,138 @@ This PR will be updated automatically when the Auto Run completes.`;
             error: error instanceof Error ? error.message : 'Unknown error',
           };
         }
+      }
+    )
+  );
+
+  /**
+   * Create draft PR for a contribution (called on first commit).
+   * Reads metadata from the contribution folder, pushes branch, and creates draft PR.
+   */
+  ipcMain.handle(
+    'symphony:createDraftPR',
+    createIpcHandler(
+      handlerOpts('createDraftPR'),
+      async (params: {
+        contributionId: string;
+      }): Promise<{
+        success: boolean;
+        draftPrNumber?: number;
+        draftPrUrl?: string;
+        error?: string;
+      }> => {
+        const { contributionId } = params;
+
+        // Read contribution metadata
+        const metadataPath = path.join(getSymphonyDir(app), 'contributions', contributionId, 'metadata.json');
+        let metadata: {
+          contributionId: string;
+          sessionId: string;
+          repoSlug: string;
+          issueNumber: number;
+          issueTitle: string;
+          branchName: string;
+          localPath: string;
+          prCreated: boolean;
+          draftPrNumber?: number;
+          draftPrUrl?: string;
+        };
+
+        try {
+          const content = await fs.readFile(metadataPath, 'utf-8');
+          metadata = JSON.parse(content);
+        } catch (e) {
+          logger.error('Failed to read contribution metadata', LOG_CONTEXT, { contributionId, error: e });
+          return { success: false, error: 'Contribution metadata not found' };
+        }
+
+        // Check if PR already created
+        if (metadata.prCreated && metadata.draftPrUrl) {
+          logger.info('Draft PR already exists', LOG_CONTEXT, { contributionId, prUrl: metadata.draftPrUrl });
+          return {
+            success: true,
+            draftPrNumber: metadata.draftPrNumber,
+            draftPrUrl: metadata.draftPrUrl,
+          };
+        }
+
+        // Check gh CLI authentication
+        const authCheck = await checkGhAuthentication();
+        if (!authCheck.authenticated) {
+          return { success: false, error: authCheck.error };
+        }
+
+        const { localPath, issueNumber, issueTitle, sessionId } = metadata;
+
+        // Check if there are any commits on this branch
+        // Use rev-list to count commits not in the default branch
+        const baseBranch = await getDefaultBranch(localPath);
+        const commitCheckResult = await execFileNoThrow(
+          'git',
+          ['rev-list', '--count', `${baseBranch}..HEAD`],
+          localPath
+        );
+
+        const commitCount = parseInt(commitCheckResult.stdout.trim(), 10) || 0;
+        if (commitCount === 0) {
+          // No commits yet - return success but indicate no PR created
+          logger.info('No commits yet, skipping PR creation', LOG_CONTEXT, { contributionId });
+          return {
+            success: true,
+            // No PR fields - caller should know PR wasn't created yet
+          };
+        }
+
+        logger.info('Found commits, creating draft PR', LOG_CONTEXT, { contributionId, commitCount });
+
+        // Create PR title and body
+        const prTitle = `[WIP] Symphony: ${issueTitle} (#${issueNumber})`;
+        const prBody = `## Maestro Symphony Contribution
+
+Working on #${issueNumber} via [Maestro Symphony](https://runmaestro.ai).
+
+**Status:** In Progress
+**Started:** ${new Date().toISOString()}
+
+---
+
+This PR will be updated automatically when the Auto Run completes.`;
+
+        // Create draft PR (this also pushes the branch)
+        const prResult = await createDraftPR(localPath, baseBranch, prTitle, prBody);
+        if (!prResult.success) {
+          logger.error('Failed to create draft PR', LOG_CONTEXT, { contributionId, error: prResult.error });
+          return { success: false, error: prResult.error };
+        }
+
+        // Update metadata with PR info
+        metadata.prCreated = true;
+        metadata.draftPrNumber = prResult.prNumber;
+        metadata.draftPrUrl = prResult.prUrl;
+        await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2));
+
+        // Broadcast PR creation event
+        const mainWindow = getMainWindow?.();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('symphony:prCreated', {
+            contributionId,
+            sessionId,
+            draftPrNumber: prResult.prNumber,
+            draftPrUrl: prResult.prUrl,
+          });
+        }
+
+        logger.info('Draft PR created for Symphony contribution', LOG_CONTEXT, {
+          contributionId,
+          prNumber: prResult.prNumber,
+          prUrl: prResult.prUrl,
+        });
+
+        return {
+          success: true,
+          draftPrNumber: prResult.prNumber,
+          draftPrUrl: prResult.prUrl,
+        };
       }
     )
   );

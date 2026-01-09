@@ -54,10 +54,11 @@ export interface UseSymphonyReturn {
 
   // Actions
   refresh: (force?: boolean) => Promise<void>;
-  startContribution: (repo: RegisteredRepository, issue: SymphonyIssue, agentType: string, sessionId: string) => Promise<{
+  startContribution: (repo: RegisteredRepository, issue: SymphonyIssue, agentType: string, sessionId: string, workingDirectory?: string) => Promise<{
     success: boolean;
     contributionId?: string;
-    draftPrUrl?: string;
+    branchName?: string;
+    autoRunPath?: string;
     error?: string;
   }>;
   cancelContribution: (contributionId: string, cleanup?: boolean) => Promise<{ success: boolean }>;
@@ -243,39 +244,56 @@ export function useSymphony(): UseSymphonyReturn {
     repo: RegisteredRepository,
     issue: SymphonyIssue,
     agentType: string,
-    sessionId: string
-  ): Promise<{ success: boolean; contributionId?: string; draftPrUrl?: string; error?: string }> => {
+    sessionId: string,
+    workingDirectory?: string
+  ): Promise<{ success: boolean; contributionId?: string; branchName?: string; autoRunPath?: string; error?: string }> => {
     try {
-      // This single action will:
-      // 1. Clone the repository
-      // 2. Create a branch (symphony/issue-{number}-{timestamp})
-      // 3. Create an empty commit
-      // 4. Push the branch
-      // 5. Open a draft PR (claims the issue)
-      // 6. Set up Auto Run with the document paths from the issue
-      const result = await window.maestro.symphony.start({
-        repoSlug: repo.slug,
+      // Generate contribution ID
+      const timestamp = Date.now().toString(36);
+      const random = Math.random().toString(36).substring(2, 8);
+      const contributionId = `contrib_${timestamp}_${random}`;
+
+      // Determine local path for the clone
+      const localPath = workingDirectory || `/tmp/symphony/${repo.name}-${contributionId}`;
+
+      // Step 1: Clone the repository
+      const cloneResult = await window.maestro.symphony.cloneRepo({
         repoUrl: repo.url,
-        repoName: repo.name,
-        issueNumber: issue.number,
-        issueTitle: issue.title,
-        documentPaths: issue.documentPaths,
-        agentType,
-        sessionId,
+        localPath,
       });
 
-      if (result.contributionId) {
-        await fetchSymphonyState();
+      if (!cloneResult.success) {
         return {
-          success: true,
-          contributionId: result.contributionId,
-          draftPrUrl: result.draftPrUrl,
+          success: false,
+          error: cloneResult.error ?? 'Failed to clone repository',
         };
       }
 
+      // Step 2: Start contribution (creates branch, sets up docs, NO PR yet)
+      // Draft PR will be created on first real commit via symphony:createDraftPR
+      const startResult = await window.maestro.symphony.startContribution({
+        contributionId,
+        sessionId,
+        repoSlug: repo.slug,
+        issueNumber: issue.number,
+        issueTitle: issue.title,
+        localPath,
+        documentPaths: issue.documentPaths,
+      });
+
+      if (!startResult.success) {
+        return {
+          success: false,
+          error: startResult.error ?? 'Failed to start contribution',
+        };
+      }
+
+      await fetchSymphonyState();
       return {
-        success: false,
-        error: result.error ?? 'Unknown error',
+        success: true,
+        contributionId,
+        branchName: startResult.branchName,
+        autoRunPath: startResult.autoRunPath,
       };
     } catch (err) {
       return {
