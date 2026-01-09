@@ -71,6 +71,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
       const ctx = keyboardHandlerRef.current;
       if (!ctx) return;
 
+      // Ctrl+C in terminal mode - let xterm.js handle it (sends SIGINT to PTY)
+      // Don't prevent default or return early with tracking - just let it pass through
+      if (e.ctrlKey && e.key === 'c' && !e.metaKey && !e.altKey && !e.shiftKey &&
+          ctx.activeSession?.inputMode === 'terminal') {
+        // Don't prevent default - let xterm.js handle it
+        return;
+      }
+
       // When layers (modals/overlays) are open, we need nuanced shortcut handling:
       // - Escape: handled by LayerStackContext in capture phase
       // - Tab: allowed for accessibility navigation
@@ -402,6 +410,102 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
           if (!ctx.leftSidebarOpen) {
             ctx.setLeftSidebarOpen(true);
           }
+        }
+      }
+
+      // Terminal tab shortcuts (terminal mode only, requires an explicitly selected session)
+      if (ctx.activeSessionId && ctx.activeSession?.inputMode === 'terminal' && !ctx.activeGroupChatId) {
+        // Ctrl+Shift+` - New terminal tab
+        if (e.ctrlKey && e.shiftKey && e.key === '`') {
+          e.preventDefault();
+          ctx.handleTerminalNewTab?.(ctx.activeSession.id);
+          trackShortcut('newTerminalTab');
+          return;
+        }
+
+        // Cmd+K - Clear terminal (override quickAction in terminal mode)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          ctx.terminalViewRef?.current?.clearActiveTerminal();
+          trackShortcut('clearTerminal');
+          return;
+        }
+
+        // Cmd+F - Search terminal
+        if ((e.metaKey || e.ctrlKey) && e.key === 'f' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          ctx.setTerminalSearchOpen?.(true);
+          trackShortcut('searchTerminal');
+          return;
+        }
+
+        // Cmd+Shift+[ - Previous terminal tab
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
+          e.preventDefault();
+          const terminalTabs = ctx.activeSession.terminalTabs ?? [];
+          const currentIndex = terminalTabs.findIndex((t: { id: string }) => t.id === ctx.activeSession.activeTerminalTabId);
+          if (currentIndex > 0) {
+            ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex - 1].id);
+          }
+          trackShortcut('prevTerminalTab');
+          return;
+        }
+
+        // Cmd+Shift+] - Next terminal tab
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === ']') {
+          e.preventDefault();
+          const terminalTabs = ctx.activeSession.terminalTabs ?? [];
+          const currentIndex = terminalTabs.findIndex((t: { id: string }) => t.id === ctx.activeSession.activeTerminalTabId);
+          if (currentIndex < terminalTabs.length - 1) {
+            ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex + 1].id);
+          }
+          trackShortcut('nextTerminalTab');
+          return;
+        }
+
+        // Cmd+W - Close terminal tab (only if more than one)
+        if ((e.metaKey || e.ctrlKey) && e.key === 'w' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          const terminalTabs = ctx.activeSession.terminalTabs ?? [];
+          if (terminalTabs.length > 1) {
+            ctx.handleTerminalTabClose?.(ctx.activeSession.id, ctx.activeSession.activeTerminalTabId);
+          }
+          trackShortcut('closeTerminalTab');
+          return;
+        }
+
+        // Cmd+Shift+T - Reopen closed terminal tab
+        if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 't') {
+          e.preventDefault();
+          ctx.handleReopenTerminalTab?.(ctx.activeSession.id);
+          trackShortcut('reopenTerminalTab');
+          return;
+        }
+
+        // Cmd+1-9 - Go to terminal tab by number
+        if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey) {
+          const num = parseInt(e.key, 10);
+          if (num >= 1 && num <= 9) {
+            e.preventDefault();
+            const terminalTabs = ctx.activeSession.terminalTabs ?? [];
+            const targetIndex = num - 1;
+            if (targetIndex < terminalTabs.length) {
+              ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[targetIndex].id);
+            }
+            trackShortcut(`goToTerminalTab${num}`);
+            return;
+          }
+        }
+
+        // Cmd+0 - Go to last terminal tab
+        if ((e.metaKey || e.ctrlKey) && e.key === '0' && !e.shiftKey && !e.altKey) {
+          e.preventDefault();
+          const terminalTabs = ctx.activeSession.terminalTabs ?? [];
+          if (terminalTabs.length > 0) {
+            ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[terminalTabs.length - 1].id);
+          }
+          trackShortcut('goToLastTerminalTab');
+          return;
         }
       }
 

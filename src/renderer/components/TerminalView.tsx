@@ -8,7 +8,7 @@
  * - Tab switching with proper focus handling
  */
 
-import React, { useRef, useCallback, useEffect, memo } from 'react';
+import React, { useRef, useCallback, useEffect, memo, forwardRef, useImperativeHandle } from 'react';
 import { XTerminal, XTerminalHandle } from './XTerminal';
 import { TerminalTabBar } from './TerminalTabBar';
 import type { Session, TerminalTab } from '../types';
@@ -17,6 +17,25 @@ import {
   getActiveTerminalTab,
   getTerminalSessionId,
 } from '../utils/terminalTabHelpers';
+
+/**
+ * Handle interface for TerminalView to expose methods to parent components
+ * via ref (used for keyboard shortcuts like Cmd+K clear and Cmd+F search)
+ */
+export interface TerminalViewHandle {
+  /** Clear the active terminal buffer */
+  clearActiveTerminal: () => void;
+  /** Focus the active terminal */
+  focusActiveTerminal: () => void;
+  /** Search in the active terminal buffer */
+  searchActiveTerminal: (query: string) => boolean;
+  /** Find the next occurrence of the search query */
+  searchNext: (query: string) => boolean;
+  /** Find the previous occurrence of the search query */
+  searchPrevious: (query: string) => boolean;
+  /** Clear search highlighting in the active terminal */
+  clearSearch: () => void;
+}
 
 interface TerminalViewProps {
   session: Session;
@@ -39,22 +58,23 @@ interface TerminalViewProps {
   onRequestRename?: (tabId: string) => void;
 }
 
-export const TerminalView = memo(function TerminalView({
-  session,
-  theme,
-  fontFamily,
-  fontSize = 14,
-  defaultShell,
-  shellArgs,
-  shellEnvVars,
-  onTabSelect,
-  onTabClose,
-  onNewTab,
-  onTabReorder,
-  onTabStateChange,
-  onTabPidChange,
-  onRequestRename,
-}: TerminalViewProps) {
+export const TerminalView = memo(forwardRef<TerminalViewHandle, TerminalViewProps>(
+  function TerminalView({
+    session,
+    theme,
+    fontFamily,
+    fontSize = 14,
+    defaultShell,
+    shellArgs,
+    shellEnvVars,
+    onTabSelect,
+    onTabClose,
+    onNewTab,
+    onTabReorder,
+    onTabStateChange,
+    onTabPidChange,
+    onRequestRename,
+  }, ref) {
   // Refs for terminal instances (one per tab)
   const terminalRefs = useRef<Map<string, XTerminalHandle>>(new Map());
 
@@ -140,6 +160,34 @@ export const TerminalView = memo(function TerminalView({
     }
   }, []);
 
+  // Expose methods to parent via ref for keyboard shortcuts
+  useImperativeHandle(ref, () => ({
+    clearActiveTerminal: () => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      activeTerminal?.clear();
+    },
+    focusActiveTerminal: () => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      activeTerminal?.focus();
+    },
+    searchActiveTerminal: (query: string) => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      return activeTerminal?.search(query) ?? false;
+    },
+    searchNext: (query: string) => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      return activeTerminal?.searchNext(query) ?? false;
+    },
+    searchPrevious: (query: string) => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      return activeTerminal?.searchPrevious(query) ?? false;
+    },
+    clearSearch: () => {
+      const activeTerminal = terminalRefs.current.get(activeTerminalTabId);
+      activeTerminal?.clearSearch();
+    },
+  }), [activeTerminalTabId]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Terminal Tab Bar */}
@@ -187,6 +235,6 @@ export const TerminalView = memo(function TerminalView({
       </div>
     </div>
   );
-});
+}));
 
 export default TerminalView;

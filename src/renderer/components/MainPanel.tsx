@@ -178,6 +178,7 @@ interface MainPanelProps {
   onTerminalTabCwdChange?: (sessionId: string, tabId: string, cwd: string) => void;
   onTerminalTabPidChange?: (sessionId: string, tabId: string, pid: number) => void;
   onTerminalRequestRename?: (tabId: string) => void;
+  terminalViewRef?: React.RefObject<import('./TerminalView').TerminalViewHandle>;
   // Shell settings for spawning terminal PTY
   defaultShell?: string;
   shellArgs?: string;
@@ -1196,6 +1197,7 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
               ) : activeSession.inputMode === 'terminal' ? (
                 /* Full terminal emulation with xterm.js and tabs */
                 <TerminalView
+                  ref={props.terminalViewRef}
                   key={`terminal-${activeSession.id}`}
                   session={activeSession}
                   theme={theme}

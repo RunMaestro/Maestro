@@ -80,3 +80,10 @@ export const TAB_SHORTCUTS: Record<string, Shortcut> = {
   goToTab9: { id: 'goToTab9', label: 'Go to Tab 9', keys: ['Meta', '9'] },
   goToLastTab: { id: 'goToLastTab', label: 'Go to Last Tab', keys: ['Meta', '0'] },
 };
+
+// Terminal tab shortcuts (when in terminal mode)
+export const TERMINAL_TAB_SHORTCUTS: Record<string, Shortcut> = {
+  newTerminalTab: { id: 'newTerminalTab', label: 'New Terminal Tab', keys: ['Control', 'Shift', '`'] },
+  clearTerminal: { id: 'clearTerminal', label: 'Clear Terminal', keys: ['Meta', 'k'] },
+  searchTerminal: { id: 'searchTerminal', label: 'Search Terminal', keys: ['Meta', 'f'] },
+};

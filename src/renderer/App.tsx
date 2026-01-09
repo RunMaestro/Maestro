@@ -582,6 +582,10 @@ function MaestroConsoleInner() {
   const [outputSearchOpen, setOutputSearchOpen] = useState(false);
   const [outputSearchQuery, setOutputSearchQuery] = useState('');
 
+  // Terminal Search State (xterm.js search when in terminal mode)
+  const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
+  const [terminalSearchQuery, setTerminalSearchQuery] = useState('');
+
   // Note: Command History, Tab Completion, and @ Mention states are now in InputContext
   // See useInputContext() destructuring above for these states
 
@@ -2810,6 +2814,7 @@ function MaestroConsoleInner() {
   const logsEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const terminalOutputRef = useRef<HTMLDivElement>(null);
+  const terminalViewRef = useRef<import('./components/TerminalView').TerminalViewHandle>(null);
   const sidebarContainerRef = useRef<HTMLDivElement>(null);
   const fileTreeContainerRef = useRef<HTMLDivElement>(null);
   const fileTreeFilterInputRef = useRef<HTMLInputElement>(null);
@@ -4401,9 +4406,9 @@ You are taking over this conversation. Based on the context above, provide a bri
   /**
    * Reopen the most recently closed terminal tab.
    * Creates a new PTY since the old one is gone.
-   * Note: Prefixed with _ until wired to keyboard shortcut (Cmd+Shift+T equivalent).
+   * Wired to keyboard shortcut Cmd+Shift+T in terminal mode.
    */
-  const _handleReopenTerminalTab = useCallback((sessionId: string) => {
+  const handleReopenTerminalTab = useCallback((sessionId: string) => {
     setSessions(prev => prev.map(s => {
       if (s.id !== sessionId) return s;
 
@@ -9512,7 +9517,18 @@ You are taking over this conversation. Based on the context above, provide a bri
     handleCloseAllTabs, handleCloseOtherTabs, handleCloseTabsLeft, handleCloseTabsRight,
 
     // Session bookmark toggle
-    toggleBookmark
+    toggleBookmark,
+
+    // Terminal tab handlers (for keyboard shortcuts in terminal mode)
+    handleTerminalNewTab,
+    handleTerminalTabSelect,
+    handleTerminalTabClose,
+    handleReopenTerminalTab,
+    terminalViewRef,
+    setTerminalSearchOpen,
+    terminalSearchOpen,
+    terminalSearchQuery,
+    setTerminalSearchQuery,
 
   };
 
@@ -11155,6 +11171,8 @@ You are taking over this conversation. Based on the context above, provide a bri
         onTerminalTabStateChange={handleTerminalTabStateChange}
         onTerminalTabCwdChange={handleTerminalTabCwdChange}
         onTerminalTabPidChange={handleTerminalTabPidChange}
+        // Terminal view ref for keyboard shortcuts (clear, search)
+        terminalViewRef={terminalViewRef}
         // Wizard thinking toggle
         onToggleWizardShowThinking={() => {
           if (!activeSession) return;
