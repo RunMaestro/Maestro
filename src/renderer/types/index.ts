@@ -432,6 +432,34 @@ export interface ClosedTab {
   closedAt: number;                // Timestamp when closed
 }
 
+/**
+ * Terminal Tab for multi-tab terminal support within a Maestro session
+ * Each tab represents a separate PTY shell session with full terminal emulation
+ */
+export interface TerminalTab {
+  id: string;                      // Unique tab ID (generated UUID)
+  name: string | null;             // User-defined name (null = show shell name or "Terminal N")
+  shellType: string;               // Shell being used (e.g., 'zsh', 'bash', 'powershell')
+  pid: number;                     // PTY process ID (0 if not spawned yet)
+  cwd: string;                     // Current working directory (tracked from shell)
+  createdAt: number;               // Timestamp for ordering
+  state: 'idle' | 'busy' | 'exited';  // Tab state (busy = command running)
+  exitCode?: number;               // Exit code if shell exited
+  scrollTop?: number;              // Saved scroll position
+  searchQuery?: string;            // Active search query (for Cmd+F persistence)
+}
+
+/**
+ * Closed terminal tab entry for undo functionality (Cmd+Shift+T)
+ * Note: Terminal tabs cannot be fully restored since the PTY session is gone,
+ * but we can recreate a new terminal in the same position with same settings
+ */
+export interface ClosedTerminalTab {
+  tab: TerminalTab;                // The closed tab data (sans PTY state)
+  index: number;                   // Original position in the tab array
+  closedAt: number;                // Timestamp when closed
+}
+
 export interface Session {
   id: string;
   groupId?: string;
@@ -442,6 +470,8 @@ export interface Session {
   fullPath: string;
   projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
   aiLogs: LogEntry[];
+  // DEPRECATED: Legacy shell output logs - will be removed after terminal tabs migration
+  // Terminal tabs use xterm.js with direct PTY streaming, not log entries
   shellLogs: LogEntry[];
   workLog: WorkLogItem[];
   contextUsage: number;
@@ -451,8 +481,8 @@ export interface Session {
   // AI process PID (for non-batch agents like Aider)
   // For Claude batch mode, this is 0 since processes spawn per-message
   aiPid: number;
-  // Terminal uses runCommand() which spawns fresh shells per command
-  // This field is kept for backwards compatibility but is always 0
+  // DEPRECATED: Single terminal PID - replaced by terminalTabs[].pid
+  // Kept for backwards compatibility during migration, always 0
   terminalPid: number;
   port: number;
   // Live mode - makes session accessible via web interface
@@ -553,6 +583,14 @@ export interface Session {
   terminalScrollTop?: number;
   // Draft input for terminal mode (persisted across session switches)
   terminalDraftInput?: string;
+
+  // Terminal tab management (multi-tab terminal support with full PTY emulation)
+  // Each terminal tab represents a separate shell session with xterm.js rendering
+  terminalTabs?: TerminalTab[];
+  // Currently active terminal tab ID
+  activeTerminalTabId?: string;
+  // Stack of recently closed terminal tabs for undo (max 10, runtime-only)
+  closedTerminalTabHistory?: ClosedTerminalTab[];
 
   // Auto Run panel state (file-based document runner)
   autoRunFolderPath?: string;           // Persisted folder path for Runner Docs
