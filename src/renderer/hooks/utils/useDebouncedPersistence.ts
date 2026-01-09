@@ -75,16 +75,34 @@ const prepareSessionForPersistence = (session: Session): Session => {
 
   // Return session without runtime-only fields
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { closedTabHistory, agentError, agentErrorPaused, agentErrorTabId, sshConnectionFailed, ...sessionWithoutRuntimeFields } = session;
+  const { closedTabHistory, closedTerminalTabHistory, agentError, agentErrorPaused, agentErrorTabId, sshConnectionFailed, ...sessionWithoutRuntimeFields } = session;
 
   // Ensure activeTabId points to a valid tab (it might have been a wizard tab that got filtered)
   const activeTabExists = truncatedTabs.some(tab => tab.id === session.activeTabId);
   const newActiveTabId = activeTabExists ? session.activeTabId : truncatedTabs[0]?.id;
 
+  // Clean terminal tabs - reset runtime state (PID, process state, exit code)
+  // but preserve configuration (shell type, cwd, name, etc.)
+  const cleanedTerminalTabs = (session.terminalTabs || []).map(tab => ({
+    id: tab.id,
+    name: tab.name,
+    shellType: tab.shellType,
+    cwd: tab.cwd,
+    createdAt: tab.createdAt,
+    // Reset runtime state - PTY processes don't survive app restart
+    pid: 0,
+    state: 'idle' as const,
+    // Don't persist exitCode - it's runtime-only
+  }));
+
   return {
     ...sessionWithoutRuntimeFields,
     aiTabs: truncatedTabs,
     activeTabId: newActiveTabId,
+    // Terminal tabs with runtime state cleaned
+    terminalTabs: cleanedTerminalTabs,
+    // Runtime-only, don't persist
+    closedTerminalTabHistory: undefined,
     // Reset runtime-only session state - processes don't survive app restart
     state: 'idle',
     busySource: undefined,

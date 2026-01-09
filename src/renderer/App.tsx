@@ -113,6 +113,7 @@ import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
 import { setActiveTab, createTab, closeTab, reopenClosedTab, getActiveTab, getWriteModeTab, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab, getInitialRenameValue, hasActiveWizard } from './utils/tabHelpers';
+import { createTerminalTab } from './utils/terminalTabHelpers';
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
@@ -834,6 +835,28 @@ function MaestroConsoleInner() {
           thinkingStartTime: undefined,
         }));
 
+        // Migrate sessions without terminal tabs (backwards compatibility)
+        let terminalTabs = correctedSession.terminalTabs;
+        let activeTerminalTabId = correctedSession.activeTerminalTabId;
+        if (!terminalTabs || terminalTabs.length === 0) {
+          const defaultTerminalTab = createTerminalTab(
+            defaultShell || 'zsh',
+            correctedSession.cwd,
+            null
+          );
+          terminalTabs = [defaultTerminalTab];
+          activeTerminalTabId = defaultTerminalTab.id;
+          console.log(`[restoreSession] Migrated session ${correctedSession.id} to terminal tabs`);
+        } else {
+          // Reset terminal tab runtime state - PTY processes don't survive app restart
+          terminalTabs = terminalTabs.map(tab => ({
+            ...tab,
+            pid: 0,
+            state: 'idle' as const,
+            exitCode: undefined,
+          }));
+        }
+
         // Session restored - no superfluous messages added to AI Terminal or Command Terminal
         return {
           ...correctedSession,
@@ -861,6 +884,10 @@ function MaestroConsoleInner() {
           agentError: undefined,
           agentErrorPaused: false,
           closedTabHistory: [],  // Runtime-only, reset on load
+          // Terminal tabs - migrated if needed, runtime state reset
+          terminalTabs,
+          activeTerminalTabId,
+          closedTerminalTabHistory: [],  // Runtime-only, reset on load
         };
       } else {
         // Process spawn failed
@@ -1188,6 +1215,9 @@ function MaestroConsoleInner() {
               saveToHistory: true
             };
 
+            // Create initial terminal tab for worktree session
+            const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', subdir.path, null);
+
             // Fetch git info (via SSH for remote sessions)
             let gitBranches: string[] | undefined;
             let gitTags: string[] | undefined;
@@ -1240,6 +1270,10 @@ function MaestroConsoleInner() {
               aiTabs: [initialTab],
               activeTabId: initialTabId,
               closedTabHistory: [],
+              // Terminal tab management - start with one default terminal
+              terminalTabs: [initialTerminalTab],
+              activeTerminalTabId: initialTerminalTab.id,
+              closedTerminalTabHistory: [],
               customPath: parentSession.customPath,
               customArgs: parentSession.customArgs,
               customEnvVars: parentSession.customEnvVars,
@@ -5252,6 +5286,9 @@ You are taking over this conversation. Based on the context above, provide a bri
         saveToHistory: defaultSaveToHistory
       };
 
+      // Create initial terminal tab for worktree session
+      const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', worktree.path, null);
+
       // Get SSH remote ID for remote git operations
       const sshRemoteId = parentSession.sshRemoteId || parentSession.sessionSshRemoteConfig?.remoteId || undefined;
 
@@ -5307,6 +5344,10 @@ You are taking over this conversation. Based on the context above, provide a bri
         aiTabs: [initialTab],
         activeTabId: initialTabId,
         closedTabHistory: [],
+        // Terminal tab management - start with one default terminal
+        terminalTabs: [initialTerminalTab],
+        activeTerminalTabId: initialTerminalTab.id,
+        closedTerminalTabHistory: [],
         customPath: parentSession.customPath,
         customArgs: parentSession.customArgs,
         customEnvVars: parentSession.customEnvVars,
@@ -5424,6 +5465,9 @@ You are taking over this conversation. Based on the context above, provide a bri
                 saveToHistory: defaultSaveToHistory
               };
 
+              // Create initial terminal tab for worktree session
+              const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', subdir.path, null);
+
               // Fetch git info (with SSH support)
               let gitBranches: string[] | undefined;
               let gitTags: string[] | undefined;
@@ -5477,6 +5521,10 @@ You are taking over this conversation. Based on the context above, provide a bri
                 aiTabs: [initialTab],
                 activeTabId: initialTabId,
                 closedTabHistory: [],
+                // Terminal tab management - start with one default terminal
+                terminalTabs: [initialTerminalTab],
+                activeTerminalTabId: initialTerminalTab.id,
+                closedTerminalTabHistory: [],
                 customPath: session.customPath,
                 customArgs: session.customArgs,
                 customEnvVars: session.customEnvVars,
@@ -6528,6 +6576,9 @@ You are taking over this conversation. Based on the context above, provide a bri
         saveToHistory: defaultSaveToHistory
       };
 
+      // Create initial terminal tab for new sessions
+      const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', workingDir, null);
+
       const newSession: Session = {
         id: newId,
         name,
@@ -6565,6 +6616,10 @@ You are taking over this conversation. Based on the context above, provide a bri
         aiTabs: [initialTab],
         activeTabId: initialTabId,
         closedTabHistory: [],
+        // Terminal tab management - start with one default terminal
+        terminalTabs: [initialTerminalTab],
+        activeTerminalTabId: initialTerminalTab.id,
+        closedTerminalTabHistory: [],
         // Nudge message - appended to every interactive user message
         nudgeMessage,
         // Per-agent config (path, args, env vars, model)
@@ -6668,6 +6723,9 @@ You are taking over this conversation. Based on the context above, provide a bri
       saveToHistory: defaultSaveToHistory
     };
 
+    // Create initial terminal tab for wizard session
+    const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', directoryPath, null);
+
     // Build Auto Run folder path
     const autoRunFolderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
     const firstDoc = generatedDocuments[0];
@@ -6708,6 +6766,10 @@ You are taking over this conversation. Based on the context above, provide a bri
       aiTabs: [initialTab],
       activeTabId: initialTabId,
       closedTabHistory: [],
+      // Terminal tab management - start with one default terminal
+      terminalTabs: [initialTerminalTab],
+      activeTerminalTabId: initialTerminalTab.id,
+      closedTerminalTabHistory: [],
       // Auto Run configuration from wizard
       autoRunFolderPath,
       autoRunSelectedFile,
@@ -8443,6 +8505,9 @@ You are taking over this conversation. Based on the context above, provide a bri
             saveToHistory: true
           };
 
+          // Create initial terminal tab for worktree session
+          const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', subdir.path, null);
+
           // Fetch git info for this subdirectory (with SSH support)
           let gitBranches: string[] | undefined;
           let gitTags: string[] | undefined;
@@ -8497,6 +8562,10 @@ You are taking over this conversation. Based on the context above, provide a bri
             aiTabs: [initialTab],
             activeTabId: initialTabId,
             closedTabHistory: [],
+            // Terminal tab management - start with one default terminal
+            terminalTabs: [initialTerminalTab],
+            activeTerminalTabId: initialTerminalTab.id,
+            closedTerminalTabHistory: [],
             customPath: activeSession.customPath,
             customArgs: activeSession.customArgs,
             customEnvVars: activeSession.customEnvVars,
@@ -8586,6 +8655,9 @@ You are taking over this conversation. Based on the context above, provide a bri
         saveToHistory: defaultSaveToHistory
       };
 
+      // Create initial terminal tab for worktree session
+      const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', worktreePath, null);
+
       // Fetch git info for the worktree (pass SSH remote ID for remote sessions)
       let gitBranches: string[] | undefined;
       let gitTags: string[] | undefined;
@@ -8638,6 +8710,10 @@ You are taking over this conversation. Based on the context above, provide a bri
         aiTabs: [initialTab],
         activeTabId: initialTabId,
         closedTabHistory: [],
+        // Terminal tab management - start with one default terminal
+        terminalTabs: [initialTerminalTab],
+        activeTerminalTabId: initialTerminalTab.id,
+        closedTerminalTabHistory: [],
         customPath: activeSession.customPath,
         customArgs: activeSession.customArgs,
         customEnvVars: activeSession.customEnvVars,
@@ -8720,6 +8796,9 @@ You are taking over this conversation. Based on the context above, provide a bri
       saveToHistory: defaultSaveToHistory
     };
 
+    // Create initial terminal tab for worktree session
+    const initialTerminalTab = createTerminalTab(defaultShell || 'zsh', worktreePath, null);
+
     // Fetch git info for the worktree (pass SSH remote ID for remote sessions)
     let gitBranches: string[] | undefined;
     let gitTags: string[] | undefined;
@@ -8772,6 +8851,10 @@ You are taking over this conversation. Based on the context above, provide a bri
       aiTabs: [initialTab],
       activeTabId: initialTabId,
       closedTabHistory: [],
+      // Terminal tab management - start with one default terminal
+      terminalTabs: [initialTerminalTab],
+      activeTerminalTabId: initialTerminalTab.id,
+      closedTerminalTabHistory: [],
       customPath: createWorktreeSession.customPath,
       customArgs: createWorktreeSession.customArgs,
       customEnvVars: createWorktreeSession.customEnvVars,
