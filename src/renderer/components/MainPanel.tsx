@@ -8,6 +8,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { GitStatusWidget } from './GitStatusWidget';
 import { AgentSessionsBrowser } from './AgentSessionsBrowser';
 import { TabBar } from './TabBar';
+import { TerminalView } from './TerminalView';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
 import { useGitStatus } from '../contexts/GitStatusContext';
@@ -166,6 +167,21 @@ interface MainPanelProps {
   onAtBottomChange?: (isAtBottom: boolean) => void;
   // Input blur handler for persisting AI input state
   onInputBlur?: () => void;
+
+  // Terminal tab callbacks (for xterm.js multi-tab terminal)
+  onTerminalTabSelect?: (sessionId: string, tabId: string) => void;
+  onTerminalTabClose?: (sessionId: string, tabId: string) => void;
+  onTerminalNewTab?: (sessionId: string) => void;
+  onTerminalTabRename?: (sessionId: string, tabId: string, name: string) => void;
+  onTerminalTabReorder?: (sessionId: string, fromIndex: number, toIndex: number) => void;
+  onTerminalTabStateChange?: (sessionId: string, tabId: string, state: 'idle' | 'busy' | 'exited', exitCode?: number) => void;
+  onTerminalTabCwdChange?: (sessionId: string, tabId: string, cwd: string) => void;
+  onTerminalTabPidChange?: (sessionId: string, tabId: string, pid: number) => void;
+  onTerminalRequestRename?: (tabId: string) => void;
+  // Shell settings for spawning terminal PTY
+  defaultShell?: string;
+  shellArgs?: string;
+  shellEnvVars?: Record<string, string>;
   // Prompt composer modal
   onOpenPromptComposer?: () => void;
   // Replay a user message (AI mode)
@@ -1177,6 +1193,27 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
                   toolExecutions={activeTab.wizardState.toolExecutions ?? []}
                   hasStartedGenerating={activeTab.wizardState.isGeneratingDocs || (activeTab.wizardState.generatedDocuments?.length ?? 0) > 0}
                 />
+              ) : activeSession.inputMode === 'terminal' ? (
+                /* Full terminal emulation with xterm.js and tabs */
+                <TerminalView
+                  key={`terminal-${activeSession.id}`}
+                  session={activeSession}
+                  theme={theme}
+                  fontFamily={props.fontFamily}
+                  fontSize={14}
+                  defaultShell={props.defaultShell || 'zsh'}
+                  shellArgs={props.shellArgs}
+                  shellEnvVars={props.shellEnvVars}
+                  onTabSelect={(tabId) => props.onTerminalTabSelect?.(activeSession.id, tabId)}
+                  onTabClose={(tabId) => props.onTerminalTabClose?.(activeSession.id, tabId)}
+                  onNewTab={() => props.onTerminalNewTab?.(activeSession.id)}
+                  onTabRename={(tabId, name) => props.onTerminalTabRename?.(activeSession.id, tabId, name)}
+                  onTabReorder={(from, to) => props.onTerminalTabReorder?.(activeSession.id, from, to)}
+                  onTabStateChange={(tabId, state, exitCode) => props.onTerminalTabStateChange?.(activeSession.id, tabId, state, exitCode)}
+                  onTabCwdChange={(tabId, cwd) => props.onTerminalTabCwdChange?.(activeSession.id, tabId, cwd)}
+                  onTabPidChange={(tabId, pid) => props.onTerminalTabPidChange?.(activeSession.id, tabId, pid)}
+                  onRequestRename={props.onTerminalRequestRename}
+                />
               ) : (
                 <TerminalOutput
                   key={`${activeSession.id}-${activeSession.activeTabId}`}
@@ -1219,16 +1256,16 @@ export const MainPanel = React.memo(forwardRef<MainPanelHandle, MainPanelProps>(
               )}
               </div>
 
-              {/* Input Area (hidden in mobile landscape for focused reading, and during wizard doc generation) */}
-              {!isMobileLandscape && !(activeTab?.wizardState?.isGeneratingDocs) && (
+              {/* Input Area - hidden in terminal mode (xterm handles input), mobile landscape, and during wizard doc generation */}
+              {!isMobileLandscape && !(activeTab?.wizardState?.isGeneratingDocs) && activeSession.inputMode !== 'terminal' && (
               <div data-tour="input-area">
               <InputArea
                 session={activeSession}
                 theme={theme}
                 inputValue={inputValue}
                 setInputValue={setInputValue}
-                enterToSend={activeSession.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI}
-                setEnterToSend={activeSession.inputMode === 'terminal' ? setEnterToSendTerminal : setEnterToSendAI}
+                enterToSend={enterToSendAI}
+                setEnterToSend={setEnterToSendAI}
                 stagedImages={stagedImages}
                 setStagedImages={setStagedImages}
                 setLightboxImage={setLightboxImage}

@@ -194,6 +194,16 @@ interface MaestroAPI {
         workingDirOverride?: string;
       };
     }) => Promise<{ exitCode: number }>;
+    // Spawn a terminal PTY for a specific tab (xterm.js integration)
+    spawnTerminalTab: (config: {
+      sessionId: string;
+      cwd: string;
+      shell?: string;
+      shellArgs?: string;
+      shellEnvVars?: Record<string, string>;
+      cols?: number;
+      rows?: number;
+    }) => Promise<{ pid: number; success: boolean }>;
     getActiveProcesses: () => Promise<Array<{
       sessionId: string;
       toolType: string;
