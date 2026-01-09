@@ -113,7 +113,12 @@ import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
 import { setActiveTab, createTab, closeTab, reopenClosedTab, getActiveTab, getWriteModeTab, navigateToNextTab, navigateToPrevTab, navigateToTabByIndex, navigateToLastTab, getInitialRenameValue, hasActiveWizard } from './utils/tabHelpers';
-import { createTerminalTab } from './utils/terminalTabHelpers';
+import {
+  createTerminalTab,
+  createClosedTerminalTab,
+  MAX_CLOSED_TERMINAL_TABS,
+  // getTerminalSessionId - available for future use
+} from './utils/terminalTabHelpers';
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
@@ -4205,6 +4210,236 @@ You are taking over this conversation. Based on the context above, provide a bri
       return updatedSession;
     }));
   }, []);
+
+  // ============================================================================
+  // TERMINAL TAB HANDLERS (Phase 7)
+  // These handlers manage terminal tabs within a session, similar to AI tabs.
+  // Unlike AI tab handlers, these accept sessionId explicitly since TerminalView
+  // passes the sessionId when calling these callbacks.
+  // ============================================================================
+
+  /**
+   * Select a terminal tab within a session
+   */
+  const handleTerminalTabSelect = useCallback((sessionId: string, tabId: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+      if (s.activeTerminalTabId === tabId) return s;  // Already selected
+
+      // Save scroll position for current tab (if needed in future)
+      return {
+        ...s,
+        activeTerminalTabId: tabId,
+      };
+    }));
+  }, []);
+
+  /**
+   * Close a terminal tab, killing its PTY process.
+   * Adds to closed tab history for undo.
+   */
+  const handleTerminalTabClose = useCallback((sessionId: string, tabId: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const tabs = s.terminalTabs || [];
+      const tabIndex = tabs.findIndex(t => t.id === tabId);
+      if (tabIndex === -1) return s;
+
+      // Don't allow closing the last tab
+      if (tabs.length <= 1) return s;
+
+      const closedTab = tabs[tabIndex];
+
+      // Add to closed tab history
+      const closedHistory = s.closedTerminalTabHistory || [];
+      const newClosedHistory = [
+        createClosedTerminalTab(closedTab, tabIndex),
+        ...closedHistory,
+      ].slice(0, MAX_CLOSED_TERMINAL_TABS);
+
+      // Remove the tab
+      const newTabs = tabs.filter(t => t.id !== tabId);
+
+      // Select adjacent tab if closing the active one
+      let newActiveTabId = s.activeTerminalTabId;
+      if (s.activeTerminalTabId === tabId) {
+        // Select the tab to the left, or the first tab if closing leftmost
+        const newActiveIndex = Math.min(tabIndex, newTabs.length - 1);
+        newActiveTabId = newTabs[newActiveIndex]?.id || newTabs[0]?.id;
+      }
+
+      return {
+        ...s,
+        terminalTabs: newTabs,
+        activeTerminalTabId: newActiveTabId,
+        closedTerminalTabHistory: newClosedHistory,
+      };
+    }));
+  }, []);
+
+  /**
+   * Create a new terminal tab
+   */
+  const handleTerminalNewTab = useCallback((sessionId: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const newTab = createTerminalTab(
+        defaultShell || 'zsh',
+        s.cwd,
+        null  // No custom name
+      );
+
+      const tabs = s.terminalTabs || [];
+      return {
+        ...s,
+        terminalTabs: [...tabs, newTab],
+        activeTerminalTabId: newTab.id,  // Switch to new tab
+      };
+    }));
+  }, [defaultShell]);
+
+  /**
+   * Rename a terminal tab
+   */
+  const handleTerminalTabRename = useCallback((sessionId: string, tabId: string, name: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const tabs = s.terminalTabs || [];
+      return {
+        ...s,
+        terminalTabs: tabs.map(tab =>
+          tab.id === tabId
+            ? { ...tab, name: name.trim() || null }  // Empty string -> null
+            : tab
+        ),
+      };
+    }));
+  }, []);
+
+  /**
+   * Reorder terminal tabs (drag and drop)
+   */
+  const handleTerminalTabReorder = useCallback((sessionId: string, fromIndex: number, toIndex: number) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+      if (fromIndex === toIndex) return s;
+
+      const tabs = s.terminalTabs || [];
+      const newTabs = [...tabs];
+      const [movedTab] = newTabs.splice(fromIndex, 1);
+      newTabs.splice(toIndex, 0, movedTab);
+
+      return {
+        ...s,
+        terminalTabs: newTabs,
+      };
+    }));
+  }, []);
+
+  /**
+   * Update terminal tab state (idle, busy, exited)
+   */
+  const handleTerminalTabStateChange = useCallback((
+    sessionId: string,
+    tabId: string,
+    state: 'idle' | 'busy' | 'exited',
+    exitCode?: number
+  ) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const tabs = s.terminalTabs || [];
+      return {
+        ...s,
+        terminalTabs: tabs.map(tab =>
+          tab.id === tabId
+            ? { ...tab, state, exitCode: state === 'exited' ? exitCode : undefined }
+            : tab
+        ),
+      };
+    }));
+  }, []);
+
+  /**
+   * Update terminal tab's current working directory.
+   * Called when shell changes directory (via OSC 7 or similar).
+   */
+  const handleTerminalTabCwdChange = useCallback((sessionId: string, tabId: string, cwd: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const tabs = s.terminalTabs || [];
+      return {
+        ...s,
+        terminalTabs: tabs.map(tab =>
+          tab.id === tabId ? { ...tab, cwd } : tab
+        ),
+      };
+    }));
+  }, []);
+
+  /**
+   * Update terminal tab's PID after PTY spawn
+   */
+  const handleTerminalTabPidChange = useCallback((sessionId: string, tabId: string, pid: number) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const tabs = s.terminalTabs || [];
+      return {
+        ...s,
+        terminalTabs: tabs.map(tab =>
+          tab.id === tabId ? { ...tab, pid } : tab
+        ),
+      };
+    }));
+  }, []);
+
+  /**
+   * Reopen the most recently closed terminal tab.
+   * Creates a new PTY since the old one is gone.
+   * Note: Prefixed with _ until wired to keyboard shortcut (Cmd+Shift+T equivalent).
+   */
+  const _handleReopenTerminalTab = useCallback((sessionId: string) => {
+    setSessions(prev => prev.map(s => {
+      if (s.id !== sessionId) return s;
+
+      const closedHistory = s.closedTerminalTabHistory || [];
+      if (closedHistory.length === 0) return s;
+
+      const [closedEntry, ...remainingHistory] = closedHistory;
+
+      // Create a new tab based on the closed one (but with fresh state)
+      const reopenedTab = {
+        ...closedEntry.tab,
+        id: generateId(),  // New ID since old PTY is gone
+        pid: 0,            // Will spawn new PTY
+        state: 'idle' as const,
+        exitCode: undefined,
+        createdAt: Date.now(),
+      };
+
+      // Insert at original position or at end
+      const tabs = s.terminalTabs || [];
+      const insertIndex = Math.min(closedEntry.index, tabs.length);
+      const newTabs = [...tabs];
+      newTabs.splice(insertIndex, 0, reopenedTab);
+
+      return {
+        ...s,
+        terminalTabs: newTabs,
+        activeTerminalTabId: reopenedTab.id,
+        closedTerminalTabHistory: remainingHistory,
+      };
+    }));
+  }, []);
+
+  // ============================================================================
+  // END TERMINAL TAB HANDLERS
+  // ============================================================================
 
   const handleRemoveQueuedItem = useCallback((itemId: string) => {
     setSessions(prev => prev.map(s => {
@@ -10911,6 +11146,15 @@ You are taking over this conversation. Based on the context above, provide a bri
         onExitWizard={endInlineWizard}
         // Cancel generation and exit wizard
         onWizardCancelGeneration={endInlineWizard}
+        // Terminal tab management handlers (Phase 7)
+        onTerminalTabSelect={handleTerminalTabSelect}
+        onTerminalTabClose={handleTerminalTabClose}
+        onTerminalNewTab={handleTerminalNewTab}
+        onTerminalTabRename={handleTerminalTabRename}
+        onTerminalTabReorder={handleTerminalTabReorder}
+        onTerminalTabStateChange={handleTerminalTabStateChange}
+        onTerminalTabCwdChange={handleTerminalTabCwdChange}
+        onTerminalTabPidChange={handleTerminalTabPidChange}
         // Wizard thinking toggle
         onToggleWizardShowThinking={() => {
           if (!activeSession) return;
