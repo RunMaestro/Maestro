@@ -430,6 +430,60 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
     })
   );
 
+  // Spawn a terminal PTY for a specific tab (xterm.js integration)
+  // This creates a persistent PTY shell for terminal tab emulation
+  ipcMain.handle(
+    'process:spawnTerminalTab',
+    withIpcErrorLogging(handlerOpts('spawnTerminalTab'), async (config: {
+      sessionId: string;
+      cwd: string;
+      shell?: string;
+      shellArgs?: string;
+      shellEnvVars?: Record<string, string>;
+      cols?: number;
+      rows?: number;
+    }) => {
+      const processManager = requireProcessManager(getProcessManager);
+
+      // If no shell specified, use defaults from settings
+      let shellToUse = config.shell || settingsStore.get('defaultShell', 'zsh');
+
+      // Custom shell path overrides the detected/selected shell path
+      const customShellPath = settingsStore.get('customShellPath', '');
+      if (customShellPath && customShellPath.trim()) {
+        shellToUse = customShellPath.trim();
+      }
+
+      // Get shell args and env vars from settings if not provided
+      const shellArgs = config.shellArgs || settingsStore.get('shellArgs', '');
+      const shellEnvVars = config.shellEnvVars || settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+
+      logger.info('Spawning terminal tab', LOG_CONTEXT, {
+        sessionId: config.sessionId,
+        cwd: config.cwd,
+        shell: shellToUse,
+        cols: config.cols,
+        rows: config.rows,
+      });
+
+      try {
+        const result = processManager.spawnTerminalTab({
+          sessionId: config.sessionId,
+          cwd: config.cwd,
+          shell: shellToUse,
+          shellArgs,
+          shellEnvVars,
+          cols: config.cols,
+          rows: config.rows,
+        });
+        return result;
+      } catch (error) {
+        logger.error('Failed to spawn terminal tab', LOG_CONTEXT, { error: String(error) });
+        throw error;
+      }
+    })
+  );
+
   // Run a single command and capture only stdout/stderr (no PTY echo/prompts)
   // Supports SSH remote execution when sessionSshRemoteConfig is provided
   ipcMain.handle(

@@ -120,6 +120,18 @@ contextBridge.exposeInMainWorld('maestro', {
       };
     }) => ipcRenderer.invoke('process:runCommand', config),
 
+    // Spawn a terminal PTY for a specific tab (xterm.js integration)
+    // Creates a persistent PTY shell for terminal tab emulation
+    spawnTerminalTab: (config: {
+      sessionId: string;
+      cwd: string;
+      shell?: string;
+      shellArgs?: string;
+      shellEnvVars?: Record<string, string>;
+      cols?: number;
+      rows?: number;
+    }) => ipcRenderer.invoke('process:spawnTerminalTab', config),
+
     // Get all active processes from ProcessManager
     getActiveProcesses: () => ipcRenderer.invoke('process:getActiveProcesses'),
 
@@ -1785,6 +1797,15 @@ export interface MaestroAPI {
         workingDirOverride?: string;
       };
     }) => Promise<{ exitCode: number }>;
+    spawnTerminalTab: (config: {
+      sessionId: string;
+      cwd: string;
+      shell?: string;
+      shellArgs?: string;
+      shellEnvVars?: Record<string, string>;
+      cols?: number;
+      rows?: number;
+    }) => Promise<{ pid: number; success: boolean }>;
     getActiveProcesses: () => Promise<Array<{
       sessionId: string;
       toolType: string;

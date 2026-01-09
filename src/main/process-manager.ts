@@ -514,7 +514,19 @@ export class ProcessManager extends EventEmitter {
 
         // Handle output
         ptyProcess.onData((data) => {
-          // Strip terminal control sequences and filter prompts/echoes
+          // For terminal mode with xterm.js, send RAW data - xterm handles all rendering
+          // This includes control sequences, colors, cursor movement, etc.
+          if (isTerminal) {
+            logger.debug('[ProcessManager] PTY onData (raw terminal)', 'ProcessManager', {
+              sessionId,
+              pid: ptyProcess.pid,
+              dataLength: data.length,
+            });
+            this.emit('data', sessionId, data);
+            return;
+          }
+
+          // For AI agents using PTY, apply filtering to clean up output
           const managedProc = this.processes.get(sessionId);
           const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
           logger.debug('[ProcessManager] PTY onData', 'ProcessManager', { sessionId, pid: ptyProcess.pid, dataPreview: cleanedData.substring(0, 100) });
@@ -1364,6 +1376,50 @@ export class ProcessManager extends EventEmitter {
       logger.error('[ProcessManager] Failed to spawn process', 'ProcessManager', { error: String(error) });
       return { pid: -1, success: false };
     }
+  }
+
+  /**
+   * Spawn a terminal PTY for a specific terminal tab.
+   * This is a convenience wrapper around spawn() that enforces terminal mode.
+   *
+   * @param config.sessionId - Full session ID in format {sessionId}-terminal-{tabId}
+   * @param config.cwd - Working directory for the shell
+   * @param config.shell - Shell to use (e.g., 'zsh', 'bash', '/usr/local/bin/zsh')
+   * @param config.shellArgs - Additional shell arguments
+   * @param config.shellEnvVars - Custom environment variables
+   * @param config.cols - Initial column count (default: 80)
+   * @param config.rows - Initial row count (default: 24)
+   */
+  spawnTerminalTab(config: {
+    sessionId: string;
+    cwd: string;
+    shell?: string;
+    shellArgs?: string;
+    shellEnvVars?: Record<string, string>;
+    cols?: number;
+    rows?: number;
+  }): { pid: number; success: boolean } {
+    const { sessionId, cwd, shell, shellArgs, shellEnvVars, cols = 80, rows = 24 } = config;
+
+    logger.debug('[ProcessManager] spawnTerminalTab()', 'ProcessManager', {
+      sessionId,
+      cwd,
+      shell,
+      cols,
+      rows,
+    });
+
+    // Use the existing spawn logic but force terminal mode
+    return this.spawn({
+      sessionId,
+      toolType: 'terminal',
+      cwd,
+      command: shell || (process.platform === 'win32' ? 'powershell.exe' : 'zsh'),
+      args: [],
+      shell,
+      shellArgs,
+      shellEnvVars,
+    });
   }
 
   /**
