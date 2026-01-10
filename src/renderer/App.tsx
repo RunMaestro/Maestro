@@ -3648,7 +3648,7 @@ You are taking over this conversation. Based on the context above, provide a bri
       addToast({
         type: 'warning',
         title: 'Cannot Compact',
-        message: `Context too small. Need at least ${minContextUsagePercent}% usage or ~10k tokens to compact.`,
+        message: `Context too small. Need at least ${minContextUsagePercent}% usage, ~2k tokens, or 8+ messages to compact.`,
       });
       return;
     }
@@ -4960,7 +4960,8 @@ You are taking over this conversation. Based on the context above, provide a bri
       activeSession.toolType, // Agent type for AI conversation
       activeSession.name, // Session/project name
       activeTab.id, // Tab ID for per-tab isolation
-      activeSession.id // Session ID for playbook creation
+      activeSession.id, // Session ID for playbook creation
+      activeSession.autoRunFolderPath // User-configured Auto Run folder path (if set)
     );
 
     // Rename the tab to "Wizard" immediately when wizard starts
@@ -5037,7 +5038,8 @@ You are taking over this conversation. Based on the context above, provide a bri
         activeSession.toolType,
         activeSession.name,
         newTab.id,
-        activeSession.id
+        activeSession.id,
+        activeSession.autoRunFolderPath // User-configured Auto Run folder path (if set)
       );
 
       // Show a system log entry

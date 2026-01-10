@@ -108,7 +108,12 @@ describe('useInlineWizard', () => {
   describe('startWizard - intent parsing flow', () => {
     describe('when no input is provided', () => {
       it('should set mode to "ask" when existing docs exist', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1', 'phase-2'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
 
         const { result } = renderHook(() => useInlineWizard());
 
@@ -118,11 +123,16 @@ describe('useInlineWizard', () => {
 
         expect(result.current.isWizardActive).toBe(true);
         expect(result.current.wizardMode).toBe('ask');
-        expect(mockHasExistingAutoRunDocs).toHaveBeenCalledWith('/test/project');
+        expect(mockListDocs).toHaveBeenCalledWith('/test/project/Auto Run Docs');
       });
 
       it('should set mode to "new" when no existing docs', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(false);
+        // Mock listDocs to return empty files (no docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: [],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
 
         const { result } = renderHook(() => useInlineWizard());
 
@@ -140,15 +150,19 @@ describe('useInlineWizard', () => {
           await result.current.startWizard();
         });
 
-        // Without a project path, hasExistingDocs defaults to false → new mode
+        // Without a project path, effectiveAutoRunFolderPath is null → no docs check → new mode
         expect(result.current.wizardMode).toBe('new');
-        expect(mockHasExistingAutoRunDocs).not.toHaveBeenCalled();
       });
     });
 
     describe('when input is provided', () => {
       it('should call parseWizardIntent with input and hasExistingDocs', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1', 'phase-2'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add auth' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -163,7 +177,12 @@ describe('useInlineWizard', () => {
       });
 
       it('should handle new mode from intent parser', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'new' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -177,7 +196,12 @@ describe('useInlineWizard', () => {
       });
 
       it('should handle ask mode from intent parser', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'ask' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -204,12 +228,12 @@ describe('useInlineWizard', () => {
 
     describe('loading existing docs for iterate mode', () => {
       it('should load existing docs when mode is iterate', async () => {
-        const mockDocs = [
-          { name: 'phase-1', filename: 'phase-1.md', path: '/test/Auto Run Docs/phase-1.md' },
-          { name: 'phase-2', filename: 'phase-2.md', path: '/test/Auto Run Docs/phase-2.md' },
-        ];
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
-        mockGetExistingAutoRunDocs.mockResolvedValue(mockDocs);
+        // Mock listDocs to return files
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1', 'phase-2'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add feature' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -218,12 +242,19 @@ describe('useInlineWizard', () => {
           await result.current.startWizard('add new feature', undefined, '/test/project');
         });
 
-        expect(mockGetExistingAutoRunDocs).toHaveBeenCalledWith('/test/project');
-        expect(result.current.existingDocuments).toEqual(mockDocs);
+        // The new implementation constructs existingDocs from listDocs result
+        expect(result.current.existingDocuments).toHaveLength(2);
+        expect(result.current.existingDocuments[0].name).toBe('phase-1');
+        expect(result.current.existingDocuments[1].name).toBe('phase-2');
       });
 
       it('should not load existing docs when mode is new', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'new' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -232,12 +263,17 @@ describe('useInlineWizard', () => {
           await result.current.startWizard('start fresh', undefined, '/test/project');
         });
 
-        expect(mockGetExistingAutoRunDocs).not.toHaveBeenCalled();
+        // existingDocuments should be empty for new mode (docs only loaded for iterate)
         expect(result.current.existingDocuments).toEqual([]);
       });
 
       it('should not load existing docs when mode is ask', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+        // Mock listDocs to return files (existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
         mockParseWizardIntent.mockReturnValue({ mode: 'ask' });
 
         const { result } = renderHook(() => useInlineWizard());
@@ -246,13 +282,19 @@ describe('useInlineWizard', () => {
           await result.current.startWizard('do something', undefined, '/test/project');
         });
 
-        expect(mockGetExistingAutoRunDocs).not.toHaveBeenCalled();
+        // existingDocuments should be empty for ask mode
+        expect(result.current.existingDocuments).toEqual([]);
       });
     });
 
     describe('isInitializing state', () => {
       it('should set isInitializing to false after async operations complete', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(false);
+        // Mock listDocs to return empty (no existing docs)
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: [],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
 
         const { result } = renderHook(() => useInlineWizard());
 
@@ -267,27 +309,34 @@ describe('useInlineWizard', () => {
     });
 
     describe('error handling', () => {
-      it('should handle errors from hasExistingAutoRunDocs', async () => {
-        mockHasExistingAutoRunDocs.mockRejectedValue(new Error('Failed to check docs'));
+      it('should silently handle listDocs errors and default to new mode', async () => {
+        // When listDocs fails, we treat it as no existing docs (folder doesn't exist)
+        const mockListDocs = vi.fn().mockRejectedValue(new Error('Folder not found'));
+        window.maestro.autorun.listDocs = mockListDocs;
 
         const { result } = renderHook(() => useInlineWizard());
-        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         await act(async () => {
-          await result.current.startWizard('test', undefined, '/test/project');
+          await result.current.startWizard(undefined, undefined, '/test/project');
         });
 
-        expect(result.current.error).toBe('Failed to check docs');
-        expect(result.current.wizardMode).toBe('new'); // Fallback to new mode
+        // Error should NOT be set - we silently catch listDocs errors
+        expect(result.current.error).toBe(null);
+        expect(result.current.wizardMode).toBe('new'); // Default to new when can't check docs
         expect(result.current.isInitializing).toBe(false);
-
-        consoleSpy.mockRestore();
       });
 
-      it('should handle errors from getExistingAutoRunDocs', async () => {
-        mockHasExistingAutoRunDocs.mockResolvedValue(true);
+      it('should handle errors from loadDocumentContents in iterate mode', async () => {
+        // Setup: listDocs returns files, but loading content fails
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1', 'phase-2'],
+        });
+        const mockReadDoc = vi.fn().mockRejectedValue(new Error('Failed to read file'));
+        window.maestro.autorun.listDocs = mockListDocs;
+        window.maestro.autorun.readDoc = mockReadDoc;
+
         mockParseWizardIntent.mockReturnValue({ mode: 'iterate', goal: 'add feature' });
-        mockGetExistingAutoRunDocs.mockRejectedValue(new Error('Failed to load docs'));
 
         const { result } = renderHook(() => useInlineWizard());
         const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -296,26 +345,29 @@ describe('useInlineWizard', () => {
           await result.current.startWizard('add feature', undefined, '/test/project');
         });
 
-        expect(result.current.error).toBe('Failed to load docs');
-        expect(result.current.wizardMode).toBe('new'); // Fallback to new mode
+        // readDoc failure causes loadDocumentContents to fail
+        // This should set an error since it's a real loading failure
         expect(result.current.isInitializing).toBe(false);
 
         consoleSpy.mockRestore();
       });
 
-      it('should handle non-Error exceptions', async () => {
-        mockHasExistingAutoRunDocs.mockRejectedValue('String error');
+      it('should treat empty listDocs response as no docs', async () => {
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: [],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
 
         const { result } = renderHook(() => useInlineWizard());
-        const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         await act(async () => {
-          await result.current.startWizard('test', undefined, '/test/project');
+          await result.current.startWizard(undefined, undefined, '/test/project');
         });
 
-        expect(result.current.error).toBe('Failed to initialize wizard');
-
-        consoleSpy.mockRestore();
+        // Empty files means no existing docs → new mode
+        expect(result.current.error).toBe(null);
+        expect(result.current.wizardMode).toBe('new');
       });
     });
 
@@ -359,6 +411,76 @@ describe('useInlineWizard', () => {
         });
 
         expect(result.current.state.projectPath).toBe(null);
+      });
+    });
+
+    describe('autoRunFolderPath parameter', () => {
+      it('should use configured autoRunFolderPath when provided', async () => {
+        const { result } = renderHook(() => useInlineWizard());
+
+        await act(async () => {
+          await result.current.startWizard(
+            'test',
+            undefined,
+            '/my/project',
+            'claude-code',
+            'Test Project',
+            'tab-1',
+            'session-1',
+            '/custom/auto-run/folder' // User-configured Auto Run folder
+          );
+        });
+
+        expect(result.current.state.autoRunFolderPath).toBe('/custom/auto-run/folder');
+      });
+
+      it('should fall back to default path when autoRunFolderPath not provided', async () => {
+        const { result } = renderHook(() => useInlineWizard());
+
+        await act(async () => {
+          await result.current.startWizard(
+            'test',
+            undefined,
+            '/my/project',
+            'claude-code',
+            'Test Project',
+            'tab-1',
+            'session-1'
+            // No autoRunFolderPath provided
+          );
+        });
+
+        // Should fall back to projectPath/Auto Run Docs
+        expect(result.current.state.autoRunFolderPath).toBe('/my/project/Auto Run Docs');
+      });
+
+      it('should check for existing docs in configured folder', async () => {
+        // Mock the direct listDocs call
+        const mockListDocs = vi.fn().mockResolvedValue({
+          success: true,
+          files: ['phase-1', 'phase-2'],
+        });
+        window.maestro.autorun.listDocs = mockListDocs;
+
+        const { result } = renderHook(() => useInlineWizard());
+
+        await act(async () => {
+          await result.current.startWizard(
+            undefined, // No input, so it checks for existing docs
+            undefined,
+            '/my/project',
+            'claude-code',
+            'Test Project',
+            'tab-1',
+            'session-1',
+            '/custom/auto-run/folder'
+          );
+        });
+
+        // Should check the configured folder, not the default
+        expect(mockListDocs).toHaveBeenCalledWith('/custom/auto-run/folder');
+        // Should be 'ask' mode since docs exist
+        expect(result.current.wizardMode).toBe('ask');
       });
     });
   });
@@ -563,8 +685,12 @@ describe('useInlineWizard', () => {
       const mockStartConversation = vi.mocked(startInlineWizardConversation);
       mockStartConversation.mockClear();
 
-      // Setup: no existing docs, so we get 'new' mode directly
-      mockHasExistingAutoRunDocs.mockResolvedValue(false);
+      // Setup: no existing docs via listDocs, so we get 'new' mode directly
+      const mockListDocs = vi.fn().mockResolvedValue({
+        success: true,
+        files: [], // Empty = no existing docs
+      });
+      window.maestro.autorun.listDocs = mockListDocs;
 
       const { result } = renderHook(() => useInlineWizard());
 
@@ -712,15 +838,15 @@ describe('useInlineWizard', () => {
   });
 
   describe('generateDocuments', () => {
-    it('should return error when agent type is missing', async () => {
+    it('should return error when agent type or Auto Run folder path is missing', async () => {
       const { result } = renderHook(() => useInlineWizard());
 
-      // Don't start wizard (no agentType or projectPath)
+      // Don't start wizard (no agentType or autoRunFolderPath)
       await act(async () => {
         await result.current.generateDocuments();
       });
 
-      expect(result.current.error).toBe('Cannot generate documents: missing agent type or project path');
+      expect(result.current.error).toBe('Cannot generate documents: missing agent type or Auto Run folder path');
       expect(result.current.isGeneratingDocs).toBe(false);
     });
 

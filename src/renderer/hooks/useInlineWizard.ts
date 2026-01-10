@@ -141,6 +141,8 @@ export interface InlineWizardState {
   subfolderName: string | null;
   /** Full path to the subfolder where documents are saved (e.g., "/path/Auto Run Docs/Maestro-Marketing") */
   subfolderPath: string | null;
+  /** User-configured Auto Run folder path (overrides default projectPath/Auto Run Docs) */
+  autoRunFolderPath: string | null;
 }
 
 /**
@@ -196,6 +198,7 @@ export interface UseInlineWizardReturn {
    * @param sessionName - The session name (used as project name)
    * @param tabId - The tab ID to associate the wizard with
    * @param sessionId - The session ID for playbook creation
+   * @param autoRunFolderPath - User-configured Auto Run folder path (if set, overrides default projectPath/Auto Run Docs)
    */
   startWizard: (
     naturalLanguageInput?: string,
@@ -204,7 +207,8 @@ export interface UseInlineWizardReturn {
     agentType?: ToolType,
     sessionName?: string,
     tabId?: string,
-    sessionId?: string
+    sessionId?: string,
+    autoRunFolderPath?: string
   ) => Promise<void>;
   /** End the wizard and restore previous UI state */
   endWizard: () => Promise<PreviousUIState | null>;
@@ -291,6 +295,7 @@ const initialState: InlineWizardState = {
   agentSessionId: null,
   subfolderName: null,
   subfolderPath: null,
+  autoRunFolderPath: null,
 };
 
 /**
@@ -444,15 +449,28 @@ export function useInlineWizard(): UseInlineWizardReturn {
       agentType?: ToolType,
       sessionName?: string,
       tabId?: string,
-      sessionId?: string
+      sessionId?: string,
+      configuredAutoRunFolderPath?: string
     ): Promise<void> => {
       // Tab ID is required for per-tab wizard management
       const effectiveTabId = tabId || 'default';
 
+      // Determine the Auto Run folder path to use:
+      // 1. If user has configured a specific path (configuredAutoRunFolderPath), use it
+      // 2. Otherwise, fall back to the default: projectPath/Auto Run Docs
+      const effectiveAutoRunFolderPath = configuredAutoRunFolderPath ||
+        (projectPath ? getAutoRunFolderPath(projectPath) : null);
+
       logger.info(
         `Starting inline wizard on tab ${effectiveTabId}`,
         '[InlineWizard]',
-        { projectPath, agentType, sessionName, hasInput: !!naturalLanguageInput }
+        {
+          projectPath,
+          agentType,
+          sessionName,
+          hasInput: !!naturalLanguageInput,
+          autoRunFolderPath: effectiveAutoRunFolderPath,
+        }
       );
 
       // Store current UI state for later restoration (per-tab)
@@ -491,13 +509,22 @@ export function useInlineWizard(): UseInlineWizardReturn {
         agentSessionId: null,
         subfolderName: null,
         subfolderPath: null,
+        autoRunFolderPath: effectiveAutoRunFolderPath,
       }));
 
       try {
-        // Step 1: Check for existing Auto Run documents
-        const hasExistingDocs = projectPath
-          ? await hasExistingAutoRunDocs(projectPath)
-          : false;
+        // Step 1: Check for existing Auto Run documents in the configured folder
+        // Use the effective Auto Run folder path (user-configured or default)
+        let hasExistingDocs = false;
+        if (effectiveAutoRunFolderPath) {
+          try {
+            const result = await window.maestro.autorun.listDocs(effectiveAutoRunFolderPath);
+            hasExistingDocs = result.success && result.files && result.files.length > 0;
+          } catch {
+            // Folder doesn't exist or can't be read - no existing docs
+            hasExistingDocs = false;
+          }
+        }
 
         // Step 2: Determine mode based on input and existing docs
         let mode: InlineWizardMode;
@@ -524,23 +551,33 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
         // Step 3: If iterate mode, load existing docs with content for context
         let docsWithContent: ExistingDocumentWithContent[] = [];
-        if (mode === 'iterate' && projectPath) {
-          existingDocs = await getExistingAutoRunDocs(projectPath);
-          const autoRunFolderPath = getAutoRunFolderPath(projectPath);
-          docsWithContent = await loadDocumentContents(existingDocs, autoRunFolderPath);
+        if (mode === 'iterate' && effectiveAutoRunFolderPath) {
+          // List docs from the configured Auto Run folder
+          try {
+            const result = await window.maestro.autorun.listDocs(effectiveAutoRunFolderPath);
+            if (result.success && result.files) {
+              existingDocs = result.files.map((name: string) => ({
+                name,
+                filename: `${name}.md`,
+                path: `${effectiveAutoRunFolderPath}/${name}.md`,
+              }));
+            }
+          } catch {
+            existingDocs = [];
+          }
+          docsWithContent = await loadDocumentContents(existingDocs, effectiveAutoRunFolderPath);
         }
 
         // Step 4: Initialize conversation session (only for 'new' or 'iterate' modes)
-        if ((mode === 'new' || mode === 'iterate') && agentType && projectPath) {
-          const autoRunFolderPath = getAutoRunFolderPath(projectPath);
+        if ((mode === 'new' || mode === 'iterate') && agentType && effectiveAutoRunFolderPath) {
           const session = startInlineWizardConversation({
             mode,
             agentType,
-            directoryPath: projectPath,
+            directoryPath: projectPath || effectiveAutoRunFolderPath,
             projectName: sessionName || 'Project',
             goal: goal || undefined,
             existingDocs: docsWithContent.length > 0 ? docsWithContent : undefined,
-            autoRunFolderPath,
+            autoRunFolderPath: effectiveAutoRunFolderPath,
           });
 
           // Store conversation session per-tab
@@ -555,6 +592,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
               mode,
               goal: goal || null,
               existingDocsCount: docsWithContent.length,
+              autoRunFolderPath: effectiveAutoRunFolderPath,
             }
           );
         }
@@ -661,17 +699,20 @@ export function useInlineWizard(): UseInlineWizardReturn {
         // If we're in 'ask' mode and don't have a session, auto-create one with 'new' mode
         // This happens when user types directly instead of using the mode selection modal
         const currentState = tabStatesRef.current.get(tabId);
-        if (currentState?.mode === 'ask' && currentState.agentType && currentState.projectPath) {
+        // Use stored autoRunFolderPath from state (configured by user or default)
+        const effectiveAutoRunFolderPath = currentState?.autoRunFolderPath ||
+          (currentState?.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+
+        if (currentState?.mode === 'ask' && currentState.agentType && effectiveAutoRunFolderPath) {
           console.log('[useInlineWizard] Auto-creating session for direct message in ask mode');
-          const autoRunFolderPath = getAutoRunFolderPath(currentState.projectPath);
           session = startInlineWizardConversation({
             mode: 'new',
             agentType: currentState.agentType,
-            directoryPath: currentState.projectPath,
+            directoryPath: currentState.projectPath || effectiveAutoRunFolderPath,
             projectName: currentState.sessionName || 'Project',
             goal: currentState.goal || undefined,
             existingDocs: undefined,
-            autoRunFolderPath,
+            autoRunFolderPath: effectiveAutoRunFolderPath,
           });
           conversationSessionsMap.current.set(tabId, session);
           // Update mode to 'new' since we're proceeding with a new plan
@@ -682,6 +723,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
             mode: currentState?.mode,
             agentType: currentState?.agentType,
             projectPath: currentState?.projectPath,
+            autoRunFolderPath: currentState?.autoRunFolderPath,
           });
           setTabState(tabId, (prev) => ({
             ...prev,
@@ -835,16 +877,19 @@ export function useInlineWizard(): UseInlineWizardReturn {
     // If transitioning from 'ask' to 'new' or 'iterate', we need to create the conversation session
     if (currentState?.mode === 'ask' && (newMode === 'new' || newMode === 'iterate') && !conversationSessionsMap.current.has(tabId)) {
       // Create conversation session if we have the required info
-      if (currentState.agentType && currentState.projectPath) {
-        const autoRunFolderPath = getAutoRunFolderPath(currentState.projectPath);
+      // Use the stored autoRunFolderPath from state (configured by user or default)
+      const effectiveAutoRunFolderPath = currentState.autoRunFolderPath ||
+        (currentState.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+
+      if (currentState.agentType && effectiveAutoRunFolderPath) {
         const session = startInlineWizardConversation({
           mode: newMode,
           agentType: currentState.agentType,
-          directoryPath: currentState.projectPath,
+          directoryPath: currentState.projectPath || effectiveAutoRunFolderPath,
           projectName: currentState.sessionName || 'Project',
           goal: currentState.goal || undefined,
           existingDocs: undefined, // Will be loaded separately if needed
-          autoRunFolderPath,
+          autoRunFolderPath: effectiveAutoRunFolderPath,
         });
 
         conversationSessionsMap.current.set(tabId, session);
@@ -1045,9 +1090,13 @@ export function useInlineWizard(): UseInlineWizardReturn {
         setCurrentTabId(tabId);
       }
 
+      // Get the effective Auto Run folder path (stored in state from startWizard)
+      const effectiveAutoRunFolderPath = currentState?.autoRunFolderPath ||
+        (currentState?.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
+
       // Validate we have the required state
-      if (!currentState?.agentType || !currentState?.projectPath) {
-        const errorMsg = 'Cannot generate documents: missing agent type or project path';
+      if (!currentState?.agentType || !effectiveAutoRunFolderPath) {
+        const errorMsg = 'Cannot generate documents: missing agent type or Auto Run folder path';
         console.error('[useInlineWizard]', errorMsg);
         setTabState(tabId, (prev) => ({ ...prev, error: errorMsg }));
         callbacks?.onError?.(errorMsg);
@@ -1066,19 +1115,16 @@ export function useInlineWizard(): UseInlineWizardReturn {
       }));
 
       try {
-        // Get the Auto Run folder path
-        const autoRunFolderPath = getAutoRunFolderPath(currentState.projectPath);
-
-        // Call the document generation service
+        // Call the document generation service with the effective Auto Run folder path
         const result = await generateInlineDocuments({
           agentType: currentState.agentType,
-          directoryPath: currentState.projectPath,
+          directoryPath: currentState.projectPath || effectiveAutoRunFolderPath,
           projectName: currentState.sessionName || 'Project',
           conversationHistory: currentState.conversationHistory,
           existingDocuments: currentState.existingDocuments,
           mode: currentState.mode === 'iterate' ? 'iterate' : 'new',
           goal: currentState.goal || undefined,
-          autoRunFolderPath,
+          autoRunFolderPath: effectiveAutoRunFolderPath,
           sessionId: currentState.sessionId || undefined,
           callbacks: {
             onStart: () => {
