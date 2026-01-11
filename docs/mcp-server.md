@@ -6,11 +6,11 @@ icon: plug
 
 # MCP Server
 
-Maestro provides a hosted MCP (Model Context Protocol) server that allows AI applications to search and retrieve information from the Maestro documentation.
+Maestro provides a hosted MCP (Model Context Protocol) server that allows AI applications to search and retrieve information from the Maestro documentation. The server is automatically generated and hosted by [Mintlify](https://mintlify.com).
 
 ## Overview
 
-The MCP server exposes a `SearchMaestro` tool that enables AI assistants to find relevant documentation, code examples, API references, and guides from the Maestro knowledge base.
+The MCP server exposes a `SearchMaestro` tool that enables AI assistants to find relevant documentation, code examples, API references, and guides from the Maestro knowledge base. When connected, your AI assistant can proactively search the documentation while generating responses—not just when explicitly asked.
 
 **MCP Server URL:**
 ```
@@ -63,6 +63,28 @@ Add to your Claude Code MCP settings:
 }
 ```
 
+### Cursor
+
+In Cursor settings, go to **Features > MCP Servers** and add:
+
+```
+https://docs.runmaestro.ai/mcp
+```
+
+### VS Code
+
+For VS Code with MCP support, add to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "maestro": {
+      "url": "https://docs.runmaestro.ai/mcp"
+    }
+  }
+}
+```
+
 ### Other MCP-Compatible Applications
 
 Any application that supports the Model Context Protocol can connect using the server URL:
@@ -84,9 +106,14 @@ Once connected, your AI assistant can use the `SearchMaestro` tool to answer que
 ## Technical Details
 
 - **Protocol**: Model Context Protocol (MCP)
-- **Transport**: HTTP/HTTPS
+- **Transport**: HTTP/HTTPS (Streamable HTTP)
 - **Authentication**: None required (public read-only access)
 - **Rate Limits**: Standard API rate limits apply
+- **Hosting**: Automatically managed by Mintlify
+
+<Note>
+The MCP server only indexes pages included in the documentation navigation. Hidden or excluded pages are not searchable.
+</Note>
 
 ## Related Resources
 

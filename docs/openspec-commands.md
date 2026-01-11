@@ -16,7 +16,7 @@ Maestro offers two complementary spec-driven development tools:
 | **Workflow** | Proposal → Apply → Archive | Constitution → Specify → Plan → Tasks |
 | **Best For** | Iterative changes, brownfield projects | New features, greenfield development |
 | **Output** | Change proposals with spec deltas | Feature specifications and task lists |
-| **Directory** | `openspec/` | Project root or designated folder |
+| **Directory** | `openspec/` | `specs/` or project root |
 
 **Use OpenSpec when:**
 - Making iterative changes to existing features
@@ -40,15 +40,16 @@ OpenSpec follows a three-stage cycle:
 
 Create a change proposal before writing any code:
 
-1. Reviews existing specs and active changes
-2. Scaffolds `proposal.md`, `tasks.md`, and optional `design.md`
-3. Creates spec deltas showing what will be ADDED, MODIFIED, or REMOVED
-4. Validates the proposal structure
+1. Reviews `openspec/project.md` for project conventions
+2. Runs `openspec list` to see active changes and `openspec list --specs` for existing capabilities
+3. Scaffolds `proposal.md`, `tasks.md`, and optional `design.md`
+4. Creates spec deltas showing what will be ADDED, MODIFIED, or REMOVED
+5. Validates with `openspec validate <change-id> --strict`
 
 **Creates:** A `openspec/changes/<change-id>/` directory with:
-- `proposal.md` - Why and what
-- `tasks.md` - Implementation checklist
-- `specs/<capability>/spec.md` - Spec deltas
+- `proposal.md` — Why and what
+- `tasks.md` — Implementation checklist
+- `specs/<capability>/spec.md` — Spec deltas
 
 ### Stage 2: Apply (`/openspec.apply`)
 
@@ -67,20 +68,23 @@ After deployment, archive the completed change:
 
 1. Moves `changes/<name>/` to `changes/archive/YYYY-MM-DD-<name>/`
 2. Updates source-of-truth specs if capabilities changed
-3. Validates the archived change
+3. Validates the archived change with `openspec validate --strict`
+
+**CLI command:** `openspec archive <change-id> --yes` (use `--skip-specs` for tooling-only changes that don't affect capabilities)
 
 ## Maestro-Specific Commands
 
-### `/openspec.implement` - Generate Auto Run Documents
+### `/openspec.implement` — Generate Auto Run Documents
 
 Bridges OpenSpec with Maestro's Auto Run:
 
 1. Reads the proposal and tasks from a change
-2. Converts tasks into Auto Run document format
-3. Saves to `Auto Run Docs/` with task checkboxes
-4. Supports worktree mode for parallel execution
+2. Converts tasks into Auto Run document format with phases
+3. Saves to `Auto Run Docs/` with task checkboxes (filename: `OpenSpec-<change-id>-Phase-XX-[Description].md`)
+4. Preserves task IDs (T001, T002, etc.) for traceability
+5. Groups related tasks into logical phases (5–15 tasks each)
 
-### `/openspec.help` - Workflow Overview
+### `/openspec.help` — Workflow Overview
 
 Get help with OpenSpec concepts and Maestro integration.
 
@@ -126,14 +130,29 @@ The system SHALL provide...
 **Migration**: [How to handle]
 ```
 
+## OpenSpec CLI Commands
+
+The OpenSpec CLI provides these essential commands:
+
+| Command | Purpose |
+|---------|---------|
+| `openspec list` | Display active changes in `changes/` |
+| `openspec list --specs` | List existing capability specs |
+| `openspec show <change-id>` | View change or spec details |
+| `openspec validate <change-id> --strict` | Comprehensive validation |
+| `openspec archive <change-id> --yes` | Archive after deployment |
+| `openspec spec list --long` | Enumerate all specifications |
+
 ## Viewing & Managing Commands
 
 Access OpenSpec commands via **Settings → AI Commands** tab. Here you can:
 
-- **View all commands** with descriptions
-- **Check for Updates** to pull the latest workflow from GitHub
-- **Expand commands** to see their full prompts
-- **Customize prompts** (modifications are preserved across updates)
+- **View all commands** — Click the chevron to expand and see the full prompt
+- **Check for Updates** — Pull the latest workflow from GitHub
+- **Edit prompts** — Customize prompts for your workflow
+- **Reset to default** — Restore modified prompts to bundled version
+
+Commands marked with a **Maestro** badge are Maestro-specific additions to the upstream workflow.
 
 <Frame>
   <img src="/screenshots/openspec-commands.png" alt="OpenSpec commands in the AI Commands panel" />
@@ -150,9 +169,10 @@ OpenSpec prompts are synced from the [Fission-AI/OpenSpec repository](https://gi
 
 ## Tips for Best Results
 
-- **Proposal first** - Never start implementation without an approved proposal
-- **Keep changes focused** - One logical change per proposal
-- **Use meaningful IDs** - `add-user-auth` not `change-1`
-- **Include scenarios** - Every requirement needs at least one `#### Scenario:`
-- **Validate often** - Run `openspec validate --strict` before sharing
-- **Archive promptly** - Archive changes after deployment to keep `changes/` clean
+- **Proposal first** — Never start implementation without an approved proposal
+- **Keep changes focused** — One logical change per proposal
+- **Use verb-led IDs** — `add-user-auth`, `update-api-schema`, `remove-legacy-handler`
+- **Include scenarios** — Every requirement needs at least one `#### Scenario:` block
+- **Check existing work** — Run `openspec list` before creating proposals to avoid conflicts
+- **Validate early** — Run `openspec validate <change-id> --strict` before sharing
+- **Archive promptly** — Archive changes after deployment to keep `changes/` clean

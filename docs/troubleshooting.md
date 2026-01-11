@@ -13,11 +13,12 @@ Maestro maintains detailed system logs that help diagnose issues. Access them vi
 - **Menu:** Click the hamburger menu (☰) in the Left Panel → "System Logs"
 
 The **System Log Viewer** shows:
-- Timestamped log entries with severity levels (info, warn, error)
-- Filterable by log level and searchable text
+- Timestamped log entries with severity levels (debug, info, warn, error, toast, autorun)
+- Filterable by log level via clickable level pills and searchable text (`Cmd+F` / `Ctrl+F`)
 - Real-time updates as new logs are generated
+- Detail view with full message content and source module
 
-**Log levels** can be configured in **Settings** → **General** → **System Log Level**. Higher levels capture more detail but may impact performance.
+**Log levels** can be configured in **Settings** → **General** → **System Log Level**. Higher levels show fewer logs — Debug shows all logs, Error shows only errors.
 
 ## Process Monitor
 
@@ -27,13 +28,53 @@ Monitor all running processes spawned by Maestro:
 - **Quick Actions:** `Cmd+K` / `Ctrl+K` → "View System Processes"
 - **Menu:** Click the hamburger menu (☰) in the Left Panel → "Process Monitor"
 
-The **Process Monitor** displays:
-- All active AI agent processes and their PIDs
-- Terminal/shell processes for each agent
-- Process uptime and resource information
-- Ability to terminate stuck processes
+The **Process Monitor** displays a hierarchical tree view:
+- **Groups** — Session groups containing their member sessions
+- **Sessions** — Each session shows its AI agent and terminal processes
+- **Process details** — PID, runtime, working directory, Claude session ID (for AI processes)
+- **Group Chat processes** — Moderator and participant processes for active group chats
+- **Wizard processes** — Active wizard conversations and playbook generation
+
+**Process types shown:**
+| Type | Description |
+|------|-------------|
+| AI Agent | Main Claude Code (or other agent) process |
+| Terminal | Shell process for the session |
+| Batch | Auto Run batch processing agent |
+| Synopsis | Context compaction synopsis generation |
+| Moderator | Group chat moderator process |
+| Participant | Group chat participant agent |
+| Wizard | Wizard conversation process |
+| Wizard Gen | Playbook document generation process |
+
+**Features:**
+- Click a process row to view detailed information (command, arguments, session ID)
+- Double-click or press `Enter` to navigate to the session/tab
+- `K` or `Delete` to kill a selected process
+- `R` to refresh the process list
+- Expand/collapse buttons in header to control tree visibility
 
 This is useful when an agent becomes unresponsive or you need to diagnose process-related issues.
+
+## Agent Errors
+
+When an AI agent encounters an error, Maestro displays a modal with clear recovery options. Common error types include:
+
+| Error Type | Description | Recovery Options |
+|------------|-------------|------------------|
+| **Authentication Required** | API key expired or invalid | Re-authenticate, check API key settings |
+| **Context Limit Reached** | Conversation exceeded token limit | Start new session, compact context |
+| **Rate Limit Exceeded** | Too many API requests | Wait and retry, reduce request frequency |
+| **Connection Error** | Network connectivity issue | Check internet, retry connection |
+| **Agent Error** | Agent process crashed unexpectedly | Restart agent, start new session |
+| **Permission Denied** | File or operation access denied | Check permissions, run with appropriate access |
+
+Each error modal shows:
+- Error type and description
+- Agent and session context
+- Timestamp of when the error occurred
+- Collapsible JSON details for debugging
+- Recovery action buttons specific to the error type
 
 ## Debug Package
 
@@ -49,17 +90,29 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 
 The debug package collects metadata and configuration — never your conversations or sensitive data:
 
+**Always included:**
+
 | File | Contents |
 |------|----------|
 | `system-info.json` | OS, CPU, memory, Electron/Node versions, app uptime |
 | `settings.json` | App preferences with sensitive values redacted |
 | `agents.json` | Agent configurations, availability, and capability flags |
 | `external-tools.json` | Shell, git, GitHub CLI, and cloudflared availability |
-| `sessions.json` | Session metadata (names, states, tab counts — no conversations) |
+| `windows-diagnostics.json` | Windows-specific diagnostics (minimal on other platforms) |
+| `groups.json` | Session group configurations |
 | `processes.json` | Active process information |
+| `web-server.json` | Web server and Cloudflare tunnel status |
+| `storage-info.json` | Storage paths and sizes |
+
+**Optional (toggleable in UI):**
+
+| File | Contents |
+|------|----------|
+| `sessions.json` | Session metadata (names, states, tab counts — no conversations) |
 | `logs.json` | Recent system log entries |
 | `errors.json` | Current error states and recent error events |
-| `storage-info.json` | Storage paths and sizes |
+| `group-chats.json` | Group chat metadata (participant lists, routing — no messages) |
+| `batch-state.json` | Auto Run state and document queue |
 
 ### Privacy Protections
 

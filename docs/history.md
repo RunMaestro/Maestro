@@ -27,13 +27,15 @@ Auto entries are created automatically when Auto Run completes a task. Each entr
 
 ### User Entries
 
-User entries are created in two ways:
+User entries are created in three ways:
 
 1. **History Toggle** — Enable the **History** pill in the AI input box. Every prompt-response cycle automatically creates a user history entry.
 
 2. **`/history` Command** — Run `/history` to create a synopsis entry covering all activity since the last time you ran the command. This is useful for periodic summaries without logging every single interaction.
 
-**Toggle the default History behavior** in Settings → toggle "Save to History by default".
+3. **`/clear` Command** — Running `/clear` automatically creates a history entry before clearing the conversation, preserving a synopsis of your work.
+
+**Toggle the default History behavior** in Settings → General → "Enable 'History' by default for new tabs".
 
 ## Filtering History
 
@@ -46,20 +48,24 @@ Use the **AUTO** and **USER** filter buttons at the top of the History panel to 
 
 ### By Keyword
 
-Type in the search box to filter entries by keyword. The search matches against:
+Press `Cmd+F` / `Ctrl+F` to open the search box, or click in the filter area to type. The search matches against:
 - Entry summaries
-- Session IDs
-- Any text content in the entry
+- Session names and IDs
+- Full response content
 
 ### By Time Range
 
 The **Graph View** at the top shows activity distribution over time. **Right-click the graph** to change the time range:
-- Last 24 hours
-- Last 7 days
-- Last 30 days
+- 24 hours
+- 72 hours
+- 1 week
+- 2 weeks
+- 1 month
+- 6 months
+- 1 year
 - All time
 
-The graph bars are clickable — click a time period to jump to entries from that window.
+The graph bars are clickable — click a time period to jump to entries from that window. Hover over any bar to see the exact count and time range.
 
 ## Entry Details
 
@@ -77,9 +83,9 @@ The detail view shows:
 
 ### Navigation
 
-- **Prev / Next** buttons to navigate between entries
+- **Prev / Next** buttons to navigate between entries (or use `←` / `→` arrow keys)
 - **Close** button to return to the list view
-- **Delete** button to remove the entry
+- **Delete** button to remove the entry (with confirmation dialog)
 
 ## Validating Entries
 
@@ -115,12 +121,31 @@ This is especially powerful for Auto Run tasks — you can pick up exactly where
 
 ## Keyboard Navigation
 
+### List View
+
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Navigate between entries |
 | `Enter` | Open detail view for selected entry |
+| `Cmd+F` / `Ctrl+F` | Open search filter |
+| `Esc` | Clear selection or close search |
+
+### Detail View
+
+| Key | Action |
+|-----|--------|
+| `←` / `→` | Navigate to previous/next entry |
 | `Esc` | Close detail view, return to list |
 
 ## Storage
 
-History is stored per-session in `~/Library/Application Support/Maestro/history/`. Each session maintains up to 5,000 entries. History files can be passed to AI agents as context for understanding past work patterns.
+History is stored per-session in JSON files within the `history/` subdirectory of your Maestro data folder:
+- **macOS**: `~/Library/Application Support/maestro/history/<sessionId>.json`
+- **Windows**: `%APPDATA%/maestro/history/<sessionId>.json`
+- **Linux**: `~/.config/maestro/history/<sessionId>.json`
+
+Each session maintains up to **5,000 entries**. History files can be passed to AI agents as context for understanding past work patterns.
+
+## Help Panel
+
+Click the **?** button in the History panel header to open a detailed guide explaining all features, entry types, status indicators, and keyboard shortcuts.

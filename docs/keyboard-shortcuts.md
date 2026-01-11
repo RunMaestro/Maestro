@@ -15,21 +15,31 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|
 | Quick Actions | `Cmd+K` | `Ctrl+K` |
-| Toggle Sidebar | `Cmd+B` | `Ctrl+B` |
-| Toggle Right Panel | `Cmd+\` | `Ctrl+\` |
+| Toggle Left Panel | `Opt+Cmd+Left` | `Alt+Ctrl+Left` |
+| Toggle Right Panel | `Opt+Cmd+Right` | `Alt+Ctrl+Right` |
 | New Agent | `Cmd+N` | `Ctrl+N` |
-| Kill Agent | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
+| New Agent Wizard | `Cmd+Shift+N` | `Ctrl+Shift+N` |
+| New Group Chat | `Opt+Cmd+C` | `Alt+Ctrl+C` |
+| Remove Agent | `Cmd+Shift+Backspace` | `Ctrl+Shift+Backspace` |
 | Move Agent to Group | `Cmd+Shift+M` | `Ctrl+Shift+M` |
 | Previous Agent | `Cmd+[` | `Ctrl+[` |
 | Next Agent | `Cmd+]` | `Ctrl+]` |
+| Navigate Back | `Cmd+Shift+,` | `Ctrl+Shift+,` |
+| Navigate Forward | `Cmd+Shift+.` | `Ctrl+Shift+.` |
 | Jump to Agent (1-9, 0=10th) | `Opt+Cmd+NUMBER` | `Alt+Ctrl+NUMBER` |
-| Switch AI/Command Terminal | `Cmd+J` | `Ctrl+J` |
+| Switch AI/Shell Mode | `Cmd+J` | `Ctrl+J` |
+| Toggle Input/Output Focus | `Cmd+.` | `Ctrl+.` |
+| Focus Left Panel | `Cmd+Shift+A` | `Ctrl+Shift+A` |
 | Show Shortcuts Help | `Cmd+/` | `Ctrl+/` |
 | Open Settings | `Cmd+,` | `Ctrl+,` |
 | Open Agent Settings | `Opt+Cmd+,` | `Alt+Ctrl+,` |
-| View All Agent Sessions | `Cmd+Shift+L` | `Ctrl+Shift+L` |
+| View Agent Sessions | `Cmd+Shift+L` | `Ctrl+Shift+L` |
+| System Log Viewer | `Opt+Cmd+L` | `Alt+Ctrl+L` |
+| System Process Monitor | `Opt+Cmd+P` | `Alt+Ctrl+P` |
 | Usage Dashboard | `Opt+Cmd+U` | `Alt+Ctrl+U` |
 | Jump to Bottom | `Cmd+Shift+J` | `Ctrl+Shift+J` |
+| Toggle Bookmark | `Cmd+Shift+B` | `Ctrl+Shift+B` |
+| Maestro Symphony | `Cmd+Shift+Y` | `Ctrl+Shift+Y` |
 | Cycle Focus Areas | `Tab` | `Tab` |
 | Cycle Focus Backwards | `Shift+Tab` | `Shift+Tab` |
 
@@ -40,8 +50,12 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Go to Files Tab | `Cmd+Shift+F` | `Ctrl+Shift+F` |
 | Go to History Tab | `Cmd+Shift+H` | `Ctrl+Shift+H` |
 | Go to Auto Run Tab | `Cmd+Shift+1` | `Ctrl+Shift+1` |
-| Toggle Markdown Raw/Preview | `Cmd+E` | `Ctrl+E` |
+| Toggle Edit/Preview (Markdown) | `Cmd+E` | `Ctrl+E` |
+| Toggle Auto Run Expanded | `Cmd+Shift+E` | `Ctrl+Shift+E` |
 | Insert Checkbox (Auto Run) | `Cmd+L` | `Ctrl+L` |
+| View Git Diff | `Cmd+Shift+D` | `Ctrl+Shift+D` |
+| View Git Log | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Fuzzy File Search | `Cmd+G` | `Ctrl+G` |
 
 ## AI Tab Shortcuts
 
@@ -49,10 +63,14 @@ These shortcuts work in AI Terminal mode and affect the current tab:
 
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|
-| Toggle History | `Cmd+S` | `Ctrl+S` |
+| Toggle Save to History | `Cmd+S` | `Ctrl+S` |
 | Toggle Read-Only Mode | `Cmd+R` | `Ctrl+R` |
 | Toggle Show Thinking | `Cmd+Shift+K` | `Ctrl+Shift+K` |
+| Toggle Tab Star | `Cmd+Shift+S` | `Ctrl+Shift+S` |
+| Toggle Tab Unread | `Cmd+Shift+U` | `Ctrl+Shift+U` |
+| Filter Unread Tabs | `Cmd+U` | `Ctrl+U` |
 | Open Image Carousel | `Cmd+Y` | `Ctrl+Y` |
+| Open Prompt Composer | `Cmd+Shift+P` | `Ctrl+Shift+P` |
 
 Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggles) for details on configuring defaults.
 
@@ -71,6 +89,8 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Next Tab | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 | Tab Switcher | `Opt+Cmd+T` | `Alt+Ctrl+T` |
 | Rename Tab | `Cmd+Shift+R` | `Ctrl+Shift+R` |
+| Go to Tab 1-9 | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
+| Go to Last Tab | `Cmd+0` | `Ctrl+0` |
 
 ### Tab Switcher
 
@@ -139,12 +159,14 @@ In AI mode, use `@` to reference files in your prompts:
 
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|
-| Go to File (fuzzy finder) | `Cmd+G` | `Ctrl+G` |
 | Navigate Agents | `Up/Down Arrow` while in sidebar | `Up/Down Arrow` while in sidebar |
 | Select Agent | `Enter` while in sidebar | `Enter` while in sidebar |
-| Open Session Filter | `Cmd+F` while in sidebar | `Ctrl+F` while in sidebar |
+| Filter Sessions (in Left Panel) | `Cmd+F` | `Ctrl+F` |
 | Navigate Files | `Up/Down Arrow` while in file tree | `Up/Down Arrow` while in file tree |
-| Open File Tree Filter | `Cmd+F` while in file tree | `Ctrl+F` while in file tree |
+| Filter Files (in Files tab) | `Cmd+F` | `Ctrl+F` |
+| Filter History (in History tab) | `Cmd+F` | `Ctrl+F` |
+| Search Output (in Main Window) | `Cmd+F` | `Ctrl+F` |
+| Search System Logs | `Cmd+F` | `Ctrl+F` |
 | Open File Preview | `Enter` on selected file | `Enter` on selected file |
 | Close Preview/Filter/Modal | `Esc` | `Esc` |
 
@@ -154,7 +176,8 @@ In AI mode, use `@` to reference files in your prompts:
 |--------|-------|---------------|
 | Copy File Path | `Cmd+P` | `Ctrl+P` |
 | Open Search | `Cmd+F` | `Ctrl+F` |
-| Open Document Graph | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Go Back | `Cmd+Left` | `Ctrl+Left` |
+| Go Forward | `Cmd+Right` | `Ctrl+Right` |
 | Scroll | `Up/Down Arrow` | `Up/Down Arrow` |
 | Close | `Esc` | `Esc` |
 
@@ -163,9 +186,9 @@ In AI mode, use `@` to reference files in your prompts:
 | Action | Key |
 |--------|-----|
 | Navigate to connected nodes | `Arrow Keys` |
-| Focus/select a node | `Enter` |
-| Open the selected document | `O` |
-| Cycle through connected nodes | `Tab` |
+| Re-center on node (document) | `Enter` |
+| Open URL (external link) | `Enter` |
+| Open document in File Preview | `O` |
 | Close the graph | `Esc` |
 
 ## Customizing Shortcuts
@@ -192,18 +215,18 @@ Most shortcuts can be remapped to fit your workflow:
 
 Maestro tracks your keyboard shortcut usage and rewards you for becoming a power user. As you discover and use more shortcuts, you'll level up through 5 mastery levels:
 
-| Level | Title | Shortcuts Used |
-|:-----:|-------|----------------|
-| 0 | **Novice** | 0-19% |
-| 1 | **Apprentice** | 20-39% |
-| 2 | **Journeyman** | 40-59% |
-| 3 | **Expert** | 60-79% |
-| 4 | **Master** | 80-100% |
+| Level | Title | Threshold |
+|:-----:|-------|-----------|
+| 0 | **Beginner** | 0% |
+| 1 | **Student** | 25% |
+| 2 | **Performer** | 50% |
+| 3 | **Virtuoso** | 75% |
+| 4 | **Keyboard Maestro** | 100% |
 
 **Tracking your progress:**
-- Your current mastery level is shown in the **status bar** at the bottom of the window
-- Hover over the keyboard icon to see which shortcuts you've used and which remain to be discovered
-- Open the **Shortcuts Help** modal (`Cmd+/` / `Ctrl+/`) to see your mastery percentage and get hints
+- Open the **Shortcuts Help** panel (`Cmd+/` / `Ctrl+/`) to see your mastery percentage and current level
+- Each shortcut displays a checkmark once you've used it
+- A progress bar shows how many shortcuts you've mastered out of the total
 - When you reach a new level, you'll see a celebration with confetti
 
 ![Keyboard Shortcuts Modal](./screenshots/shortcuts-modal.png)

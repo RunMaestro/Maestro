@@ -15,7 +15,7 @@ SSH Remote Execution wraps agent commands in SSH, executing them on a configured
 - Access tools or SDKs installed only on specific servers
 - Work with codebases that require particular OS or architecture
 - Execute agents in secure/isolated environments
-- Coordinate multiple agents across different machines in [Group Chat](./group-chat)
+- Coordinate multiple agents across different machines in [Group Chat](/group-chat)
 - Run Auto Run playbooks on remote projects
 
 ## Configuring SSH Remotes
@@ -88,8 +88,8 @@ With the above config, you can:
 #### Field Labels
 
 When using SSH config mode, field labels indicate which values are optional:
-- **Username (optional override)** — leave empty to use SSH config's `User`
-- **Private Key Path (optional override)** — leave empty to use SSH config's `IdentityFile`
+- **Username (optional)** — leave empty to use SSH config's `User`
+- **Private Key Path (optional)** — leave empty to use SSH config's `IdentityFile`
 
 #### Clearing SSH Config Mode
 
@@ -109,39 +109,40 @@ A successful test shows the remote hostname. Failed tests display specific error
 ### Setting a Global Default
 
 Click the checkmark icon next to any remote to set it as the **global default**. When set:
-- All agents use this remote by default
-- Individual agents can override this setting
-- The default badge appears next to the remote name
+- The "Default" badge appears next to the remote name
+- The default remote is highlighted in selection dropdowns
+- New sessions still require explicit selection — the default serves as a visual indicator of your preferred remote
 
-Click the checkmark again to clear the default and return to local execution.
+Click the checkmark again to clear the default.
 
-## Per-Agent Configuration
+<Note>
+The global default is a convenience marker, not an automatic setting. Each session must explicitly select an SSH remote via the "SSH Remote Execution" dropdown in the New Agent dialog or session configuration.
+</Note>
 
-Each agent can have its own SSH remote setting, overriding the global default.
+## Per-Session Configuration
 
-### Configuring an Agent
+Each session can have its own SSH remote setting configured when creating the session or editing its configuration.
 
-1. Open the agent's configuration panel (gear icon in session header, or via Settings → Agents)
-2. Find the **SSH Remote Execution** dropdown
-3. Select an option:
+### Configuring a Session
+
+1. When creating a new agent session (via New Agent dialog or the wizard), find the **SSH Remote Execution** dropdown
+2. Select an option:
 
 ![SSH Agent Mapping](./screenshots/ssh-agents-mapping.png)
 
 | Option | Behavior |
 |--------|----------|
-| **Use Global Default** | Follows the global setting (shows which remote if one is set) |
-| **Force Local Execution** | Always runs locally, ignoring any global default |
-| **[Specific Remote]** | Always uses this remote, regardless of global setting |
+| **Local Execution** | Runs the agent on your local machine (default) |
+| **[Remote Name]** | Runs the agent on the specified SSH remote host |
 
-### Resolution Order
+### How It Works
 
-When spawning an agent, Maestro resolves which SSH remote to use:
+SSH remote execution is configured at the **session level**:
 
-1. **Per-agent explicit remote** → Uses that specific remote
-2. **Per-agent "Force Local"** → Runs locally (ignores global)
-3. **Per-agent "Use Global Default"** → Falls through to global setting
-4. **Global default set** → Uses the global default remote
-5. **No global default** → Runs locally
+- When you create a new session, you choose whether it runs locally or on a specific remote
+- The configuration is saved with the session and persists across restarts
+- Each session maintains its own SSH setting independently
+- Changing a session's SSH remote requires editing the session configuration
 
 ## Status Visibility
 
@@ -149,7 +150,7 @@ When a session is running via SSH remote, you can easily identify it:
 
 ![SSH Agent Status](./screenshots/ssh-agents-status.png)
 
-- **REMOTE pill** — Appears in the Left Bar next to the agent, indicating it's configured for remote execution
+- **REMOTE pill** — Appears in the Left Bar next to the session, indicating it's configured for remote execution
 - **Host name badge** — Displayed in the Main Panel header showing which SSH host the agent is running on (e.g., "PEDTOME")
 - **Agent type indicator** — Shows "claude-code (SSH)" to clarify the execution mode
 - Connection state reflects SSH connectivity
@@ -231,11 +232,11 @@ This is especially useful for:
 
 ### Tips
 
-- **Import from SSH config**: Use the dropdown when adding remotes to import from `~/.ssh/config`—saves time and keeps configuration consistent
-- **Bastion hosts**: Use `ProxyJump` in your SSH config for multi-hop connections; Maestro inherits this automatically
-- **Key management**: Use `ssh-agent` to avoid passphrase prompts
-- **Keep-alive**: Configure `ServerAliveInterval` in SSH config for long sessions
-- **Test manually first**: Verify `ssh host 'claude --version'` works before configuring in Maestro
+- **Import from SSH config** — Use the dropdown when adding remotes to import from `~/.ssh/config`; saves time and keeps configuration consistent
+- **Bastion hosts** — Use `ProxyJump` in your SSH config for multi-hop connections; Maestro inherits this automatically
+- **Key management** — Use `ssh-agent` to avoid passphrase prompts
+- **Keep-alive** — Configure `ServerAliveInterval` in SSH config for long sessions
+- **Test manually first** — Verify `ssh host 'claude --version'` works before configuring in Maestro
 
 ## Security Considerations
 
@@ -246,7 +247,6 @@ This is especially useful for:
 
 ## Limitations
 
-- PTY (pseudo-terminal) features are not available over SSH
-- Some interactive agent features may behave differently
 - Network latency affects perceived responsiveness
 - The remote host must have the agent CLI installed and configured
+- Some shell initialization files (`.bashrc`, `.zshrc`) may not be fully sourced — agent commands use `$SHELL -lc` to ensure PATH availability from login profiles

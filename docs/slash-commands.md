@@ -6,9 +6,22 @@ icon: terminal
 
 Maestro includes an extensible slash command system with autocomplete. Type `/` in the input area to open the autocomplete menu, use arrow keys to navigate, and press `Tab` or `Enter` to select.
 
+## Built-in Maestro Commands
+
+Maestro provides built-in slash commands that are handled internally (not sent to the AI agent):
+
+| Command | Description |
+|---------|-------------|
+| `/history` | Generate a synopsis of recent work and add to the History panel |
+| `/wizard` | Start the planning wizard for Auto Run documents |
+
+<Tip>
+The `/wizard` command can take optional natural language input: `/wizard add user authentication feature` to provide initial context.
+</Tip>
+
 ## Custom AI Commands
 
-Create your own slash commands in **Settings > Custom AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
+Create your own slash commands in **Settings → AI Commands**. Each command has a trigger (e.g., `/deploy`) and a prompt that gets sent to the AI agent.
 
 Commands support **template variables** that are automatically substituted at runtime:
 
@@ -21,7 +34,7 @@ Commands support **template variables** that are automatically substituted at ru
 | `{{AGENT_GROUP}}` | Agent's group name (if grouped) |
 | `{{AGENT_SESSION_ID}}` | Agent session ID (for conversation continuity) |
 | `{{TAB_NAME}}` | Custom tab name (alias: `SESSION_NAME`) |
-| `{{TOOL_TYPE}}` | Agent type (claude-code, codex, opencode) |
+| `{{TOOL_TYPE}}` | Agent type (claude-code, codex, opencode, aider) |
 
 ### Path Variables
 
@@ -36,7 +49,7 @@ Commands support **template variables** that are automatically substituted at ru
 |----------|-------------|
 | `{{DOCUMENT_NAME}}` | Current Auto Run document name (without .md) |
 | `{{DOCUMENT_PATH}}` | Full path to current Auto Run document |
-| `{{LOOP_NUMBER}}` | Current loop iteration (starts at 1) |
+| `{{LOOP_NUMBER}}` | Current loop iteration (5-digit padded: 00001, 00002, etc.) |
 
 ### Date/Time Variables
 
@@ -70,7 +83,20 @@ Summarize what I worked on yesterday and suggest priorities for today.
 
 ## Spec-Kit Commands
 
-Maestro bundles [GitHub's spec-kit](https://github.com/github/spec-kit) methodology for structured feature development. Commands include `/speckit.constitution`, `/speckit.specify`, `/speckit.clarify`, `/speckit.plan`, `/speckit.tasks`, and `/speckit.implement`.
+Maestro bundles [GitHub's spec-kit](https://github.com/github/spec-kit) methodology for structured feature development:
+
+| Command | Description |
+|---------|-------------|
+| `/speckit.help` | Learn how to use spec-kit with Maestro |
+| `/speckit.constitution` | Create or update the project constitution |
+| `/speckit.specify` | Create or update feature specification |
+| `/speckit.clarify` | Identify underspecified areas and ask clarification questions |
+| `/speckit.plan` | Execute implementation planning workflow |
+| `/speckit.tasks` | Generate actionable, dependency-ordered tasks |
+| `/speckit.analyze` | Cross-artifact consistency and quality analysis |
+| `/speckit.checklist` | Generate custom checklist for feature |
+| `/speckit.taskstoissues` | Convert tasks to GitHub issues |
+| `/speckit.implement` | Execute tasks using Maestro Auto Run with worktree support |
 
 See [Spec-Kit Commands](/speckit-commands) for the complete workflow guide.
 
@@ -80,17 +106,17 @@ Maestro bundles [OpenSpec](https://github.com/Fission-AI/OpenSpec) for spec-driv
 
 | Command | Description |
 |---------|-------------|
-| `/openspec.proposal` | Create a change proposal with spec deltas before writing code |
-| `/openspec.apply` | Implement an approved proposal by following the tasks |
-| `/openspec.archive` | Archive completed changes after deployment |
-| `/openspec.implement` | Generate Auto Run documents from a proposal (Maestro-specific) |
-| `/openspec.help` | Get help with OpenSpec workflow and concepts |
+| `/openspec.help` | Learn how to use OpenSpec with Maestro |
+| `/openspec.proposal` | Create a change proposal with specs, tasks, and optional design docs |
+| `/openspec.apply` | Implement an approved change proposal by executing tasks |
+| `/openspec.archive` | Archive a completed change after deployment |
+| `/openspec.implement` | Convert OpenSpec tasks to Maestro Auto Run documents |
 
 See [OpenSpec Commands](/openspec-commands) for the complete workflow guide and directory structure.
 
 ## Agent Native Commands
 
-When using Claude Code, Maestro automatically discovers and displays the agent's native slash commands in the autocomplete menu. These appear with a "Claude Code command" label to distinguish them from Maestro's custom commands.
+When using Claude Code, Maestro automatically discovers and displays the agent's native slash commands in the autocomplete menu. These commands are sent via the `system/init` event when Claude Code starts and appear with a "Claude Code command" label to distinguish them from Maestro's custom commands.
 
 ### Supported in Batch Mode
 
@@ -99,7 +125,6 @@ Claude Code runs in batch/print mode within Maestro, which means only certain na
 | Command | Description |
 |---------|-------------|
 | `/compact` | Compact conversation history to reduce context usage |
-| `/context` | Manage conversation context |
 | `/cost` | Show token usage and cost for the session |
 | `/init` | Initialize a CLAUDE.md file in the project |
 | `/pr-comments` | Address PR review comments |

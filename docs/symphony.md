@@ -34,18 +34,24 @@ Maestro Symphony is a community-driven program that connects Maestro users with 
 
 ## Browsing Projects
 
-The Symphony modal shows registered open source projects in a tiled grid:
+The Symphony modal has four tabs: **Projects**, **Active**, **History**, and **Stats**.
+
+### Projects Tab
+
+The Projects tab shows registered open source projects in a tiled grid:
 
 - **Category filters** — Filter by AI/ML, Developer Tools, etc.
-- **Search** — Find projects by name or description
+- **Search** — Find projects by name, description, or tags
 - **Project tiles** — Click to view available issues
+- **Keyboard navigation** — Use arrow keys to navigate, Enter to select, `/` to focus search
 
 ![Symphony Project Details](./screenshots/symphony-details.png)
 
 Select a repository to see its available GitHub issues. Each issue shows:
 - Issue title and number
 - Number of Auto Run documents to process
-- Document previews (expandable)
+- Document previews with a dropdown selector (use `Cmd+Shift+[` / `Cmd+Shift+]` to cycle documents)
+- Status indicator (available or in-progress with PR link)
 
 ## Starting a Contribution
 
@@ -60,11 +66,11 @@ Configure your contribution:
 
 Click **Create Agent** and Maestro will:
 
-1. Clone the repository to `~/Maestro-Symphony/{owner}-{repo}/`
-2. Create a new branch for your contribution
-3. Open a draft PR (claims the issue so others know it's in progress)
-4. Copy the Auto Run documents to your session
-5. Begin processing tasks automatically
+1. Clone the repository to `~/Maestro-Symphony/{owner}-{repo}/` (default location, customizable)
+2. Create a new branch (`symphony/{issue-number}-{short-id}`)
+3. Set up Auto Run documents (external attachments downloaded to cache, repo docs referenced in place)
+4. Begin processing tasks automatically
+5. Create a draft PR on first commit (claims the issue so others know it's in progress)
 
 ## Tracking Contributions
 
@@ -75,29 +81,31 @@ View your in-progress Symphony sessions:
 ![Active Contributions](./screenshots/symphony-active.png)
 
 Each active contribution shows:
-- **Issue title and repository** — The GitHub issue being worked on
-- **Status badge** — Running, Paused, or Waiting
-- **Document progress** — Current document and total count
-- **Time elapsed** — How long the contribution has been running
-- **Token usage** — Input/output tokens and estimated cost
-- **Pause/Cancel controls** — Pause to review or cancel to abort
 
-Click **Check PR Status** to verify your draft PR on GitHub.
+- Status indicators (Running, Paused, Creating PR, etc.)
+- Progress bar showing documents completed vs. total
+- Current document being processed
+- Token usage (input/output tokens, estimated cost)
+- Draft PR link (once created on first commit)
+- Controls: Pause/Resume, Cancel, Finalize PR
+- **Check PR Status** button to detect merged/closed PRs
 
 ### History Tab
 
 Review completed contributions:
-- PR links with merge status
-- Per-contribution statistics
-- Time and tokens spent
+- PR links with merge status (Open or Merged)
+- Completion date
+- Documents processed count
+- Total cost for the contribution
+- Summary statistics at the top (total PRs, merged count, tokens, cost)
 
 ### Stats Tab
 
 Track your overall impact:
-- Total contributions and merged PRs
-- Tokens donated and estimated cost
-- Issues resolved and repositories contributed to
-- Streak tracking and achievement badges
+- **Overview metrics**: Total contributions, merged PRs, tokens donated, estimated cost
+- **Repositories contributed to**: Unique project count
+- **Streak tracking**: Current and longest contribution streaks
+- **Achievement badges**: Unlock achievements like "First Contribution", "Week Warrior", "Token Titan"
 
 ## Session Integration
 
@@ -130,20 +138,24 @@ Each document path should point to an Auto Run-compatible markdown file with tas
 
 ## Task Claiming
 
-When you click **Start Symphony**, Maestro immediately creates a draft PR. This claims the task so other contributors know it's being worked on:
+Symphony uses **deferred PR creation** to avoid GitHub's "no commits between branches" error. When you start a contribution, Maestro sets up the branch and documents but waits until the first commit to create the draft PR:
+
+1. **Start contribution** → Branch created locally, Auto Run begins processing
+2. **First commit** → Draft PR automatically created, claims the issue
+3. **Subsequent commits** → Push to the same PR
+
+This means issues show as "in progress" once the first commit lands. The claiming mechanism:
 
 - **No draft PR** → Task is available
-- **Draft PR exists** → Task is in progress
-
-First to create a draft PR wins — this prevents duplicate work.
+- **Draft PR exists** → Task is in progress (first to commit wins)
 
 ## Registering Your Project
 
 To add your open source project to Symphony:
 
 1. Fork the [Maestro repository](https://github.com/pedramamini/Maestro)
-2. Add your project to `symphony-registry.json`
-3. Submit a pull request
+2. Add your project to `symphony-registry.json` in the root directory
+3. Submit a pull request to the main Maestro repository
 
 Your project entry should include:
 ```json
@@ -152,15 +164,33 @@ Your project entry should include:
   "name": "Project Name",
   "description": "Brief description",
   "url": "https://github.com/owner/repo",
-  "category": "developer-tools",
+  "category": "ai-ml",
   "tags": ["tag1", "tag2"],
   "maintainer": {
     "name": "Your Name",
     "url": "https://github.com/yourusername"
   },
-  "isActive": true
+  "isActive": true,
+  "featured": false,
+  "addedAt": "2025-01-01"
 }
 ```
+
+### Available Categories
+
+| Category | Label | Emoji |
+|----------|-------|-------|
+| `ai-ml` | AI & ML | 🤖 |
+| `developer-tools` | Developer Tools | 🛠️ |
+| `infrastructure` | Infrastructure | 🏗️ |
+| `documentation` | Documentation | 📚 |
+| `web` | Web | 🌐 |
+| `mobile` | Mobile | 📱 |
+| `data` | Data | 📊 |
+| `security` | Security | 🔒 |
+| `other` | Other | 📦 |
+
+Once merged, your project will appear in the Symphony Projects tab (registry cached for 2 hours, issues cached for 5 minutes).
 
 ---
 
