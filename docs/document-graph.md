@@ -12,19 +12,27 @@ The Document Graph provides an interactive visualization of your markdown files 
 
 There are several ways to access the Document Graph:
 
-### From the File Explorer
+### From File Preview
 
-Click the **graph icon** (circular arrows) in the Files tab header to open the Document Graph for your current project.
-
-![Last Graph Button](./screenshots/document-graph-last-graph.png)
+When viewing a markdown file in File Preview, press `Cmd+Shift+G` / `Ctrl+Shift+G` to open the Document Graph focused on that file. Press `Esc` to return to the File Preview. This is the primary way to open the Document Graph.
 
 ### From Quick Actions
 
-Press `Cmd+K` / `Ctrl+K` and search for "Document Graph" to open it directly.
+Press `Cmd+K` / `Ctrl+K` and search for "Open Last Document Graph" to re-open the most recently viewed graph.
 
-### From File Preview
+<Note>
+The "Open Last Document Graph" option only appears after you've opened a Document Graph at least once during your session.
+</Note>
 
-When viewing a markdown file in File Preview, press `Cmd+Shift+G` / `Ctrl+Shift+G` to open the Document Graph focused on that file. Press `Esc` to return to the File Preview.
+### From the File Explorer
+
+After you've opened a Document Graph at least once, a **graph icon** (branch icon) appears in the Files tab header. Click it to re-open the last viewed graph.
+
+![Last Graph Button](./screenshots/document-graph-last-graph.png)
+
+### From File Context Menu
+
+Right-click any markdown file in the File Explorer and select **Document Graph** to open the graph focused on that file.
 
 ### Using Go to File
 
@@ -36,17 +44,18 @@ The Document Graph is designed for keyboard-first navigation:
 
 | Action | Key |
 |--------|-----|
-| Navigate to connected nodes | `Arrow Keys` (spatial detection) |
-| Focus/select a node | `Enter` |
-| Open the selected document | `O` |
-| Close the graph | `Esc` |
-| Cycle through connected nodes | `Tab` |
+| Navigate between nodes | `Arrow Keys` (spatial detection) |
+| Recenter view on node | `Enter` (for document nodes) |
+| Open external URL | `Enter` (for external link nodes) |
+| Open document in File Preview | `O` |
+| Focus search | `Cmd/Ctrl+F` |
+| Close graph or help panel | `Esc` |
 
 ### Mouse Controls
 
 - **Click** a node to select it
 - **Double-click** a node to recenter the view on it
-- **Drag** nodes to reposition them — positions are saved
+- **Drag** nodes to reposition them
 - **Scroll** to zoom in and out
 - **Pan** by dragging the background
 
@@ -56,13 +65,14 @@ The toolbar at the top of the Document Graph provides several options:
 
 ### Depth Control
 
-Adjust the **Depth** setting to control how many levels of connections are shown from the focused document:
+Adjust the **Depth** slider to control how many levels of connections are shown from the focused document:
 
+- **Depth: 0 (All)** — Show all connected documents regardless of distance
 - **Depth: 1** — Show only direct connections
 - **Depth: 2** — Show connections and their connections (default)
-- **Depth: 3+** — Show deeper relationship chains
+- **Depth: 3-5** — Show deeper relationship chains
 
-Lower depth values keep the graph focused; higher values reveal the full document ecosystem.
+Lower depth values keep the graph focused and improve performance; higher values reveal more of the document ecosystem. The depth can be adjusted from 0 (All) to 5.
 
 ### External Links
 
@@ -133,11 +143,11 @@ The Document Graph is especially useful for:
 
 | Action | macOS | Windows/Linux |
 |--------|-------|---------------|
-| Open Document Graph | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Open from File Preview | `Cmd+Shift+G` | `Ctrl+Shift+G` |
+| Re-open last graph | Via `Cmd+K` menu | Via `Ctrl+K` menu |
 | Go to File (fuzzy finder) | `Cmd+G` | `Ctrl+G` |
 | Navigate nodes | `Arrow Keys` | `Arrow Keys` |
-| Select/focus node | `Enter` | `Enter` |
-| Open document | `O` | `O` |
-| Cycle connected nodes | `Tab` | `Tab` |
+| Recenter on node | `Enter` | `Enter` |
+| Open document in preview | `O` | `O` |
+| Focus search | `Cmd+F` | `Ctrl+F` |
 | Close graph | `Esc` | `Esc` |
