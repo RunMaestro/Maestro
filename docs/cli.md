@@ -38,6 +38,7 @@ maestro-cli list groups
 
 # List all agents
 maestro-cli list agents
+maestro-cli list agents -g <group-id>
 maestro-cli list agents --group <group-id>
 
 # Show agent details (history, usage stats, cost)
@@ -45,6 +46,7 @@ maestro-cli show agent <agent-id>
 
 # List all playbooks (or filter by agent)
 maestro-cli list playbooks
+maestro-cli list playbooks -a <agent-id>
 maestro-cli list playbooks --agent <agent-id>
 
 # Show playbook details
@@ -64,6 +66,10 @@ maestro-cli playbook <playbook-id> --wait --verbose
 
 # Debug mode for troubleshooting
 maestro-cli playbook <playbook-id> --debug
+
+# Clean orphaned playbooks (for deleted sessions)
+maestro-cli clean playbooks
+maestro-cli clean playbooks --dry-run
 ```
 
 ## JSON Output
@@ -82,17 +88,22 @@ GROUPS (2)
 
 # JSON output for scripting
 maestro-cli list groups --json
-{"type":"group","id":"group-abc123","name":"Frontend","emoji":"🎨","timestamp":...}
-{"type":"group","id":"group-def456","name":"Backend","emoji":"⚙️","timestamp":...}
+{"type":"group","id":"group-abc123","name":"Frontend","emoji":"🎨","collapsed":false,"timestamp":...}
+{"type":"group","id":"group-def456","name":"Backend","emoji":"⚙️","collapsed":false,"timestamp":...}
+
+# Note: list agents outputs a JSON array (not JSONL)
+maestro-cli list agents --json
+[{"id":"agent-abc123","name":"My Agent","toolType":"claude-code","cwd":"/path/to/project",...}]
 
 # Running a playbook with JSON streams events
 maestro-cli playbook <playbook-id> --json
 {"type":"start","timestamp":...,"playbook":{...}}
 {"type":"document_start","timestamp":...,"document":"tasks.md","taskCount":5}
 {"type":"task_start","timestamp":...,"taskIndex":0}
-{"type":"task_complete","timestamp":...,"success":true,"summary":"...","elapsedMs":8000}
-{"type":"document_complete","timestamp":...,"tasksCompleted":5}
-{"type":"complete","timestamp":...,"totalTasksCompleted":5,"totalElapsedMs":60000}
+{"type":"task_complete","timestamp":...,"success":true,"summary":"...","elapsedMs":8000,"usageStats":{...}}
+{"type":"document_complete","timestamp":...,"document":"tasks.md","tasksCompleted":5}
+{"type":"loop_complete","timestamp":...,"iteration":1,"tasksCompleted":5,"elapsedMs":60000}
+{"type":"complete","timestamp":...,"success":true,"totalTasksCompleted":5,"totalElapsedMs":60000,"totalCost":0.05}
 ```
 
 ## Scheduling with Cron
