@@ -394,6 +394,9 @@ const mockMaestro = {
       configPath: '~/.ssh/config',
     }),
   },
+  leaderboard: {
+    submit: vi.fn().mockResolvedValue({ success: true, rank: 1 }),
+  },
 };
 
 Object.defineProperty(window, 'maestro', {
