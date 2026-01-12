@@ -319,33 +319,32 @@ describe('LeaderboardRegistrationModal', () => {
 
   describe('Form submission', () => {
     it('should include Bluesky handle in API submission', async () => {
+      // Use existing registration with Bluesky handle to test submission includes it
+      const existingRegistration: LeaderboardRegistration = {
+        displayName: 'Test User',
+        email: 'test@example.com',
+        blueskyHandle: 'testuser.bsky.social',
+        registeredAt: Date.now(),
+        emailConfirmed: true,
+        authToken: 'test-auth-token',
+      };
+
       render(
         <LeaderboardRegistrationModal
           theme={theme}
           autoRunStats={autoRunStats}
           keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
+          existingRegistration={existingRegistration}
           onClose={onClose}
           onSave={onSave}
         />
       );
 
-      // Fill required fields
-      const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
-      fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
-
-      const emailInput = screen.getByPlaceholderText((content, element) => {
-        return element?.getAttribute('type') === 'email' || false;
-      });
-      fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
-
-      // Fill Bluesky field
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      fireEvent.change(blueskyInput, { target: { value: 'testuser.bsky.social' } });
-
-      // Submit form
+      // Submit form (existing registration pre-populates fields)
       const submitButton = screen.getByText('Push Up');
-      fireEvent.click(submitButton);
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
 
       await waitFor(() => {
         expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
@@ -357,33 +356,32 @@ describe('LeaderboardRegistrationModal', () => {
     });
 
     it('should include custom domain Bluesky handle in API submission', async () => {
+      // Use existing registration with custom domain Bluesky handle
+      const existingRegistration: LeaderboardRegistration = {
+        displayName: 'Test User',
+        email: 'test@example.com',
+        blueskyHandle: 'user.example.com',
+        registeredAt: Date.now(),
+        emailConfirmed: true,
+        authToken: 'test-auth-token',
+      };
+
       render(
         <LeaderboardRegistrationModal
           theme={theme}
           autoRunStats={autoRunStats}
           keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
+          existingRegistration={existingRegistration}
           onClose={onClose}
           onSave={onSave}
         />
       );
 
-      // Fill required fields
-      const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
-      fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
-
-      const emailInput = screen.getByPlaceholderText((content, element) => {
-        return element?.getAttribute('type') === 'email' || false;
-      });
-      fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
-
-      // Fill Bluesky field with custom domain
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      fireEvent.change(blueskyInput, { target: { value: 'user.example.com' } });
-
-      // Submit form
+      // Submit form (existing registration pre-populates fields)
       const submitButton = screen.getByText('Push Up');
-      fireEvent.click(submitButton);
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
 
       await waitFor(() => {
         expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
@@ -408,12 +406,16 @@ describe('LeaderboardRegistrationModal', () => {
 
       // Fill required fields
       const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
-      fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
+      await act(async () => {
+        fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
+      });
 
       const emailInput = screen.getByPlaceholderText((content, element) => {
         return element?.getAttribute('type') === 'email' || false;
       });
-      fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+      await act(async () => {
+        fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+      });
 
       // Leave Bluesky field empty
       const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
@@ -421,40 +423,46 @@ describe('LeaderboardRegistrationModal', () => {
 
       // Submit form
       const submitButton = screen.getByText('Push Up');
-      fireEvent.click(submitButton);
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
 
       await waitFor(() => {
         expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
           expect.objectContaining({
-            blueskyHandle: '',
+            blueskyHandle: undefined,
           })
         );
       });
     });
 
     it('should include Bluesky handle in local save', async () => {
+      // Use existing registration with Bluesky handle
+      const existingRegistration: LeaderboardRegistration = {
+        displayName: 'Test User',
+        email: 'test@example.com',
+        blueskyHandle: 'testuser.bsky.social',
+        registeredAt: Date.now(),
+        emailConfirmed: true,
+        authToken: 'test-auth-token',
+      };
+
       render(
         <LeaderboardRegistrationModal
           theme={theme}
           autoRunStats={autoRunStats}
           keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
+          existingRegistration={existingRegistration}
           onClose={onClose}
           onSave={onSave}
         />
       );
 
-      // Fill required fields
-      const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
-      fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
-
-      // Fill Bluesky field
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      fireEvent.change(blueskyInput, { target: { value: 'testuser.bsky.social' } });
-
-      // Submit form
+      // Submit form (existing registration pre-populates fields)
       const submitButton = screen.getByText('Push Up');
-      fireEvent.click(submitButton);
+      await act(async () => {
+        fireEvent.click(submitButton);
+      });
 
       await waitFor(() => {
         expect(onSave).toHaveBeenCalledWith(

@@ -396,6 +396,10 @@ const mockMaestro = {
   },
   leaderboard: {
     submit: vi.fn().mockResolvedValue({ success: true, rank: 1 }),
+    pollAuthStatus: vi.fn().mockResolvedValue({ status: 'confirmed', authToken: 'test-token' }),
+    resendConfirmation: vi.fn().mockResolvedValue({ success: true }),
+    sync: vi.fn().mockResolvedValue({ success: true }),
+    getInstallationId: vi.fn().mockResolvedValue('test-installation-id'),
   },
 };
 
