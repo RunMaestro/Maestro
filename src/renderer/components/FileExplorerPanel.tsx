@@ -462,16 +462,18 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
   }, [onAutoRefreshChange]);
 
   // Context menu handlers
-  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode, path: string) => {
+  const handleContextMenu = useCallback((e: React.MouseEvent, node: FileNode, path: string, globalIndex: number) => {
     e.preventDefault();
     e.stopPropagation();
+    // Update selection to the right-clicked item so user sees which item the menu affects
+    setSelectedFileIndex(globalIndex);
     setContextMenu({
       x: e.clientX,
       y: e.clientY,
       node,
       path
     });
-  }, []);
+  }, [setSelectedFileIndex]);
 
   const handleFocusInGraph = useCallback(() => {
     if (contextMenu && onFocusFileInGraph) {
@@ -819,7 +821,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
             handleFileClick(node, fullPath, session);
           }
         }}
-        onContextMenu={(e) => handleContextMenu(e, node, fullPath)}
+        onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
       >
         {indentGuides}
         {isFolder && (

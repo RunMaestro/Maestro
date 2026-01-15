@@ -297,7 +297,7 @@ describe('useAgentSessionManagement', () => {
     expect(updatedSession.inputMode).toBe('ai');
   });
 
-  it('skips origin lookup when metadata is already provided', async () => {
+  it('skips message fetch when messages are already provided', async () => {
     const activeSession = createMockSession({ projectRoot: '/test/project' });
     const setSessions = vi.fn();
 
@@ -325,7 +325,9 @@ describe('useAgentSessionManagement', () => {
       await result.current.handleResumeSession('agent-789', providedMessages, 'Named Session', false);
     });
 
-    expect(window.maestro.claude.getSessionOrigins).not.toHaveBeenCalled();
+    // Origin lookup is still called to get contextUsage for context window persistence
+    expect(window.maestro.claude.getSessionOrigins).toHaveBeenCalled();
+    // But message fetch should be skipped since messages were provided
     expect(window.maestro.agentSessions.read).not.toHaveBeenCalled();
   });
 });

@@ -18,6 +18,17 @@ Maestro is an Electron desktop application for managing multiple AI coding assis
 - **Current Directory:** {{CWD}}
 - **Git Branch:** {{GIT_BRANCH}}
 - **Session ID:** {{AGENT_SESSION_ID}}
+- **History File:** {{AGENT_HISTORY_PATH}}
+
+## Task Recall
+
+Your session history is stored at `{{AGENT_HISTORY_PATH}}`. When you need context about previously completed tasks, read this JSON file and parse the `entries` array. Each entry contains:
+- `summary`: Brief description of the task
+- `timestamp`: When the task was completed (Unix ms)
+- `type`: `AUTO` (automated) or `USER` (interactive)
+- `success`: Whether the task succeeded
+
+To recall recent work, read the file and scan the most recent entries by timestamp.
 
 ## Auto-run Documents
 

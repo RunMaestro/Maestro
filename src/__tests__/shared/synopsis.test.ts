@@ -3,11 +3,13 @@
  *
  * Coverage:
  * - parseSynopsis: Parse synopsis response into summary and full text
+ * - isNothingToReport: Check if response indicates nothing to report
+ * - NOTHING_TO_REPORT: Sentinel token constant
  * - ParsedSynopsis: Interface for parsed result
  */
 
 import { describe, it, expect } from 'vitest';
-import { parseSynopsis, ParsedSynopsis } from '../../shared/synopsis';
+import { parseSynopsis, ParsedSynopsis, isNothingToReport, NOTHING_TO_REPORT } from '../../shared/synopsis';
 
 describe('synopsis', () => {
   describe('parseSynopsis', () => {
@@ -18,6 +20,7 @@ describe('synopsis', () => {
 
         expect(result.shortSummary).toBe('Fixed the authentication bug');
         expect(result.fullSynopsis).toBe('Fixed the authentication bug\n\nUpdated the login handler to properly validate tokens and handle edge cases.');
+        expect(result.nothingToReport).toBe(false);
       });
 
       it('should parse response with Summary only', () => {
@@ -26,6 +29,7 @@ describe('synopsis', () => {
 
         expect(result.shortSummary).toBe('No changes made.');
         expect(result.fullSynopsis).toBe('No changes made.');
+        expect(result.nothingToReport).toBe(false);
       });
 
       it('should handle case-insensitive section headers', () => {
@@ -213,13 +217,15 @@ detail line two`;
     });
 
     describe('return type validation', () => {
-      it('should always return object with shortSummary and fullSynopsis', () => {
+      it('should always return object with shortSummary, fullSynopsis, and nothingToReport', () => {
         const result = parseSynopsis('test');
 
         expect(result).toHaveProperty('shortSummary');
         expect(result).toHaveProperty('fullSynopsis');
+        expect(result).toHaveProperty('nothingToReport');
         expect(typeof result.shortSummary).toBe('string');
         expect(typeof result.fullSynopsis).toBe('string');
+        expect(typeof result.nothingToReport).toBe('boolean');
       });
 
       it('should satisfy ParsedSynopsis interface', () => {
@@ -229,7 +235,86 @@ detail line two`;
         // Runtime check that properties exist
         expect(result.shortSummary).toBeDefined();
         expect(result.fullSynopsis).toBeDefined();
+        expect(result.nothingToReport).toBe(false);
       });
+    });
+
+    describe('NOTHING_TO_REPORT detection', () => {
+      it('should detect NOTHING_TO_REPORT token and return nothingToReport: true', () => {
+        const result = parseSynopsis('NOTHING_TO_REPORT');
+
+        expect(result.nothingToReport).toBe(true);
+        expect(result.shortSummary).toBe('');
+        expect(result.fullSynopsis).toBe('');
+      });
+
+      it('should detect NOTHING_TO_REPORT with surrounding whitespace', () => {
+        const result = parseSynopsis('  \n  NOTHING_TO_REPORT  \n  ');
+
+        expect(result.nothingToReport).toBe(true);
+        expect(result.shortSummary).toBe('');
+        expect(result.fullSynopsis).toBe('');
+      });
+
+      it('should detect NOTHING_TO_REPORT with ANSI codes', () => {
+        const result = parseSynopsis('\x1b[32mNOTHING_TO_REPORT\x1b[0m');
+
+        expect(result.nothingToReport).toBe(true);
+      });
+
+      it('should detect NOTHING_TO_REPORT with box drawing characters', () => {
+        const result = parseSynopsis('───────\n│NOTHING_TO_REPORT│\n───────');
+
+        expect(result.nothingToReport).toBe(true);
+      });
+
+      it('should return nothingToReport: false for normal synopsis', () => {
+        const result = parseSynopsis('**Summary:** Fixed the bug\n\n**Details:** Updated code.');
+
+        expect(result.nothingToReport).toBe(false);
+        expect(result.shortSummary).toBe('Fixed the bug');
+      });
+
+      it('should return nothingToReport: false for empty responses', () => {
+        // Empty responses should fall back to "Task completed", not NOTHING_TO_REPORT
+        const result = parseSynopsis('');
+
+        expect(result.nothingToReport).toBe(false);
+        expect(result.shortSummary).toBe('Task completed');
+      });
+    });
+  });
+
+  describe('isNothingToReport', () => {
+    it('should return true for exact NOTHING_TO_REPORT', () => {
+      expect(isNothingToReport('NOTHING_TO_REPORT')).toBe(true);
+    });
+
+    it('should return true when NOTHING_TO_REPORT is embedded in response', () => {
+      expect(isNothingToReport('Some preamble\nNOTHING_TO_REPORT\nSome postamble')).toBe(true);
+    });
+
+    it('should return true with ANSI codes around token', () => {
+      expect(isNothingToReport('\x1b[32mNOTHING_TO_REPORT\x1b[0m')).toBe(true);
+    });
+
+    it('should return false for normal responses', () => {
+      expect(isNothingToReport('**Summary:** Fixed the bug')).toBe(false);
+    });
+
+    it('should return false for empty string', () => {
+      expect(isNothingToReport('')).toBe(false);
+    });
+
+    it('should return false for partial matches', () => {
+      expect(isNothingToReport('NOTHING_TO')).toBe(false);
+      expect(isNothingToReport('TO_REPORT')).toBe(false);
+    });
+  });
+
+  describe('NOTHING_TO_REPORT constant', () => {
+    it('should be the expected string value', () => {
+      expect(NOTHING_TO_REPORT).toBe('NOTHING_TO_REPORT');
     });
   });
 });

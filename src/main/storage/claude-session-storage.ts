@@ -46,6 +46,7 @@ type StoredOriginData =
       origin: AgentSessionOrigin;
       sessionName?: string;
       starred?: boolean;
+      contextUsage?: number;
     };
 
 export interface ClaudeSessionOriginsData {
@@ -1144,6 +1145,27 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
   }
 
   /**
+   * Update the context usage percentage of a session
+   * This persists the last known context window usage so it can be restored on resume
+   */
+  updateSessionContextUsage(projectPath: string, agentSessionId: string, contextUsage: number): void {
+    const origins = this.originsStore.get('origins', {});
+    if (!origins[projectPath]) {
+      origins[projectPath] = {};
+    }
+    const existing = origins[projectPath][agentSessionId];
+    if (typeof existing === 'string') {
+      origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
+    } else if (existing) {
+      origins[projectPath][agentSessionId] = { ...existing, contextUsage };
+    } else {
+      origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
+    }
+    this.originsStore.set('origins', origins);
+    // Don't log this - it updates frequently and would spam logs
+  }
+
+  /**
    * Get all origin info for a project
    */
   getSessionOrigins(projectPath: string): Record<string, SessionOriginInfo> {
@@ -1160,6 +1182,7 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
           origin: data.origin,
           sessionName: data.sessionName,
           starred: data.starred,
+          contextUsage: data.contextUsage,
         };
       }
     }

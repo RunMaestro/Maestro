@@ -87,6 +87,7 @@ interface ClaudeSessionOriginInfo {
   origin: ClaudeSessionOrigin;
   sessionName?: string;
   starred?: boolean;
+  contextUsage?: number;
 }
 interface ClaudeSessionOriginsData {
   origins: Record<string, Record<string, ClaudeSessionOrigin | ClaudeSessionOriginInfo>>;

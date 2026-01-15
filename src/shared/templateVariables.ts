@@ -8,6 +8,7 @@
  *   {{AGENT_PATH}}        - Agent home directory path (full path to project)
  *   {{AGENT_GROUP}}       - Agent's group name (if grouped)
  *   {{AGENT_SESSION_ID}}  - Agent session ID (for conversation continuity)
+ *   {{AGENT_HISTORY_PATH}} - Path to agent's history JSON file (for task recall)
  *   {{TAB_NAME}}          - Custom tab name (alias: SESSION_NAME)
  *   {{TOOL_TYPE}}         - Agent type (claude-code, aider, etc.)
  *
@@ -65,12 +66,15 @@ export interface TemplateContext {
   // Auto Run document context
   documentName?: string;
   documentPath?: string;
+  // History file path for task recall
+  historyFilePath?: string;
 }
 
 // List of all available template variables for documentation (alphabetically sorted)
 // Variables marked as autoRunOnly are only shown in Auto Run contexts, not in AI Commands settings
 export const TEMPLATE_VARIABLES = [
   { variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
+  { variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
   { variable: '{{AGENT_NAME}}', description: 'Agent name' },
   { variable: '{{AGENT_PATH}}', description: 'Agent home directory path' },
   { variable: '{{AGENT_SESSION_ID}}', description: 'Agent session ID' },
@@ -106,7 +110,7 @@ export function substituteTemplateVariables(
   template: string,
   context: TemplateContext
 ): string {
-  const { session, gitBranch, groupName, autoRunFolder, loopNumber, documentName, documentPath } = context;
+  const { session, gitBranch, groupName, autoRunFolder, loopNumber, documentName, documentPath, historyFilePath } = context;
   const now = new Date();
 
   // Build replacements map
@@ -116,6 +120,7 @@ export function substituteTemplateVariables(
     'AGENT_PATH': session.fullPath || session.projectRoot || session.cwd,
     'AGENT_GROUP': groupName || '',
     'AGENT_SESSION_ID': session.agentSessionId || '',
+    'AGENT_HISTORY_PATH': historyFilePath || '',
     'TAB_NAME': session.name,
     'TOOL_TYPE': session.toolType,
 

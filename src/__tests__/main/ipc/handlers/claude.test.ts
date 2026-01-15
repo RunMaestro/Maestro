@@ -153,8 +153,9 @@ describe('Claude IPC handlers', () => {
       // Line 1422: ipcMain.handle('claude:registerSessionOrigin', ...)  - Register session origin (user/auto)
       // Line 1438: ipcMain.handle('claude:updateSessionName', ...)   - Update session name
       // Line 1459: ipcMain.handle('claude:updateSessionStarred', ...)  - Update session starred status
-      // Line 1480: ipcMain.handle('claude:getSessionOrigins', ...)   - Get session origins for a project
-      // Line 1488: ipcMain.handle('claude:getAllNamedSessions', ...)  - Get all sessions with names
+      // Line 1461: ipcMain.handle('claude:updateSessionContextUsage', ...)  - Update context usage percentage
+      // Line 1482: ipcMain.handle('claude:getSessionOrigins', ...)   - Get session origins for a project
+      // Line 1490: ipcMain.handle('claude:getAllNamedSessions', ...)  - Get all sessions with names
       const expectedChannels = [
         'claude:listSessions',
         'claude:listSessionsPaginated',
@@ -168,6 +169,7 @@ describe('Claude IPC handlers', () => {
         'claude:registerSessionOrigin',
         'claude:updateSessionName',
         'claude:updateSessionStarred',
+        'claude:updateSessionContextUsage',
         'claude:getSessionOrigins',
         'claude:getAllNamedSessions',
       ];

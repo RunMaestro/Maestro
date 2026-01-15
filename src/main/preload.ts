@@ -863,6 +863,9 @@ contextBridge.exposeInMainWorld('maestro', {
       logDeprecationWarning('updateSessionStarred');
       return ipcRenderer.invoke('claude:updateSessionStarred', projectPath, agentSessionId, starred);
     },
+    updateSessionContextUsage: (projectPath: string, agentSessionId: string, contextUsage: number) => {
+      return ipcRenderer.invoke('claude:updateSessionContextUsage', projectPath, agentSessionId, contextUsage);
+    },
     getSessionOrigins: (projectPath: string) => {
       logDeprecationWarning('getSessionOrigins');
       return ipcRenderer.invoke('claude:getSessionOrigins', projectPath);
@@ -2348,7 +2351,8 @@ export interface MaestroAPI {
     registerSessionOrigin: (projectPath: string, agentSessionId: string, origin: 'user' | 'auto', sessionName?: string) => Promise<boolean>;
     updateSessionName: (projectPath: string, agentSessionId: string, sessionName: string) => Promise<boolean>;
     updateSessionStarred: (projectPath: string, agentSessionId: string, starred: boolean) => Promise<boolean>;
-    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean }>>;
+    updateSessionContextUsage: (projectPath: string, agentSessionId: string, contextUsage: number) => Promise<boolean>;
+    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean; contextUsage?: number }>>;
     deleteMessagePair: (projectPath: string, sessionId: string, userMessageUuid: string, fallbackContent?: string) => Promise<{ success: boolean; linesRemoved?: number; error?: string }>;
   };
   agentSessions: {

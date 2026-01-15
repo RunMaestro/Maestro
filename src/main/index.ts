@@ -301,6 +301,7 @@ interface ClaudeSessionOriginInfo {
   origin: ClaudeSessionOrigin;
   sessionName?: string; // User-defined session name from Maestro
   starred?: boolean;    // Whether the session is starred
+  contextUsage?: number; // Last known context window usage percentage (0-100)
 }
 interface ClaudeSessionOriginsData {
   // Map of projectPath -> { agentSessionId -> origin info }

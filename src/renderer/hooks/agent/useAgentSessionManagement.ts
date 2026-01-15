@@ -196,16 +196,16 @@ export function useAgentSessionManagement(
         }));
       }
 
-      // Look up starred status and session name from stores if not provided
+      // Look up starred status, session name, and context usage from stores if not provided
       let isStarred = starred ?? false;
       let name = sessionName ?? null;
+      let storedContextUsage: number | undefined;
+      let finalUsageStats = usageStats;
 
-      const shouldLookupOrigins = activeSession.toolType === 'claude-code'
-        && (starred === undefined || sessionName === undefined);
-
-      if (shouldLookupOrigins) {
+      // Always look up origins for Claude sessions to get contextUsage (and name/starred if not provided)
+      if (activeSession.toolType === 'claude-code') {
         try {
-          // Look up session metadata from session origins (name and starred)
+          // Look up session metadata from session origins (name, starred, contextUsage)
           // Note: getSessionOrigins is still Claude-specific until we add generic origin tracking
           // Use projectRoot (not cwd) for consistent session storage access
           const origins = await window.maestro.claude.getSessionOrigins(activeSession.projectRoot);
@@ -217,10 +217,29 @@ export function useAgentSessionManagement(
             if (starred === undefined && originData.starred !== undefined) {
               isStarred = originData.starred;
             }
+            if (originData.contextUsage !== undefined) {
+              storedContextUsage = originData.contextUsage;
+            }
           }
         } catch (error) {
-          console.warn('[handleResumeSession] Failed to lookup starred/named status:', error);
+          console.warn('[handleResumeSession] Failed to lookup session metadata:', error);
         }
+      }
+
+      // If we have stored contextUsage, set token values to reproduce that percentage
+      // The context calculation is: (inputTokens + cacheRead + cacheCreation) / contextWindow * 100
+      // So we set inputTokens = contextUsage * contextWindow / 100 to get the correct percentage
+      if (storedContextUsage !== undefined && storedContextUsage > 0) {
+        const contextWindow = finalUsageStats?.contextWindow || 200000;
+        finalUsageStats = {
+          inputTokens: Math.round(storedContextUsage * contextWindow / 100),
+          outputTokens: finalUsageStats?.outputTokens || 0,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          totalCostUsd: finalUsageStats?.totalCostUsd || 0,
+          contextWindow,
+          reasoningTokens: finalUsageStats?.reasoningTokens,
+        };
       }
 
       // Update the session and switch to AI mode
@@ -234,7 +253,7 @@ export function useAgentSessionManagement(
           logs: messages,
           name,
           starred: isStarred,
-          usageStats,
+          usageStats: finalUsageStats,
           saveToHistory: defaultSaveToHistory,
           showThinking: defaultShowThinking
         });

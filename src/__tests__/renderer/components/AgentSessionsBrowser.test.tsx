@@ -2180,6 +2180,8 @@ describe('AgentSessionsBrowser', () => {
         await vi.runAllTimersAsync();
       });
 
+      // buildUsageStats now only preserves cost (tokens are zeroed to avoid stale context display)
+      // The actual context usage will be looked up from session origins by handleResumeSession
       expect(onResumeSession).toHaveBeenCalledWith(
         'session-1',
         expect.arrayContaining([
@@ -2189,8 +2191,8 @@ describe('AgentSessionsBrowser', () => {
         'My Session',
         false, // not starred
         expect.objectContaining({
-          inputTokens: 5000,
-          outputTokens: 2000,
+          inputTokens: 0,
+          outputTokens: 0,
           totalCostUsd: 0.15,
         })
       );
@@ -2229,14 +2231,15 @@ describe('AgentSessionsBrowser', () => {
         await vi.runAllTimersAsync();
       });
 
+      // buildUsageStats now only preserves cost (tokens are zeroed to avoid stale context display)
       expect(onResumeSession).toHaveBeenCalledWith(
         'session-1',
         expect.any(Array),
         undefined,
         true, // starred
         expect.objectContaining({
-          inputTokens: 5000,
-          outputTokens: 2000,
+          inputTokens: 0,
+          outputTokens: 0,
           totalCostUsd: 0.15,
         })
       );
@@ -2307,14 +2310,15 @@ describe('AgentSessionsBrowser', () => {
         await vi.runAllTimersAsync();
       });
 
+      // buildUsageStats now only preserves cost (tokens are zeroed to avoid stale context display)
       expect(onResumeSession).toHaveBeenCalledWith(
         'session-1',
         [], // Empty messages for quick resume
         'Quick Session',
         false,
         expect.objectContaining({
-          inputTokens: 5000,
-          outputTokens: 2000,
+          inputTokens: 0,
+          outputTokens: 0,
           totalCostUsd: 0.15,
         })
       );

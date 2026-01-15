@@ -64,6 +64,7 @@ describe('TEMPLATE_VARIABLES constant', () => {
     expect(variables).toContain('{{AGENT_PATH}}');
     expect(variables).toContain('{{AGENT_GROUP}}');
     expect(variables).toContain('{{AGENT_SESSION_ID}}');
+    expect(variables).toContain('{{AGENT_HISTORY_PATH}}');
     expect(variables).toContain('{{TAB_NAME}}');
     expect(variables).toContain('{{TOOL_TYPE}}');
   });
@@ -204,6 +205,22 @@ describe('substituteTemplateVariables', () => {
       const result2 = substituteTemplateVariables('{{SESSION_NAME}}', context);
       expect(result1).toBe(result2);
       expect(result1).toBe('Aliased Name');
+    });
+
+    it('should replace {{AGENT_HISTORY_PATH}} with historyFilePath', () => {
+      const context = createTestContext({
+        historyFilePath: '/Users/test/.config/Maestro/history/session-123.json',
+      });
+      const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
+      expect(result).toBe('History: /Users/test/.config/Maestro/history/session-123.json');
+    });
+
+    it('should replace {{AGENT_HISTORY_PATH}} with empty string when historyFilePath is undefined', () => {
+      const context = createTestContext({
+        historyFilePath: undefined,
+      });
+      const result = substituteTemplateVariables('History: {{AGENT_HISTORY_PATH}}', context);
+      expect(result).toBe('History: ');
     });
   });
 

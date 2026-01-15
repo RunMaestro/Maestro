@@ -502,14 +502,18 @@ export function AgentSessionsBrowser({
   };
 
   // Helper to build UsageStats from session data
+  // NOTE: Token counts from stored sessions are LIFETIME TOTALS, not current context.
+  // We only preserve the cost for display. Token fields are set to 0 so context window
+  // starts at 0% and gets updated when Claude Code sends fresh usage data.
+  // This fixes the bug where resumed sessions showed 100% context due to stale cumulative tokens.
   const buildUsageStats = useCallback((session: ClaudeSession): UsageStats | undefined => {
-    // Only build if we have token data
-    if (!session.inputTokens && !session.outputTokens) return undefined;
+    // Only build if we have cost data (tokens are intentionally zeroed)
+    if (!session.costUsd) return undefined;
     return {
-      inputTokens: session.inputTokens || 0,
-      outputTokens: session.outputTokens || 0,
-      cacheReadInputTokens: session.cacheReadTokens || 0,
-      cacheCreationInputTokens: session.cacheCreationTokens || 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadInputTokens: 0,
+      cacheCreationInputTokens: 0,
       totalCostUsd: session.costUsd || 0,
       contextWindow: 200000, // Default Claude context window
     };

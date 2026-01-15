@@ -123,6 +123,8 @@ export interface SessionOriginInfo {
   origin: AgentSessionOrigin;
   sessionName?: string;
   starred?: boolean;
+  /** Last known context window usage percentage (0-100) for session resume */
+  contextUsage?: number;
 }
 
 /**

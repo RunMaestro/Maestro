@@ -72,7 +72,7 @@ export function DeleteAgentConfirmModal({
             onKeyDown={(e) => handleKeyDown(e, handleConfirm)}
             className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
             style={{
-              backgroundColor: theme.colors.error,
+              backgroundColor: `${theme.colors.error}99`,
               color: '#ffffff',
             }}
           >

@@ -729,6 +729,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
               }
             }
 
+            // Get history file path for task recall
+            let historyFilePath: string | undefined;
+            try {
+              historyFilePath = await window.maestro.history.getFilePath(freshSession.id) || undefined;
+            } catch {
+              // Ignore history errors
+            }
+
             // Substitute template variables in the system prompt
             console.log('[useInputProcessing] Template substitution context:', {
               sessionId: freshSession.id,
@@ -737,10 +745,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
               fullPath: freshSession.fullPath,
               cwd: freshSession.cwd,
               parentSessionId: freshSession.parentSessionId,
+              historyFilePath,
             });
             const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
               session: freshSession,
               gitBranch,
+              historyFilePath,
             });
 
             // Prepend system prompt to user's message

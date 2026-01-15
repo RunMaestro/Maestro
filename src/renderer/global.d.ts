@@ -810,7 +810,8 @@ interface MaestroAPI {
     registerSessionOrigin: (projectPath: string, agentSessionId: string, origin: 'user' | 'auto', sessionName?: string) => Promise<boolean>;
     updateSessionName: (projectPath: string, agentSessionId: string, sessionName: string) => Promise<boolean>;
     updateSessionStarred: (projectPath: string, agentSessionId: string, starred: boolean) => Promise<boolean>;
-    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean }>>;
+    updateSessionContextUsage: (projectPath: string, agentSessionId: string, contextUsage: number) => Promise<boolean>;
+    getSessionOrigins: (projectPath: string) => Promise<Record<string, 'user' | 'auto' | { origin: 'user' | 'auto'; sessionName?: string; starred?: boolean; contextUsage?: number }>>;
     getAllNamedSessions: () => Promise<Array<{
       agentId: string;
       agentSessionId: string;

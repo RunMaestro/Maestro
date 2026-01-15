@@ -111,6 +111,7 @@ interface ClaudeSessionOriginInfo {
   origin: ClaudeSessionOrigin;
   sessionName?: string;
   starred?: boolean;
+  contextUsage?: number;
 }
 
 interface ClaudeSessionOriginsData {
@@ -1453,6 +1454,27 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
       }
       claudeSessionOriginsStore.set('origins', origins);
       logger.debug(`Updated Claude session starred: ${agentSessionId} = ${starred}`, ORIGINS_LOG_CONTEXT, { projectPath });
+      return true;
+    }
+  ));
+
+  ipcMain.handle('claude:updateSessionContextUsage', withIpcErrorLogging(
+    handlerOpts('updateSessionContextUsage', ORIGINS_LOG_CONTEXT),
+    async (projectPath: string, agentSessionId: string, contextUsage: number) => {
+      const origins = claudeSessionOriginsStore.get('origins', {});
+      if (!origins[projectPath]) {
+        origins[projectPath] = {};
+      }
+      const existing = origins[projectPath][agentSessionId];
+      if (typeof existing === 'string') {
+        origins[projectPath][agentSessionId] = { origin: existing, contextUsage };
+      } else if (existing) {
+        origins[projectPath][agentSessionId] = { ...existing, contextUsage };
+      } else {
+        origins[projectPath][agentSessionId] = { origin: 'user', contextUsage };
+      }
+      claudeSessionOriginsStore.set('origins', origins);
+      // Don't log - this updates frequently and would spam logs
       return true;
     }
   ));

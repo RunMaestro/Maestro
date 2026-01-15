@@ -233,8 +233,10 @@ export function useFileTreeManagement(
     const session = sessions.find(s => s.id === activeSessionId);
     if (!session) return;
 
-    // Only load if file tree is empty and not already loading
-    if ((!session.fileTree || session.fileTree.length === 0) && !session.fileTreeLoading) {
+    // Only load if file tree is empty, not already loading, and hasn't been loaded yet
+    // fileTreeStats is set after successful load, so we use it to detect "loaded but empty"
+    const hasLoadedOnce = session.fileTreeStats !== undefined || session.fileTreeError !== undefined;
+    if ((!session.fileTree || session.fileTree.length === 0) && !session.fileTreeLoading && !hasLoadedOnce) {
       // Check if we're in a retry backoff period
       if (session.fileTreeRetryAt && Date.now() < session.fileTreeRetryAt) {
         // Schedule retry when backoff expires (if not already scheduled)

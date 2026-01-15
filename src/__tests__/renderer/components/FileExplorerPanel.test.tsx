@@ -1391,6 +1391,19 @@ describe('FileExplorerPanel', () => {
       expect(screen.getByText('Reveal in Finder')).toBeInTheDocument();
     });
 
+    it('updates selection to right-clicked item when opening context menu', () => {
+      const { container } = render(<FileExplorerPanel {...defaultProps} />);
+      // package.json is at index 1 (after src at index 0)
+      const fileItem = Array.from(container.querySelectorAll('[data-file-index]'))
+        .find(el => el.textContent?.includes('package.json'));
+      const fileIndex = parseInt(fileItem!.getAttribute('data-file-index')!, 10);
+
+      fireEvent.contextMenu(fileItem!, { clientX: 100, clientY: 200 });
+
+      // Should update selection to the right-clicked item
+      expect(defaultProps.setSelectedFileIndex).toHaveBeenCalledWith(fileIndex);
+    });
+
     it('shows Document Graph option only for markdown files', () => {
       const onFocusFileInGraph = vi.fn();
       const { container } = render(

@@ -41,7 +41,7 @@ const mockTheme: Theme = {
 // Mock log entries
 const createMockLog = (overrides: Partial<{
   timestamp: number;
-  level: 'debug' | 'info' | 'warn' | 'error' | 'toast';
+  level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
   message: string;
   context?: string;
   data?: unknown;
@@ -1012,6 +1012,83 @@ describe('LogViewer', () => {
         const dialog = screen.getByRole('dialog');
         // Check that there's no TestModule or other context text
         expect(screen.queryByText('TestModule')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should display agent pill for toast entries with project in data', async () => {
+      getMockGetLogs().mockResolvedValue([
+        createMockLog({
+          level: 'toast',
+          message: 'Toast message',
+          data: { project: 'Test Agent', type: 'success' }
+        }),
+      ]);
+
+      render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Test Agent')).toBeInTheDocument();
+      });
+    });
+
+    it('should display agent pill for autorun entries with context', async () => {
+      getMockGetLogs().mockResolvedValue([
+        createMockLog({
+          level: 'autorun',
+          message: 'Auto run started',
+          context: 'My Session'
+        }),
+      ]);
+
+      render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('My Session')).toBeInTheDocument();
+      });
+    });
+
+    it('should not show agent pill for toast entries without project', async () => {
+      getMockGetLogs().mockResolvedValue([
+        createMockLog({
+          level: 'toast',
+          message: 'Toast message',
+          data: { type: 'info' } // No project field
+        }),
+      ]);
+
+      render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('Toast message')).toBeInTheDocument();
+        // Should not have any agent pill text
+        expect(screen.queryByText('Test Agent')).not.toBeInTheDocument();
+      });
+    });
+
+    it('should not show context badge for toast entries', async () => {
+      getMockGetLogs().mockResolvedValue([
+        createMockLog({
+          level: 'toast',
+          message: 'Test notification',
+          context: 'Toast',
+          data: { project: 'Agent Name' }
+        }),
+      ]);
+
+      render(<LogViewer theme={mockTheme} onClose={vi.fn()} />);
+
+      await waitFor(() => {
+        // Should show the agent name from data.project
+        expect(screen.getByText('Agent Name')).toBeInTheDocument();
+        // The context "Toast" should not be shown as a separate badge for toast entries
+        // The level pill shows "toast" (lowercase), and context "Toast" (capitalized)
+        // should not appear as a separate context badge
+        const toastLevelPill = screen.getByText('toast');
+        expect(toastLevelPill).toBeInTheDocument();
+        // Make sure there's no separate "Toast" context badge (distinct from the level pill)
+        const allTextElements = screen.queryAllByText('Toast');
+        // Should be 0 - the context "Toast" is not displayed for toast level entries
+        expect(allTextElements.length).toBe(0);
       });
     });
   });

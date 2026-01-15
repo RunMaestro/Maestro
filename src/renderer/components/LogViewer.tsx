@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { Search, X, Trash2, Download, ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown } from 'lucide-react';
+import { Search, X, Trash2, Download, ChevronRight, ChevronDown, ChevronsDownUp, ChevronsUpDown, Pencil } from 'lucide-react';
 import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -567,11 +567,38 @@ export function LogViewer({ theme, onClose, logLevel = 'info', savedSelectedLeve
                     <span className="text-xs opacity-50 font-mono flex-shrink-0" style={{ color: theme.colors.textDim }}>
                       {new Date(log.timestamp).toLocaleTimeString()}
                     </span>
-                    {log.context && (
+                    {/* Context pill - show for non-toast/autorun entries */}
+                    {log.level !== 'toast' && log.level !== 'autorun' && log.context && (
                       <span
                         className="text-xs px-1.5 py-0.5 rounded font-mono"
                         style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.accent }}
                       >
+                        {log.context}
+                      </span>
+                    )}
+                    {/* Agent name pill for toast entries (from data.project) */}
+                    {(() => {
+                      if (log.level !== 'toast') return null;
+                      const data = log.data as { project?: string } | undefined;
+                      const project = data?.project;
+                      if (!project) return null;
+                      return (
+                        <span
+                          className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
+                          style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+                        >
+                          <Pencil className="w-3 h-3" />
+                          {project}
+                        </span>
+                      );
+                    })()}
+                    {/* Agent name pill for autorun entries (from context) */}
+                    {log.level === 'autorun' && log.context && (
+                      <span
+                        className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
+                        style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+                      >
+                        <Pencil className="w-3 h-3" />
                         {log.context}
                       </span>
                     )}

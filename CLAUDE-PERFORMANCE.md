@@ -230,3 +230,34 @@ useEffect(() => {
   return () => document.removeEventListener('click', handler);
 }, []);
 ```
+
+## Performance Profiling
+
+**Exporting DevTools Performance traces:**
+
+The Chrome DevTools Performance panel's "Save profile" button fails in Electron with:
+```
+NotAllowedError: The request is not allowed by the user agent or the platform in the current context.
+```
+
+This occurs because Electron 28 doesn't fully support the File System Access API (`showSaveFilePicker`). Full support was added in Electron 30+ ([electron/electron#41419](https://github.com/electron/electron/pull/41419)).
+
+**Workarounds:**
+
+1. **Launch with experimental flag** (enables FSAA):
+   ```bash
+   # macOS
+   /Applications/Maestro.app/Contents/MacOS/Maestro --enable-experimental-web-platform-features
+
+   # Development
+   npm run dev -- --enable-experimental-web-platform-features
+   ```
+
+2. **Use Maestro's native save dialog** (copy trace JSON from DevTools, then in renderer console):
+   ```javascript
+   navigator.clipboard.readText().then(data =>
+     window.maestro.dialog.saveFile({ defaultPath: 'trace.json', content: data })
+   );
+   ```
+
+3. **Right-click context menu** - Right-click on the flame graph and select "Save profile..." which may use a different code path.
