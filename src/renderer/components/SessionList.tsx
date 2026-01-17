@@ -1531,7 +1531,7 @@ function SessionListInner(props: SessionListProps) {
         setPreFilterBookmarksCollapsed(null);
       }
     }
-   
+
   }, [sessionFilterOpen]);
 
   // Temporarily expand groups when filtering to show matching sessions
@@ -1571,7 +1571,7 @@ function SessionListInner(props: SessionListProps) {
       setGroups(prev => prev.map(g => ({ ...g, collapsed: true })));
       setBookmarksCollapsed(false);
     }
-   
+
   }, [sessionFilter]);
 
   // Get the jump number (1-9, 0=10th) for a session based on its position in visibleSessions
@@ -1664,11 +1664,10 @@ function SessionListInner(props: SessionListProps) {
                       setLiveOverlayOpen(!liveOverlayOpen);
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
-                    isLiveMode
-                      ? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
-                      : 'text-gray-500 hover:bg-white/10'
-                  }`}
+                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${isLiveMode
+                    ? 'bg-green-500/20 text-green-500 hover:bg-green-500/30'
+                    : 'text-gray-500 hover:bg-white/10'
+                    }`}
                   title={isLiveMode ? "Web interface active - Click to show URL" : "Click to enable web interface"}
                 >
                   <Radio className={`w-3 h-3 ${isLiveMode ? 'animate-pulse' : ''}`} />
@@ -1729,13 +1728,12 @@ function SessionListInner(props: SessionListProps) {
                           <button
                             onClick={handleTunnelToggle}
                             disabled={!cloudflaredInstalled || tunnelStatus === 'starting'}
-                            className={`relative w-10 h-5 rounded-full transition-colors ${
-                              tunnelStatus === 'connected'
-                                ? 'bg-green-500'
-                                : cloudflaredInstalled
-                                  ? 'bg-gray-600 hover:bg-gray-500'
-                                  : 'bg-gray-700 opacity-50 cursor-not-allowed'
-                            }`}
+                            className={`relative w-10 h-5 rounded-full transition-colors ${tunnelStatus === 'connected'
+                              ? 'bg-green-500'
+                              : cloudflaredInstalled
+                                ? 'bg-gray-600 hover:bg-gray-500'
+                                : 'bg-gray-700 opacity-50 cursor-not-allowed'
+                              }`}
                             title={
                               !cloudflaredInstalled
                                 ? 'cloudflared not installed'
@@ -1745,9 +1743,8 @@ function SessionListInner(props: SessionListProps) {
                             }
                           >
                             <div
-                              className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                                tunnelStatus === 'connected' ? 'translate-x-5' : 'translate-x-0.5'
-                              }`}
+                              className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${tunnelStatus === 'connected' ? 'translate-x-5' : 'translate-x-0.5'
+                                }`}
                             />
                             {tunnelStatus === 'starting' && (
                               <div className="absolute inset-0 flex items-center justify-center">
@@ -1803,11 +1800,10 @@ function SessionListInner(props: SessionListProps) {
                                 setTimeout(() => restartWebServer(), 100);
                               }
                             }}
-                            className={`relative w-10 h-5 rounded-full transition-colors ${
-                              webInterfaceUseCustomPort
-                                ? 'bg-green-500'
-                                : 'bg-gray-600 hover:bg-gray-500'
-                            }`}
+                            className={`relative w-10 h-5 rounded-full transition-colors ${webInterfaceUseCustomPort
+                              ? 'bg-green-500'
+                              : 'bg-gray-600 hover:bg-gray-500'
+                              }`}
                             title={
                               webInterfaceUseCustomPort
                                 ? 'Use random port'
@@ -1815,9 +1811,8 @@ function SessionListInner(props: SessionListProps) {
                             }
                           >
                             <div
-                              className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                                webInterfaceUseCustomPort ? 'translate-x-5' : 'translate-x-0.5'
-                              }`}
+                              className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${webInterfaceUseCustomPort ? 'translate-x-5' : 'translate-x-0.5'
+                                }`}
                             />
                           </button>
                         </div>
@@ -1889,9 +1884,8 @@ function SessionListInner(props: SessionListProps) {
                         {/* URL Display */}
                         <div className="flex items-center gap-2 mb-3">
                           <div
-                            className={`flex-1 text-[11px] font-mono truncate select-all ${
-                              activeUrlTab === 'local' ? 'text-green-400' : 'text-blue-400'
-                            }`}
+                            className={`flex-1 text-[11px] font-mono truncate select-all ${activeUrlTab === 'local' ? 'text-green-400' : 'text-blue-400'
+                              }`}
                             title={activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl || ''}
                           >
                             {(activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl || '').replace(/^https?:\/\//, '')}
@@ -1972,22 +1966,20 @@ function SessionListInner(props: SessionListProps) {
                             >
                               <button
                                 onClick={() => setActiveUrlTab('local')}
-                                className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${
-                                  activeUrlTab === 'local'
-                                    ? 'bg-green-500 text-white shadow-sm'
-                                    : 'hover:bg-white/10'
-                                }`}
+                                className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${activeUrlTab === 'local'
+                                  ? 'bg-green-500 text-white shadow-sm'
+                                  : 'hover:bg-white/10'
+                                  }`}
                                 style={activeUrlTab !== 'local' ? { color: theme.colors.textDim } : {}}
                               >
                                 Local
                               </button>
                               <button
                                 onClick={() => setActiveUrlTab('remote')}
-                                className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${
-                                  activeUrlTab === 'remote'
-                                    ? 'bg-blue-500 text-white shadow-sm'
-                                    : 'hover:bg-white/10'
-                                }`}
+                                className={`px-4 py-1 text-[10px] font-bold uppercase rounded-full transition-all ${activeUrlTab === 'remote'
+                                  ? 'bg-blue-500 text-white shadow-sm'
+                                  : 'hover:bg-white/10'
+                                  }`}
                                 style={activeUrlTab !== 'remote' ? { color: theme.colors.textDim } : {}}
                               >
                                 Remote
@@ -1996,15 +1988,13 @@ function SessionListInner(props: SessionListProps) {
                             {/* Dot indicators */}
                             <div className="flex gap-1.5">
                               <div
-                                className={`w-1.5 h-1.5 rounded-full transition-colors cursor-pointer ${
-                                  activeUrlTab === 'local' ? 'bg-green-500' : 'bg-gray-600'
-                                }`}
+                                className={`w-1.5 h-1.5 rounded-full transition-colors cursor-pointer ${activeUrlTab === 'local' ? 'bg-green-500' : 'bg-gray-600'
+                                  }`}
                                 onClick={() => setActiveUrlTab('local')}
                               />
                               <div
-                                className={`w-1.5 h-1.5 rounded-full transition-colors cursor-pointer ${
-                                  activeUrlTab === 'remote' ? 'bg-blue-500' : 'bg-gray-600'
-                                }`}
+                                className={`w-1.5 h-1.5 rounded-full transition-colors cursor-pointer ${activeUrlTab === 'remote' ? 'bg-blue-500' : 'bg-gray-600'
+                                  }`}
                                 onClick={() => setActiveUrlTab('remote')}
                               />
                             </div>
@@ -2283,55 +2273,55 @@ function SessionListInner(props: SessionListProps) {
               )}
             </div>
           ) : groups.length > 0 && (
-          /* UNGROUPED FOLDER - Groups exist, show as collapsible folder */
-          <div className="mb-1 mt-4">
-            <div
-              className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
-              onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
-              onDragOver={handleDragOver}
-              onDrop={handleDropOnUngrouped}
-            >
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1" style={{ color: theme.colors.textDim }}>
-                {ungroupedCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                <Folder className="w-3.5 h-3.5" />
-                <span>Ungrouped Agents</span>
-              </div>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  createNewGroup();
-                }}
-                className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
-                style={{
-                  backgroundColor: theme.colors.accent + '20',
-                  color: theme.colors.accent,
-                  border: `1px solid ${theme.colors.accent}40`
-                }}
-                title="Create new group"
-              >
-                <Plus className="w-3 h-3" />
-                <span>New Group</span>
-              </button>
-            </div>
-
-            {!ungroupedCollapsed ? (
-              <div className="flex flex-col border-l ml-4" style={{ borderColor: theme.colors.border }}>
-                {sortedUngroupedSessions.map((session) =>
-                  renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
-                )}
-              </div>
-            ) : (
-              /* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
+            /* UNGROUPED FOLDER - Groups exist, show as collapsible folder */
+            <div className="mb-1 mt-4">
               <div
-                className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
-                onClick={() => setUngroupedCollapsed(false)}
+                className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+                onClick={() => setUngroupedCollapsed(!ungroupedCollapsed)}
+                onDragOver={handleDragOver}
+                onDrop={handleDropOnUngrouped}
               >
-                {sortedUngroupedParentSessions.map(s =>
-                  renderCollapsedPill(s, 'ungrouped-collapsed', () => setUngroupedCollapsed(false))
-                )}
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1" style={{ color: theme.colors.textDim }}>
+                  {ungroupedCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  <Folder className="w-3.5 h-3.5" />
+                  <span>Ungrouped Agents</span>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    createNewGroup();
+                  }}
+                  className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+                  style={{
+                    backgroundColor: theme.colors.accent + '20',
+                    color: theme.colors.accent,
+                    border: `1px solid ${theme.colors.accent}40`
+                  }}
+                  title="Create new group"
+                >
+                  <Plus className="w-3 h-3" />
+                  <span>New Group</span>
+                </button>
               </div>
-            )}
-          </div>
+
+              {!ungroupedCollapsed ? (
+                <div className="flex flex-col border-l ml-4" style={{ borderColor: theme.colors.border }}>
+                  {sortedUngroupedSessions.map((session) =>
+                    renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
+                  )}
+                </div>
+              ) : (
+                /* Collapsed Ungrouped Palette - uses subdivided pills for worktrees */
+                <div
+                  className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
+                  onClick={() => setUngroupedCollapsed(false)}
+                >
+                  {sortedUngroupedParentSessions.map(s =>
+                    renderCollapsedPill(s, 'ungrouped-collapsed', () => setUngroupedCollapsed(false))
+                  )}
+                </div>
+              )}
+            </div>
           )}
 
           {/* Flexible spacer to push group chats to bottom */}
@@ -2339,24 +2329,24 @@ function SessionListInner(props: SessionListProps) {
 
           {/* GROUP CHATS SECTION - Only show when at least 2 AI agents exist */}
           {onNewGroupChat && onOpenGroupChat && onEditGroupChat && onRenameGroupChat && onDeleteGroupChat &&
-           sessions.filter(s => s.toolType !== 'terminal').length >= 2 && (
-            <GroupChatList
-              theme={theme}
-              groupChats={groupChats}
-              activeGroupChatId={activeGroupChatId}
-              onOpenGroupChat={onOpenGroupChat}
-              onNewGroupChat={onNewGroupChat}
-              onEditGroupChat={onEditGroupChat}
-              onRenameGroupChat={onRenameGroupChat}
-              onDeleteGroupChat={onDeleteGroupChat}
-              isExpanded={groupChatsExpanded}
-              onExpandedChange={onGroupChatsExpandedChange}
-              groupChatState={groupChatState}
-              participantStates={participantStates}
-              groupChatStates={groupChatStates}
-              allGroupChatParticipantStates={allGroupChatParticipantStates}
-            />
-          )}
+            sessions.filter(s => s.toolType !== 'terminal').length >= 2 && (
+              <GroupChatList
+                theme={theme}
+                groupChats={groupChats}
+                activeGroupChatId={activeGroupChatId}
+                onOpenGroupChat={onOpenGroupChat}
+                onNewGroupChat={onNewGroupChat}
+                onEditGroupChat={onEditGroupChat}
+                onRenameGroupChat={onRenameGroupChat}
+                onDeleteGroupChat={onDeleteGroupChat}
+                isExpanded={groupChatsExpanded}
+                onExpandedChange={onGroupChatsExpandedChange}
+                groupChatState={groupChatState}
+                participantStates={participantStates}
+                groupChatStates={groupChatStates}
+                allGroupChatParticipantStates={allGroupChatParticipantStates}
+              />
+            )}
         </div>
       ) : (
         /* SIDEBAR CONTENT: SKINNY MODE */
@@ -2368,58 +2358,58 @@ function SessionListInner(props: SessionListProps) {
             const effectiveStatusColor = isInBatch
               ? theme.colors.warning
               : (session.toolType === 'claude' && !session.agentSessionId
-                  ? undefined // Will use border style instead
-                  : getStatusColor(session.state, theme));
+                ? undefined // Will use border style instead
+                : getStatusColor(session.state, theme));
             const shouldPulse = session.state === 'busy' || isInBatch;
 
             return (
-            <div
-              key={session.id}
-              onClick={() => setActiveSessionId(session.id)}
-              onContextMenu={(e) => handleContextMenu(e, session.id)}
-              className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? 'ring-2' : 'hover:bg-white/10'}`}
-              style={{ '--tw-ring-color': theme.colors.accent } as React.CSSProperties}
-            >
-              <div className="relative">
-                <div
-                  className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
-                  style={
-                    session.toolType === 'claude' && !session.agentSessionId && !isInBatch
-                      ? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-                      : { backgroundColor: effectiveStatusColor }
-                  }
-                  title={session.toolType === 'claude' && !session.agentSessionId ? 'No active Claude session' : undefined}
-                />
-                {/* Unread Notification Badge */}
-                {activeSessionId !== session.id && hasUnreadTabs && (
-                  <div
-                    className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-                    style={{ backgroundColor: theme.colors.error }}
-                    title="Unread messages"
-                  />
-                )}
-              </div>
-
-              {/* Hover Tooltip for Skinny Mode */}
               <div
-                className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-xl"
-                style={{
-                  minWidth: '240px',
-                  left: '80px',
-                  backgroundColor: theme.colors.bgSidebar,
-                  border: `1px solid ${theme.colors.border}`
-                }}
+                key={session.id}
+                onClick={() => setActiveSessionId(session.id)}
+                onContextMenu={(e) => handleContextMenu(e, session.id)}
+                className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? 'ring-2' : 'hover:bg-white/10'}`}
+                style={{ '--tw-ring-color': theme.colors.accent } as React.CSSProperties}
               >
-                <SessionTooltipContent
-                  session={session}
-                  theme={theme}
-                  gitFileCount={gitFileCounts.get(session.id)}
-                  groupName={groups.find(g => g.id === session.groupId)?.name}
-                  isInBatch={isInBatch}
-                />
+                <div className="relative">
+                  <div
+                    className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
+                    style={
+                      session.toolType === 'claude' && !session.agentSessionId && !isInBatch
+                        ? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
+                        : { backgroundColor: effectiveStatusColor }
+                    }
+                    title={session.toolType === 'claude' && !session.agentSessionId ? 'No active Claude session' : undefined}
+                  />
+                  {/* Unread Notification Badge */}
+                  {activeSessionId !== session.id && hasUnreadTabs && (
+                    <div
+                      className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
+                      style={{ backgroundColor: theme.colors.error }}
+                      title="Unread messages"
+                    />
+                  )}
+                </div>
+
+                {/* Hover Tooltip for Skinny Mode */}
+                <div
+                  className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-xl"
+                  style={{
+                    minWidth: '240px',
+                    left: '80px',
+                    backgroundColor: theme.colors.bgSidebar,
+                    border: `1px solid ${theme.colors.border}`
+                  }}
+                >
+                  <SessionTooltipContent
+                    session={session}
+                    theme={theme}
+                    gitFileCount={gitFileCounts.get(session.id)}
+                    groupName={groups.find(g => g.id === session.groupId)?.name}
+                    isInBatch={isInBatch}
+                  />
+                </div>
               </div>
-            </div>
-          );
+            );
           })}
         </div>
       )}
