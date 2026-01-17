@@ -174,8 +174,8 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
         }),
       }}
     >
-      {/* Category badge */}
-      <div className="flex items-center gap-2 mb-2">
+      {/* Category and source badges */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <span
           className="px-2 py-0.5 rounded text-xs"
           style={{
@@ -188,6 +188,18 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
         {playbook.subcategory && (
           <span className="text-xs" style={{ color: theme.colors.textDim }}>
             / {playbook.subcategory}
+          </span>
+        )}
+        {playbook.source === 'local' && (
+          <span
+            className="px-2 py-0.5 rounded text-xs font-medium"
+            style={{
+              backgroundColor: '#3b82f620',
+              color: '#3b82f6',
+            }}
+            title="Custom local playbook"
+          >
+            Local
           </span>
         )}
       </div>

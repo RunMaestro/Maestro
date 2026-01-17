@@ -1008,6 +1008,7 @@ interface MaestroAPI {
           loopEnabled: boolean;
           maxLoops?: number | null;
           prompt: string | null;
+          source?: 'official' | 'local';
         }>;
       };
       fromCache?: boolean;
@@ -1036,6 +1037,7 @@ interface MaestroAPI {
           loopEnabled: boolean;
           maxLoops?: number | null;
           prompt: string | null;
+          source?: 'official' | 'local';
         }>;
       };
       fromCache?: boolean;
@@ -1066,6 +1068,7 @@ interface MaestroAPI {
       importedDocs?: string[];
       error?: string;
     }>;
+    onManifestChanged: (handler: () => void) => () => void;
   };
   // Updates API
   updates: {

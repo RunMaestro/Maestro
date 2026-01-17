@@ -12,6 +12,7 @@
 
 import { ipcMain, App } from 'electron';
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import Store from 'electron-store';
@@ -20,6 +21,7 @@ import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import type {
   MarketplaceManifest,
   MarketplaceCache,
+  MarketplacePlaybook,
 } from '../../../shared/marketplace-types';
 import {
   MarketplaceFetchError,
@@ -51,6 +53,14 @@ export interface MarketplaceHandlerDependencies {
 // Module-level reference to settings store (set during registration)
 let marketplaceSettingsStore: Store<MaestroSettings> | undefined;
 
+// File watcher for local manifest
+let localManifestWatcher: fsSync.FSWatcher | undefined;
+
+// Debounce timer for file changes
+let watcherDebounceTimer: NodeJS.Timeout | undefined;
+
+const WATCHER_DEBOUNCE_MS = 500;
+
 /**
  * Get SSH remote configuration by ID from the settings store.
  * Returns undefined if not found or store not provided.
@@ -73,6 +83,160 @@ function getSshRemoteById(sshRemoteId: string): SshRemoteConfig | undefined {
  */
 function getCacheFilePath(app: App): string {
   return path.join(app.getPath('userData'), 'marketplace-cache.json');
+}
+
+/**
+ * Get the path to the local manifest file.
+ * Local manifest allows users to define custom/private playbooks that extend
+ * or override the official marketplace catalog.
+ */
+function getLocalManifestPath(app: App): string {
+  return path.join(app.getPath('userData'), 'local-manifest.json');
+}
+
+/**
+ * Check if a path is a local filesystem path (absolute or tilde-prefixed).
+ * Returns true for paths like:
+ * - /absolute/path
+ * - ~/home/path
+ * - C:\Windows\path (on Windows)
+ * Returns false for GitHub repository paths.
+ */
+function isLocalPath(pathStr: string): boolean {
+  // Check for absolute paths
+  if (path.isAbsolute(pathStr)) {
+    return true;
+  }
+  // Check for tilde-prefixed paths
+  if (pathStr.startsWith('~/') || pathStr.startsWith('~\\')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Read the local manifest from disk.
+ * Returns null if the file doesn't exist or is invalid.
+ * Logs warnings for invalid JSON but doesn't throw - graceful degradation.
+ */
+async function readLocalManifest(app: App): Promise<MarketplaceManifest | null> {
+  const localManifestPath = getLocalManifestPath(app);
+
+  try {
+    const content = await fs.readFile(localManifestPath, 'utf-8');
+    const data = JSON.parse(content);
+
+    // Validate local manifest structure
+    if (!data.playbooks || !Array.isArray(data.playbooks)) {
+      logger.warn('Invalid local manifest structure: missing playbooks array', LOG_CONTEXT);
+      return null;
+    }
+
+    logger.info(`Loaded local manifest with ${data.playbooks.length} playbook(s)`, LOG_CONTEXT);
+    return data as MarketplaceManifest;
+  } catch (error) {
+    // File doesn't exist - this is normal, treat as empty
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      logger.debug('No local manifest found (this is normal)', LOG_CONTEXT);
+      return null;
+    }
+
+    // Invalid JSON or other error - log warning but don't crash
+    logger.warn('Failed to read local manifest, ignoring', LOG_CONTEXT, { error });
+    return null;
+  }
+}
+
+/**
+ * Merge official and local manifests.
+ *
+ * Merge semantics:
+ * - Playbooks are merged by `id` field
+ * - Local playbooks with same `id` override official ones
+ * - Local-only `id`s are appended to the catalog
+ * - All playbooks are tagged with `source` field for UI distinction
+ *
+ * @param official Official manifest from GitHub (may be null)
+ * @param local Local manifest from filesystem (may be null)
+ * @returns Merged manifest with source tags
+ */
+function mergeManifests(
+  official: MarketplaceManifest | null,
+  local: MarketplaceManifest | null
+): MarketplaceManifest {
+  // If no manifests at all, return empty
+  if (!official && !local) {
+    return {
+      lastUpdated: new Date().toISOString().split('T')[0],
+      playbooks: [],
+    };
+  }
+
+  // If only official exists, tag all as official
+  if (official && !local) {
+    return {
+      ...official,
+      playbooks: official.playbooks.map((p) => ({ ...p, source: 'official' as const })),
+    };
+  }
+
+  // If only local exists, tag all as local
+  if (!official && local) {
+    return {
+      ...local,
+      playbooks: local.playbooks.map((p) => ({ ...p, source: 'local' as const })),
+    };
+  }
+
+  // Both exist - merge by ID
+  const officialPlaybooks = official!.playbooks;
+  const localPlaybooks = local!.playbooks;
+
+  // Create map of local playbooks by ID for fast lookup
+  const localMap = new Map<string, MarketplacePlaybook>();
+  for (const playbook of localPlaybooks) {
+    if (!playbook.id) {
+      logger.warn('Local playbook missing required "id" field, skipping', LOG_CONTEXT, {
+        title: playbook.title,
+      });
+      continue;
+    }
+    // Validate required fields
+    if (!playbook.title || !playbook.path || !playbook.documents) {
+      logger.warn(`Local playbook "${playbook.id}" missing required fields, skipping`, LOG_CONTEXT);
+      continue;
+    }
+    localMap.set(playbook.id, { ...playbook, source: 'local' });
+  }
+
+  // Override official playbooks with local matches, tag official ones
+  const mergedPlaybooks = officialPlaybooks.map((official) => {
+    const localOverride = localMap.get(official.id);
+    if (localOverride) {
+      logger.info(`Local playbook "${official.id}" overrides official version`, LOG_CONTEXT);
+      return localOverride;
+    }
+    return { ...official, source: 'official' as const };
+  });
+
+  // Find local-only playbooks (not in official catalog)
+  const officialIds = new Set(officialPlaybooks.map((p) => p.id));
+  const localOnlyPlaybooks = Array.from(localMap.values()).filter(
+    (local) => !officialIds.has(local.id)
+  );
+
+  // Append local-only playbooks
+  const finalPlaybooks = [...mergedPlaybooks, ...localOnlyPlaybooks];
+
+  logger.info(
+    `Merged manifest: ${officialPlaybooks.length} official, ${localPlaybooks.length} local, ${finalPlaybooks.length} total`,
+    LOG_CONTEXT
+  );
+
+  return {
+    lastUpdated: official?.lastUpdated || local?.lastUpdated || new Date().toISOString().split('T')[0],
+    playbooks: finalPlaybooks,
+  };
 }
 
 /**
@@ -170,11 +334,45 @@ async function fetchManifest(): Promise<MarketplaceManifest> {
 }
 
 /**
- * Fetch a document from GitHub.
+ * Resolve tilde (~) to user's home directory.
+ */
+function resolveTildePath(pathStr: string): string {
+  if (pathStr.startsWith('~/') || pathStr.startsWith('~\\')) {
+    const homedir = require('os').homedir();
+    return path.join(homedir, pathStr.slice(2));
+  }
+  return pathStr;
+}
+
+/**
+ * Fetch a document from GitHub or local filesystem.
+ * If playbookPath is a local filesystem path, reads from disk.
+ * Otherwise, fetches from GitHub.
  */
 async function fetchDocument(playbookPath: string, filename: string): Promise<string> {
+  // Check if this is a local path
+  if (isLocalPath(playbookPath)) {
+    const resolvedPath = resolveTildePath(playbookPath);
+    const docPath = path.join(resolvedPath, `${filename}.md`);
+    logger.debug(`Reading local document: ${docPath}`, LOG_CONTEXT);
+
+    try {
+      const content = await fs.readFile(docPath, 'utf-8');
+      return content;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new MarketplaceFetchError(`Local document not found: ${docPath}`);
+      }
+      throw new MarketplaceFetchError(
+        `Failed to read local document: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
+
+  // GitHub path - fetch from remote
   const url = `${GITHUB_RAW_BASE}/${playbookPath}/${filename}.md`;
-  logger.debug(`Fetching document: ${url}`, LOG_CONTEXT);
+  logger.debug(`Fetching document from GitHub: ${url}`, LOG_CONTEXT);
 
   try {
     const response = await fetch(url);
@@ -201,12 +399,33 @@ async function fetchDocument(playbookPath: string, filename: string): Promise<st
 }
 
 /**
- * Fetch an asset file from GitHub (from assets/ subfolder).
+ * Fetch an asset file from GitHub or local filesystem (from assets/ subfolder).
  * Returns the raw content as a Buffer for binary-safe handling.
  */
 async function fetchAsset(playbookPath: string, assetFilename: string): Promise<Buffer> {
+  // Check if this is a local path
+  if (isLocalPath(playbookPath)) {
+    const resolvedPath = resolveTildePath(playbookPath);
+    const assetPath = path.join(resolvedPath, 'assets', assetFilename);
+    logger.debug(`Reading local asset: ${assetPath}`, LOG_CONTEXT);
+
+    try {
+      const content = await fs.readFile(assetPath);
+      return content;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new MarketplaceFetchError(`Local asset not found: ${assetPath}`);
+      }
+      throw new MarketplaceFetchError(
+        `Failed to read local asset: ${error instanceof Error ? error.message : String(error)}`,
+        error
+      );
+    }
+  }
+
+  // GitHub path - fetch from remote
   const url = `${GITHUB_RAW_BASE}/${playbookPath}/assets/${assetFilename}`;
-  logger.debug(`Fetching asset: ${url}`, LOG_CONTEXT);
+  logger.debug(`Fetching asset from GitHub: ${url}`, LOG_CONTEXT);
 
   try {
     const response = await fetch(url);
@@ -234,11 +453,31 @@ async function fetchAsset(playbookPath: string, assetFilename: string): Promise<
 }
 
 /**
- * Fetch README from GitHub.
+ * Fetch README from GitHub or local filesystem.
  */
 async function fetchReadme(playbookPath: string): Promise<string | null> {
+  // Check if this is a local path
+  if (isLocalPath(playbookPath)) {
+    const resolvedPath = resolveTildePath(playbookPath);
+    const readmePath = path.join(resolvedPath, 'README.md');
+    logger.debug(`Reading local README: ${readmePath}`, LOG_CONTEXT);
+
+    try {
+      const content = await fs.readFile(readmePath, 'utf-8');
+      return content;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null; // README is optional
+      }
+      // Other errors are non-fatal for README
+      logger.debug(`Local README read failed (non-fatal): ${error}`, LOG_CONTEXT);
+      return null;
+    }
+  }
+
+  // GitHub path - fetch from remote
   const url = `${GITHUB_RAW_BASE}/${playbookPath}/README.md`;
-  logger.debug(`Fetching README: ${url}`, LOG_CONTEXT);
+  logger.debug(`Fetching README from GitHub: ${url}`, LOG_CONTEXT);
 
   try {
     const response = await fetch(url);
@@ -264,6 +503,76 @@ async function fetchReadme(playbookPath: string): Promise<string | null> {
 }
 
 /**
+ * Setup file watcher for local manifest changes.
+ * Enables hot reload during development - changes to local-manifest.json
+ * trigger a manifest refresh event.
+ */
+function setupLocalManifestWatcher(app: App): void {
+  const localManifestPath = getLocalManifestPath(app);
+
+  try {
+    // Clean up existing watcher if any
+    if (localManifestWatcher) {
+      localManifestWatcher.close();
+      localManifestWatcher = undefined;
+    }
+
+    // Create new watcher
+    localManifestWatcher = fsSync.watch(
+      localManifestPath,
+      (eventType: string) => {
+        logger.debug(`Local manifest file changed (${eventType}), debouncing refresh...`, LOG_CONTEXT);
+
+        // Clear existing timer
+        if (watcherDebounceTimer) {
+          clearTimeout(watcherDebounceTimer);
+        }
+
+        // Debounce file changes (wait for rapid saves to settle)
+        watcherDebounceTimer = setTimeout(async () => {
+          logger.info('Local manifest changed, broadcasting refresh event', LOG_CONTEXT);
+
+          // Send IPC event to all renderer windows
+          const { BrowserWindow } = require('electron');
+          const allWindows = BrowserWindow.getAllWindows();
+          for (const win of allWindows) {
+            win.webContents.send('marketplace:manifestChanged');
+          }
+        }, WATCHER_DEBOUNCE_MS);
+      }
+    );
+
+    logger.debug('Local manifest file watcher initialized', LOG_CONTEXT);
+  } catch (error) {
+    // File might not exist yet - this is normal
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      logger.warn('Failed to setup local manifest watcher (non-fatal)', LOG_CONTEXT, { error });
+    }
+    // Don't throw - watcher failure shouldn't prevent normal operation
+  }
+}
+
+/**
+ * Cleanup file watcher on app shutdown.
+ */
+function cleanupLocalManifestWatcher(): void {
+  if (watcherDebounceTimer) {
+    clearTimeout(watcherDebounceTimer);
+    watcherDebounceTimer = undefined;
+  }
+
+  if (localManifestWatcher) {
+    try {
+      localManifestWatcher.close();
+      logger.debug('Local manifest watcher cleaned up', LOG_CONTEXT);
+    } catch (error) {
+      logger.warn('Error closing local manifest watcher', LOG_CONTEXT, { error });
+    }
+    localManifestWatcher = undefined;
+  }
+}
+
+/**
  * Helper to create handler options with consistent context.
  */
 const handlerOpts = (operation: string, logSuccess = true): CreateHandlerOptions => ({
@@ -285,6 +594,14 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
   // Store settings reference for SSH remote lookups
   marketplaceSettingsStore = settingsStore;
 
+  // Setup hot reload watcher for local manifest
+  setupLocalManifestWatcher(app);
+
+  // Cleanup watcher on app quit
+  app.on('will-quit', () => {
+    cleanupLocalManifestWatcher();
+  });
+
   // -------------------------------------------------------------------------
   // marketplace:getManifest - Get manifest (from cache if valid, else fetch)
   // -------------------------------------------------------------------------
@@ -293,24 +610,38 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
     createIpcHandler(handlerOpts('getManifest'), async () => {
       // Try to read from cache first
       const cache = await readCache(app);
+      let officialManifest: MarketplaceManifest | null = null;
+      let fromCache = false;
+      let cacheAge: number | undefined;
 
       if (cache && isCacheValid(cache)) {
-        const cacheAge = Date.now() - cache.fetchedAt;
-        logger.debug(`Serving manifest from cache (age: ${Math.round(cacheAge / 1000)}s)`, LOG_CONTEXT);
-        return {
-          manifest: cache.manifest,
-          fromCache: true,
-          cacheAge,
-        };
+        cacheAge = Date.now() - cache.fetchedAt;
+        logger.debug(`Serving official manifest from cache (age: ${Math.round(cacheAge / 1000)}s)`, LOG_CONTEXT);
+        officialManifest = cache.manifest;
+        fromCache = true;
+      } else {
+        // Cache miss or expired - fetch fresh data
+        try {
+          officialManifest = await fetchManifest();
+          await writeCache(app, officialManifest);
+        } catch (error) {
+          logger.warn('Failed to fetch official manifest, continuing with local only', LOG_CONTEXT, { error });
+          // Continue - we might still have local playbooks
+        }
       }
 
-      // Cache miss or expired - fetch fresh data
-      const manifest = await fetchManifest();
-      await writeCache(app, manifest);
+      // Read local manifest (always, not cached)
+      const localManifest = await readLocalManifest(app);
+      logger.info(`Local manifest loaded: ${localManifest ? localManifest.playbooks.length : 0} playbooks`, LOG_CONTEXT);
+
+      // Merge manifests
+      const mergedManifest = mergeManifests(officialManifest, localManifest);
+      logger.info(`Merged manifest: ${mergedManifest.playbooks.length} total playbooks`, LOG_CONTEXT);
 
       return {
-        manifest,
-        fromCache: false,
+        manifest: mergedManifest,
+        fromCache,
+        cacheAge,
       };
     })
   );
@@ -323,11 +654,22 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
     createIpcHandler(handlerOpts('refreshManifest'), async () => {
       logger.info('Force refreshing manifest (bypass cache)', LOG_CONTEXT);
 
-      const manifest = await fetchManifest();
-      await writeCache(app, manifest);
+      let officialManifest: MarketplaceManifest | null = null;
+      try {
+        officialManifest = await fetchManifest();
+        await writeCache(app, officialManifest);
+      } catch (error) {
+        logger.warn('Failed to fetch official manifest during refresh, continuing with local only', LOG_CONTEXT, { error });
+      }
+
+      // Read local manifest (always fresh, not cached)
+      const localManifest = await readLocalManifest(app);
+
+      // Merge manifests
+      const mergedManifest = mergeManifests(officialManifest, localManifest);
 
       return {
-        manifest,
+        manifest: mergedManifest,
         fromCache: false,
       };
     })

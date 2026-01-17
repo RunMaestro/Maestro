@@ -1,0 +1,54 @@
+{
+  "lastUpdated": "2026-01-17",
+  "playbooks": [
+    {
+      "id": "my-custom-playbook",
+      "title": "My Custom Security Audit",
+      "description": "Internal security audit playbook for our organization",
+      "category": "Custom",
+      "author": "Internal Team",
+      "lastUpdated": "2026-01-17",
+      "path": "/Users/me/.maestro/custom-playbooks/security-audit",
+      "documents": [
+        {
+          "filename": "1_SCAN",
+          "resetOnCompletion": false
+        },
+        {
+          "filename": "2_ANALYZE",
+          "resetOnCompletion": true
+        },
+        {
+          "filename": "3_REPORT",
+          "resetOnCompletion": false
+        }
+      ],
+      "loopEnabled": false,
+      "maxLoops": null,
+      "prompt": null,
+      "assets": ["config.yaml", "rules.json"]
+    },
+    {
+      "id": "development-security",
+      "title": "Enhanced Development Security (Override)",
+      "description": "Custom version of the official playbook with our internal modifications",
+      "category": "Development",
+      "author": "Our Team",
+      "lastUpdated": "2026-01-17",
+      "path": "~/maestro-playbooks/dev-security",
+      "documents": [
+        {
+          "filename": "SETUP",
+          "resetOnCompletion": false
+        },
+        {
+          "filename": "SCAN",
+          "resetOnCompletion": true
+        }
+      ],
+      "loopEnabled": true,
+      "maxLoops": 3,
+      "prompt": "Custom prompt for our workflow"
+    }
+  ]
+}

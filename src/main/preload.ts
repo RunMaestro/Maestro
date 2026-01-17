@@ -1325,6 +1325,11 @@ contextBridge.exposeInMainWorld('maestro', {
       ipcRenderer.invoke('marketplace:getReadme', playbookPath),
     importPlaybook: (playbookId: string, targetFolderName: string, autoRunFolderPath: string, sessionId: string, sshRemoteId?: string) =>
       ipcRenderer.invoke('marketplace:importPlaybook', playbookId, targetFolderName, autoRunFolderPath, sessionId, sshRemoteId),
+    onManifestChanged: (handler: () => void) => {
+      const wrappedHandler = () => handler();
+      ipcRenderer.on('marketplace:manifestChanged', wrappedHandler);
+      return () => ipcRenderer.removeListener('marketplace:manifestChanged', wrappedHandler);
+    },
   },
 
   // Debug Package API (generate support bundles for bug reporting)

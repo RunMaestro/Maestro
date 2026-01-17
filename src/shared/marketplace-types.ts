@@ -22,6 +22,11 @@ export interface MarketplaceManifest {
 }
 
 /**
+ * Playbook source type - distinguishes official GitHub playbooks from local ones.
+ */
+export type PlaybookSource = 'official' | 'local';
+
+/**
  * Individual playbook entry in the marketplace manifest.
  */
 export interface MarketplacePlaybook {
@@ -43,7 +48,7 @@ export interface MarketplacePlaybook {
   tags?: string[];
   /** Last update date in YYYY-MM-DD format */
   lastUpdated: string;
-  /** Folder path in repo for fetching documents */
+  /** Folder path in repo for fetching documents (GitHub path or local filesystem path) */
   path: string;
   /** Ordered list of documents in the playbook */
   documents: MarketplaceDocument[];
@@ -59,6 +64,8 @@ export interface MarketplacePlaybook {
    * that are bundled with the playbook.
    */
   assets?: string[];
+  /** Source of the playbook - official (from GitHub) or local (from local-manifest.json) */
+  source?: PlaybookSource;
 }
 
 /**

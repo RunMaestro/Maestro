@@ -152,6 +152,25 @@ export function useMarketplace(): UseMarketplaceReturn {
     loadManifest();
   }, []);
 
+  // Hot reload: listen for manifest changes (local-manifest.json edits)
+  useEffect(() => {
+    const cleanup = window.maestro.marketplace.onManifestChanged(async () => {
+      console.log('Local manifest changed, reloading...');
+      try {
+        const result = await window.maestro.marketplace.getManifest();
+        if (result.success && result.manifest) {
+          setManifest(result.manifest);
+          setFromCache(result.fromCache ?? false);
+          setCacheAge(result.cacheAge ?? null);
+        }
+      } catch (err) {
+        console.error('Failed to reload manifest after change:', err);
+      }
+    });
+
+    return cleanup;
+  }, []);
+
   // Extract playbooks from manifest
   const playbooks = useMemo(() => {
     return manifest?.playbooks ?? [];
