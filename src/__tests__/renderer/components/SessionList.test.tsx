@@ -76,6 +76,18 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
     getFileCount: () => 0,
     getStatus: () => undefined,
   }),
+  useGitFileStatus: () => ({
+    getFileCount: () => 0,
+    hasChanges: () => false,
+    isLoading: false,
+  }),
+  useGitBranch: () => ({
+    getBranchInfo: () => undefined,
+  }),
+  useGitDetail: () => ({
+    getFileDetails: () => undefined,
+    refreshGitStatus: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 // Add tunnel mock to window.maestro
@@ -1155,10 +1167,14 @@ describe('SessionList', () => {
       // Simulate drag
       fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
 
-      // Move mouse
+      // Move mouse (direct DOM update for performance, no state call yet)
       fireEvent.mouseMove(document, { clientX: 350 });
 
-      // Width should be updated
+      // State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
+      expect(setLeftSidebarWidthState).not.toHaveBeenCalled();
+
+      // End resize - state is updated
+      fireEvent.mouseUp(document);
       expect(setLeftSidebarWidthState).toHaveBeenCalled();
     });
   });
@@ -2618,13 +2634,20 @@ describe('SessionList', () => {
       // Try to drag beyond max (600px)
       fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
       fireEvent.mouseMove(document, { clientX: 1000 });
+      // State is only updated on mouseUp for performance
+      fireEvent.mouseUp(document);
 
       // Should be clamped to 600
       expect(setLeftSidebarWidthState).toHaveBeenCalledWith(600);
 
+      // Reset mock for next test
+      setLeftSidebarWidthState.mockClear();
+
       // Try to drag below min (256px)
       fireEvent.mouseDown(resizeHandle!, { clientX: 300 });
       fireEvent.mouseMove(document, { clientX: 100 });
+      // State is only updated on mouseUp for performance
+      fireEvent.mouseUp(document);
 
       // Should be clamped to 256
       expect(setLeftSidebarWidthState).toHaveBeenCalledWith(256);

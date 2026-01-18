@@ -158,8 +158,9 @@ describe('MessageHistory', () => {
   });
 
   describe('Timestamp Formatting', () => {
-    it('formats timestamp with hour and minute', () => {
-      const timestamp = new Date('2024-01-15T14:30:00').getTime();
+    it('formats timestamp with hour and minute for today', () => {
+      // Use current date to ensure it's "today"
+      const timestamp = Date.now();
       const logs: LogEntry[] = [
         createLogEntry({ timestamp, text: 'Test', source: 'user' }),
       ];
@@ -168,6 +169,21 @@ describe('MessageHistory', () => {
       // User messages are rendered as plain text, not through markdown
       const messageCard = container.querySelector('[style*="padding: 10px 12px"]');
       expect(messageCard?.textContent).toMatch(/\d{1,2}:\d{2}/);
+    });
+
+    it('shows date and time for messages older than today', () => {
+      // Use a date from yesterday
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const timestamp = yesterday.getTime();
+      const logs: LogEntry[] = [
+        createLogEntry({ timestamp, text: 'Old message', source: 'user' }),
+      ];
+      const { container } = render(<MessageHistory logs={logs} inputMode="ai" />);
+      const messageCard = container.querySelector('[style*="padding: 10px 12px"]');
+      // Should contain both date (month/day) and time
+      // Format is like "Jan 15 14:30" - check for month abbreviation pattern
+      expect(messageCard?.textContent).toMatch(/[A-Z][a-z]{2}\s+\d{1,2}\s+\d{1,2}:\d{2}/);
     });
   });
 

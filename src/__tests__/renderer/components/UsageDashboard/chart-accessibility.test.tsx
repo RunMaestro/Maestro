@@ -81,8 +81,8 @@ describe('Chart Accessibility - AgentComparisonChart', () => {
     render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
     const figure = screen.getByRole('figure');
     expect(figure).toHaveAttribute('aria-label');
-    expect(figure.getAttribute('aria-label')).toContain('Agent comparison chart');
-    expect(figure.getAttribute('aria-label')).toContain('3 agents displayed');
+    expect(figure.getAttribute('aria-label')).toContain('Provider comparison chart');
+    expect(figure.getAttribute('aria-label')).toContain('3 providers displayed');
   });
 
   it('has proper aria attributes on meter elements', () => {
@@ -136,10 +136,10 @@ describe('Chart Accessibility - SourceDistributionChart', () => {
     expect(figure).toBeInTheDocument();
   });
 
-  it('has descriptive aria-label mentioning source distribution', () => {
+  it('has descriptive aria-label mentioning session type', () => {
     render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
     const figure = screen.getByRole('figure');
-    expect(figure.getAttribute('aria-label')).toContain('Source distribution');
+    expect(figure.getAttribute('aria-label')).toContain('Session type');
   });
 
   it('has aria-pressed on toggle buttons', () => {
@@ -353,11 +353,11 @@ describe('Chart Accessibility - General ARIA Patterns', () => {
   it('all charts have proper heading structure', () => {
     // Render each chart and verify h3 headings exist
     const { unmount: u1 } = render(<AgentComparisonChart data={mockStatsData} theme={mockTheme} />);
-    expect(screen.getByRole('heading', { level: 3, name: /agent comparison/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: /provider comparison/i })).toBeInTheDocument();
     u1();
 
     const { unmount: u2 } = render(<SourceDistributionChart data={mockStatsData} theme={mockTheme} />);
-    expect(screen.getByRole('heading', { level: 3, name: /source distribution/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: /session type/i })).toBeInTheDocument();
     u2();
 
     const { unmount: u3 } = render(<ActivityHeatmap data={mockStatsData} timeRange="week" theme={mockTheme} />);
@@ -429,7 +429,7 @@ describe('Chart Accessibility - Screen Reader Announcements', () => {
     const ariaLabel = figure.getAttribute('aria-label') || '';
     expect(ariaLabel).toContain('query counts');
     expect(ariaLabel).toContain('duration');
-    expect(ariaLabel).toContain('agents displayed');
+    expect(ariaLabel).toContain('providers displayed');
   });
 
   it('SourceDistributionChart provides percentage summary in SVG', () => {

@@ -140,12 +140,12 @@ describe('Colorblind Palette Constants', () => {
 describe('AgentComparisonChart with colorBlindMode', () => {
   it('renders with colorBlindMode=false by default', () => {
     render(<AgentComparisonChart data={mockData} theme={theme} />);
-    expect(screen.getByText('Agent Comparison')).toBeInTheDocument();
+    expect(screen.getByText('Provider Comparison')).toBeInTheDocument();
   });
 
   it('renders with colorBlindMode=true', () => {
     render(<AgentComparisonChart data={mockData} theme={theme} colorBlindMode={true} />);
-    expect(screen.getByText('Agent Comparison')).toBeInTheDocument();
+    expect(screen.getByText('Provider Comparison')).toBeInTheDocument();
   });
 
   it('uses colorblind palette colors when colorBlindMode is enabled', () => {
@@ -182,12 +182,12 @@ describe('AgentComparisonChart with colorBlindMode', () => {
 describe('SourceDistributionChart with colorBlindMode', () => {
   it('renders with colorBlindMode=false by default', () => {
     render(<SourceDistributionChart data={mockData} theme={theme} />);
-    expect(screen.getByText('Source Distribution')).toBeInTheDocument();
+    expect(screen.getByText('Session Type')).toBeInTheDocument();
   });
 
   it('renders with colorBlindMode=true', () => {
     render(<SourceDistributionChart data={mockData} theme={theme} colorBlindMode={true} />);
-    expect(screen.getByText('Source Distribution')).toBeInTheDocument();
+    expect(screen.getByText('Session Type')).toBeInTheDocument();
   });
 
   it('renders both Interactive and Auto Run labels', () => {

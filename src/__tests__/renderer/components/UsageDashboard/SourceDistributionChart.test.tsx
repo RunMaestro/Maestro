@@ -88,7 +88,7 @@ describe('SourceDistributionChart', () => {
     it('renders the component with title', () => {
       render(<SourceDistributionChart data={mockData} theme={theme} />);
 
-      expect(screen.getByText('Source Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Session Type')).toBeInTheDocument();
     });
 
     it('renders metric toggle buttons', () => {
@@ -376,7 +376,7 @@ describe('SourceDistributionChart', () => {
     it('applies theme text colors', () => {
       render(<SourceDistributionChart data={mockData} theme={theme} />);
 
-      const title = screen.getByText('Source Distribution');
+      const title = screen.getByText('Session Type');
       expect(title).toHaveStyle({
         color: theme.colors.textMain,
       });
@@ -387,7 +387,7 @@ describe('SourceDistributionChart', () => {
 
       render(<SourceDistributionChart data={mockData} theme={lightTheme} />);
 
-      expect(screen.getByText('Source Distribution')).toBeInTheDocument();
+      expect(screen.getByText('Session Type')).toBeInTheDocument();
     });
 
     it('applies border colors from theme', () => {

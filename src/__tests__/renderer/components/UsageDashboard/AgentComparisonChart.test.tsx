@@ -85,7 +85,7 @@ describe('AgentComparisonChart', () => {
     it('renders the component with title', () => {
       render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-      expect(screen.getByText('Agent Comparison')).toBeInTheDocument();
+      expect(screen.getByText('Provider Comparison')).toBeInTheDocument();
     });
 
     it('renders count and duration labels for each agent', () => {
@@ -302,7 +302,7 @@ describe('AgentComparisonChart', () => {
     it('applies theme text colors', () => {
       render(<AgentComparisonChart data={mockData} theme={theme} />);
 
-      const title = screen.getByText('Agent Comparison');
+      const title = screen.getByText('Provider Comparison');
       expect(title).toHaveStyle({
         color: theme.colors.textMain,
       });
@@ -313,7 +313,7 @@ describe('AgentComparisonChart', () => {
 
       render(<AgentComparisonChart data={mockData} theme={lightTheme} />);
 
-      expect(screen.getByText('Agent Comparison')).toBeInTheDocument();
+      expect(screen.getByText('Provider Comparison')).toBeInTheDocument();
     });
 
     it('applies border colors from theme', () => {

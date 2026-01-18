@@ -356,9 +356,14 @@ describe('RightPanel', () => {
       // Start resize
       fireEvent.mouseDown(resizeHandle, { clientX: 500 });
 
-      // Simulate mouse move
+      // Simulate mouse move (direct DOM update for performance, no state call yet)
       fireEvent.mouseMove(document, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
 
+      // State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
+      expect(setRightPanelWidthState).not.toHaveBeenCalled();
+
+      // End resize - state is updated
+      fireEvent.mouseUp(document);
       expect(setRightPanelWidthState).toHaveBeenCalled();
     });
 
@@ -374,6 +379,9 @@ describe('RightPanel', () => {
 
       // Try to make it very wide (delta = 500 - (-500) = 1000)
       fireEvent.mouseMove(document, { clientX: -500 });
+
+      // End resize - state is updated on mouseUp
+      fireEvent.mouseUp(document);
 
       // Should be clamped to max 800
       const calls = setRightPanelWidthState.mock.calls;

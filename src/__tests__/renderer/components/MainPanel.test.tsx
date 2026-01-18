@@ -175,6 +175,27 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
     getFileCount: (sessionId: string) => mockGitStatusData[sessionId]?.fileCount ?? 0,
     getStatus: (sessionId: string) => mockGitStatusData[sessionId],
   }),
+  useGitFileStatus: () => ({
+    getFileCount: (sessionId: string) => mockGitStatusData[sessionId]?.fileCount ?? 0,
+    hasChanges: (sessionId: string) => (mockGitStatusData[sessionId]?.fileCount ?? 0) > 0,
+    isLoading: false,
+  }),
+  useGitBranch: () => ({
+    getBranchInfo: (sessionId: string) => {
+      const status = mockGitStatusData[sessionId];
+      if (!status) return undefined;
+      return {
+        branch: status.branch,
+        remote: status.remote,
+        ahead: status.ahead || 0,
+        behind: status.behind || 0,
+      };
+    },
+  }),
+  useGitDetail: () => ({
+    getFileDetails: () => undefined,
+    refreshGitStatus: mockRefreshGitStatus,
+  }),
 }));
 
 // Import MainPanel after mocks

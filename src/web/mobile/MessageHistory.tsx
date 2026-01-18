@@ -40,10 +40,22 @@ export interface MessageHistoryProps {
 
 /**
  * Format timestamp for display
+ * Shows time only for today's messages, date + time for older messages
  */
 function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+
+  if (isToday) {
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  } else {
+    return (
+      date.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+      ' ' +
+      date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
+  }
 }
 
 /**
