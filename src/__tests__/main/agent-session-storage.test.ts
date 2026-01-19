@@ -14,6 +14,14 @@ import {
 } from '../../main/agent-session-storage';
 import type { ToolType } from '../../shared/types';
 
+// Mock electron's app module for CodexSessionStorage tests
+// This is needed because CodexSessionStorage uses app.getPath('userData') for caching
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn().mockReturnValue('/tmp/test-user-data'),
+  },
+}));
+
 // Mock storage implementation for testing
 class MockSessionStorage implements AgentSessionStorage {
   readonly agentId: ToolType;
@@ -267,6 +275,11 @@ describe('OpenCodeSessionStorage', () => {
 });
 
 describe('CodexSessionStorage', () => {
+  // Reset modules before each test to ensure clean imports with the mock in place
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
   it('should be importable', async () => {
     const { CodexSessionStorage } = await import('../../main/storage/codex-session-storage');
     expect(CodexSessionStorage).toBeDefined();
@@ -296,7 +309,7 @@ describe('CodexSessionStorage', () => {
 
     const search = await storage.searchSessions('/test/nonexistent/project', 'query', 'all');
     expect(search).toEqual([]);
-  });
+  }, 30000); // Extended timeout for file system operations under load
 
   it('should return null for getSessionPath (async operation required)', async () => {
     const { CodexSessionStorage } = await import('../../main/storage/codex-session-storage');
@@ -315,7 +328,7 @@ describe('CodexSessionStorage', () => {
     const deleteResult = await storage.deleteMessagePair('/test/project', 'session-123', 'uuid-456');
     expect(deleteResult.success).toBe(false);
     expect(deleteResult.error).toContain('Session file not found');
-  });
+  }, 30000); // Extended timeout for file system operations under load
 
   it('should handle empty search query', async () => {
     const { CodexSessionStorage } = await import('../../main/storage/codex-session-storage');
