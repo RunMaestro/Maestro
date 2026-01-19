@@ -189,7 +189,36 @@ src/__tests__/
 └── web/           # Web interface tests
 ```
 
-## Linting
+## Linting & Pre-commit Hooks
+
+### Pre-commit Hooks
+
+This project uses [Husky](https://typicode.github.io/husky/) and [lint-staged](https://github.com/lint-staged/lint-staged) to automatically format and lint staged files before each commit.
+
+**How it works:**
+1. When you run `git commit`, Husky triggers the pre-commit hook
+2. lint-staged runs Prettier and ESLint only on your staged files
+3. If there are unfixable errors, the commit is blocked
+4. Fixed files are automatically re-staged
+
+**Setup is automatic** — hooks are installed when you run `npm install` (via the `prepare` script).
+
+**Bypassing hooks (emergency only):**
+```bash
+git commit --no-verify -m "emergency fix"
+```
+
+**Running lint-staged manually:**
+```bash
+npx lint-staged
+```
+
+**Troubleshooting:**
+- **Hooks not running** — Check if `.husky/pre-commit` has executable permissions: `chmod +x .husky/pre-commit`
+- **Wrong tool version** — Ensure `npx` is using local `node_modules`: delete `node_modules` and run `npm install`
+- **Hook fails in CI/Docker** — The `prepare` script uses `husky || true` to gracefully skip in environments without `.git`
+
+### Manual Linting
 
 Run TypeScript type checking and ESLint to catch errors before building:
 
@@ -214,9 +243,9 @@ ESLint is configured with TypeScript and React plugins (`eslint.config.mjs`):
 - `@typescript-eslint/no-unused-vars` - Warns about unused variables
 - `prefer-const` - Suggests const for never-reassigned variables
 
-**When to run linting:**
-- Before committing changes
-- After making significant refactors
+**When to run manual linting:**
+- Pre-commit hooks handle staged files automatically
+- Run full lint after significant refactors: `npm run lint && npm run lint:eslint`
 - When CI fails with type errors
 
 **Common lint issues:**
