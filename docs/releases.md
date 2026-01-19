@@ -19,7 +19,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 Changes in this point release include:
 
--
+- Added confirmation input to prevent accidental agent directory deletion, plus updated button labels ("Cancel", "Agent Only", "Agent + Work Directory"). (#206)
 
 The major contributions to 0.14.x remain:
 
