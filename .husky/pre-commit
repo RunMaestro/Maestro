@@ -1,0 +1,6 @@
+#!/bin/sh
+
+# Run lint-staged for formatting and linting on staged files only
+npx lint-staged
+
+# Everything else (tests, type checking) should run in CI

@@ -1,4 +1,5 @@
 dist/
 release/
 node_modules/
-*.md
+coverage/
+*.min.js
