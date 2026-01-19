@@ -594,6 +594,50 @@ describe('DeleteAgentConfirmModal', () => {
   });
 
   describe('accessibility', () => {
+    it('adds aria-label and aria-describedby to the confirmation input', () => {
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      const input = screen.getByRole('textbox');
+      expect(input).toHaveAttribute(
+        'aria-label',
+        'Type TestAgent to confirm directory deletion'
+      );
+      expect(input).toHaveAttribute('aria-describedby', 'delete-agent-warning');
+
+      const warning = document.getElementById('delete-agent-warning');
+      expect(warning).toBeInTheDocument();
+      expect(warning?.textContent).toContain('Deleting the agent');
+    });
+
+    it('reflects the erase button disabled state with aria-disabled', () => {
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      const input = screen.getByRole('textbox');
+      const eraseButton = screen.getByRole('button', { name: 'Agent + Work Directory' });
+      expect(eraseButton).toHaveAttribute('aria-disabled', 'true');
+
+      fireEvent.change(input, { target: { value: 'TestAgent' } });
+      expect(eraseButton).toHaveAttribute('aria-disabled', 'false');
+    });
+
     it('has tabIndex on dialog for focus', () => {
       renderWithLayerStack(
         <DeleteAgentConfirmModal
@@ -641,6 +685,73 @@ describe('DeleteAgentConfirmModal', () => {
       );
 
       expect(screen.getByRole('heading', { name: 'Confirm Delete' })).toBeInTheDocument();
+    });
+
+    it('assigns tab order for actions', () => {
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      const cancelButton = screen.getByRole('button', { name: 'Cancel' });
+      const agentOnlyButton = screen.getByRole('button', { name: 'Agent Only' });
+      const input = screen.getByRole('textbox');
+      const eraseButton = screen.getByRole('button', { name: 'Agent + Work Directory' });
+
+      expect(cancelButton).toHaveAttribute('tabindex', '1');
+      expect(agentOnlyButton).toHaveAttribute('tabindex', '2');
+      expect(input).toHaveAttribute('tabindex', '3');
+      expect(eraseButton).toHaveAttribute('tabindex', '4');
+    });
+  });
+
+  describe('confirmation input keyboard handling', () => {
+    it('activates Agent + Work Directory when Enter is pressed with a matching name', () => {
+      const onConfirmAndErase = vi.fn();
+      const onClose = vi.fn();
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={onConfirmAndErase}
+          onClose={onClose}
+        />
+      );
+
+      const input = screen.getByRole('textbox');
+      fireEvent.change(input, { target: { value: 'TestAgent' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(onConfirmAndErase).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not activate Agent + Work Directory when Enter is pressed without a match', () => {
+      const onConfirmAndErase = vi.fn();
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={onConfirmAndErase}
+          onClose={vi.fn()}
+        />
+      );
+
+      const input = screen.getByRole('textbox');
+      fireEvent.change(input, { target: { value: 'Nope' } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+
+      expect(onConfirmAndErase).not.toHaveBeenCalled();
     });
   });
 });

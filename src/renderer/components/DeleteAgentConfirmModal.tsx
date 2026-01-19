@@ -24,6 +24,8 @@ export function DeleteAgentConfirmModal({
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const [confirmationText, setConfirmationText] = useState('');
 
+  const warningId = 'delete-agent-warning';
+  const agentNameLabel = agentName.trim() || agentName;
   const normalizedAgentName = useMemo(() => agentName.trim().toLowerCase(), [agentName]);
   const isAgentNameMatch = useMemo(() => {
     return confirmationText.trim().toLowerCase() === normalizedAgentName;
@@ -39,6 +41,16 @@ export function DeleteAgentConfirmModal({
     onConfirmAndErase();
     onClose();
   }, [isAgentNameMatch, onConfirmAndErase, onClose]);
+
+  const handleInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      e.stopPropagation();
+      handleConfirmAndErase();
+    },
+    [handleConfirmAndErase]
+  );
 
   // Stop Enter key propagation to prevent parent handlers from triggering after modal closes
   const handleKeyDown = (e: React.KeyboardEvent, action: () => void) => {
@@ -64,6 +76,7 @@ export function DeleteAgentConfirmModal({
             type="button"
             onClick={onClose}
             onKeyDown={(e) => handleKeyDown(e, onClose)}
+            tabIndex={1}
             className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
             style={{
               borderColor: theme.colors.border,
@@ -77,6 +90,7 @@ export function DeleteAgentConfirmModal({
             type="button"
             onClick={handleConfirm}
             onKeyDown={(e) => handleKeyDown(e, handleConfirm)}
+            tabIndex={2}
             className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
             style={{
               backgroundColor: `${theme.colors.error}99`,
@@ -89,6 +103,7 @@ export function DeleteAgentConfirmModal({
             type="button"
             onClick={handleConfirmAndErase}
             onKeyDown={(e) => handleKeyDown(e, handleConfirmAndErase)}
+            tabIndex={4}
             className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
             style={{
               backgroundColor: theme.colors.error,
@@ -97,6 +112,7 @@ export function DeleteAgentConfirmModal({
               cursor: isAgentNameMatch ? 'pointer' : 'not-allowed',
             }}
             disabled={!isAgentNameMatch}
+            aria-disabled={!isAgentNameMatch}
           >
             Agent + Work Directory
           </button>
@@ -111,7 +127,11 @@ export function DeleteAgentConfirmModal({
           >
             <AlertTriangle className="h-4 w-4" style={{ color: '#ffa500' }} />
           </div>
-          <p className="leading-relaxed break-words" style={{ color: '#ffffff' }}>
+          <p
+            id={warningId}
+            className="leading-relaxed break-words"
+            style={{ color: '#ffffff' }}
+          >
             <span className="font-semibold" style={{ color: '#ffd700' }}>
               Danger:
             </span>{' '}
@@ -133,9 +153,12 @@ export function DeleteAgentConfirmModal({
           type="text"
           value={confirmationText}
           onChange={(e) => setConfirmationText(e.target.value)}
+          onKeyDown={handleInputKeyDown}
           placeholder="Type the agent name here to confirm directory deletion."
-          aria-label="Type the agent name here to confirm directory deletion."
+          aria-label={`Type ${agentNameLabel} to confirm directory deletion`}
+          aria-describedby={warningId}
           maxLength={256}
+          tabIndex={3}
           className="mt-2.5 w-full px-3 py-2 rounded text-sm outline-none placeholder:text-[color:var(--placeholder-color)]"
           style={{
             backgroundColor: theme.colors.bgActivity,
