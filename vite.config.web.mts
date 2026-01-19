@@ -143,7 +143,7 @@ export default defineConfig(({ mode }) => ({
 
   // Development server (for testing web interface standalone)
   server: {
-    port: 5174, // Different from renderer dev server (5173)
+    port: process.env.VITE_WEB_PORT ? parseInt(process.env.VITE_WEB_PORT) : 5174, // Different from renderer dev server (5173)
     strictPort: true,
     // Proxy API calls to the running Maestro app during development
     proxy: {

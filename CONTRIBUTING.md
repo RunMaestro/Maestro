@@ -167,6 +167,8 @@ VITE_PORT=5175 npm run dev
 
 This allows you to develop and test different branches simultaneously without port conflicts.
 
+**Note:** The web interface dev server (`npm run dev:web`) uses a separate port (default 5174) and can be configured with `VITE_WEB_PORT` if needed.
+
 ## Testing
 
 Run the test suite with Jest:
