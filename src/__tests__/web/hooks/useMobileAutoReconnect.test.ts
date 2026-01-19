@@ -9,64 +9,68 @@ import { useMobileAutoReconnect } from '../../../web/hooks/useMobileAutoReconnec
 const DEFAULT_COUNTDOWN = 30;
 
 describe('useMobileAutoReconnect', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+	beforeEach(() => {
+		vi.useFakeTimers();
+	});
 
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.clearAllMocks();
-  });
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.clearAllMocks();
+	});
 
-  it('counts down and reconnects when disconnected and online', () => {
-    const connect = vi.fn();
+	it('counts down and reconnects when disconnected and online', () => {
+		const connect = vi.fn();
 
-    const { result } = renderHook(({ connectionState, isOffline }) =>
-      useMobileAutoReconnect({
-        connectionState,
-        isOffline,
-        connect,
-      }), {
-        initialProps: { connectionState: 'disconnected', isOffline: false },
-      }
-    );
+		const { result } = renderHook(
+			({ connectionState, isOffline }) =>
+				useMobileAutoReconnect({
+					connectionState,
+					isOffline,
+					connect,
+				}),
+			{
+				initialProps: { connectionState: 'disconnected', isOffline: false },
+			}
+		);
 
-    expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
+		expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
 
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
+		act(() => {
+			vi.advanceTimersByTime(1000);
+		});
 
-    expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN - 1);
+		expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN - 1);
 
-    act(() => {
-      vi.advanceTimersByTime(29000);
-    });
+		act(() => {
+			vi.advanceTimersByTime(29000);
+		});
 
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
-  });
+		expect(connect).toHaveBeenCalledTimes(1);
+		expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
+	});
 
-  it('does not reconnect while offline', () => {
-    const connect = vi.fn();
+	it('does not reconnect while offline', () => {
+		const connect = vi.fn();
 
-    const { result } = renderHook(({ connectionState, isOffline }) =>
-      useMobileAutoReconnect({
-        connectionState,
-        isOffline,
-        connect,
-      }), {
-        initialProps: { connectionState: 'disconnected', isOffline: true },
-      }
-    );
+		const { result } = renderHook(
+			({ connectionState, isOffline }) =>
+				useMobileAutoReconnect({
+					connectionState,
+					isOffline,
+					connect,
+				}),
+			{
+				initialProps: { connectionState: 'disconnected', isOffline: true },
+			}
+		);
 
-    expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
+		expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
 
-    act(() => {
-      vi.advanceTimersByTime(60000);
-    });
+		act(() => {
+			vi.advanceTimersByTime(60000);
+		});
 
-    expect(connect).not.toHaveBeenCalled();
-    expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
-  });
+		expect(connect).not.toHaveBeenCalled();
+		expect(result.current.reconnectCountdown).toBe(DEFAULT_COUNTDOWN);
+	});
 });

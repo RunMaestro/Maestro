@@ -19,12 +19,12 @@ import { useEffect, useRef, useState } from 'react';
 export type AnnouncementPoliteness = 'polite' | 'assertive';
 
 interface ScreenReaderAnnouncementProps {
-  /** The message to announce to screen readers */
-  message: string;
-  /** Politeness level - 'polite' (default) or 'assertive' for urgent announcements */
-  politeness?: AnnouncementPoliteness;
-  /** Optional key to force re-announcement of the same message */
-  announceKey?: string | number;
+	/** The message to announce to screen readers */
+	message: string;
+	/** Politeness level - 'polite' (default) or 'assertive' for urgent announcements */
+	politeness?: AnnouncementPoliteness;
+	/** Optional key to force re-announcement of the same message */
+	announceKey?: string | number;
 }
 
 /**
@@ -50,64 +50,54 @@ interface ScreenReaderAnnouncementProps {
  * ```
  */
 export function ScreenReaderAnnouncement({
-  message,
-  politeness = 'polite',
-  announceKey,
+	message,
+	politeness = 'polite',
+	announceKey,
 }: ScreenReaderAnnouncementProps): JSX.Element {
-  // Use a toggle state to force re-announcement of the same message
-  // Screen readers may ignore duplicate content, so we alternate between two regions
-  const [toggle, setToggle] = useState(false);
-  const prevMessageRef = useRef<string>('');
-  const prevKeyRef = useRef<string | number | undefined>(undefined);
+	// Use a toggle state to force re-announcement of the same message
+	// Screen readers may ignore duplicate content, so we alternate between two regions
+	const [toggle, setToggle] = useState(false);
+	const prevMessageRef = useRef<string>('');
+	const prevKeyRef = useRef<string | number | undefined>(undefined);
 
-  useEffect(() => {
-    // Only toggle if the message or key has changed
-    if (message !== prevMessageRef.current || announceKey !== prevKeyRef.current) {
-      prevMessageRef.current = message;
-      prevKeyRef.current = announceKey;
-      // Toggle to trigger re-render and re-announcement
-      setToggle((prev) => !prev);
-    }
-  }, [message, announceKey]);
+	useEffect(() => {
+		// Only toggle if the message or key has changed
+		if (message !== prevMessageRef.current || announceKey !== prevKeyRef.current) {
+			prevMessageRef.current = message;
+			prevKeyRef.current = announceKey;
+			// Toggle to trigger re-render and re-announcement
+			setToggle((prev) => !prev);
+		}
+	}, [message, announceKey]);
 
-  // The visually-hidden styles ensure the element is:
-  // - Not visible on screen (but not display:none)
-  // - Still accessible to screen readers
-  // - Not affecting layout
-  const visuallyHiddenStyles: React.CSSProperties = {
-    position: 'absolute',
-    width: '1px',
-    height: '1px',
-    margin: '-1px',
-    padding: '0',
-    overflow: 'hidden',
-    clip: 'rect(0, 0, 0, 0)',
-    whiteSpace: 'nowrap',
-    border: '0',
-  };
+	// The visually-hidden styles ensure the element is:
+	// - Not visible on screen (but not display:none)
+	// - Still accessible to screen readers
+	// - Not affecting layout
+	const visuallyHiddenStyles: React.CSSProperties = {
+		position: 'absolute',
+		width: '1px',
+		height: '1px',
+		margin: '-1px',
+		padding: '0',
+		overflow: 'hidden',
+		clip: 'rect(0, 0, 0, 0)',
+		whiteSpace: 'nowrap',
+		border: '0',
+	};
 
-  return (
-    <>
-      {/* Primary announcement region */}
-      <div
-        role="status"
-        aria-live={politeness}
-        aria-atomic="true"
-        style={visuallyHiddenStyles}
-      >
-        {toggle ? message : ''}
-      </div>
-      {/* Secondary announcement region (for toggling) */}
-      <div
-        role="status"
-        aria-live={politeness}
-        aria-atomic="true"
-        style={visuallyHiddenStyles}
-      >
-        {!toggle ? message : ''}
-      </div>
-    </>
-  );
+	return (
+		<>
+			{/* Primary announcement region */}
+			<div role="status" aria-live={politeness} aria-atomic="true" style={visuallyHiddenStyles}>
+				{toggle ? message : ''}
+			</div>
+			{/* Secondary announcement region (for toggling) */}
+			<div role="status" aria-live={politeness} aria-atomic="true" style={visuallyHiddenStyles}>
+				{!toggle ? message : ''}
+			</div>
+		</>
+	);
 }
 
 /**
@@ -125,42 +115,42 @@ export function ScreenReaderAnnouncement({
  * ```
  */
 export function useAnnouncement(debounceMs: number = 100) {
-  const [message, setMessage] = useState('');
-  const [key, setKey] = useState(0);
-  const [politenessLevel, setPolitenessLevel] = useState<AnnouncementPoliteness>('polite');
-  const timeoutRef = useRef<number | null>(null);
+	const [message, setMessage] = useState('');
+	const [key, setKey] = useState(0);
+	const [politenessLevel, setPolitenessLevel] = useState<AnnouncementPoliteness>('polite');
+	const timeoutRef = useRef<number | null>(null);
 
-  const announce = (newMessage: string, politeness: AnnouncementPoliteness = 'polite') => {
-    // Clear any pending announcement
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+	const announce = (newMessage: string, politeness: AnnouncementPoliteness = 'polite') => {
+		// Clear any pending announcement
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current);
+		}
 
-    // Debounce to avoid rapid announcements
-    timeoutRef.current = window.setTimeout(() => {
-      setMessage(newMessage);
-      setPolitenessLevel(politeness);
-      setKey((prev) => prev + 1);
-    }, debounceMs);
-  };
+		// Debounce to avoid rapid announcements
+		timeoutRef.current = window.setTimeout(() => {
+			setMessage(newMessage);
+			setPolitenessLevel(politeness);
+			setKey((prev) => prev + 1);
+		}, debounceMs);
+	};
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
+	// Cleanup on unmount
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+			}
+		};
+	}, []);
 
-  return {
-    announce,
-    announcementProps: {
-      message,
-      announceKey: key,
-      politeness: politenessLevel,
-    },
-  };
+	return {
+		announce,
+		announcementProps: {
+			message,
+			announceKey: key,
+			politeness: politenessLevel,
+		},
+	};
 }
 
 export default ScreenReaderAnnouncement;

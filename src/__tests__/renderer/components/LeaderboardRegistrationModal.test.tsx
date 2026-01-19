@@ -14,10 +14,10 @@ const mockRegisterLayer = vi.fn(() => 'layer-leaderboard-123');
 const mockUnregisterLayer = vi.fn();
 
 vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
-  useLayerStack: () => ({
-    registerLayer: mockRegisterLayer,
-    unregisterLayer: mockUnregisterLayer,
-  }),
+	useLayerStack: () => ({
+		registerLayer: mockRegisterLayer,
+		unregisterLayer: mockUnregisterLayer,
+	}),
 }));
 
 // Add __APP_VERSION__ global
@@ -25,547 +25,551 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 
 // Create test theme
 const createTheme = (): Theme => ({
-  id: 'test-dark',
-  name: 'Test Dark',
-  mode: 'dark',
-  colors: {
-    bgMain: '#1a1a2e',
-    bgSidebar: '#16213e',
-    bgActivity: '#0f3460',
-    textMain: '#e8e8e8',
-    textDim: '#888888',
-    accent: '#7b2cbf',
-    border: '#333355',
-    success: '#22c55e',
-    warning: '#f59e0b',
-    error: '#ef4444',
-    info: '#3b82f6',
-    bgAccentHover: '#9333ea',
-  },
+	id: 'test-dark',
+	name: 'Test Dark',
+	mode: 'dark',
+	colors: {
+		bgMain: '#1a1a2e',
+		bgSidebar: '#16213e',
+		bgActivity: '#0f3460',
+		textMain: '#e8e8e8',
+		textDim: '#888888',
+		accent: '#7b2cbf',
+		border: '#333355',
+		success: '#22c55e',
+		warning: '#f59e0b',
+		error: '#ef4444',
+		info: '#3b82f6',
+		bgAccentHover: '#9333ea',
+	},
 });
 
 // Create test autoRunStats
 const createAutoRunStats = (overrides: Partial<AutoRunStats> = {}): AutoRunStats => ({
-  cumulativeTimeMs: 120000, // 2 minutes
-  longestRunMs: 60000, // 1 minute
-  totalRuns: 5,
-  lastBadgeAcknowledged: null,
-  badgeHistory: [],
-  ...overrides,
+	cumulativeTimeMs: 120000, // 2 minutes
+	longestRunMs: 60000, // 1 minute
+	totalRuns: 5,
+	lastBadgeAcknowledged: null,
+	badgeHistory: [],
+	...overrides,
 });
 
 // Create test keyboard mastery stats
-const createKeyboardMasteryStats = (overrides: Partial<KeyboardMasteryStats> = {}): KeyboardMasteryStats => ({
-  shortcutUsageCounts: {},
-  totalShortcutsUsed: 50,
-  firstShortcutAt: new Date('2024-01-01').toISOString(),
-  lastShortcutAt: new Date('2024-01-10').toISOString(),
-  usedShortcuts: ['openCommandPalette', 'newSession', 'closeSession'],
-  currentLevel: 1,
-  ...overrides,
+const createKeyboardMasteryStats = (
+	overrides: Partial<KeyboardMasteryStats> = {}
+): KeyboardMasteryStats => ({
+	shortcutUsageCounts: {},
+	totalShortcutsUsed: 50,
+	firstShortcutAt: new Date('2024-01-01').toISOString(),
+	lastShortcutAt: new Date('2024-01-10').toISOString(),
+	usedShortcuts: ['openCommandPalette', 'newSession', 'closeSession'],
+	currentLevel: 1,
+	...overrides,
 });
 
 describe('LeaderboardRegistrationModal', () => {
-  let theme: Theme;
-  let autoRunStats: AutoRunStats;
-  let keyboardMasteryStats: KeyboardMasteryStats;
-  let onClose: ReturnType<typeof vi.fn>;
-  let onSave: ReturnType<typeof vi.fn>;
+	let theme: Theme;
+	let autoRunStats: AutoRunStats;
+	let keyboardMasteryStats: KeyboardMasteryStats;
+	let onClose: ReturnType<typeof vi.fn>;
+	let onSave: ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
-    theme = createTheme();
-    autoRunStats = createAutoRunStats();
-    keyboardMasteryStats = createKeyboardMasteryStats();
-    onClose = vi.fn();
-    onSave = vi.fn();
+	beforeEach(() => {
+		theme = createTheme();
+		autoRunStats = createAutoRunStats();
+		keyboardMasteryStats = createKeyboardMasteryStats();
+		onClose = vi.fn();
+		onSave = vi.fn();
 
-    // Mock leaderboard API
-    vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({
-      success: true,
-      rank: 42,
-    });
+		// Mock leaderboard API
+		vi.mocked(window.maestro.leaderboard.submit).mockResolvedValue({
+			success: true,
+			rank: 42,
+		});
 
-    // Reset layer stack mocks
-    mockRegisterLayer.mockClear().mockReturnValue('layer-leaderboard-123');
-    mockUnregisterLayer.mockClear();
-  });
+		// Reset layer stack mocks
+		mockRegisterLayer.mockClear().mockReturnValue('layer-leaderboard-123');
+		mockUnregisterLayer.mockClear();
+	});
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+	afterEach(() => {
+		vi.clearAllMocks();
+	});
 
-  describe('Bluesky field rendering', () => {
-    it('should render Bluesky input field', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('Bluesky field rendering', () => {
+		it('should render Bluesky input field', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      expect(blueskyInput).toBeInTheDocument();
-    });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			expect(blueskyInput).toBeInTheDocument();
+		});
 
-    it('should render Bluesky icon with correct styling', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should render Bluesky icon with correct styling', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // The BlueskySkyIcon renders an SVG path - check for the icon container
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      const iconContainer = blueskyInput.parentElement?.querySelector('svg');
-      expect(iconContainer).toBeInTheDocument();
-      expect(iconContainer).toHaveClass('w-4', 'h-4');
-    });
+			// The BlueskySkyIcon renders an SVG path - check for the icon container
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			const iconContainer = blueskyInput.parentElement?.querySelector('svg');
+			expect(iconContainer).toBeInTheDocument();
+			expect(iconContainer).toHaveClass('w-4', 'h-4');
+		});
 
-    it('should have correct placeholder text', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should have correct placeholder text', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      expect(blueskyInput).toHaveAttribute('placeholder', 'username.bsky.social');
-    });
-  });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			expect(blueskyInput).toHaveAttribute('placeholder', 'username.bsky.social');
+		});
+	});
 
-  describe('@ prefix stripping', () => {
-    it('should strip leading @ when user types it', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('@ prefix stripping', () => {
+		it('should strip leading @ when user types it', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      fireEvent.change(blueskyInput, { target: { value: '@username.bsky.social' } });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			fireEvent.change(blueskyInput, { target: { value: '@username.bsky.social' } });
 
-      expect(blueskyInput.value).toBe('username.bsky.social');
-    });
+			expect(blueskyInput.value).toBe('username.bsky.social');
+		});
 
-    it('should handle multiple @ symbols (only strip the leading one)', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should handle multiple @ symbols (only strip the leading one)', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      fireEvent.change(blueskyInput, { target: { value: '@user@name.bsky.social' } });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			fireEvent.change(blueskyInput, { target: { value: '@user@name.bsky.social' } });
 
-      expect(blueskyInput.value).toBe('user@name.bsky.social');
-    });
+			expect(blueskyInput.value).toBe('user@name.bsky.social');
+		});
 
-    it('should allow input without @ prefix', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should allow input without @ prefix', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      fireEvent.change(blueskyInput, { target: { value: 'username.bsky.social' } });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			fireEvent.change(blueskyInput, { target: { value: 'username.bsky.social' } });
 
-      expect(blueskyInput.value).toBe('username.bsky.social');
-    });
-  });
+			expect(blueskyInput.value).toBe('username.bsky.social');
+		});
+	});
 
-  describe('Custom domain support', () => {
-    it('should accept custom domain handles', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('Custom domain support', () => {
+		it('should accept custom domain handles', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      fireEvent.change(blueskyInput, { target: { value: 'user.example.com' } });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			fireEvent.change(blueskyInput, { target: { value: 'user.example.com' } });
 
-      expect(blueskyInput.value).toBe('user.example.com');
-    });
+			expect(blueskyInput.value).toBe('user.example.com');
+		});
 
-    it('should strip @ from custom domain handles', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should strip @ from custom domain handles', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      fireEvent.change(blueskyInput, { target: { value: '@user.example.com' } });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			fireEvent.change(blueskyInput, { target: { value: '@user.example.com' } });
 
-      expect(blueskyInput.value).toBe('user.example.com');
-    });
-  });
+			expect(blueskyInput.value).toBe('user.example.com');
+		});
+	});
 
-  describe('State persistence', () => {
-    it('should load existing Bluesky handle from registration', () => {
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        gitHubUsername: 'testuser',
-        twitterHandle: 'testuser',
-        discordUsername: 'testuser#1234',
-        blueskyHandle: 'testuser.bsky.social',
-        submittedAt: new Date().toISOString(),
-      };
+	describe('State persistence', () => {
+		it('should load existing Bluesky handle from registration', () => {
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				gitHubUsername: 'testuser',
+				twitterHandle: 'testuser',
+				discordUsername: 'testuser#1234',
+				blueskyHandle: 'testuser.bsky.social',
+				submittedAt: new Date().toISOString(),
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      expect(blueskyInput.value).toBe('testuser.bsky.social');
-    });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			expect(blueskyInput.value).toBe('testuser.bsky.social');
+		});
 
-    it('should load custom domain Bluesky handle from registration', () => {
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        gitHubUsername: 'testuser',
-        twitterHandle: 'testuser',
-        discordUsername: 'testuser#1234',
-        blueskyHandle: 'testuser.example.com',
-        submittedAt: new Date().toISOString(),
-      };
+		it('should load custom domain Bluesky handle from registration', () => {
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				gitHubUsername: 'testuser',
+				twitterHandle: 'testuser',
+				discordUsername: 'testuser#1234',
+				blueskyHandle: 'testuser.example.com',
+				submittedAt: new Date().toISOString(),
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      expect(blueskyInput.value).toBe('testuser.example.com');
-    });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			expect(blueskyInput.value).toBe('testuser.example.com');
+		});
 
-    it('should handle missing Bluesky handle in existing registration', () => {
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        gitHubUsername: 'testuser',
-        twitterHandle: 'testuser',
-        discordUsername: 'testuser#1234',
-        submittedAt: new Date().toISOString(),
-      };
+		it('should handle missing Bluesky handle in existing registration', () => {
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				gitHubUsername: 'testuser',
+				twitterHandle: 'testuser',
+				discordUsername: 'testuser#1234',
+				submittedAt: new Date().toISOString(),
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
-      expect(blueskyInput.value).toBe('');
-    });
-  });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social') as HTMLInputElement;
+			expect(blueskyInput.value).toBe('');
+		});
+	});
 
-  describe('Form submission', () => {
-    it('should include Bluesky handle in API submission', async () => {
-      // Use existing registration with Bluesky handle to test submission includes it
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        email: 'test@example.com',
-        blueskyHandle: 'testuser.bsky.social',
-        registeredAt: Date.now(),
-        emailConfirmed: true,
-        authToken: 'test-auth-token',
-      };
+	describe('Form submission', () => {
+		it('should include Bluesky handle in API submission', async () => {
+			// Use existing registration with Bluesky handle to test submission includes it
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				email: 'test@example.com',
+				blueskyHandle: 'testuser.bsky.social',
+				registeredAt: Date.now(),
+				emailConfirmed: true,
+				authToken: 'test-auth-token',
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // Submit form (existing registration pre-populates fields)
-      const submitButton = screen.getByText('Push Up');
-      await act(async () => {
-        fireEvent.click(submitButton);
-      });
+			// Submit form (existing registration pre-populates fields)
+			const submitButton = screen.getByText('Push Up');
+			await act(async () => {
+				fireEvent.click(submitButton);
+			});
 
-      await waitFor(() => {
-        expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            blueskyHandle: 'testuser.bsky.social',
-          })
-        );
-      });
-    });
+			await waitFor(() => {
+				expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+					expect.objectContaining({
+						blueskyHandle: 'testuser.bsky.social',
+					})
+				);
+			});
+		});
 
-    it('should include custom domain Bluesky handle in API submission', async () => {
-      // Use existing registration with custom domain Bluesky handle
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        email: 'test@example.com',
-        blueskyHandle: 'user.example.com',
-        registeredAt: Date.now(),
-        emailConfirmed: true,
-        authToken: 'test-auth-token',
-      };
+		it('should include custom domain Bluesky handle in API submission', async () => {
+			// Use existing registration with custom domain Bluesky handle
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				email: 'test@example.com',
+				blueskyHandle: 'user.example.com',
+				registeredAt: Date.now(),
+				emailConfirmed: true,
+				authToken: 'test-auth-token',
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // Submit form (existing registration pre-populates fields)
-      const submitButton = screen.getByText('Push Up');
-      await act(async () => {
-        fireEvent.click(submitButton);
-      });
+			// Submit form (existing registration pre-populates fields)
+			const submitButton = screen.getByText('Push Up');
+			await act(async () => {
+				fireEvent.click(submitButton);
+			});
 
-      await waitFor(() => {
-        expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            blueskyHandle: 'user.example.com',
-          })
-        );
-      });
-    });
+			await waitFor(() => {
+				expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+					expect.objectContaining({
+						blueskyHandle: 'user.example.com',
+					})
+				);
+			});
+		});
 
-    it('should handle empty Bluesky handle (optional field)', async () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should handle empty Bluesky handle (optional field)', async () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // Fill required fields
-      const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
-      await act(async () => {
-        fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
-      });
+			// Fill required fields
+			const displayNameInput = screen.getByPlaceholderText('ConductorPedram');
+			await act(async () => {
+				fireEvent.change(displayNameInput, { target: { value: 'Test User' } });
+			});
 
-      const emailInput = screen.getByPlaceholderText((content, element) => {
-        return element?.getAttribute('type') === 'email' || false;
-      });
-      await act(async () => {
-        fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
-      });
+			const emailInput = screen.getByPlaceholderText((content, element) => {
+				return element?.getAttribute('type') === 'email' || false;
+			});
+			await act(async () => {
+				fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+			});
 
-      // Leave Bluesky field empty
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      expect(blueskyInput).toHaveValue('');
+			// Leave Bluesky field empty
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			expect(blueskyInput).toHaveValue('');
 
-      // Submit form
-      const submitButton = screen.getByText('Push Up');
-      await act(async () => {
-        fireEvent.click(submitButton);
-      });
+			// Submit form
+			const submitButton = screen.getByText('Push Up');
+			await act(async () => {
+				fireEvent.click(submitButton);
+			});
 
-      await waitFor(() => {
-        expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
-          expect.objectContaining({
-            blueskyHandle: undefined,
-          })
-        );
-      });
-    });
+			await waitFor(() => {
+				expect(window.maestro.leaderboard.submit).toHaveBeenCalledWith(
+					expect.objectContaining({
+						blueskyHandle: undefined,
+					})
+				);
+			});
+		});
 
-    it('should include Bluesky handle in local save', async () => {
-      // Use existing registration with Bluesky handle
-      const existingRegistration: LeaderboardRegistration = {
-        displayName: 'Test User',
-        email: 'test@example.com',
-        blueskyHandle: 'testuser.bsky.social',
-        registeredAt: Date.now(),
-        emailConfirmed: true,
-        authToken: 'test-auth-token',
-      };
+		it('should include Bluesky handle in local save', async () => {
+			// Use existing registration with Bluesky handle
+			const existingRegistration: LeaderboardRegistration = {
+				displayName: 'Test User',
+				email: 'test@example.com',
+				blueskyHandle: 'testuser.bsky.social',
+				registeredAt: Date.now(),
+				emailConfirmed: true,
+				authToken: 'test-auth-token',
+			};
 
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={existingRegistration}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={existingRegistration}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // Submit form (existing registration pre-populates fields)
-      const submitButton = screen.getByText('Push Up');
-      await act(async () => {
-        fireEvent.click(submitButton);
-      });
+			// Submit form (existing registration pre-populates fields)
+			const submitButton = screen.getByText('Push Up');
+			await act(async () => {
+				fireEvent.click(submitButton);
+			});
 
-      await waitFor(() => {
-        expect(onSave).toHaveBeenCalledWith(
-          expect.objectContaining({
-            blueskyHandle: 'testuser.bsky.social',
-          })
-        );
-      });
-    });
-  });
+			await waitFor(() => {
+				expect(onSave).toHaveBeenCalledWith(
+					expect.objectContaining({
+						blueskyHandle: 'testuser.bsky.social',
+					})
+				);
+			});
+		});
+	});
 
-  describe('Field disabled state', () => {
-    it('should have Bluesky field enabled when not submitting', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('Field disabled state', () => {
+		it('should have Bluesky field enabled when not submitting', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      // Verify Bluesky field is initially enabled
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      expect(blueskyInput).not.toBeDisabled();
-    });
-  });
+			// Verify Bluesky field is initially enabled
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			expect(blueskyInput).not.toBeDisabled();
+		});
+	});
 
-  describe('Theme styling', () => {
-    it('should apply theme colors to Bluesky input', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('Theme styling', () => {
+		it('should apply theme colors to Bluesky input', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      expect(blueskyInput).toHaveStyle({
-        backgroundColor: theme.colors.bgActivity,
-        borderColor: theme.colors.border,
-        color: theme.colors.textMain,
-      });
-    });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			expect(blueskyInput).toHaveStyle({
+				backgroundColor: theme.colors.bgActivity,
+				borderColor: theme.colors.border,
+				color: theme.colors.textMain,
+			});
+		});
 
-    it('should apply theme colors to Bluesky icon', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should apply theme colors to Bluesky icon', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
-      const iconContainer = blueskyInput.parentElement?.querySelector('svg');
-      expect(iconContainer).toHaveStyle({ color: theme.colors.textDim });
-    });
-  });
+			const blueskyInput = screen.getByPlaceholderText('username.bsky.social');
+			const iconContainer = blueskyInput.parentElement?.querySelector('svg');
+			expect(iconContainer).toHaveStyle({ color: theme.colors.textDim });
+		});
+	});
 
-  describe('Layer stack integration', () => {
-    it('should register layer on mount', () => {
-      render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+	describe('Layer stack integration', () => {
+		it('should register layer on mount', () => {
+			render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      expect(mockRegisterLayer).toHaveBeenCalledTimes(1);
-      expect(mockRegisterLayer).toHaveBeenCalledWith(expect.objectContaining({
-        type: 'modal',
-      }));
-    });
+			expect(mockRegisterLayer).toHaveBeenCalledTimes(1);
+			expect(mockRegisterLayer).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'modal',
+				})
+			);
+		});
 
-    it('should unregister layer on unmount', () => {
-      const { unmount } = render(
-        <LeaderboardRegistrationModal
-          theme={theme}
-          autoRunStats={autoRunStats}
-          keyboardMasteryStats={keyboardMasteryStats}
-          existingRegistration={null}
-          onClose={onClose}
-          onSave={onSave}
-        />
-      );
+		it('should unregister layer on unmount', () => {
+			const { unmount } = render(
+				<LeaderboardRegistrationModal
+					theme={theme}
+					autoRunStats={autoRunStats}
+					keyboardMasteryStats={keyboardMasteryStats}
+					existingRegistration={null}
+					onClose={onClose}
+					onSave={onSave}
+				/>
+			);
 
-      unmount();
+			unmount();
 
-      expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-leaderboard-123');
-    });
-  });
+			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-leaderboard-123');
+		});
+	});
 });

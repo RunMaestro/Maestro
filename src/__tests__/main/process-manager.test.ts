@@ -9,7 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock node-pty before importing process-manager (native module)
 vi.mock('node-pty', () => ({
-	spawn: vi.fn()
+	spawn: vi.fn(),
 }));
 
 // Mock logger to avoid any side effects
@@ -18,8 +18,8 @@ vi.mock('../../main/utils/logger', () => ({
 		info: vi.fn(),
 		warn: vi.fn(),
 		error: vi.fn(),
-		debug: vi.fn()
-	}
+		debug: vi.fn(),
+	},
 }));
 
 import * as fs from 'fs';
@@ -31,7 +31,7 @@ import {
 	buildUnixBasePath,
 	type UsageStats,
 	type ModelStats,
-	type AgentError
+	type AgentError,
 } from '../../main/process-manager';
 
 describe('process-manager.ts', () => {
@@ -44,8 +44,8 @@ describe('process-manager.ts', () => {
 						outputTokens: 500,
 						cacheReadInputTokens: 200,
 						cacheCreationInputTokens: 100,
-						contextWindow: 200000
-					}
+						contextWindow: 200000,
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage, {}, 0.05);
@@ -56,7 +56,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 200,
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.05,
-					contextWindow: 200000
+					contextWindow: 200000,
 				});
 			});
 
@@ -69,15 +69,15 @@ describe('process-manager.ts', () => {
 						outputTokens: 500,
 						cacheReadInputTokens: 200,
 						cacheCreationInputTokens: 100,
-						contextWindow: 200000
+						contextWindow: 200000,
 					},
 					'claude-3-haiku': {
 						inputTokens: 500,
 						outputTokens: 250,
 						cacheReadInputTokens: 100,
 						cacheCreationInputTokens: 50,
-						contextWindow: 180000
-					}
+						contextWindow: 180000,
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage, {}, 0.1);
@@ -89,7 +89,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 200,
 					cacheCreationInputTokens: 100,
 					totalCostUsd: 0.1,
-					contextWindow: 200000 // Should use the highest context window
+					contextWindow: 200000, // Should use the highest context window
 				});
 			});
 
@@ -98,13 +98,13 @@ describe('process-manager.ts', () => {
 					'model-small': {
 						inputTokens: 100,
 						outputTokens: 50,
-						contextWindow: 128000
+						contextWindow: 128000,
 					},
 					'model-large': {
 						inputTokens: 200,
 						outputTokens: 100,
-						contextWindow: 1000000 // Much larger context
-					}
+						contextWindow: 1000000, // Much larger context
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage);
@@ -116,14 +116,14 @@ describe('process-manager.ts', () => {
 				const modelUsage: Record<string, ModelStats> = {
 					'model-1': {
 						inputTokens: 1000,
-						outputTokens: 500
+						outputTokens: 500,
 						// No cache fields
 					},
 					'model-2': {
 						inputTokens: 500,
 						// Missing outputTokens
-						cacheReadInputTokens: 100
-					}
+						cacheReadInputTokens: 100,
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage);
@@ -135,7 +135,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 100,
 					cacheCreationInputTokens: 0,
 					totalCostUsd: 0,
-					contextWindow: 200000 // Default value
+					contextWindow: 200000, // Default value
 				});
 			});
 
@@ -144,7 +144,7 @@ describe('process-manager.ts', () => {
 
 				const result = aggregateModelUsage(modelUsage, {
 					input_tokens: 500,
-					output_tokens: 250
+					output_tokens: 250,
 				});
 
 				// Should fall back to usage object when modelUsage is empty
@@ -159,7 +159,7 @@ describe('process-manager.ts', () => {
 					input_tokens: 2000,
 					output_tokens: 1000,
 					cache_read_input_tokens: 500,
-					cache_creation_input_tokens: 250
+					cache_creation_input_tokens: 250,
 				};
 
 				const result = aggregateModelUsage(undefined, usage, 0.15);
@@ -170,7 +170,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 500,
 					cacheCreationInputTokens: 250,
 					totalCostUsd: 0.15,
-					contextWindow: 200000 // Default
+					contextWindow: 200000, // Default
 				});
 			});
 
@@ -178,12 +178,12 @@ describe('process-manager.ts', () => {
 				const modelUsage: Record<string, ModelStats> = {
 					'empty-model': {
 						inputTokens: 0,
-						outputTokens: 0
-					}
+						outputTokens: 0,
+					},
 				};
 				const usage = {
 					input_tokens: 1500,
-					output_tokens: 750
+					output_tokens: 750,
 				};
 
 				const result = aggregateModelUsage(modelUsage, usage);
@@ -194,7 +194,7 @@ describe('process-manager.ts', () => {
 
 			it('should handle partial usage object', () => {
 				const usage = {
-					input_tokens: 1000
+					input_tokens: 1000,
 					// Missing other fields
 				};
 
@@ -206,7 +206,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 0,
 					cacheCreationInputTokens: 0,
 					totalCostUsd: 0,
-					contextWindow: 200000
+					contextWindow: 200000,
 				});
 			});
 		});
@@ -221,7 +221,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 0,
 					cacheCreationInputTokens: 0,
 					totalCostUsd: 0,
-					contextWindow: 200000 // Default for Claude
+					contextWindow: 200000, // Default for Claude
 				});
 			});
 
@@ -234,7 +234,7 @@ describe('process-manager.ts', () => {
 					cacheReadInputTokens: 0,
 					cacheCreationInputTokens: 0,
 					totalCostUsd: 0,
-					contextWindow: 200000
+					contextWindow: 200000,
 				});
 			});
 
@@ -271,8 +271,8 @@ describe('process-manager.ts', () => {
 						outputTokens: 2340,
 						cacheReadInputTokens: 12000,
 						cacheCreationInputTokens: 1500,
-						contextWindow: 200000
-					}
+						contextWindow: 200000,
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage, {}, 0.0543);
@@ -291,7 +291,7 @@ describe('process-manager.ts', () => {
 					input_tokens: 5000,
 					output_tokens: 1500,
 					cache_read_input_tokens: 3000,
-					cache_creation_input_tokens: 500
+					cache_creation_input_tokens: 500,
 				};
 
 				const result = aggregateModelUsage(undefined, usage, 0.025);
@@ -307,12 +307,12 @@ describe('process-manager.ts', () => {
 				const modelUsage: Record<string, ModelStats> = {
 					'claude-3-sonnet': {
 						inputTokens: 10000, // Full context including cache
-						outputTokens: 500
-					}
+						outputTokens: 500,
+					},
 				};
 				const usage = {
 					input_tokens: 1000, // Only new/billable tokens
-					output_tokens: 500
+					output_tokens: 500,
 				};
 
 				const result = aggregateModelUsage(modelUsage, usage, 0.05);
@@ -330,14 +330,14 @@ describe('process-manager.ts', () => {
 						outputTokens: 3000,
 						cacheReadInputTokens: 15000,
 						cacheCreationInputTokens: 2000,
-						contextWindow: 200000
+						contextWindow: 200000,
 					},
 					'claude-3-haiku': {
 						// Used for tool use - smaller context read
 						inputTokens: 500,
 						outputTokens: 100,
-						contextWindow: 200000
-					}
+						contextWindow: 200000,
+					},
 				};
 
 				const result = aggregateModelUsage(modelUsage, {}, 0.25);
@@ -367,7 +367,7 @@ describe('process-manager.ts', () => {
 					message: 'Test error',
 					recoverable: true,
 					agentId: 'claude-code',
-					timestamp: Date.now()
+					timestamp: Date.now(),
 				};
 				expect(error.type).toBe('auth_expired');
 			});
@@ -376,12 +376,9 @@ describe('process-manager.ts', () => {
 		describe('agent-error event emission', () => {
 			it('should be an EventEmitter that supports agent-error events', () => {
 				let emittedError: AgentError | null = null;
-				processManager.on(
-					'agent-error',
-					(sessionId: string, error: AgentError) => {
-						emittedError = error;
-					}
-				);
+				processManager.on('agent-error', (sessionId: string, error: AgentError) => {
+					emittedError = error;
+				});
 
 				// Manually emit an error event to verify the event system works
 				const testError: AgentError = {
@@ -390,7 +387,7 @@ describe('process-manager.ts', () => {
 					recoverable: true,
 					agentId: 'claude-code',
 					sessionId: 'test-session',
-					timestamp: Date.now()
+					timestamp: Date.now(),
 				};
 				processManager.emit('agent-error', 'test-session', testError);
 
@@ -411,7 +408,7 @@ describe('process-manager.ts', () => {
 					message: 'Connection failed',
 					recoverable: true,
 					agentId: 'claude-code',
-					timestamp: Date.now()
+					timestamp: Date.now(),
 				};
 				processManager.emit('agent-error', 'session-123', testError);
 
@@ -428,10 +425,7 @@ describe('process-manager.ts', () => {
 
 		describe('parseLine method', () => {
 			it('should return null for unknown session', () => {
-				const event = processManager.parseLine(
-					'non-existent-session',
-					'{"type":"test"}'
-				);
+				const event = processManager.parseLine('non-existent-session', '{"type":"test"}');
 				expect(event).toBeNull();
 			});
 		});
@@ -490,7 +484,7 @@ describe('process-manager.ts', () => {
 				const originalPlatform = process.platform;
 				Object.defineProperty(process, 'platform', {
 					value: 'win32',
-					configurable: true
+					configurable: true,
 				});
 
 				const result = detectNodeVersionManagerBinPaths();
@@ -498,7 +492,7 @@ describe('process-manager.ts', () => {
 				expect(result).toEqual([]);
 				Object.defineProperty(process, 'platform', {
 					value: originalPlatform,
-					configurable: true
+					configurable: true,
 				});
 			});
 		});
@@ -511,7 +505,7 @@ describe('process-manager.ts', () => {
 				const result = detectNodeVersionManagerBinPaths();
 
 				expect(Array.isArray(result)).toBe(true);
-				result.forEach(path => {
+				result.forEach((path) => {
 					expect(typeof path).toBe('string');
 					expect(path.length).toBeGreaterThan(0);
 				});
@@ -524,7 +518,7 @@ describe('process-manager.ts', () => {
 				const result = detectNodeVersionManagerBinPaths();
 
 				// All returned paths should exist on the filesystem
-				result.forEach(path => {
+				result.forEach((path) => {
 					expect(fs.existsSync(path)).toBe(true);
 				});
 			});
@@ -540,9 +534,7 @@ describe('process-manager.ts', () => {
 				const resultWithFakePath = detectNodeVersionManagerBinPaths();
 
 				// Should not include the fake path since it doesn't exist
-				expect(resultWithFakePath.some(p => p.includes('/nonexistent/'))).toBe(
-					false
-				);
+				expect(resultWithFakePath.some((p) => p.includes('/nonexistent/'))).toBe(false);
 
 				process.env.NVM_DIR = originalNvmDir;
 			});
@@ -575,7 +567,7 @@ describe('process-manager.ts', () => {
 
 			// Should not have empty segments
 			const segments = result.split(':');
-			segments.forEach(segment => {
+			segments.forEach((segment) => {
 				expect(segment.length).toBeGreaterThan(0);
 			});
 		});
@@ -585,13 +577,10 @@ describe('process-manager.ts', () => {
 			if (process.platform === 'win32') return;
 
 			const result = buildUnixBasePath();
-			const standardPaths =
-				'/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
+			const standardPaths = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
 
 			// Result should end with standard paths (they come after version manager paths)
-			expect(result.endsWith(standardPaths) || result === standardPaths).toBe(
-				true
-			);
+			expect(result.endsWith(standardPaths) || result === standardPaths).toBe(true);
 		});
 	});
 });

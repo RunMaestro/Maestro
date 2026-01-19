@@ -77,9 +77,13 @@ export class LocalCommandRunner {
 				for (const [key, value] of Object.entries(shellEnvVars)) {
 					env[key] = value.startsWith('~/') ? path.join(homeDir, value.slice(2)) : value;
 				}
-				logger.debug('[ProcessManager] Applied custom shell env vars to runCommand', 'ProcessManager', {
-					keys: Object.keys(shellEnvVars),
-				});
+				logger.debug(
+					'[ProcessManager] Applied custom shell env vars to runCommand',
+					'ProcessManager',
+					{
+						keys: Object.keys(shellEnvVars),
+					}
+				);
 			}
 
 			// Resolve shell to full path
@@ -129,9 +133,13 @@ export class LocalCommandRunner {
 					});
 					this.emitter.emit('data', sessionId, output);
 				} else {
-					logger.debug('[ProcessManager] runCommand SKIPPED emit (empty after trim)', 'ProcessManager', {
-						sessionId,
-					});
+					logger.debug(
+						'[ProcessManager] runCommand SKIPPED emit (empty after trim)',
+						'ProcessManager',
+						{
+							sessionId,
+						}
+					);
 				}
 			});
 

@@ -19,14 +19,14 @@
  */
 
 import React, {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useMemo,
-  useRef,
-  useEffect,
-  ReactNode
+	createContext,
+	useContext,
+	useState,
+	useCallback,
+	useMemo,
+	useRef,
+	useEffect,
+	ReactNode,
 } from 'react';
 import type { Session, Group } from '../types';
 import { useBatchedSessionUpdates } from '../hooks';
@@ -35,49 +35,49 @@ import { useBatchedSessionUpdates } from '../hooks';
  * Session context value - all session states and their setters
  */
 export interface SessionContextValue {
-  // Core Session State
-  sessions: Session[];
-  setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
+	// Core Session State
+	sessions: Session[];
+	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 
-  // Groups State
-  groups: Group[];
-  setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
+	// Groups State
+	groups: Group[];
+	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
 
-  // Active Session
-  activeSessionId: string;
-  setActiveSessionId: (id: string) => void;
-  setActiveSessionIdInternal: React.Dispatch<React.SetStateAction<string>>;
+	// Active Session
+	activeSessionId: string;
+	setActiveSessionId: (id: string) => void;
+	setActiveSessionIdInternal: React.Dispatch<React.SetStateAction<string>>;
 
-  // Initialization State
-  sessionsLoaded: boolean;
-  setSessionsLoaded: React.Dispatch<React.SetStateAction<boolean>>;
-  initialLoadComplete: React.MutableRefObject<boolean>;
+	// Initialization State
+	sessionsLoaded: boolean;
+	setSessionsLoaded: React.Dispatch<React.SetStateAction<boolean>>;
+	initialLoadComplete: React.MutableRefObject<boolean>;
 
-  // Refs for accessing current state in callbacks (avoids stale closures)
-  sessionsRef: React.MutableRefObject<Session[]>;
-  groupsRef: React.MutableRefObject<Group[]>;
-  activeSessionIdRef: React.MutableRefObject<string>;
+	// Refs for accessing current state in callbacks (avoids stale closures)
+	sessionsRef: React.MutableRefObject<Session[]>;
+	groupsRef: React.MutableRefObject<Group[]>;
+	activeSessionIdRef: React.MutableRefObject<string>;
 
-  // Batched Updater for performance
-  batchedUpdater: ReturnType<typeof useBatchedSessionUpdates>;
+	// Batched Updater for performance
+	batchedUpdater: ReturnType<typeof useBatchedSessionUpdates>;
 
-  // Computed Values
-  activeSession: Session | null;
+	// Computed Values
+	activeSession: Session | null;
 
-  // Cycle tracking for session navigation
-  cyclePositionRef: React.MutableRefObject<number>;
+	// Cycle tracking for session navigation
+	cyclePositionRef: React.MutableRefObject<number>;
 
-  // Worktree tracking
-  removedWorktreePaths: Set<string>;
-  setRemovedWorktreePaths: React.Dispatch<React.SetStateAction<Set<string>>>;
-  removedWorktreePathsRef: React.MutableRefObject<Set<string>>;
+	// Worktree tracking
+	removedWorktreePaths: Set<string>;
+	setRemovedWorktreePaths: React.Dispatch<React.SetStateAction<Set<string>>>;
+	removedWorktreePathsRef: React.MutableRefObject<Set<string>>;
 }
 
 // Create context with null as default (will throw if used outside provider)
 const SessionContext = createContext<SessionContextValue | null>(null);
 
 interface SessionProviderProps {
-  children: ReactNode;
+	children: ReactNode;
 }
 
 /**
@@ -100,134 +100,134 @@ interface SessionProviderProps {
  * </SessionProvider>
  */
 export function SessionProvider({ children }: SessionProviderProps) {
-  // Core Session State
-  const [sessions, setSessions] = useState<Session[]>([]);
+	// Core Session State
+	const [sessions, setSessions] = useState<Session[]>([]);
 
-  // Groups State
-  const [groups, setGroups] = useState<Group[]>([]);
+	// Groups State
+	const [groups, setGroups] = useState<Group[]>([]);
 
-  // Track worktree paths that were manually removed - prevents re-discovery during this session
-  const [removedWorktreePaths, setRemovedWorktreePaths] = useState<Set<string>>(new Set());
-  // Ref to always access current removed paths (avoids stale closure in async scanner)
-  const removedWorktreePathsRef = useRef<Set<string>>(removedWorktreePaths);
-  removedWorktreePathsRef.current = removedWorktreePaths;
+	// Track worktree paths that were manually removed - prevents re-discovery during this session
+	const [removedWorktreePaths, setRemovedWorktreePaths] = useState<Set<string>>(new Set());
+	// Ref to always access current removed paths (avoids stale closure in async scanner)
+	const removedWorktreePathsRef = useRef<Set<string>>(removedWorktreePaths);
+	removedWorktreePathsRef.current = removedWorktreePaths;
 
-  // Track if initial data has been loaded to prevent overwriting on mount
-  const initialLoadComplete = useRef(false);
+	// Track if initial data has been loaded to prevent overwriting on mount
+	const initialLoadComplete = useRef(false);
 
-  // Track if sessions/groups have been loaded (for splash screen coordination)
-  const [sessionsLoaded, setSessionsLoaded] = useState(false);
+	// Track if sessions/groups have been loaded (for splash screen coordination)
+	const [sessionsLoaded, setSessionsLoaded] = useState(false);
 
-  // Active session ID - internal state
-  const [activeSessionId, setActiveSessionIdInternal] = useState<string>('');
+	// Active session ID - internal state
+	const [activeSessionId, setActiveSessionIdInternal] = useState<string>('');
 
-  // Track current position in visual order for cycling (allows same session to appear twice)
-  const cyclePositionRef = useRef<number>(-1);
+	// Track current position in visual order for cycling (allows same session to appear twice)
+	const cyclePositionRef = useRef<number>(-1);
 
-  // Batched updater for performance during AI streaming
-  const batchedUpdater = useBatchedSessionUpdates(setSessions);
+	// Batched updater for performance during AI streaming
+	const batchedUpdater = useBatchedSessionUpdates(setSessions);
 
-  // Ref to access batchedUpdater without creating callback dependencies
-  // This prevents re-creating setActiveSessionId when batchedUpdater changes
-  const batchedUpdaterRef = useRef(batchedUpdater);
-  batchedUpdaterRef.current = batchedUpdater;
+	// Ref to access batchedUpdater without creating callback dependencies
+	// This prevents re-creating setActiveSessionId when batchedUpdater changes
+	const batchedUpdaterRef = useRef(batchedUpdater);
+	batchedUpdaterRef.current = batchedUpdater;
 
-  // Wrapper that resets cycle position when session is changed via click (not cycling)
-  // Also flushes batched updates to ensure previous session's state is fully updated
-  // Uses ref to avoid dependency on batchedUpdater, preventing render cascades
-  const setActiveSessionId = useCallback((id: string) => {
-    batchedUpdaterRef.current.flushNow(); // Flush pending updates before switching sessions
-    cyclePositionRef.current = -1; // Reset so next cycle finds first occurrence
-    setActiveSessionIdInternal(id);
-  }, []);
+	// Wrapper that resets cycle position when session is changed via click (not cycling)
+	// Also flushes batched updates to ensure previous session's state is fully updated
+	// Uses ref to avoid dependency on batchedUpdater, preventing render cascades
+	const setActiveSessionId = useCallback((id: string) => {
+		batchedUpdaterRef.current.flushNow(); // Flush pending updates before switching sessions
+		cyclePositionRef.current = -1; // Reset so next cycle finds first occurrence
+		setActiveSessionIdInternal(id);
+	}, []);
 
-  // Refs for accessing current state in callbacks (avoids stale closures)
-  const groupsRef = useRef(groups);
-  const sessionsRef = useRef(sessions);
-  const activeSessionIdRef = useRef(activeSessionId);
+	// Refs for accessing current state in callbacks (avoids stale closures)
+	const groupsRef = useRef(groups);
+	const sessionsRef = useRef(sessions);
+	const activeSessionIdRef = useRef(activeSessionId);
 
-  // Keep refs in sync with state
-  useEffect(() => {
-    groupsRef.current = groups;
-  }, [groups]);
+	// Keep refs in sync with state
+	useEffect(() => {
+		groupsRef.current = groups;
+	}, [groups]);
 
-  useEffect(() => {
-    sessionsRef.current = sessions;
-  }, [sessions]);
+	useEffect(() => {
+		sessionsRef.current = sessions;
+	}, [sessions]);
 
-  useEffect(() => {
-    activeSessionIdRef.current = activeSessionId;
-  }, [activeSessionId]);
+	useEffect(() => {
+		activeSessionIdRef.current = activeSessionId;
+	}, [activeSessionId]);
 
-  // Computed value: active session (with fallback to first session)
-  const activeSession = useMemo(() =>
-    sessions.find(s => s.id === activeSessionId) || sessions[0] || null,
-  [sessions, activeSessionId]);
+	// Computed value: active session (with fallback to first session)
+	const activeSession = useMemo(
+		() => sessions.find((s) => s.id === activeSessionId) || sessions[0] || null,
+		[sessions, activeSessionId]
+	);
 
-  // PERFORMANCE: Create stable context value
-  // React's useState setters are stable (don't need to be in deps)
-  // Refs are also stable. Only include values that consumers need reactively.
-  //
-  // IMPORTANT: sessions/groups/activeSession ARE included because consumers
-  // need to re-render when they change. The performance issue is in OTHER contexts,
-  // not here - SessionContext needs to propagate session changes.
-  const value = useMemo<SessionContextValue>(() => ({
-    // Core Session State
-    sessions,
-    setSessions,
+	// PERFORMANCE: Create stable context value
+	// React's useState setters are stable (don't need to be in deps)
+	// Refs are also stable. Only include values that consumers need reactively.
+	//
+	// IMPORTANT: sessions/groups/activeSession ARE included because consumers
+	// need to re-render when they change. The performance issue is in OTHER contexts,
+	// not here - SessionContext needs to propagate session changes.
+	const value = useMemo<SessionContextValue>(
+		() => ({
+			// Core Session State
+			sessions,
+			setSessions,
 
-    // Groups State
-    groups,
-    setGroups,
+			// Groups State
+			groups,
+			setGroups,
 
-    // Active Session
-    activeSessionId,
-    setActiveSessionId,
-    setActiveSessionIdInternal,
+			// Active Session
+			activeSessionId,
+			setActiveSessionId,
+			setActiveSessionIdInternal,
 
-    // Initialization State
-    sessionsLoaded,
-    setSessionsLoaded,
-    initialLoadComplete,
+			// Initialization State
+			sessionsLoaded,
+			setSessionsLoaded,
+			initialLoadComplete,
 
-    // Refs
-    sessionsRef,
-    groupsRef,
-    activeSessionIdRef,
+			// Refs
+			sessionsRef,
+			groupsRef,
+			activeSessionIdRef,
 
-    // Batched Updater
-    batchedUpdater,
+			// Batched Updater
+			batchedUpdater,
 
-    // Computed Values
-    activeSession,
+			// Computed Values
+			activeSession,
 
-    // Cycle tracking
-    cyclePositionRef,
+			// Cycle tracking
+			cyclePositionRef,
 
-    // Worktree tracking
-    removedWorktreePaths,
-    setRemovedWorktreePaths,
-    removedWorktreePathsRef,
-  }), [
-    // These values must trigger re-renders for consumers
-    sessions,
-    groups,
-    activeSessionId,
-    // setActiveSessionId is now stable (uses ref for batchedUpdater) so no need to include
-    sessionsLoaded,
-    // batchedUpdater is provided for API access but doesn't need to trigger re-renders
-    // Consumers use it for imperative calls, not reactive subscriptions
-    activeSession,
-    removedWorktreePaths,
-    // Note: setState functions from useState are stable and don't need to be deps
-    // Refs are also stable objects (the ref itself doesn't change, only .current)
-  ]);
+			// Worktree tracking
+			removedWorktreePaths,
+			setRemovedWorktreePaths,
+			removedWorktreePathsRef,
+		}),
+		[
+			// These values must trigger re-renders for consumers
+			sessions,
+			groups,
+			activeSessionId,
+			// setActiveSessionId is now stable (uses ref for batchedUpdater) so no need to include
+			sessionsLoaded,
+			// batchedUpdater is provided for API access but doesn't need to trigger re-renders
+			// Consumers use it for imperative calls, not reactive subscriptions
+			activeSession,
+			removedWorktreePaths,
+			// Note: setState functions from useState are stable and don't need to be deps
+			// Refs are also stable objects (the ref itself doesn't change, only .current)
+		]
+	);
 
-  return (
-    <SessionContext.Provider value={value}>
-      {children}
-    </SessionContext.Provider>
-  );
+	return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
 }
 
 /**
@@ -264,11 +264,11 @@ export function SessionProvider({ children }: SessionProviderProps) {
  * batchedUpdater.appendLog(sessionId, tabId, true, data);
  */
 export function useSession(): SessionContextValue {
-  const context = useContext(SessionContext);
+	const context = useContext(SessionContext);
 
-  if (!context) {
-    throw new Error('useSession must be used within a SessionProvider');
-  }
+	if (!context) {
+		throw new Error('useSession must be used within a SessionProvider');
+	}
 
-  return context;
+	return context;
 }

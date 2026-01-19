@@ -25,13 +25,13 @@
 
 import React, { createContext, useContext, useMemo, ReactNode } from 'react';
 import {
-  useInlineWizard,
-  type UseInlineWizardReturn,
-  type InlineWizardState,
-  type InlineWizardMode,
-  type InlineWizardMessage,
-  type InlineGeneratedDocument,
-  type PreviousUIState,
+	useInlineWizard,
+	type UseInlineWizardReturn,
+	type InlineWizardState,
+	type InlineWizardMode,
+	type InlineWizardMessage,
+	type InlineGeneratedDocument,
+	type PreviousUIState,
 } from '../hooks/useInlineWizard';
 
 /**
@@ -43,7 +43,7 @@ export type InlineWizardContextValue = UseInlineWizardReturn;
 const InlineWizardContext = createContext<InlineWizardContextValue | null>(null);
 
 interface InlineWizardProviderProps {
-  children: ReactNode;
+	children: ReactNode;
 }
 
 /**
@@ -71,55 +71,54 @@ interface InlineWizardProviderProps {
  * ```
  */
 export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
-  // Use the inline wizard hook
-  const wizardState = useInlineWizard();
+	// Use the inline wizard hook
+	const wizardState = useInlineWizard();
 
-  // Memoize the context value to prevent unnecessary re-renders
-  // The useInlineWizard hook already memoizes its return value,
-  // but we wrap it here for safety
-  const value = useMemo<InlineWizardContextValue>(() => wizardState, [
-    // Dependencies from the wizard state
-    wizardState.isWizardActive,
-    wizardState.isInitializing,
-    wizardState.isWaiting,
-    wizardState.wizardMode,
-    wizardState.wizardGoal,
-    wizardState.confidence,
-    wizardState.ready,
-    wizardState.readyToGenerate,
-    wizardState.conversationHistory,
-    wizardState.isGeneratingDocs,
-    wizardState.generatedDocuments,
-    wizardState.existingDocuments,
-    wizardState.error,
-    wizardState.state,
-    // Actions (stable references from useCallback)
-    wizardState.startWizard,
-    wizardState.endWizard,
-    wizardState.sendMessage,
-    wizardState.setConfidence,
-    wizardState.setMode,
-    wizardState.setGoal,
-    wizardState.setGeneratingDocs,
-    wizardState.setGeneratedDocuments,
-    wizardState.setExistingDocuments,
-    wizardState.setError,
-    wizardState.clearError,
-    wizardState.retryLastMessage,
-    wizardState.addAssistantMessage,
-    wizardState.clearConversation,
-    wizardState.reset,
-    wizardState.generateDocuments,
-    wizardState.streamingContent,
-    wizardState.generationProgress,
-    wizardState.wizardTabId,
-  ]);
+	// Memoize the context value to prevent unnecessary re-renders
+	// The useInlineWizard hook already memoizes its return value,
+	// but we wrap it here for safety
+	const value = useMemo<InlineWizardContextValue>(
+		() => wizardState,
+		[
+			// Dependencies from the wizard state
+			wizardState.isWizardActive,
+			wizardState.isInitializing,
+			wizardState.isWaiting,
+			wizardState.wizardMode,
+			wizardState.wizardGoal,
+			wizardState.confidence,
+			wizardState.ready,
+			wizardState.readyToGenerate,
+			wizardState.conversationHistory,
+			wizardState.isGeneratingDocs,
+			wizardState.generatedDocuments,
+			wizardState.existingDocuments,
+			wizardState.error,
+			wizardState.state,
+			// Actions (stable references from useCallback)
+			wizardState.startWizard,
+			wizardState.endWizard,
+			wizardState.sendMessage,
+			wizardState.setConfidence,
+			wizardState.setMode,
+			wizardState.setGoal,
+			wizardState.setGeneratingDocs,
+			wizardState.setGeneratedDocuments,
+			wizardState.setExistingDocuments,
+			wizardState.setError,
+			wizardState.clearError,
+			wizardState.retryLastMessage,
+			wizardState.addAssistantMessage,
+			wizardState.clearConversation,
+			wizardState.reset,
+			wizardState.generateDocuments,
+			wizardState.streamingContent,
+			wizardState.generationProgress,
+			wizardState.wizardTabId,
+		]
+	);
 
-  return (
-    <InlineWizardContext.Provider value={value}>
-      {children}
-    </InlineWizardContext.Provider>
-  );
+	return <InlineWizardContext.Provider value={value}>{children}</InlineWizardContext.Provider>;
 }
 
 /**
@@ -159,20 +158,20 @@ export function InlineWizardProvider({ children }: InlineWizardProviderProps) {
  * }
  */
 export function useInlineWizardContext(): InlineWizardContextValue {
-  const context = useContext(InlineWizardContext);
+	const context = useContext(InlineWizardContext);
 
-  if (!context) {
-    throw new Error('useInlineWizardContext must be used within an InlineWizardProvider');
-  }
+	if (!context) {
+		throw new Error('useInlineWizardContext must be used within an InlineWizardProvider');
+	}
 
-  return context;
+	return context;
 }
 
 // Re-export types for convenience
 export type {
-  InlineWizardState,
-  InlineWizardMode,
-  InlineWizardMessage,
-  InlineGeneratedDocument,
-  PreviousUIState,
+	InlineWizardState,
+	InlineWizardMode,
+	InlineWizardMessage,
+	InlineGeneratedDocument,
+	PreviousUIState,
 };

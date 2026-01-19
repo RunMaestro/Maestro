@@ -5,7 +5,7 @@ import { useLayerStack as useLayerStackHook, type LayerStackAPI } from '../hooks
 const LayerStackContext = createContext<LayerStackAPI | null>(null);
 
 interface LayerStackProviderProps {
-  children: ReactNode;
+	children: ReactNode;
 }
 
 /**
@@ -22,43 +22,39 @@ interface LayerStackProviderProps {
  * </LayerStackProvider>
  */
 export function LayerStackProvider({ children }: LayerStackProviderProps) {
-  const layerStack = useLayerStackHook();
+	const layerStack = useLayerStackHook();
 
-  // Global Escape key handler - delegates to top layer
-  // We use a ref to always have access to the latest layerStack methods
-  const layerStackRef = React.useRef(layerStack);
-  layerStackRef.current = layerStack;
+	// Global Escape key handler - delegates to top layer
+	// We use a ref to always have access to the latest layerStack methods
+	const layerStackRef = React.useRef(layerStack);
+	layerStackRef.current = layerStack;
 
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        const stack = layerStackRef.current;
-        const topLayer = stack.getTopLayer();
-        if (topLayer) {
-          // Prevent default Escape behavior and stop propagation
-          e.preventDefault();
-          e.stopPropagation();
+	useEffect(() => {
+		const handleEscape = (e: KeyboardEvent) => {
+			if (e.key === 'Escape') {
+				const stack = layerStackRef.current;
+				const topLayer = stack.getTopLayer();
+				if (topLayer) {
+					// Prevent default Escape behavior and stop propagation
+					e.preventDefault();
+					e.stopPropagation();
 
-          // Close the top layer (async but we don't need to await here since
-          // we've already prevented default - the modal will close asynchronously)
-          void stack.closeTopLayer();
-        }
-      }
-    };
+					// Close the top layer (async but we don't need to await here since
+					// we've already prevented default - the modal will close asynchronously)
+					void stack.closeTopLayer();
+				}
+			}
+		};
 
-    // Use capture phase to handle Escape before it reaches child components
-    window.addEventListener('keydown', handleEscape, { capture: true });
+		// Use capture phase to handle Escape before it reaches child components
+		window.addEventListener('keydown', handleEscape, { capture: true });
 
-    return () => {
-      window.removeEventListener('keydown', handleEscape, { capture: true });
-    };
-  }, []); // Empty deps - handler uses ref to get latest stack
+		return () => {
+			window.removeEventListener('keydown', handleEscape, { capture: true });
+		};
+	}, []); // Empty deps - handler uses ref to get latest stack
 
-  return (
-    <LayerStackContext.Provider value={layerStack}>
-      {children}
-    </LayerStackContext.Provider>
-  );
+	return <LayerStackContext.Provider value={layerStack}>{children}</LayerStackContext.Provider>;
 }
 
 /**
@@ -83,11 +79,11 @@ export function LayerStackProvider({ children }: LayerStackProviderProps) {
  * }, []);
  */
 export function useLayerStack(): LayerStackAPI {
-  const context = useContext(LayerStackContext);
+	const context = useContext(LayerStackContext);
 
-  if (!context) {
-    throw new Error('useLayerStack must be used within a LayerStackProvider');
-  }
+	if (!context) {
+		throw new Error('useLayerStack must be used within a LayerStackProvider');
+	}
 
-  return context;
+	return context;
 }

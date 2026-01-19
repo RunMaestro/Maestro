@@ -4,12 +4,12 @@
  * '../../shared/formatters' for new code.
  */
 export {
-  formatSize,
-  formatNumber,
-  formatTokens,
-  formatTokensCompact,
-  formatRelativeTime,
-  formatActiveTime,
-  formatElapsedTime,
-  formatCost,
+	formatSize,
+	formatNumber,
+	formatTokens,
+	formatTokensCompact,
+	formatRelativeTime,
+	formatActiveTime,
+	formatElapsedTime,
+	formatCost,
 } from '../../shared/formatters';

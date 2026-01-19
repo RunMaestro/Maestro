@@ -28,18 +28,18 @@
 import { useEffect, RefObject } from 'react';
 
 export interface UseClickOutsideOptions {
-  /**
-   * Event type to listen for. Defaults to 'mousedown'.
-   * Use 'click' if you need the click to complete (e.g., for button toggles).
-   */
-  eventType?: 'mousedown' | 'click';
+	/**
+	 * Event type to listen for. Defaults to 'mousedown'.
+	 * Use 'click' if you need the click to complete (e.g., for button toggles).
+	 */
+	eventType?: 'mousedown' | 'click';
 
-  /**
-   * Whether to delay adding the event listener using setTimeout(0).
-   * This prevents the click that opened the element from immediately closing it.
-   * Useful when the element is shown in response to a click event.
-   */
-  delay?: boolean;
+	/**
+	 * Whether to delay adding the event listener using setTimeout(0).
+	 * This prevents the click that opened the element from immediately closing it.
+	 * Useful when the element is shown in response to a click event.
+	 */
+	delay?: boolean;
 }
 
 /**
@@ -68,46 +68,44 @@ export interface UseClickOutsideOptions {
  * );
  */
 export function useClickOutside<T extends HTMLElement = HTMLElement>(
-  ref: RefObject<T | null> | RefObject<T | null>[],
-  onClickOutside: () => void,
-  enabled: boolean = true,
-  options: UseClickOutsideOptions = {}
+	ref: RefObject<T | null> | RefObject<T | null>[],
+	onClickOutside: () => void,
+	enabled: boolean = true,
+	options: UseClickOutsideOptions = {}
 ): void {
-  const { eventType = 'mousedown', delay = false } = options;
+	const { eventType = 'mousedown', delay = false } = options;
 
-  useEffect(() => {
-    if (!enabled) return;
+	useEffect(() => {
+		if (!enabled) return;
 
-    const handleClickOutside = (e: Event) => {
-      const refs = Array.isArray(ref) ? ref : [ref];
-      const target = e.target as Node;
+		const handleClickOutside = (e: Event) => {
+			const refs = Array.isArray(ref) ? ref : [ref];
+			const target = e.target as Node;
 
-      // Check if click is inside any of the excluded elements
-      const isInside = refs.some(
-        (r) => r.current && r.current.contains(target)
-      );
+			// Check if click is inside any of the excluded elements
+			const isInside = refs.some((r) => r.current && r.current.contains(target));
 
-      if (!isInside) {
-        onClickOutside();
-      }
-    };
+			if (!isInside) {
+				onClickOutside();
+			}
+		};
 
-    if (delay) {
-      // Use setTimeout to avoid immediate trigger from the click that opened it
-      const timeoutId = setTimeout(() => {
-        document.addEventListener(eventType, handleClickOutside);
-      }, 0);
+		if (delay) {
+			// Use setTimeout to avoid immediate trigger from the click that opened it
+			const timeoutId = setTimeout(() => {
+				document.addEventListener(eventType, handleClickOutside);
+			}, 0);
 
-      return () => {
-        clearTimeout(timeoutId);
-        document.removeEventListener(eventType, handleClickOutside);
-      };
-    } else {
-      document.addEventListener(eventType, handleClickOutside);
-      return () => document.removeEventListener(eventType, handleClickOutside);
-    }
-    // Note: ref is intentionally excluded from dependencies.
-    // Refs are stable across renders by design, and including them
-    // causes unnecessary listener re-registration when parent re-renders.
-  }, [onClickOutside, enabled, eventType, delay]);
+			return () => {
+				clearTimeout(timeoutId);
+				document.removeEventListener(eventType, handleClickOutside);
+			};
+		} else {
+			document.addEventListener(eventType, handleClickOutside);
+			return () => document.removeEventListener(eventType, handleClickOutside);
+		}
+		// Note: ref is intentionally excluded from dependencies.
+		// Refs are stable across renders by design, and including them
+		// causes unnecessary listener re-registration when parent re-renders.
+	}, [onClickOutside, enabled, eventType, delay]);
 }

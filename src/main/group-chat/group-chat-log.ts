@@ -21,10 +21,10 @@ import { v4 as uuidv4 } from 'uuid';
  * Message structure for parsed log entries.
  */
 export interface GroupChatMessage {
-  timestamp: string;
-  from: string;
-  content: string;
-  readOnly?: boolean;
+	timestamp: string;
+	from: string;
+	content: string;
+	readOnly?: boolean;
 }
 
 /**
@@ -39,10 +39,7 @@ export interface GroupChatMessage {
  * @returns Escaped content safe for log storage
  */
 export function escapeContent(content: string): string {
-  return content
-    .replace(/\\/g, '\\\\')
-    .replace(/\|/g, '\\|')
-    .replace(/\n/g, '\\n');
+	return content.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\n/g, '\\n');
 }
 
 /**
@@ -56,22 +53,22 @@ export function escapeContent(content: string): string {
  * @returns Original unescaped content
  */
 export function unescapeContent(escaped: string): string {
-  // Use a single regex with alternation to handle all escapes correctly.
-  // \\\\  matches escaped backslash
-  // \\n   matches escaped newline
-  // \\|   matches escaped pipe (note: \| in regex is just |, but \\| is backslash-pipe)
-  return escaped.replace(/\\\\|\\n|\\\|/g, (match) => {
-    switch (match) {
-      case '\\\\':
-        return '\\';
-      case '\\n':
-        return '\n';
-      case '\\|':
-        return '|';
-      default:
-        return match;
-    }
-  });
+	// Use a single regex with alternation to handle all escapes correctly.
+	// \\\\  matches escaped backslash
+	// \\n   matches escaped newline
+	// \\|   matches escaped pipe (note: \| in regex is just |, but \\| is backslash-pipe)
+	return escaped.replace(/\\\\|\\n|\\\|/g, (match) => {
+		switch (match) {
+			case '\\\\':
+				return '\\';
+			case '\\n':
+				return '\n';
+			case '\\|':
+				return '|';
+			default:
+				return match;
+		}
+	});
 }
 
 /**
@@ -83,23 +80,23 @@ export function unescapeContent(escaped: string): string {
  * @param readOnly - Optional flag indicating read-only mode
  */
 export async function appendToLog(
-  logPath: string,
-  from: string,
-  content: string,
-  readOnly?: boolean
+	logPath: string,
+	from: string,
+	content: string,
+	readOnly?: boolean
 ): Promise<void> {
-  const timestamp = new Date().toISOString();
-  const escapedContent = escapeContent(content);
-  // Format: TIMESTAMP|FROM|CONTENT or TIMESTAMP|FROM|CONTENT|readOnly
-  const line = readOnly
-    ? `${timestamp}|${from}|${escapedContent}|readOnly\n`
-    : `${timestamp}|${from}|${escapedContent}\n`;
+	const timestamp = new Date().toISOString();
+	const escapedContent = escapeContent(content);
+	// Format: TIMESTAMP|FROM|CONTENT or TIMESTAMP|FROM|CONTENT|readOnly
+	const line = readOnly
+		? `${timestamp}|${from}|${escapedContent}|readOnly\n`
+		: `${timestamp}|${from}|${escapedContent}\n`;
 
-  // Ensure directory exists
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
+	// Ensure directory exists
+	await fs.mkdir(path.dirname(logPath), { recursive: true });
 
-  // Append to file
-  await fs.appendFile(logPath, line, 'utf-8');
+	// Append to file
+	await fs.appendFile(logPath, line, 'utf-8');
 }
 
 /**
@@ -109,59 +106,59 @@ export async function appendToLog(
  * @returns Array of parsed messages
  */
 export async function readLog(logPath: string): Promise<GroupChatMessage[]> {
-  try {
-    const content = await fs.readFile(logPath, 'utf-8');
+	try {
+		const content = await fs.readFile(logPath, 'utf-8');
 
-    if (!content.trim()) {
-      return [];
-    }
+		if (!content.trim()) {
+			return [];
+		}
 
-    const lines = content.split('\n').filter((line) => line.trim());
-    const messages: GroupChatMessage[] = [];
+		const lines = content.split('\n').filter((line) => line.trim());
+		const messages: GroupChatMessage[] = [];
 
-    for (const line of lines) {
-      // Find unescaped pipes to split the line
-      const pipeIndices: number[] = [];
+		for (const line of lines) {
+			// Find unescaped pipes to split the line
+			const pipeIndices: number[] = [];
 
-      for (let i = 0; i < line.length; i++) {
-        if (line[i] === '|' && (i === 0 || line[i - 1] !== '\\')) {
-          pipeIndices.push(i);
-        }
-      }
+			for (let i = 0; i < line.length; i++) {
+				if (line[i] === '|' && (i === 0 || line[i - 1] !== '\\')) {
+					pipeIndices.push(i);
+				}
+			}
 
-      // Need at least 2 pipes for TIMESTAMP|FROM|CONTENT
-      if (pipeIndices.length >= 2) {
-        const timestamp = line.substring(0, pipeIndices[0]);
-        const from = line.substring(pipeIndices[0] + 1, pipeIndices[1]);
+			// Need at least 2 pipes for TIMESTAMP|FROM|CONTENT
+			if (pipeIndices.length >= 2) {
+				const timestamp = line.substring(0, pipeIndices[0]);
+				const from = line.substring(pipeIndices[0] + 1, pipeIndices[1]);
 
-        // Check if there's a 4th field (readOnly flag)
-        let escapedContent: string;
-        let readOnly = false;
+				// Check if there's a 4th field (readOnly flag)
+				let escapedContent: string;
+				let readOnly = false;
 
-        if (pipeIndices.length >= 3) {
-          escapedContent = line.substring(pipeIndices[1] + 1, pipeIndices[2]);
-          const flag = line.substring(pipeIndices[2] + 1);
-          readOnly = flag === 'readOnly';
-        } else {
-          escapedContent = line.substring(pipeIndices[1] + 1);
-        }
+				if (pipeIndices.length >= 3) {
+					escapedContent = line.substring(pipeIndices[1] + 1, pipeIndices[2]);
+					const flag = line.substring(pipeIndices[2] + 1);
+					readOnly = flag === 'readOnly';
+				} else {
+					escapedContent = line.substring(pipeIndices[1] + 1);
+				}
 
-        messages.push({
-          timestamp,
-          from,
-          content: unescapeContent(escapedContent),
-          ...(readOnly && { readOnly: true }),
-        });
-      }
-    }
+				messages.push({
+					timestamp,
+					from,
+					content: unescapeContent(escapedContent),
+					...(readOnly && { readOnly: true }),
+				});
+			}
+		}
 
-    return messages;
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return [];
-    }
-    throw error;
-  }
+		return messages;
+	} catch (error: unknown) {
+		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+			return [];
+		}
+		throw error;
+	}
 }
 
 /** Allowed image file extensions */
@@ -178,29 +175,31 @@ const ALLOWED_IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
  * @throws Error if extension is invalid or path traversal is detected
  */
 export async function saveImage(
-  imagesDir: string,
-  imageBuffer: Buffer,
-  originalFilename: string
+	imagesDir: string,
+	imageBuffer: Buffer,
+	originalFilename: string
 ): Promise<string> {
-  const ext = path.extname(originalFilename).toLowerCase() || '.png';
+	const ext = path.extname(originalFilename).toLowerCase() || '.png';
 
-  // Validate extension against whitelist
-  if (!ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
-    throw new Error(`Invalid image extension: ${ext}. Allowed: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}`);
-  }
+	// Validate extension against whitelist
+	if (!ALLOWED_IMAGE_EXTENSIONS.includes(ext)) {
+		throw new Error(
+			`Invalid image extension: ${ext}. Allowed: ${ALLOWED_IMAGE_EXTENSIONS.join(', ')}`
+		);
+	}
 
-  const filename = `image-${uuidv4().slice(0, 8)}${ext}`;
-  const filepath = path.join(imagesDir, filename);
+	const filename = `image-${uuidv4().slice(0, 8)}${ext}`;
+	const filepath = path.join(imagesDir, filename);
 
-  // Defense-in-depth: verify resolved path stays within expected directory
-  const resolvedPath = path.resolve(filepath);
-  const resolvedDir = path.resolve(imagesDir);
-  if (!resolvedPath.startsWith(resolvedDir + path.sep) && resolvedPath !== resolvedDir) {
-    throw new Error('Path traversal attempt detected');
-  }
+	// Defense-in-depth: verify resolved path stays within expected directory
+	const resolvedPath = path.resolve(filepath);
+	const resolvedDir = path.resolve(imagesDir);
+	if (!resolvedPath.startsWith(resolvedDir + path.sep) && resolvedPath !== resolvedDir) {
+		throw new Error('Path traversal attempt detected');
+	}
 
-  await fs.mkdir(imagesDir, { recursive: true });
-  await fs.writeFile(filepath, imageBuffer);
+	await fs.mkdir(imagesDir, { recursive: true });
+	await fs.writeFile(filepath, imageBuffer);
 
-  return filename;
+	return filename;
 }

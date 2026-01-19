@@ -13,7 +13,7 @@ import { generateId } from './ids';
  * @returns The name to pre-fill in the rename input (empty for auto-generated names)
  */
 export function getInitialRenameValue(tab: AITab): string {
-  return tab.name || '';
+	return tab.name || '';
 }
 
 // Maximum number of closed tabs to keep in history
@@ -27,7 +27,10 @@ const MAX_CLOSED_TAB_HISTORY = 25;
  * @returns True if the tab has unsent text input or staged images
  */
 export function hasDraft(tab: AITab): boolean {
-  return (tab.inputValue && tab.inputValue.trim() !== '') || (tab.stagedImages && tab.stagedImages.length > 0);
+	return (
+		(tab.inputValue && tab.inputValue.trim() !== '') ||
+		(tab.stagedImages && tab.stagedImages.length > 0)
+	);
 }
 
 /**
@@ -38,7 +41,7 @@ export function hasDraft(tab: AITab): boolean {
  * @returns True if the tab has an active wizard that hasn't completed
  */
 export function hasActiveWizard(tab: AITab): boolean {
-  return tab.wizardState?.isActive === true;
+	return tab.wizardState?.isActive === true;
 }
 
 /**
@@ -61,15 +64,15 @@ export function hasActiveWizard(tab: AITab): boolean {
  * const unreadTabs = getNavigableTabs(session, true);
  */
 export function getNavigableTabs(session: Session, showUnreadOnly = false): AITab[] {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return [];
-  }
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return [];
+	}
 
-  if (showUnreadOnly) {
-    return session.aiTabs.filter(tab => tab.hasUnread || hasDraft(tab));
-  }
+	if (showUnreadOnly) {
+		return session.aiTabs.filter((tab) => tab.hasUnread || hasDraft(tab));
+	}
 
-  return session.aiTabs;
+	return session.aiTabs;
 }
 
 /**
@@ -81,36 +84,36 @@ export function getNavigableTabs(session: Session, showUnreadOnly = false): AITa
  * @returns The active AITab or undefined if no tabs exist
  */
 export function getActiveTab(session: Session): AITab | undefined {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return undefined;
-  }
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return undefined;
+	}
 
-  const activeTab = session.aiTabs.find(tab => tab.id === session.activeTabId);
+	const activeTab = session.aiTabs.find((tab) => tab.id === session.activeTabId);
 
-  // Fallback to first tab if activeTabId doesn't match any tab
-  // (can happen after tab deletion or data corruption)
-  return activeTab ?? session.aiTabs[0];
+	// Fallback to first tab if activeTabId doesn't match any tab
+	// (can happen after tab deletion or data corruption)
+	return activeTab ?? session.aiTabs[0];
 }
 
 /**
  * Options for creating a new AI tab.
  */
 export interface CreateTabOptions {
-  agentSessionId?: string | null;  // Claude Code session UUID (null for new tabs)
-  logs?: LogEntry[];                // Initial conversation history
-  name?: string | null;             // User-defined name (null = show UUID octet)
-  starred?: boolean;                // Whether session is starred
-  usageStats?: UsageStats;          // Token usage stats
-  saveToHistory?: boolean;          // Whether to save synopsis to history after completions
-  showThinking?: boolean;           // Whether to show thinking/streaming content for this tab
+	agentSessionId?: string | null; // Claude Code session UUID (null for new tabs)
+	logs?: LogEntry[]; // Initial conversation history
+	name?: string | null; // User-defined name (null = show UUID octet)
+	starred?: boolean; // Whether session is starred
+	usageStats?: UsageStats; // Token usage stats
+	saveToHistory?: boolean; // Whether to save synopsis to history after completions
+	showThinking?: boolean; // Whether to show thinking/streaming content for this tab
 }
 
 /**
  * Result of creating a new tab - contains both the new tab and updated session.
  */
 export interface CreateTabResult {
-  tab: AITab;                       // The newly created tab
-  session: Session;                 // Updated session with the new tab added and set as active
+	tab: AITab; // The newly created tab
+	session: Session; // Updated session with the new tab added and set as active
 }
 
 /**
@@ -134,64 +137,67 @@ export interface CreateTabResult {
  *   logs: existingLogs
  * });
  */
-export function createTab(session: Session, options: CreateTabOptions = {}): CreateTabResult | null {
-  if (!session) {
-    return null;
-  }
+export function createTab(
+	session: Session,
+	options: CreateTabOptions = {}
+): CreateTabResult | null {
+	if (!session) {
+		return null;
+	}
 
-  const {
-    agentSessionId = null,
-    logs = [],
-    name = null,
-    starred = false,
-    usageStats,
-    saveToHistory = true,
-    showThinking = false
-  } = options;
+	const {
+		agentSessionId = null,
+		logs = [],
+		name = null,
+		starred = false,
+		usageStats,
+		saveToHistory = true,
+		showThinking = false,
+	} = options;
 
-  // Create the new tab with default values
-  const newTab: AITab = {
-    id: generateId(),
-    agentSessionId,
-    name,
-    starred,
-    logs,
-    inputValue: '',
-    stagedImages: [],
-    usageStats,
-    createdAt: Date.now(),
-    state: 'idle',
-    saveToHistory,
-    showThinking
-  };
+	// Create the new tab with default values
+	const newTab: AITab = {
+		id: generateId(),
+		agentSessionId,
+		name,
+		starred,
+		logs,
+		inputValue: '',
+		stagedImages: [],
+		usageStats,
+		createdAt: Date.now(),
+		state: 'idle',
+		saveToHistory,
+		showThinking,
+	};
 
-  // Update the session with the new tab added and set as active
-  const updatedSession: Session = {
-    ...session,
-    aiTabs: [...(session.aiTabs || []), newTab],
-    activeTabId: newTab.id
-  };
+	// Update the session with the new tab added and set as active
+	const updatedSession: Session = {
+		...session,
+		aiTabs: [...(session.aiTabs || []), newTab],
+		activeTabId: newTab.id,
+	};
 
-  return {
-    tab: newTab,
-    session: updatedSession
-  };
+	return {
+		tab: newTab,
+		session: updatedSession,
+	};
 }
 
 /**
  * Options for closing a tab.
  */
 export interface CloseTabOptions {
-  /** If true, skip adding to closed tab history (e.g., for wizard tabs) */
-  skipHistory?: boolean;
+	/** If true, skip adding to closed tab history (e.g., for wizard tabs) */
+	skipHistory?: boolean;
 }
 
 /**
  * Result of closing a tab - contains the closed tab info and updated session.
  */
 export interface CloseTabResult {
-  closedTab: ClosedTab;           // The closed tab data with original index
-  session: Session;               // Updated session with tab removed
+	closedTab: ClosedTab; // The closed tab data with original index
+	session: Session; // Updated session with tab removed
 }
 
 /**
@@ -219,99 +225,104 @@ export interface CloseTabResult {
  * // Close wizard tab without adding to history
  * const result = closeTab(session, 'wizard-tab-id', false, { skipHistory: true });
  */
-export function closeTab(session: Session, tabId: string, showUnreadOnly = false, options: CloseTabOptions = {}): CloseTabResult | null {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return null;
-  }
+export function closeTab(
+	session: Session,
+	tabId: string,
+	showUnreadOnly = false,
+	options: CloseTabOptions = {}
+): CloseTabResult | null {
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return null;
+	}
 
-  // Find the tab to close
-  const tabIndex = session.aiTabs.findIndex(tab => tab.id === tabId);
-  if (tabIndex === -1) {
-    return null;
-  }
+	// Find the tab to close
+	const tabIndex = session.aiTabs.findIndex((tab) => tab.id === tabId);
+	if (tabIndex === -1) {
+		return null;
+	}
 
-  const tabToClose = session.aiTabs[tabIndex];
+	const tabToClose = session.aiTabs[tabIndex];
 
-  // Create closed tab entry with original index
-  const closedTab: ClosedTab = {
-    tab: { ...tabToClose },
-    index: tabIndex,
-    closedAt: Date.now()
-  };
+	// Create closed tab entry with original index
+	const closedTab: ClosedTab = {
+		tab: { ...tabToClose },
+		index: tabIndex,
+		closedAt: Date.now(),
+	};
 
-  // Remove tab from aiTabs
-  let updatedTabs = session.aiTabs.filter(tab => tab.id !== tabId);
+	// Remove tab from aiTabs
+	let updatedTabs = session.aiTabs.filter((tab) => tab.id !== tabId);
 
-  // If we just closed the last tab, create a fresh new tab to replace it
-  let newActiveTabId = session.activeTabId;
-  if (updatedTabs.length === 0) {
-    const freshTab: AITab = {
-      id: generateId(),
-      agentSessionId: null,
-      name: null,
-      starred: false,
-      logs: [],
-      inputValue: '',
-      stagedImages: [],
-      createdAt: Date.now(),
-      state: 'idle'
-    };
-    updatedTabs = [freshTab];
-    newActiveTabId = freshTab.id;
-  } else if (session.activeTabId === tabId) {
-    // If we closed the active tab, select the next appropriate tab
+	// If we just closed the last tab, create a fresh new tab to replace it
+	let newActiveTabId = session.activeTabId;
+	if (updatedTabs.length === 0) {
+		const freshTab: AITab = {
+			id: generateId(),
+			agentSessionId: null,
+			name: null,
+			starred: false,
+			logs: [],
+			inputValue: '',
+			stagedImages: [],
+			createdAt: Date.now(),
+			state: 'idle',
+		};
+		updatedTabs = [freshTab];
+		newActiveTabId = freshTab.id;
+	} else if (session.activeTabId === tabId) {
+		// If we closed the active tab, select the next appropriate tab
 
-    if (showUnreadOnly) {
-      // When filtering unread tabs, find the next unread tab to switch to
-      // Build a temporary session with the updated tabs to use getNavigableTabs
-      const tempSession = { ...session, aiTabs: updatedTabs };
-      const navigableTabs = getNavigableTabs(tempSession, true);
+		if (showUnreadOnly) {
+			// When filtering unread tabs, find the next unread tab to switch to
+			// Build a temporary session with the updated tabs to use getNavigableTabs
+			const tempSession = { ...session, aiTabs: updatedTabs };
+			const navigableTabs = getNavigableTabs(tempSession, true);
 
-      if (navigableTabs.length > 0) {
-        // Find the position of the closed tab within the navigable tabs (before removal)
-        // Then pick the tab at the same position or the last one if we were at the end
-        const closedTabNavIndex = getNavigableTabs(session, true).findIndex(t => t.id === tabId);
-        const newNavIndex = Math.min(closedTabNavIndex, navigableTabs.length - 1);
-        newActiveTabId = navigableTabs[Math.max(0, newNavIndex)].id;
-      } else {
-        // No more unread tabs - fall back to selecting by position in full list
-        const newIndex = Math.min(tabIndex, updatedTabs.length - 1);
-        newActiveTabId = updatedTabs[newIndex].id;
-      }
-    } else {
-      // Normal mode: select the next tab or the previous one if at end
-      const newIndex = Math.min(tabIndex, updatedTabs.length - 1);
-      newActiveTabId = updatedTabs[newIndex].id;
-    }
-  }
+			if (navigableTabs.length > 0) {
+				// Find the position of the closed tab within the navigable tabs (before removal)
+				// Then pick the tab at the same position or the last one if we were at the end
+				const closedTabNavIndex = getNavigableTabs(session, true).findIndex((t) => t.id === tabId);
+				const newNavIndex = Math.min(closedTabNavIndex, navigableTabs.length - 1);
+				newActiveTabId = navigableTabs[Math.max(0, newNavIndex)].id;
+			} else {
+				// No more unread tabs - fall back to selecting by position in full list
+				const newIndex = Math.min(tabIndex, updatedTabs.length - 1);
+				newActiveTabId = updatedTabs[newIndex].id;
+			}
+		} else {
+			// Normal mode: select the next tab or the previous one if at end
+			const newIndex = Math.min(tabIndex, updatedTabs.length - 1);
+			newActiveTabId = updatedTabs[newIndex].id;
+		}
+	}
 
-  // Add to closed tab history unless skipHistory is set (e.g., for wizard tabs)
-  // Wizard tabs should not be restorable via Cmd+Shift+T
-  const updatedHistory = options.skipHistory
-    ? (session.closedTabHistory || [])
-    : [closedTab, ...(session.closedTabHistory || [])].slice(0, MAX_CLOSED_TAB_HISTORY);
+	// Add to closed tab history unless skipHistory is set (e.g., for wizard tabs)
+	// Wizard tabs should not be restorable via Cmd+Shift+T
+	const updatedHistory = options.skipHistory
+		? session.closedTabHistory || []
+		: [closedTab, ...(session.closedTabHistory || [])].slice(0, MAX_CLOSED_TAB_HISTORY);
 
-  // Create updated session
-  const updatedSession: Session = {
-    ...session,
-    aiTabs: updatedTabs,
-    activeTabId: newActiveTabId,
-    closedTabHistory: updatedHistory
-  };
+	// Create updated session
+	const updatedSession: Session = {
+		...session,
+		aiTabs: updatedTabs,
+		activeTabId: newActiveTabId,
+		closedTabHistory: updatedHistory,
+	};
 
-  return {
-    closedTab,
-    session: updatedSession
-  };
+	return {
+		closedTab,
+		session: updatedSession,
+	};
 }
 
 /**
  * Result of reopening a closed tab.
  */
 export interface ReopenTabResult {
-  tab: AITab;                       // The reopened tab (either restored or existing duplicate)
-  session: Session;                 // Updated session with tab restored/selected
-  wasDuplicate: boolean;            // True if we switched to an existing tab instead of restoring
+	tab: AITab; // The reopened tab (either restored or existing duplicate)
+	session: Session; // Updated session with tab restored/selected
+	wasDuplicate: boolean; // True if we switched to an existing tab instead of restoring
 }
 
 /**
@@ -337,70 +348,70 @@ export interface ReopenTabResult {
  * }
  */
 export function reopenClosedTab(session: Session): ReopenTabResult | null {
-  // Check if there's anything in the history
-  if (!session.closedTabHistory || session.closedTabHistory.length === 0) {
-    return null;
-  }
+	// Check if there's anything in the history
+	if (!session.closedTabHistory || session.closedTabHistory.length === 0) {
+		return null;
+	}
 
-  // Pop the most recently closed tab from history
-  const [closedTabEntry, ...remainingHistory] = session.closedTabHistory;
-  const tabToRestore = closedTabEntry.tab;
+	// Pop the most recently closed tab from history
+	const [closedTabEntry, ...remainingHistory] = session.closedTabHistory;
+	const tabToRestore = closedTabEntry.tab;
 
-  // Check for duplicate: does a tab with the same agentSessionId already exist?
-  // Note: null agentSessionId (new/empty tabs) are never considered duplicates
-  if (tabToRestore.agentSessionId !== null) {
-    const existingTab = session.aiTabs.find(
-      tab => tab.agentSessionId === tabToRestore.agentSessionId
-    );
+	// Check for duplicate: does a tab with the same agentSessionId already exist?
+	// Note: null agentSessionId (new/empty tabs) are never considered duplicates
+	if (tabToRestore.agentSessionId !== null) {
+		const existingTab = session.aiTabs.find(
+			(tab) => tab.agentSessionId === tabToRestore.agentSessionId
+		);
 
-    if (existingTab) {
-      // Duplicate found - switch to existing tab instead of restoring
-      // Still remove from history since user "used" their undo
-      return {
-        tab: existingTab,
-        session: {
-          ...session,
-          activeTabId: existingTab.id,
-          closedTabHistory: remainingHistory
-        },
-        wasDuplicate: true
-      };
-    }
-  }
+		if (existingTab) {
+			// Duplicate found - switch to existing tab instead of restoring
+			// Still remove from history since user "used" their undo
+			return {
+				tab: existingTab,
+				session: {
+					...session,
+					activeTabId: existingTab.id,
+					closedTabHistory: remainingHistory,
+				},
+				wasDuplicate: true,
+			};
+		}
+	}
 
-  // No duplicate - restore the tab
-  // Generate a new ID to avoid any ID conflicts
-  const restoredTab: AITab = {
-    ...tabToRestore,
-    id: generateId()
-  };
+	// No duplicate - restore the tab
+	// Generate a new ID to avoid any ID conflicts
+	const restoredTab: AITab = {
+		...tabToRestore,
+		id: generateId(),
+	};
 
-  // Insert at original index if possible, otherwise append
-  const insertIndex = Math.min(closedTabEntry.index, session.aiTabs.length);
-  const updatedTabs = [
-    ...session.aiTabs.slice(0, insertIndex),
-    restoredTab,
-    ...session.aiTabs.slice(insertIndex)
-  ];
+	// Insert at original index if possible, otherwise append
+	const insertIndex = Math.min(closedTabEntry.index, session.aiTabs.length);
+	const updatedTabs = [
+		...session.aiTabs.slice(0, insertIndex),
+		restoredTab,
+		...session.aiTabs.slice(insertIndex),
+	];
 
-  return {
-    tab: restoredTab,
-    session: {
-      ...session,
-      aiTabs: updatedTabs,
-      activeTabId: restoredTab.id,
-      closedTabHistory: remainingHistory
-    },
-    wasDuplicate: false
-  };
+	return {
+		tab: restoredTab,
+		session: {
+			...session,
+			aiTabs: updatedTabs,
+			activeTabId: restoredTab.id,
+			closedTabHistory: remainingHistory,
+		},
+		wasDuplicate: false,
+	};
 }
 
 /**
  * Result of setting the active tab.
  */
 export interface SetActiveTabResult {
-  tab: AITab;                       // The newly active tab
-  session: Session;                 // Updated session with activeTabId changed
+	tab: AITab; // The newly active tab
+	session: Session; // Updated session with activeTabId changed
 }
 
 /**
@@ -419,31 +430,31 @@ export interface SetActiveTabResult {
  * }
  */
 export function setActiveTab(session: Session, tabId: string): SetActiveTabResult | null {
-  // Validate that the session and tab exists
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return null;
-  }
+	// Validate that the session and tab exists
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return null;
+	}
 
-  const targetTab = session.aiTabs.find(tab => tab.id === tabId);
-  if (!targetTab) {
-    return null;
-  }
+	const targetTab = session.aiTabs.find((tab) => tab.id === tabId);
+	if (!targetTab) {
+		return null;
+	}
 
-  // If already active, return current state (no mutation needed)
-  if (session.activeTabId === tabId) {
-    return {
-      tab: targetTab,
-      session
-    };
-  }
+	// If already active, return current state (no mutation needed)
+	if (session.activeTabId === tabId) {
+		return {
+			tab: targetTab,
+			session,
+		};
+	}
 
-  return {
-    tab: targetTab,
-    session: {
-      ...session,
-      activeTabId: tabId
-    }
-  };
+	return {
+		tab: targetTab,
+		session: {
+			...session,
+			activeTabId: tabId,
+		},
+	};
 }
 
 /**
@@ -462,11 +473,11 @@ export function setActiveTab(session: Session, tabId: string): SetActiveTabResul
  * }
  */
 export function getWriteModeTab(session: Session): AITab | undefined {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return undefined;
-  }
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return undefined;
+	}
 
-  return session.aiTabs.find(tab => tab.state === 'busy');
+	return session.aiTabs.find((tab) => tab.state === 'busy');
 }
 
 /**
@@ -490,11 +501,11 @@ export function getWriteModeTab(session: Session): AITab | undefined {
  * }
  */
 export function getBusyTabs(session: Session): AITab[] {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return [];
-  }
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return [];
+	}
 
-  return session.aiTabs.filter(tab => tab.state === 'busy');
+	return session.aiTabs.filter((tab) => tab.state === 'busy');
 }
 
 /**
@@ -512,48 +523,51 @@ export function getBusyTabs(session: Session): AITab[] {
  *   setSessions(prev => prev.map(s => s.id === session.id ? result.session : s));
  * }
  */
-export function navigateToNextTab(session: Session, showUnreadOnly = false): SetActiveTabResult | null {
-  if (!session || !session.aiTabs || session.aiTabs.length < 2) {
-    return null;
-  }
+export function navigateToNextTab(
+	session: Session,
+	showUnreadOnly = false
+): SetActiveTabResult | null {
+	if (!session || !session.aiTabs || session.aiTabs.length < 2) {
+		return null;
+	}
 
-  const navigableTabs = getNavigableTabs(session, showUnreadOnly);
+	const navigableTabs = getNavigableTabs(session, showUnreadOnly);
 
-  if (navigableTabs.length === 0) {
-    return null;
-  }
+	if (navigableTabs.length === 0) {
+		return null;
+	}
 
-  // Find current position in navigable tabs
-  const currentIndex = navigableTabs.findIndex(tab => tab.id === session.activeTabId);
+	// Find current position in navigable tabs
+	const currentIndex = navigableTabs.findIndex((tab) => tab.id === session.activeTabId);
 
-  // If current tab is not in navigable list, go to first navigable tab
-  if (currentIndex === -1) {
-    const firstTab = navigableTabs[0];
-    return {
-      tab: firstTab,
-      session: {
-        ...session,
-        activeTabId: firstTab.id
-      }
-    };
-  }
+	// If current tab is not in navigable list, go to first navigable tab
+	if (currentIndex === -1) {
+		const firstTab = navigableTabs[0];
+		return {
+			tab: firstTab,
+			session: {
+				...session,
+				activeTabId: firstTab.id,
+			},
+		};
+	}
 
-  // If only one navigable tab, stay on it
-  if (navigableTabs.length < 2) {
-    return null;
-  }
+	// If only one navigable tab, stay on it
+	if (navigableTabs.length < 2) {
+		return null;
+	}
 
-  // Wrap around to first tab if at the end
-  const nextIndex = (currentIndex + 1) % navigableTabs.length;
-  const nextTab = navigableTabs[nextIndex];
+	// Wrap around to first tab if at the end
+	const nextIndex = (currentIndex + 1) % navigableTabs.length;
+	const nextTab = navigableTabs[nextIndex];
 
-  return {
-    tab: nextTab,
-    session: {
-      ...session,
-      activeTabId: nextTab.id
-    }
-  };
+	return {
+		tab: nextTab,
+		session: {
+			...session,
+			activeTabId: nextTab.id,
+		},
+	};
 }
 
 /**
@@ -571,48 +585,51 @@ export function navigateToNextTab(session: Session, showUnreadOnly = false): Set
  *   setSessions(prev => prev.map(s => s.id === session.id ? result.session : s));
  * }
  */
-export function navigateToPrevTab(session: Session, showUnreadOnly = false): SetActiveTabResult | null {
-  if (!session || !session.aiTabs || session.aiTabs.length < 2) {
-    return null;
-  }
+export function navigateToPrevTab(
+	session: Session,
+	showUnreadOnly = false
+): SetActiveTabResult | null {
+	if (!session || !session.aiTabs || session.aiTabs.length < 2) {
+		return null;
+	}
 
-  const navigableTabs = getNavigableTabs(session, showUnreadOnly);
+	const navigableTabs = getNavigableTabs(session, showUnreadOnly);
 
-  if (navigableTabs.length === 0) {
-    return null;
-  }
+	if (navigableTabs.length === 0) {
+		return null;
+	}
 
-  // Find current position in navigable tabs
-  const currentIndex = navigableTabs.findIndex(tab => tab.id === session.activeTabId);
+	// Find current position in navigable tabs
+	const currentIndex = navigableTabs.findIndex((tab) => tab.id === session.activeTabId);
 
-  // If current tab is not in navigable list, go to last navigable tab
-  if (currentIndex === -1) {
-    const lastTab = navigableTabs[navigableTabs.length - 1];
-    return {
-      tab: lastTab,
-      session: {
-        ...session,
-        activeTabId: lastTab.id
-      }
-    };
-  }
+	// If current tab is not in navigable list, go to last navigable tab
+	if (currentIndex === -1) {
+		const lastTab = navigableTabs[navigableTabs.length - 1];
+		return {
+			tab: lastTab,
+			session: {
+				...session,
+				activeTabId: lastTab.id,
+			},
+		};
+	}
 
-  // If only one navigable tab, stay on it
-  if (navigableTabs.length < 2) {
-    return null;
-  }
+	// If only one navigable tab, stay on it
+	if (navigableTabs.length < 2) {
+		return null;
+	}
 
-  // Wrap around to last tab if at the beginning
-  const prevIndex = (currentIndex - 1 + navigableTabs.length) % navigableTabs.length;
-  const prevTab = navigableTabs[prevIndex];
+	// Wrap around to last tab if at the beginning
+	const prevIndex = (currentIndex - 1 + navigableTabs.length) % navigableTabs.length;
+	const prevTab = navigableTabs[prevIndex];
 
-  return {
-    tab: prevTab,
-    session: {
-      ...session,
-      activeTabId: prevTab.id
-    }
-  };
+	return {
+		tab: prevTab,
+		session: {
+			...session,
+			activeTabId: prevTab.id,
+		},
+	};
 }
 
 /**
@@ -632,35 +649,39 @@ export function navigateToPrevTab(session: Session, showUnreadOnly = false): Set
  *   setSessions(prev => prev.map(s => s.id === session.id ? result.session : s));
  * }
  */
-export function navigateToTabByIndex(session: Session, index: number, showUnreadOnly = false): SetActiveTabResult | null {
-  if (!session || !session.aiTabs || session.aiTabs.length === 0) {
-    return null;
-  }
+export function navigateToTabByIndex(
+	session: Session,
+	index: number,
+	showUnreadOnly = false
+): SetActiveTabResult | null {
+	if (!session || !session.aiTabs || session.aiTabs.length === 0) {
+		return null;
+	}
 
-  const navigableTabs = getNavigableTabs(session, showUnreadOnly);
+	const navigableTabs = getNavigableTabs(session, showUnreadOnly);
 
-  // Check if index is within bounds
-  if (index < 0 || index >= navigableTabs.length) {
-    return null;
-  }
+	// Check if index is within bounds
+	if (index < 0 || index >= navigableTabs.length) {
+		return null;
+	}
 
-  const targetTab = navigableTabs[index];
+	const targetTab = navigableTabs[index];
 
-  // If already on this tab, return current state (no change needed)
-  if (session.activeTabId === targetTab.id) {
-    return {
-      tab: targetTab,
-      session
-    };
-  }
+	// If already on this tab, return current state (no change needed)
+	if (session.activeTabId === targetTab.id) {
+		return {
+			tab: targetTab,
+			session,
+		};
+	}
 
-  return {
-    tab: targetTab,
-    session: {
-      ...session,
-      activeTabId: targetTab.id
-    }
-  };
+	return {
+		tab: targetTab,
+		session: {
+			...session,
+			activeTabId: targetTab.id,
+		},
+	};
 }
 
 /**
@@ -678,23 +699,26 @@ export function navigateToTabByIndex(session: Session, index: number, showUnread
  *   setSessions(prev => prev.map(s => s.id === session.id ? result.session : s));
  * }
  */
-export function navigateToLastTab(session: Session, showUnreadOnly = false): SetActiveTabResult | null {
-  const navigableTabs = getNavigableTabs(session, showUnreadOnly);
+export function navigateToLastTab(
+	session: Session,
+	showUnreadOnly = false
+): SetActiveTabResult | null {
+	const navigableTabs = getNavigableTabs(session, showUnreadOnly);
 
-  if (navigableTabs.length === 0) {
-    return null;
-  }
+	if (navigableTabs.length === 0) {
+		return null;
+	}
 
-  const lastIndex = navigableTabs.length - 1;
-  return navigateToTabByIndex(session, lastIndex, showUnreadOnly);
+	const lastIndex = navigableTabs.length - 1;
+	return navigateToTabByIndex(session, lastIndex, showUnreadOnly);
 }
 
 /**
  * Options for creating a new AI tab at a specific position.
  */
 export interface CreateTabAtPositionOptions extends CreateTabOptions {
-  /** Insert the new tab after this tab ID */
-  afterTabId: string;
+	/** Insert the new tab after this tab ID */
+	afterTabId: string;
 }
 
 /**
@@ -714,62 +738,62 @@ export interface CreateTabAtPositionOptions extends CreateTabOptions {
  * });
  */
 export function createTabAtPosition(
-  session: Session,
-  options: CreateTabAtPositionOptions
+	session: Session,
+	options: CreateTabAtPositionOptions
 ): CreateTabResult | null {
-  const result = createTab(session, options);
-  if (!result) return null;
+	const result = createTab(session, options);
+	if (!result) return null;
 
-  // Find the index of the afterTabId
-  const afterIndex = result.session.aiTabs.findIndex(t => t.id === options.afterTabId);
-  if (afterIndex === -1) return result;
+	// Find the index of the afterTabId
+	const afterIndex = result.session.aiTabs.findIndex((t) => t.id === options.afterTabId);
+	if (afterIndex === -1) return result;
 
-  // Move the new tab to be right after afterTabId
-  const tabs = [...result.session.aiTabs];
-  const newTabIndex = tabs.findIndex(t => t.id === result.tab.id);
+	// Move the new tab to be right after afterTabId
+	const tabs = [...result.session.aiTabs];
+	const newTabIndex = tabs.findIndex((t) => t.id === result.tab.id);
 
-  // Only move if the new tab isn't already in the right position
-  if (newTabIndex !== afterIndex + 1) {
-    const [newTab] = tabs.splice(newTabIndex, 1);
-    tabs.splice(afterIndex + 1, 0, newTab);
-  }
+	// Only move if the new tab isn't already in the right position
+	if (newTabIndex !== afterIndex + 1) {
+		const [newTab] = tabs.splice(newTabIndex, 1);
+		tabs.splice(afterIndex + 1, 0, newTab);
+	}
 
-  return {
-    tab: result.tab,
-    session: { ...result.session, aiTabs: tabs },
-  };
+	return {
+		tab: result.tab,
+		session: { ...result.session, aiTabs: tabs },
+	};
 }
 
 /**
  * Options for creating a merged session from multiple context sources.
  */
 export interface CreateMergedSessionOptions {
-  /** Name for the new merged session */
-  name: string;
-  /** Project root directory for the new session */
-  projectRoot: string;
-  /** Agent type for the new session */
-  toolType: ToolType;
-  /** Pre-merged conversation logs to initialize the tab with */
-  mergedLogs: LogEntry[];
-  /** Aggregated usage stats from merged contexts (optional) */
-  usageStats?: UsageStats;
-  /** Group ID to assign the session to (optional) */
-  groupId?: string;
-  /** Whether to save completions to history (default: true) */
-  saveToHistory?: boolean;
-  /** Whether to show thinking/streaming content (default: false) */
-  showThinking?: boolean;
+	/** Name for the new merged session */
+	name: string;
+	/** Project root directory for the new session */
+	projectRoot: string;
+	/** Agent type for the new session */
+	toolType: ToolType;
+	/** Pre-merged conversation logs to initialize the tab with */
+	mergedLogs: LogEntry[];
+	/** Aggregated usage stats from merged contexts (optional) */
+	usageStats?: UsageStats;
+	/** Group ID to assign the session to (optional) */
+	groupId?: string;
+	/** Whether to save completions to history (default: true) */
+	saveToHistory?: boolean;
+	/** Whether to show thinking/streaming content (default: false) */
+	showThinking?: boolean;
 }
 
 /**
  * Result of creating a merged session.
  */
 export interface CreateMergedSessionResult {
-  /** The newly created session with merged context */
-  session: Session;
-  /** The ID of the active tab in the new session */
-  tabId: string;
+	/** The newly created session with merged context */
+	session: Session;
+	/** The ID of the active tab in the new session */
+	tabId: string;
 }
 
 /**
@@ -795,77 +819,81 @@ export interface CreateMergedSessionResult {
  * });
  * // Add session to app state and initialize agent
  */
-export function createMergedSession(options: CreateMergedSessionOptions): CreateMergedSessionResult {
-  const {
-    name,
-    projectRoot,
-    toolType,
-    mergedLogs,
-    usageStats,
-    groupId,
-    saveToHistory = true,
-    showThinking = false
-  } = options;
+export function createMergedSession(
+	options: CreateMergedSessionOptions
+): CreateMergedSessionResult {
+	const {
+		name,
+		projectRoot,
+		toolType,
+		mergedLogs,
+		usageStats,
+		groupId,
+		saveToHistory = true,
+		showThinking = false,
+	} = options;
 
-  const sessionId = generateId();
-  const tabId = generateId();
+	const sessionId = generateId();
+	const tabId = generateId();
 
-  // Create the initial tab with merged logs
-  const mergedTab: AITab = {
-    id: tabId,
-    agentSessionId: null, // Will be assigned when agent spawns
-    name: null, // Auto-generated name based on session UUID octet
-    starred: false,
-    logs: mergedLogs,
-    inputValue: '',
-    stagedImages: [],
-    usageStats,
-    createdAt: Date.now(),
-    state: 'idle',
-    saveToHistory,
-    showThinking
-  };
+	// Create the initial tab with merged logs
+	const mergedTab: AITab = {
+		id: tabId,
+		agentSessionId: null, // Will be assigned when agent spawns
+		name: null, // Auto-generated name based on session UUID octet
+		starred: false,
+		logs: mergedLogs,
+		inputValue: '',
+		stagedImages: [],
+		usageStats,
+		createdAt: Date.now(),
+		state: 'idle',
+		saveToHistory,
+		showThinking,
+	};
 
-  // Create the merged session with standard structure
-  // Matches the pattern from App.tsx createNewSession
-  const session: Session = {
-    id: sessionId,
-    name,
-    groupId,
-    toolType,
-    state: 'idle',
-    cwd: projectRoot,
-    fullPath: projectRoot,
-    projectRoot, // Never changes, used for session storage
-    isGitRepo: false, // Will be updated by caller if needed
-    aiLogs: [], // Deprecated - logs are in aiTabs
-    shellLogs: [{
-      id: generateId(),
-      timestamp: Date.now(),
-      source: 'system',
-      text: 'Merged Context Session Ready.'
-    }],
-    workLog: [],
-    contextUsage: 0,
-    inputMode: toolType === 'terminal' ? 'terminal' : 'ai',
-    aiPid: 0,
-    terminalPid: 0,
-    port: 3000 + Math.floor(Math.random() * 100),
-    isLive: false,
-    changedFiles: [],
-    fileTree: [],
-    fileExplorerExpanded: [],
-    fileExplorerScrollPos: 0,
-    fileTreeAutoRefreshInterval: 180, // Default: auto-refresh every 3 minutes
-    shellCwd: projectRoot,
-    aiCommandHistory: [],
-    shellCommandHistory: [],
-    executionQueue: [],
-    activeTimeMs: 0,
-    aiTabs: [mergedTab],
-    activeTabId: tabId,
-    closedTabHistory: []
-  };
+	// Create the merged session with standard structure
+	// Matches the pattern from App.tsx createNewSession
+	const session: Session = {
+		id: sessionId,
+		name,
+		groupId,
+		toolType,
+		state: 'idle',
+		cwd: projectRoot,
+		fullPath: projectRoot,
+		projectRoot, // Never changes, used for session storage
+		isGitRepo: false, // Will be updated by caller if needed
+		aiLogs: [], // Deprecated - logs are in aiTabs
+		shellLogs: [
+			{
+				id: generateId(),
+				timestamp: Date.now(),
+				source: 'system',
+				text: 'Merged Context Session Ready.',
+			},
+		],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: toolType === 'terminal' ? 'terminal' : 'ai',
+		aiPid: 0,
+		terminalPid: 0,
+		port: 3000 + Math.floor(Math.random() * 100),
+		isLive: false,
+		changedFiles: [],
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		fileTreeAutoRefreshInterval: 180, // Default: auto-refresh every 3 minutes
+		shellCwd: projectRoot,
+		aiCommandHistory: [],
+		shellCommandHistory: [],
+		executionQueue: [],
+		activeTimeMs: 0,
+		aiTabs: [mergedTab],
+		activeTabId: tabId,
+		closedTabHistory: [],
+	};
 
-  return { session, tabId };
+	return { session, tabId };
 }

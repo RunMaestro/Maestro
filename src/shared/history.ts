@@ -29,41 +29,41 @@ export const ORPHANED_SESSION_ID = '_orphaned';
  * Per-session history file format
  */
 export interface HistoryFileData {
-  version: number;
-  sessionId: string;
-  projectPath: string;
-  entries: HistoryEntry[];
+	version: number;
+	sessionId: string;
+	projectPath: string;
+	entries: HistoryEntry[];
 }
 
 /**
  * Migration marker file format
  */
 export interface MigrationMarker {
-  migratedAt: number;
-  version: number;
-  legacyEntryCount: number;
-  sessionsMigrated: number;
+	migratedAt: number;
+	version: number;
+	legacyEntryCount: number;
+	sessionsMigrated: number;
 }
 
 /**
  * Pagination options for history queries
  */
 export interface PaginationOptions {
-  /** Number of entries to return (default: 100) */
-  limit?: number;
-  /** Number of entries to skip (default: 0) */
-  offset?: number;
+	/** Number of entries to return (default: 100) */
+	limit?: number;
+	/** Number of entries to skip (default: 0) */
+	offset?: number;
 }
 
 /**
  * Paginated result wrapper
  */
 export interface PaginatedResult<T> {
-  entries: T[];
-  total: number;
-  limit: number;
-  offset: number;
-  hasMore: boolean;
+	entries: T[];
+	total: number;
+	limit: number;
+	offset: number;
+	hasMore: boolean;
 }
 
 /**
@@ -72,8 +72,8 @@ export interface PaginatedResult<T> {
  * their own PaginationOptions if different values are needed.
  */
 export const DEFAULT_PAGINATION: Required<PaginationOptions> = {
-  limit: 100,
-  offset: 0,
+	limit: 100,
+	offset: 0,
 };
 
 /**
@@ -83,7 +83,7 @@ export const DEFAULT_PAGINATION: Required<PaginationOptions> = {
  * @returns A filesystem-safe session ID
  */
 export function sanitizeSessionId(sessionId: string): string {
-  return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
+	return sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
 /**
@@ -92,22 +92,19 @@ export function sanitizeSessionId(sessionId: string): string {
  * @param options - Optional pagination parameters (limit, offset)
  * @returns A PaginatedResult containing the sliced entries and metadata
  */
-export function paginateEntries<T>(
-  entries: T[],
-  options?: PaginationOptions
-): PaginatedResult<T> {
-  const limit = options?.limit ?? DEFAULT_PAGINATION.limit;
-  const offset = options?.offset ?? DEFAULT_PAGINATION.offset;
+export function paginateEntries<T>(entries: T[], options?: PaginationOptions): PaginatedResult<T> {
+	const limit = options?.limit ?? DEFAULT_PAGINATION.limit;
+	const offset = options?.offset ?? DEFAULT_PAGINATION.offset;
 
-  const paginatedEntries = entries.slice(offset, offset + limit);
+	const paginatedEntries = entries.slice(offset, offset + limit);
 
-  return {
-    entries: paginatedEntries,
-    total: entries.length,
-    limit,
-    offset,
-    hasMore: offset + limit < entries.length,
-  };
+	return {
+		entries: paginatedEntries,
+		total: entries.length,
+		limit,
+		offset,
+		hasMore: offset + limit < entries.length,
+	};
 }
 
 /**
@@ -117,5 +114,5 @@ export function paginateEntries<T>(
  * @returns A new array with entries sorted by descending timestamp
  */
 export function sortEntriesByTimestamp(entries: HistoryEntry[]): HistoryEntry[] {
-  return [...entries].sort((a, b) => b.timestamp - a.timestamp);
+	return [...entries].sort((a, b) => b.timestamp - a.timestamp);
 }

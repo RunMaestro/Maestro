@@ -1,11 +1,4 @@
-import React, {
-	useState,
-	useEffect,
-	useRef,
-	useMemo,
-	useCallback,
-	useDeferredValue
-} from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useDeferredValue } from 'react';
 import { SettingsModal } from './components/SettingsModal';
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
@@ -15,7 +8,7 @@ import {
 	type PRDetails,
 	type FlatFileItem,
 	type MergeOptions,
-	type SendToAgentOptions
+	type SendToAgentOptions,
 } from './components/AppModals';
 import { DEFAULT_BATCH_PROMPT } from './components/BatchRunnerModal';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -30,7 +23,7 @@ import {
 	MaestroWizard,
 	useWizard,
 	WizardResumeModal,
-	AUTO_RUN_FOLDER_NAME
+	AUTO_RUN_FOLDER_NAME,
 } from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
@@ -41,10 +34,7 @@ import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
-import {
-	GroupChatRightPanel,
-	type GroupChatRightTab
-} from './components/GroupChatRightPanel';
+import { GroupChatRightPanel, type GroupChatRightTab } from './components/GroupChatRightPanel';
 
 // Import custom hooks
 import {
@@ -92,14 +82,10 @@ import {
 	useThemeStyles,
 	useAppHandlers,
 	// Auto Run
-	useAutoRunHandlers
+	useAutoRunHandlers,
 } from './hooks';
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
-import {
-	useMainPanelProps,
-	useSessionListProps,
-	useRightPanelProps
-} from './hooks/props';
+import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -110,10 +96,7 @@ import { InputProvider, useInputContext } from './contexts/InputContext';
 import { GroupChatProvider, useGroupChat } from './contexts/GroupChatContext';
 import { AutoRunProvider, useAutoRun } from './contexts/AutoRunContext';
 import { SessionProvider, useSession } from './contexts/SessionContext';
-import {
-	InlineWizardProvider,
-	useInlineWizardContext
-} from './contexts/InlineWizardContext';
+import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 
 // Import services
@@ -145,7 +128,7 @@ import type {
 	SpecKitCommand,
 	OpenSpecCommand,
 	LeaderboardRegistration,
-	CustomAICommand
+	CustomAICommand,
 } from './types';
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
@@ -162,7 +145,7 @@ import {
 	navigateToTabByIndex,
 	navigateToLastTab,
 	getInitialRenameValue,
-	hasActiveWizard
+	hasActiveWizard,
 } from './utils/tabHelpers';
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
@@ -170,10 +153,7 @@ import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession } from './utils/sessionValidation';
 import { estimateContextUsage } from './utils/contextUsage';
 import { formatLogsForClipboard } from './utils/contextExtractor';
-import {
-	isLikelyConcatenatedToolNames,
-	getSlashCommandDescription
-} from './constants/app';
+import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from './constants/app';
 import { useUILayout } from './contexts/UILayoutContext';
 
 // Note: DEFAULT_IMAGE_ONLY_PROMPT is now imported from useInputProcessing hook
@@ -212,7 +192,7 @@ function MaestroConsoleInner() {
 		addToast,
 		setDefaultDuration: setToastDefaultDuration,
 		setAudioFeedback,
-		setOsNotifications
+		setOsNotifications,
 	} = useToast();
 
 	// --- MODAL STATE (centralized modal state management) ---
@@ -394,15 +374,14 @@ function MaestroConsoleInner() {
 		tourOpen,
 		setTourOpen,
 		tourFromWizard,
-		setTourFromWizard
+		setTourFromWizard,
 	} = useModalContext();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
 
 	// --- NAVIGATION HISTORY (back/forward through sessions and tabs) ---
-	const { pushNavigation, navigateBack, navigateForward } =
-		useNavigationHistory();
+	const { pushNavigation, navigateBack, navigateForward } = useNavigationHistory();
 
 	// --- WIZARD (onboarding wizard for new users) ---
 	const {
@@ -413,7 +392,7 @@ function MaestroConsoleInner() {
 		clearResumeState,
 		completeWizard,
 		closeWizard: _closeWizardModal,
-		goToStep: wizardGoToStep
+		goToStep: wizardGoToStep,
 	} = useWizard();
 
 	// --- SETTINGS (from useSettings hook) ---
@@ -533,13 +512,13 @@ function MaestroConsoleInner() {
 		documentGraphPreviewCharLimit,
 
 		// Rendering settings
-		disableConfetti
+		disableConfetti,
 	} = settings;
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
 	const { isShortcut, isTabShortcut } = useKeyboardShortcutHelpers({
 		shortcuts,
-		tabShortcuts
+		tabShortcuts,
 	});
 
 	// --- SESSION STATE (Phase 6: extracted to SessionContext) ---
@@ -563,16 +542,14 @@ function MaestroConsoleInner() {
 		cyclePositionRef,
 		removedWorktreePaths: _removedWorktreePaths,
 		setRemovedWorktreePaths,
-		removedWorktreePathsRef
+		removedWorktreePathsRef,
 	} = useSession();
 
 	// Spec Kit commands (loaded from bundled prompts)
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
 
 	// OpenSpec commands (loaded from bundled prompts)
-	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>(
-		[]
-	);
+	const [openspecCommands, setOpenspecCommands] = useState<OpenSpecCommand[]>([]);
 
 	// --- GROUP CHAT STATE (Phase 4: extracted to GroupChatContext) ---
 	// Note: groupChatsExpanded remains here as it's a UI layout concern (already in UILayoutContext)
@@ -610,24 +587,22 @@ function MaestroConsoleInner() {
 		setGroupChatError,
 		groupChatInputRef,
 		groupChatMessagesRef,
-		clearGroupChatError: handleClearGroupChatErrorBase
+		clearGroupChatError: handleClearGroupChatErrorBase,
 	} = useGroupChat();
 
 	// SSH Remote configs for looking up SSH remote names (used for participant cards in group chat)
-	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<
-		Array<{ id: string; name: string }>
-	>([]);
+	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
 
 	// Load SSH configs once on mount
 	useEffect(() => {
 		window.maestro?.sshRemote
 			?.getConfigs()
-			.then(result => {
+			.then((result) => {
 				if (result.success && result.configs) {
 					setSshRemoteConfigs(
 						result.configs.map((c: { id: string; name: string }) => ({
 							id: c.id,
-							name: c.name
+							name: c.name,
 						}))
 					);
 				}
@@ -639,12 +614,9 @@ function MaestroConsoleInner() {
 	const sessionSshRemoteNames = useMemo(() => {
 		const map = new Map<string, string>();
 		for (const session of sessions) {
-			if (
-				session.sessionSshRemoteConfig?.enabled &&
-				session.sessionSshRemoteConfig.remoteId
-			) {
+			if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
 				const sshConfig = sshRemoteConfigs.find(
-					c => c.id === session.sessionSshRemoteConfig?.remoteId
+					(c) => c.id === session.sessionSshRemoteConfig?.remoteId
 				);
 				if (sshConfig) {
 					map.set(session.name, sshConfig.name);
@@ -671,8 +643,12 @@ function MaestroConsoleInner() {
 	// PERF: Refs to access current input values without triggering re-renders in memoized callbacks
 	const terminalInputValueRef = useRef(terminalInputValue);
 	const aiInputValueLocalRef = useRef(aiInputValueLocal);
-	useEffect(() => { terminalInputValueRef.current = terminalInputValue; }, [terminalInputValue]);
-	useEffect(() => { aiInputValueLocalRef.current = aiInputValueLocal; }, [aiInputValueLocal]);
+	useEffect(() => {
+		terminalInputValueRef.current = terminalInputValue;
+	}, [terminalInputValue]);
+	useEffect(() => {
+		aiInputValueLocalRef.current = aiInputValueLocal;
+	}, [aiInputValueLocal]);
 
 	// Completion states from InputContext (these change infrequently)
 	const {
@@ -699,7 +675,7 @@ function MaestroConsoleInner() {
 		commandHistoryFilter,
 		setCommandHistoryFilter,
 		commandHistorySelectedIndex,
-		setCommandHistorySelectedIndex
+		setCommandHistorySelectedIndex,
 	} = useInputContext();
 
 	// UI State
@@ -724,13 +700,11 @@ function MaestroConsoleInner() {
 	const { fileTreeFilterOpen, setFileTreeFilterOpen } = useUILayout();
 	const [isGraphViewOpen, setIsGraphViewOpen] = useState(false);
 	// File path to focus on when opening the Document Graph (relative to session.cwd)
-	const [graphFocusFilePath, setGraphFocusFilePath] = useState<
-		string | undefined
-	>(undefined);
+	const [graphFocusFilePath, setGraphFocusFilePath] = useState<string | undefined>(undefined);
 	// Track the last opened document graph for quick re-open from command palette
-	const [lastGraphFocusFilePath, setLastGraphFocusFilePath] = useState<
-		string | undefined
-	>(undefined);
+	const [lastGraphFocusFilePath, setLastGraphFocusFilePath] = useState<string | undefined>(
+		undefined
+	);
 	// PERF: Ref to access lastGraphFocusFilePath in memoized callbacks without causing re-renders
 	const lastGraphFocusFilePathRef = useRef(lastGraphFocusFilePath);
 
@@ -743,15 +717,11 @@ function MaestroConsoleInner() {
 		content: string;
 	} | null>(null);
 	// File gist URL storage - maps file paths to their published gist info
-	const [fileGistUrls, setFileGistUrls] = useState<Record<string, GistInfo>>(
-		{}
-	);
+	const [fileGistUrls, setFileGistUrls] = useState<Record<string, GistInfo>>({});
 
 	// Delete Agent Modal State
 	const [deleteAgentModalOpen, setDeleteAgentModalOpen] = useState(false);
-	const [deleteAgentSession, setDeleteAgentSession] = useState<Session | null>(
-		null
-	);
+	const [deleteAgentSession, setDeleteAgentSession] = useState<Session | null>(null);
 
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are now from ModalContext
 
@@ -769,36 +739,18 @@ function MaestroConsoleInner() {
 	// NOTE: These must be declared AFTER the state they reference
 	const handleCloseGitDiff = useCallback(() => setGitDiffPreview(null), []);
 	const handleCloseGitLog = useCallback(() => setGitLogOpen(false), []);
-	const handleCloseSettings = useCallback(
-		() => setSettingsModalOpen(false),
-		[]
-	);
-	const handleCloseDebugPackage = useCallback(
-		() => setDebugPackageModalOpen(false),
-		[]
-	);
+	const handleCloseSettings = useCallback(() => setSettingsModalOpen(false), []);
+	const handleCloseDebugPackage = useCallback(() => setDebugPackageModalOpen(false), []);
 
 	// AppInfoModals stable callbacks
-	const handleCloseShortcutsHelp = useCallback(
-		() => setShortcutsHelpOpen(false),
-		[]
-	);
+	const handleCloseShortcutsHelp = useCallback(() => setShortcutsHelpOpen(false), []);
 	const handleCloseAboutModal = useCallback(() => setAboutModalOpen(false), []);
-	const handleCloseUpdateCheckModal = useCallback(
-		() => setUpdateCheckModalOpen(false),
-		[]
-	);
-	const handleCloseProcessMonitor = useCallback(
-		() => setProcessMonitorOpen(false),
-		[]
-	);
+	const handleCloseUpdateCheckModal = useCallback(() => setUpdateCheckModalOpen(false), []);
+	const handleCloseProcessMonitor = useCallback(() => setProcessMonitorOpen(false), []);
 	const handleCloseLogViewer = useCallback(() => setLogViewerOpen(false), []);
 
 	// Confirm modal close handler
-	const handleCloseConfirmModal = useCallback(
-		() => setConfirmModalOpen(false),
-		[]
-	);
+	const handleCloseConfirmModal = useCallback(() => setConfirmModalOpen(false), []);
 
 	// Delete agent modal handlers
 	const handleCloseDeleteAgentModal = useCallback(() => {
@@ -888,8 +840,7 @@ function MaestroConsoleInner() {
 	// Flash notification state (for inline notifications like "Commands disabled while agent is working")
 	const { flashNotification, setFlashNotification } = useUILayout();
 	// Success flash notification state (for success messages like "Refresh complete")
-	const { successFlashNotification, setSuccessFlashNotification } =
-		useUILayout();
+	const { successFlashNotification, setSuccessFlashNotification } = useUILayout();
 
 	// Note: Images are now stored per-tab in AITab.stagedImages
 	// See stagedImages/setStagedImages computed from active tab below
@@ -908,7 +859,7 @@ function MaestroConsoleInner() {
 		isLoadingDocuments: autoRunIsLoadingDocuments,
 		setIsLoadingDocuments: setAutoRunIsLoadingDocuments,
 		documentTaskCounts: autoRunDocumentTaskCounts,
-		setDocumentTaskCounts: setAutoRunDocumentTaskCounts
+		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
 	} = useAutoRun();
 
 	// Restore focus when LogViewer closes to ensure global hotkeys work
@@ -936,8 +887,8 @@ function MaestroConsoleInner() {
 			setActiveSessionId(sessionId);
 			if (tabId) {
 				// Switch to the specific tab within the session
-				setSessions(prev =>
-					prev.map(s => (s.id === sessionId ? { ...s, activeTabId: tabId } : s))
+				setSessions((prev) =>
+					prev.map((s) => (s.id === sessionId ? { ...s, activeTabId: tabId } : s))
 				);
 			}
 		},
@@ -949,9 +900,7 @@ function MaestroConsoleInner() {
 			// Restore state for this group chat when navigating from ProcessMonitor
 			setActiveGroupChatId(groupChatId);
 			setGroupChatState(groupChatStates.get(groupChatId) ?? 'idle');
-			setParticipantStates(
-				allGroupChatParticipantStates.get(groupChatId) ?? new Map()
-			);
+			setParticipantStates(allGroupChatParticipantStates.get(groupChatId) ?? new Map());
 			setProcessMonitorOpen(false);
 		},
 		[
@@ -959,7 +908,7 @@ function MaestroConsoleInner() {
 			setGroupChatState,
 			groupChatStates,
 			setParticipantStates,
-			allGroupChatParticipantStates
+			allGroupChatParticipantStates,
 		]
 	);
 
@@ -1026,14 +975,14 @@ function MaestroConsoleInner() {
 				if (isGitRepo) {
 					[gitBranches, gitTags] = await Promise.all([
 						gitService.getBranches(cwd, sshRemoteId),
-						gitService.getTags(cwd, sshRemoteId)
+						gitService.getTags(cwd, sshRemoteId),
 					]);
 					gitRefsCacheTime = Date.now();
 				}
 
 				// Update the session with git info and mark SSH as connected
-				setSessions(prev =>
-					prev.map(s =>
+				setSessions((prev) =>
+					prev.map((s) =>
 						s.id === sessionId
 							? {
 									...s,
@@ -1041,8 +990,8 @@ function MaestroConsoleInner() {
 									gitBranches,
 									gitTags,
 									gitRefsCacheTime,
-									sshConnectionFailed: false
-							  }
+									sshConnectionFailed: false,
+								}
 							: s
 					)
 				);
@@ -1052,10 +1001,8 @@ function MaestroConsoleInner() {
 					error
 				);
 				// Mark SSH connection as failed so UI can show error state
-				setSessions(prev =>
-					prev.map(s =>
-						s.id === sessionId ? { ...s, sshConnectionFailed: true } : s
-					)
+				setSessions((prev) =>
+					prev.map((s) => (s.id === sessionId ? { ...s, sshConnectionFailed: true } : s))
 				);
 			}
 		},
@@ -1081,7 +1028,7 @@ function MaestroConsoleInner() {
 					terminalPid: 0,
 					state: 'error' as SessionState,
 					isLive: false,
-					liveUrl: undefined
+					liveUrl: undefined,
 				};
 			}
 
@@ -1093,13 +1040,11 @@ function MaestroConsoleInner() {
 			// If toolType is 'terminal', migrate to claude-code
 			// This fixes legacy sessions that were incorrectly saved with toolType='terminal'
 			if (aiAgentType === 'terminal') {
-				console.warn(
-					`[restoreSession] Session has toolType='terminal', migrating to claude-code`
-				);
+				console.warn(`[restoreSession] Session has toolType='terminal', migrating to claude-code`);
 				aiAgentType = 'claude-code' as ToolType;
 				correctedSession = {
 					...correctedSession,
-					toolType: 'claude-code' as ToolType
+					toolType: 'claude-code' as ToolType,
 				};
 
 				// Add warning to the active tab's logs
@@ -1107,16 +1052,14 @@ function MaestroConsoleInner() {
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'system',
-					text: '⚠️ Session migrated to use Claude Code agent.'
+					text: '⚠️ Session migrated to use Claude Code agent.',
 				};
 				const activeTabIndex = correctedSession.aiTabs.findIndex(
-					tab => tab.id === correctedSession.activeTabId
+					(tab) => tab.id === correctedSession.activeTabId
 				);
 				if (activeTabIndex >= 0) {
 					correctedSession.aiTabs = correctedSession.aiTabs.map((tab, i) =>
-						i === activeTabIndex
-							? { ...tab, logs: [...tab.logs, warningLog] }
-							: tab
+						i === activeTabIndex ? { ...tab, logs: [...tab.logs, warningLog] } : tab
 					);
 				}
 			}
@@ -1124,16 +1067,14 @@ function MaestroConsoleInner() {
 			// Get agent definitions for both processes
 			const agent = await window.maestro.agents.get(aiAgentType);
 			if (!agent) {
-				console.error(
-					`Agent not found for toolType: ${correctedSession.toolType}`
-				);
+				console.error(`Agent not found for toolType: ${correctedSession.toolType}`);
 				return {
 					...correctedSession,
 					aiPid: -1,
 					terminalPid: 0,
 					state: 'error' as SessionState,
 					isLive: false,
-					liveUrl: undefined
+					liveUrl: undefined,
 				};
 			}
 
@@ -1171,7 +1112,7 @@ function MaestroConsoleInner() {
 					if (isGitRepo) {
 						[gitBranches, gitTags] = await Promise.all([
 							gitService.getBranches(correctedSession.cwd, undefined),
-							gitService.getTags(correctedSession.cwd, undefined)
+							gitService.getTags(correctedSession.cwd, undefined),
 						]);
 						gitRefsCacheTime = Date.now();
 					}
@@ -1179,10 +1120,10 @@ function MaestroConsoleInner() {
 				// For remote sessions, we'll fetch git info in background after session restore
 
 				// Reset all tab states to idle - processes don't survive app restart
-				const resetAiTabs = correctedSession.aiTabs.map(tab => ({
+				const resetAiTabs = correctedSession.aiTabs.map((tab) => ({
 					...tab,
 					state: 'idle' as const,
-					thinkingStartTime: undefined
+					thinkingStartTime: undefined,
 				}));
 
 				// Session restored - no superfluous messages added to AI Terminal or Command Terminal
@@ -1211,7 +1152,7 @@ function MaestroConsoleInner() {
 					// Clear runtime-only error state - no agent is running yet so there can't be an error
 					agentError: undefined,
 					agentErrorPaused: false,
-					closedTabHistory: [] // Runtime-only, reset on load
+					closedTabHistory: [], // Runtime-only, reset on load
 				};
 			} else {
 				// Process spawn failed
@@ -1222,7 +1163,7 @@ function MaestroConsoleInner() {
 					terminalPid: 0,
 					state: 'error' as SessionState,
 					isLive: false,
-					liveUrl: undefined
+					liveUrl: undefined,
 				};
 			}
 		} catch (error) {
@@ -1233,7 +1174,7 @@ function MaestroConsoleInner() {
 				terminalPid: 0,
 				state: 'error' as SessionState,
 				isLive: false,
-				liveUrl: undefined
+				liveUrl: undefined,
 			};
 		}
 	};
@@ -1262,15 +1203,13 @@ function MaestroConsoleInner() {
 
 				// Handle sessions
 				if (savedSessions && savedSessions.length > 0) {
-					const restoredSessions = await Promise.all(
-						savedSessions.map(s => restoreSession(s))
-					);
+					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
 					setSessions(restoredSessions);
 					_hasSessionsLoaded = true;
 					// Set active session to first session if current activeSessionId is invalid
 					if (
 						restoredSessions.length > 0 &&
-						!restoredSessions.find(s => s.id === activeSessionId)
+						!restoredSessions.find((s) => s.id === activeSessionId)
 					) {
 						setActiveSessionId(restoredSessions[0].id);
 					}
@@ -1278,8 +1217,7 @@ function MaestroConsoleInner() {
 					// For remote (SSH) sessions, fetch git info in background to avoid blocking
 					// startup on SSH connection timeouts. This runs after UI is shown.
 					for (const session of restoredSessions) {
-						const sshRemoteId =
-							session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
+						const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
 						if (sshRemoteId) {
 							// Fire and forget - don't await, let it update sessions when done
 							fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
@@ -1343,7 +1281,7 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		window.maestro.git
 			.checkGhCli()
-			.then(status => {
+			.then((status) => {
 				setGhCliAvailable(status.installed && status.authenticated);
 			})
 			.catch(() => {
@@ -1355,7 +1293,7 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		window.maestro.settings
 			.get('fileGistUrls')
-			.then(savedUrls => {
+			.then((savedUrls) => {
 				if (savedUrls && typeof savedUrls === 'object') {
 					setFileGistUrls(savedUrls as Record<string, GistInfo>);
 				}
@@ -1366,17 +1304,14 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Helper to save a gist URL for a file path
-	const saveFileGistUrl = useCallback(
-		(filePath: string, gistInfo: GistInfo) => {
-			setFileGistUrls(prev => {
-				const updated = { ...prev, [filePath]: gistInfo };
-				// Persist to settings
-				window.maestro.settings.set('fileGistUrls', updated);
-				return updated;
-			});
-		},
-		[]
-	);
+	const saveFileGistUrl = useCallback((filePath: string, gistInfo: GistInfo) => {
+		setFileGistUrls((prev) => {
+			const updated = { ...prev, [filePath]: gistInfo };
+			// Persist to settings
+			window.maestro.settings.set('fileGistUrls', updated);
+			return updated;
+		});
+	}, []);
 
 	// Expose debug helpers to window for console access
 	// No dependency array - always keep functions fresh
@@ -1384,7 +1319,7 @@ function MaestroConsoleInner() {
 		openDebugWizard: () => setDebugWizardModalOpen(true),
 		openCommandK: () => setQuickActionOpen(true),
 		openWizard: () => openWizardModal(),
-		openSettings: () => setSettingsModalOpen(true)
+		openSettings: () => setSettingsModalOpen(true),
 	};
 
 	// Check for unacknowledged badges on startup (show missed standing ovations)
@@ -1392,9 +1327,7 @@ function MaestroConsoleInner() {
 		if (settingsLoaded && sessionsLoaded) {
 			const unacknowledgedLevel = getUnacknowledgedBadgeLevel();
 			if (unacknowledgedLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find(
-					b => b.level === unacknowledgedLevel
-				);
+				const badge = CONDUCTOR_BADGES.find((b) => b.level === unacknowledgedLevel);
 				if (badge) {
 					// Show the standing ovation overlay for the missed badge
 					// Small delay to ensure UI is fully rendered
@@ -1402,7 +1335,7 @@ function MaestroConsoleInner() {
 						setStandingOvationData({
 							badge,
 							isNewRecord: false, // We don't know if it was a record, so default to false
-							recordTimeMs: autoRunStats.longestRunMs
+							recordTimeMs: autoRunStats.longestRunMs,
 						});
 					}, 1000);
 				}
@@ -1428,9 +1361,7 @@ function MaestroConsoleInner() {
 
 			const unacknowledgedLevel = getUnacknowledgedBadgeLevel();
 			if (unacknowledgedLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find(
-					b => b.level === unacknowledgedLevel
-				);
+				const badge = CONDUCTOR_BADGES.find((b) => b.level === unacknowledgedLevel);
 				if (badge) {
 					checkPending = true;
 					// Small delay to let the UI stabilize
@@ -1440,7 +1371,7 @@ function MaestroConsoleInner() {
 							setStandingOvationData({
 								badge,
 								isNewRecord: false,
-								recordTimeMs: autoRunStats.longestRunMs
+								recordTimeMs: autoRunStats.longestRunMs,
 							});
 						}
 						checkPending = false;
@@ -1486,7 +1417,7 @@ function MaestroConsoleInner() {
 		sessionsLoaded,
 		standingOvationData,
 		getUnacknowledgedBadgeLevel,
-		autoRunStats.longestRunMs
+		autoRunStats.longestRunMs,
 	]);
 
 	// Check for unacknowledged keyboard mastery levels on startup
@@ -1512,7 +1443,7 @@ function MaestroConsoleInner() {
 		const scanWorktreeConfigsOnStartup = async () => {
 			// Find sessions that have worktreeConfig with basePath
 			const sessionsWithWorktreeConfig = sessions.filter(
-				s => s.worktreeConfig?.basePath && !s.parentSessionId // Only parent sessions
+				(s) => s.worktreeConfig?.basePath && !s.parentSessionId // Only parent sessions
 			);
 
 			if (sessionsWithWorktreeConfig.length === 0) return;
@@ -1545,13 +1476,12 @@ function MaestroConsoleInner() {
 						// Check if a session already exists for this worktree
 						// Normalize paths for comparison (remove trailing slashes)
 						const normalizedSubdirPath = subdir.path.replace(/\/+$/, '');
-						const existingSession = sessions.find(s => {
+						const existingSession = sessions.find((s) => {
 							const normalizedCwd = s.cwd.replace(/\/+$/, '');
 							// Check if same path (regardless of parent) or same branch under same parent
 							return (
 								normalizedCwd === normalizedSubdirPath ||
-								(s.parentSessionId === parentSession.id &&
-									s.worktreeBranch === subdir.branch)
+								(s.parentSessionId === parentSession.id && s.worktreeBranch === subdir.branch)
 							);
 						});
 						if (existingSession) {
@@ -1560,9 +1490,7 @@ function MaestroConsoleInner() {
 
 						// Also check in sessions we're about to add
 						if (
-							newWorktreeSessions.some(
-								s => s.cwd.replace(/\/+$/, '') === normalizedSubdirPath
-							)
+							newWorktreeSessions.some((s) => s.cwd.replace(/\/+$/, '') === normalizedSubdirPath)
 						) {
 							continue;
 						}
@@ -1580,7 +1508,7 @@ function MaestroConsoleInner() {
 							createdAt: Date.now(),
 							state: 'idle',
 							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking
+							showThinking: defaultShowThinking,
 						};
 
 						// Fetch git info (via SSH for remote sessions)
@@ -1591,7 +1519,7 @@ function MaestroConsoleInner() {
 						try {
 							[gitBranches, gitTags] = await Promise.all([
 								gitService.getBranches(subdir.path, sshRemoteId),
-								gitService.getTags(subdir.path, sshRemoteId)
+								gitService.getTags(subdir.path, sshRemoteId),
 							]);
 							gitRefsCacheTime = Date.now();
 						} catch {
@@ -1619,13 +1547,12 @@ function MaestroConsoleInner() {
 									id: generateId(),
 									timestamp: Date.now(),
 									source: 'system',
-									text: 'Worktree Session Ready.'
-								}
+									text: 'Worktree Session Ready.',
+								},
 							],
 							workLog: [],
 							contextUsage: 0,
-							inputMode:
-								parentSession.toolType === 'terminal' ? 'terminal' : 'ai',
+							inputMode: parentSession.toolType === 'terminal' ? 'terminal' : 'ai',
 							aiPid: 0,
 							terminalPid: 0,
 							port: 3000 + Math.floor(Math.random() * 100),
@@ -1651,40 +1578,32 @@ function MaestroConsoleInner() {
 							nudgeMessage: parentSession.nudgeMessage,
 							autoRunFolderPath: parentSession.autoRunFolderPath,
 							// Inherit SSH configuration from parent session
-							sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig
+							sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig,
 						};
 
 						newWorktreeSessions.push(worktreeSession);
 					}
 				} catch (err) {
 					console.error(
-						`[WorktreeStartup] Error scanning ${
-							parentSession.worktreeConfig!.basePath
-						}:`,
+						`[WorktreeStartup] Error scanning ${parentSession.worktreeConfig!.basePath}:`,
 						err
 					);
 				}
 			}
 
 			if (newWorktreeSessions.length > 0) {
-				setSessions(prev => {
+				setSessions((prev) => {
 					// Double-check to avoid duplicates
-					const currentPaths = new Set(prev.map(s => s.cwd));
-					const trulyNew = newWorktreeSessions.filter(
-						s => !currentPaths.has(s.cwd)
-					);
+					const currentPaths = new Set(prev.map((s) => s.cwd));
+					const trulyNew = newWorktreeSessions.filter((s) => !currentPaths.has(s.cwd));
 					if (trulyNew.length === 0) return prev;
 					return [...prev, ...trulyNew];
 				});
 
 				// Expand worktrees on parent sessions
-				const parentIds = new Set(
-					newWorktreeSessions.map(s => s.parentSessionId)
-				);
-				setSessions(prev =>
-					prev.map(s =>
-						parentIds.has(s.id) ? { ...s, worktreesExpanded: true } : s
-					)
+				const parentIds = new Set(newWorktreeSessions.map((s) => s.parentSessionId));
+				setSessions((prev) =>
+					prev.map((s) => (parentIds.has(s.id) ? { ...s, worktreesExpanded: true } : s))
 				);
 			}
 		};
@@ -1732,7 +1651,7 @@ function MaestroConsoleInner() {
 			try {
 				const result = await window.maestro.leaderboard.sync({
 					email,
-					authToken
+					authToken,
 				});
 
 				if (result.success && result.found && result.data) {
@@ -1746,26 +1665,19 @@ function MaestroConsoleInner() {
 							cumulativeTimeMs: result.data.cumulativeTimeMs,
 							totalRuns: result.data.totalRuns,
 							currentBadgeLevel: result.data.badgeLevel,
-							longestRunMs:
-								result.data.longestRunMs ?? autoRunStats.longestRunMs,
-							longestRunTimestamp
+							longestRunMs: result.data.longestRunMs ?? autoRunStats.longestRunMs,
+							longestRunTimestamp,
 						});
 
-						console.log(
-							'[Leaderboard] Startup sync: updated local stats from server',
-							{
-								serverCumulativeMs: result.data.cumulativeTimeMs,
-								localCumulativeMs: autoRunStats.cumulativeTimeMs
-							}
-						);
+						console.log('[Leaderboard] Startup sync: updated local stats from server', {
+							serverCumulativeMs: result.data.cumulativeTimeMs,
+							localCumulativeMs: autoRunStats.cumulativeTimeMs,
+						});
 					}
 				}
 				// Silent failure - startup sync is not critical
 			} catch (error) {
-				console.debug(
-					'[Leaderboard] Startup sync failed (non-critical):',
-					error
-				);
+				console.debug('[Leaderboard] Startup sync failed (non-critical):', error);
 			}
 		}, 3000); // Slightly longer delay than update check
 
@@ -1806,126 +1718,111 @@ function MaestroConsoleInner() {
 
 		// Handle process output data (BATCHED for performance)
 		// sessionId will be in format: "{id}-ai-{tabId}", "{id}-terminal", "{id}-batch-{timestamp}", etc.
-		const unsubscribeData = window.maestro.process.onData(
-			(sessionId: string, data: string) => {
-				// Parse sessionId to determine which process this is from
-				let actualSessionId: string;
-				let isFromAi: boolean;
-				let tabIdFromSession: string | undefined;
+		const unsubscribeData = window.maestro.process.onData((sessionId: string, data: string) => {
+			// Parse sessionId to determine which process this is from
+			let actualSessionId: string;
+			let isFromAi: boolean;
+			let tabIdFromSession: string | undefined;
 
-				// Format: sessionId-ai-tabId
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-					tabIdFromSession = aiTabMatch[2];
-					isFromAi = true;
-				} else if (sessionId.endsWith('-terminal')) {
-					// Ignore PTY terminal output - we use runCommand for terminal commands,
-					// which emits data with plain session ID (not -terminal suffix)
-					return;
-				} else if (sessionId.includes('-batch-')) {
-					// Ignore batch task output - these are handled separately by spawnAgentForSession
-					// and their output goes to history entries, not to the AI terminal
-					return;
-				} else {
-					// Plain session ID = output from runCommand (terminal commands)
-					actualSessionId = sessionId;
-					isFromAi = false;
-				}
+			// Format: sessionId-ai-tabId
+			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+			if (aiTabMatch) {
+				actualSessionId = aiTabMatch[1];
+				tabIdFromSession = aiTabMatch[2];
+				isFromAi = true;
+			} else if (sessionId.endsWith('-terminal')) {
+				// Ignore PTY terminal output - we use runCommand for terminal commands,
+				// which emits data with plain session ID (not -terminal suffix)
+				return;
+			} else if (sessionId.includes('-batch-')) {
+				// Ignore batch task output - these are handled separately by spawnAgentForSession
+				// and their output goes to history entries, not to the AI terminal
+				return;
+			} else {
+				// Plain session ID = output from runCommand (terminal commands)
+				actualSessionId = sessionId;
+				isFromAi = false;
+			}
 
-				// Filter out empty stdout for terminal commands (AI output should pass through)
-				if (!isFromAi && !data.trim()) return;
+			// Filter out empty stdout for terminal commands (AI output should pass through)
+			if (!isFromAi && !data.trim()) return;
 
-				// For terminal output, use batched append to shell logs
-				if (!isFromAi) {
-					batchedUpdater.appendLog(actualSessionId, null, false, data);
-					return;
-				}
+			// For terminal output, use batched append to shell logs
+			if (!isFromAi) {
+				batchedUpdater.appendLog(actualSessionId, null, false, data);
+				return;
+			}
 
-				// For AI output, determine target tab ID
-				// Priority: 1) tab ID from session ID (most reliable), 2) busy tab, 3) active tab
-				let targetTabId = tabIdFromSession;
-				if (!targetTabId) {
-					// Fallback: look up session from ref to find busy/active tab
-					const session = sessionsRef.current.find(
-						s => s.id === actualSessionId
-					);
-					if (session) {
-						const targetTab = getWriteModeTab(session) || getActiveTab(session);
-						if (targetTab) {
-							targetTabId = targetTab.id;
-						}
-					}
-				}
-
-				if (!targetTabId) {
-					console.error(
-						'[onData] No target tab found - session has no aiTabs, this should not happen'
-					);
-					return;
-				}
-
-				// Batch the log append, delivery mark, unread mark, and byte tracking
-				batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
-				batchedUpdater.markDelivered(actualSessionId, targetTabId);
-				batchedUpdater.updateCycleBytes(actualSessionId, data.length);
-
-				// Clear error state if session had an error but is now receiving successful data
-				// This indicates the user fixed the issue (e.g., re-authenticated) and the agent is working
-				const sessionForErrorCheck = sessionsRef.current.find(
-					s => s.id === actualSessionId
-				);
-				if (sessionForErrorCheck?.agentError) {
-					setSessions(prev =>
-						prev.map(s => {
-							if (s.id !== actualSessionId) return s;
-							// Clear error from session and the specific tab
-							const updatedAiTabs = s.aiTabs.map(tab =>
-								tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
-							);
-							return {
-								...s,
-								agentError: undefined,
-								agentErrorTabId: undefined,
-								agentErrorPaused: false,
-								state: 'busy' as SessionState, // Keep busy since we're receiving data
-								aiTabs: updatedAiTabs
-							};
-						})
-					);
-					// Notify main process to clear error state
-					window.maestro.agentError.clearError(actualSessionId).catch(err => {
-						console.error(
-							'Failed to clear agent error on successful data:',
-							err
-						);
-					});
-				}
-
-				// Determine if tab should be marked as unread
-				// Mark as unread if user hasn't seen the new message:
-				// - The tab is not the active tab in this session, OR
-				// - The session is not the active session, OR
-				// - The user has scrolled up (not at bottom)
-				const session = sessionsRef.current.find(s => s.id === actualSessionId);
+			// For AI output, determine target tab ID
+			// Priority: 1) tab ID from session ID (most reliable), 2) busy tab, 3) active tab
+			let targetTabId = tabIdFromSession;
+			if (!targetTabId) {
+				// Fallback: look up session from ref to find busy/active tab
+				const session = sessionsRef.current.find((s) => s.id === actualSessionId);
 				if (session) {
-					const targetTab = session.aiTabs?.find(t => t.id === targetTabId);
+					const targetTab = getWriteModeTab(session) || getActiveTab(session);
 					if (targetTab) {
-						const isTargetTabActive = targetTab.id === session.activeTabId;
-						const isThisSessionActive =
-							session.id === activeSessionIdRef.current;
-						const isUserAtBottom = targetTab.isAtBottom !== false; // Default to true if undefined
-						const shouldMarkUnread =
-							!isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
-						batchedUpdater.markUnread(
-							actualSessionId,
-							targetTabId,
-							shouldMarkUnread
-						);
+						targetTabId = targetTab.id;
 					}
 				}
 			}
-		);
+
+			if (!targetTabId) {
+				console.error(
+					'[onData] No target tab found - session has no aiTabs, this should not happen'
+				);
+				return;
+			}
+
+			// Batch the log append, delivery mark, unread mark, and byte tracking
+			batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
+			batchedUpdater.markDelivered(actualSessionId, targetTabId);
+			batchedUpdater.updateCycleBytes(actualSessionId, data.length);
+
+			// Clear error state if session had an error but is now receiving successful data
+			// This indicates the user fixed the issue (e.g., re-authenticated) and the agent is working
+			const sessionForErrorCheck = sessionsRef.current.find((s) => s.id === actualSessionId);
+			if (sessionForErrorCheck?.agentError) {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== actualSessionId) return s;
+						// Clear error from session and the specific tab
+						const updatedAiTabs = s.aiTabs.map((tab) =>
+							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+						);
+						return {
+							...s,
+							agentError: undefined,
+							agentErrorTabId: undefined,
+							agentErrorPaused: false,
+							state: 'busy' as SessionState, // Keep busy since we're receiving data
+							aiTabs: updatedAiTabs,
+						};
+					})
+				);
+				// Notify main process to clear error state
+				window.maestro.agentError.clearError(actualSessionId).catch((err) => {
+					console.error('Failed to clear agent error on successful data:', err);
+				});
+			}
+
+			// Determine if tab should be marked as unread
+			// Mark as unread if user hasn't seen the new message:
+			// - The tab is not the active tab in this session, OR
+			// - The session is not the active session, OR
+			// - The user has scrolled up (not at bottom)
+			const session = sessionsRef.current.find((s) => s.id === actualSessionId);
+			if (session) {
+				const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
+				if (targetTab) {
+					const isTargetTabActive = targetTab.id === session.activeTabId;
+					const isThisSessionActive = session.id === activeSessionIdRef.current;
+					const isUserAtBottom = targetTab.isAtBottom !== false; // Default to true if undefined
+					const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
+					batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
+				}
+			}
+		});
 
 		// Handle process exit
 		const unsubscribeExit = window.maestro.process.onExit(
@@ -1934,7 +1831,7 @@ function MaestroConsoleInner() {
 				console.log('[onExit] Process exit event received:', {
 					rawSessionId: sessionId,
 					exitCode: code,
-					timestamp: new Date().toISOString()
+					timestamp: new Date().toISOString(),
 				});
 
 				// Parse sessionId to determine which process exited
@@ -1965,19 +1862,13 @@ function MaestroConsoleInner() {
 				// (which can happen if we receive a stale/duplicate exit event)
 				if (isFromAi) {
 					try {
-						const activeProcesses =
-							await window.maestro.process.getActiveProcesses();
-						const processStillRunning = activeProcesses.some(
-							p => p.sessionId === sessionId
-						);
+						const activeProcesses = await window.maestro.process.getActiveProcesses();
+						const processStillRunning = activeProcesses.some((p) => p.sessionId === sessionId);
 						if (processStillRunning) {
-							console.warn(
-								'[onExit] Process still running despite exit event, ignoring:',
-								{
-									sessionId,
-									activeProcesses: activeProcesses.map(p => p.sessionId)
-								}
-							);
+							console.warn('[onExit] Process still running despite exit event, ignoring:', {
+								sessionId,
+								activeProcesses: activeProcesses.map((p) => p.sessionId),
+							});
 							return;
 						}
 					} catch (error) {
@@ -2034,9 +1925,7 @@ function MaestroConsoleInner() {
 				} | null = null;
 
 				if (isFromAi) {
-					const currentSession = sessionsRef.current.find(
-						s => s.id === actualSessionId
-					);
+					const currentSession = sessionsRef.current.find((s) => s.id === actualSessionId);
 					if (currentSession) {
 						// Check if there are queued items to process next
 						// We still want to show a toast for this tab's completion even if other tabs have work queued
@@ -2047,7 +1936,7 @@ function MaestroConsoleInner() {
 						) {
 							queuedItemToProcess = {
 								sessionId: actualSessionId,
-								item: currentSession.executionQueue[0]
+								item: currentSession.executionQueue[0],
 							};
 						}
 
@@ -2056,51 +1945,41 @@ function MaestroConsoleInner() {
 						// Use the SPECIFIC tab that just completed (from tabIdFromSession), NOT the active tab
 						// This is critical for parallel tab execution where multiple tabs complete independently
 						const completedTab = tabIdFromSession
-							? currentSession.aiTabs?.find(tab => tab.id === tabIdFromSession)
+							? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession)
 							: getActiveTab(currentSession);
 						const logs = completedTab?.logs || [];
-						const lastUserLog = logs.filter(log => log.source === 'user').pop();
+						const lastUserLog = logs.filter((log) => log.source === 'user').pop();
 						// Find last AI response: 'stdout' or 'ai' source (note: 'thinking' logs are already excluded since they have a distinct source type)
 						const lastAiLog = logs
-							.filter(log => log.source === 'stdout' || log.source === 'ai')
+							.filter((log) => log.source === 'stdout' || log.source === 'ai')
 							.pop();
 						// Use the completed tab's thinkingStartTime for accurate per-tab duration
 						const completedTabData = currentSession.aiTabs?.find(
-							tab => tab.id === tabIdFromSession
+							(tab) => tab.id === tabIdFromSession
 						);
 						const duration = completedTabData?.thinkingStartTime
 							? Date.now() - completedTabData.thinkingStartTime
 							: currentSession.thinkingStartTime
-							? Date.now() - currentSession.thinkingStartTime
-							: 0;
+								? Date.now() - currentSession.thinkingStartTime
+								: 0;
 
 						// Calculate session size in bytes for debugging context issues
-						const sessionSizeBytes = logs.reduce(
-							(sum, log) => sum + (log.text?.length || 0),
-							0
-						);
+						const sessionSizeBytes = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 						const sessionSizeKB = (sessionSizeBytes / 1024).toFixed(1);
 
 						// Get group name for this session (sessions have groupId, groups have id)
 						const sessionGroup = currentSession.groupId
-							? groupsRef.current.find(
-									(g: any) => g.id === currentSession.groupId
-							  )
+							? groupsRef.current.find((g: any) => g.id === currentSession.groupId)
 							: null;
 						const groupName = sessionGroup?.name || 'Ungrouped';
 						const projectName =
-							currentSession.name ||
-							currentSession.cwd.split('/').pop() ||
-							'Unknown';
+							currentSession.name || currentSession.cwd.split('/').pop() || 'Unknown';
 
 						// Create title from user's request (truncated)
 						let title = 'Task Complete';
 						if (lastUserLog?.text) {
 							const userText = lastUserLog.text.trim();
-							title =
-								userText.length > 50
-									? userText.substring(0, 47) + '...'
-									: userText;
+							title = userText.length > 50 ? userText.substring(0, 47) + '...' : userText;
 						}
 
 						// Create a short summary from the last AI response
@@ -2108,8 +1987,7 @@ function MaestroConsoleInner() {
 						if (lastAiLog?.text) {
 							const text = lastAiLog.text.trim();
 							if (text.length > 10) {
-								const firstSentence =
-									text.match(/^[^.!?\n]*[.!?]/)?.[0] || text.substring(0, 120);
+								const firstSentence = text.match(/^[^.!?\n]*[.!?]/)?.[0] || text.substring(0, 120);
 								summary =
 									firstSentence.length < text.length
 										? firstSentence
@@ -2121,14 +1999,11 @@ function MaestroConsoleInner() {
 						}
 
 						// Get the completed tab's agentSessionId for traceability
-						const agentSessionId =
-							completedTab?.agentSessionId || currentSession.agentSessionId;
+						const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
 						// Get tab name: prefer tab's name, fallback to short UUID from agentSessionId
 						const tabName =
 							completedTab?.name ||
-							(agentSessionId
-								? agentSessionId.substring(0, 8).toUpperCase()
-								: undefined);
+							(agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : undefined);
 
 						toastData = {
 							title,
@@ -2147,14 +2022,11 @@ function MaestroConsoleInner() {
 							// Stats tracking fields
 							agentType: currentSession.toolType,
 							projectPath: currentSession.cwd,
-							startTime:
-								completedTabData?.thinkingStartTime ||
-								currentSession.thinkingStartTime,
+							startTime: completedTabData?.thinkingStartTime || currentSession.thinkingStartTime,
 							// SSH remote session tracking: check both sshRemoteId (set after spawn) and sessionSshRemoteConfig (set before spawn)
 							isRemote: !!(
-								currentSession.sshRemoteId ||
-								currentSession.sessionSshRemoteConfig?.enabled
-							)
+								currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.enabled
+							),
 						};
 
 						// Check if synopsis should be triggered:
@@ -2164,19 +2036,14 @@ function MaestroConsoleInner() {
 						const shouldSynopsis =
 							currentSession.executionQueue.length === 0 &&
 							(completedTab?.agentSessionId || currentSession.agentSessionId) &&
-							(completedTab?.saveToHistory ||
-								currentSession.pendingAICommandForSynopsis);
+							(completedTab?.saveToHistory || currentSession.pendingAICommandForSynopsis);
 
 						if (shouldSynopsis) {
 							synopsisData = {
 								sessionId: actualSessionId,
 								cwd: currentSession.cwd,
-								agentSessionId:
-									completedTab?.agentSessionId ||
-									currentSession.agentSessionId!,
-								command:
-									currentSession.pendingAICommandForSynopsis ||
-									'Save to History',
+								agentSessionId: completedTab?.agentSessionId || currentSession.agentSessionId!,
+								command: currentSession.pendingAICommandForSynopsis || 'Save to History',
 								groupName,
 								projectName,
 								tabName,
@@ -2188,16 +2055,16 @@ function MaestroConsoleInner() {
 									customArgs: currentSession.customArgs,
 									customEnvVars: currentSession.customEnvVars,
 									customModel: currentSession.customModel,
-									customContextWindow: currentSession.customContextWindow
-								}
+									customContextWindow: currentSession.customContextWindow,
+								},
 							};
 						}
 					}
 				}
 
 				// Update state (pure function - no side effects)
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
 						if (isFromAi) {
@@ -2207,25 +2074,25 @@ function MaestroConsoleInner() {
 								// Set the specific tab to idle but preserve session error state
 								const updatedAiTabs =
 									s.aiTabs?.length > 0
-										? s.aiTabs.map(tab => {
+										? s.aiTabs.map((tab) => {
 												if (tabIdFromSession) {
 													return tab.id === tabIdFromSession
 														? {
 																...tab,
 																state: 'idle' as const,
-																thinkingStartTime: undefined
-														  }
+																thinkingStartTime: undefined,
+															}
 														: tab;
 												} else {
 													return tab.state === 'busy'
 														? {
 																...tab,
 																state: 'idle' as const,
-																thinkingStartTime: undefined
-														  }
+																thinkingStartTime: undefined,
+															}
 														: tab;
 												}
-										  })
+											})
 										: s.aiTabs;
 
 								return {
@@ -2233,7 +2100,7 @@ function MaestroConsoleInner() {
 									state: 'error' as SessionState, // Preserve error state
 									busySource: undefined,
 									thinkingStartTime: undefined,
-									aiTabs: updatedAiTabs
+									aiTabs: updatedAiTabs,
 								};
 							}
 
@@ -2243,8 +2110,7 @@ function MaestroConsoleInner() {
 
 								// Determine which tab this item belongs to
 								const targetTab =
-									s.aiTabs.find(tab => tab.id === nextItem.tabId) ||
-									getActiveTab(s);
+									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
 								if (!targetTab) {
 									// Fallback: no tabs exist, just update the queue
@@ -2255,21 +2121,21 @@ function MaestroConsoleInner() {
 										executionQueue: remainingQueue,
 										thinkingStartTime: Date.now(),
 										currentCycleTokens: 0,
-										currentCycleBytes: 0
+										currentCycleBytes: 0,
 									};
 								}
 
 								// IMPORTANT: Set the ORIGINAL tab (that just finished) to idle,
 								// UNLESS it's also the target tab for the next queued item.
 								// Also set target tab to 'busy' so thinking pill can find it via getWriteModeTab()
-								let updatedAiTabs = s.aiTabs.map(tab => {
+								let updatedAiTabs = s.aiTabs.map((tab) => {
 									// If this tab is the target for the next queued item, set it to busy
 									// (takes priority over setting to idle, even if it's the same tab that just finished)
 									if (tab.id === targetTab.id) {
 										return {
 											...tab,
 											state: 'busy' as const,
-											thinkingStartTime: Date.now()
+											thinkingStartTime: Date.now(),
 										};
 									}
 									// Set the original tab (that just finished) to idle, but only if it's different from target
@@ -2287,12 +2153,10 @@ function MaestroConsoleInner() {
 										timestamp: Date.now(),
 										source: 'user',
 										text: nextItem.text,
-										images: nextItem.images
+										images: nextItem.images,
 									};
-									updatedAiTabs = updatedAiTabs.map(tab =>
-										tab.id === targetTab.id
-											? { ...tab, logs: [...tab.logs, logEntry] }
-											: tab
+									updatedAiTabs = updatedAiTabs.map((tab) =>
+										tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
 									);
 								}
 
@@ -2307,7 +2171,7 @@ function MaestroConsoleInner() {
 									executionQueue: remainingQueue,
 									thinkingStartTime: Date.now(),
 									currentCycleTokens: 0,
-									currentCycleBytes: 0
+									currentCycleBytes: 0,
 								};
 							}
 
@@ -2315,15 +2179,15 @@ function MaestroConsoleInner() {
 							// Use tabIdFromSession if available (new format), otherwise set all busy tabs to idle (legacy)
 							const updatedAiTabs =
 								s.aiTabs?.length > 0
-									? s.aiTabs.map(tab => {
+									? s.aiTabs.map((tab) => {
 											if (tabIdFromSession) {
 												// New format: only update the specific tab
 												return tab.id === tabIdFromSession
 													? {
 															...tab,
 															state: 'idle' as const,
-															thinkingStartTime: undefined
-													  }
+															thinkingStartTime: undefined,
+														}
 													: tab;
 											} else {
 												// Legacy format: update all busy tabs
@@ -2331,25 +2195,23 @@ function MaestroConsoleInner() {
 													? {
 															...tab,
 															state: 'idle' as const,
-															thinkingStartTime: undefined
-													  }
+															thinkingStartTime: undefined,
+														}
 													: tab;
 											}
-									  })
+										})
 									: s.aiTabs;
 
 							// Check if ANY other tabs are still busy (for parallel read-only execution)
 							// Only set session to idle if no tabs are busy
 							// IMPORTANT: Preserve 'error' state if session has an active agentError - don't overwrite with 'idle'
-							const anyTabStillBusy = updatedAiTabs.some(
-								tab => tab.state === 'busy'
-							);
+							const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
 							const newState =
 								s.state === 'error' && s.agentError
 									? ('error' as SessionState) // Preserve error state
 									: anyTabStillBusy
-									? ('busy' as SessionState)
-									: ('idle' as SessionState);
+										? ('busy' as SessionState)
+										: ('idle' as SessionState);
 							const newBusySource = anyTabStillBusy ? s.busySource : undefined;
 
 							// Log state transition for debugging thinking pill issues
@@ -2361,10 +2223,10 @@ function MaestroConsoleInner() {
 								previousBusySource: s.busySource,
 								newBusySource,
 								anyTabStillBusy,
-								tabStates: updatedAiTabs.map(t => ({
+								tabStates: updatedAiTabs.map((t) => ({
 									id: t.id.substring(0, 8),
-									state: t.state
-								}))
+									state: t.state,
+								})),
 							});
 
 							// Task complete - also clear pending AI command flag
@@ -2372,11 +2234,9 @@ function MaestroConsoleInner() {
 								...s,
 								state: newState,
 								busySource: newBusySource,
-								thinkingStartTime: anyTabStillBusy
-									? s.thinkingStartTime
-									: undefined,
+								thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
 								pendingAICommandForSynopsis: undefined,
-								aiTabs: updatedAiTabs
+								aiTabs: updatedAiTabs,
 							};
 						}
 
@@ -2385,19 +2245,18 @@ function MaestroConsoleInner() {
 							id: generateId(),
 							timestamp: Date.now(),
 							source: 'system',
-							text: `Terminal process exited with code ${code}`
+							text: `Terminal process exited with code ${code}`,
 						};
 
 						// Check if any AI tabs are still busy - don't clear session state if so
-						const anyAiTabBusy =
-							s.aiTabs?.some(tab => tab.state === 'busy') || false;
+						const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
 
 						return {
 							...s,
 							// Only clear session state if no AI tabs are busy
 							state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 							busySource: anyAiTabBusy ? s.busySource : undefined,
-							shellLogs: [...s.shellLogs, exitLog]
+							shellLogs: [...s.shellLogs, exitLog],
 						};
 					})
 				);
@@ -2405,16 +2264,11 @@ function MaestroConsoleInner() {
 				// Refresh git branches/tags after terminal command completes in git repos
 				// Check if the last command was a git command that might modify refs
 				if (!isFromAi) {
-					const currentSession = sessionsRef.current.find(
-						s => s.id === actualSessionId
-					);
+					const currentSession = sessionsRef.current.find((s) => s.id === actualSessionId);
 					if (currentSession?.isGitRepo) {
 						// Get the last user command from shell logs
-						const userLogs = currentSession.shellLogs.filter(
-							log => log.source === 'user'
-						);
-						const lastCommand =
-							userLogs[userLogs.length - 1]?.text?.trim().toLowerCase() || '';
+						const userLogs = currentSession.shellLogs.filter((log) => log.source === 'user');
+						const lastCommand = userLogs[userLogs.length - 1]?.text?.trim().toLowerCase() || '';
 
 						// Refresh refs if command might have modified them
 						const gitRefCommands = [
@@ -2426,11 +2280,9 @@ function MaestroConsoleInner() {
 							'git tag',
 							'git merge',
 							'git rebase',
-							'git reset'
+							'git reset',
 						];
-						const shouldRefresh = gitRefCommands.some(cmd =>
-							lastCommand.startsWith(cmd)
-						);
+						const shouldRefresh = gitRefCommands.some((cmd) => lastCommand.startsWith(cmd));
 
 						if (shouldRefresh) {
 							(async () => {
@@ -2440,17 +2292,17 @@ function MaestroConsoleInner() {
 									undefined;
 								const [gitBranches, gitTags] = await Promise.all([
 									gitService.getBranches(currentSession.cwd, sshRemoteId),
-									gitService.getTags(currentSession.cwd, sshRemoteId)
+									gitService.getTags(currentSession.cwd, sshRemoteId),
 								]);
-								setSessions(prev =>
-									prev.map(s =>
+								setSessions((prev) =>
+									prev.map((s) =>
 										s.id === actualSessionId
 											? {
 													...s,
 													gitBranches,
 													gitTags,
-													gitRefsCacheTime: Date.now()
-											  }
+													gitRefsCacheTime: Date.now(),
+												}
 											: s
 									)
 								);
@@ -2471,63 +2323,47 @@ function MaestroConsoleInner() {
 							duration: toastData.duration,
 							projectPath: toastData.projectPath,
 							tabId: toastData.tabId,
-							isRemote: toastData.isRemote
+							isRemote: toastData.isRemote,
 						})
-						.catch(err => {
+						.catch((err) => {
 							// Don't fail the completion flow if stats recording fails
-							console.warn(
-								'[onProcessExit] Failed to record query stats:',
-								err
-							);
+							console.warn('[onProcessExit] Failed to record query stats:', err);
 						});
 				}
 
 				if (queuedItemToProcess) {
 					setTimeout(() => {
-						processQueuedItem(
-							queuedItemToProcess!.sessionId,
-							queuedItemToProcess!.item
-						);
+						processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item);
 					}, 0);
 				} else if (toastData) {
 					setTimeout(() => {
 						// Log agent completion for debugging and traceability
-						window.maestro.logger.log(
-							'info',
-							'Agent process completed',
-							'App',
-							{
-								agentSessionId: toastData!.agentSessionId,
-								group: toastData!.groupName,
-								project: toastData!.projectName,
-								durationMs: toastData!.duration,
-								sessionSizeKB: toastData!.sessionSizeKB,
-								prompt:
-									toastData!.prompt?.substring(0, 200) +
-									(toastData!.prompt && toastData!.prompt.length > 200
-										? '...'
-										: ''),
-								response:
-									toastData!.response?.substring(0, 500) +
-									(toastData!.response && toastData!.response.length > 500
-										? '...'
-										: ''),
-								inputTokens: toastData!.usageStats?.inputTokens,
-								outputTokens: toastData!.usageStats?.outputTokens,
-								cacheReadTokens: toastData!.usageStats?.cacheReadInputTokens,
-								totalCostUsd: toastData!.usageStats?.totalCostUsd
-							}
-						);
+						window.maestro.logger.log('info', 'Agent process completed', 'App', {
+							agentSessionId: toastData!.agentSessionId,
+							group: toastData!.groupName,
+							project: toastData!.projectName,
+							durationMs: toastData!.duration,
+							sessionSizeKB: toastData!.sessionSizeKB,
+							prompt:
+								toastData!.prompt?.substring(0, 200) +
+								(toastData!.prompt && toastData!.prompt.length > 200 ? '...' : ''),
+							response:
+								toastData!.response?.substring(0, 500) +
+								(toastData!.response && toastData!.response.length > 500 ? '...' : ''),
+							inputTokens: toastData!.usageStats?.inputTokens,
+							outputTokens: toastData!.usageStats?.outputTokens,
+							cacheReadTokens: toastData!.usageStats?.cacheReadInputTokens,
+							totalCostUsd: toastData!.usageStats?.totalCostUsd,
+						});
 
 						// Suppress toast if user is already viewing this tab (they'll see the response directly)
 						// Only show toasts for out-of-view completions (different session or different tab)
 						const currentActiveSession = sessionsRef.current.find(
-							s => s.id === activeSessionIdRef.current
+							(s) => s.id === activeSessionIdRef.current
 						);
 						const isViewingCompletedTab =
 							currentActiveSession?.id === actualSessionId &&
-							(!tabIdFromSession ||
-								currentActiveSession.activeTabId === tabIdFromSession);
+							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
 
 						if (!isViewingCompletedTab) {
 							addToastRef.current({
@@ -2540,7 +2376,7 @@ function MaestroConsoleInner() {
 								agentSessionId: toastData!.agentSessionId,
 								tabName: toastData!.tabName,
 								sessionId: toastData!.sessionId,
-								tabId: toastData!.tabId
+								tabId: toastData!.tabId,
 							});
 						}
 					}, 0);
@@ -2548,11 +2384,7 @@ function MaestroConsoleInner() {
 
 				// Run synopsis in parallel if this was a custom AI command (like /commit)
 				// This creates a USER history entry to track the work
-				if (
-					synopsisData &&
-					spawnBackgroundSynopsisRef.current &&
-					addHistoryEntryRef.current
-				) {
+				if (synopsisData && spawnBackgroundSynopsisRef.current && addHistoryEntryRef.current) {
 					// Build dynamic prompt based on whether there's a previous synopsis timestamp
 					// This ensures the AI only summarizes work since the last synopsis
 					let SYNOPSIS_PROMPT: string;
@@ -2575,13 +2407,9 @@ function MaestroConsoleInner() {
 							synopsisData.toolType, // Pass tool type for multi-provider support
 							synopsisData.sessionConfig // Pass session config for custom env vars, args, etc.
 						)
-						.then(result => {
+						.then((result) => {
 							const duration = Date.now() - startTime;
-							if (
-								result.success &&
-								result.response &&
-								addHistoryEntryRef.current
-							) {
+							if (result.success && result.response && addHistoryEntryRef.current) {
 								// IMPORTANT: Pass explicit sessionId and projectPath to prevent cross-agent bleed
 								// when user switches agents while synopsis is running in background
 								addHistoryEntryRef.current({
@@ -2591,19 +2419,19 @@ function MaestroConsoleInner() {
 									usageStats: result.usageStats,
 									sessionId: synopsisData!.sessionId,
 									projectPath: synopsisData!.cwd,
-									sessionName: synopsisData!.tabName
+									sessionName: synopsisData!.tabName,
 								});
 
 								// Update lastSynopsisTime on the tab so future synopses know the time window
-								setSessions(prev =>
-									prev.map(s => {
+								setSessions((prev) =>
+									prev.map((s) => {
 										if (s.id !== synopsisData!.sessionId) return s;
 										return {
 											...s,
-											aiTabs: s.aiTabs.map(tab => {
+											aiTabs: s.aiTabs.map((tab) => {
 												if (tab.id !== synopsisData!.tabId) return tab;
 												return { ...tab, lastSynopsisTime: synopsisTime };
-											})
+											}),
 										};
 									})
 								);
@@ -2618,7 +2446,7 @@ function MaestroConsoleInner() {
 									taskDuration: duration,
 									sessionId: synopsisData!.sessionId,
 									tabId: synopsisData!.tabId,
-									tabName: synopsisData!.tabName
+									tabName: synopsisData!.tabName,
 								});
 
 								// Refresh history panel if available
@@ -2631,12 +2459,12 @@ function MaestroConsoleInner() {
 									{
 										sessionId: synopsisData!.sessionId,
 										agentSessionId: synopsisData!.agentSessionId,
-										hasResponse: !!result.response
+										hasResponse: !!result.response,
 									}
 								);
 							}
 						})
-						.catch(err => {
+						.catch((err) => {
 							console.error('[onProcessExit] Synopsis failed:', err);
 						});
 				}
@@ -2667,8 +2495,8 @@ function MaestroConsoleInner() {
 
 				// Store Claude session ID in session state
 				// Note: slash commands are now received via onSlashCommands from Claude Code's init message
-				setSessions(prev => {
-					const session = prev.find(s => s.id === actualSessionId);
+				setSessions((prev) => {
+					const session = prev.find((s) => s.id === actualSessionId);
 					if (!session) return prev;
 
 					// Register this as a user-initiated Maestro session (batch sessions are filtered above)
@@ -2676,14 +2504,9 @@ function MaestroConsoleInner() {
 					// Use projectRoot (not cwd) for consistent session storage access
 					window.maestro.agentSessions
 						.registerSessionOrigin(session.projectRoot, agentSessionId, 'user')
-						.catch(err =>
-							console.error(
-								'[onSessionId] Failed to register session origin:',
-								err
-							)
-						);
+						.catch((err) => console.error('[onSessionId] Failed to register session origin:', err));
 
-					return prev.map(s => {
+					return prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
 						// Find the target tab - use explicit tab ID from session ID if available
@@ -2691,13 +2514,13 @@ function MaestroConsoleInner() {
 						let targetTab;
 						if (tabId) {
 							// New format: tab ID is encoded in session ID
-							targetTab = s.aiTabs?.find(tab => tab.id === tabId);
+							targetTab = s.aiTabs?.find((tab) => tab.id === tabId);
 						}
 
 						// Fallback: find awaiting tab or active tab (for legacy format)
 						if (!targetTab) {
 							const awaitingTab = s.aiTabs?.find(
-								tab => tab.awaitingSessionId && !tab.agentSessionId
+								(tab) => tab.awaitingSessionId && !tab.agentSessionId
 							);
 							targetTab = awaitingTab || getActiveTab(s);
 						}
@@ -2712,25 +2535,21 @@ function MaestroConsoleInner() {
 						}
 
 						// Skip if this tab already has a agentSessionId (prevent overwriting)
-						if (
-							targetTab.agentSessionId &&
-							targetTab.agentSessionId !== agentSessionId
-						) {
+						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
 							return s;
 						}
 
 						// Update the target tab's agentSessionId and clear awaitingSessionId flag
 						// Keep name as null for auto-generated display (derived from agentSessionId)
-						const updatedAiTabs = s.aiTabs.map(tab => {
+						const updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id !== targetTab.id) return tab;
 							// Only preserve existing custom name, don't auto-set to UUID
-							const newName =
-								tab.name && tab.name !== 'New Session' ? tab.name : null;
+							const newName = tab.name && tab.name !== 'New Session' ? tab.name : null;
 							return {
 								...tab,
 								agentSessionId,
 								awaitingSessionId: false,
-								name: newName
+								name: newName,
 							};
 						});
 
@@ -2750,13 +2569,13 @@ function MaestroConsoleInner() {
 
 				// Convert string array to command objects with descriptions
 				// Claude Code returns just command names, we'll need to derive descriptions
-				const commands = slashCommands.map(cmd => ({
+				const commands = slashCommands.map((cmd) => ({
 					command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-					description: getSlashCommandDescription(cmd)
+					description: getSlashCommandDescription(cmd),
 				}));
 
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 						return { ...s, agentCommands: commands };
 					})
@@ -2766,45 +2585,37 @@ function MaestroConsoleInner() {
 
 		// Handle stderr from processes (BATCHED - separate from stdout)
 		// Supports both AI processes (sessionId format: {id}-ai-{tabId}) and terminal commands (plain sessionId)
-		const unsubscribeStderr = window.maestro.process.onStderr(
-			(sessionId: string, data: string) => {
-				// Filter out empty stderr (only whitespace)
-				if (!data.trim()) return;
+		const unsubscribeStderr = window.maestro.process.onStderr((sessionId: string, data: string) => {
+			// Filter out empty stderr (only whitespace)
+			if (!data.trim()) return;
 
-				// Parse sessionId to determine which process this is from
-				// Same logic as onData handler
-				let actualSessionId: string;
-				let tabIdFromSession: string | undefined;
-				let isFromAi = false;
+			// Parse sessionId to determine which process this is from
+			// Same logic as onData handler
+			let actualSessionId: string;
+			let tabIdFromSession: string | undefined;
+			let isFromAi = false;
 
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-					tabIdFromSession = aiTabMatch[2];
-					isFromAi = true;
-				} else if (sessionId.includes('-batch-')) {
-					// Ignore batch task stderr
-					return;
-				} else {
-					// Plain session ID = runCommand (terminal commands)
-					actualSessionId = sessionId;
-				}
-
-				if (isFromAi && tabIdFromSession) {
-					// AI process stderr - route to the correct tab with stderr flag for red box styling
-					batchedUpdater.appendLog(
-						actualSessionId,
-						tabIdFromSession,
-						true,
-						data,
-						true
-					);
-				} else {
-					// Terminal command stderr - route to shell logs
-					batchedUpdater.appendLog(actualSessionId, null, false, data, true);
-				}
+			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+			if (aiTabMatch) {
+				actualSessionId = aiTabMatch[1];
+				tabIdFromSession = aiTabMatch[2];
+				isFromAi = true;
+			} else if (sessionId.includes('-batch-')) {
+				// Ignore batch task stderr
+				return;
+			} else {
+				// Plain session ID = runCommand (terminal commands)
+				actualSessionId = sessionId;
 			}
-		);
+
+			if (isFromAi && tabIdFromSession) {
+				// AI process stderr - route to the correct tab with stderr flag for red box styling
+				batchedUpdater.appendLog(actualSessionId, tabIdFromSession, true, data, true);
+			} else {
+				// Terminal command stderr - route to shell logs
+				batchedUpdater.appendLog(actualSessionId, null, false, data, true);
+			}
+		});
 
 		// Handle command exit from runCommand
 		const unsubscribeCommandExit = window.maestro.process.onCommandExit(
@@ -2812,20 +2623,17 @@ function MaestroConsoleInner() {
 				// runCommand uses plain session ID (no suffix)
 				const actualSessionId = sessionId;
 
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
 						// Check if any AI tabs are still busy
-						const anyAiTabBusy =
-							s.aiTabs?.some(tab => tab.state === 'busy') || false;
+						const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
 
 						// Determine new state:
 						// - If AI tabs are busy, session stays busy with busySource 'ai'
 						// - Otherwise, session becomes idle
-						const newState = anyAiTabBusy
-							? ('busy' as SessionState)
-							: ('idle' as SessionState);
+						const newState = anyAiTabBusy ? ('busy' as SessionState) : ('idle' as SessionState);
 						const newBusySource = anyAiTabBusy ? ('ai' as const) : undefined;
 
 						// Only show exit code if non-zero (error)
@@ -2834,20 +2642,20 @@ function MaestroConsoleInner() {
 								id: generateId(),
 								timestamp: Date.now(),
 								source: 'system',
-								text: `Command exited with code ${code}`
+								text: `Command exited with code ${code}`,
 							};
 							return {
 								...s,
 								state: newState,
 								busySource: newBusySource,
-								shellLogs: [...s.shellLogs, exitLog]
+								shellLogs: [...s.shellLogs, exitLog],
 							};
 						}
 
 						return {
 							...s,
 							state: newState,
-							busySource: newBusySource
+							busySource: newBusySource,
 						};
 					})
 				);
@@ -2855,69 +2663,61 @@ function MaestroConsoleInner() {
 		);
 
 		// Handle usage statistics from AI responses (BATCHED for performance)
-		const unsubscribeUsage = window.maestro.process.onUsage(
-			(sessionId: string, usageStats) => {
-				// Parse sessionId to get actual session ID and tab ID (handles -ai-tabId and legacy -ai suffix)
-				let actualSessionId: string;
-				let tabId: string | null = null;
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-					tabId = aiTabMatch[2];
-				} else if (sessionId.endsWith('-ai')) {
-					actualSessionId = sessionId.slice(0, -3);
-				} else {
-					actualSessionId = sessionId;
-				}
-
-				// Calculate context window usage percentage from CURRENT reported tokens.
-				// IMPORTANT: Claude Code reports cacheReadInputTokens as CUMULATIVE session totals,
-				// not per-request values. Including them causes context % to exceed 100% impossibly.
-				// For Claude: context = inputTokens + cacheCreationInputTokens (new content only)
-				// For Codex: context = inputTokens + outputTokens (combined limit)
-				const sessionForUsage = sessionsRef.current.find(
-					s => s.id === actualSessionId
-				);
-				const agentToolType = sessionForUsage?.toolType;
-				const isClaudeUsage =
-					agentToolType === 'claude-code' || agentToolType === 'claude';
-				const currentContextTokens = isClaudeUsage
-					? usageStats.inputTokens + usageStats.cacheCreationInputTokens
-					: usageStats.inputTokens + usageStats.outputTokens;
-
-				// Calculate context percentage, falling back to agent-specific defaults if contextWindow not provided
-				let contextPercentage: number;
-				if (usageStats.contextWindow > 0) {
-					contextPercentage = Math.min(
-						Math.round((currentContextTokens / usageStats.contextWindow) * 100),
-						100
-					);
-				} else {
-					// Use fallback estimation with agent-specific default context window
-					const estimated = estimateContextUsage(usageStats, agentToolType);
-					contextPercentage = estimated ?? 0;
-				}
-
-				// Batch the usage stats update, context percentage, and cycle tokens
-				// The batched updater handles the accumulation logic internally
-				batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
-				batchedUpdater.updateUsage(actualSessionId, null, usageStats); // Session-level accumulation
-				batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
-				batchedUpdater.updateCycleTokens(
-					actualSessionId,
-					usageStats.outputTokens
-				);
-
-				// Update persistent global stats (not batched - this is a separate concern)
-				updateGlobalStatsRef.current({
-					totalInputTokens: usageStats.inputTokens,
-					totalOutputTokens: usageStats.outputTokens,
-					totalCacheReadTokens: usageStats.cacheReadInputTokens,
-					totalCacheCreationTokens: usageStats.cacheCreationInputTokens,
-					totalCostUsd: usageStats.totalCostUsd
-				});
+		const unsubscribeUsage = window.maestro.process.onUsage((sessionId: string, usageStats) => {
+			// Parse sessionId to get actual session ID and tab ID (handles -ai-tabId and legacy -ai suffix)
+			let actualSessionId: string;
+			let tabId: string | null = null;
+			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
+			if (aiTabMatch) {
+				actualSessionId = aiTabMatch[1];
+				tabId = aiTabMatch[2];
+			} else if (sessionId.endsWith('-ai')) {
+				actualSessionId = sessionId.slice(0, -3);
+			} else {
+				actualSessionId = sessionId;
 			}
-		);
+
+			// Calculate context window usage percentage from CURRENT reported tokens.
+			// IMPORTANT: Claude Code reports cacheReadInputTokens as CUMULATIVE session totals,
+			// not per-request values. Including them causes context % to exceed 100% impossibly.
+			// For Claude: context = inputTokens + cacheCreationInputTokens (new content only)
+			// For Codex: context = inputTokens + outputTokens (combined limit)
+			const sessionForUsage = sessionsRef.current.find((s) => s.id === actualSessionId);
+			const agentToolType = sessionForUsage?.toolType;
+			const isClaudeUsage = agentToolType === 'claude-code' || agentToolType === 'claude';
+			const currentContextTokens = isClaudeUsage
+				? usageStats.inputTokens + usageStats.cacheCreationInputTokens
+				: usageStats.inputTokens + usageStats.outputTokens;
+
+			// Calculate context percentage, falling back to agent-specific defaults if contextWindow not provided
+			let contextPercentage: number;
+			if (usageStats.contextWindow > 0) {
+				contextPercentage = Math.min(
+					Math.round((currentContextTokens / usageStats.contextWindow) * 100),
+					100
+				);
+			} else {
+				// Use fallback estimation with agent-specific default context window
+				const estimated = estimateContextUsage(usageStats, agentToolType);
+				contextPercentage = estimated ?? 0;
+			}
+
+			// Batch the usage stats update, context percentage, and cycle tokens
+			// The batched updater handles the accumulation logic internally
+			batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
+			batchedUpdater.updateUsage(actualSessionId, null, usageStats); // Session-level accumulation
+			batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
+			batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
+
+			// Update persistent global stats (not batched - this is a separate concern)
+			updateGlobalStatsRef.current({
+				totalInputTokens: usageStats.inputTokens,
+				totalOutputTokens: usageStats.outputTokens,
+				totalCacheReadTokens: usageStats.cacheReadInputTokens,
+				totalCacheCreationTokens: usageStats.cacheCreationInputTokens,
+				totalCostUsd: usageStats.totalCostUsd,
+			});
+		});
 
 		// Handle agent errors (auth expired, token exhaustion, rate limits, crashes)
 		const unsubscribeAgentError = window.maestro.process.onAgentError(
@@ -2931,7 +2731,7 @@ function MaestroConsoleInner() {
 					sessionId: error.sessionId,
 					timestamp: error.timestamp,
 					raw: error.raw,
-					parsedJson: error.parsedJson
+					parsedJson: error.parsedJson,
 				};
 
 				// Check if this is a group chat error (moderator or participant)
@@ -2943,33 +2743,26 @@ function MaestroConsoleInner() {
 				const groupChatParticipantMatch = sessionId.match(
 					/^group-chat-([0-9a-f-]{36})-(.+?)-(\d+)$/
 				);
-				const groupChatMatch =
-					groupChatModeratorMatch || groupChatParticipantMatch;
+				const groupChatMatch = groupChatModeratorMatch || groupChatParticipantMatch;
 				if (groupChatMatch) {
 					const groupChatId = groupChatMatch[1];
 					const isModeratorError = groupChatModeratorMatch !== null;
-					const participantOrModerator = isModeratorError
-						? 'moderator'
-						: groupChatMatch[2];
+					const participantOrModerator = isModeratorError ? 'moderator' : groupChatMatch[2];
 
 					console.log('[onAgentError] Group chat error received:', {
 						rawSessionId: sessionId,
 						groupChatId,
-						participantName: isModeratorError
-							? 'Moderator'
-							: participantOrModerator,
+						participantName: isModeratorError ? 'Moderator' : participantOrModerator,
 						errorType: error.type,
 						message: error.message,
-						recoverable: error.recoverable
+						recoverable: error.recoverable,
 					});
 
 					// Set the group chat error state - this will show in the group chat UI
 					setGroupChatError({
 						groupChatId,
 						error: agentError,
-						participantName: isModeratorError
-							? 'Moderator'
-							: participantOrModerator
+						participantName: isModeratorError ? 'Moderator' : participantOrModerator,
 					});
 
 					// Also add an error message to the group chat messages
@@ -2978,13 +2771,13 @@ function MaestroConsoleInner() {
 						from: 'system',
 						content: `⚠️ ${
 							isModeratorError ? 'Moderator' : participantOrModerator
-						} error: ${agentError.message}`
+						} error: ${agentError.message}`,
 					};
-					setGroupChatMessages(prev => [...prev, errorMessage]);
+					setGroupChatMessages((prev) => [...prev, errorMessage]);
 
 					// Reset group chat state to idle so user can try again
 					setGroupChatState('idle');
-					setGroupChatStates(prev => {
+					setGroupChatStates((prev) => {
 						const next = new Map(prev);
 						next.set(groupChatId, 'idle');
 						return next;
@@ -2998,7 +2791,7 @@ function MaestroConsoleInner() {
 					console.log('[onAgentError] Ignoring synopsis process error:', {
 						rawSessionId: sessionId,
 						errorType: error.type,
-						message: error.message
+						message: error.message,
 					});
 					return;
 				}
@@ -3022,7 +2815,7 @@ function MaestroConsoleInner() {
 					actualSessionId,
 					errorType: error.type,
 					message: error.message,
-					recoverable: error.recoverable
+					recoverable: error.recoverable,
 				});
 
 				// session_not_found is informational, not a blocking error.
@@ -3036,35 +2829,35 @@ function MaestroConsoleInner() {
 					timestamp: agentError.timestamp,
 					source: isSessionNotFound ? 'system' : 'error',
 					text: agentError.message,
-					agentError: isSessionNotFound ? undefined : agentError // Only include for actual errors
+					agentError: isSessionNotFound ? undefined : agentError, // Only include for actual errors
 				};
 
 				// Update session with error state and add log entry to the originating tab
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
 						// Prefer explicit tab ID from the sessionId; fall back to active tab
 						const targetTab = tabIdFromSession
-							? s.aiTabs.find(tab => tab.id === tabIdFromSession)
+							? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
 							: getActiveTab(s);
 						const updatedAiTabs = targetTab
-							? s.aiTabs.map(tab =>
+							? s.aiTabs.map((tab) =>
 									tab.id === targetTab.id
 										? {
 												...tab,
 												logs: [...tab.logs, errorLogEntry],
-												agentError: isSessionNotFound ? undefined : agentError
-										  }
+												agentError: isSessionNotFound ? undefined : agentError,
+											}
 										: tab
-							  )
+								)
 							: s.aiTabs;
 
 						// For session_not_found, don't block operations or set error state
 						if (isSessionNotFound) {
 							return {
 								...s,
-								aiTabs: updatedAiTabs
+								aiTabs: updatedAiTabs,
 							};
 						}
 
@@ -3074,7 +2867,7 @@ function MaestroConsoleInner() {
 							agentErrorTabId: targetTab?.id,
 							agentErrorPaused: true, // Block new operations until resolved
 							state: 'error' as SessionState,
-							aiTabs: updatedAiTabs
+							aiTabs: updatedAiTabs,
 						};
 					})
 				);
@@ -3084,12 +2877,8 @@ function MaestroConsoleInner() {
 				if (getBatchStateRef.current && pauseBatchOnErrorRef.current) {
 					const batchState = getBatchStateRef.current(actualSessionId);
 					if (batchState.isRunning && !batchState.errorPaused) {
-						console.log(
-							'[onAgentError] Pausing active batch run due to error:',
-							actualSessionId
-						);
-						const currentDoc =
-							batchState.documents[batchState.currentDocumentIndex];
+						console.log('[onAgentError] Pausing active batch run due to error:', actualSessionId);
+						const currentDoc = batchState.documents[batchState.currentDocumentIndex];
 						pauseBatchOnErrorRef.current(
 							actualSessionId,
 							agentError,
@@ -3098,9 +2887,7 @@ function MaestroConsoleInner() {
 						);
 
 						// Get session for history entry
-						const session = sessionsRef.current.find(
-							s => s.id === actualSessionId
-						);
+						const session = sessionsRef.current.find((s) => s.id === actualSessionId);
 
 						// Add history entry for Auto Run error (similar to stalled document entries)
 						if (addHistoryEntryRef.current && session) {
@@ -3116,27 +2903,25 @@ function MaestroConsoleInner() {
 								agentError.type === 'auth_expired'
 									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
 									: agentError.type === 'token_exhaustion'
-									? '- Start a new session to reset the context window'
-									: agentError.type === 'rate_limited'
-									? '- Wait a few minutes before retrying'
-									: agentError.type === 'network_error'
-									? '- Check your internet connection and try again'
-									: '- Review the error message and take appropriate action',
+										? '- Start a new session to reset the context window'
+										: agentError.type === 'rate_limited'
+											? '- Wait a few minutes before retrying'
+											: agentError.type === 'network_error'
+												? '- Check your internet connection and try again'
+												: '- Review the error message and take appropriate action',
 								'',
-								'After resolving the issue, you can resume, skip, or abort the Auto Run.'
+								'After resolving the issue, you can resume, skip, or abort the Auto Run.',
 							]
 								.filter(Boolean)
 								.join('\n');
 
 							addHistoryEntryRef.current({
 								type: 'AUTO',
-								summary: `Auto Run error: ${errorTitle}${
-									currentDoc ? ` (${currentDoc})` : ''
-								}`,
+								summary: `Auto Run error: ${errorTitle}${currentDoc ? ` (${currentDoc})` : ''}`,
 								fullResponse: errorExplanation,
 								projectPath: session.cwd,
 								sessionId: actualSessionId,
-								success: false
+								success: false,
 							});
 						}
 
@@ -3147,7 +2932,7 @@ function MaestroConsoleInner() {
 								type: 'error',
 								title: `Auto Run: ${errorTitle}`,
 								message: agentError.message,
-								sessionId: actualSessionId
+								sessionId: actualSessionId,
 							});
 						}
 					}
@@ -3174,12 +2959,8 @@ function MaestroConsoleInner() {
 				const bufferKey = `${actualSessionId}:${tabId}`;
 
 				// Buffer the chunk - accumulate if there's already content for this session+tab
-				const existingContent =
-					thinkingChunkBufferRef.current.get(bufferKey) || '';
-				thinkingChunkBufferRef.current.set(
-					bufferKey,
-					existingContent + content
-				);
+				const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
+				thinkingChunkBufferRef.current.set(bufferKey, existingContent + content);
 
 				// Schedule a single RAF callback to process all buffered chunks
 				// This naturally throttles to ~60fps (16.67ms) and batches multiple rapid arrivals
@@ -3197,8 +2978,8 @@ function MaestroConsoleInner() {
 						buffer.clear();
 						thinkingChunkRafIdRef.current = null;
 
-						setSessions(prev =>
-							prev.map(s => {
+						setSessions((prev) =>
+							prev.map((s) => {
 								// Check if any buffered chunks are for this session
 								let hasChanges = false;
 								for (const [key] of chunksToProcess) {
@@ -3215,7 +2996,7 @@ function MaestroConsoleInner() {
 									const [chunkSessionId, chunkTabId] = key.split(':');
 									if (chunkSessionId !== s.id) continue;
 
-									const targetTab = updatedTabs.find(t => t.id === chunkTabId);
+									const targetTab = updatedTabs.find((t) => t.id === chunkTabId);
 									if (!targetTab) continue;
 
 									// Only append if thinking is enabled for this tab
@@ -3241,28 +3022,25 @@ function MaestroConsoleInner() {
 												'[App] Detected malformed thinking content, replacing instead of appending'
 											);
 											// Replace with just the new content (likely the start of real text)
-											updatedTabs = updatedTabs.map(tab =>
+											updatedTabs = updatedTabs.map((tab) =>
 												tab.id === chunkTabId
 													? {
 															...tab,
 															logs: [
 																...tab.logs.slice(0, -1),
-																{ ...lastLog, text: bufferedContent }
-															]
-													  }
+																{ ...lastLog, text: bufferedContent },
+															],
+														}
 													: tab
 											);
 										} else {
 											// Normal append to existing thinking block
-											updatedTabs = updatedTabs.map(tab =>
+											updatedTabs = updatedTabs.map((tab) =>
 												tab.id === chunkTabId
 													? {
 															...tab,
-															logs: [
-																...tab.logs.slice(0, -1),
-																{ ...lastLog, text: combinedText }
-															]
-													  }
+															logs: [...tab.logs.slice(0, -1), { ...lastLog, text: combinedText }],
+														}
 													: tab
 											);
 										}
@@ -3272,19 +3050,15 @@ function MaestroConsoleInner() {
 											id: generateId(),
 											timestamp: Date.now(),
 											source: 'thinking',
-											text: bufferedContent
+											text: bufferedContent,
 										};
-										updatedTabs = updatedTabs.map(tab =>
-											tab.id === chunkTabId
-												? { ...tab, logs: [...tab.logs, newLog] }
-												: tab
+										updatedTabs = updatedTabs.map((tab) =>
+											tab.id === chunkTabId ? { ...tab, logs: [...tab.logs, newLog] } : tab
 										);
 									}
 								}
 
-								return updatedTabs === s.aiTabs
-									? s
-									: { ...s, aiTabs: updatedTabs };
+								return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
 							})
 						);
 					});
@@ -3297,27 +3071,21 @@ function MaestroConsoleInner() {
 		// IMPORTANT: When SSH connection is established, we also recheck isGitRepo since the initial
 		// check may have failed or been done before SSH was ready.
 		const unsubscribeSshRemote = window.maestro.process.onSshRemote?.(
-			(
-				sessionId: string,
-				sshRemote: { id: string; name: string; host: string } | null
-			) => {
+			(sessionId: string, sshRemote: { id: string; name: string; host: string } | null) => {
 				// Parse sessionId to get actual session ID (format: {id}-ai-{tabId} or {id}-terminal)
 				let actualSessionId: string;
 				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
 				if (aiTabMatch) {
 					actualSessionId = aiTabMatch[1];
-				} else if (
-					sessionId.endsWith('-ai') ||
-					sessionId.endsWith('-terminal')
-				) {
+				} else if (sessionId.endsWith('-ai') || sessionId.endsWith('-terminal')) {
 					actualSessionId = sessionId.replace(/-ai$|-terminal$/, '');
 				} else {
 					actualSessionId = sessionId;
 				}
 
 				// Update session with SSH remote info
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 						// Only update if the value actually changed (avoid unnecessary re-renders)
 						const currentRemoteId = s.sshRemote?.id;
@@ -3326,7 +3094,7 @@ function MaestroConsoleInner() {
 						return {
 							...s,
 							sshRemote: sshRemote ?? undefined,
-							sshRemoteId: sshRemote?.id
+							sshRemoteId: sshRemote?.id,
 						};
 					})
 				);
@@ -3335,30 +3103,24 @@ function MaestroConsoleInner() {
 				// For SSH sessions, this is the FIRST git check (deferred from session creation)
 				// since we can't check until SSH is connected
 				if (sshRemote?.id) {
-					const session = sessionsRef.current.find(
-						s => s.id === actualSessionId
-					);
+					const session = sessionsRef.current.find((s) => s.id === actualSessionId);
 					// Only check if session hasn't been detected as git repo yet
 					// (avoids redundant checks if SSH reconnects)
 					if (session && !session.isGitRepo) {
-						const remoteCwd =
-							session.sessionSshRemoteConfig?.workingDirOverride || session.cwd;
+						const remoteCwd = session.sessionSshRemoteConfig?.workingDirOverride || session.cwd;
 						(async () => {
 							try {
-								const isGitRepo = await gitService.isRepo(
-									remoteCwd,
-									sshRemote.id
-								);
+								const isGitRepo = await gitService.isRepo(remoteCwd, sshRemote.id);
 								if (isGitRepo) {
 									// Fetch git branches and tags now that we know it's a git repo
 									const [gitBranches, gitTags] = await Promise.all([
 										gitService.getBranches(remoteCwd, sshRemote.id),
-										gitService.getTags(remoteCwd, sshRemote.id)
+										gitService.getTags(remoteCwd, sshRemote.id),
 									]);
 									const gitRefsCacheTime = Date.now();
 
-									setSessions(prev =>
-										prev.map(s => {
+									setSessions((prev) =>
+										prev.map((s) => {
 											if (s.id !== actualSessionId) return s;
 											// Only update if still not detected as git repo
 											if (s.isGitRepo) return s;
@@ -3367,16 +3129,13 @@ function MaestroConsoleInner() {
 												isGitRepo: true,
 												gitBranches,
 												gitTags,
-												gitRefsCacheTime
+												gitRefsCacheTime,
 											};
 										})
 									);
 								}
 							} catch (err) {
-								console.error(
-									`[SSH] Failed to check git repo status for ${actualSessionId}:`,
-									err
-								);
+								console.error(`[SSH] Failed to check git repo status for ${actualSessionId}:`, err);
 							}
 						})();
 					}
@@ -3387,10 +3146,7 @@ function MaestroConsoleInner() {
 		// Handle tool execution events from AI agents
 		// Only appends to logs if the tab has showThinking enabled (tools shown alongside thinking)
 		const unsubscribeToolExecution = window.maestro.process.onToolExecution?.(
-			(
-				sessionId: string,
-				toolEvent: { toolName: string; state?: unknown; timestamp: number }
-			) => {
+			(sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
 				// Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
 				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
 				if (!aiTabMatch) return; // Only handle AI tab messages
@@ -3398,11 +3154,11 @@ function MaestroConsoleInner() {
 				const actualSessionId = aiTabMatch[1];
 				const tabId = aiTabMatch[2];
 
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== actualSessionId) return s;
 
-						const targetTab = s.aiTabs.find(t => t.id === tabId);
+						const targetTab = s.aiTabs.find((t) => t.id === tabId);
 						if (!targetTab?.showThinking) return s; // Only show if thinking enabled
 
 						const toolLog: LogEntry = {
@@ -3411,19 +3167,15 @@ function MaestroConsoleInner() {
 							source: 'tool',
 							text: toolEvent.toolName,
 							metadata: {
-								toolState: toolEvent.state as NonNullable<
-									LogEntry['metadata']
-								>['toolState']
-							}
+								toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
+							},
 						};
 
 						return {
 							...s,
-							aiTabs: s.aiTabs.map(tab =>
-								tab.id === tabId
-									? { ...tab, logs: [...tab.logs, toolLog] }
-									: tab
-							)
+							aiTabs: s.aiTabs.map((tab) =>
+								tab.id === tabId ? { ...tab, logs: [...tab.logs, toolLog] } : tab
+							),
 						};
 					})
 				);
@@ -3457,13 +3209,13 @@ function MaestroConsoleInner() {
 	useEffect(() => {
 		const unsubMessage = window.maestro.groupChat.onMessage((id, message) => {
 			if (id === activeGroupChatId) {
-				setGroupChatMessages(prev => [...prev, message]);
+				setGroupChatMessages((prev) => [...prev, message]);
 			}
 		});
 
 		const unsubState = window.maestro.groupChat.onStateChange((id, state) => {
 			// Track state for ALL group chats (for sidebar indicator when not active)
-			setGroupChatStates(prev => {
+			setGroupChatStates((prev) => {
 				const next = new Map(prev);
 				next.set(id, state);
 				return next;
@@ -3474,22 +3226,18 @@ function MaestroConsoleInner() {
 			}
 		});
 
-		const unsubParticipants = window.maestro.groupChat.onParticipantsChanged(
-			(id, participants) => {
-				// Update the group chat's participants list
-				setGroupChats(prev =>
-					prev.map(chat => (chat.id === id ? { ...chat, participants } : chat))
-				);
-			}
-		);
+		const unsubParticipants = window.maestro.groupChat.onParticipantsChanged((id, participants) => {
+			// Update the group chat's participants list
+			setGroupChats((prev) =>
+				prev.map((chat) => (chat.id === id ? { ...chat, participants } : chat))
+			);
+		});
 
-		const unsubModeratorUsage = window.maestro.groupChat.onModeratorUsage?.(
-			(id, usage) => {
-				if (id === activeGroupChatId) {
-					setModeratorUsage(usage);
-				}
+		const unsubModeratorUsage = window.maestro.groupChat.onModeratorUsage?.((id, usage) => {
+			if (id === activeGroupChatId) {
+				setModeratorUsage(usage);
 			}
-		);
+		});
 
 		console.log(
 			`[GroupChat:UI] Setting up onParticipantState listener, activeGroupChatId=${activeGroupChatId}`
@@ -3500,16 +3248,16 @@ function MaestroConsoleInner() {
 					`[GroupChat:UI] Received participant state: chatId=${id}, participant=${participantName}, state=${state}, activeGroupChatId=${activeGroupChatId}`
 				);
 				// Track participant state for ALL group chats (for sidebar indicator)
-				setAllGroupChatParticipantStates(prev => {
+				setAllGroupChatParticipantStates((prev) => {
 					const next = new Map(prev);
 					const chatStates = next.get(id) || new Map();
 					const updatedChatStates = new Map(chatStates);
 					updatedChatStates.set(participantName, state);
 					next.set(id, updatedChatStates);
 					console.log(
-						`[GroupChat:UI] Updated allGroupChatParticipantStates for ${id}: ${JSON.stringify(
-							[...updatedChatStates.entries()]
-						)}`
+						`[GroupChat:UI] Updated allGroupChatParticipantStates for ${id}: ${JSON.stringify([
+							...updatedChatStates.entries(),
+						])}`
 					);
 					return next;
 				});
@@ -3518,13 +3266,11 @@ function MaestroConsoleInner() {
 					console.log(
 						`[GroupChat:UI] Updating participantStates for active chat: ${participantName}=${state}`
 					);
-					setParticipantStates(prev => {
+					setParticipantStates((prev) => {
 						const next = new Map(prev);
 						next.set(participantName, state);
 						console.log(
-							`[GroupChat:UI] New participantStates: ${JSON.stringify([
-								...next.entries()
-							])}`
+							`[GroupChat:UI] New participantStates: ${JSON.stringify([...next.entries()])}`
 						);
 						return next;
 					});
@@ -3536,19 +3282,16 @@ function MaestroConsoleInner() {
 			}
 		);
 
-		const unsubModeratorSessionId =
-			window.maestro.groupChat.onModeratorSessionIdChanged?.(
-				(id, agentSessionId) => {
-					// Update the group chat's moderator agent session ID (the Claude Code session UUID)
-					setGroupChats(prev =>
-						prev.map(chat =>
-							chat.id === id
-								? { ...chat, moderatorAgentSessionId: agentSessionId }
-								: chat
-						)
-					);
-				}
-			);
+		const unsubModeratorSessionId = window.maestro.groupChat.onModeratorSessionIdChanged?.(
+			(id, agentSessionId) => {
+				// Update the group chat's moderator agent session ID (the Claude Code session UUID)
+				setGroupChats((prev) =>
+					prev.map((chat) =>
+						chat.id === id ? { ...chat, moderatorAgentSessionId: agentSessionId } : chat
+					)
+				);
+			}
+		);
 
 		return () => {
 			unsubMessage();
@@ -3562,18 +3305,14 @@ function MaestroConsoleInner() {
 
 	// Process group chat execution queue when state becomes idle
 	useEffect(() => {
-		if (
-			groupChatState === 'idle' &&
-			groupChatExecutionQueue.length > 0 &&
-			activeGroupChatId
-		) {
+		if (groupChatState === 'idle' && groupChatExecutionQueue.length > 0 && activeGroupChatId) {
 			// Take the first item from the queue
 			const [nextItem, ...remainingQueue] = groupChatExecutionQueue;
 			setGroupChatExecutionQueue(remainingQueue);
 
 			// Send the queued message - update both active state and per-chat state
 			setGroupChatState('moderator-thinking');
-			setGroupChatStates(prev => {
+			setGroupChatStates((prev) => {
 				const next = new Map(prev);
 				next.set(activeGroupChatId, 'moderator-thinking');
 				return next;
@@ -3636,9 +3375,7 @@ function MaestroConsoleInner() {
 		  ) => void)
 		| null
 	>(null);
-	const getBatchStateRef = useRef<
-		((sessionId: string) => BatchRunState) | null
-	>(null);
+	const getBatchStateRef = useRef<((sessionId: string) => BatchRunState) | null>(null);
 
 	// Refs for throttled thinking chunk updates (Phase 6.4)
 	// Buffer chunks per session+tab and use requestAnimationFrame to batch UI updates
@@ -3661,9 +3398,9 @@ function MaestroConsoleInner() {
 					title: 'Test Notification',
 					message: 'This is a test toast notification from the console!',
 					group: 'Debug',
-					project: 'Test Project'
+					project: 'Test Project',
 				});
-			}
+			},
 		};
 		return () => {
 			delete (window as any).__maestroDebug;
@@ -3682,8 +3419,7 @@ function MaestroConsoleInner() {
 		if (!activeSession) return;
 		if (activeSession.toolType !== 'claude-code') return;
 		// Skip if we already have commands
-		if (activeSession.agentCommands && activeSession.agentCommands.length > 0)
-			return;
+		if (activeSession.agentCommands && activeSession.agentCommands.length > 0) return;
 
 		// Capture session ID to prevent race conditions when switching sessions
 		const sessionId = activeSession.id;
@@ -3697,7 +3433,7 @@ function MaestroConsoleInner() {
 		) => {
 			const merged = [...existing];
 			for (const cmd of newCmds) {
-				if (!merged.some(c => c.command === cmd.command)) {
+				if (!merged.some((c) => c.command === cmd.command)) {
 					merged.push(cmd);
 				}
 			}
@@ -3707,38 +3443,30 @@ function MaestroConsoleInner() {
 		// Fetch custom Claude commands immediately (fast - just reads files)
 		const fetchCustomCommands = async () => {
 			try {
-				const customClaudeCommands = await window.maestro.claude.getCommands(
-					projectRoot
-				);
+				const customClaudeCommands = await window.maestro.claude.getCommands(projectRoot);
 				if (cancelled) return;
 
 				// Custom Claude commands already have command and description from the handler
-				const customCommandObjects = (customClaudeCommands || []).map(cmd => ({
+				const customCommandObjects = (customClaudeCommands || []).map((cmd) => ({
 					command: cmd.command,
-					description: cmd.description
+					description: cmd.description,
 				}));
 
 				if (customCommandObjects.length > 0) {
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							const existingCommands = s.agentCommands || [];
 							return {
 								...s,
-								agentCommands: mergeCommands(
-									existingCommands,
-									customCommandObjects
-								)
+								agentCommands: mergeCommands(existingCommands, customCommandObjects),
 							};
 						})
 					);
 				}
 			} catch (error) {
 				if (!cancelled) {
-					console.error(
-						'[SlashCommandDiscovery] Failed to fetch custom commands:',
-						error
-					);
+					console.error('[SlashCommandDiscovery] Failed to fetch custom commands:', error);
 				}
 			}
 		};
@@ -3746,41 +3474,34 @@ function MaestroConsoleInner() {
 		// Discover built-in agent slash commands in background (slower - spawns Claude)
 		const discoverAgentCommands = async () => {
 			try {
-				const agentSlashCommands =
-					await window.maestro.agents.discoverSlashCommands(
-						activeSession.toolType,
-						activeSession.cwd,
-						activeSession.customPath
-					);
+				const agentSlashCommands = await window.maestro.agents.discoverSlashCommands(
+					activeSession.toolType,
+					activeSession.cwd,
+					activeSession.customPath
+				);
 				if (cancelled) return;
 
 				// Convert agent slash commands to command objects
-				const agentCommandObjects = (agentSlashCommands || []).map(cmd => ({
+				const agentCommandObjects = (agentSlashCommands || []).map((cmd) => ({
 					command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-					description: getSlashCommandDescription(cmd)
+					description: getSlashCommandDescription(cmd),
 				}));
 
 				if (agentCommandObjects.length > 0) {
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							const existingCommands = s.agentCommands || [];
 							return {
 								...s,
-								agentCommands: mergeCommands(
-									existingCommands,
-									agentCommandObjects
-								)
+								agentCommands: mergeCommands(existingCommands, agentCommandObjects),
 							};
 						})
 					);
 				}
 			} catch (error) {
 				if (!cancelled) {
-					console.error(
-						'[SlashCommandDiscovery] Failed to discover agent commands:',
-						error
-					);
+					console.error('[SlashCommandDiscovery] Failed to discover agent commands:', error);
 				}
 			}
 		};
@@ -3798,7 +3519,7 @@ function MaestroConsoleInner() {
 		activeSession?.cwd,
 		activeSession?.customPath,
 		activeSession?.agentCommands,
-		activeSession?.projectRoot
+		activeSession?.projectRoot,
 	]);
 
 	// File preview navigation history - derived from active session (per-agent history)
@@ -3825,10 +3546,8 @@ function MaestroConsoleInner() {
 	const setFilePreviewHistory = useCallback(
 		(history: { name: string; content: string; path: string }[]) => {
 			if (!activeSessionId) return;
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === activeSessionId ? { ...s, filePreviewHistory: history } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === activeSessionId ? { ...s, filePreviewHistory: history } : s))
 			);
 		},
 		[activeSessionId]
@@ -3837,12 +3556,8 @@ function MaestroConsoleInner() {
 	const setFilePreviewHistoryIndex = useCallback(
 		(index: number) => {
 			if (!activeSessionId) return;
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === activeSessionId
-						? { ...s, filePreviewHistoryIndex: index }
-						: s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === activeSessionId ? { ...s, filePreviewHistoryIndex: index } : s))
 			);
 		},
 		[activeSessionId]
@@ -3860,7 +3575,7 @@ function MaestroConsoleInner() {
 		updateSessionWorkingDirectory,
 		toggleFolder,
 		expandAllFolders,
-		collapseAllFolders
+		collapseAllFolders,
 	} = useAppHandlers({
 		activeSession,
 		activeSessionId,
@@ -3874,7 +3589,7 @@ function MaestroConsoleInner() {
 		setFilePreviewHistoryIndex,
 		setConfirmModalMessage,
 		setConfirmModalOnConfirm,
-		setConfirmModalOpen
+		setConfirmModalOpen,
 	});
 
 	// Use custom colors when custom theme is selected, otherwise use the standard theme
@@ -3882,7 +3597,7 @@ function MaestroConsoleInner() {
 		if (activeThemeId === 'custom') {
 			return {
 				...THEMES.custom,
-				colors: customThemeColors
+				colors: customThemeColors,
 			};
 		}
 		return THEMES[activeThemeId];
@@ -3917,9 +3632,7 @@ function MaestroConsoleInner() {
 	// Get the session with the active error (for AgentErrorModal)
 	const errorSession = useMemo(
 		() =>
-			agentErrorModalSessionId
-				? sessions.find(s => s.id === agentErrorModalSessionId)
-				: null,
+			agentErrorModalSessionId ? sessions.find((s) => s.id === agentErrorModalSessionId) : null,
 		[agentErrorModalSessionId, sessions]
 	);
 
@@ -3929,52 +3642,49 @@ function MaestroConsoleInner() {
 	}, []);
 
 	// Handler to clear agent error and resume operations
-	const handleClearAgentError = useCallback(
-		(sessionId: string, tabId?: string) => {
-			setSessions(prev =>
-				prev.map(s => {
-					if (s.id !== sessionId) return s;
-					const targetTabId = tabId ?? s.agentErrorTabId;
-					const updatedAiTabs = targetTabId
-						? s.aiTabs.map(tab =>
-								tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
-						  )
-						: s.aiTabs;
-					return {
-						...s,
-						agentError: undefined,
-						agentErrorTabId: undefined,
-						agentErrorPaused: false,
-						state: 'idle' as SessionState,
-						aiTabs: updatedAiTabs
-					};
-				})
-			);
-			setAgentErrorModalSessionId(null);
-			// Notify main process to clear error state
-			window.maestro.agentError.clearError(sessionId).catch(err => {
-				console.error('Failed to clear agent error:', err);
-			});
-		},
-		[]
-	);
+	const handleClearAgentError = useCallback((sessionId: string, tabId?: string) => {
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				const targetTabId = tabId ?? s.agentErrorTabId;
+				const updatedAiTabs = targetTabId
+					? s.aiTabs.map((tab) =>
+							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
+						)
+					: s.aiTabs;
+				return {
+					...s,
+					agentError: undefined,
+					agentErrorTabId: undefined,
+					agentErrorPaused: false,
+					state: 'idle' as SessionState,
+					aiTabs: updatedAiTabs,
+				};
+			})
+		);
+		setAgentErrorModalSessionId(null);
+		// Notify main process to clear error state
+		window.maestro.agentError.clearError(sessionId).catch((err) => {
+			console.error('Failed to clear agent error:', err);
+		});
+	}, []);
 
 	// Handler to start a new session (recovery action)
 	const handleStartNewSessionAfterError = useCallback(
 		(sessionId: string) => {
-			const session = sessions.find(s => s.id === sessionId);
+			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
 			// Clear the error state
 			handleClearAgentError(sessionId);
 
 			// Create a new tab in the session to start fresh
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					const result = createTab(s, {
 						saveToHistory: defaultSaveToHistory,
-						showThinking: defaultShowThinking
+						showThinking: defaultShowThinking,
 					});
 					if (!result) return s;
 					return result.session;
@@ -4002,7 +3712,7 @@ function MaestroConsoleInner() {
 	// Handler to restart the agent (recovery action for crashes)
 	const handleRestartAgentAfterError = useCallback(
 		async (sessionId: string) => {
-			const session = sessions.find(s => s.id === sessionId);
+			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
 			// Clear the error state
@@ -4024,15 +3734,13 @@ function MaestroConsoleInner() {
 
 	const handleAuthenticateAfterError = useCallback(
 		(sessionId: string) => {
-			const session = sessions.find(s => s.id === sessionId);
+			const session = sessions.find((s) => s.id === sessionId);
 			if (!session) return;
 
 			handleClearAgentError(sessionId);
 			setActiveSessionId(sessionId);
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === sessionId ? { ...s, inputMode: 'terminal' } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === sessionId ? { ...s, inputMode: 'terminal' } : s))
 			);
 
 			setTimeout(() => inputRef.current?.focus(), 0);
@@ -4045,21 +3753,11 @@ function MaestroConsoleInner() {
 		error: errorSession?.agentError,
 		agentId: errorSession?.toolType || 'claude-code',
 		sessionId: errorSession?.id || '',
-		onNewSession: errorSession
-			? () => handleStartNewSessionAfterError(errorSession.id)
-			: undefined,
-		onRetry: errorSession
-			? () => handleRetryAfterError(errorSession.id)
-			: undefined,
-		onClearError: errorSession
-			? () => handleClearAgentError(errorSession.id)
-			: undefined,
-		onRestartAgent: errorSession
-			? () => handleRestartAgentAfterError(errorSession.id)
-			: undefined,
-		onAuthenticate: errorSession
-			? () => handleAuthenticateAfterError(errorSession.id)
-			: undefined
+		onNewSession: errorSession ? () => handleStartNewSessionAfterError(errorSession.id) : undefined,
+		onRetry: errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
+		onClearError: errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
+		onRestartAgent: errorSession ? () => handleRestartAgentAfterError(errorSession.id) : undefined,
+		onAuthenticate: errorSession ? () => handleAuthenticateAfterError(errorSession.id) : undefined,
 	});
 
 	// Handler to clear group chat error (now uses context's clearGroupChatError)
@@ -4071,16 +3769,14 @@ function MaestroConsoleInner() {
 		agentId: 'claude-code', // Group chat moderator is always claude-code for now
 		sessionId: groupChatError?.groupChatId || '',
 		onRetry: handleClearGroupChatError,
-		onClearError: handleClearGroupChatError
+		onClearError: handleClearGroupChatError,
 	});
 
 	// Tab completion hook for terminal mode
-	const { getSuggestions: getTabCompletionSuggestions } =
-		useTabCompletion(activeSession);
+	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion(activeSession);
 
 	// @ mention completion hook for AI mode
-	const { getSuggestions: getAtMentionSuggestions } =
-		useAtMentionCompletion(activeSession);
+	const { getSuggestions: getAtMentionSuggestions } = useAtMentionCompletion(activeSession);
 
 	// Remote integration hook - handles web interface communication
 	useRemoteIntegration({
@@ -4091,17 +3787,17 @@ function MaestroConsoleInner() {
 		setSessions,
 		setActiveSessionId,
 		defaultSaveToHistory,
-		defaultShowThinking
+		defaultShowThinking,
 	});
 
 	// Web broadcasting hook - handles external history change notifications
 	useWebBroadcasting({
-		rightPanelRef
+		rightPanelRef,
 	});
 
 	// CLI activity monitoring hook - tracks CLI playbook runs and updates session states
 	useCliActivityMonitoring({
-		setSessions
+		setSessions,
 	});
 
 	// Quit confirmation handler - shows modal when trying to quit with busy agents
@@ -4109,10 +3805,7 @@ function MaestroConsoleInner() {
 		const unsubscribe = window.maestro.app.onQuitConfirmationRequest(() => {
 			// Get all busy AI sessions (agents that are actively thinking)
 			const busyAgents = sessions.filter(
-				s =>
-					s.state === 'busy' &&
-					s.busySource === 'ai' &&
-					s.toolType !== 'terminal'
+				(s) => s.state === 'busy' && s.busySource === 'ai' && s.toolType !== 'terminal'
 			);
 
 			if (busyAgents.length === 0) {
@@ -4129,7 +3822,7 @@ function MaestroConsoleInner() {
 
 	// Theme styles hook - manages CSS variables and scrollbar fade animations
 	useThemeStyles({
-		themeColors: theme.colors
+		themeColors: theme.colors,
 	});
 
 	// Get capabilities for the active session's agent type
@@ -4149,12 +3842,12 @@ function MaestroConsoleInner() {
 		cancelTab: cancelMergeTab,
 		cancelMerge: _cancelMerge,
 		clearTabState: clearMergeTabState,
-		reset: resetMerge
+		reset: resetMerge,
 	} = useMergeSessionWithSessions({
 		sessions,
 		setSessions,
 		activeTabId: activeSession?.activeTabId,
-		onSessionCreated: info => {
+		onSessionCreated: (info) => {
 			// Navigate to the newly created merged session
 			setActiveSessionId(info.sessionId);
 			setMergeSessionModalOpen(false);
@@ -4177,7 +3870,7 @@ function MaestroConsoleInner() {
 				type: 'success',
 				title: 'Session Merged',
 				message: `Created "${info.sessionName}" from ${sourceInfo}${tokenInfo}.${savedInfo}`,
-				sessionId: info.sessionId
+				sessionId: info.sessionId,
 			});
 
 			// Show desktop notification for visibility when app is not focused
@@ -4209,8 +3902,8 @@ function MaestroConsoleInner() {
 				setActiveSessionId(result.targetSessionId);
 				if (result.targetTabId) {
 					const targetTabId = result.targetTabId; // Extract to satisfy TypeScript narrowing
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== result.targetSessionId) return s;
 							return { ...s, activeTabId: targetTabId };
 						})
@@ -4222,7 +3915,7 @@ function MaestroConsoleInner() {
 					title: 'Context Merged',
 					message: `"${result.sourceSessionName || 'Current Session'}" → "${
 						result.targetSessionName || 'Selected Session'
-					}"${tokenInfo}.${savedInfo}`
+					}"${tokenInfo}.${savedInfo}`,
 				});
 
 				// Clear the merge state for the source tab
@@ -4230,22 +3923,20 @@ function MaestroConsoleInner() {
 					clearMergeTabState(sourceTabId);
 				}, 1000);
 			}
-		}
+		},
 	});
 
 	// Send to Agent hook for cross-agent context transfer operations
 	// Track the source/target agents for the transfer progress modal
-	const [transferSourceAgent, setTransferSourceAgent] =
-		useState<ToolType | null>(null);
-	const [transferTargetAgent, setTransferTargetAgent] =
-		useState<ToolType | null>(null);
+	const [transferSourceAgent, setTransferSourceAgent] = useState<ToolType | null>(null);
+	const [transferTargetAgent, setTransferTargetAgent] = useState<ToolType | null>(null);
 	const {
 		transferState,
 		progress: transferProgress,
 		error: _transferError,
 		executeTransfer: _executeTransfer,
 		cancelTransfer,
-		reset: resetTransfer
+		reset: resetTransfer,
 	} = useSendToAgentWithSessions({
 		sessions,
 		setSessions,
@@ -4258,7 +3949,7 @@ function MaestroConsoleInner() {
 			addToast({
 				type: 'success',
 				title: 'Context Transferred',
-				message: `Created "${sessionName}" with transferred context`
+				message: `Created "${sessionName}" with transferred context`,
 			});
 
 			// Show desktop notification for visibility when app is not focused
@@ -4273,7 +3964,7 @@ function MaestroConsoleInner() {
 				setTransferSourceAgent(null);
 				setTransferTargetAgent(null);
 			}, 1500);
-		}
+		},
 	});
 
 	// --- STABLE HANDLERS FOR APP AGENT MODALS ---
@@ -4283,12 +3974,9 @@ function MaestroConsoleInner() {
 		setLeaderboardRegistrationOpen(false);
 	}, []);
 
-	const handleSaveLeaderboardRegistration = useCallback(
-		(registration: LeaderboardRegistration) => {
-			setLeaderboardRegistration(registration);
-		},
-		[]
-	);
+	const handleSaveLeaderboardRegistration = useCallback((registration: LeaderboardRegistration) => {
+		setLeaderboardRegistration(registration);
+	}, []);
 
 	const handleLeaderboardOptOut = useCallback(() => {
 		setLeaderboardRegistration(null);
@@ -4312,7 +4000,7 @@ function MaestroConsoleInner() {
 				longestRunTimestamp: stats.longestRunTimestamp,
 				// Also update badge tracking to match synced level
 				lastBadgeUnlockLevel: stats.currentBadgeLevel,
-				lastAcknowledgedBadgeLevel: stats.currentBadgeLevel
+				lastAcknowledgedBadgeLevel: stats.currentBadgeLevel,
 			});
 		},
 		[autoRunStats, setAutoRunStats]
@@ -4325,11 +4013,7 @@ function MaestroConsoleInner() {
 	}, [resetMerge]);
 
 	const handleMerge = useCallback(
-		async (
-			targetSessionId: string,
-			targetTabId: string | undefined,
-			options: MergeOptions
-		) => {
+		async (targetSessionId: string, targetTabId: string | undefined, options: MergeOptions) => {
 			// Close the modal - merge will show in the input area overlay
 			setMergeSessionModalOpen(false);
 
@@ -4346,7 +4030,7 @@ function MaestroConsoleInner() {
 				addToast({
 					type: 'error',
 					title: 'Merge Failed',
-					message: result.error || 'Failed to merge contexts'
+					message: result.error || 'Failed to merge contexts',
 				});
 			}
 			// Note: Success toasts are handled by onSessionCreated (for new sessions)
@@ -4378,7 +4062,7 @@ function MaestroConsoleInner() {
 	const handleSendToAgent = useCallback(
 		async (targetSessionId: string, options: SendToAgentOptions) => {
 			// Find the target session
-			const targetSession = sessions.find(s => s.id === targetSessionId);
+			const targetSession = sessions.find((s) => s.id === targetSessionId);
 			if (!targetSession) {
 				return { success: false, error: 'Target session not found' };
 			}
@@ -4391,9 +4075,7 @@ function MaestroConsoleInner() {
 			setSendToAgentModalOpen(false);
 
 			// Get source tab context
-			const sourceTab = activeSession!.aiTabs.find(
-				t => t.id === activeSession!.activeTabId
-			);
+			const sourceTab = activeSession!.aiTabs.find((t) => t.id === activeSession!.activeTabId);
 			if (!sourceTab) {
 				return { success: false, error: 'Source tab not found' };
 			}
@@ -4402,23 +4084,19 @@ function MaestroConsoleInner() {
 			// Only include user messages and AI responses, not system messages
 			const formattedContext = sourceTab.logs
 				.filter(
-					log =>
+					(log) =>
 						log.text &&
 						log.text.trim() &&
-						(log.source === 'user' ||
-							log.source === 'ai' ||
-							log.source === 'stdout')
+						(log.source === 'user' || log.source === 'ai' || log.source === 'stdout')
 				)
-				.map(log => {
+				.map((log) => {
 					const role = log.source === 'user' ? 'User' : 'Assistant';
 					return `${role}: ${log.text}`;
 				})
 				.join('\n\n');
 
 			const sourceName =
-				activeSession!.name ||
-				activeSession!.projectRoot.split('/').pop() ||
-				'Unknown';
+				activeSession!.name || activeSession!.projectRoot.split('/').pop() || 'Unknown';
 			const sourceAgentName = activeSession!.toolType;
 
 			// Create the context message to be sent directly to the agent
@@ -4447,7 +4125,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				source: 'system',
 				text: `Context transferred from "${sourceName}" (${sourceAgentName})${
 					options.groomContext ? ' - cleaned to reduce size' : ''
-				}`
+				}`,
 			};
 
 			// Create user message entry for the context being sent
@@ -4455,7 +4133,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				id: `user-context-${Date.now()}`,
 				timestamp: Date.now(),
 				source: 'user',
-				text: contextMessage
+				text: contextMessage,
 			};
 
 			const newTab: AITab = {
@@ -4469,12 +4147,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createdAt: Date.now(),
 				state: 'busy', // Start in busy state since we're spawning immediately
 				thinkingStartTime: Date.now(),
-				awaitingSessionId: true // Mark as awaiting session ID
+				awaitingSessionId: true, // Mark as awaiting session ID
 			};
 
 			// Add the new tab to the target session and set it as active
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id === targetSessionId) {
 						return {
 							...s,
@@ -4482,7 +4160,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							busySource: 'ai',
 							thinkingStartTime: Date.now(),
 							aiTabs: [...s.aiTabs, newTab],
-							activeTabId: newTabId
+							activeTabId: newTabId,
 						};
 					}
 					return s;
@@ -4494,12 +4172,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Calculate estimated tokens for the toast
 			const estimatedTokens = sourceTab.logs
-				.filter(log => log.text && log.source !== 'system')
+				.filter((log) => log.text && log.source !== 'system')
 				.reduce((sum, log) => sum + Math.round((log.text?.length || 0) / 4), 0);
-			const tokenInfo =
-				estimatedTokens > 0
-					? ` (~${estimatedTokens.toLocaleString()} tokens)`
-					: '';
+			const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
 
 			// Show success toast
 			addToast({
@@ -4507,7 +4182,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				title: 'Context Sent',
 				message: `"${sourceName}" → "${targetSession.name}"${tokenInfo}`,
 				sessionId: targetSessionId,
-				tabId: newTabId
+				tabId: newTabId,
 			});
 
 			// Reset transfer state
@@ -4520,8 +4195,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				try {
 					// Get agent configuration
 					const agent = await window.maestro.agents.get(targetSession.toolType);
-					if (!agent)
-						throw new Error(`${targetSession.toolType} agent not found`);
+					if (!agent) throw new Error(`${targetSession.toolType} agent not found`);
 
 					const baseArgs = agent.args ?? [];
 					const commandToUse = agent.path || agent.command;
@@ -4542,13 +4216,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Prepend Maestro system prompt since this is a new session
 					if (maestroSystemPrompt) {
-						const substitutedSystemPrompt = substituteTemplateVariables(
-							maestroSystemPrompt,
-							{
-								session: targetSession,
-								gitBranch
-							}
-						);
+						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							session: targetSession,
+							gitBranch,
+						});
 						effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 					}
 
@@ -4567,7 +4238,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionCustomEnvVars: targetSession.customEnvVars,
 						sessionCustomModel: targetSession.customModel,
 						sessionCustomContextWindow: targetSession.customContextWindow,
-						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig
+						sessionSshRemoteConfig: targetSession.sessionSshRemoteConfig,
 					});
 				} catch (error) {
 					console.error('Failed to spawn agent for context transfer:', error);
@@ -4575,26 +4246,26 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: `error-${Date.now()}`,
 						timestamp: Date.now(),
 						source: 'system',
-						text: `Error: Failed to spawn agent - ${(error as Error).message}`
+						text: `Error: Failed to spawn agent - ${(error as Error).message}`,
 					};
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== targetSessionId) return s;
 							return {
 								...s,
 								state: 'idle',
 								busySource: undefined,
 								thinkingStartTime: undefined,
-								aiTabs: s.aiTabs.map(tab =>
+								aiTabs: s.aiTabs.map((tab) =>
 									tab.id === newTabId
 										? {
 												...tab,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLog]
-										  }
+												logs: [...tab.logs, errorLog],
+											}
 										: tab
-								)
+								),
 							};
 						})
 					);
@@ -4603,14 +4274,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			return { success: true, newSessionId: targetSessionId, newTabId };
 		},
-		[
-			activeSession,
-			sessions,
-			setSessions,
-			setActiveSessionId,
-			addToast,
-			resetTransfer
-		]
+		[activeSession, sessions, setSessions, setActiveSessionId, addToast, resetTransfer]
 	);
 
 	// Summarize & Continue hook for context compaction (non-blocking, per-tab)
@@ -4624,7 +4288,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		cancelTab,
 		clearTabState,
 		canSummarize,
-		minContextUsagePercent
+		minContextUsagePercent,
 	} = useSummarizeAndContinue(activeSession ?? null);
 
 	// Handler for starting summarization (non-blocking - UI remains interactive)
@@ -4633,16 +4297,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (!activeSession || activeSession.inputMode !== 'ai') return;
 
 			const targetTabId = tabId || activeSession.activeTabId;
-			const targetTab = activeSession.aiTabs.find(t => t.id === targetTabId);
+			const targetTab = activeSession.aiTabs.find((t) => t.id === targetTabId);
 
-			if (
-				!targetTab ||
-				!canSummarize(activeSession.contextUsage, targetTab.logs)
-			) {
+			if (!targetTab || !canSummarize(activeSession.contextUsage, targetTab.logs)) {
 				addToast({
 					type: 'warning',
 					title: 'Cannot Compact',
-					message: `Context too small. Need at least ${minContextUsagePercent}% usage, ~2k tokens, or 8+ messages to compact.`
+					message: `Context too small. Need at least ${minContextUsagePercent}% usage, ~2k tokens, or 8+ messages to compact.`,
 				});
 				return;
 			}
@@ -4651,40 +4312,37 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const sourceSessionId = activeSession.id;
 			const sourceSessionName = activeSession.name;
 
-			startSummarize(targetTabId).then(result => {
+			startSummarize(targetTabId).then((result) => {
 				if (result) {
 					// Update session with the new tab
-					setSessions(prev =>
-						prev.map(s =>
-							s.id === sourceSessionId ? result.updatedSession : s
-						)
+					setSessions((prev) =>
+						prev.map((s) => (s.id === sourceSessionId ? result.updatedSession : s))
 					);
 
 					// Add system log entry to the SOURCE tab's history
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sourceSessionId) return s;
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(tab =>
+								aiTabs: s.aiTabs.map((tab) =>
 									tab.id === targetTabId
 										? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
 										: tab
-								)
+								),
 							};
 						})
 					);
 
 					// Show success notification with click-to-navigate
-					const reductionPercent =
-						result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
+					const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
 					addToast({
 						type: 'success',
 						title: 'Context Compacted',
 						message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
 						sessionId: sourceSessionId,
 						tabId: result.newTabId,
-						project: sourceSessionName
+						project: sourceSessionName,
 					});
 
 					// Clear the summarization state for this tab
@@ -4699,7 +4357,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			startSummarize,
 			setSessions,
 			addToast,
-			clearTabState
+			clearTabState,
 		]
 	);
 
@@ -4707,70 +4365,70 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// This ensures speckit and openspec commands are processed the same way as custom commands
 	const allCustomCommands = useMemo((): CustomAICommand[] => {
 		// Convert speckit commands to CustomAICommand format
-		const speckitAsCustom: CustomAICommand[] = speckitCommands.map(cmd => ({
+		const speckitAsCustom: CustomAICommand[] = speckitCommands.map((cmd) => ({
 			id: `speckit-${cmd.id}`,
 			command: cmd.command,
 			description: cmd.description,
 			prompt: cmd.prompt,
-			isBuiltIn: true // Speckit commands are built-in (bundled)
+			isBuiltIn: true, // Speckit commands are built-in (bundled)
 		}));
 		// Convert openspec commands to CustomAICommand format
-		const openspecAsCustom: CustomAICommand[] = openspecCommands.map(cmd => ({
+		const openspecAsCustom: CustomAICommand[] = openspecCommands.map((cmd) => ({
 			id: `openspec-${cmd.id}`,
 			command: cmd.command,
 			description: cmd.description,
 			prompt: cmd.prompt,
-			isBuiltIn: true // OpenSpec commands are built-in (bundled)
+			isBuiltIn: true, // OpenSpec commands are built-in (bundled)
 		}));
 		return [...customAICommands, ...speckitAsCustom, ...openspecAsCustom];
 	}, [customAICommands, speckitCommands, openspecCommands]);
 
 	// Combine built-in slash commands with custom AI commands, spec-kit commands, openspec commands, AND agent-specific commands for autocomplete
 	const allSlashCommands = useMemo(() => {
-		const customCommandsAsSlash = customAICommands.map(cmd => ({
+		const customCommandsAsSlash = customAICommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
 			aiOnly: true, // Custom AI commands are only available in AI mode
-			prompt: cmd.prompt // Include prompt for execution
+			prompt: cmd.prompt, // Include prompt for execution
 		}));
 		// Spec Kit commands (bundled from github/spec-kit)
-		const speckitCommandsAsSlash = speckitCommands.map(cmd => ({
+		const speckitCommandsAsSlash = speckitCommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
 			aiOnly: true, // Spec-kit commands are only available in AI mode
 			prompt: cmd.prompt, // Include prompt for execution
-			isSpeckit: true // Mark as spec-kit command for special handling
+			isSpeckit: true, // Mark as spec-kit command for special handling
 		}));
 		// OpenSpec commands (bundled from Fission-AI/OpenSpec)
-		const openspecCommandsAsSlash = openspecCommands.map(cmd => ({
+		const openspecCommandsAsSlash = openspecCommands.map((cmd) => ({
 			command: cmd.command,
 			description: cmd.description,
 			aiOnly: true, // OpenSpec commands are only available in AI mode
 			prompt: cmd.prompt, // Include prompt for execution
-			isOpenspec: true // Mark as openspec command for special handling
+			isOpenspec: true, // Mark as openspec command for special handling
 		}));
 		// Only include agent-specific commands if the agent supports slash commands
 		// This allows built-in and custom commands to be shown for all agents (Codex, OpenCode, etc.)
 		const agentCommands = hasActiveSessionCapability('supportsSlashCommands')
-			? (activeSession?.agentCommands || []).map(cmd => ({
+			? (activeSession?.agentCommands || []).map((cmd) => ({
 					command: cmd.command,
 					description: cmd.description,
-					aiOnly: true // Agent commands are only available in AI mode
-			  }))
+					aiOnly: true, // Agent commands are only available in AI mode
+				}))
 			: [];
 		return [
 			...slashCommands,
 			...customCommandsAsSlash,
 			...speckitCommandsAsSlash,
 			...openspecCommandsAsSlash,
-			...agentCommands
+			...agentCommands,
 		];
 	}, [
 		customAICommands,
 		speckitCommands,
 		openspecCommands,
 		activeSession?.agentCommands,
-		hasActiveSessionCapability
+		hasActiveSessionCapability,
 	]);
 
 	// Derive current input value and setter based on active session mode
@@ -4812,14 +4470,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// This ensures we don't lose draft input when clicking directly on another tab
 			// Also ensures clearing the input (empty string) is persisted when switching away
 			if (prevTabId) {
-				setSessions(prev =>
-					prev.map(s => ({
+				setSessions((prev) =>
+					prev.map((s) => ({
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
-							tab.id === prevTabId
-								? { ...tab, inputValue: aiInputValueLocal }
-								: tab
-						)
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.id === prevTabId ? { ...tab, inputValue: aiInputValueLocal } : tab
+						),
 					}))
 				);
 			}
@@ -4832,14 +4488,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// This is the central place that handles all tab switches regardless of how they happen
 			// (click, keyboard shortcut, programmatic, etc.)
 			if (activeTab.hasUnread && activeSession) {
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
-							aiTabs: s.aiTabs.map(t =>
-								t.id === activeTab.id ? { ...t, hasUnread: false } : t
-							)
+							aiTabs: s.aiTabs.map((t) => (t.id === activeTab.id ? { ...t, hasUnread: false } : t)),
 						};
 					})
 				);
@@ -4852,12 +4506,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, [activeTab?.id]);
 
 	// Input sync handlers (extracted to useInputSync hook)
-	const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(
-		activeSession,
-		{
-			setSessions
-		}
-	);
+	const { syncAiInputToSession, syncTerminalInputToSession } = useInputSync(activeSession, {
+		setSessions,
+	});
 
 	// Session navigation handlers (extracted to useSessionNavigation hook)
 	const { handleNavBack, handleNavForward } = useSessionNavigation(sessions, {
@@ -4865,7 +4516,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		navigateForward,
 		setActiveSessionId: setActiveSessionIdInternal,
 		setSessions,
-		cyclePositionRef
+		cyclePositionRef,
 	});
 
 	// Sync terminal input when switching sessions
@@ -4876,11 +4527,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Save terminal input to the previous session (if there was one and we have input)
 			if (prevSessionId && terminalInputValue) {
-				setSessions(prev =>
-					prev.map(s =>
-						s.id === prevSessionId
-							? { ...s, terminalDraftInput: terminalInputValue }
-							: s
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === prevSessionId ? { ...s, terminalDraftInput: terminalInputValue } : s
 					)
 				);
 			}
@@ -4920,7 +4569,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
 	// The computation is O(n) but only runs when sessions array changes, not on every keystroke.
 	const thinkingSessions = useMemo(
-		() => sessions.filter(s => s.state === 'busy' && s.busySource === 'ai'),
+		() => sessions.filter((s) => s.state === 'busy' && s.busySource === 'ai'),
 		[sessions]
 	);
 
@@ -4936,12 +4585,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const setStagedImages = useCallback(
 		(imagesOrUpdater: string[] | ((prev: string[]) => string[])) => {
 			if (!activeSession) return;
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab => {
+						aiTabs: s.aiTabs.map((tab) => {
 							if (tab.id !== s.activeTabId) return tab;
 							const currentImages = tab.stagedImages || [];
 							const newImages =
@@ -4949,7 +4598,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 									? imagesOrUpdater(currentImages)
 									: imagesOrUpdater;
 							return { ...tab, stagedImages: newImages };
-						})
+						}),
 					};
 				})
 			);
@@ -4976,20 +4625,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 				text: logEntry.text,
 				...(logEntry.images && { images: logEntry.images }),
 				...(logEntry.delivered !== undefined && {
-					delivered: logEntry.delivered
+					delivered: logEntry.delivered,
 				}),
-				...('aiCommand' in logEntry &&
-					logEntry.aiCommand && { aiCommand: logEntry.aiCommand })
+				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
 			};
 
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 
 					// Use specified tab or fall back to active tab
-					const targetTab = tabId
-						? s.aiTabs.find(tab => tab.id === tabId)
-						: getActiveTab(s);
+					const targetTab = tabId ? s.aiTabs.find((tab) => tab.id === tabId) : getActiveTab(s);
 
 					if (!targetTab) {
 						// No tabs exist - this is a bug, sessions must have aiTabs
@@ -5000,10 +4646,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 					}
 
 					// Update target tab's logs
-					const updatedAiTabs = s.aiTabs.map(tab =>
-						tab.id === targetTab.id
-							? { ...tab, logs: [...tab.logs, entry] }
-							: tab
+					const updatedAiTabs = s.aiTabs.map((tab) =>
+						tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, entry] } : tab
 					);
 
 					return { ...s, aiTabs: updatedAiTabs };
@@ -5033,38 +4677,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Tab completion suggestions (must be after inputValue is defined)
 	// PERF: Only debounce when menu is open to avoid unnecessary state updates during normal typing
-	const debouncedInputForTabCompletion = useDebouncedValue(
-		tabCompletionOpen ? inputValue : '',
-		50
-	);
+	const debouncedInputForTabCompletion = useDebouncedValue(tabCompletionOpen ? inputValue : '', 50);
 	const tabCompletionSuggestions = useMemo(() => {
-		if (
-			!tabCompletionOpen ||
-			!activeSessionId ||
-			activeSessionInputMode !== 'terminal'
-		) {
+		if (!tabCompletionOpen || !activeSessionId || activeSessionInputMode !== 'terminal') {
 			return [];
 		}
-		return getTabCompletionSuggestions(
-			debouncedInputForTabCompletion,
-			tabCompletionFilter
-		);
+		return getTabCompletionSuggestions(debouncedInputForTabCompletion, tabCompletionFilter);
 	}, [
 		tabCompletionOpen,
 		activeSessionId,
 		activeSessionInputMode,
 		debouncedInputForTabCompletion,
 		tabCompletionFilter,
-		getTabCompletionSuggestions
+		getTabCompletionSuggestions,
 	]);
 
 	// @ mention suggestions for AI mode
 	// PERF: Only debounce when menu is open to avoid unnecessary state updates during normal typing
 	// When menu is closed, pass empty string to skip debounce hook overhead entirely
-	const debouncedAtMentionFilter = useDebouncedValue(
-		atMentionOpen ? atMentionFilter : '',
-		100
-	);
+	const debouncedAtMentionFilter = useDebouncedValue(atMentionOpen ? atMentionFilter : '', 100);
 	const atMentionSuggestions = useMemo(() => {
 		if (!atMentionOpen || !activeSessionId || activeSessionInputMode !== 'ai') {
 			return [];
@@ -5075,19 +4706,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 		activeSessionId,
 		activeSessionInputMode,
 		debouncedAtMentionFilter,
-		getAtMentionSuggestions
+		getAtMentionSuggestions,
 	]);
 
 	// Sync file tree selection to match tab completion suggestion
 	// This highlights the corresponding file/folder in the right panel when navigating tab completion
 	const syncFileTreeToTabCompletion = useCallback(
 		(suggestion: TabCompletionSuggestion | undefined) => {
-			if (
-				!suggestion ||
-				suggestion.type === 'history' ||
-				flatFileList.length === 0
-			)
-				return;
+			if (!suggestion || suggestion.type === 'history' || flatFileList.length === 0) return;
 
 			// Strip trailing slash from folder paths to match flatFileList format
 			const targetPath = suggestion.value.replace(/\/$/, '');
@@ -5095,9 +4721,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Also handle paths with command prefix (e.g., "cd src/" -> "src")
 			const pathOnly = targetPath.split(/\s+/).pop() || targetPath;
 
-			const matchIndex = flatFileList.findIndex(
-				item => item.fullPath === pathOnly
-			);
+			const matchIndex = flatFileList.findIndex((item) => item.fullPath === pathOnly);
 
 			if (matchIndex >= 0) {
 				fileTreeKeyboardNavRef.current = true; // Scroll to matched file
@@ -5120,47 +4744,41 @@ You are taking over this conversation. Based on the context above, provide a bri
 		spawnBackgroundSynopsisRef,
 		spawnAgentWithPromptRef: _spawnAgentWithPromptRef,
 		showFlashNotification: _showFlashNotification,
-		showSuccessFlash
+		showSuccessFlash,
 	} = useAgentExecution({
 		activeSession,
 		sessionsRef,
 		setSessions,
 		processQueuedItemRef,
 		setFlashNotification,
-		setSuccessFlashNotification
+		setSuccessFlashNotification,
 	});
 
 	// --- AGENT SESSION MANAGEMENT ---
 	// Extracted hook for agent-specific session operations (history, session clear, resume)
-	const {
-		addHistoryEntry,
-		addHistoryEntryRef,
-		handleJumpToAgentSession,
-		handleResumeSession
-	} = useAgentSessionManagement({
-		activeSession,
-		setSessions,
-		setActiveAgentSessionId,
-		setAgentSessionsOpen,
-		rightPanelRef,
-		defaultSaveToHistory,
-		defaultShowThinking
-	});
+	const { addHistoryEntry, addHistoryEntryRef, handleJumpToAgentSession, handleResumeSession } =
+		useAgentSessionManagement({
+			activeSession,
+			setSessions,
+			setActiveAgentSessionId,
+			setAgentSessionsOpen,
+			rightPanelRef,
+			defaultSaveToHistory,
+			defaultShowThinking,
+		});
 
 	// PERFORMANCE: Memoized callback for creating new agent sessions
 	// Extracted from inline function to prevent MainPanel re-renders
 	const handleNewAgentSession = useCallback(() => {
 		// Create a fresh AI tab using functional setState to avoid stale closure
-		setSessions(prev => {
-			const currentSession = prev.find(
-				s => s.id === activeSessionIdRef.current
-			);
+		setSessions((prev) => {
+			const currentSession = prev.find((s) => s.id === activeSessionIdRef.current);
 			if (!currentSession) return prev;
-			return prev.map(s => {
+			return prev.map((s) => {
 				if (s.id !== currentSession.id) return s;
 				const result = createTab(s, {
 					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking
+					showThinking: defaultShowThinking,
 				});
 				if (!result) return s;
 				return result.session;
@@ -5173,8 +4791,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// PERFORMANCE: Memoized tab management callbacks
 	// Extracted from inline functions to prevent MainPanel re-renders
 	const handleTabSelect = useCallback((tabId: string) => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				const result = setActiveTab(s, tabId);
 				return result ? result.session : s;
@@ -5187,11 +4805,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Wizard tabs are closed without being added to history (they can't be restored).
 	 */
 	const performTabClose = useCallback((tabId: string) => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				// Check if this is a wizard tab - wizard tabs should not be added to close history
-				const tab = s.aiTabs.find(t => t.id === tabId);
+				const tab = s.aiTabs.find((t) => t.id === tabId);
 				const isWizardTab = tab && hasActiveWizard(tab);
 				// Note: showUnreadOnly is accessed via ref pattern if needed, or we accept this dep
 				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab }); // Don't filter for unread during close
@@ -5207,10 +4825,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleTabClose = useCallback(
 		(tabId: string) => {
 			// Find the tab to check if it has an active wizard
-			const session = sessionsRef.current.find(
-				s => s.id === activeSessionIdRef.current
-			);
-			const tab = session?.aiTabs.find(t => t.id === tabId);
+			const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+			const tab = session?.aiTabs.find((t) => t.id === tabId);
 
 			if (tab && hasActiveWizard(tab)) {
 				// Show confirmation modal for wizard tabs
@@ -5228,12 +4844,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 	);
 
 	const handleNewTab = useCallback(() => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				const result = createTab(s, {
 					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking
+					showThinking: defaultShowThinking,
 				});
 				if (!result) return s;
 				return result.session;
@@ -5246,16 +4862,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Creates a fresh new tab after closing all existing ones.
 	 */
 	const handleCloseAllTabs = useCallback(() => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				// Close all tabs by iterating through them
 				let updatedSession = s;
-				const tabIds = s.aiTabs.map(t => t.id);
+				const tabIds = s.aiTabs.map((t) => t.id);
 				for (const tabId of tabIds) {
-					const tab = updatedSession.aiTabs.find(t => t.id === tabId);
+					const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
 					const result = closeTab(updatedSession, tabId, false, {
-						skipHistory: tab ? hasActiveWizard(tab) : false
+						skipHistory: tab ? hasActiveWizard(tab) : false,
 					});
 					if (result) {
 						updatedSession = result.session;
@@ -5270,14 +4886,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Close all tabs except the active tab.
 	 */
 	const handleCloseOtherTabs = useCallback(() => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				let updatedSession = s;
-				const tabsToClose = s.aiTabs.filter(t => t.id !== s.activeTabId);
+				const tabsToClose = s.aiTabs.filter((t) => t.id !== s.activeTabId);
 				for (const tab of tabsToClose) {
 					const result = closeTab(updatedSession, tab.id, false, {
-						skipHistory: hasActiveWizard(tab)
+						skipHistory: hasActiveWizard(tab),
 					});
 					if (result) {
 						updatedSession = result.session;
@@ -5292,16 +4908,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Close all tabs to the left of the active tab.
 	 */
 	const handleCloseTabsLeft = useCallback(() => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
-				const activeIndex = s.aiTabs.findIndex(t => t.id === s.activeTabId);
+				const activeIndex = s.aiTabs.findIndex((t) => t.id === s.activeTabId);
 				if (activeIndex <= 0) return s; // Nothing to close
 				let updatedSession = s;
 				const tabsToClose = s.aiTabs.slice(0, activeIndex);
 				for (const tab of tabsToClose) {
 					const result = closeTab(updatedSession, tab.id, false, {
-						skipHistory: hasActiveWizard(tab)
+						skipHistory: hasActiveWizard(tab),
 					});
 					if (result) {
 						updatedSession = result.session;
@@ -5316,16 +4932,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Close all tabs to the right of the active tab.
 	 */
 	const handleCloseTabsRight = useCallback(() => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
-				const activeIndex = s.aiTabs.findIndex(t => t.id === s.activeTabId);
+				const activeIndex = s.aiTabs.findIndex((t) => t.id === s.activeTabId);
 				if (activeIndex < 0 || activeIndex >= s.aiTabs.length - 1) return s; // Nothing to close
 				let updatedSession = s;
 				const tabsToClose = s.aiTabs.slice(activeIndex + 1);
 				for (const tab of tabsToClose) {
 					const result = closeTab(updatedSession, tab.id, false, {
-						skipHistory: hasActiveWizard(tab)
+						skipHistory: hasActiveWizard(tab),
 					});
 					if (result) {
 						updatedSession = result.session;
@@ -5337,12 +4953,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				return {
 					...s,
-					executionQueue: s.executionQueue.filter(item => item.id !== itemId)
+					executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
 				};
 			})
 		);
@@ -5353,10 +4969,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	 * Used by keyboard shortcut (Cmd+Shift+B) and UI actions.
 	 */
 	const toggleBookmark = useCallback((sessionId: string) => {
-		setSessions(prev =>
-			prev.map(s =>
-				s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s
-			)
+		setSessions((prev) =>
+			prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
 		);
 	}, []);
 
@@ -5368,21 +4982,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Extracted from inline function to prevent MainPanel re-renders
 	const handleDeleteLog = useCallback((logId: string): number | null => {
 		// Use refs to access current state without adding dependencies
-		const currentSession = sessionsRef.current.find(
-			s => s.id === activeSessionIdRef.current
-		);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return null;
 
 		const isAIMode = currentSession.inputMode === 'ai';
 
 		// For AI mode, use the active tab's logs; for terminal mode, use shellLogs
 		const currentActiveTab = isAIMode ? getActiveTab(currentSession) : null;
-		const logs = isAIMode
-			? currentActiveTab?.logs || []
-			: currentSession.shellLogs;
+		const logs = isAIMode ? currentActiveTab?.logs || [] : currentSession.shellLogs;
 
 		// Find the log entry and its index
-		const logIndex = logs.findIndex(log => log.id === logId);
+		const logIndex = logs.findIndex((log) => log.id === logId);
 		if (logIndex === -1) return null;
 
 		const log = logs[logIndex];
@@ -5398,10 +5008,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		}
 
 		// Remove logs from logIndex to endIndex (exclusive)
-		const newLogs = [
-			...logs.slice(0, logIndex),
-			...logs.slice(endIndex)
-		];
+		const newLogs = [...logs.slice(0, logIndex), ...logs.slice(endIndex)];
 
 		// Find the index of the next user command in the NEW array
 		// This is the command that was at endIndex, now at logIndex position
@@ -5436,39 +5043,31 @@ You are taking over this conversation. Based on the context above, provide a bri
 						logId, // This is the UUID if loaded from Claude session
 						log.text // Fallback: match by content if UUID doesn't match
 					)
-					.then(result => {
+					.then((result) => {
 						if (!result.success) {
-							console.warn(
-								'[handleDeleteLog] Failed to delete from Claude session:',
-								result.error
-							);
+							console.warn('[handleDeleteLog] Failed to delete from Claude session:', result.error);
 						}
 					})
-					.catch(err => {
-						console.error(
-							'[handleDeleteLog] Error deleting from Claude session:',
-							err
-						);
+					.catch((err) => {
+						console.error('[handleDeleteLog] Error deleting from Claude session:', err);
 					});
 			}
 
 			// Update the active tab's logs and aiCommandHistory
 			const commandText = log.text.trim();
 
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== currentSession.id) return s;
-					const newAICommandHistory = (
-						s.aiCommandHistory || []
-					).filter(cmd => cmd !== commandText);
+					const newAICommandHistory = (s.aiCommandHistory || []).filter(
+						(cmd) => cmd !== commandText
+					);
 					return {
 						...s,
 						aiCommandHistory: newAICommandHistory,
-						aiTabs: s.aiTabs.map(tab =>
-							tab.id === currentActiveTab.id
-								? { ...tab, logs: newLogs }
-								: tab
-						)
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.id === currentActiveTab.id ? { ...tab, logs: newLogs } : tab
+						),
 					};
 				})
 			);
@@ -5476,16 +5075,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Terminal mode - update shellLogs and shellCommandHistory
 			const commandText = log.text.trim();
 
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== currentSession.id) return s;
-					const newShellCommandHistory = (
-						s.shellCommandHistory || []
-					).filter(cmd => cmd !== commandText);
+					const newShellCommandHistory = (s.shellCommandHistory || []).filter(
+						(cmd) => cmd !== commandText
+					);
 					return {
 						...s,
 						shellLogs: newLogs,
-						shellCommandHistory: newShellCommandHistory
+						shellCommandHistory: newShellCommandHistory,
 					};
 				})
 			);
@@ -5497,9 +5096,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// PERF: Memoized callbacks for MainPanel tab management props
 	// These were previously inline arrow functions, causing MainPanel re-renders on every keystroke
 	const handleRequestTabRename = useCallback((tabId: string) => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
-		const tab = session.aiTabs?.find(t => t.id === tabId);
+		const tab = session.aiTabs?.find((t) => t.id === tabId);
 		if (tab) {
 			setRenameTabId(tabId);
 			setRenameTabInitialName(getInitialRenameValue(tab));
@@ -5508,8 +5107,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleTabReorder = useCallback((fromIndex: number, toIndex: number) => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current || !s.aiTabs) return s;
 				const tabs = [...s.aiTabs];
 				const [movedTab] = tabs.splice(fromIndex, 1);
@@ -5519,155 +5118,153 @@ You are taking over this conversation. Based on the context above, provide a bri
 		);
 	}, []);
 
-	const handleUpdateTabByClaudeSessionId = useCallback((
-		agentSessionId: string,
-		updates: { name?: string | null; starred?: boolean }
-	) => {
-		setSessions(prev =>
-			prev.map(s => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				const tabIndex = s.aiTabs.findIndex(tab => tab.agentSessionId === agentSessionId);
-				if (tabIndex === -1) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map(tab =>
-						tab.agentSessionId === agentSessionId
-							? {
-								...tab,
-								...(updates.name !== undefined ? { name: updates.name } : {}),
-								...(updates.starred !== undefined ? { starred: updates.starred } : {})
-							}
-							: tab
-					)
-				};
-			})
-		);
-	}, []);
+	const handleUpdateTabByClaudeSessionId = useCallback(
+		(agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionIdRef.current) return s;
+					const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
+					if (tabIndex === -1) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.agentSessionId === agentSessionId
+								? {
+										...tab,
+										...(updates.name !== undefined ? { name: updates.name } : {}),
+										...(updates.starred !== undefined ? { starred: updates.starred } : {}),
+									}
+								: tab
+						),
+					};
+				})
+			);
+		},
+		[]
+	);
 
 	const handleTabStar = useCallback((tabId: string, starred: boolean) => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
-		const tabToStar = session.aiTabs.find(t => t.id === tabId);
+		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
 		if (!tabToStar?.agentSessionId) return;
 
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
-				const tab = s.aiTabs.find(t => t.id === tabId);
+				const tab = s.aiTabs.find((t) => t.id === tabId);
 				if (tab?.agentSessionId) {
 					const agentId = s.toolType || 'claude-code';
 					if (agentId === 'claude-code') {
 						window.maestro.claude
 							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch(err => console.error('Failed to persist tab starred:', err));
+							.catch((err) => console.error('Failed to persist tab starred:', err));
 					} else {
 						window.maestro.agentSessions
 							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch(err => console.error('Failed to persist tab starred:', err));
+							.catch((err) => console.error('Failed to persist tab starred:', err));
 					}
 				}
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(t => t.id === tabId ? { ...t, starred } : t)
+					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
 				};
 			})
 		);
 	}, []);
 
 	const handleTabMarkUnread = useCallback((tabId: string) => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(t => t.id === tabId ? { ...t, hasUnread: true } : t)
+					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: true } : t)),
 				};
 			})
 		);
 	}, []);
 
 	const handleToggleTabReadOnlyMode = useCallback(() => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
 		const activeTab = getActiveTab(session);
 		if (!activeTab) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab =>
+					aiTabs: s.aiTabs.map((tab) =>
 						tab.id === activeTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-					)
+					),
 				};
 			})
 		);
 	}, []);
 
 	const handleToggleTabSaveToHistory = useCallback(() => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
 		const activeTab = getActiveTab(session);
 		if (!activeTab) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab =>
+					aiTabs: s.aiTabs.map((tab) =>
 						tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					)
+					),
 				};
 			})
 		);
 	}, []);
 
 	const handleToggleTabShowThinking = useCallback(() => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
 		const activeTab = getActiveTab(session);
 		if (!activeTab) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionIdRef.current) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab => {
+					aiTabs: s.aiTabs.map((tab) => {
 						if (tab.id !== activeTab.id) return tab;
 						if (tab.showThinking) {
 							return {
 								...tab,
 								showThinking: false,
-								logs: tab.logs.filter(l => l.source !== 'thinking' && l.source !== 'tool')
+								logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
 							};
 						}
 						return { ...tab, showThinking: true };
-					})
+					}),
 				};
 			})
 		);
 	}, []);
 
 	const handleScrollPositionChange = useCallback((scrollTop: number) => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const activeTab = getActiveTab(session);
 			if (!activeTab) return;
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSessionIdRef.current) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
-							tab.id === activeTab.id ? { ...tab, scrollTop } : tab
-						)
+						aiTabs: s.aiTabs.map((tab) => (tab.id === activeTab.id ? { ...tab, scrollTop } : tab)),
 					};
 				})
 			);
 		} else {
-			setSessions(prev =>
-				prev.map(s =>
+			setSessions((prev) =>
+				prev.map((s) =>
 					s.id === activeSessionIdRef.current ? { ...s, terminalScrollTop: scrollTop } : s
 				)
 			);
@@ -5675,21 +5272,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-		const session = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!session) return;
 		if (session.inputMode === 'ai') {
 			const activeTab = getActiveTab(session);
 			if (!activeTab) return;
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSessionIdRef.current) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
+						aiTabs: s.aiTabs.map((tab) =>
 							tab.id === activeTab.id
 								? { ...tab, isAtBottom, hasUnread: isAtBottom ? false : tab.hasUnread }
 								: tab
-						)
+						),
 					};
 				})
 			);
@@ -5698,7 +5295,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	const handleMainPanelInputBlur = useCallback(() => {
 		// Access current values via refs to avoid dependencies
-		const currentIsAiMode = sessionsRef.current.find(s => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
+		const currentIsAiMode =
+			sessionsRef.current.find((s) => s.id === activeSessionIdRef.current)?.inputMode === 'ai';
 		if (currentIsAiMode) {
 			syncAiInputToSession(aiInputValueLocalRef.current);
 		} else {
@@ -5709,12 +5307,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// PERF: Ref to access processInput without dependency - will be set after processInput is defined
 	const processInputRef = useRef<(text?: string) => void>(() => {});
 
-	const handleReplayMessage = useCallback((text: string, images?: string[]) => {
-		if (images && images.length > 0) {
-			setStagedImages(images);
-		}
-		setTimeout(() => processInputRef.current(text), 0);
-	}, [setStagedImages]);
+	const handleReplayMessage = useCallback(
+		(text: string, images?: string[]) => {
+			if (images && images.length > 0) {
+				setStagedImages(images);
+			}
+			setTimeout(() => processInputRef.current(text), 0);
+		},
+		[setStagedImages]
+	);
 
 	const handleOpenTabSearch = useCallback(() => {
 		setTabSwitcherOpen(true);
@@ -5756,7 +5357,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	// Sync lastGraphFocusFilePath ref for use in memoized callbacks
-	useEffect(() => { lastGraphFocusFilePathRef.current = lastGraphFocusFilePath; }, [lastGraphFocusFilePath]);
+	useEffect(() => {
+		lastGraphFocusFilePathRef.current = lastGraphFocusFilePath;
+	}, [lastGraphFocusFilePath]);
 
 	// PERF: Memoized callbacks for SessionList props - these were inline arrow functions
 	const handleEditAgent = useCallback((session: Session) => {
@@ -5785,11 +5388,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleToggleWorktreeExpanded = useCallback((sessionId: string) => {
-		setSessions(prev =>
-			prev.map(s =>
-				s.id === sessionId
-					? { ...s, worktreesExpanded: !(s.worktreesExpanded ?? true) }
-					: s
+		setSessions((prev) =>
+			prev.map((s) =>
+				s.id === sessionId ? { ...s, worktreesExpanded: !(s.worktreesExpanded ?? true) } : s
 			)
 		);
 	}, []);
@@ -5818,15 +5419,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// PERF: Memoized callbacks for MainPanel file preview navigation
 	// These were inline arrow functions causing MainPanel re-renders on every keystroke
 	const handleMainPanelFileClick = useCallback(async (relativePath: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
 		const filename = relativePath.split('/').pop() || relativePath;
 
 		// Get SSH remote ID
 		const sshRemoteId =
-			currentSession.sshRemoteId ||
-			currentSession.sessionSshRemoteConfig?.remoteId ||
-			undefined;
+			currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 		// Check if file should be opened externally (PDF, etc.)
 		if (!sshRemoteId && shouldOpenExternally(filename)) {
@@ -5847,10 +5446,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (!currentFile || currentFile.path !== fullPath) {
 				const newHistory = history.slice(0, historyIndex + 1);
 				newHistory.push(newFile);
-				setSessions(prev =>
-					prev.map(s =>
+				setSessions((prev) =>
+					prev.map((s) =>
 						s.id === currentSession.id
-							? { ...s, filePreviewHistory: newHistory, filePreviewHistoryIndex: newHistory.length - 1 }
+							? {
+									...s,
+									filePreviewHistory: newHistory,
+									filePreviewHistoryIndex: newHistory.length - 1,
+								}
 							: s
 					)
 				);
@@ -5863,14 +5466,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleNavigateBack = useCallback(() => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
 		const historyIndex = currentSession.filePreviewHistoryIndex ?? -1;
 		const history = currentSession.filePreviewHistory ?? [];
 		if (historyIndex > 0) {
 			const newIndex = historyIndex - 1;
-			setSessions(prev =>
-				prev.map(s =>
+			setSessions((prev) =>
+				prev.map((s) =>
 					s.id === currentSession.id ? { ...s, filePreviewHistoryIndex: newIndex } : s
 				)
 			);
@@ -5879,14 +5482,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleNavigateForward = useCallback(() => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
 		const historyIndex = currentSession.filePreviewHistoryIndex ?? -1;
 		const history = currentSession.filePreviewHistory ?? [];
 		if (historyIndex < history.length - 1) {
 			const newIndex = historyIndex + 1;
-			setSessions(prev =>
-				prev.map(s =>
+			setSessions((prev) =>
+				prev.map((s) =>
 					s.id === currentSession.id ? { ...s, filePreviewHistoryIndex: newIndex } : s
 				)
 			);
@@ -5895,47 +5498,41 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	const handleNavigateToIndex = useCallback((index: number) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
 		const history = currentSession.filePreviewHistory ?? [];
 		if (index >= 0 && index < history.length) {
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === currentSession.id ? { ...s, filePreviewHistoryIndex: index } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === currentSession.id ? { ...s, filePreviewHistoryIndex: index } : s))
 			);
 			setPreviewFile(history[index]);
 		}
 	}, []);
 
 	const handleMergeWith = useCallback((tabId: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (currentSession) {
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === currentSession.id ? { ...s, activeTabId: tabId } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === currentSession.id ? { ...s, activeTabId: tabId } : s))
 			);
 		}
 		setMergeSessionModalOpen(true);
 	}, []);
 
 	const handleOpenSendToAgentModal = useCallback((tabId: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (currentSession) {
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === currentSession.id ? { ...s, activeTabId: tabId } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === currentSession.id ? { ...s, activeTabId: tabId } : s))
 			);
 		}
 		setSendToAgentModalOpen(true);
 	}, []);
 
 	const handleCopyContext = useCallback((tabId: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
-		const tab = currentSession.aiTabs.find(t => t.id === tabId);
+		const tab = currentSession.aiTabs.find((t) => t.id === tabId);
 		if (!tab || !tab.logs || tab.logs.length === 0) return;
 
 		const text = formatLogsForClipboard(tab.logs);
@@ -5945,24 +5542,24 @@ You are taking over this conversation. Based on the context above, provide a bri
 				addToastRef.current({
 					type: 'success',
 					title: 'Context Copied',
-					message: 'Conversation copied to clipboard.'
+					message: 'Conversation copied to clipboard.',
 				});
 			})
-			.catch(err => {
+			.catch((err) => {
 				console.error('Failed to copy context:', err);
 				addToastRef.current({
 					type: 'error',
 					title: 'Copy Failed',
-					message: 'Failed to copy context to clipboard.'
+					message: 'Failed to copy context to clipboard.',
 				});
 			});
 	}, []);
 
 	// Memoized handler for exporting tab as HTML
 	const handleExportHtml = useCallback(async (tabId: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
-		const tab = currentSession.aiTabs.find(t => t.id === tabId);
+		const tab = currentSession.aiTabs.find((t) => t.id === tabId);
 		if (!tab || !tab.logs || tab.logs.length === 0) return;
 
 		try {
@@ -5972,30 +5569,30 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{
 					name: currentSession.name,
 					cwd: currentSession.cwd,
-					toolType: currentSession.toolType
+					toolType: currentSession.toolType,
 				},
 				themeRef.current
 			);
 			addToastRef.current({
 				type: 'success',
 				title: 'Export Complete',
-				message: 'Conversation exported as HTML.'
+				message: 'Conversation exported as HTML.',
 			});
 		} catch (err) {
 			console.error('Failed to export tab:', err);
 			addToastRef.current({
 				type: 'error',
 				title: 'Export Failed',
-				message: 'Failed to export conversation as HTML.'
+				message: 'Failed to export conversation as HTML.',
 			});
 		}
 	}, []);
 
 	// Memoized handler for publishing tab as GitHub Gist
 	const handlePublishTabGist = useCallback((tabId: string) => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
-		const tab = currentSession.aiTabs.find(t => t.id === tabId);
+		const tab = currentSession.aiTabs.find((t) => t.id === tabId);
 		if (!tab || !tab.logs || tab.logs.length === 0) return;
 
 		// Convert logs to markdown-like text format
@@ -6011,18 +5608,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Memoized handler for clearing agent error (wraps handleClearAgentError with session/tab context)
 	const handleClearAgentErrorForMainPanel = useCallback(() => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
-		const activeTab = currentSession.aiTabs.find(t => t.id === currentSession.activeTabId);
+		const activeTab = currentSession.aiTabs.find((t) => t.id === currentSession.activeTabId);
 		if (!activeTab?.agentError) return;
 		handleClearAgentError(currentSession.id, activeTab.id);
 	}, [handleClearAgentError]);
 
 	// Memoized handler for showing agent error modal
 	const handleShowAgentErrorModal = useCallback(() => {
-		const currentSession = sessionsRef.current.find(s => s.id === activeSessionIdRef.current);
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (!currentSession) return;
-		const activeTab = currentSession.aiTabs.find(t => t.id === currentSession.activeTabId);
+		const activeTab = currentSession.aiTabs.find((t) => t.id === currentSession.activeTabId);
 		if (!activeTab?.agentError) return;
 		setAgentErrorModalSessionId(currentSession.id);
 	}, []);
@@ -6040,20 +5637,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 		pauseBatchOnError,
 		skipCurrentDocument,
 		resumeAfterError,
-		abortBatchOnError
+		abortBatchOnError,
 	} = useBatchProcessor({
 		sessions,
 		groups,
 		onUpdateSession: (sessionId, updates) => {
-			setSessions(prev =>
-				prev.map(s => (s.id === sessionId ? { ...s, ...updates } : s))
-			);
+			setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, ...updates } : s)));
 		},
 		onSpawnAgent: spawnAgentForSession,
-		onAddHistoryEntry: async entry => {
+		onAddHistoryEntry: async (entry) => {
 			await window.maestro.history.add({
 				...entry,
-				id: generateId()
+				id: generateId(),
 			});
 			// Refresh history panel to show the new entry
 			rightPanelRef.current?.refreshHistoryPanel();
@@ -6063,12 +5658,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 		audioFeedbackCommand,
 		// Pass autoRunStats for achievement progress in final summary
 		autoRunStats,
-		onComplete: info => {
+		onComplete: (info) => {
 			// Find group name for the session
-			const session = sessions.find(s => s.id === info.sessionId);
-			const sessionGroup = session?.groupId
-				? groups.find(g => g.id === session.groupId)
-				: null;
+			const session = sessions.find((s) => s.id === info.sessionId);
+			const sessionGroup = session?.groupId ? groups.find((g) => g.id === session.groupId) : null;
 			const groupName = sessionGroup?.name || 'Ungrouped';
 
 			// Determine toast type and message based on completion status
@@ -6076,8 +5669,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const toastType = info.wasStopped
 				? 'warning'
 				: info.completedTasks === info.totalTasks
-				? 'success'
-				: 'info';
+					? 'success'
+					: 'info';
 
 			// Build message
 			let message: string;
@@ -6098,14 +5691,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 				group: groupName,
 				project: info.sessionName,
 				taskDuration: info.elapsedTimeMs,
-				sessionId: info.sessionId
+				sessionId: info.sessionId,
 			});
 
 			// Record achievement and check for badge unlocks
 			if (info.elapsedTimeMs > 0) {
-				const { newBadgeLevel, isNewRecord } = recordAutoRunComplete(
-					info.elapsedTimeMs
-				);
+				const { newBadgeLevel, isNewRecord } = recordAutoRunComplete(info.elapsedTimeMs);
 
 				// Check for first Auto Run celebration (takes priority over standing ovation)
 				if (!firstAutoRunCompleted) {
@@ -6116,7 +5707,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						setFirstRunCelebrationData({
 							elapsedTimeMs: info.elapsedTimeMs,
 							completedTasks: info.completedTasks,
-							totalTasks: info.totalTasks
+							totalTasks: info.totalTasks,
 						});
 					}, 500);
 				}
@@ -6124,10 +5715,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				else if (newBadgeLevel !== null || isNewRecord) {
 					const badge =
 						newBadgeLevel !== null
-							? CONDUCTOR_BADGES.find(b => b.level === newBadgeLevel)
-							: CONDUCTOR_BADGES.find(
-									b => b.level === autoRunStats.currentBadgeLevel
-							  );
+							? CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel)
+							: CONDUCTOR_BADGES.find((b) => b.level === autoRunStats.currentBadgeLevel);
 
 					if (badge) {
 						// Small delay to let the toast appear first
@@ -6135,9 +5724,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							setStandingOvationData({
 								badge,
 								isNewRecord,
-								recordTimeMs: isNewRecord
-									? info.elapsedTimeMs
-									: autoRunStats.longestRunMs
+								recordTimeMs: isNewRecord ? info.elapsedTimeMs : autoRunStats.longestRunMs,
 							});
 						}, 500);
 					}
@@ -6146,13 +5733,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Submit to leaderboard if registered and email confirmed
 				if (isLeaderboardRegistered && leaderboardRegistration) {
 					// Calculate updated stats after this run (simulating what recordAutoRunComplete updated)
-					const updatedCumulativeTimeMs =
-						autoRunStats.cumulativeTimeMs + info.elapsedTimeMs;
+					const updatedCumulativeTimeMs = autoRunStats.cumulativeTimeMs + info.elapsedTimeMs;
 					const updatedTotalRuns = autoRunStats.totalRuns + 1;
-					const updatedLongestRunMs = Math.max(
-						autoRunStats.longestRunMs || 0,
-						info.elapsedTimeMs
-					);
+					const updatedLongestRunMs = Math.max(autoRunStats.longestRunMs || 0, info.elapsedTimeMs);
 					const updatedBadge = getBadgeForTime(updatedCumulativeTimeMs);
 					const updatedBadgeLevel = updatedBadge?.level || 0;
 					const updatedBadgeName = updatedBadge?.name || 'No Badge Yet';
@@ -6162,9 +5745,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					if (isNewRecord) {
 						longestRunDate = new Date().toISOString().split('T')[0];
 					} else if (autoRunStats.longestRunTimestamp > 0) {
-						longestRunDate = new Date(autoRunStats.longestRunTimestamp)
-							.toISOString()
-							.split('T')[0];
+						longestRunDate = new Date(autoRunStats.longestRunTimestamp).toISOString().split('T')[0];
 					}
 
 					// Submit to leaderboard in background (only if we have an auth token)
@@ -6197,15 +5778,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 								deltaMs: info.elapsedTimeMs,
 								deltaRuns: 1,
 								// Client's local total for discrepancy detection
-								clientTotalTimeMs: updatedCumulativeTimeMs
+								clientTotalTimeMs: updatedCumulativeTimeMs,
 							})
-							.then(result => {
+							.then((result) => {
 								if (result.success) {
 									// Update last submission timestamp
 									setLeaderboardRegistration({
 										...leaderboardRegistration,
 										lastSubmissionAt: Date.now(),
-										emailConfirmed: !result.requiresConfirmation
+										emailConfirmed: !result.requiresConfirmation,
 									});
 
 									// Show ranking notification if available
@@ -6222,9 +5803,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 											const spotsUp = cumulative.previousRank - cumulative.rank;
 											message = `You moved up ${spotsUp} spot${
 												spotsUp > 1 ? 's' : ''
-											}! Now #${cumulative.rank} (was #${
-												cumulative.previousRank
-											})`;
+											}! Now #${cumulative.rank} (was #${cumulative.previousRank})`;
 										} else if (cumulative.rank === cumulative.previousRank) {
 											// Holding steady
 											message = `You're holding steady at #${cumulative.rank}`;
@@ -6241,25 +5820,23 @@ You are taking over this conversation. Based on the context above, provide a bri
 										addToastRef.current({
 											type: 'success',
 											title: 'Leaderboard Updated',
-											message
+											message,
 										});
 									}
 
 									// Sync local stats from server response (Gap 1 fix for multi-device aggregation)
 									if (result.serverTotals) {
-										const serverCumulativeMs =
-											result.serverTotals.cumulativeTimeMs;
+										const serverCumulativeMs = result.serverTotals.cumulativeTimeMs;
 										// Only update if server has more data (aggregated from other devices)
 										if (serverCumulativeMs > updatedCumulativeTimeMs) {
 											handleSyncAutoRunStats({
 												cumulativeTimeMs: serverCumulativeMs,
 												totalRuns: result.serverTotals.totalRuns,
 												// Recalculate badge level from server cumulative time
-												currentBadgeLevel:
-													getBadgeForTime(serverCumulativeMs)?.level ?? 0,
+												currentBadgeLevel: getBadgeForTime(serverCumulativeMs)?.level ?? 0,
 												// Keep local longest run (server might not return this in submit response)
 												longestRunMs: updatedLongestRunMs,
-												longestRunTimestamp: autoRunStats.longestRunTimestamp
+												longestRunTimestamp: autoRunStats.longestRunTimestamp,
 											});
 										}
 									}
@@ -6273,12 +5850,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				}
 			}
 		},
-		onPRResult: info => {
+		onPRResult: (info) => {
 			// Find group name for the session
-			const session = sessions.find(s => s.id === info.sessionId);
-			const sessionGroup = session?.groupId
-				? groups.find(g => g.id === session.groupId)
-				: null;
+			const session = sessions.find((s) => s.id === info.sessionId);
+			const sessionGroup = session?.groupId ? groups.find((g) => g.id === session.groupId) : null;
 			const groupName = sessionGroup?.name || 'Ungrouped';
 
 			if (info.success) {
@@ -6289,7 +5864,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					message: info.prUrl || 'Pull request created successfully',
 					group: groupName,
 					project: info.sessionName,
-					sessionId: info.sessionId
+					sessionId: info.sessionId,
 				});
 			} else {
 				// PR creation failed - show warning (not error, since the auto-run itself succeeded)
@@ -6299,37 +5874,31 @@ You are taking over this conversation. Based on the context above, provide a bri
 					message: info.error || 'Failed to create pull request',
 					group: groupName,
 					project: info.sessionName,
-					sessionId: info.sessionId
+					sessionId: info.sessionId,
 				});
 			}
 		},
 		// Process queued items after batch completion/stop
 		// This ensures pending user messages are processed after Auto Run ends
-		onProcessQueueAfterCompletion: sessionId => {
-			const session = sessionsRef.current.find(s => s.id === sessionId);
-			if (
-				session &&
-				session.executionQueue.length > 0 &&
-				processQueuedItemRef.current
-			) {
+		onProcessQueueAfterCompletion: (sessionId) => {
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			if (session && session.executionQueue.length > 0 && processQueuedItemRef.current) {
 				// Pop first item and process it
 				const [nextItem, ...remainingQueue] = session.executionQueue;
 
 				// Update session state: set to busy, pop first item from queue
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
-						const targetTab =
-							s.aiTabs.find(tab => tab.id === nextItem.tabId) ||
-							getActiveTab(s);
+						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 						if (!targetTab) {
 							return {
 								...s,
 								state: 'busy' as SessionState,
 								busySource: 'ai',
 								executionQueue: remainingQueue,
-								thinkingStartTime: Date.now()
+								thinkingStartTime: Date.now(),
 							};
 						}
 
@@ -6341,15 +5910,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 								timestamp: Date.now(),
 								source: 'user',
 								text: nextItem.text,
-								images: nextItem.images
+								images: nextItem.images,
 							};
-							updatedAiTabs = s.aiTabs.map(tab =>
+							updatedAiTabs = s.aiTabs.map((tab) =>
 								tab.id === targetTab.id
 									? {
 											...tab,
 											logs: [...tab.logs, logEntry],
-											state: 'busy' as const
-									  }
+											state: 'busy' as const,
+										}
 									: tab
 							);
 						}
@@ -6361,7 +5930,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							aiTabs: updatedAiTabs,
 							activeTabId: targetTab.id,
 							executionQueue: remainingQueue,
-							thinkingStartTime: Date.now()
+							thinkingStartTime: Date.now(),
 						};
 					})
 				);
@@ -6369,7 +5938,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Process the item after state update
 				processQueuedItemRef.current(sessionId, nextItem);
 			}
-		}
+		},
 	});
 
 	// Update refs for batch processor error handling (Phase 5.10)
@@ -6422,7 +5991,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		agentSessionId: inlineWizardAgentSessionId,
 		// Per-tab wizard state accessors
 		getStateForTab: getInlineWizardStateForTab,
-		isWizardActiveForTab: isInlineWizardActiveForTab
+		isWizardActiveForTab: isInlineWizardActiveForTab,
 	} = useInlineWizardContext();
 
 	// Wrapper for sendInlineWizardMessage that adds thinking content callback
@@ -6433,12 +6002,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (activeSession) {
 				const activeTab = getActiveTab(activeSession);
 				if (activeTab?.wizardState) {
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(tab => {
+								aiTabs: s.aiTabs.map((tab) => {
 									if (tab.id !== activeTab.id) return tab;
 									if (!tab.wizardState) return tab;
 									return {
@@ -6446,10 +6015,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 										wizardState: {
 											...tab.wizardState,
 											thinkingContent: '', // Clear previous thinking
-											toolExecutions: [] // Clear previous tool executions
-										}
+											toolExecutions: [], // Clear previous tool executions
+										},
 									};
-								})
+								}),
 							};
 						})
 					);
@@ -6462,7 +6031,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const tabId = activeSession ? getActiveTab(activeSession)?.id : undefined;
 
 			await sendInlineWizardMessage(content, {
-				onThinkingChunk: chunk => {
+				onThinkingChunk: (chunk) => {
 					// Early return if session/tab IDs weren't captured
 					if (!sessionId || !tabId) {
 						return;
@@ -6480,10 +6049,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Accumulate thinking content in the session state
 					// All checks happen inside the updater to use fresh state
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find(t => t.id === tabId);
+							const tab = s.aiTabs.find((t) => t.id === tabId);
 
 							// Only accumulate if showWizardThinking is enabled
 							if (!tab?.wizardState?.showWizardThinking) {
@@ -6492,23 +6061,22 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(t => {
+								aiTabs: s.aiTabs.map((t) => {
 									if (t.id !== tabId) return t;
 									if (!t.wizardState) return t;
 									return {
 										...t,
 										wizardState: {
 											...t.wizardState,
-											thinkingContent:
-												(t.wizardState.thinkingContent || '') + chunk
-										}
+											thinkingContent: (t.wizardState.thinkingContent || '') + chunk,
+										},
 									};
-								})
+								}),
 							};
 						})
 					);
 				},
-				onToolExecution: toolEvent => {
+				onToolExecution: (toolEvent) => {
 					// Early return if session/tab IDs weren't captured
 					if (!sessionId || !tabId) {
 						return;
@@ -6516,10 +6084,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Accumulate tool executions in the session state
 					// This is crucial for showThinking mode since batch mode doesn't stream assistant messages
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
-							const tab = s.aiTabs.find(t => t.id === tabId);
+							const tab = s.aiTabs.find((t) => t.id === tabId);
 
 							// Only accumulate if showWizardThinking is enabled
 							if (!tab?.wizardState?.showWizardThinking) {
@@ -6528,24 +6096,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(t => {
+								aiTabs: s.aiTabs.map((t) => {
 									if (t.id !== tabId) return t;
 									if (!t.wizardState) return t;
 									return {
 										...t,
 										wizardState: {
 											...t.wizardState,
-											toolExecutions: [
-												...(t.wizardState.toolExecutions || []),
-												toolEvent
-											]
-										}
+											toolExecutions: [...(t.wizardState.toolExecutions || []), toolEvent],
+										},
 									};
-								})
+								}),
 							};
 						})
 					);
-				}
+				},
 			});
 		},
 		[activeSession, sendInlineWizardMessage, setSessions]
@@ -6563,8 +6128,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Get the wizard state for the CURRENT tab using the per-tab accessor
 		const tabWizardState = getInlineWizardStateForTab(activeTabId);
-		const hasWizardOnThisTab =
-			tabWizardState?.isActive || tabWizardState?.isGeneratingDocs;
+		const hasWizardOnThisTab = tabWizardState?.isActive || tabWizardState?.isGeneratingDocs;
 		const currentTabWizardState = activeTab?.wizardState;
 
 		if (!hasWizardOnThisTab && !currentTabWizardState) {
@@ -6574,14 +6138,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		if (!hasWizardOnThisTab && currentTabWizardState) {
 			// Wizard was deactivated on this tab - clear the tab's wizard state
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
+						aiTabs: s.aiTabs.map((tab) =>
 							tab.id === activeTabId ? { ...tab, wizardState: undefined } : tab
-						)
+						),
 					};
 				})
 			);
@@ -6597,13 +6161,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// IMPORTANT: showWizardThinking and thinkingContent are preserved from the LATEST state
 		// inside the setSessions updater to avoid stale closure issues. These are managed by
 		// the toggle and onThinkingChunk callback, not by the hook.
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 
 				// Read the LATEST wizard state from prev, not from captured currentTabWizardState
 				// This prevents stale closure issues when the toggle or callback updates state
-				const latestTab = s.aiTabs.find(tab => tab.id === activeTabId);
+				const latestTab = s.aiTabs.find((tab) => tab.id === activeTabId);
 				const latestWizardState = latestTab?.wizardState;
 
 				const newWizardState = {
@@ -6613,26 +6177,26 @@ You are taking over this conversation. Based on the context above, provide a bri
 					goal: tabWizardState.goal ?? undefined,
 					confidence: tabWizardState.confidence,
 					ready: tabWizardState.ready,
-					conversationHistory: tabWizardState.conversationHistory.map(msg => ({
+					conversationHistory: tabWizardState.conversationHistory.map((msg) => ({
 						id: msg.id,
 						role: msg.role,
 						content: msg.content,
 						timestamp: msg.timestamp,
 						confidence: msg.confidence,
-						ready: msg.ready
+						ready: msg.ready,
 					})),
 					previousUIState: tabWizardState.previousUIState ?? {
 						readOnlyMode: false,
 						saveToHistory: true,
-						showThinking: false
+						showThinking: false,
 					},
 					error: tabWizardState.error,
 					isGeneratingDocs: tabWizardState.isGeneratingDocs,
-					generatedDocuments: tabWizardState.generatedDocuments.map(doc => ({
+					generatedDocuments: tabWizardState.generatedDocuments.map((doc) => ({
 						filename: doc.filename,
 						content: doc.content,
 						taskCount: doc.taskCount,
-						savedPath: doc.savedPath
+						savedPath: doc.savedPath,
 					})),
 					streamingContent: tabWizardState.streamingContent,
 					currentDocumentIndex: tabWizardState.currentDocumentIndex,
@@ -6648,16 +6212,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 					subfolderName: tabWizardState.subfolderName ?? undefined,
 					// Preserve thinking state from LATEST state (inside updater) to avoid stale closure
 					showWizardThinking: latestWizardState?.showWizardThinking ?? false,
-					thinkingContent: latestWizardState?.thinkingContent ?? ''
+					thinkingContent: latestWizardState?.thinkingContent ?? '',
 				};
 
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab =>
-						tab.id === activeTabId
-							? { ...tab, wizardState: newWizardState }
-							: tab
-					)
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === activeTabId ? { ...tab, wizardState: newWizardState } : tab
+					),
 				};
 			})
 		);
@@ -6667,7 +6229,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// getInlineWizardStateForTab changes when tabStates Map changes (new wizard state for any tab)
 		// This ensures we re-sync when the active tab's wizard state changes
 		getInlineWizardStateForTab,
-		setSessions
+		setSessions,
 	]);
 
 	// Handler for the built-in /history command
@@ -6687,7 +6249,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'system',
-				text: 'No active agent session. Start a conversation first before using /history.'
+				text: 'No active agent session. Start a conversation first before using /history.',
 			};
 			addLogToActiveTab(activeSession.id, errorLog);
 			return;
@@ -6698,7 +6260,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			id: generateId(),
 			timestamp: Date.now(),
 			source: 'system',
-			text: 'Generating history synopsis...'
+			text: 'Generating history synopsis...',
 		};
 		addLogToActiveTab(activeSession.id, pendingLog);
 
@@ -6726,7 +6288,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					customArgs: activeSession.customArgs,
 					customEnvVars: activeSession.customEnvVars,
 					customModel: activeSession.customModel,
-					customContextWindow: activeSession.customContextWindow
+					customContextWindow: activeSession.customContextWindow,
 				}
 			);
 
@@ -6737,25 +6299,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Check if AI indicated nothing meaningful to report
 				if (parsed.nothingToReport) {
 					// Update the pending log to indicate nothing to report
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(tab => {
+								aiTabs: s.aiTabs.map((tab) => {
 									if (tab.id !== activeTab.id) return tab;
 									return {
 										...tab,
-										logs: tab.logs.map(log =>
+										logs: tab.logs.map((log) =>
 											log.id === pendingLog.id
 												? {
 														...log,
-														text: 'Nothing to report - no history entry created.'
-												  }
+														text: 'Nothing to report - no history entry created.',
+													}
 												: log
-										)
+										),
 									};
-								})
+								}),
 							};
 						})
 					);
@@ -6763,7 +6325,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				}
 
 				// Get group info for the history entry
-				const group = groups.find(g => g.id === activeSession.groupId);
+				const group = groups.find((g) => g.id === activeSession.groupId);
 				const groupName = group?.name || 'Ungrouped';
 
 				// Add to history
@@ -6775,30 +6337,30 @@ You are taking over this conversation. Based on the context above, provide a bri
 					sessionId: activeSession.id,
 					projectPath: activeSession.cwd,
 					sessionName: activeTab.name || undefined,
-					usageStats: result.usageStats
+					usageStats: result.usageStats,
 				});
 
 				// Update the pending log with success AND set lastSynopsisTime
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
-							aiTabs: s.aiTabs.map(tab => {
+							aiTabs: s.aiTabs.map((tab) => {
 								if (tab.id !== activeTab.id) return tab;
 								return {
 									...tab,
 									lastSynopsisTime: synopsisTime, // Track when this synopsis was generated
-									logs: tab.logs.map(log =>
+									logs: tab.logs.map((log) =>
 										log.id === pendingLog.id
 											? {
 													...log,
-													text: `Synopsis saved to history: ${parsed.shortSummary}`
-											  }
+													text: `Synopsis saved to history: ${parsed.shortSummary}`,
+												}
 											: log
-									)
+									),
 								};
-							})
+							}),
 						};
 					})
 				);
@@ -6812,29 +6374,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 					project: activeSession.name,
 					sessionId: activeSession.id,
 					tabId: activeTab.id,
-					tabName: activeTab.name || undefined
+					tabName: activeTab.name || undefined,
 				});
 			} else {
 				// Synopsis generation failed
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== activeSession.id) return s;
 						return {
 							...s,
-							aiTabs: s.aiTabs.map(tab => {
+							aiTabs: s.aiTabs.map((tab) => {
 								if (tab.id !== activeTab.id) return tab;
 								return {
 									...tab,
-									logs: tab.logs.map(log =>
+									logs: tab.logs.map((log) =>
 										log.id === pendingLog.id
 											? {
 													...log,
-													text: 'Failed to generate history synopsis. Try again.'
-											  }
+													text: 'Failed to generate history synopsis. Try again.',
+												}
 											: log
-									)
+									),
 								};
-							})
+							}),
 						};
 					})
 				);
@@ -6842,27 +6404,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 		} catch (error) {
 			console.error('[handleHistoryCommand] Error:', error);
 			// Update the pending log with error
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab => {
+						aiTabs: s.aiTabs.map((tab) => {
 							if (tab.id !== activeTab.id) return tab;
 							return {
 								...tab,
-								logs: tab.logs.map(log =>
+								logs: tab.logs.map((log) =>
 									log.id === pendingLog.id
 										? {
 												...log,
-												text: `Error generating synopsis: ${
-													(error as Error).message
-												}`
-										  }
+												text: `Error generating synopsis: ${(error as Error).message}`,
+											}
 										: log
-								)
+								),
 							};
-						})
+						}),
 					};
 				})
 			);
@@ -6874,7 +6434,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		addHistoryEntry,
 		addLogToActiveTab,
 		setSessions,
-		addToast
+		addToast,
 	]);
 
 	// Handler for the built-in /wizard command
@@ -6896,7 +6456,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const currentUIState: PreviousUIState = {
 				readOnlyMode: activeTab.readOnlyMode ?? false,
 				saveToHistory: activeTab.saveToHistory ?? true,
-				showThinking: activeTab.showThinking ?? false
+				showThinking: activeTab.showThinking ?? false,
 			};
 
 			// Start the inline wizard with the argument text (natural language input)
@@ -6915,14 +6475,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Rename the tab to "Wizard" immediately when wizard starts
 			// This provides visual feedback that wizard mode is active
 			// The tab will be renamed again on completion if a subfolder is chosen
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
+						aiTabs: s.aiTabs.map((tab) =>
 							tab.id === activeTab.id ? { ...tab, name: 'Wizard' } : tab
-						)
+						),
 					};
 				})
 			);
@@ -6934,7 +6494,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				source: 'system',
 				text: args
 					? `Starting wizard with: "${args}"`
-					: 'Starting wizard for Auto Run documents...'
+					: 'Starting wizard for Auto Run documents...',
 			};
 			addLogToActiveTab(activeSession.id, wizardLog);
 		},
@@ -6952,7 +6512,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const result = createTab(activeSession, {
 			name: 'Wizard',
 			saveToHistory: defaultSaveToHistory,
-			showThinking: defaultShowThinking
+			showThinking: defaultShowThinking,
 		});
 		if (!result) {
 			console.warn('[handleLaunchWizardTab] Failed to create new tab');
@@ -6963,12 +6523,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const updatedSession = result.session;
 
 		// Update sessions with new tab and switch to it
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...updatedSession,
-					activeTabId: newTab.id
+					activeTabId: newTab.id,
 				};
 			})
 		);
@@ -6977,7 +6537,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const currentUIState: PreviousUIState = {
 			readOnlyMode: false,
 			saveToHistory: defaultSaveToHistory,
-			showThinking: defaultShowThinking
+			showThinking: defaultShowThinking,
 		};
 
 		// Start the inline wizard in the new tab
@@ -6997,7 +6557,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Show a system log entry
 			const wizardLog = {
 				source: 'system' as const,
-				text: 'Starting wizard for Auto Run documents...'
+				text: 'Starting wizard for Auto Run documents...',
 			};
 			addLogToTab(activeSession.id, wizardLog, newTab.id);
 		}, 0);
@@ -7007,7 +6567,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		defaultSaveToHistory,
 		defaultShowThinking,
 		startInlineWizard,
-		addLogToTab
+		addLogToTab,
 	]);
 
 	// Determine if wizard is active for the current tab
@@ -7017,39 +6577,33 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeSession || !inlineWizardActive) return false;
 		const activeTab = getActiveTab(activeSession);
 		return activeTab?.id === inlineWizardTabId;
-	}, [
-		activeSession,
-		activeSession?.activeTabId,
-		inlineWizardActive,
-		inlineWizardTabId
-	]);
+	}, [activeSession, activeSession?.activeTabId, inlineWizardActive, inlineWizardTabId]);
 
 	// Input processing hook - handles sending messages and commands
-	const { processInput, processInputRef: hookProcessInputRef } =
-		useInputProcessing({
-			activeSession,
-			activeSessionId,
-			setSessions,
-			inputValue,
-			setInputValue,
-			stagedImages,
-			setStagedImages,
-			inputRef,
-			customAICommands: allCustomCommands, // Use combined custom + speckit commands
-			setSlashCommandOpen,
-			syncAiInputToSession,
-			syncTerminalInputToSession,
-			isAiMode,
-			sessionsRef,
-			getBatchState,
-			activeBatchRunState,
-			processQueuedItemRef,
-			flushBatchedUpdates: batchedUpdater.flushNow,
-			onHistoryCommand: handleHistoryCommand,
-			onWizardCommand: handleWizardCommand,
-			onWizardSendMessage: sendWizardMessageWithThinking,
-			isWizardActive: isWizardActiveForCurrentTab
-		});
+	const { processInput, processInputRef: hookProcessInputRef } = useInputProcessing({
+		activeSession,
+		activeSessionId,
+		setSessions,
+		inputValue,
+		setInputValue,
+		stagedImages,
+		setStagedImages,
+		inputRef,
+		customAICommands: allCustomCommands, // Use combined custom + speckit commands
+		setSlashCommandOpen,
+		syncAiInputToSession,
+		syncTerminalInputToSession,
+		isAiMode,
+		sessionsRef,
+		getBatchState,
+		activeBatchRunState,
+		processQueuedItemRef,
+		flushBatchedUpdates: batchedUpdater.flushNow,
+		onHistoryCommand: handleHistoryCommand,
+		onWizardCommand: handleWizardCommand,
+		onWizardSendMessage: sendWizardMessageWithThinking,
+		isWizardActive: isWizardActiveForCurrentTab,
+	});
 
 	// Auto-send context when a tab with autoSendOnActivate becomes active
 	// PERF: Sync processInputRef from hook to our local ref for use in memoized callbacks
@@ -7065,16 +6619,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeTab?.autoSendOnActivate) return;
 
 		// Clear the flag first to prevent multiple sends
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab =>
-						tab.id === activeTab.id
-							? { ...tab, autoSendOnActivate: false }
-							: tab
-					)
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === activeTab.id ? { ...tab, autoSendOnActivate: false } : tab
+					),
 				};
 			})
 		);
@@ -7096,7 +6648,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Track elapsed time for active auto-runs and update achievement stats every minute
 	// This allows badges to be unlocked during an auto-run, not just when it completes
 	const autoRunProgressRef = useRef<{ lastUpdateTime: number }>({
-		lastUpdateTime: 0
+		lastUpdateTime: 0,
 	});
 
 	useEffect(() => {
@@ -7126,12 +6678,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// If a new badge was unlocked during the run, show standing ovation
 			if (newBadgeLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find(b => b.level === newBadgeLevel);
+				const badge = CONDUCTOR_BADGES.find((b) => b.level === newBadgeLevel);
 				if (badge) {
 					setStandingOvationData({
 						badge,
 						isNewRecord: false, // Record is determined at completion
-						recordTimeMs: autoRunStats.longestRunMs
+						recordTimeMs: autoRunStats.longestRunMs,
 					});
 				}
 			}
@@ -7140,28 +6692,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 		return () => {
 			clearInterval(intervalId);
 		};
-	}, [
-		activeBatchSessionIds.length,
-		updateAutoRunProgress,
-		autoRunStats.longestRunMs
-	]);
+	}, [activeBatchSessionIds.length, updateAutoRunProgress, autoRunStats.longestRunMs]);
 
 	// Track peak usage stats for achievements image
 	useEffect(() => {
 		// Count current active agents (non-terminal sessions)
-		const activeAgents = sessions.filter(s => s.toolType !== 'terminal').length;
+		const activeAgents = sessions.filter((s) => s.toolType !== 'terminal').length;
 
 		// Count busy sessions (currently processing)
-		const busySessions = sessions.filter(s => s.state === 'busy').length;
+		const busySessions = sessions.filter((s) => s.state === 'busy').length;
 
 		// Count auto-run sessions (sessions with active batch runs)
 		const autoRunSessions = activeBatchSessionIds.length;
 
 		// Count total queue depth across all sessions
-		const totalQueueDepth = sessions.reduce(
-			(sum, s) => sum + (s.executionQueue?.length || 0),
-			0
-		);
+		const totalQueueDepth = sessions.reduce((sum, s) => sum + (s.executionQueue?.length || 0), 0);
 
 		// Update usage stats (only updates if new values are higher)
 		updateUsageStats({
@@ -7169,7 +6714,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			maxDefinedAgents: activeAgents, // Same as active agents for now
 			maxSimultaneousAutoRuns: autoRunSessions,
 			maxSimultaneousQueries: busySessions,
-			maxQueueDepth: totalQueueDepth
+			maxQueueDepth: totalQueueDepth,
 		});
 	}, [sessions, activeBatchSessionIds, updateUsageStats]);
 
@@ -7177,10 +6722,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const worktreeConfigKey = useMemo(
 		() =>
 			sessions
-				.map(
-					s =>
-						`${s.id}:${s.worktreeConfig?.basePath}:${s.worktreeConfig?.watchEnabled}`
-				)
+				.map((s) => `${s.id}:${s.worktreeConfig?.basePath}:${s.worktreeConfig?.watchEnabled}`)
 				.join(','),
 		[sessions]
 	);
@@ -7190,19 +6732,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 	useEffect(() => {
 		// Find sessions that have worktreeConfig with watchEnabled
 		const watchableSessions = sessions.filter(
-			s => s.worktreeConfig?.basePath && s.worktreeConfig?.watchEnabled
+			(s) => s.worktreeConfig?.basePath && s.worktreeConfig?.watchEnabled
 		);
 
 		// Start watchers for each session
 		for (const session of watchableSessions) {
-			window.maestro.git.watchWorktreeDirectory(
-				session.id,
-				session.worktreeConfig!.basePath
-			);
+			window.maestro.git.watchWorktreeDirectory(session.id, session.worktreeConfig!.basePath);
 		}
 
 		// Set up listener for discovered worktrees
-		const cleanup = window.maestro.git.onWorktreeDiscovered(async data => {
+		const cleanup = window.maestro.git.onWorktreeDiscovered(async (data) => {
 			const { sessionId, worktree } = data;
 
 			// Skip main/master/HEAD branches (already filtered by main process, but double-check)
@@ -7218,19 +6757,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const currentSessions = sessionsRef.current;
 
 			// Find the parent session
-			const parentSession = currentSessions.find(s => s.id === sessionId);
+			const parentSession = currentSessions.find((s) => s.id === sessionId);
 			if (!parentSession) return;
 
 			// Check if session already exists for this worktree
 			// Normalize paths for comparison (remove trailing slashes)
 			const normalizedWorktreePath = worktree.path.replace(/\/+$/, '');
-			const existingSession = currentSessions.find(s => {
+			const existingSession = currentSessions.find((s) => {
 				const normalizedCwd = s.cwd.replace(/\/+$/, '');
 				// Check if same path (regardless of parent) or same branch under same parent
 				return (
 					normalizedCwd === normalizedWorktreePath ||
-					(s.parentSessionId === sessionId &&
-						s.worktreeBranch === worktree.branch)
+					(s.parentSessionId === sessionId && s.worktreeBranch === worktree.branch)
 				);
 			});
 			if (existingSession) return;
@@ -7249,14 +6787,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createdAt: Date.now(),
 				state: 'idle',
 				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking
+				showThinking: defaultShowThinking,
 			};
 
 			// Get SSH remote ID for remote git operations
 			const sshRemoteId =
-				parentSession.sshRemoteId ||
-				parentSession.sessionSshRemoteConfig?.remoteId ||
-				undefined;
+				parentSession.sshRemoteId || parentSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 			// Fetch git info (via SSH for remote sessions)
 			let gitBranches: string[] | undefined;
@@ -7266,7 +6802,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			try {
 				[gitBranches, gitTags] = await Promise.all([
 					gitService.getBranches(worktree.path, sshRemoteId),
-					gitService.getTags(worktree.path, sshRemoteId)
+					gitService.getTags(worktree.path, sshRemoteId),
 				]);
 				gitRefsCacheTime = Date.now();
 			} catch {
@@ -7294,8 +6830,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: 'Worktree Session Ready.'
-					}
+						text: 'Worktree Session Ready.',
+					},
 				],
 				workLog: [],
 				contextUsage: 0,
@@ -7325,26 +6861,24 @@ You are taking over this conversation. Based on the context above, provide a bri
 				nudgeMessage: parentSession.nudgeMessage,
 				autoRunFolderPath: parentSession.autoRunFolderPath,
 				// Inherit SSH configuration from parent session
-				sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig
+				sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig,
 			};
 
-			setSessions(prev => {
+			setSessions((prev) => {
 				// Double-check to avoid duplicates
-				if (prev.some(s => s.cwd === worktree.path)) return prev;
+				if (prev.some((s) => s.cwd === worktree.path)) return prev;
 				return [...prev, worktreeSession];
 			});
 
 			// Expand parent's worktrees
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === sessionId ? { ...s, worktreesExpanded: true } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === sessionId ? { ...s, worktreesExpanded: true } : s))
 			);
 
 			addToast({
 				type: 'success',
 				title: 'New Worktree Discovered',
-				message: worktree.branch || worktree.name
+				message: worktree.branch || worktree.name,
 			});
 		});
 
@@ -7358,7 +6892,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, [
 		// Re-run when worktreeConfig changes on any session
 		worktreeConfigKey,
-		defaultSaveToHistory
+		defaultSaveToHistory,
 	]);
 
 	// Legacy: Scanner for sessions using old worktreeParentPath
@@ -7367,7 +6901,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// This avoids blocking the main thread every 30 seconds during active use
 	useEffect(() => {
 		// Check if any sessions use the legacy worktreeParentPath model
-		const hasLegacyWorktreeSessions = sessions.some(s => s.worktreeParentPath);
+		const hasLegacyWorktreeSessions = sessions.some((s) => s.worktreeParentPath);
 		if (!hasLegacyWorktreeSessions) return;
 
 		// Track if we're currently scanning to avoid overlapping scans
@@ -7379,9 +6913,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			try {
 				// Find sessions that have worktreeParentPath set (legacy model)
-				const worktreeParentSessions = sessionsRef.current.filter(
-					s => s.worktreeParentPath
-				);
+				const worktreeParentSessions = sessionsRef.current.filter((s) => s.worktreeParentPath);
 				if (worktreeParentSessions.length === 0) return;
 
 				// Collect all new sessions to add in a single batch (avoids stale closure issues)
@@ -7393,9 +6925,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					try {
 						// Get SSH remote ID for parent session (check both runtime and config)
 						const parentSshRemoteId =
-							session.sshRemoteId ||
-							session.sessionSshRemoteConfig?.remoteId ||
-							undefined;
+							session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 						const result = await window.maestro.git.scanWorktreeDirectory(
 							session.worktreeParentPath!,
 							parentSshRemoteId
@@ -7412,7 +6942,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							// Skip if session already exists (check current sessions via ref)
 							const currentSessions = sessionsRef.current;
 							const existingSession = currentSessions.find(
-								s => s.cwd === subdir.path || s.projectRoot === subdir.path
+								(s) => s.cwd === subdir.path || s.projectRoot === subdir.path
 							);
 							if (existingSession) {
 								continue;
@@ -7426,9 +6956,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							// Found a new worktree - prepare session creation
 							pathsBeingAdded.add(subdir.path);
 
-							const sessionName = subdir.branch
-								? `${subdir.name} (${subdir.branch})`
-								: subdir.name;
+							const sessionName = subdir.branch ? `${subdir.name} (${subdir.branch})` : subdir.name;
 
 							const newId = generateId();
 							const initialTabId = generateId();
@@ -7443,7 +6971,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								createdAt: Date.now(),
 								state: 'idle',
 								saveToHistory: defaultSaveToHistory,
-								showThinking: defaultShowThinking
+								showThinking: defaultShowThinking,
 							};
 
 							// Fetch git info (with SSH support)
@@ -7454,7 +6982,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							try {
 								[gitBranches, gitTags] = await Promise.all([
 									gitService.getBranches(subdir.path, parentSshRemoteId),
-									gitService.getTags(subdir.path, parentSshRemoteId)
+									gitService.getTags(subdir.path, parentSshRemoteId),
 								]);
 								gitRefsCacheTime = Date.now();
 							} catch {
@@ -7483,8 +7011,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 										id: generateId(),
 										timestamp: Date.now(),
 										source: 'system',
-										text: 'Shell Session Ready.'
-									}
+										text: 'Shell Session Ready.',
+									},
 								],
 								workLog: [],
 								contextUsage: 0,
@@ -7509,27 +7037,22 @@ You are taking over this conversation. Based on the context above, provide a bri
 								customPath: session.customPath,
 								customArgs: session.customArgs,
 								customEnvVars: session.customEnvVars,
-								customModel: session.customModel
+								customModel: session.customModel,
 							};
 
 							newSessionsToAdd.push(newSession);
 						}
 					} catch (error) {
-						console.error(
-							`[WorktreeScanner] Error scanning ${session.worktreeParentPath}:`,
-							error
-						);
+						console.error(`[WorktreeScanner] Error scanning ${session.worktreeParentPath}:`, error);
 					}
 				}
 
 				// Add all new sessions in a single update (uses functional update to get fresh state)
 				if (newSessionsToAdd.length > 0) {
-					setSessions(prev => {
+					setSessions((prev) => {
 						// Double-check against current state to avoid duplicates
-						const currentPaths = new Set(prev.map(s => s.cwd));
-						const trulyNew = newSessionsToAdd.filter(
-							s => !currentPaths.has(s.cwd)
-						);
+						const currentPaths = new Set(prev.map((s) => s.cwd));
+						const trulyNew = newSessionsToAdd.filter((s) => !currentPaths.has(s.cwd));
 						if (trulyNew.length === 0) return prev;
 						return [...prev, ...trulyNew];
 					});
@@ -7538,7 +7061,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						addToast({
 							type: 'success',
 							title: 'New Worktree Discovered',
-							message: session.name
+							message: session.name,
 						});
 					}
 				}
@@ -7563,7 +7086,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		return () => {
 			document.removeEventListener('visibilitychange', handleVisibilityChange);
 		};
-	}, [sessions.some(s => s.worktreeParentPath), defaultSaveToHistory]); // Only re-run when legacy sessions exist/don't exist
+	}, [sessions.some((s) => s.worktreeParentPath), defaultSaveToHistory]); // Only re-run when legacy sessions exist/don't exist
 
 	// Handler to open batch runner modal
 	const handleOpenBatchRunner = useCallback(() => {
@@ -7578,11 +7101,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
 		(tab: RightPanelTab) => {
-			if (
-				tab === 'autorun' &&
-				activeSession &&
-				!activeSession.autoRunFolderPath
-			) {
+			if (tab === 'autorun' && activeSession && !activeSession.autoRunFolderPath) {
 				// No folder configured - show setup modal
 				setAutoRunSetupModalOpen(true);
 				// Still switch to the tab (it will show an empty state or the modal)
@@ -7605,7 +7124,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleAutoRunSelectDocument,
 		handleAutoRunRefresh,
 		handleAutoRunOpenSetup,
-		handleAutoRunCreateDocument
+		handleAutoRunCreateDocument,
 	} = useAutoRunHandlers(activeSession, {
 		setSessions,
 		setAutoRunDocumentList,
@@ -7618,7 +7137,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setActiveFocus,
 		setSuccessFlashNotification,
 		autoRunDocumentList,
-		startBatchRun
+		startBatchRun,
 	});
 
 	// Handler for marketplace import completion - refresh document list
@@ -7631,7 +7150,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			addToast({
 				type: 'success',
 				title: 'Playbook Imported',
-				message: `Successfully imported playbook to ${folderName}`
+				message: `Successfully imported playbook to ${folderName}`,
 			});
 		},
 		[activeSession?.autoRunFolderPath, handleAutoRunRefresh, addToast]
@@ -7641,11 +7160,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleAutoRefreshChange = useCallback(
 		(interval: number) => {
 			if (!activeSession) return;
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === activeSession.id
-						? { ...s, fileTreeAutoRefreshInterval: interval }
-						: s
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === activeSession.id ? { ...s, fileTreeAutoRefreshInterval: interval } : s
 				)
 			);
 		},
@@ -7660,9 +7177,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Use provided targetSessionId, or fall back to first active batch, or active session
 			const sessionId =
 				targetSessionId ??
-				(activeBatchSessionIds.length > 0
-					? activeBatchSessionIds[0]
-					: activeSession?.id);
+				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id);
 			console.log(
 				'[App:handleStopBatchRun] targetSessionId:',
 				targetSessionId,
@@ -7670,11 +7185,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				sessionId
 			);
 			if (!sessionId) return;
-			const session = sessions.find(s => s.id === sessionId);
+			const session = sessions.find((s) => s.id === sessionId);
 			const agentName = session?.name || 'this session';
-			setConfirmModalMessage(
-				`Stop Auto Run for "${agentName}" after the current task completes?`
-			);
+			setConfirmModalMessage(`Stop Auto Run for "${agentName}" after the current task completes?`);
 			setConfirmModalOnConfirm(() => () => {
 				console.log(
 					'[App:handleStopBatchRun] Confirmation callback executing for sessionId:',
@@ -7690,51 +7203,30 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Error handling callbacks for Auto Run (Phase 5.10)
 	const handleSkipCurrentDocument = useCallback(() => {
 		const sessionId =
-			activeBatchSessionIds.length > 0
-				? activeBatchSessionIds[0]
-				: activeSession?.id;
+			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
 		if (!sessionId) return;
 		skipCurrentDocument(sessionId);
 		// Clear the session error state as well
 		handleClearAgentError(sessionId);
-	}, [
-		activeBatchSessionIds,
-		activeSession,
-		skipCurrentDocument,
-		handleClearAgentError
-	]);
+	}, [activeBatchSessionIds, activeSession, skipCurrentDocument, handleClearAgentError]);
 
 	const handleResumeAfterError = useCallback(() => {
 		const sessionId =
-			activeBatchSessionIds.length > 0
-				? activeBatchSessionIds[0]
-				: activeSession?.id;
+			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
 		if (!sessionId) return;
 		resumeAfterError(sessionId);
 		// Clear the session error state as well
 		handleClearAgentError(sessionId);
-	}, [
-		activeBatchSessionIds,
-		activeSession,
-		resumeAfterError,
-		handleClearAgentError
-	]);
+	}, [activeBatchSessionIds, activeSession, resumeAfterError, handleClearAgentError]);
 
 	const handleAbortBatchOnError = useCallback(() => {
 		const sessionId =
-			activeBatchSessionIds.length > 0
-				? activeBatchSessionIds[0]
-				: activeSession?.id;
+			activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id;
 		if (!sessionId) return;
 		abortBatchOnError(sessionId);
 		// Clear the session error state as well
 		handleClearAgentError(sessionId);
-	}, [
-		activeBatchSessionIds,
-		activeSession,
-		abortBatchOnError,
-		handleClearAgentError
-	]);
+	}, [activeBatchSessionIds, activeSession, abortBatchOnError, handleClearAgentError]);
 
 	// Handler for toast navigation - switches to session and optionally to a specific tab
 	const handleToastSessionClick = useCallback(
@@ -7743,11 +7235,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveSessionId(sessionId);
 			// If a tab ID is provided, switch to that tab within the session
 			if (tabId) {
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 						// Check if tab exists
-						if (!s.aiTabs?.some(t => t.id === tabId)) {
+						if (!s.aiTabs?.some((t) => t.id === tabId)) {
 							return s;
 						}
 						return { ...s, activeTabId: tabId, inputMode: 'ai' };
@@ -7761,11 +7253,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Handler to open lightbox with optional context images for navigation
 	// source: 'staged' allows deletion, 'history' is read-only
 	const handleSetLightboxImage = useCallback(
-		(
-			image: string | null,
-			contextImages?: string[],
-			source: 'staged' | 'history' = 'history'
-		) => {
+		(image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') => {
 			// Capture state SYNCHRONOUSLY in refs before any state updates
 			// This ensures values are available immediately when the component re-renders
 			// React batches state updates, so refs are more reliable for immediate access
@@ -7791,7 +7279,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 				// Restore the state for this specific chat from the per-chat state map
 				// This prevents state from one chat bleeding into another when switching
-				setGroupChatState(_prev => {
+				setGroupChatState((_prev) => {
 					const savedState = groupChatStates.get(id);
 					return savedState ?? 'idle';
 				});
@@ -7800,17 +7288,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				const savedParticipantStates = allGroupChatParticipantStates.get(id);
 				console.log(
 					`[GroupChat:UI] handleOpenGroupChat: restoring participantStates for ${id}: ${
-						savedParticipantStates
-							? JSON.stringify([...savedParticipantStates.entries()])
-							: 'none'
+						savedParticipantStates ? JSON.stringify([...savedParticipantStates.entries()]) : 'none'
 					}`
 				);
 				setParticipantStates(savedParticipantStates ?? new Map());
 
 				// Load saved right tab preference for this group chat
-				const savedTab = await window.maestro.settings.get(
-					`groupChatRightTab:${id}`
-				);
+				const savedTab = await window.maestro.settings.get(`groupChatRightTab:${id}`);
 				if (savedTab === 'participants' || savedTab === 'history') {
 					setGroupChatRightTab(savedTab);
 				} else {
@@ -7818,12 +7302,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 				}
 
 				// Start moderator if not running - this initializes the session ID prefix
-				const moderatorSessionId =
-					await window.maestro.groupChat.startModerator(id);
+				const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
 				// Update the group chat state with the moderator session ID
 				if (moderatorSessionId) {
-					setGroupChats(prev =>
-						prev.map(c => (c.id === id ? { ...c, moderatorSessionId } : c))
+					setGroupChats((prev) =>
+						prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c))
 					);
 				}
 
@@ -7850,10 +7333,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		(tab: GroupChatRightTab) => {
 			setGroupChatRightTab(tab);
 			if (activeGroupChatId) {
-				window.maestro.settings.set(
-					`groupChatRightTab:${activeGroupChatId}`,
-					tab
-				);
+				window.maestro.settings.set(`groupChatRightTab:${activeGroupChatId}`, tab);
 			}
 		},
 		[activeGroupChatId]
@@ -7869,8 +7349,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleOpenModeratorSession = useCallback(
 		(moderatorSessionId: string) => {
 			// Find the session that has this agent session ID
-			const session = sessions.find(s =>
-				s.aiTabs?.some(tab => tab.agentSessionId === moderatorSessionId)
+			const session = sessions.find((s) =>
+				s.aiTabs?.some((tab) => tab.agentSessionId === moderatorSessionId)
 			);
 
 			if (session) {
@@ -7884,14 +7364,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				setActiveSessionId(session.id);
 
 				// Find and activate the tab with this agent session ID
-				const tab = session.aiTabs?.find(
-					t => t.agentSessionId === moderatorSessionId
-				);
+				const tab = session.aiTabs?.find((t) => t.agentSessionId === moderatorSessionId);
 				if (tab) {
-					setSessions(prev =>
-						prev.map(s =>
-							s.id === session.id ? { ...s, activeTabId: tab.id } : s
-						)
+					setSessions((prev) =>
+						prev.map((s) => (s.id === session.id ? { ...s, activeTabId: tab.id } : s))
 					);
 				}
 			}
@@ -7909,12 +7385,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customEnvVars?: Record<string, string>;
 			}
 		) => {
-			const chat = await window.maestro.groupChat.create(
-				name,
-				moderatorAgentId,
-				moderatorConfig
-			);
-			setGroupChats(prev => [chat, ...prev]);
+			const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+			setGroupChats((prev) => [chat, ...prev]);
 			setShowNewGroupChatModal(false);
 			handleOpenGroupChat(chat.id);
 		},
@@ -7924,7 +7396,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleDeleteGroupChat = useCallback(
 		async (id: string) => {
 			await window.maestro.groupChat.delete(id);
-			setGroupChats(prev => prev.filter(c => c.id !== id));
+			setGroupChats((prev) => prev.filter((c) => c.id !== id));
 			if (activeGroupChatId === id) {
 				handleCloseGroupChat();
 			}
@@ -7933,16 +7405,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[activeGroupChatId, handleCloseGroupChat]
 	);
 
-	const handleRenameGroupChat = useCallback(
-		async (id: string, newName: string) => {
-			await window.maestro.groupChat.rename(id, newName);
-			setGroupChats(prev =>
-				prev.map(c => (c.id === id ? { ...c, name: newName } : c))
-			);
-			setShowRenameGroupChatModal(null);
-		},
-		[]
-	);
+	const handleRenameGroupChat = useCallback(async (id: string, newName: string) => {
+		await window.maestro.groupChat.rename(id, newName);
+		setGroupChats((prev) => prev.map((c) => (c.id === id ? { ...c, name: newName } : c)));
+		setShowRenameGroupChatModal(null);
+	}, []);
 
 	const handleUpdateGroupChat = useCallback(
 		async (
@@ -7958,9 +7425,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const updated = await window.maestro.groupChat.update(id, {
 				name,
 				moderatorAgentId,
-				moderatorConfig
+				moderatorConfig,
 			});
-			setGroupChats(prev => prev.map(c => (c.id === id ? updated : c)));
+			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
 			setShowEditGroupChatModal(null);
 		},
 		[]
@@ -7968,23 +7435,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// --- GROUP CHAT MODAL HANDLERS ---
 	// Stable callback handlers for AppGroupChatModals component
-	const handleCloseNewGroupChatModal = useCallback(
-		() => setShowNewGroupChatModal(false),
-		[]
-	);
-	const handleCloseDeleteGroupChatModal = useCallback(
-		() => setShowDeleteGroupChatModal(null),
-		[]
-	);
+	const handleCloseNewGroupChatModal = useCallback(() => setShowNewGroupChatModal(false), []);
+	const handleCloseDeleteGroupChatModal = useCallback(() => setShowDeleteGroupChatModal(null), []);
 	const handleConfirmDeleteGroupChat = useCallback(() => {
 		if (showDeleteGroupChatModal) {
 			handleDeleteGroupChat(showDeleteGroupChatModal);
 		}
 	}, [showDeleteGroupChatModal, handleDeleteGroupChat]);
-	const handleCloseRenameGroupChatModal = useCallback(
-		() => setShowRenameGroupChatModal(null),
-		[]
-	);
+	const handleCloseRenameGroupChatModal = useCallback(() => setShowRenameGroupChatModal(null), []);
 	const handleRenameGroupChatFromModal = useCallback(
 		(newName: string) => {
 			if (showRenameGroupChatModal) {
@@ -7993,14 +7451,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[showRenameGroupChatModal, handleRenameGroupChat]
 	);
-	const handleCloseEditGroupChatModal = useCallback(
-		() => setShowEditGroupChatModal(null),
-		[]
-	);
-	const handleCloseGroupChatInfo = useCallback(
-		() => setShowGroupChatInfo(false),
-		[]
-	);
+	const handleCloseEditGroupChatModal = useCallback(() => setShowEditGroupChatModal(null), []);
+	const handleCloseGroupChatInfo = useCallback(() => setShowGroupChatInfo(false), []);
 
 	const handleSendGroupChatMessage = useCallback(
 		async (content: string, images?: string[], readOnly?: boolean) => {
@@ -8015,27 +7467,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 					type: 'message',
 					text: content,
 					images: images ? [...images] : undefined,
-					tabName:
-						groupChats.find(c => c.id === activeGroupChatId)?.name ||
-						'Group Chat',
-					readOnlyMode: readOnly
+					tabName: groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Group Chat',
+					readOnlyMode: readOnly,
 				};
-				setGroupChatExecutionQueue(prev => [...prev, queuedItem]);
+				setGroupChatExecutionQueue((prev) => [...prev, queuedItem]);
 				return;
 			}
 
 			setGroupChatState('moderator-thinking');
-			setGroupChatStates(prev => {
+			setGroupChatStates((prev) => {
 				const next = new Map(prev);
 				next.set(activeGroupChatId, 'moderator-thinking');
 				return next;
 			});
-			await window.maestro.groupChat.sendToModerator(
-				activeGroupChatId,
-				content,
-				images,
-				readOnly
-			);
+			await window.maestro.groupChat.sendToModerator(activeGroupChatId, content, images, readOnly);
 		},
 		[activeGroupChatId, groupChatState, groupChats]
 	);
@@ -8044,10 +7489,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleGroupChatDraftChange = useCallback(
 		(draft: string) => {
 			if (!activeGroupChatId) return;
-			setGroupChats(prev =>
-				prev.map(c =>
-					c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c
-				)
+			setGroupChats((prev) =>
+				prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
 			);
 		},
 		[activeGroupChatId]
@@ -8055,28 +7498,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Handle removing an item from the group chat execution queue
 	const handleRemoveGroupChatQueueItem = useCallback((itemId: string) => {
-		setGroupChatExecutionQueue(prev => prev.filter(item => item.id !== itemId));
+		setGroupChatExecutionQueue((prev) => prev.filter((item) => item.id !== itemId));
 	}, []);
 
 	// Handle reordering items in the group chat execution queue
-	const handleReorderGroupChatQueueItems = useCallback(
-		(fromIndex: number, toIndex: number) => {
-			setGroupChatExecutionQueue(prev => {
-				const queue = [...prev];
-				const [removed] = queue.splice(fromIndex, 1);
-				queue.splice(toIndex, 0, removed);
-				return queue;
-			});
-		},
-		[]
-	);
+	const handleReorderGroupChatQueueItems = useCallback((fromIndex: number, toIndex: number) => {
+		setGroupChatExecutionQueue((prev) => {
+			const queue = [...prev];
+			const [removed] = queue.splice(fromIndex, 1);
+			queue.splice(toIndex, 0, removed);
+			return queue;
+		});
+	}, []);
 
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions } = useSortedSessions({
 		sessions,
 		groups,
-		bookmarksCollapsed
+		bookmarksCollapsed,
 	});
 
 	// --- KEYBOARD NAVIGATION ---
@@ -8085,7 +7525,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleSidebarNavigation,
 		handleTabNavigation,
 		handleEnterToActivate,
-		handleEscapeInMain
+		handleEscapeInMain,
 	} = useKeyboardNavigation({
 		sortedSessions,
 		selectedSidebarIndex,
@@ -8099,13 +7539,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		bookmarksCollapsed,
 		setBookmarksCollapsed,
 		inputRef,
-		terminalOutputRef
+		terminalOutputRef,
 	});
 
 	// --- MAIN KEYBOARD HANDLER ---
 	// Extracted hook for main keyboard event listener (empty deps, uses ref pattern)
-	const { keyboardHandlerRef, showSessionJumpNumbers } =
-		useMainKeyboardHandler();
+	const { keyboardHandlerRef, showSessionJumpNumbers } = useMainKeyboardHandler();
 
 	// Persist sessions to electron-store using debounced persistence (reduces disk writes from 100+/sec to <1/sec during streaming)
 	// The hook handles: debouncing, flush-on-unmount, flush-on-visibility-change, flush-on-beforeunload
@@ -8131,8 +7570,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				workingDirOverride?: string;
 			}
 		) => {
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					return {
 						...s,
@@ -8143,7 +7582,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						customEnvVars,
 						customModel,
 						customContextWindow,
-						sessionSshRemoteConfig
+						sessionSshRemoteConfig,
 					};
 				})
 			);
@@ -8154,49 +7593,34 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			if (!activeSession || !renameTabId) return;
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					// Find the tab to get its agentSessionId for persistence
-					const tab = s.aiTabs.find(t => t.id === renameTabId);
+					const tab = s.aiTabs.find((t) => t.id === renameTabId);
 					if (tab?.agentSessionId) {
 						// Persist name to agent session metadata (async, fire and forget)
 						// Use projectRoot (not cwd) for consistent session storage access
 						const agentId = s.toolType || 'claude-code';
 						if (agentId === 'claude-code') {
 							window.maestro.claude
-								.updateSessionName(
-									s.projectRoot,
-									tab.agentSessionId,
-									newName || ''
-								)
-								.catch(err =>
-									console.error('Failed to persist tab name:', err)
-								);
+								.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
+								.catch((err) => console.error('Failed to persist tab name:', err));
 						} else {
 							window.maestro.agentSessions
-								.setSessionName(
-									agentId,
-									s.projectRoot,
-									tab.agentSessionId,
-									newName || null
-								)
-								.catch(err =>
-									console.error('Failed to persist tab name:', err)
-								);
+								.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
+								.catch((err) => console.error('Failed to persist tab name:', err));
 						}
 						// Also update past history entries with this agentSessionId
 						window.maestro.history
 							.updateSessionName(tab.agentSessionId, newName || '')
-							.catch(err =>
-								console.error('Failed to update history session names:', err)
-							);
+							.catch((err) => console.error('Failed to update history session names:', err));
 					}
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
+						aiTabs: s.aiTabs.map((tab) =>
 							tab.id === renameTabId ? { ...tab, name: newName || null } : tab
-						)
+						),
 					};
 				})
 			);
@@ -8222,8 +7646,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			fileTreeContainerRef.current &&
 			activeSession.fileExplorerScrollPos !== undefined
 		) {
-			fileTreeContainerRef.current.scrollTop =
-				activeSession.fileExplorerScrollPos;
+			fileTreeContainerRef.current.scrollTop = activeSession.fileExplorerScrollPos;
 		}
 	}, [activeSessionId]); // Only restore on session switch, not on scroll position changes
 
@@ -8235,7 +7658,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				tabId:
 					activeSession.inputMode === 'ai' && activeSession.aiTabs?.length > 0
 						? activeSession.activeTabId
-						: undefined
+						: undefined,
 			});
 		}
 	}, [activeSessionId, activeSession?.activeTabId]); // Track session and tab changes
@@ -8268,7 +7691,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Load content and count tasks for each document in parallel
 			await Promise.all(
-				documents.map(async docPath => {
+				documents.map(async (docPath) => {
 					try {
 						const result = await window.maestro.autorun.readDoc(
 							folderPath,
@@ -8305,9 +7728,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Get SSH remote ID for remote sessions (check both runtime and config values)
 			const sshRemoteId =
-				activeSession.sshRemoteId ||
-				activeSession.sessionSshRemoteConfig?.remoteId ||
-				undefined;
+				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 			// Load document list
 			setAutoRunIsLoadingDocuments(true);
@@ -8321,11 +7742,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				setAutoRunDocumentTree(listResult.tree || []);
 
 				// Load task counts for all documents
-				const counts = await loadTaskCounts(
-					activeSession.autoRunFolderPath,
-					files,
-					sshRemoteId
-				);
+				const counts = await loadTaskCounts(activeSession.autoRunFolderPath, files, sshRemoteId);
 				setAutoRunDocumentTaskCounts(counts);
 			}
 			setAutoRunIsLoadingDocuments(false);
@@ -8338,17 +7755,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 					activeSession.autoRunSelectedFile + '.md',
 					sshRemoteId
 				);
-				const newContent = contentResult.success
-					? contentResult.content || ''
-					: '';
-				setSessions(prev =>
-					prev.map(s =>
+				const newContent = contentResult.success ? contentResult.content || '' : '';
+				setSessions((prev) =>
+					prev.map((s) =>
 						s.id === activeSession.id
 							? {
 									...s,
 									autoRunContent: newContent,
-									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1
-							  }
+									autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+								}
 							: s
 					)
 				);
@@ -8363,7 +7778,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		activeSession?.autoRunSelectedFile,
 		activeSession?.sshRemoteId,
 		activeSession?.sessionSshRemoteConfig?.remoteId,
-		loadTaskCounts
+		loadTaskCounts,
 	]);
 
 	// File watching for Auto Run - watch whenever a folder is configured
@@ -8376,9 +7791,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const selectedFile = activeSession?.autoRunSelectedFile;
 		// Get SSH remote ID for remote sessions (check both runtime and config values)
 		const sshRemoteId =
-			activeSession?.sshRemoteId ||
-			activeSession?.sessionSshRemoteConfig?.remoteId ||
-			undefined;
+			activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined;
 
 		// Only watch if folder is set
 		if (!folderPath || !sessionId) return;
@@ -8387,15 +7800,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		window.maestro.autorun.watchFolder(folderPath, sshRemoteId);
 
 		// Listen for file change events (only triggered for local sessions)
-		const unsubscribe = window.maestro.autorun.onFileChanged(async data => {
+		const unsubscribe = window.maestro.autorun.onFileChanged(async (data) => {
 			// Only respond to changes in the current folder
 			if (data.folderPath !== folderPath) return;
 
 			// Reload document list for any change (in case files added/removed)
-			const listResult = await window.maestro.autorun.listDocs(
-				folderPath,
-				sshRemoteId
-			);
+			const listResult = await window.maestro.autorun.listDocs(folderPath, sshRemoteId);
 			if (listResult.success) {
 				const files = listResult.files || [];
 				setAutoRunDocumentList(files);
@@ -8416,14 +7826,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 				);
 				if (contentResult.success) {
 					// Update content in the specific session that owns this folder
-					setSessions(prev =>
-						prev.map(s =>
+					setSessions((prev) =>
+						prev.map((s) =>
 							s.id === sessionId
 								? {
 										...s,
 										autoRunContent: contentResult.content || '',
-										autoRunContentVersion: (s.autoRunContentVersion || 0) + 1
-								  }
+										autoRunContentVersion: (s.autoRunContentVersion || 0) + 1,
+									}
 								: s
 						)
 					);
@@ -8443,7 +7853,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		activeSession?.autoRunSelectedFile,
 		activeSession?.sshRemoteId,
 		activeSession?.sessionSshRemoteConfig?.remoteId,
-		loadTaskCounts
+		loadTaskCounts,
 	]);
 
 	// Auto-scroll logs
@@ -8477,12 +7887,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Helper to get worktree children for a session
 		const getWorktreeChildren = (parentId: string) =>
 			sessions
-				.filter(s => s.parentSessionId === parentId)
+				.filter((s) => s.parentSessionId === parentId)
 				.sort((a, b) =>
-					compareNamesIgnoringEmojis(
-						a.worktreeBranch || a.name,
-						b.worktreeBranch || b.name
-					)
+					compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name)
 				);
 
 		// Helper to add session with its worktree children to visual order
@@ -8493,17 +7900,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 			visualOrder.push({
 				type: 'session' as const,
 				id: session.id,
-				name: session.name
+				name: session.name,
 			});
 
 			// Add worktree children if expanded
 			if (session.worktreesExpanded !== false) {
 				const children = getWorktreeChildren(session.id);
 				visualOrder.push(
-					...children.map(s => ({
+					...children.map((s) => ({
 						type: 'session' as const,
 						id: s.id,
-						name: s.worktreeBranch || s.name
+						name: s.worktreeBranch || s.name,
 					}))
 				);
 			}
@@ -8513,19 +7920,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Bookmarks section (if expanded and has bookmarked sessions)
 			if (!bookmarksCollapsed) {
 				const bookmarkedSessions = sessions
-					.filter(s => s.bookmarked && !s.parentSessionId)
+					.filter((s) => s.bookmarked && !s.parentSessionId)
 					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 				bookmarkedSessions.forEach(addSessionWithWorktrees);
 			}
 
 			// Groups (sorted alphabetically), with each group's sessions
-			const sortedGroups = [...groups].sort((a, b) =>
-				compareNamesIgnoringEmojis(a.name, b.name)
-			);
+			const sortedGroups = [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 			for (const group of sortedGroups) {
 				if (!group.collapsed) {
 					const groupSessions = sessions
-						.filter(s => s.groupId === group.id && !s.parentSessionId)
+						.filter((s) => s.groupId === group.id && !s.parentSessionId)
 						.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 					groupSessions.forEach(addSessionWithWorktrees);
 				}
@@ -8534,7 +7939,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Ungrouped sessions (sorted alphabetically) - only if not collapsed
 			if (!settings.ungroupedCollapsed) {
 				const ungroupedSessions = sessions
-					.filter(s => !s.groupId && !s.parentSessionId)
+					.filter((s) => !s.groupId && !s.parentSessionId)
 					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 				ungroupedSessions.forEach(addSessionWithWorktrees);
 			}
@@ -8545,20 +7950,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 					a.name.toLowerCase().localeCompare(b.name.toLowerCase())
 				);
 				visualOrder.push(
-					...sortedGroupChats.map(gc => ({
+					...sortedGroupChats.map((gc) => ({
 						type: 'groupChat' as const,
 						id: gc.id,
-						name: gc.name
+						name: gc.name,
 					}))
 				);
 			}
 		} else {
 			// Sidebar collapsed: cycle through all sessions in their sorted order
 			visualOrder.push(
-				...sortedSessions.map(s => ({
+				...sortedSessions.map((s) => ({
 					type: 'session' as const,
 					id: s.id,
-					name: s.name
+					name: s.name,
 				}))
 			);
 		}
@@ -8580,11 +7985,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		) {
 			// Position is invalid or doesn't match current item - find first occurrence
 			currentIndex = visualOrder.findIndex(
-				item =>
+				(item) =>
 					item.id === currentActiveId &&
-					(currentIsGroupChat
-						? item.type === 'groupChat'
-						: item.type === 'session')
+					(currentIsGroupChat ? item.type === 'groupChat' : item.type === 'session')
 			);
 		}
 
@@ -8605,11 +8008,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Move to next/prev in visual order
 		let nextIndex;
 		if (dir === 'next') {
-			nextIndex =
-				currentIndex === visualOrder.length - 1 ? 0 : currentIndex + 1;
+			nextIndex = currentIndex === visualOrder.length - 1 ? 0 : currentIndex + 1;
 		} else {
-			nextIndex =
-				currentIndex === 0 ? visualOrder.length - 1 : currentIndex - 1;
+			nextIndex = currentIndex === 0 ? visualOrder.length - 1 : currentIndex - 1;
 		}
 
 		cyclePositionRef.current = nextIndex;
@@ -8633,14 +8034,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Delete group chat with confirmation dialog (for keyboard shortcut and CMD+K)
 	const deleteGroupChatWithConfirmation = useCallback(
 		(id: string) => {
-			const chat = groupChats.find(c => c.id === id);
+			const chat = groupChats.find((c) => c.id === id);
 			if (!chat) return;
 
 			showConfirmation(
 				`Are you sure you want to delete the group chat "${chat.name}"? This action cannot be undone.`,
 				async () => {
 					await window.maestro.groupChat.delete(id);
-					setGroupChats(prev => prev.filter(c => c.id !== id));
+					setGroupChats((prev) => prev.filter((c) => c.id !== id));
 					if (activeGroupChatId === id) {
 						handleCloseGroupChat();
 					}
@@ -8651,7 +8052,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	);
 
 	const deleteSession = (id: string) => {
-		const session = sessions.find(s => s.id === id);
+		const session = sessions.find((s) => s.id === id);
 		if (!session) return;
 
 		// Open the delete agent modal
@@ -8689,7 +8090,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// If this is a worktree session, track its path to prevent re-discovery
 			if (session.worktreeParentPath && session.cwd) {
-				setRemovedWorktreePaths(prev => new Set([...prev, session.cwd]));
+				setRemovedWorktreePaths((prev) => new Set([...prev, session.cwd]));
 			}
 
 			// Optionally erase the working directory (move to trash)
@@ -8702,12 +8103,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 					addToast({
 						title: 'Failed to Erase Directory',
 						message: error instanceof Error ? error.message : 'Unknown error',
-						type: 'error'
+						type: 'error',
 					});
 				}
 			}
 
-			const newSessions = sessions.filter(s => s.id !== id);
+			const newSessions = sessions.filter((s) => s.id !== id);
 			setSessions(newSessions);
 			// Flush immediately for critical operation (session deletion)
 			// Note: flushSessionPersistence will pick up the latest state via ref
@@ -8724,22 +8125,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveSessionId,
 			flushSessionPersistence,
 			setRemovedWorktreePaths,
-			addToast
+			addToast,
 		]
 	);
 
 	// Delete an entire worktree group and all its agents
 	const deleteWorktreeGroup = (groupId: string) => {
-		const group = groups.find(g => g.id === groupId);
+		const group = groups.find((g) => g.id === groupId);
 		if (!group) return;
 
-		const groupSessions = sessions.filter(s => s.groupId === groupId);
+		const groupSessions = sessions.filter((s) => s.groupId === groupId);
 		const sessionCount = groupSessions.length;
 
 		showConfirmation(
-			`Are you sure you want to remove the group "${
-				group.name
-			}" and all ${sessionCount} agent${
+			`Are you sure you want to remove the group "${group.name}" and all ${sessionCount} agent${
 				sessionCount !== 1 ? 's' : ''
 			} in it? This action cannot be undone.`,
 			async () => {
@@ -8766,20 +8165,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 				// Track all removed paths to prevent re-discovery
 				const pathsToTrack = groupSessions
-					.filter(s => s.worktreeParentPath && s.cwd)
-					.map(s => s.cwd);
+					.filter((s) => s.worktreeParentPath && s.cwd)
+					.map((s) => s.cwd);
 
 				if (pathsToTrack.length > 0) {
-					setRemovedWorktreePaths(prev => new Set([...prev, ...pathsToTrack]));
+					setRemovedWorktreePaths((prev) => new Set([...prev, ...pathsToTrack]));
 				}
 
 				// Remove all sessions in the group
-				const sessionIdsToRemove = new Set(groupSessions.map(s => s.id));
-				const newSessions = sessions.filter(s => !sessionIdsToRemove.has(s.id));
+				const sessionIdsToRemove = new Set(groupSessions.map((s) => s.id));
+				const newSessions = sessions.filter((s) => !sessionIdsToRemove.has(s.id));
 				setSessions(newSessions);
 
 				// Remove the group
-				setGroups(prev => prev.filter(g => g.id !== groupId));
+				setGroups((prev) => prev.filter((g) => g.id !== groupId));
 
 				// Flush immediately for critical operation
 				setTimeout(() => flushSessionPersistence(), 0);
@@ -8796,7 +8195,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					title: 'Group Removed',
 					message: `Removed "${group.name}" and ${sessionCount} agent${
 						sessionCount !== 1 ? 's' : ''
-					}`
+					}`,
 				});
 			}
 		);
@@ -8834,18 +8233,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Always create a single session for the selected directory
 			// Worktree scanning/creation is now handled explicitly via the worktree config modal
 			// Validate uniqueness before creating
-			const validation = validateNewSession(
-				name,
-				workingDir,
-				agentId as ToolType,
-				sessions
-			);
+			const validation = validateNewSession(name, workingDir, agentId as ToolType, sessions);
 			if (!validation.valid) {
 				console.error(`Session validation failed: ${validation.error}`);
 				addToast({
 					type: 'error',
 					title: 'Session Creation Failed',
-					message: validation.error || 'Cannot create duplicate session'
+					message: validation.error || 'Cannot create duplicate session',
 				});
 				return;
 			}
@@ -8855,8 +8249,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// For SSH sessions, defer git check until onSshRemote fires (SSH connection established)
 			// For local sessions, check git repo status immediately
-			const isRemoteSession =
-				sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.remoteId;
+			const isRemoteSession = sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.remoteId;
 			let isGitRepo = false;
 			let gitBranches: string[] | undefined;
 			let gitTags: string[] | undefined;
@@ -8868,7 +8261,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				if (isGitRepo) {
 					[gitBranches, gitTags] = await Promise.all([
 						gitService.getBranches(workingDir),
-						gitService.getTags(workingDir)
+						gitService.getTags(workingDir),
 					]);
 					gitRefsCacheTime = Date.now();
 				}
@@ -8889,7 +8282,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createdAt: Date.now(),
 				state: 'idle',
 				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking
+				showThinking: defaultShowThinking,
 			};
 
 			const newSession: Session = {
@@ -8910,8 +8303,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: 'Shell Session Ready.'
-					}
+						text: 'Shell Session Ready.',
+					},
 				],
 				workLog: [],
 				contextUsage: 0,
@@ -8946,9 +8339,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customContextWindow,
 				customProviderPath,
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
-				sessionSshRemoteConfig
+				sessionSshRemoteConfig,
 			};
-			setSessions(prev => [...prev, newSession]);
+			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
 			// Track session creation in global stats
 			updateGlobalStats({ totalSessions: 1 });
@@ -8958,7 +8351,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				agentType: agentId,
 				projectPath: workingDir,
 				createdAt: Date.now(),
-				isRemote: !!isRemoteSession
+				isRemote: !!isRemoteSession,
 			});
 			// Auto-focus the input so user can start typing immediately
 			// Use a small delay to ensure the modal has closed and the UI has updated
@@ -8985,7 +8378,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customPath,
 				customArgs,
 				customEnvVars,
-				sessionSshRemoteConfig
+				sessionSshRemoteConfig,
 			} = wizardState;
 
 			if (!selectedAgent || !directoryPath) {
@@ -9009,7 +8402,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				addToast({
 					type: 'error',
 					title: 'Session Creation Failed',
-					message: validation.error || 'Cannot create duplicate session'
+					message: validation.error || 'Cannot create duplicate session',
 				});
 				throw new Error(validation.error || 'Session validation failed');
 			}
@@ -9027,17 +8420,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Check git repo status (with SSH support if configured)
 			const wizardSshRemoteId = sessionSshRemoteConfig?.remoteId || undefined;
-			const isGitRepo = await gitService.isRepo(
-				directoryPath,
-				wizardSshRemoteId
-			);
+			const isGitRepo = await gitService.isRepo(directoryPath, wizardSshRemoteId);
 			let gitBranches: string[] | undefined;
 			let gitTags: string[] | undefined;
 			let gitRefsCacheTime: number | undefined;
 			if (isGitRepo) {
 				[gitBranches, gitTags] = await Promise.all([
 					gitService.getBranches(directoryPath, wizardSshRemoteId),
-					gitService.getTags(directoryPath, wizardSshRemoteId)
+					gitService.getTags(directoryPath, wizardSshRemoteId),
 				]);
 				gitRefsCacheTime = Date.now();
 			}
@@ -9055,15 +8445,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createdAt: Date.now(),
 				state: 'idle',
 				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking
+				showThinking: defaultShowThinking,
 			};
 
 			// Build Auto Run folder path
 			const autoRunFolderPath = `${directoryPath}/${AUTO_RUN_FOLDER_NAME}`;
 			const firstDoc = generatedDocuments[0];
-			const autoRunSelectedFile = firstDoc
-				? firstDoc.filename.replace(/\.md$/, '')
-				: undefined;
+			const autoRunSelectedFile = firstDoc ? firstDoc.filename.replace(/\.md$/, '') : undefined;
 
 			// Create the session with Auto Run configured
 			const newSession: Session = {
@@ -9084,8 +8472,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: 'Shell Session Ready.'
-					}
+						text: 'Shell Session Ready.',
+					},
 				],
 				workLog: [],
 				contextUsage: 0,
@@ -9115,11 +8503,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customArgs,
 				customEnvVars,
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
-				sessionSshRemoteConfig
+				sessionSshRemoteConfig,
 			};
 
 			// Add session and make it active
-			setSessions(prev => [...prev, newSession]);
+			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
 			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
@@ -9128,7 +8516,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				agentType: selectedAgent,
 				projectPath: directoryPath,
 				createdAt: Date.now(),
-				isRemote: !!sessionSshRemoteConfig?.enabled
+				isRemote: !!sessionSshRemoteConfig?.enabled,
 			});
 
 			// Clear wizard resume state since we completed successfully
@@ -9155,9 +8543,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Auto-start the batch run with the first document that has tasks
 			// This is the core purpose of the onboarding wizard - get the user's first Auto Run going
-			const firstDocWithTasks = generatedDocuments.find(
-				doc => doc.taskCount > 0
-			);
+			const firstDocWithTasks = generatedDocuments.find((doc) => doc.taskCount > 0);
 			if (firstDocWithTasks && autoRunFolderPath) {
 				// Create batch config for single document run
 				const batchConfig: BatchRunConfig = {
@@ -9166,11 +8552,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 							id: generateId(),
 							filename: firstDocWithTasks.filename.replace(/\.md$/, ''),
 							resetOnCompletion: false,
-							isDuplicate: false
-						}
+							isDuplicate: false,
+						},
 					],
 					prompt: DEFAULT_BATCH_PROMPT,
-					loopEnabled: false
+					loopEnabled: false,
 				};
 
 				// Small delay to ensure session state is fully propagated before starting batch
@@ -9196,7 +8582,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveFocus,
 			startBatchRun,
 			sessions,
-			addToast
+			addToast,
 		]
 	);
 
@@ -9215,7 +8601,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const _initializeMergedSession = useCallback(
 		async (session: Session, contextSummary?: string) => {
 			// Add session to app state
-			setSessions(prev => [...prev, session]);
+			setSessions((prev) => [...prev, session]);
 			setActiveSessionId(session.id);
 
 			// Track session creation in global stats
@@ -9225,31 +8611,26 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
 			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
 			const sshRemoteId =
-				session.sshRemoteId ||
-				session.sessionSshRemoteConfig?.remoteId ||
-				undefined;
+				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 
 			// Check if this is a git repo and update git info (via SSH for remote sessions)
-			const isGitRepo = await gitService.isRepo(
-				session.projectRoot,
-				sshRemoteId
-			);
+			const isGitRepo = await gitService.isRepo(session.projectRoot, sshRemoteId);
 			if (isGitRepo) {
 				try {
 					const [gitBranches, gitTags] = await Promise.all([
 						gitService.getBranches(session.projectRoot, sshRemoteId),
-						gitService.getTags(session.projectRoot, sshRemoteId)
+						gitService.getTags(session.projectRoot, sshRemoteId),
 					]);
 
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== session.id) return s;
 							return {
 								...s,
 								isGitRepo: true,
 								gitBranches,
 								gitTags,
-								gitRefsCacheTime: Date.now()
+								gitRefsCacheTime: Date.now(),
 							};
 						})
 					);
@@ -9268,21 +8649,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: `[Merged Context]\n\n${contextSummary}`
+						text: `[Merged Context]\n\n${contextSummary}`,
 					};
 
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== session.id) return s;
 							return {
 								...s,
-								aiTabs: s.aiTabs.map(tab => {
+								aiTabs: s.aiTabs.map((tab) => {
 									if (tab.id !== activeTab.id) return tab;
 									return {
 										...tab,
-										logs: [...tab.logs, contextLogEntry]
+										logs: [...tab.logs, contextLogEntry],
 									};
-								})
+								}),
 							};
 						})
 					);
@@ -9297,21 +8678,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 			addToast({
 				type: 'success',
 				title: 'Session Created',
-				message: `Merged context session "${session.name}" is ready`
+				message: `Merged context session "${session.name}" is ready`,
 			});
 		},
-		[
-			setSessions,
-			setActiveSessionId,
-			updateGlobalStats,
-			setActiveFocus,
-			addToast
-		]
+		[setSessions, setActiveSessionId, updateGlobalStats, setActiveFocus, addToast]
 	);
 
 	const toggleInputMode = () => {
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 				return { ...s, inputMode: s.inputMode === 'ai' ? 'terminal' : 'ai' };
 			})
@@ -9330,11 +8705,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Exiting filter mode: restore previous active tab if it still exists
 			if (preFilterActiveTabIdRef.current && activeSession) {
 				const tabStillExists = activeSession.aiTabs.some(
-					t => t.id === preFilterActiveTabIdRef.current
+					(t) => t.id === preFilterActiveTabIdRef.current
 				);
 				if (tabStillExists) {
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 							return { ...s, activeTabId: preFilterActiveTabIdRef.current! };
 						})
@@ -9343,7 +8718,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				preFilterActiveTabIdRef.current = null;
 			}
 		}
-		setShowUnreadOnly(prev => !prev);
+		setShowUnreadOnly((prev) => !prev);
 	}, [showUnreadOnly, activeSession]);
 
 	// Toggle star on the current active tab
@@ -9353,8 +8728,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!tab) return;
 
 		const newStarred = !tab.starred;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				// Persist starred status to session metadata (async, fire and forget)
 				// Use projectRoot (not cwd) for consistent session storage access
@@ -9362,32 +8737,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const agentId = s.toolType || 'claude-code';
 					if (agentId === 'claude-code') {
 						window.maestro.claude
-							.updateSessionStarred(
-								s.projectRoot,
-								tab.agentSessionId,
-								newStarred
-							)
-							.catch(err =>
-								console.error('Failed to persist tab starred:', err)
-							);
+							.updateSessionStarred(s.projectRoot, tab.agentSessionId, newStarred)
+							.catch((err) => console.error('Failed to persist tab starred:', err));
 					} else {
 						window.maestro.agentSessions
-							.setSessionStarred(
-								agentId,
-								s.projectRoot,
-								tab.agentSessionId,
-								newStarred
-							)
-							.catch(err =>
-								console.error('Failed to persist tab starred:', err)
-							);
+							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, newStarred)
+							.catch((err) => console.error('Failed to persist tab starred:', err));
 					}
 				}
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(t =>
-						t.id === tab.id ? { ...t, starred: newStarred } : t
-					)
+					aiTabs: s.aiTabs.map((t) => (t.id === tab.id ? { ...t, starred: newStarred } : t)),
 				};
 			})
 		);
@@ -9399,14 +8759,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const tab = getActiveTab(activeSession);
 		if (!tab) return;
 
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(t =>
-						t.id === tab.id ? { ...t, hasUnread: !t.hasUnread } : t
-					)
+					aiTabs: s.aiTabs.map((t) => (t.id === tab.id ? { ...t, hasUnread: !t.hasUnread } : t)),
 				};
 			})
 		);
@@ -9428,10 +8786,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					setIsLiveMode(true);
 					setWebInterfaceUrl(result.url);
 				} else {
-					console.error(
-						'[toggleGlobalLive] Failed to start server:',
-						result.error
-					);
+					console.error('[toggleGlobalLive] Failed to start server:', result.error);
 				}
 			}
 		} catch (error) {
@@ -9450,10 +8805,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				setWebInterfaceUrl(result.url);
 				return result.url;
 			} else {
-				console.error(
-					'[restartWebServer] Failed to restart server:',
-					result.error
-				);
+				console.error('[restartWebServer] Failed to restart server:', result.error);
 				return null;
 			}
 		} catch (error) {
@@ -9483,41 +8835,24 @@ You are taking over this conversation. Based on the context above, provide a bri
 	};
 
 	const finishRenamingSession = (sessId: string, newName: string) => {
-		setSessions(prev => {
-			const updated = prev.map(s =>
-				s.id === sessId ? { ...s, name: newName } : s
-			);
+		setSessions((prev) => {
+			const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
 			// Sync the session name to agent session storage for searchability
 			// Use projectRoot (not cwd) for consistent session storage access
-			const session = updated.find(s => s.id === sessId);
+			const session = updated.find((s) => s.id === sessId);
 			if (session?.agentSessionId && session.projectRoot) {
 				const agentId = session.toolType || 'claude-code';
 				if (agentId === 'claude-code') {
 					window.maestro.claude
-						.updateSessionName(
-							session.projectRoot,
-							session.agentSessionId,
-							newName
-						)
-						.catch(err =>
-							console.warn(
-								'[finishRenamingSession] Failed to sync session name:',
-								err
-							)
+						.updateSessionName(session.projectRoot, session.agentSessionId, newName)
+						.catch((err) =>
+							console.warn('[finishRenamingSession] Failed to sync session name:', err)
 						);
 				} else {
 					window.maestro.agentSessions
-						.setSessionName(
-							agentId,
-							session.projectRoot,
-							session.agentSessionId,
-							newName
-						)
-						.catch(err =>
-							console.warn(
-								'[finishRenamingSession] Failed to sync session name:',
-								err
-							)
+						.setSessionName(agentId, session.projectRoot, session.agentSessionId, newName)
+						.catch((err) =>
+							console.warn('[finishRenamingSession] Failed to sync session name:', err)
 						);
 				}
 			}
@@ -9546,25 +8881,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 				command: string;
 				inputMode?: 'ai' | 'terminal';
 			}>;
-			const {
-				sessionId,
-				command,
-				inputMode: webInputMode
-			} = customEvent.detail;
+			const { sessionId, command, inputMode: webInputMode } = customEvent.detail;
 
 			console.log('[Remote] Processing remote command via event:', {
 				sessionId,
 				command: command.substring(0, 50),
-				webInputMode
+				webInputMode,
 			});
 
 			// Find the session directly from sessionsRef (not from React state which may be stale)
-			const session = sessionsRef.current.find(s => s.id === sessionId);
+			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
-				console.log(
-					'[Remote] ERROR: Session not found in sessionsRef:',
-					sessionId
-				);
+				console.log('[Remote] ERROR: Session not found in sessionsRef:', sessionId);
 				return;
 			}
 
@@ -9577,18 +8905,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 				state: session.state,
 				sessionInputMode: session.inputMode,
 				effectiveInputMode,
-				toolType: session.toolType
+				toolType: session.toolType,
 			});
 
 			// Handle terminal mode commands
 			if (effectiveInputMode === 'terminal') {
-				console.log(
-					'[Remote] Terminal mode - using runCommand for clean output'
-				);
+				console.log('[Remote] Terminal mode - using runCommand for clean output');
 
 				// Add user message to shell logs and set state to busy
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 						return {
 							...s,
@@ -9600,9 +8926,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 									id: generateId(),
 									timestamp: Date.now(),
 									source: 'user',
-									text: command
-								}
-							]
+									text: command,
+								},
+							],
 						};
 					})
 				);
@@ -9611,12 +8937,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// This spawns a fresh shell with -l -c to run the command
 				// When SSH is enabled for the session, the command runs on the remote host
 				// For SSH sessions, use remoteCwd; for local, use shellCwd
-				const isRemote =
-					!!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+				const isRemote = !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 				const commandCwd = isRemote
-					? session.remoteCwd ||
-					  session.sessionSshRemoteConfig?.workingDirOverride ||
-					  session.cwd
+					? session.remoteCwd || session.sessionSshRemoteConfig?.workingDirOverride || session.cwd
 					: session.shellCwd || session.cwd;
 				try {
 					await window.maestro.process.runCommand({
@@ -9624,15 +8947,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 						command: command,
 						cwd: commandCwd,
 						// Pass SSH config if the session has SSH enabled
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
 					console.log('[Remote] Terminal command completed successfully');
 				} catch (error: unknown) {
 					console.error('[Remote] Terminal command failed:', error);
-					const errorMessage =
-						error instanceof Error ? error.message : 'Unknown error';
-					setSessions(prev =>
-						prev.map(s => {
+					const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							return {
 								...s,
@@ -9645,9 +8967,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 										id: generateId(),
 										timestamp: Date.now(),
 										source: 'system',
-										text: `Error: Failed to run command - ${errorMessage}`
-									}
-								]
+										text: `Error: Failed to run command - ${errorMessage}`,
+									},
+								],
 							};
 						})
 					);
@@ -9656,12 +8978,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			}
 
 			// Handle AI mode for batch-mode agents (Claude Code, Codex, OpenCode)
-			const supportedBatchAgents: ToolType[] = [
-				'claude',
-				'claude-code',
-				'codex',
-				'opencode'
-			];
+			const supportedBatchAgents: ToolType[] = ['claude', 'claude-code', 'codex', 'opencode'];
 			if (!supportedBatchAgents.includes(session.toolType)) {
 				console.log('[Remote] Not a batch-mode agent, skipping');
 				return;
@@ -9684,23 +9001,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 				// Look up in custom AI commands
 				const matchingCustomCommand = customAICommandsRef.current.find(
-					cmd => cmd.command === commandText
+					(cmd) => cmd.command === commandText
 				);
 
 				// Look up in spec-kit commands
 				const matchingSpeckitCommand = speckitCommandsRef.current.find(
-					cmd => cmd.command === commandText
+					(cmd) => cmd.command === commandText
 				);
 
 				// Look up in openspec commands
 				const matchingOpenspecCommand = openspecCommandsRef.current.find(
-					cmd => cmd.command === commandText
+					(cmd) => cmd.command === commandText
 				);
 
 				const matchingCommand =
-					matchingCustomCommand ||
-					matchingSpeckitCommand ||
-					matchingOpenspecCommand;
+					matchingCustomCommand || matchingSpeckitCommand || matchingOpenspecCommand;
 
 				if (matchingCommand) {
 					console.log(
@@ -9709,8 +9024,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 						matchingSpeckitCommand
 							? '(spec-kit)'
 							: matchingOpenspecCommand
-							? '(openspec)'
-							: '(custom)'
+								? '(openspec)'
+								: '(custom)'
 					);
 
 					// Get git branch for template substitution
@@ -9727,11 +9042,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 					// Substitute template variables
 					promptToSend = substituteTemplateVariables(matchingCommand.prompt, {
 						session,
-						gitBranch
+						gitBranch,
 					});
 					commandMetadata = {
 						command: matchingCommand.command,
-						description: matchingCommand.description
+						description: matchingCommand.description,
 					};
 
 					console.log(
@@ -9743,7 +9058,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					console.log('[Remote] Unknown slash command:', commandText);
 					addLogToActiveTab(sessionId, {
 						source: 'system',
-						text: `Unknown command: ${commandText}`
+						text: `Unknown command: ${commandText}`,
 					});
 					return;
 				}
@@ -9753,9 +9068,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Get agent configuration for this session's tool type
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
-					console.log(
-						`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`
-					);
+					console.log(`[Remote] ERROR: Agent not found for toolType: ${session.toolType}`);
 					return;
 				}
 
@@ -9772,10 +9085,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				const agentArgs = agent.args ?? [];
 				const spawnArgs = isReadOnly
 					? agentArgs.filter(
-							arg =>
+							(arg) =>
 								arg !== '--dangerously-skip-permissions' &&
 								arg !== '--dangerously-bypass-approvals-and-sandbox'
-					  )
+						)
 					: [...agentArgs];
 
 				// Note: agentSessionId and readOnlyMode are passed to spawn() config below.
@@ -9794,7 +9107,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					isResume: !!tabAgentSessionId,
 					command: commandToUse,
 					args: spawnArgs,
-					prompt: promptToSend.substring(0, 100)
+					prompt: promptToSend.substring(0, 100),
 				});
 
 				// Add user message to active tab's logs and set state to busy
@@ -9804,26 +9117,26 @@ You are taking over this conversation. Based on the context above, provide a bri
 					timestamp: Date.now(),
 					source: 'user',
 					text: promptToSend,
-					...(commandMetadata && { aiCommand: commandMetadata })
+					...(commandMetadata && { aiCommand: commandMetadata }),
 				};
 
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 
 						// Update active tab: add log entry and set state to 'busy' for write-mode tracking
 						const activeTab = getActiveTab(s);
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
-								? s.aiTabs.map(tab =>
+								? s.aiTabs.map((tab) =>
 										tab.id === s.activeTabId
 											? {
 													...tab,
 													state: 'busy' as const,
-													logs: [...tab.logs, userLogEntry]
-											  }
+													logs: [...tab.logs, userLogEntry],
+												}
 											: tab
-								  )
+									)
 								: s.aiTabs;
 
 						if (!activeTab) {
@@ -9845,9 +9158,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 							...(commandMetadata && {
 								aiCommandHistory: Array.from(
 									new Set([...(s.aiCommandHistory || []), command.trim()])
-								).slice(-50)
+								).slice(-50),
 							}),
-							aiTabs: updatedAiTabs
+							aiTabs: updatedAiTabs,
 						};
 					})
 				);
@@ -9870,39 +9183,36 @@ You are taking over this conversation. Based on the context above, provide a bri
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					// Per-session SSH remote config (takes precedence over agent-level SSH config)
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 
-				console.log(
-					`[Remote] ${session.toolType} spawn initiated successfully`
-				);
+				console.log(`[Remote] ${session.toolType} spawn initiated successfully`);
 			} catch (error: unknown) {
 				console.error('[Remote] Failed to spawn Claude:', error);
-				const errorMessage =
-					error instanceof Error ? error.message : String(error);
+				const errorMessage = error instanceof Error ? error.message : String(error);
 				const errorLogEntry: LogEntry = {
 					id: generateId(),
 					timestamp: Date.now(),
 					source: 'system',
-					text: `Error: Failed to process remote command - ${errorMessage}`
+					text: `Error: Failed to process remote command - ${errorMessage}`,
 				};
-				setSessions(prev =>
-					prev.map(s => {
+				setSessions((prev) =>
+					prev.map((s) => {
 						if (s.id !== sessionId) return s;
 						// Reset active tab's state to 'idle' and add error log
 						const activeTab = getActiveTab(s);
 						const updatedAiTabs =
 							s.aiTabs?.length > 0
-								? s.aiTabs.map(tab =>
+								? s.aiTabs.map((tab) =>
 										tab.id === s.activeTabId
 											? {
 													...tab,
 													state: 'idle' as const,
 													thinkingStartTime: undefined,
-													logs: [...tab.logs, errorLogEntry]
-											  }
+													logs: [...tab.logs, errorLogEntry],
+												}
 											: tab
-								  )
+									)
 								: s.aiTabs;
 
 						if (!activeTab) {
@@ -9918,15 +9228,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 							state: 'idle' as SessionState,
 							busySource: undefined,
 							thinkingStartTime: undefined,
-							aiTabs: updatedAiTabs
+							aiTabs: updatedAiTabs,
 						};
 					})
 				);
 			}
 		};
 		window.addEventListener('maestro:remoteCommand', handleRemoteCommand);
-		return () =>
-			window.removeEventListener('maestro:remoteCommand', handleRemoteCommand);
+		return () => window.removeEventListener('maestro:remoteCommand', handleRemoteCommand);
 	}, [addLogToActiveTab]);
 
 	// Listen for tour UI actions to control right panel state
@@ -9964,7 +9273,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Handles both 'message' and 'command' types
 	const processQueuedItem = async (sessionId: string, item: QueuedItem) => {
 		// Use sessionsRef.current to get the latest session state (avoids stale closure)
-		const session = sessionsRef.current.find(s => s.id === sessionId);
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session) {
 			console.error('[processQueuedItem] Session not found:', sessionId);
 			return;
@@ -9972,16 +9281,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Find the TARGET tab for this queued item (NOT the active tab!)
 		// The item carries its intended tabId from when it was queued
-		const targetTab =
-			session.aiTabs.find(tab => tab.id === item.tabId) ||
-			getActiveTab(session);
+		const targetTab = session.aiTabs.find((tab) => tab.id === item.tabId) || getActiveTab(session);
 		const targetSessionId = `${sessionId}-ai-${targetTab?.id || 'default'}`;
 
 		try {
 			// Get agent configuration for this session's tool type
 			const agent = await window.maestro.agents.get(session.toolType);
-			if (!agent)
-				throw new Error(`Agent not found for toolType: ${session.toolType}`);
+			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
 
 			// Get the TARGET TAB's agentSessionId for session continuity
 			// (not the active tab or deprecated session-level one)
@@ -9994,10 +9300,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// - Codex: --dangerously-bypass-approvals-and-sandbox
 			const spawnArgs = isReadOnly
 				? (agent.args || []).filter(
-						arg =>
+						(arg) =>
 							arg !== '--dangerously-skip-permissions' &&
 							arg !== '--dangerously-bypass-approvals-and-sandbox'
-				  )
+					)
 				: [...(agent.args || [])];
 
 			// Note: agentSessionId and readOnlyMode are passed to spawn() config below.
@@ -10009,15 +9315,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Check if this is a message with images but no text
 			const hasImages = item.images && item.images.length > 0;
 			const hasText = item.text && item.text.trim();
-			const isImageOnlyMessage =
-				item.type === 'message' && hasImages && !hasText;
+			const isImageOnlyMessage = item.type === 'message' && hasImages && !hasText;
 
 			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
 				// Process a message - spawn agent with the message text
 				// If user sends only an image without text, inject the default image-only prompt
-				let effectivePrompt = isImageOnlyMessage
-					? DEFAULT_IMAGE_ONLY_PROMPT
-					: item.text!;
+				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
 
 				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
 				// This introduces Maestro and sets directory restrictions for the agent
@@ -10035,13 +9338,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 					}
 
 					// Substitute template variables in the system prompt
-					const substitutedSystemPrompt = substituteTemplateVariables(
-						maestroSystemPrompt,
-						{
-							session,
-							gitBranch
-						}
-					);
+					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+						session,
+						gitBranch,
+					});
 
 					// Prepend system prompt to user's message
 					effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
@@ -10056,7 +9356,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					agentSessionId: tabAgentSessionId,
 					isReadOnly,
 					argsLength: spawnArgs.length,
-					args: spawnArgs
+					args: spawnArgs,
 				});
 
 				await window.maestro.process.spawn({
@@ -10077,19 +9377,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
 					// Per-session SSH remote config (takes precedence over agent-level SSH config)
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 			} else if (item.type === 'command' && item.command) {
 				// Process a slash command - find the matching custom AI command, speckit command, or openspec command
 				// Use refs to get latest values and avoid stale closure
 				const matchingCommand =
-					customAICommandsRef.current.find(
-						cmd => cmd.command === item.command
-					) ||
-					speckitCommandsRef.current.find(
-						cmd => cmd.command === item.command
-					) ||
-					openspecCommandsRef.current.find(cmd => cmd.command === item.command);
+					customAICommandsRef.current.find((cmd) => cmd.command === item.command) ||
+					speckitCommandsRef.current.find((cmd) => cmd.command === item.command) ||
+					openspecCommandsRef.current.find((cmd) => cmd.command === item.command);
 				if (matchingCommand) {
 					// Substitute template variables
 					let gitBranch: string | undefined;
@@ -10101,10 +9397,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 							// Ignore git errors
 						}
 					}
-					const substitutedPrompt = substituteTemplateVariables(
-						matchingCommand.prompt,
-						{ session, gitBranch }
-					);
+					const substitutedPrompt = substituteTemplateVariables(matchingCommand.prompt, {
+						session,
+						gitBranch,
+					});
 
 					// For NEW sessions (no agentSessionId), prepend Maestro system prompt
 					// This introduces Maestro and sets directory restrictions for the agent
@@ -10113,13 +9409,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 					let promptForAgent = substitutedPrompt;
 					if (isNewSessionForCommand && maestroSystemPrompt) {
 						// Substitute template variables in the system prompt
-						const substitutedSystemPrompt = substituteTemplateVariables(
-							maestroSystemPrompt,
-							{
-								session,
-								gitBranch
-							}
-						);
+						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
+							session,
+							gitBranch,
+						});
 
 						// Prepend system prompt to command's prompt (for agent only)
 						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;
@@ -10134,19 +9427,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 							text: substitutedPrompt,
 							aiCommand: {
 								command: matchingCommand.command,
-								description: matchingCommand.description
-							}
+								description: matchingCommand.description,
+							},
 						},
 						item.tabId
 					);
 
 					// Track this command for automatic synopsis on completion
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							return {
 								...s,
-								pendingAICommandForSynopsis: matchingCommand.command
+								pendingAICommandForSynopsis: matchingCommand.command,
 							};
 						})
 					);
@@ -10169,7 +9462,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						sessionCustomModel: session.customModel,
 						sessionCustomContextWindow: session.customContextWindow,
 						// Per-session SSH remote config (takes precedence over agent-level SSH config)
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig
+						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 					});
 				} else {
 					// Unknown command - add error log
@@ -10177,21 +9470,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: `Unknown command: ${item.command}`
+						text: `Unknown command: ${item.command}`,
 					};
 					addLogToActiveTab(sessionId, errorLogEntry);
 					// Set session back to idle with full state cleanup
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== sessionId) return s;
 							// Reset the target tab's state too
-							const updatedAiTabs = s.aiTabs?.map(tab =>
+							const updatedAiTabs = s.aiTabs?.map((tab) =>
 								tab.id === item.tabId
 									? {
 											...tab,
 											state: 'idle' as const,
-											thinkingStartTime: undefined
-									  }
+											thinkingStartTime: undefined,
+										}
 									: tab
 							);
 							return {
@@ -10199,40 +9492,37 @@ You are taking over this conversation. Based on the context above, provide a bri
 								state: 'idle' as SessionState,
 								busySource: undefined,
 								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs
+								aiTabs: updatedAiTabs,
 							};
 						})
 					);
 				}
 			}
 		} catch (error: any) {
-			console.error(
-				'[processQueuedItem] Failed to process queued item:',
-				error
-			);
+			console.error('[processQueuedItem] Failed to process queued item:', error);
 			const errorLogEntry: LogEntry = {
 				id: generateId(),
 				timestamp: Date.now(),
 				source: 'system',
-				text: `Error: Failed to process queued ${item.type} - ${error.message}`
+				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
 			};
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					// Reset active tab's state to 'idle' and add error log
 					const activeTab = getActiveTab(s);
 					const updatedAiTabs =
 						s.aiTabs?.length > 0
-							? s.aiTabs.map(tab =>
+							? s.aiTabs.map((tab) =>
 									tab.id === s.activeTabId
 										? {
 												...tab,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLogEntry]
-										  }
+												logs: [...tab.logs, errorLogEntry],
+											}
 										: tab
-							  )
+								)
 							: s.aiTabs;
 
 					if (!activeTab) {
@@ -10248,7 +9538,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						state: 'idle',
 						busySource: undefined,
 						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabs
+						aiTabs: updatedAiTabs,
 					};
 				})
 			);
@@ -10268,7 +9558,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Find sessions with queued items that are idle (stuck from previous session)
 		const sessionsWithQueuedItems = sessions.filter(
-			s => s.state === 'idle' && s.executionQueue && s.executionQueue.length > 0
+			(s) => s.state === 'idle' && s.executionQueue && s.executionQueue.length > 0
 		);
 
 		if (sessionsWithQueuedItems.length > 0) {
@@ -10279,7 +9569,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Process the first queued item from each session
 			// Delay to ensure all refs and handlers are set up
 			setTimeout(() => {
-				sessionsWithQueuedItems.forEach(session => {
+				sessionsWithQueuedItems.forEach((session) => {
 					const firstItem = session.executionQueue[0];
 					console.log(
 						`[App] Processing leftover queued item for session ${session.id}:`,
@@ -10287,23 +9577,22 @@ You are taking over this conversation. Based on the context above, provide a bri
 					);
 
 					// Set session to busy and remove item from queue
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== session.id) return s;
 
 							const [, ...remainingQueue] = s.executionQueue;
 							const targetTab =
-								s.aiTabs.find(tab => tab.id === firstItem.tabId) ||
-								getActiveTab(s);
+								s.aiTabs.find((tab) => tab.id === firstItem.tabId) || getActiveTab(s);
 
 							// Set the target tab to busy
-							const updatedAiTabs = s.aiTabs.map(tab =>
+							const updatedAiTabs = s.aiTabs.map((tab) =>
 								tab.id === targetTab?.id
 									? {
 											...tab,
 											state: 'busy' as const,
-											thinkingStartTime: Date.now()
-									  }
+											thinkingStartTime: Date.now(),
+										}
 									: tab
 							);
 
@@ -10315,7 +9604,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								currentCycleTokens: 0,
 								currentCycleBytes: 0,
 								executionQueue: remainingQueue,
-								aiTabs: updatedAiTabs
+								aiTabs: updatedAiTabs,
 							};
 						})
 					);
@@ -10342,16 +9631,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			await window.maestro.process.interrupt(targetSessionId);
 
 			// Check if there are queued items to process after interrupt
-			const currentSession = sessionsRef.current.find(
-				s => s.id === activeSession.id
-			);
-			let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null =
-				null;
+			const currentSession = sessionsRef.current.find((s) => s.id === activeSession.id);
+			let queuedItemToProcess: { sessionId: string; item: QueuedItem } | null = null;
 
 			if (currentSession && currentSession.executionQueue.length > 0) {
 				queuedItemToProcess = {
 					sessionId: activeSession.id,
-					item: currentSession.executionQueue[0]
+					item: currentSession.executionQueue[0],
 				};
 			}
 
@@ -10362,21 +9648,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 							id: generateId(),
 							timestamp: Date.now(),
 							source: 'system',
-							text: 'Canceled by user'
-					  }
+							text: 'Canceled by user',
+						}
 					: null;
 
 			// Set state to idle with full cleanup, or process next queued item
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 
 					// If there are queued items, start processing the next one
 					if (s.executionQueue.length > 0) {
 						const [nextItem, ...remainingQueue] = s.executionQueue;
-						const targetTab =
-							s.aiTabs.find(tab => tab.id === nextItem.tabId) ||
-							getActiveTab(s);
+						const targetTab = s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
 						if (!targetTab) {
 							return {
@@ -10386,25 +9670,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 								executionQueue: remainingQueue,
 								thinkingStartTime: Date.now(),
 								currentCycleTokens: 0,
-								currentCycleBytes: 0
+								currentCycleBytes: 0,
 							};
 						}
 
 						// Set the interrupted tab to idle, and the target tab for queued item to busy
 						// Also add the canceled log to the interrupted tab
-						let updatedAiTabs = s.aiTabs.map(tab => {
+						let updatedAiTabs = s.aiTabs.map((tab) => {
 							if (tab.id === targetTab.id) {
 								return {
 									...tab,
 									state: 'busy' as const,
-									thinkingStartTime: Date.now()
+									thinkingStartTime: Date.now(),
 								};
 							}
 							// Set any other busy tabs to idle (they were interrupted) and add canceled log
 							// Also clear any thinking/tool logs since the process was interrupted
 							if (tab.state === 'busy') {
 								const logsWithoutThinkingOrTools = tab.logs.filter(
-									log => log.source !== 'thinking' && log.source !== 'tool'
+									(log) => log.source !== 'thinking' && log.source !== 'tool'
 								);
 								const updatedLogs = canceledLog
 									? [...logsWithoutThinkingOrTools, canceledLog]
@@ -10413,7 +9697,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 									...tab,
 									state: 'idle' as const,
 									thinkingStartTime: undefined,
-									logs: updatedLogs
+									logs: updatedLogs,
 								};
 							}
 							return tab;
@@ -10426,12 +9710,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 								timestamp: Date.now(),
 								source: 'user',
 								text: nextItem.text,
-								images: nextItem.images
+								images: nextItem.images,
 							};
-							updatedAiTabs = updatedAiTabs.map(tab =>
-								tab.id === targetTab.id
-									? { ...tab, logs: [...tab.logs, logEntry] }
-									: tab
+							updatedAiTabs = updatedAiTabs.map((tab) =>
+								tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
 							);
 						}
 
@@ -10443,7 +9725,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							executionQueue: remainingQueue,
 							thinkingStartTime: Date.now(),
 							currentCycleTokens: 0,
-							currentCycleBytes: 0
+							currentCycleBytes: 0,
 						};
 					}
 
@@ -10452,41 +9734,41 @@ You are taking over this conversation. Based on the context above, provide a bri
 					const activeTabForCancel = getActiveTab(s);
 					const updatedAiTabsForIdle =
 						canceledLog && activeTabForCancel
-							? s.aiTabs.map(tab => {
+							? s.aiTabs.map((tab) => {
 									if (tab.id === activeTabForCancel.id) {
 										const logsWithoutThinkingOrTools = tab.logs.filter(
-											log => log.source !== 'thinking' && log.source !== 'tool'
+											(log) => log.source !== 'thinking' && log.source !== 'tool'
 										);
 										return {
 											...tab,
 											logs: [...logsWithoutThinkingOrTools, canceledLog],
 											state: 'idle' as const,
-											thinkingStartTime: undefined
+											thinkingStartTime: undefined,
 										};
 									}
 									return tab;
-							  })
-							: s.aiTabs.map(tab => {
+								})
+							: s.aiTabs.map((tab) => {
 									if (tab.state === 'busy') {
 										const logsWithoutThinkingOrTools = tab.logs.filter(
-											log => log.source !== 'thinking' && log.source !== 'tool'
+											(log) => log.source !== 'thinking' && log.source !== 'tool'
 										);
 										return {
 											...tab,
 											state: 'idle' as const,
 											thinkingStartTime: undefined,
-											logs: logsWithoutThinkingOrTools
+											logs: logsWithoutThinkingOrTools,
 										};
 									}
 									return tab;
-							  });
+								});
 
 					return {
 						...s,
 						state: 'idle',
 						busySource: undefined,
 						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabsForIdle
+						aiTabs: updatedAiTabsForIdle,
 					};
 				})
 			);
@@ -10494,10 +9776,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Process the queued item after state update
 			if (queuedItemToProcess) {
 				setTimeout(() => {
-					processQueuedItem(
-						queuedItemToProcess!.sessionId,
-						queuedItemToProcess!.item
-					);
+					processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item);
 				}, 0);
 			}
 		} catch (error) {
@@ -10517,30 +9796,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: 'Process forcefully terminated'
+						text: 'Process forcefully terminated',
 					};
 
 					// Check if there are queued items to process after kill
-					const currentSessionForKill = sessionsRef.current.find(
-						s => s.id === activeSession.id
-					);
+					const currentSessionForKill = sessionsRef.current.find((s) => s.id === activeSession.id);
 					let queuedItemAfterKill: {
 						sessionId: string;
 						item: QueuedItem;
 					} | null = null;
 
-					if (
-						currentSessionForKill &&
-						currentSessionForKill.executionQueue.length > 0
-					) {
+					if (currentSessionForKill && currentSessionForKill.executionQueue.length > 0) {
 						queuedItemAfterKill = {
 							sessionId: activeSession.id,
-							item: currentSessionForKill.executionQueue[0]
+							item: currentSessionForKill.executionQueue[0],
 						};
 					}
 
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 
 							// Add kill log to the appropriate place and clear thinking/tool logs
@@ -10548,15 +9822,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 							if (currentMode === 'ai') {
 								const tab = getActiveTab(s);
 								if (tab) {
-									updatedSession.aiTabs = s.aiTabs.map(t => {
+									updatedSession.aiTabs = s.aiTabs.map((t) => {
 										if (t.id === tab.id) {
 											const logsWithoutThinkingOrTools = t.logs.filter(
-												log =>
-													log.source !== 'thinking' && log.source !== 'tool'
+												(log) => log.source !== 'thinking' && log.source !== 'tool'
 											);
 											return {
 												...t,
-												logs: [...logsWithoutThinkingOrTools, killLog]
+												logs: [...logsWithoutThinkingOrTools, killLog],
 											};
 										}
 										return t;
@@ -10570,8 +9843,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							if (s.executionQueue.length > 0) {
 								const [nextItem, ...remainingQueue] = s.executionQueue;
 								const targetTab =
-									s.aiTabs.find(tab => tab.id === nextItem.tabId) ||
-									getActiveTab(s);
+									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
 
 								if (!targetTab) {
 									return {
@@ -10581,28 +9853,28 @@ You are taking over this conversation. Based on the context above, provide a bri
 										executionQueue: remainingQueue,
 										thinkingStartTime: Date.now(),
 										currentCycleTokens: 0,
-										currentCycleBytes: 0
+										currentCycleBytes: 0,
 									};
 								}
 
 								// Set tabs appropriately and clear thinking/tool logs from interrupted tabs
-								let updatedAiTabs = updatedSession.aiTabs.map(tab => {
+								let updatedAiTabs = updatedSession.aiTabs.map((tab) => {
 									if (tab.id === targetTab.id) {
 										return {
 											...tab,
 											state: 'busy' as const,
-											thinkingStartTime: Date.now()
+											thinkingStartTime: Date.now(),
 										};
 									}
 									if (tab.state === 'busy') {
 										const logsWithoutThinkingOrTools = tab.logs.filter(
-											log => log.source !== 'thinking' && log.source !== 'tool'
+											(log) => log.source !== 'thinking' && log.source !== 'tool'
 										);
 										return {
 											...tab,
 											state: 'idle' as const,
 											thinkingStartTime: undefined,
-											logs: logsWithoutThinkingOrTools
+											logs: logsWithoutThinkingOrTools,
 										};
 									}
 									return tab;
@@ -10615,12 +9887,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 										timestamp: Date.now(),
 										source: 'user',
 										text: nextItem.text,
-										images: nextItem.images
+										images: nextItem.images,
 									};
-									updatedAiTabs = updatedAiTabs.map(tab =>
-										tab.id === targetTab.id
-											? { ...tab, logs: [...tab.logs, logEntry] }
-											: tab
+									updatedAiTabs = updatedAiTabs.map((tab) =>
+										tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
 									);
 								}
 
@@ -10632,7 +9902,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 									executionQueue: remainingQueue,
 									thinkingStartTime: Date.now(),
 									currentCycleTokens: 0,
-									currentCycleBytes: 0
+									currentCycleBytes: 0,
 								};
 							}
 
@@ -10644,35 +9914,34 @@ You are taking over this conversation. Based on the context above, provide a bri
 										...updatedSession,
 										state: 'idle',
 										busySource: undefined,
-										thinkingStartTime: undefined
+										thinkingStartTime: undefined,
 									};
 								return {
 									...updatedSession,
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
-									aiTabs: updatedSession.aiTabs.map(t => {
+									aiTabs: updatedSession.aiTabs.map((t) => {
 										if (t.id === tab.id) {
 											const logsWithoutThinkingOrTools = t.logs.filter(
-												log =>
-													log.source !== 'thinking' && log.source !== 'tool'
+												(log) => log.source !== 'thinking' && log.source !== 'tool'
 											);
 											return {
 												...t,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: logsWithoutThinkingOrTools
+												logs: logsWithoutThinkingOrTools,
 											};
 										}
 										return t;
-									})
+									}),
 								};
 							}
 							return {
 								...updatedSession,
 								state: 'idle',
 								busySource: undefined,
-								thinkingStartTime: undefined
+								thinkingStartTime: undefined,
 							};
 						})
 					);
@@ -10680,10 +9949,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					// Process the queued item after state update
 					if (queuedItemAfterKill) {
 						setTimeout(() => {
-							processQueuedItem(
-								queuedItemAfterKill!.sessionId,
-								queuedItemAfterKill!.item
-							);
+							processQueuedItem(queuedItemAfterKill!.sessionId, queuedItemAfterKill!.item);
 						}, 0);
 					}
 				} catch (killError: unknown) {
@@ -10694,10 +9960,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: `Error: Failed to terminate process - ${killErrorMessage}`
+						text: `Error: Failed to terminate process - ${killErrorMessage}`,
 					};
-					setSessions(prev =>
-						prev.map(s => {
+					setSessions((prev) =>
+						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 							if (currentMode === 'ai') {
 								const tab = getActiveTab(s);
@@ -10706,29 +9972,28 @@ You are taking over this conversation. Based on the context above, provide a bri
 										...s,
 										state: 'idle',
 										busySource: undefined,
-										thinkingStartTime: undefined
+										thinkingStartTime: undefined,
 									};
 								return {
 									...s,
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
-									aiTabs: s.aiTabs.map(t => {
+									aiTabs: s.aiTabs.map((t) => {
 										if (t.id === tab.id) {
 											// Clear thinking/tool logs even on error
 											const logsWithoutThinkingOrTools = t.logs.filter(
-												log =>
-													log.source !== 'thinking' && log.source !== 'tool'
+												(log) => log.source !== 'thinking' && log.source !== 'tool'
 											);
 											return {
 												...t,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: [...logsWithoutThinkingOrTools, errorLog]
+												logs: [...logsWithoutThinkingOrTools, errorLog],
 											};
 										}
 										return t;
-									})
+									}),
 								};
 							}
 							return {
@@ -10736,7 +10001,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								shellLogs: [...s.shellLogs, errorLog],
 								state: 'idle',
 								busySource: undefined,
-								thinkingStartTime: undefined
+								thinkingStartTime: undefined,
 							};
 						})
 					);
@@ -10781,13 +10046,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				e.preventDefault();
 				// Tab cycles through filter types (only in git repos, otherwise just accept)
 				if (activeSession?.isGitRepo) {
-					const filters: TabCompletionFilter[] = [
-						'all',
-						'history',
-						'branch',
-						'tag',
-						'file'
-					];
+					const filters: TabCompletionFilter[] = ['all', 'history', 'branch', 'tag', 'file'];
 					const currentIndex = filters.indexOf(tabCompletionFilter);
 					// Shift+Tab goes backwards, Tab goes forwards
 					const nextIndex = e.shiftKey
@@ -10798,12 +10057,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				} else {
 					// In non-git repos, Tab accepts the selection (like Enter)
 					if (tabCompletionSuggestions[selectedTabCompletionIndex]) {
-						setInputValue(
-							tabCompletionSuggestions[selectedTabCompletionIndex].value
-						);
-						syncFileTreeToTabCompletion(
-							tabCompletionSuggestions[selectedTabCompletionIndex]
-						);
+						setInputValue(tabCompletionSuggestions[selectedTabCompletionIndex].value);
+						syncFileTreeToTabCompletion(tabCompletionSuggestions[selectedTabCompletionIndex]);
 					}
 					setTabCompletionOpen(false);
 				}
@@ -10811,13 +10066,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			} else if (e.key === 'Enter') {
 				e.preventDefault();
 				if (tabCompletionSuggestions[selectedTabCompletionIndex]) {
-					setInputValue(
-						tabCompletionSuggestions[selectedTabCompletionIndex].value
-					);
+					setInputValue(tabCompletionSuggestions[selectedTabCompletionIndex].value);
 					// Final sync on acceptance
-					syncFileTreeToTabCompletion(
-						tabCompletionSuggestions[selectedTabCompletionIndex]
-					);
+					syncFileTreeToTabCompletion(tabCompletionSuggestions[selectedTabCompletionIndex]);
 				}
 				setTabCompletionOpen(false);
 				return;
@@ -10833,13 +10084,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (atMentionOpen && activeSession?.inputMode === 'ai') {
 			if (e.key === 'ArrowDown') {
 				e.preventDefault();
-				setSelectedAtMentionIndex(prev =>
-					Math.min(prev + 1, atMentionSuggestions.length - 1)
-				);
+				setSelectedAtMentionIndex((prev) => Math.min(prev + 1, atMentionSuggestions.length - 1));
 				return;
 			} else if (e.key === 'ArrowUp') {
 				e.preventDefault();
-				setSelectedAtMentionIndex(prev => Math.max(prev - 1, 0));
+				setSelectedAtMentionIndex((prev) => Math.max(prev - 1, 0));
 				return;
 			} else if (e.key === 'Tab' || e.key === 'Enter') {
 				e.preventDefault();
@@ -10869,10 +10118,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Handle slash command autocomplete
 		if (slashCommandOpen) {
 			const isTerminalMode = activeSession?.inputMode === 'terminal';
-			const filteredCommands = allSlashCommands.filter(cmd => {
+			const filteredCommands = allSlashCommands.filter((cmd) => {
 				// Check if command is only available in terminal mode
-				if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode)
-					return false;
+				if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
 				// Check if command is only available in AI mode
 				if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
 				// Check if command matches input
@@ -10881,12 +10129,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			if (e.key === 'ArrowDown') {
 				e.preventDefault();
-				setSelectedSlashCommandIndex(prev =>
-					Math.min(prev + 1, filteredCommands.length - 1)
-				);
+				setSelectedSlashCommandIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
 			} else if (e.key === 'ArrowUp') {
 				e.preventDefault();
-				setSelectedSlashCommandIndex(prev => Math.max(prev - 1, 0));
+				setSelectedSlashCommandIndex((prev) => Math.max(prev - 1, 0));
 			} else if (e.key === 'Tab' || e.key === 'Enter') {
 				// Tab or Enter fills in the command text (user can then press Enter again to execute)
 				e.preventDefault();
@@ -10905,9 +10151,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (e.key === 'Enter') {
 			// Use the appropriate setting based on input mode
 			const currentEnterToSend =
-				activeSession?.inputMode === 'terminal'
-					? enterToSendTerminal
-					: enterToSendAI;
+				activeSession?.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI;
 
 			if (currentEnterToSend && !e.shiftKey && !e.metaKey) {
 				e.preventDefault();
@@ -10971,16 +10215,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!isGroupChatActive && !isDirectAIMode) return;
 
 		const items = e.clipboardData.items;
-		const hasImage = Array.from(items).some(item =>
-			item.type.startsWith('image/')
-		);
+		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
 
-		if (
-			hasImage &&
-			isDirectAIMode &&
-			!isGroupChatActive &&
-			blockCodexResumeImages
-		) {
+		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
 			e.preventDefault();
 			showImageAttachBlockedNotice();
 			return;
@@ -10992,11 +10229,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 				const blob = items[i].getAsFile();
 				if (blob) {
 					const reader = new FileReader();
-					reader.onload = event => {
+					reader.onload = (event) => {
 						if (event.target?.result) {
 							const imageData = event.target!.result as string;
 							if (isGroupChatActive) {
-								setGroupChatStagedImages(prev => {
+								setGroupChatStagedImages((prev) => {
 									if (prev.includes(imageData)) {
 										setSuccessFlashNotification('Duplicate image ignored');
 										setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -11005,7 +10242,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 									return [...prev, imageData];
 								});
 							} else {
-								setStagedImages(prev => {
+								setStagedImages((prev) => {
 									if (prev.includes(imageData)) {
 										setSuccessFlashNotification('Duplicate image ignored');
 										setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -11034,16 +10271,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!isGroupChatActive && !isDirectAIMode) return;
 
 		const files = e.dataTransfer.files;
-		const hasImage = Array.from(files).some(file =>
-			file.type.startsWith('image/')
-		);
+		const hasImage = Array.from(files).some((file) => file.type.startsWith('image/'));
 
-		if (
-			hasImage &&
-			isDirectAIMode &&
-			!isGroupChatActive &&
-			blockCodexResumeImages
-		) {
+		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
 			showImageAttachBlockedNotice();
 			return;
 		}
@@ -11051,11 +10281,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 		for (let i = 0; i < files.length; i++) {
 			if (files[i].type.startsWith('image/')) {
 				const reader = new FileReader();
-				reader.onload = event => {
+				reader.onload = (event) => {
 					if (event.target?.result) {
 						const imageData = event.target!.result as string;
 						if (isGroupChatActive) {
-							setGroupChatStagedImages(prev => {
+							setGroupChatStagedImages((prev) => {
 								if (prev.includes(imageData)) {
 									setSuccessFlashNotification('Duplicate image ignored');
 									setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -11064,7 +10294,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								return [...prev, imageData];
 							});
 						} else {
-							setStagedImages(prev => {
+							setStagedImages((prev) => {
 								if (prev.includes(imageData)) {
 									setSuccessFlashNotification('Duplicate image ignored');
 									setTimeout(() => setSuccessFlashNotification(null), 2000);
@@ -11082,16 +10312,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// --- FILE TREE MANAGEMENT ---
 	// Extracted hook for file tree operations (refresh, git state, filtering)
-	const { refreshFileTree, refreshGitFileState, filteredFileTree } =
-		useFileTreeManagement({
-			sessions,
-			sessionsRef,
-			setSessions,
-			activeSessionId,
-			activeSession,
-			fileTreeFilter,
-			rightPanelRef
-		});
+	const { refreshFileTree, refreshGitFileState, filteredFileTree } = useFileTreeManagement({
+		sessions,
+		sessionsRef,
+		setSessions,
+		activeSessionId,
+		activeSession,
+		fileTreeFilter,
+		rightPanelRef,
+	});
 
 	// --- GROUP MANAGEMENT ---
 	// Extracted hook for group CRUD operations (toggle, rename, create, drag-drop)
@@ -11102,7 +10331,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		createNewGroup,
 		handleDropOnGroup,
 		handleDropOnUngrouped,
-		modalState: groupModalState
+		modalState: groupModalState,
 	} = useGroupManagement({
 		groups,
 		setGroups,
@@ -11110,15 +10339,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 		draggingSessionId,
 		setDraggingSessionId,
 		editingGroupId,
-		setEditingGroupId
+		setEditingGroupId,
 	});
 
 	// Destructure group modal state for use in JSX
 	const { createGroupModalOpen, setCreateGroupModalOpen } = groupModalState;
 
 	// State to track session that should be moved to newly created group
-	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] =
-		useState<string | null>(null);
+	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] = useState<string | null>(
+		null
+	);
 
 	// Group Modal Handlers (stable callbacks for AppGroupModals)
 	// Must be defined after groupModalState destructure since setCreateGroupModalOpen comes from there
@@ -11134,10 +10364,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
 			if (pendingMoveToGroupSessionId) {
-				setSessions(prev =>
-					prev.map(s =>
-						s.id === pendingMoveToGroupSessionId ? { ...s, groupId } : s
-					)
+				setSessions((prev) =>
+					prev.map((s) => (s.id === pendingMoveToGroupSessionId ? { ...s, groupId } : s))
 				);
 				setPendingMoveToGroupSessionId(null);
 			}
@@ -11164,18 +10392,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (!activeSession) return;
 
 			// Save the config first
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === activeSession.id ? { ...s, worktreeConfig: config } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === activeSession.id ? { ...s, worktreeConfig: config } : s))
 			);
 
 			// Scan for worktrees and create sub-agent sessions
 			// Get SSH remote ID for parent session (check both runtime and config)
 			const parentSshRemoteId =
-				activeSession.sshRemoteId ||
-				activeSession.sessionSshRemoteConfig?.remoteId ||
-				undefined;
+				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 			try {
 				const scanResult = await window.maestro.git.scanWorktreeDirectory(
 					config.basePath,
@@ -11198,16 +10422,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 						// Check if a session already exists for this worktree
 						const existingSession = sessions.find(
-							s =>
-								s.parentSessionId === activeSession.id &&
-								s.worktreeBranch === subdir.branch
+							(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
 						);
 						if (existingSession) {
 							continue;
 						}
 
 						// Also check by path
-						const existingByPath = sessions.find(s => s.cwd === subdir.path);
+						const existingByPath = sessions.find((s) => s.cwd === subdir.path);
 						if (existingByPath) {
 							continue;
 						}
@@ -11225,7 +10447,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							createdAt: Date.now(),
 							state: 'idle',
 							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking
+							showThinking: defaultShowThinking,
 						};
 
 						// Fetch git info for this subdirectory (with SSH support)
@@ -11236,7 +10458,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						try {
 							[gitBranches, gitTags] = await Promise.all([
 								gitService.getBranches(subdir.path, parentSshRemoteId),
-								gitService.getTags(subdir.path, parentSshRemoteId)
+								gitService.getTags(subdir.path, parentSshRemoteId),
 							]);
 							gitRefsCacheTime = Date.now();
 						} catch {
@@ -11266,13 +10488,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 									id: generateId(),
 									timestamp: Date.now(),
 									source: 'system',
-									text: 'Worktree Session Ready.'
-								}
+									text: 'Worktree Session Ready.',
+								},
 							],
 							workLog: [],
 							contextUsage: 0,
-							inputMode:
-								activeSession.toolType === 'terminal' ? 'terminal' : 'ai',
+							inputMode: activeSession.toolType === 'terminal' ? 'terminal' : 'ai',
 							aiPid: 0,
 							terminalPid: 0,
 							port: 3000 + Math.floor(Math.random() * 100),
@@ -11296,28 +10517,24 @@ You are taking over this conversation. Based on the context above, provide a bri
 							customModel: activeSession.customModel,
 							customContextWindow: activeSession.customContextWindow,
 							nudgeMessage: activeSession.nudgeMessage,
-							autoRunFolderPath: activeSession.autoRunFolderPath
+							autoRunFolderPath: activeSession.autoRunFolderPath,
 						};
 
 						newWorktreeSessions.push(worktreeSession);
 					}
 
 					if (newWorktreeSessions.length > 0) {
-						setSessions(prev => [...prev, ...newWorktreeSessions]);
+						setSessions((prev) => [...prev, ...newWorktreeSessions]);
 						// Expand worktrees on parent
-						setSessions(prev =>
-							prev.map(s =>
-								s.id === activeSession.id
-									? { ...s, worktreesExpanded: true }
-									: s
-							)
+						setSessions((prev) =>
+							prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s))
 						);
 						addToast({
 							type: 'success',
 							title: 'Worktrees Discovered',
 							message: `Found ${newWorktreeSessions.length} worktree sub-agent${
 								newWorktreeSessions.length > 1 ? 's' : ''
-							}`
+							}`,
 						});
 					}
 				}
@@ -11333,15 +10550,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Count worktree children that will be removed
 		const worktreeChildCount = sessions.filter(
-			s => s.parentSessionId === activeSession.id
+			(s) => s.parentSessionId === activeSession.id
 		).length;
 
-		setSessions(prev =>
+		setSessions((prev) =>
 			prev
 				// Remove all worktree children of this parent
-				.filter(s => s.parentSessionId !== activeSession.id)
+				.filter((s) => s.parentSessionId !== activeSession.id)
 				// Clear worktree config on the parent
-				.map(s =>
+				.map((s) =>
 					s.id === activeSession.id
 						? { ...s, worktreeConfig: undefined, worktreeParentPath: undefined }
 						: s
@@ -11350,15 +10567,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		const childMessage =
 			worktreeChildCount > 0
-				? ` Removed ${worktreeChildCount} worktree sub-agent${
-						worktreeChildCount > 1 ? 's' : ''
-				  }.`
+				? ` Removed ${worktreeChildCount} worktree sub-agent${worktreeChildCount > 1 ? 's' : ''}.`
 				: '';
 
 		addToast({
 			type: 'success',
 			title: 'Worktrees Disabled',
-			message: `Worktree configuration cleared for this agent.${childMessage}`
+			message: `Worktree configuration cleared for this agent.${childMessage}`,
 		});
 	}, [activeSession, sessions, addToast]);
 
@@ -11368,26 +10583,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 				addToast({
 					type: 'error',
 					title: 'Error',
-					message: 'No worktree directory configured'
+					message: 'No worktree directory configured',
 				});
 				return;
 			}
 
 			const worktreePath = `${basePath}/${branchName}`;
-			console.log(
-				'[WorktreeConfig] Create worktree:',
-				branchName,
-				'at',
-				worktreePath
-			);
+			console.log('[WorktreeConfig] Create worktree:', branchName, 'at', worktreePath);
 
 			// Get SSH remote ID for remote worktree operations
 			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
 			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
 			const sshRemoteId =
-				activeSession.sshRemoteId ||
-				activeSession.sessionSshRemoteConfig?.remoteId ||
-				undefined;
+				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 
 			try {
 				// Create the worktree via git (pass SSH remote ID for remote sessions)
@@ -11416,7 +10624,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					createdAt: Date.now(),
 					state: 'idle',
 					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking
+					showThinking: defaultShowThinking,
 				};
 
 				// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
@@ -11427,7 +10635,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				try {
 					[gitBranches, gitTags] = await Promise.all([
 						gitService.getBranches(worktreePath, sshRemoteId),
-						gitService.getTags(worktreePath, sshRemoteId)
+						gitService.getTags(worktreePath, sshRemoteId),
 					]);
 					gitRefsCacheTime = Date.now();
 				} catch {
@@ -11455,8 +10663,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 							id: generateId(),
 							timestamp: Date.now(),
 							source: 'system',
-							text: 'Worktree Session Ready.'
-						}
+							text: 'Worktree Session Ready.',
+						},
 					],
 					workLog: [],
 					contextUsage: 0,
@@ -11486,29 +10694,27 @@ You are taking over this conversation. Based on the context above, provide a bri
 					nudgeMessage: activeSession.nudgeMessage,
 					autoRunFolderPath: activeSession.autoRunFolderPath,
 					// Inherit SSH configuration from parent session
-					sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig
+					sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
 				};
 
-				setSessions(prev => [...prev, worktreeSession]);
+				setSessions((prev) => [...prev, worktreeSession]);
 
 				// Expand parent's worktrees
-				setSessions(prev =>
-					prev.map(s =>
-						s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s
-					)
+				setSessions((prev) =>
+					prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s))
 				);
 
 				addToast({
 					type: 'success',
 					title: 'Worktree Created',
-					message: branchName
+					message: branchName,
 				});
 			} catch (err) {
 				console.error('[WorktreeConfig] Failed to create worktree:', err);
 				addToast({
 					type: 'error',
 					title: 'Failed to Create Worktree',
-					message: err instanceof Error ? err.message : String(err)
+					message: err instanceof Error ? err.message : String(err),
 				});
 				throw err; // Re-throw so the modal can show the error
 			}
@@ -11531,12 +10737,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createWorktreeSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
 
 			const worktreePath = `${basePath}/${branchName}`;
-			console.log(
-				'[CreateWorktree] Create worktree:',
-				branchName,
-				'at',
-				worktreePath
-			);
+			console.log('[CreateWorktree] Create worktree:', branchName, 'at', worktreePath);
 
 			// Get SSH remote ID for remote worktree operations
 			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
@@ -11572,7 +10773,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				createdAt: Date.now(),
 				state: 'idle',
 				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking
+				showThinking: defaultShowThinking,
 			};
 
 			// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
@@ -11583,7 +10784,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			try {
 				[gitBranches, gitTags] = await Promise.all([
 					gitService.getBranches(worktreePath, sshRemoteId),
-					gitService.getTags(worktreePath, sshRemoteId)
+					gitService.getTags(worktreePath, sshRemoteId),
 				]);
 				gitRefsCacheTime = Date.now();
 			} catch {
@@ -11611,13 +10812,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 						id: generateId(),
 						timestamp: Date.now(),
 						source: 'system',
-						text: 'Worktree Session Ready.'
-					}
+						text: 'Worktree Session Ready.',
+					},
 				],
 				workLog: [],
 				contextUsage: 0,
-				inputMode:
-					createWorktreeSession.toolType === 'terminal' ? 'terminal' : 'ai',
+				inputMode: createWorktreeSession.toolType === 'terminal' ? 'terminal' : 'ai',
 				aiPid: 0,
 				terminalPid: 0,
 				port: 3000 + Math.floor(Math.random() * 100),
@@ -11643,24 +10843,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 				nudgeMessage: createWorktreeSession.nudgeMessage,
 				autoRunFolderPath: createWorktreeSession.autoRunFolderPath,
 				// Inherit SSH configuration from parent session
-				sessionSshRemoteConfig: createWorktreeSession.sessionSshRemoteConfig
+				sessionSshRemoteConfig: createWorktreeSession.sessionSshRemoteConfig,
 			};
 
-			setSessions(prev => [...prev, worktreeSession]);
+			setSessions((prev) => [...prev, worktreeSession]);
 
 			// Expand parent's worktrees
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === createWorktreeSession.id
-						? { ...s, worktreesExpanded: true }
-						: s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === createWorktreeSession.id ? { ...s, worktreesExpanded: true } : s))
 			);
 
 			// Save worktree config if not already configured
 			if (!createWorktreeSession.worktreeConfig?.basePath) {
-				setSessions(prev =>
-					prev.map(s =>
+				setSessions((prev) =>
+					prev.map((s) =>
 						s.id === createWorktreeSession.id
 							? { ...s, worktreeConfig: { basePath, watchEnabled: true } }
 							: s
@@ -11671,7 +10867,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			addToast({
 				type: 'success',
 				title: 'Worktree Created',
-				message: branchName
+				message: branchName,
 			});
 		},
 		[createWorktreeSession, defaultSaveToHistory, addToast]
@@ -11690,7 +10886,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				title: 'Pull Request Created',
 				message: prDetails.title,
 				actionUrl: prDetails.url,
-				actionLabel: prDetails.url
+				actionLabel: prDetails.url,
 			});
 			// Add history entry with PR details
 			if (session) {
@@ -11702,15 +10898,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 					fullResponse: [
 						`**Pull Request:** [${prDetails.title}](${prDetails.url})`,
 						`**Branch:** ${prDetails.sourceBranch} → ${prDetails.targetBranch}`,
-						prDetails.description
-							? `**Description:** ${prDetails.description}`
-							: ''
+						prDetails.description ? `**Description:** ${prDetails.description}` : '',
 					]
 						.filter(Boolean)
 						.join('\n\n'),
 					projectPath: session.projectRoot || session.cwd,
 					sessionId: session.id,
-					sessionName: session.name
+					sessionName: session.name,
 				});
 				rightPanelRef.current?.refreshHistoryPanel();
 			}
@@ -11727,20 +10921,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 	const handleConfirmDeleteWorktree = useCallback(() => {
 		if (!deleteWorktreeSession) return;
 		// Remove the session but keep the worktree on disk
-		setSessions(prev => prev.filter(s => s.id !== deleteWorktreeSession.id));
+		setSessions((prev) => prev.filter((s) => s.id !== deleteWorktreeSession.id));
 	}, [deleteWorktreeSession]);
 
 	const handleConfirmAndDeleteWorktreeOnDisk = useCallback(async () => {
 		if (!deleteWorktreeSession) return;
 		// Remove the session AND delete the worktree from disk
-		const result = await window.maestro.git.removeWorktree(
-			deleteWorktreeSession.cwd,
-			true
-		);
+		const result = await window.maestro.git.removeWorktree(deleteWorktreeSession.cwd, true);
 		if (!result.success) {
 			throw new Error(result.error || 'Failed to remove worktree');
 		}
-		setSessions(prev => prev.filter(s => s.id !== deleteWorktreeSession.id));
+		setSessions((prev) => prev.filter((s) => s.id !== deleteWorktreeSession.id));
 	}, [deleteWorktreeSession]);
 
 	// AppUtilityModals stable callbacks
@@ -11753,69 +10944,50 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Return focus to input after closing carousel
 		setTimeout(() => inputRef.current?.focus(), 0);
 	}, []);
-	const handleNavigateLightbox = useCallback(
-		(img: string) => setLightboxImage(img),
-		[]
-	);
+	const handleNavigateLightbox = useCallback((img: string) => setLightboxImage(img), []);
 	const handleDeleteLightboxImage = useCallback(
 		(img: string) => {
 			// Use ref for group chat check - refs are set synchronously before React batches state updates
 			if (lightboxIsGroupChatRef.current) {
-				setGroupChatStagedImages(prev => prev.filter(i => i !== img));
+				setGroupChatStagedImages((prev) => prev.filter((i) => i !== img));
 			} else {
-				setStagedImages(prev => prev.filter(i => i !== img));
+				setStagedImages((prev) => prev.filter((i) => i !== img));
 			}
 		},
 		[setStagedImages]
 	);
-	const handleCloseAutoRunSetup = useCallback(
-		() => setAutoRunSetupModalOpen(false),
-		[]
-	);
-	const handleCloseBatchRunner = useCallback(
-		() => setBatchRunnerModalOpen(false),
-		[]
-	);
+	const handleCloseAutoRunSetup = useCallback(() => setAutoRunSetupModalOpen(false), []);
+	const handleCloseBatchRunner = useCallback(() => setBatchRunnerModalOpen(false), []);
 	const handleSaveBatchPrompt = useCallback(
 		(prompt: string) => {
 			if (!activeSession) return;
 			// Save the custom prompt and modification timestamp to the session (persisted across restarts)
-			setSessions(prev =>
-				prev.map(s =>
+			setSessions((prev) =>
+				prev.map((s) =>
 					s.id === activeSession.id
 						? {
 								...s,
 								batchRunnerPrompt: prompt,
-								batchRunnerPromptModifiedAt: Date.now()
-						  }
+								batchRunnerPromptModifiedAt: Date.now(),
+							}
 						: s
 				)
 			);
 		},
 		[activeSession]
 	);
-	const handleCloseTabSwitcher = useCallback(
-		() => setTabSwitcherOpen(false),
-		[]
-	);
+	const handleCloseTabSwitcher = useCallback(() => setTabSwitcherOpen(false), []);
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			setSessions(prev =>
-				prev.map(s =>
-					s.id === activeSession.id ? { ...s, activeTabId: tabId } : s
-				)
+			setSessions((prev) =>
+				prev.map((s) => (s.id === activeSession.id ? { ...s, activeTabId: tabId } : s))
 			);
 		},
 		[activeSession]
 	);
 	const handleNamedSessionSelect = useCallback(
-		(
-			agentSessionId: string,
-			_projectPath: string,
-			sessionName: string,
-			starred?: boolean
-		) => {
+		(agentSessionId: string, _projectPath: string, sessionName: string, starred?: boolean) => {
 			// Open a closed named session as a new tab - use handleResumeSession to properly load messages
 			handleResumeSession(agentSessionId, [], sessionName, starred);
 			// Focus input so user can start interacting immediately
@@ -11824,10 +10996,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[handleResumeSession, setActiveFocus]
 	);
-	const handleCloseFileSearch = useCallback(
-		() => setFuzzyFileSearchOpen(false),
-		[]
-	);
+	const handleCloseFileSearch = useCallback(() => setFuzzyFileSearchOpen(false), []);
 	const handleFileSearchSelect = useCallback(
 		(file: FlatFileItem) => {
 			// Preview the file directly (handleFileClick expects relative path)
@@ -11845,10 +11014,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		(value: string) => {
 			if (activeGroupChatId) {
 				// Update group chat draft
-				setGroupChats(prev =>
-					prev.map(c =>
-						c.id === activeGroupChatId ? { ...c, draftMessage: value } : c
-					)
+				setGroupChats((prev) =>
+					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: value } : c))
 				);
 			} else {
 				setInputValue(value);
@@ -11867,10 +11034,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				);
 				setGroupChatStagedImages([]);
 				// Clear draft
-				setGroupChats(prev =>
-					prev.map(c =>
-						c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c
-					)
+				setGroupChats((prev) =>
+					prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: '' } : c))
 				);
 			} else {
 				// Set the input value and trigger send
@@ -11884,44 +11049,40 @@ You are taking over this conversation. Based on the context above, provide a bri
 			groupChatStagedImages,
 			groupChatReadOnlyMode,
 			handleSendGroupChatMessage,
-			processInput
+			processInput,
 		]
 	);
 	const handlePromptToggleTabSaveToHistory = useCallback(() => {
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab =>
-						tab.id === activeTab.id
-							? { ...tab, saveToHistory: !tab.saveToHistory }
-							: tab
-					)
+					aiTabs: s.aiTabs.map((tab) =>
+						tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
+					),
 				};
 			})
 		);
 	}, [activeSession, getActiveTab]);
 	const handlePromptToggleTabReadOnlyMode = useCallback(() => {
 		if (activeGroupChatId) {
-			setGroupChatReadOnlyMode(prev => !prev);
+			setGroupChatReadOnlyMode((prev) => !prev);
 		} else {
 			if (!activeSession) return;
 			const activeTab = getActiveTab(activeSession);
 			if (!activeTab) return;
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
-							tab.id === activeTab.id
-								? { ...tab, readOnlyMode: !tab.readOnlyMode }
-								: tab
-						)
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.id === activeTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+						),
 					};
 				})
 			);
@@ -11931,23 +11092,23 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeSession) return;
 		const activeTab = getActiveTab(activeSession);
 		if (!activeTab) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab => {
+					aiTabs: s.aiTabs.map((tab) => {
 						if (tab.id !== activeTab.id) return tab;
 						if (tab.showThinking) {
 							// Turn off - clear thinking logs
 							return {
 								...tab,
 								showThinking: false,
-								logs: tab.logs.filter(log => log.source !== 'thinking')
+								logs: tab.logs.filter((log) => log.source !== 'thinking'),
 							};
 						}
 						return { ...tab, showThinking: true };
-					})
+					}),
 				};
 			})
 		);
@@ -11960,9 +11121,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// QuickActionsModal stable callbacks
 	const handleQuickActionsRenameTab = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			const activeTab = activeSession.aiTabs?.find(
-				t => t.id === activeSession.activeTabId
-			);
+			const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
 			// Only allow rename if tab has an active Claude session
 			if (activeTab?.agentSessionId) {
 				setRenameTabId(activeTab.id);
@@ -11973,16 +11132,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, [activeSession, getInitialRenameValue]);
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab =>
-							tab.id === s.activeTabId
-								? { ...tab, readOnlyMode: !tab.readOnlyMode }
-								: tab
-						)
+						aiTabs: s.aiTabs.map((tab) =>
+							tab.id === s.activeTabId ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
+						),
 					};
 				})
 			);
@@ -11990,25 +11147,23 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, [activeSession]);
 	const handleQuickActionsToggleTabShowThinking = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
 					return {
 						...s,
-						aiTabs: s.aiTabs.map(tab => {
+						aiTabs: s.aiTabs.map((tab) => {
 							if (tab.id !== s.activeTabId) return tab;
 							// When turning OFF, clear any thinking/tool logs
 							if (tab.showThinking) {
 								return {
 									...tab,
 									showThinking: false,
-									logs: tab.logs.filter(
-										l => l.source !== 'thinking' && l.source !== 'tool'
-									)
+									logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
 								};
 							}
 							return { ...tab, showThinking: true };
-						})
+						}),
 					};
 				})
 			);
@@ -12033,8 +11188,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeSession || activeSession.executionQueue.length === 0) return;
 		const [nextItem, ...remainingQueue] = activeSession.executionQueue;
 		// Update state to remove item from queue
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
 				return { ...s, executionQueue: remainingQueue };
 			})
@@ -12054,18 +11209,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setEditAgentSession(session);
 		setEditAgentModalOpen(true);
 	}, []);
-	const handleQuickActionsNewGroupChat = useCallback(
-		() => setShowNewGroupChatModal(true),
-		[]
-	);
-	const handleQuickActionsOpenMergeSession = useCallback(
-		() => setMergeSessionModalOpen(true),
-		[]
-	);
-	const handleQuickActionsOpenSendToAgent = useCallback(
-		() => setSendToAgentModalOpen(true),
-		[]
-	);
+	const handleQuickActionsNewGroupChat = useCallback(() => setShowNewGroupChatModal(true), []);
+	const handleQuickActionsOpenMergeSession = useCallback(() => setMergeSessionModalOpen(true), []);
+	const handleQuickActionsOpenSendToAgent = useCallback(() => setSendToAgentModalOpen(true), []);
 	const handleQuickActionsOpenCreatePR = useCallback((session: Session) => {
 		setCreatePRSession(session);
 		setCreatePRModalOpen(true);
@@ -12079,9 +11225,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Show flash notification based on the NEW state (opposite of current)
 		if (isLiveMode) {
 			// Was live, now offline
-			setSuccessFlashNotification(
-				'Remote Control: OFFLINE — See indicator at top of left panel'
-			);
+			setSuccessFlashNotification('Remote Control: OFFLINE — See indicator at top of left panel');
 		} else {
 			// Was offline, now live
 			setSuccessFlashNotification(
@@ -12094,24 +11238,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 		rightPanelRef.current?.openAutoRunResetTasksModal();
 	}, []);
 
-	const handleCloseQueueBrowser = useCallback(
-		() => setQueueBrowserOpen(false),
-		[]
-	);
-	const handleRemoveQueueItem = useCallback(
-		(sessionId: string, itemId: string) => {
-			setSessions(prev =>
-				prev.map(s => {
-					if (s.id !== sessionId) return s;
-					return {
-						...s,
-						executionQueue: s.executionQueue.filter(item => item.id !== itemId)
-					};
-				})
-			);
-		},
-		[]
-	);
+	const handleCloseQueueBrowser = useCallback(() => setQueueBrowserOpen(false), []);
+	const handleRemoveQueueItem = useCallback((sessionId: string, itemId: string) => {
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== sessionId) return s;
+				return {
+					...s,
+					executionQueue: s.executionQueue.filter((item) => item.id !== itemId),
+				};
+			})
+		);
+	}, []);
 	const handleSwitchQueueSession = useCallback(
 		(sessionId: string) => {
 			setActiveSessionId(sessionId);
@@ -12120,8 +11258,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 	);
 	const handleReorderQueueItems = useCallback(
 		(sessionId: string, fromIndex: number, toIndex: number) => {
-			setSessions(prev =>
-				prev.map(s => {
+			setSessions((prev) =>
+				prev.map((s) => {
 					if (s.id !== sessionId) return s;
 					const queue = [...s.executionQueue];
 					const [removed] = queue.splice(fromIndex, 1);
@@ -12259,9 +11397,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Summarize and continue
 		canSummarizeActiveTab: (() => {
 			if (!activeSession || !activeSession.activeTabId) return false;
-			const activeTab = activeSession.aiTabs.find(
-				t => t.id === activeSession.activeTabId
-			);
+			const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
 			return canSummarize(activeSession.contextUsage, activeTab?.logs);
 		})(),
 		summarizeAndContinue: handleSummarizeAndContinue,
@@ -12284,7 +11420,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleCloseTabsRight,
 
 		// Session bookmark toggle
-		toggleBookmark
+		toggleBookmark,
 	};
 
 	// Update flat file list when active session's tree, expanded folders, filter, or hidden files setting changes
@@ -12299,10 +11435,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const filterHiddenFiles = (nodes: FileNode[]): FileNode[] => {
 			if (showHiddenFiles) return nodes;
 			return nodes
-				.filter(node => !node.name.startsWith('.'))
-				.map(node => ({
+				.filter((node) => !node.name.startsWith('.'))
+				.map((node) => ({
 					...node,
-					children: node.children ? filterHiddenFiles(node.children) : undefined
+					children: node.children ? filterHiddenFiles(node.children) : undefined,
 				}));
 		};
 
@@ -12314,11 +11450,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Handle pending jump path from /jump command
 	useEffect(() => {
-		if (
-			!activeSession ||
-			activeSession.pendingJumpPath === undefined ||
-			flatFileList.length === 0
-		)
+		if (!activeSession || activeSession.pendingJumpPath === undefined || flatFileList.length === 0)
 			return;
 
 		const jumpPath = activeSession.pendingJumpPath;
@@ -12332,7 +11464,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		} else {
 			// Find the folder in the flat list and select it directly
 			const folderIndex = flatFileList.findIndex(
-				item => item.fullPath === jumpPath && item.isFolder
+				(item) => item.fullPath === jumpPath && item.isFolder
 			);
 
 			if (folderIndex !== -1) {
@@ -12346,10 +11478,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSelectedFileIndex(targetIndex);
 
 		// Clear the pending jump path
-		setSessions(prev =>
-			prev.map(s =>
-				s.id === activeSession.id ? { ...s, pendingJumpPath: undefined } : s
-			)
+		setSessions((prev) =>
+			prev.map((s) => (s.id === activeSession.id ? { ...s, pendingJumpPath: undefined } : s))
 		);
 	}, [activeSession?.pendingJumpPath, flatFileList, activeSession?.id]);
 
@@ -12382,17 +11512,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 				selectedElement.scrollIntoView({
 					behavior: 'auto', // Immediate scroll
 					block: 'center', // Center in viewport to avoid sticky header at top
-					inline: 'nearest'
+					inline: 'nearest',
 				});
 			}
 		});
-	}, [
-		selectedFileIndex,
-		activeFocus,
-		activeRightTab,
-		flatFileList,
-		tabCompletionOpen
-	]);
+	}, [selectedFileIndex, activeFocus, activeRightTab, flatFileList, tabCompletionOpen]);
 
 	// File Explorer keyboard navigation
 	useEffect(() => {
@@ -12401,16 +11525,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (hasOpenModal()) return;
 
 			// Only handle when right panel is focused and on files tab
-			if (
-				activeFocus !== 'right' ||
-				activeRightTab !== 'files' ||
-				flatFileList.length === 0
-			)
+			if (activeFocus !== 'right' || activeRightTab !== 'files' || flatFileList.length === 0)
 				return;
 
-			const expandedFolders = new Set(
-				activeSession?.fileExplorerExpanded || []
-			);
+			const expandedFolders = new Set(activeSession?.fileExplorerExpanded || []);
 
 			// Cmd+Arrow: jump to top/bottom
 			if ((e.metaKey || e.ctrlKey) && e.key === 'ArrowUp') {
@@ -12426,32 +11544,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 			else if (e.altKey && e.key === 'ArrowUp') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex(prev => Math.max(0, prev - 10));
+				setSelectedFileIndex((prev) => Math.max(0, prev - 10));
 			} else if (e.altKey && e.key === 'ArrowDown') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex(prev =>
-					Math.min(flatFileList.length - 1, prev + 10)
-				);
+				setSelectedFileIndex((prev) => Math.min(flatFileList.length - 1, prev + 10));
 			}
 			// Regular Arrow: move one item
 			else if (e.key === 'ArrowUp') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex(prev => Math.max(0, prev - 1));
+				setSelectedFileIndex((prev) => Math.max(0, prev - 1));
 			} else if (e.key === 'ArrowDown') {
 				e.preventDefault();
 				fileTreeKeyboardNavRef.current = true;
-				setSelectedFileIndex(prev =>
-					Math.min(flatFileList.length - 1, prev + 1)
-				);
+				setSelectedFileIndex((prev) => Math.min(flatFileList.length - 1, prev + 1));
 			} else if (e.key === 'ArrowLeft') {
 				e.preventDefault();
 				const selectedItem = flatFileList[selectedFileIndex];
-				if (
-					selectedItem?.isFolder &&
-					expandedFolders.has(selectedItem.fullPath)
-				) {
+				if (selectedItem?.isFolder && expandedFolders.has(selectedItem.fullPath)) {
 					// If selected item is an expanded folder, collapse it
 					toggleFolder(selectedItem.fullPath, activeSessionId, setSessions);
 				} else if (selectedItem) {
@@ -12463,9 +11574,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					if (parentPath && expandedFolders.has(parentPath)) {
 						toggleFolder(parentPath, activeSessionId, setSessions);
 						// Move selection to parent folder
-						const parentIndex = flatFileList.findIndex(
-							item => item.fullPath === parentPath
-						);
+						const parentIndex = flatFileList.findIndex((item) => item.fullPath === parentPath);
 						if (parentIndex >= 0) {
 							fileTreeKeyboardNavRef.current = true;
 							setSelectedFileIndex(parentIndex);
@@ -12475,10 +11584,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			} else if (e.key === 'ArrowRight') {
 				e.preventDefault();
 				const selectedItem = flatFileList[selectedFileIndex];
-				if (
-					selectedItem?.isFolder &&
-					!expandedFolders.has(selectedItem.fullPath)
-				) {
+				if (selectedItem?.isFolder && !expandedFolders.has(selectedItem.fullPath)) {
 					toggleFolder(selectedItem.fullPath, activeSessionId, setSessions);
 				}
 			} else if (e.key === 'Enter') {
@@ -12506,7 +11612,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSessions,
 		toggleFolder,
 		handleFileClick,
-		hasOpenModal
+		hasOpenModal,
 	]);
 
 	// ============================================================================
@@ -12521,22 +11627,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!wizardState) return;
 
 		// Convert wizard conversation history to log entries
-		const wizardLogEntries: LogEntry[] =
-			wizardState.conversationHistory.map(msg => ({
-				id: `wizard-${msg.id}`,
-				timestamp: msg.timestamp,
-				source: msg.role === 'user' ? 'user' : 'ai',
-				text: msg.content,
-				delivered: true
-			}));
+		const wizardLogEntries: LogEntry[] = wizardState.conversationHistory.map((msg) => ({
+			id: `wizard-${msg.id}`,
+			timestamp: msg.timestamp,
+			source: msg.role === 'user' ? 'user' : 'ai',
+			text: msg.content,
+			delivered: true,
+		}));
 
 		// Create summary message with next steps
 		const generatedDocs = wizardState.generatedDocuments || [];
-		const totalTasks = generatedDocs.reduce(
-			(sum, doc) => sum + doc.taskCount,
-			0
-		);
-		const docNames = generatedDocs.map(d => d.filename).join(', ');
+		const totalTasks = generatedDocs.reduce((sum, doc) => sum + doc.taskCount, 0);
+		const docNames = generatedDocs.map((d) => d.filename).join(', ');
 
 		const summaryMessage: LogEntry = {
 			id: `wizard-summary-${Date.now()}`,
@@ -12553,7 +11655,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				`2. Review and edit tasks as needed\n` +
 				`3. Click **Run** to start executing tasks automatically\n\n` +
 				`You can continue chatting to iterate on your playbook - the AI has full context of what was created.`,
-			delivered: true
+			delivered: true,
 		};
 
 		const subfolderName = wizardState.subfolderName || '';
@@ -12561,17 +11663,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 		const wizardAgentSessionId = wizardState.agentSessionId;
 		const activeTabId = activeTabLocal.id;
 
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
-				const updatedTabs = s.aiTabs.map(tab => {
+				const updatedTabs = s.aiTabs.map((tab) => {
 					if (tab.id !== activeTabId) return tab;
 					return {
 						...tab,
 						logs: [...tab.logs, ...wizardLogEntries, summaryMessage],
 						agentSessionId: wizardAgentSessionId || tab.agentSessionId,
 						name: tabName,
-						wizardState: undefined
+						wizardState: undefined,
 					};
 				});
 				return { ...s, aiTabs: updatedTabs };
@@ -12581,7 +11683,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 		endInlineWizard();
 		handleAutoRunRefresh();
 		setInputValue('');
-	}, [activeSession, getActiveTab, setSessions, endInlineWizard, handleAutoRunRefresh, setInputValue]);
+	}, [
+		activeSession,
+		getActiveTab,
+		setSessions,
+		endInlineWizard,
+		handleAutoRunRefresh,
+		setInputValue,
+	]);
 
 	// Wizard lets go handler - generates documents for active tab
 	const handleWizardLetsGo = useCallback(() => {
@@ -12596,12 +11705,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeSession) return;
 		const activeTabLocal = getActiveTab(activeSession);
 		if (!activeTabLocal?.wizardState) return;
-		setSessions(prev =>
-			prev.map(s => {
+		setSessions((prev) =>
+			prev.map((s) => {
 				if (s.id !== activeSession.id) return s;
 				return {
 					...s,
-					aiTabs: s.aiTabs.map(tab => {
+					aiTabs: s.aiTabs.map((tab) => {
 						if (tab.id !== activeTabLocal.id) return tab;
 						if (!tab.wizardState) return tab;
 						return {
@@ -12611,10 +11720,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 								showWizardThinking: !tab.wizardState.showWizardThinking,
 								thinkingContent: !tab.wizardState.showWizardThinking
 									? ''
-									: tab.wizardState.thinkingContent
-							}
+									: tab.wizardState.thinkingContent,
+							},
 						};
-					})
+					}),
 				};
 			})
 		);
@@ -13051,9 +12160,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 	});
 
 	return (
-		<GitStatusProvider
-			sessions={sessions}
-			activeSessionId={activeSessionId}>
+		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
 			<div
 				className={`flex h-screen w-full font-mono overflow-hidden transition-colors duration-300 ${
 					isMobileLandscape ? 'pt-0' : 'pt-10'
@@ -13062,39 +12169,41 @@ You are taking over this conversation. Based on the context above, provide a bri
 					backgroundColor: theme.colors.bgMain,
 					color: theme.colors.textMain,
 					fontFamily: fontFamily,
-					fontSize: `${fontSize}px`
+					fontSize: `${fontSize}px`,
 				}}
 				onDragEnter={handleImageDragEnter}
 				onDragLeave={handleImageDragLeave}
 				onDragOver={handleImageDragOver}
-				onDrop={handleDrop}>
+				onDrop={handleDrop}
+			>
 				{/* Image Drop Overlay */}
 				{isDraggingImage && (
 					<div
-						className='fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center'
-						style={{ backgroundColor: `${theme.colors.accent}20` }}>
+						className="fixed inset-0 z-[9999] pointer-events-none flex items-center justify-center"
+						style={{ backgroundColor: `${theme.colors.accent}20` }}
+					>
 						<div
-							className='pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-4'
+							className="pointer-events-none rounded-xl border-2 border-dashed p-8 flex flex-col items-center gap-4"
 							style={{
 								borderColor: theme.colors.accent,
-								backgroundColor: `${theme.colors.bgMain}ee`
-							}}>
+								backgroundColor: `${theme.colors.bgMain}ee`,
+							}}
+						>
 							<svg
-								className='w-16 h-16'
+								className="w-16 h-16"
 								style={{ color: theme.colors.accent }}
-								fill='none'
-								stroke='currentColor'
-								viewBox='0 0 24 24'>
+								fill="none"
+								stroke="currentColor"
+								viewBox="0 0 24 24"
+							>
 								<path
-									strokeLinecap='round'
-									strokeLinejoin='round'
+									strokeLinecap="round"
+									strokeLinejoin="round"
 									strokeWidth={2}
-									d='M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z'
+									d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
 								/>
 							</svg>
-							<span
-								className='text-lg font-medium'
-								style={{ color: theme.colors.textMain }}>
+							<span className="text-lg font-medium" style={{ color: theme.colors.textMain }}>
 								Drop image to attach
 							</span>
 						</div>
@@ -13104,31 +12213,31 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape) --- */}
 				{!isMobileLandscape && (
 					<div
-						className='fixed top-0 left-0 right-0 h-10 flex items-center justify-center'
+						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={
 							{
-								WebkitAppRegion: 'drag'
+								WebkitAppRegion: 'drag',
 							} as React.CSSProperties
-						}>
+						}
+					>
 						{activeGroupChatId ? (
 							<span
-								className='text-xs select-none opacity-50'
-								style={{ color: theme.colors.textDim }}>
+								className="text-xs select-none opacity-50"
+								style={{ color: theme.colors.textDim }}
+							>
 								Maestro Group Chat:{' '}
-								{groupChats.find(c => c.id === activeGroupChatId)?.name ||
-									'Unknown'}
+								{groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Unknown'}
 							</span>
 						) : (
 							activeSession && (
 								<span
-									className='text-xs select-none opacity-50'
-									style={{ color: theme.colors.textDim }}>
+									className="text-xs select-none opacity-50"
+									style={{ color: theme.colors.textDim }}
+								>
 									{(() => {
 										const parts: string[] = [];
 										// Group name (if grouped)
-										const group = groups.find(
-											g => g.id === activeSession.groupId
-										);
+										const group = groups.find((g) => g.id === activeSession.groupId);
 										if (group) {
 											parts.push(`${group.emoji} ${group.name}`);
 										}
@@ -13136,7 +12245,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 										parts.push(activeSession.name);
 										// Active tab name or UUID octet
 										const activeTab = activeSession.aiTabs?.find(
-											t => t.id === activeSession.activeTabId
+											(t) => t.id === activeSession.activeTabId
 										);
 										if (activeTab) {
 											const tabLabel =
@@ -13179,9 +12288,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					autoRunStats={autoRunStats}
 					usageStats={usageStats}
 					handsOnTimeMs={globalStats.totalActiveTimeMs}
-					onOpenLeaderboardRegistration={
-						handleOpenLeaderboardRegistrationFromAbout
-					}
+					onOpenLeaderboardRegistration={handleOpenLeaderboardRegistrationFromAbout}
 					isLeaderboardRegistered={isLeaderboardRegistered}
 					updateCheckModalOpen={updateCheckModalOpen}
 					onCloseUpdateCheckModal={handleCloseUpdateCheckModal}
@@ -13251,9 +12358,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					deleteWorktreeSession={deleteWorktreeSession}
 					onCloseDeleteWorktreeModal={handleCloseDeleteWorktreeModal}
 					onConfirmDeleteWorktree={handleConfirmDeleteWorktree}
-					onConfirmAndDeleteWorktreeOnDisk={
-						handleConfirmAndDeleteWorktreeOnDisk
-					}
+					onConfirmAndDeleteWorktreeOnDisk={handleConfirmAndDeleteWorktreeOnDisk}
 					// AppUtilityModals props
 					quickActionOpen={quickActionOpen}
 					quickActionInitialMode={quickActionInitialMode}
@@ -13285,28 +12390,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 					setGitLogOpen={setGitLogOpen}
 					isAiMode={activeSession?.inputMode === 'ai'}
 					onQuickActionsRenameTab={handleQuickActionsRenameTab}
-					onQuickActionsToggleReadOnlyMode={
-						handleQuickActionsToggleReadOnlyMode
-					}
-					onQuickActionsToggleTabShowThinking={
-						handleQuickActionsToggleTabShowThinking
-					}
+					onQuickActionsToggleReadOnlyMode={handleQuickActionsToggleReadOnlyMode}
+					onQuickActionsToggleTabShowThinking={handleQuickActionsToggleTabShowThinking}
 					onQuickActionsOpenTabSwitcher={handleQuickActionsOpenTabSwitcher}
 					onCloseAllTabs={handleCloseAllTabs}
 					onCloseOtherTabs={handleCloseOtherTabs}
 					onCloseTabsLeft={handleCloseTabsLeft}
 					onCloseTabsRight={handleCloseTabsRight}
 					setPlaygroundOpen={setPlaygroundOpen}
-					onQuickActionsRefreshGitFileState={
-						handleQuickActionsRefreshGitFileState
-					}
-					onQuickActionsDebugReleaseQueuedItem={
-						handleQuickActionsDebugReleaseQueuedItem
-					}
+					onQuickActionsRefreshGitFileState={handleQuickActionsRefreshGitFileState}
+					onQuickActionsDebugReleaseQueuedItem={handleQuickActionsDebugReleaseQueuedItem}
 					markdownEditMode={markdownEditMode}
-					onQuickActionsToggleMarkdownEditMode={
-						handleQuickActionsToggleMarkdownEditMode
-					}
+					onQuickActionsToggleMarkdownEditMode={handleQuickActionsToggleMarkdownEditMode}
 					setUpdateCheckModalOpenForQuickActions={setUpdateCheckModalOpen}
 					openWizard={openWizardModal}
 					wizardGoToStep={wizardGoToStep}
@@ -13329,17 +12424,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 						activeSession
 							? canSummarize(
 									activeSession.contextUsage,
-									activeSession.aiTabs.find(
-										t => t.id === activeSession.activeTabId
-									)?.logs
-							  )
+									activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId)?.logs
+								)
 							: false
 					}
 					onToggleRemoteControl={handleQuickActionsToggleRemoteControl}
 					autoRunSelectedDocument={activeSession?.autoRunSelectedFile ?? null}
-					autoRunCompletedTaskCount={
-						rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0
-					}
+					autoRunCompletedTaskCount={rightPanelRef.current?.getAutoRunCompletedTaskCount() ?? 0}
 					onAutoRunResetTasks={handleQuickActionsAutoRunResetTasks}
 					isFilePreviewOpen={previewFile !== null}
 					ghCliAvailable={ghCliAvailable}
@@ -13357,9 +12448,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onCloseLightbox={handleCloseLightbox}
 					onNavigateLightbox={handleNavigateLightbox}
 					onDeleteLightboxImage={
-						lightboxAllowDeleteRef.current
-							? handleDeleteLightboxImage
-							: undefined
+						lightboxAllowDeleteRef.current ? handleDeleteLightboxImage : undefined
 					}
 					gitDiffPreview={gitDiffPreview}
 					gitViewerCwd={gitViewerCwd}
@@ -13391,58 +12480,44 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onClosePromptComposer={handleClosePromptComposer}
 					promptComposerInitialValue={
 						activeGroupChatId
-							? groupChats.find(c => c.id === activeGroupChatId)
-									?.draftMessage || ''
+							? groupChats.find((c) => c.id === activeGroupChatId)?.draftMessage || ''
 							: deferredInputValue
 					}
 					onPromptComposerSubmit={handlePromptComposerSubmit}
 					onPromptComposerSend={handlePromptComposerSend}
 					promptComposerSessionName={
 						activeGroupChatId
-							? groupChats.find(c => c.id === activeGroupChatId)?.name
+							? groupChats.find((c) => c.id === activeGroupChatId)?.name
 							: activeSession?.name
 					}
 					promptComposerStagedImages={
-						activeGroupChatId
-							? groupChatStagedImages
-							: canAttachImages
-							? stagedImages
-							: []
+						activeGroupChatId ? groupChatStagedImages : canAttachImages ? stagedImages : []
 					}
 					setPromptComposerStagedImages={
 						activeGroupChatId
 							? setGroupChatStagedImages
 							: canAttachImages
-							? setStagedImages
-							: undefined
+								? setStagedImages
+								: undefined
 					}
 					onPromptImageAttachBlocked={
-						activeGroupChatId || !blockCodexResumeImages
-							? undefined
-							: showImageAttachBlockedNotice
+						activeGroupChatId || !blockCodexResumeImages ? undefined : showImageAttachBlockedNotice
 					}
 					onPromptOpenLightbox={handleSetLightboxImage}
-					promptTabSaveToHistory={
-						activeGroupChatId ? false : activeTab?.saveToHistory ?? false
-					}
+					promptTabSaveToHistory={activeGroupChatId ? false : (activeTab?.saveToHistory ?? false)}
 					onPromptToggleTabSaveToHistory={
 						activeGroupChatId ? undefined : handlePromptToggleTabSaveToHistory
 					}
 					promptTabReadOnlyMode={
-						activeGroupChatId
-							? groupChatReadOnlyMode
-							: activeTab?.readOnlyMode ?? false
+						activeGroupChatId ? groupChatReadOnlyMode : (activeTab?.readOnlyMode ?? false)
 					}
 					onPromptToggleTabReadOnlyMode={handlePromptToggleTabReadOnlyMode}
-					promptTabShowThinking={
-						activeGroupChatId ? false : activeTab?.showThinking ?? false
-					}
+					promptTabShowThinking={activeGroupChatId ? false : (activeTab?.showThinking ?? false)}
 					onPromptToggleTabShowThinking={
 						activeGroupChatId ? undefined : handlePromptToggleTabShowThinking
 					}
 					promptSupportsThinking={
-						!activeGroupChatId &&
-						hasActiveSessionCapability('supportsThinkingDisplay')
+						!activeGroupChatId && hasActiveSessionCapability('supportsThinkingDisplay')
 					}
 					promptEnterToSend={enterToSendAI}
 					onPromptToggleEnterToSend={handlePromptToggleEnterToSend}
@@ -13556,9 +12631,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{gistPublishModalOpen && (previewFile || tabGistContent) && (
 					<GistPublishModal
 						theme={theme}
-						filename={
-							tabGistContent?.filename ?? previewFile?.name ?? 'conversation.md'
-						}
+						filename={tabGistContent?.filename ?? previewFile?.name ?? 'conversation.md'}
 						content={tabGistContent?.content ?? previewFile?.content ?? ''}
 						onClose={() => {
 							setGistPublishModalOpen(false);
@@ -13570,7 +12643,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								saveFileGistUrl(previewFile.path, {
 									gistUrl,
 									isPublic,
-									publishedAt: Date.now()
+									publishedAt: Date.now(),
 								});
 							}
 							// Copy the gist URL to clipboard
@@ -13579,20 +12652,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 							addToast({
 								type: 'success',
 								title: 'Gist Published',
-								message: `${
-									isPublic ? 'Public' : 'Secret'
-								} gist created! URL copied to clipboard.`,
+								message: `${isPublic ? 'Public' : 'Secret'} gist created! URL copied to clipboard.`,
 								duration: 5000,
 								actionUrl: gistUrl,
-								actionLabel: 'Open Gist'
+								actionLabel: 'Open Gist',
 							});
 							// Clear tab gist content after success
 							setTabGistContent(null);
 						}}
 						existingGist={
-							previewFile && !tabGistContent
-								? fileGistUrls[previewFile.path]
-								: undefined
+							previewFile && !tabGistContent ? fileGistUrls[previewFile.path] : undefined
 						}
 					/>
 				)}
@@ -13612,10 +12681,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 						}}
 						theme={theme}
 						rootPath={activeSession?.projectRoot || activeSession?.cwd || ''}
-						onDocumentOpen={filePath => {
+						onDocumentOpen={(filePath) => {
 							// Open the document in file preview
-							const treeRoot =
-								activeSession?.projectRoot || activeSession?.cwd || '';
+							const treeRoot = activeSession?.projectRoot || activeSession?.cwd || '';
 							const fullPath = `${treeRoot}/${filePath}`;
 							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
 							// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
@@ -13623,18 +12691,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 								activeSession?.sshRemoteId ||
 								activeSession?.sessionSshRemoteConfig?.remoteId ||
 								undefined;
-							window.maestro.fs.readFile(fullPath, sshId).then(content => {
+							window.maestro.fs.readFile(fullPath, sshId).then((content) => {
 								if (content !== null) {
 									setPreviewFile({
 										name: filePath.split('/').pop() || filePath,
 										content,
-										path: fullPath
+										path: fullPath,
 									});
 								}
 							});
 							setIsGraphViewOpen(false);
 						}}
-						onExternalLinkOpen={url => {
+						onExternalLinkOpen={(url) => {
 							// Open external URL in default browser
 							window.maestro.shell.openExternal(url);
 						}}
@@ -13663,9 +12731,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						agentName={deleteAgentSession.name}
 						workingDirectory={deleteAgentSession.cwd}
 						onConfirm={() => performDeleteSession(deleteAgentSession, false)}
-						onConfirmAndErase={() =>
-							performDeleteSession(deleteAgentSession, true)
-						}
+						onConfirmAndErase={() => performDeleteSession(deleteAgentSession, true)}
 						onClose={handleCloseDeleteAgentModal}
 					/>
 				)}
@@ -13698,8 +12764,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- SYSTEM LOG VIEWER (replaces center content when open) --- */}
 				{logViewerOpen && (
 					<div
-						className='flex-1 flex flex-col min-w-0'
-						style={{ backgroundColor: theme.colors.bgMain }}>
+						className="flex-1 flex flex-col min-w-0"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
 						<LogViewer
 							theme={theme}
 							onClose={handleCloseLogViewer}
@@ -13714,18 +12781,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- GROUP CHAT VIEW (shown when a group chat is active, hidden when log viewer open) --- */}
 				{!logViewerOpen &&
 					activeGroupChatId &&
-					groupChats.find(c => c.id === activeGroupChatId) && (
+					groupChats.find((c) => c.id === activeGroupChatId) && (
 						<>
-							<div className='flex-1 flex flex-col min-w-0'>
+							<div className="flex-1 flex flex-col min-w-0">
 								<GroupChatPanel
 									theme={theme}
-									groupChat={groupChats.find(c => c.id === activeGroupChatId)!}
+									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
 									messages={groupChatMessages}
 									state={groupChatState}
 									totalCost={(() => {
-										const chat = groupChats.find(
-											c => c.id === activeGroupChatId
-										);
+										const chat = groupChats.find((c) => c.id === activeGroupChatId);
 										const participantsCost = (chat?.participants || []).reduce(
 											(sum, p) => sum + (p.totalCost || 0),
 											0
@@ -13734,25 +12799,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 										return participantsCost + modCost;
 									})()}
 									costIncomplete={(() => {
-										const chat = groupChats.find(
-											c => c.id === activeGroupChatId
-										);
+										const chat = groupChats.find((c) => c.id === activeGroupChatId);
 										const participants = chat?.participants || [];
 										// Check if any participant is missing cost data
 										const anyParticipantMissingCost = participants.some(
-											p => p.totalCost === undefined || p.totalCost === null
+											(p) => p.totalCost === undefined || p.totalCost === null
 										);
 										// Moderator is also considered - if no usage stats yet, cost is incomplete
 										const moderatorMissingCost =
-											moderatorUsage?.totalCost === undefined ||
-											moderatorUsage?.totalCost === null;
+											moderatorUsage?.totalCost === undefined || moderatorUsage?.totalCost === null;
 										return anyParticipantMissingCost || moderatorMissingCost;
 									})()}
 									onSendMessage={handleSendGroupChatMessage}
 									onClose={handleCloseGroupChat}
-									onRename={() =>
-										setShowRenameGroupChatModal(activeGroupChatId)
-									}
+									onRename={() => setShowRenameGroupChatModal(activeGroupChatId)}
 									onShowInfo={() => setShowGroupChatInfo(true)}
 									rightPanelOpen={rightPanelOpen}
 									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
@@ -13769,14 +12829,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 									handleDrop={handleDrop}
 									onOpenLightbox={handleSetLightboxImage}
 									executionQueue={groupChatExecutionQueue.filter(
-										item => item.tabId === activeGroupChatId
+										(item) => item.tabId === activeGroupChatId
 									)}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
 									markdownEditMode={markdownEditMode}
-									onToggleMarkdownEditMode={() =>
-										setMarkdownEditMode(!markdownEditMode)
-									}
+									onToggleMarkdownEditMode={() => setMarkdownEditMode(!markdownEditMode)}
 									maxOutputLines={maxOutputLines}
 									enterToSendAI={enterToSendAI}
 									setEnterToSendAI={setEnterToSendAI}
@@ -13792,19 +12850,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 								theme={theme}
 								groupChatId={activeGroupChatId}
 								participants={
-									groupChats.find(c => c.id === activeGroupChatId)
-										?.participants || []
+									groupChats.find((c) => c.id === activeGroupChatId)?.participants || []
 								}
 								participantStates={participantStates}
 								participantSessionPaths={
 									new Map(
 										sessions
-											.filter(s =>
+											.filter((s) =>
 												groupChats
-													.find(c => c.id === activeGroupChatId)
-													?.participants.some(p => p.sessionId === s.id)
+													.find((c) => c.id === activeGroupChatId)
+													?.participants.some((p) => p.sessionId === s.id)
 											)
-											.map(s => [s.id, s.projectRoot])
+											.map((s) => [s.id, s.projectRoot])
 									)
 								}
 								sessionSshRemoteNames={sessionSshRemoteNames}
@@ -13814,20 +12871,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 								setWidthState={setRightPanelWidth}
 								shortcuts={shortcuts}
 								moderatorAgentId={
-									groupChats.find(c => c.id === activeGroupChatId)
-										?.moderatorAgentId || 'claude-code'
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentId ||
+									'claude-code'
 								}
 								moderatorSessionId={
-									groupChats.find(c => c.id === activeGroupChatId)
-										?.moderatorSessionId || ''
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorSessionId || ''
 								}
 								moderatorAgentSessionId={
-									groupChats.find(c => c.id === activeGroupChatId)
-										?.moderatorAgentSessionId
+									groupChats.find((c) => c.id === activeGroupChatId)?.moderatorAgentSessionId
 								}
-								moderatorState={
-									groupChatState === 'moderator-thinking' ? 'busy' : 'idle'
-								}
+								moderatorState={groupChatState === 'moderator-thinking' ? 'busy' : 'idle'}
 								moderatorUsage={moderatorUsage}
 								activeTab={groupChatRightTab}
 								onTabChange={handleGroupChatRightTabChange}
@@ -13839,24 +12892,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 				{/* --- CENTER WORKSPACE (hidden when no sessions, group chat is active, or log viewer is open) --- */}
 				{sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
-					<MainPanel
-						ref={mainPanelRef}
-						{...mainPanelProps}
-					/>
+					<MainPanel ref={mainPanelRef} {...mainPanelProps} />
 				)}
 
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
-				{!isMobileLandscape &&
-					sessions.length > 0 &&
-					!activeGroupChatId &&
-					!logViewerOpen && (
-						<ErrorBoundary>
-							<RightPanel
-								ref={rightPanelRef}
-								{...rightPanelProps}
-							/>
-						</ErrorBoundary>
-					)}
+				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
+					<ErrorBoundary>
+						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+					</ErrorBoundary>
+				)}
 
 				{/* Old settings modal removed - using new SettingsModal component below */}
 				{/* NOTE: NewInstanceModal and EditAgentModal are now rendered via AppSessionModals */}
@@ -13931,8 +12975,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 					setCustomAICommands={setCustomAICommands}
 					initialTab={settingsTab}
 					hasNoAgents={hasNoAgents}
-					onThemeImportError={msg => setFlashNotification(msg)}
-					onThemeImportSuccess={msg => setFlashNotification(msg)}
+					onThemeImportError={(msg) => setFlashNotification(msg)}
+					onThemeImportSuccess={(msg) => setFlashNotification(msg)}
 				/>
 
 				{/* --- WIZARD RESUME MODAL (asks if user wants to resume incomplete wizard) --- */}
@@ -13940,15 +12984,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 					<WizardResumeModal
 						theme={theme}
 						resumeState={wizardResumeState}
-						onResume={(options?: {
-							directoryInvalid?: boolean;
-							agentInvalid?: boolean;
-						}) => {
+						onResume={(options?: { directoryInvalid?: boolean; agentInvalid?: boolean }) => {
 							// Close the resume modal
 							setWizardResumeModalOpen(false);
 
-							const { directoryInvalid = false, agentInvalid = false } =
-								options || {};
+							const { directoryInvalid = false, agentInvalid = false } = options || {};
 
 							// If agent is invalid, redirect to agent selection step with error
 							// This takes priority since it's the first step
@@ -13957,7 +12997,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 									...wizardResumeState,
 									currentStep: 'agent-selection' as const,
 									// Clear the agent selection so user must select a new one
-									selectedAgent: null
+									selectedAgent: null,
 									// Keep other state for resume after agent selection
 								};
 								restoreWizardState(modifiedState);
@@ -13970,7 +13010,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 										'The previously selected directory no longer exists. Please choose a new location.',
 									// Clear the directory path so user must select a new one
 									directoryPath: '',
-									isGitRepo: false
+									isGitRepo: false,
 								};
 								restoreWizardState(modifiedState);
 							} else {
@@ -14036,12 +13076,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- FLASH NOTIFICATION (centered, auto-dismiss) --- */}
 				{flashNotification && (
 					<div
-						className='fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]'
+						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
 						style={{
 							backgroundColor: theme.colors.warning,
 							color: '#000000',
-							textShadow: '0 1px 2px rgba(255, 255, 255, 0.3)'
-						}}>
+							textShadow: '0 1px 2px rgba(255, 255, 255, 0.3)',
+						}}
+					>
 						{flashNotification}
 					</div>
 				)}
@@ -14049,21 +13090,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- SUCCESS FLASH NOTIFICATION (centered, auto-dismiss) --- */}
 				{successFlashNotification && (
 					<div
-						className='fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]'
+						className="fixed top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 px-6 py-4 rounded-lg shadow-2xl text-base font-bold animate-in fade-in zoom-in-95 duration-200 z-[9999]"
 						style={{
 							backgroundColor: theme.colors.accent,
 							color: theme.colors.accentForeground,
-							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)'
-						}}>
+							textShadow: '0 1px 2px rgba(0, 0, 0, 0.3)',
+						}}
+					>
 						{successFlashNotification}
 					</div>
 				)}
 
 				{/* --- TOAST NOTIFICATIONS --- */}
-				<ToastContainer
-					theme={theme}
-					onSessionClick={handleToastSessionClick}
-				/>
+				<ToastContainer theme={theme} onSessionClick={handleToastSessionClick} />
 			</div>
 		</GitStatusProvider>
 	);

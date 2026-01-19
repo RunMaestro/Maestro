@@ -20,449 +20,427 @@ import type { Theme } from '../../../../renderer/types';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
-  Wand2: () => <svg data-testid="wand-icon" />,
-  FileText: () => <svg data-testid="file-text-icon" />,
-  RefreshCw: () => <svg data-testid="refresh-icon" />,
-  X: () => <svg data-testid="x-icon" />,
+	Wand2: () => <svg data-testid="wand-icon" />,
+	FileText: () => <svg data-testid="file-text-icon" />,
+	RefreshCw: () => <svg data-testid="refresh-icon" />,
+	X: () => <svg data-testid="x-icon" />,
 }));
 
 // Create a test theme
 const testTheme: Theme = {
-  id: 'test-theme',
-  name: 'Test Theme',
-  mode: 'dark',
-  colors: {
-    bgMain: '#1e1e1e',
-    bgSidebar: '#252526',
-    bgActivity: '#333333',
-    textMain: '#d4d4d4',
-    textDim: '#808080',
-    accent: '#007acc',
-    border: '#404040',
-    error: '#f14c4c',
-    warning: '#cca700',
-    success: '#89d185',
-    info: '#3794ff',
-    textInverse: '#000000',
-  },
+	id: 'test-theme',
+	name: 'Test Theme',
+	mode: 'dark',
+	colors: {
+		bgMain: '#1e1e1e',
+		bgSidebar: '#252526',
+		bgActivity: '#333333',
+		textMain: '#d4d4d4',
+		textDim: '#808080',
+		accent: '#007acc',
+		border: '#404040',
+		error: '#f14c4c',
+		warning: '#cca700',
+		success: '#89d185',
+		info: '#3794ff',
+		textInverse: '#000000',
+	},
 };
 
 // Helper to render with LayerStackProvider
 const renderWithLayerStack = (ui: React.ReactElement) => {
-  return render(<LayerStackProvider>{ui}</LayerStackProvider>);
+	return render(<LayerStackProvider>{ui}</LayerStackProvider>);
 };
 
 describe('WizardModePrompt', () => {
-  const defaultProps = {
-    theme: testTheme,
-    isOpen: true,
-    onSelectMode: vi.fn(),
-    onSetGoal: vi.fn(),
-    onClose: vi.fn(),
-    existingDocCount: 3,
-  };
-
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
-
-  describe('rendering', () => {
-    it('renders nothing when not open', () => {
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} isOpen={false} />
-      );
-
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    });
-
-    it('renders modal when open', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-    });
-
-    it('renders header with title and wand icon', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByText('Wizard Mode')).toBeInTheDocument();
-      expect(screen.getByTestId('wand-icon')).toBeInTheDocument();
-    });
-
-    it('renders "Create New Plan" option button', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByText('Create New Plan')).toBeInTheDocument();
-      expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
-    });
-
-    it('renders "Iterate on Existing" option button', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByText('Iterate on Existing')).toBeInTheDocument();
-      expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
-    });
+	const defaultProps = {
+		theme: testTheme,
+		isOpen: true,
+		onSelectMode: vi.fn(),
+		onSetGoal: vi.fn(),
+		onClose: vi.fn(),
+		existingDocCount: 3,
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-    it('renders Cancel button', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByTestId('wizard-mode-cancel-button')).toBeInTheDocument();
-    });
-
-    it('shows existing document count in intro text', () => {
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} existingDocCount={5} />
-      );
+	describe('rendering', () => {
+		it('renders nothing when not open', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} isOpen={false} />);
 
-      expect(screen.getByText(/You have 5 existing Auto Run documents/)).toBeInTheDocument();
-    });
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
 
-    it('shows singular form for 1 document', () => {
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} existingDocCount={1} />
-      );
+		it('renders modal when open', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      expect(screen.getByText(/You have 1 existing Auto Run document\./)).toBeInTheDocument();
-    });
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+		});
+
+		it('renders header with title and wand icon', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-    it('shows alternative text when no documents exist', () => {
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} existingDocCount={0} />
-      );
+			expect(screen.getByText('Wizard Mode')).toBeInTheDocument();
+			expect(screen.getByTestId('wand-icon')).toBeInTheDocument();
+		});
 
-      expect(screen.getByText(/Choose how you want to proceed with the wizard/)).toBeInTheDocument();
-    });
-
-    it('has correct test IDs for buttons', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
-
-      expect(screen.getByTestId('wizard-mode-new-button')).toBeInTheDocument();
-      expect(screen.getByTestId('wizard-mode-iterate-button')).toBeInTheDocument();
-      expect(screen.getByTestId('wizard-mode-cancel-button')).toBeInTheDocument();
-    });
-  });
-
-  describe('Create New Plan flow', () => {
-    it('calls onSetGoal with null and onSelectMode with "new" when clicked', () => {
-      const onSelectMode = vi.fn();
-      const onSetGoal = vi.fn();
-      const onClose = vi.fn();
+		it('renders "Create New Plan" option button', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      renderWithLayerStack(
-        <WizardModePrompt
-          {...defaultProps}
-          onSelectMode={onSelectMode}
-          onSetGoal={onSetGoal}
-          onClose={onClose}
-        />
-      );
+			expect(screen.getByText('Create New Plan')).toBeInTheDocument();
+			expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
+		});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-new-button'));
+		it('renders "Iterate on Existing" option button', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      expect(onSetGoal).toHaveBeenCalledWith(null);
-      expect(onSelectMode).toHaveBeenCalledWith('new');
-      expect(onClose).toHaveBeenCalled();
-    });
-  });
+			expect(screen.getByText('Iterate on Existing')).toBeInTheDocument();
+			expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
+		});
 
-  describe('Iterate on Existing flow', () => {
-    it('shows goal input when iterate option is selected', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+		it('renders Cancel button', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			expect(screen.getByTestId('wizard-mode-cancel-button')).toBeInTheDocument();
+		});
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
-    });
+		it('shows existing document count in intro text', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} existingDocCount={5} />);
 
-    it('focuses goal input when iterate option is selected', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			expect(screen.getByText(/You have 5 existing Auto Run documents/)).toBeInTheDocument();
+		});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+		it('shows singular form for 1 document', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} existingDocCount={1} />);
 
-      await waitFor(() => {
-        expect(document.activeElement).toBe(screen.getByTestId('wizard-mode-goal-input'));
-      });
-    });
+			expect(screen.getByText(/You have 1 existing Auto Run document\./)).toBeInTheDocument();
+		});
 
-    it('shows Back button when goal input is visible', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+		it('shows alternative text when no documents exist', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} existingDocCount={0} />);
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			expect(
+				screen.getByText(/Choose how you want to proceed with the wizard/)
+			).toBeInTheDocument();
+		});
 
-      await waitFor(() => {
-        expect(screen.getByText('Back')).toBeInTheDocument();
-      });
-    });
+		it('has correct test IDs for buttons', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-    it('shows Continue button disabled when goal is empty', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			expect(screen.getByTestId('wizard-mode-new-button')).toBeInTheDocument();
+			expect(screen.getByTestId('wizard-mode-iterate-button')).toBeInTheDocument();
+			expect(screen.getByTestId('wizard-mode-cancel-button')).toBeInTheDocument();
+		});
+	});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+	describe('Create New Plan flow', () => {
+		it('calls onSetGoal with null and onSelectMode with "new" when clicked', () => {
+			const onSelectMode = vi.fn();
+			const onSetGoal = vi.fn();
+			const onClose = vi.fn();
 
-      await waitFor(() => {
-        const confirmButton = screen.getByTestId('wizard-mode-confirm-button');
-        expect(confirmButton).toBeDisabled();
-      });
-    });
+			renderWithLayerStack(
+				<WizardModePrompt
+					{...defaultProps}
+					onSelectMode={onSelectMode}
+					onSetGoal={onSetGoal}
+					onClose={onClose}
+				/>
+			);
 
-    it('enables Continue button when goal is entered', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			fireEvent.click(screen.getByTestId('wizard-mode-new-button'));
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			expect(onSetGoal).toHaveBeenCalledWith(null);
+			expect(onSelectMode).toHaveBeenCalledWith('new');
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+	describe('Iterate on Existing flow', () => {
+		it('shows goal input when iterate option is selected', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      const input = screen.getByTestId('wizard-mode-goal-input');
-      fireEvent.change(input, { target: { value: 'Add user authentication' } });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      expect(screen.getByTestId('wizard-mode-confirm-button')).not.toBeDisabled();
-    });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
+		});
 
-    it('calls callbacks with correct values when Continue is clicked', async () => {
-      const onSelectMode = vi.fn();
-      const onSetGoal = vi.fn();
-      const onClose = vi.fn();
+		it('focuses goal input when iterate option is selected', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      renderWithLayerStack(
-        <WizardModePrompt
-          {...defaultProps}
-          onSelectMode={onSelectMode}
-          onSetGoal={onSetGoal}
-          onClose={onClose}
-        />
-      );
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByTestId('wizard-mode-goal-input'));
+			});
+		});
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+		it('shows Back button when goal input is visible', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      const input = screen.getByTestId('wizard-mode-goal-input');
-      fireEvent.change(input, { target: { value: 'Add user authentication' } });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      fireEvent.click(screen.getByTestId('wizard-mode-confirm-button'));
+			await waitFor(() => {
+				expect(screen.getByText('Back')).toBeInTheDocument();
+			});
+		});
 
-      expect(onSetGoal).toHaveBeenCalledWith('Add user authentication');
-      expect(onSelectMode).toHaveBeenCalledWith('iterate');
-      expect(onClose).toHaveBeenCalled();
-    });
+		it('shows Continue button disabled when goal is empty', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-    it('trims whitespace from goal', async () => {
-      const onSetGoal = vi.fn();
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} onSetGoal={onSetGoal} />
-      );
+			await waitFor(() => {
+				const confirmButton = screen.getByTestId('wizard-mode-confirm-button');
+				expect(confirmButton).toBeDisabled();
+			});
+		});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+		it('enables Continue button when goal is entered', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      const input = screen.getByTestId('wizard-mode-goal-input');
-      fireEvent.change(input, { target: { value: '  Add auth  ' } });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-confirm-button'));
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.change(input, { target: { value: 'Add user authentication' } });
 
-      expect(onSetGoal).toHaveBeenCalledWith('Add auth');
-    });
+			expect(screen.getByTestId('wizard-mode-confirm-button')).not.toBeDisabled();
+		});
 
-    it('keeps Continue button disabled if only whitespace entered', async () => {
-      const onSetGoal = vi.fn();
-      const onSelectMode = vi.fn();
+		it('calls callbacks with correct values when Continue is clicked', async () => {
+			const onSelectMode = vi.fn();
+			const onSetGoal = vi.fn();
+			const onClose = vi.fn();
 
-      renderWithLayerStack(
-        <WizardModePrompt
-          {...defaultProps}
-          onSetGoal={onSetGoal}
-          onSelectMode={onSelectMode}
-        />
-      );
+			renderWithLayerStack(
+				<WizardModePrompt
+					{...defaultProps}
+					onSelectMode={onSelectMode}
+					onSetGoal={onSetGoal}
+					onClose={onClose}
+				/>
+			);
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-      // Manually set value and simulate a way to bypass the disabled button
-      const input = screen.getByTestId('wizard-mode-goal-input') as HTMLInputElement;
-      fireEvent.change(input, { target: { value: '   ' } });
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.change(input, { target: { value: 'Add user authentication' } });
 
-      // Continue button should still be disabled for whitespace-only
-      expect(screen.getByTestId('wizard-mode-confirm-button')).toBeDisabled();
-    });
+			fireEvent.click(screen.getByTestId('wizard-mode-confirm-button'));
 
-    it('hides goal input when Back is clicked', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			expect(onSetGoal).toHaveBeenCalledWith('Add user authentication');
+			expect(onSelectMode).toHaveBeenCalledWith('iterate');
+			expect(onClose).toHaveBeenCalled();
+		});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+		it('trims whitespace from goal', async () => {
+			const onSetGoal = vi.fn();
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} onSetGoal={onSetGoal} />);
 
-      fireEvent.click(screen.getByText('Back'));
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      await waitFor(() => {
-        expect(screen.queryByTestId('wizard-mode-goal-input')).not.toBeInTheDocument();
-      });
-    });
-  });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-  describe('keyboard interactions', () => {
-    it('submits on Enter when goal is entered', async () => {
-      const onSelectMode = vi.fn();
-      const onSetGoal = vi.fn();
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.change(input, { target: { value: '  Add auth  ' } });
 
-      renderWithLayerStack(
-        <WizardModePrompt
-          {...defaultProps}
-          onSelectMode={onSelectMode}
-          onSetGoal={onSetGoal}
-        />
-      );
+			fireEvent.click(screen.getByTestId('wizard-mode-confirm-button'));
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			expect(onSetGoal).toHaveBeenCalledWith('Add auth');
+		});
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+		it('keeps Continue button disabled if only whitespace entered', async () => {
+			const onSetGoal = vi.fn();
+			const onSelectMode = vi.fn();
 
-      const input = screen.getByTestId('wizard-mode-goal-input');
-      fireEvent.change(input, { target: { value: 'Add auth' } });
-      fireEvent.keyDown(input, { key: 'Enter' });
+			renderWithLayerStack(
+				<WizardModePrompt {...defaultProps} onSetGoal={onSetGoal} onSelectMode={onSelectMode} />
+			);
 
-      expect(onSelectMode).toHaveBeenCalledWith('iterate');
-      expect(onSetGoal).toHaveBeenCalledWith('Add auth');
-    });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-    it('does not submit on Enter when goal is empty', async () => {
-      const onSelectMode = vi.fn();
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} onSelectMode={onSelectMode} />
-      );
+			// Manually set value and simulate a way to bypass the disabled button
+			const input = screen.getByTestId('wizard-mode-goal-input') as HTMLInputElement;
+			fireEvent.change(input, { target: { value: '   ' } });
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			// Continue button should still be disabled for whitespace-only
+			expect(screen.getByTestId('wizard-mode-confirm-button')).toBeDisabled();
+		});
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+		it('hides goal input when Back is clicked', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
 
-      const input = screen.getByTestId('wizard-mode-goal-input');
-      fireEvent.keyDown(input, { key: 'Enter' });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      expect(onSelectMode).not.toHaveBeenCalled();
-    });
-  });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-  describe('cancel behavior', () => {
-    it('calls onClose when Cancel button is clicked', () => {
-      const onClose = vi.fn();
-      renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} onClose={onClose} />
-      );
+			fireEvent.click(screen.getByText('Back'));
 
-      fireEvent.click(screen.getByTestId('wizard-mode-cancel-button'));
+			await waitFor(() => {
+				expect(screen.queryByTestId('wizard-mode-goal-input')).not.toBeInTheDocument();
+			});
+		});
+	});
 
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
-  });
+	describe('keyboard interactions', () => {
+		it('submits on Enter when goal is entered', async () => {
+			const onSelectMode = vi.fn();
+			const onSetGoal = vi.fn();
 
-  describe('state reset on open', () => {
-    it('resets selected option when modal reopens', async () => {
-      const { rerender } = renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} isOpen={true} />
-      );
+			renderWithLayerStack(
+				<WizardModePrompt {...defaultProps} onSelectMode={onSelectMode} onSetGoal={onSetGoal} />
+			);
 
-      // Select iterate option
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      await waitFor(() => {
-        expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
-      });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-      // Close and reopen
-      rerender(
-        <LayerStackProvider>
-          <WizardModePrompt {...defaultProps} isOpen={false} />
-        </LayerStackProvider>
-      );
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.change(input, { target: { value: 'Add auth' } });
+			fireEvent.keyDown(input, { key: 'Enter' });
 
-      rerender(
-        <LayerStackProvider>
-          <WizardModePrompt {...defaultProps} isOpen={true} />
-        </LayerStackProvider>
-      );
+			expect(onSelectMode).toHaveBeenCalledWith('iterate');
+			expect(onSetGoal).toHaveBeenCalledWith('Add auth');
+		});
 
-      // Goal input should not be visible
-      expect(screen.queryByTestId('wizard-mode-goal-input')).not.toBeInTheDocument();
-    });
-  });
+		it('does not submit on Enter when goal is empty', async () => {
+			const onSelectMode = vi.fn();
 
-  describe('accessibility', () => {
-    it('has correct ARIA attributes on modal', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} onSelectMode={onSelectMode} />);
 
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toHaveAttribute('aria-modal', 'true');
-      expect(dialog).toHaveAttribute('aria-label', 'Wizard Mode');
-    });
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-    it('has accessible label on goal input', async () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-      fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+			const input = screen.getByTestId('wizard-mode-goal-input');
+			fireEvent.keyDown(input, { key: 'Enter' });
 
-      await waitFor(() => {
-        expect(screen.getByLabelText(/What do you want to add or change/)).toBeInTheDocument();
-      });
-    });
+			expect(onSelectMode).not.toHaveBeenCalled();
+		});
+	});
 
-    it('has semantic button elements', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+	describe('cancel behavior', () => {
+		it('calls onClose when Cancel button is clicked', () => {
+			const onClose = vi.fn();
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} onClose={onClose} />);
 
-      // New button, Iterate button, Cancel, and X close button
-      const buttons = screen.getAllByRole('button');
-      expect(buttons.length).toBeGreaterThanOrEqual(3);
-    });
-  });
+			fireEvent.click(screen.getByTestId('wizard-mode-cancel-button'));
 
-  describe('layer stack integration', () => {
-    it('registers and unregisters without errors', () => {
-      const { unmount } = renderWithLayerStack(
-        <WizardModePrompt {...defaultProps} />
-      );
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+	});
 
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(() => unmount()).not.toThrow();
-    });
-  });
+	describe('state reset on open', () => {
+		it('resets selected option when modal reopens', async () => {
+			const { rerender } = renderWithLayerStack(
+				<WizardModePrompt {...defaultProps} isOpen={true} />
+			);
 
-  describe('theming', () => {
-    it('applies theme colors to modal', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			// Select iterate option
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
 
-      // The modal container should have theme background
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toBeInTheDocument();
-    });
+			await waitFor(() => {
+				expect(screen.getByTestId('wizard-mode-goal-input')).toBeInTheDocument();
+			});
 
-    it('displays option buttons with correct icons', () => {
-      renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+			// Close and reopen
+			rerender(
+				<LayerStackProvider>
+					<WizardModePrompt {...defaultProps} isOpen={false} />
+				</LayerStackProvider>
+			);
 
-      expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
-      expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
-    });
-  });
+			rerender(
+				<LayerStackProvider>
+					<WizardModePrompt {...defaultProps} isOpen={true} />
+				</LayerStackProvider>
+			);
+
+			// Goal input should not be visible
+			expect(screen.queryByTestId('wizard-mode-goal-input')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('accessibility', () => {
+		it('has correct ARIA attributes on modal', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toHaveAttribute('aria-modal', 'true');
+			expect(dialog).toHaveAttribute('aria-label', 'Wizard Mode');
+		});
+
+		it('has accessible label on goal input', async () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			fireEvent.click(screen.getByTestId('wizard-mode-iterate-button'));
+
+			await waitFor(() => {
+				expect(screen.getByLabelText(/What do you want to add or change/)).toBeInTheDocument();
+			});
+		});
+
+		it('has semantic button elements', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			// New button, Iterate button, Cancel, and X close button
+			const buttons = screen.getAllByRole('button');
+			expect(buttons.length).toBeGreaterThanOrEqual(3);
+		});
+	});
+
+	describe('layer stack integration', () => {
+		it('registers and unregisters without errors', () => {
+			const { unmount } = renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+			expect(() => unmount()).not.toThrow();
+		});
+	});
+
+	describe('theming', () => {
+		it('applies theme colors to modal', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			// The modal container should have theme background
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toBeInTheDocument();
+		});
+
+		it('displays option buttons with correct icons', () => {
+			renderWithLayerStack(<WizardModePrompt {...defaultProps} />);
+
+			expect(screen.getByTestId('file-text-icon')).toBeInTheDocument();
+			expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
+		});
+	});
 });

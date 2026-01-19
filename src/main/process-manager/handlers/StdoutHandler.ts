@@ -229,7 +229,9 @@ export class StdoutHandler {
 			const usageStats = this.buildUsageStats(managedProcess, usage);
 			// Normalize Codex usage (cumulative -> delta)
 			const normalizedUsageStats =
-				managedProcess.toolType === 'codex' ? normalizeCodexUsage(managedProcess, usageStats) : usageStats;
+				managedProcess.toolType === 'codex'
+					? normalizeCodexUsage(managedProcess, usageStats)
+					: usageStats;
 			this.emitter.emit('usage', sessionId, normalizedUsageStats);
 		}
 
@@ -324,15 +326,23 @@ export class StdoutHandler {
 				});
 				this.bufferManager.emitDataBuffered(sessionId, resultText);
 			} else if (sessionId.includes('-synopsis-')) {
-				logger.warn('[ProcessManager] Synopsis result is empty - no text to emit', 'ProcessManager', {
-					sessionId,
-					rawEvent: JSON.stringify(event).substring(0, 500),
-				});
+				logger.warn(
+					'[ProcessManager] Synopsis result is empty - no text to emit',
+					'ProcessManager',
+					{
+						sessionId,
+						rawEvent: JSON.stringify(event).substring(0, 500),
+					}
+				);
 			}
 		}
 	}
 
-	private handleLegacyMessage(sessionId: string, managedProcess: ManagedProcess, msg: unknown): void {
+	private handleLegacyMessage(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		msg: unknown
+	): void {
 		const msgRecord = msg as Record<string, unknown>;
 
 		// Skip error messages in fallback mode - they're handled by detectErrorFromLine
@@ -368,15 +378,18 @@ export class StdoutHandler {
 		}
 	}
 
-	private buildUsageStats(managedProcess: ManagedProcess, usage: {
-		inputTokens: number;
-		outputTokens: number;
-		cacheReadTokens?: number;
-		cacheCreationTokens?: number;
-		costUsd?: number;
-		contextWindow?: number;
-		reasoningTokens?: number;
-	}): UsageStats {
+	private buildUsageStats(
+		managedProcess: ManagedProcess,
+		usage: {
+			inputTokens: number;
+			outputTokens: number;
+			cacheReadTokens?: number;
+			cacheCreationTokens?: number;
+			costUsd?: number;
+			contextWindow?: number;
+			reasoningTokens?: number;
+		}
+	): UsageStats {
 		return {
 			inputTokens: usage.inputTokens,
 			outputTokens: usage.outputTokens,

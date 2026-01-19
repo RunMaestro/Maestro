@@ -7,10 +7,10 @@
 // Main input processing
 export { useInputProcessing, DEFAULT_IMAGE_ONLY_PROMPT } from './useInputProcessing';
 export type {
-  UseInputProcessingDeps,
-  UseInputProcessingReturn,
-  /** @deprecated Use BatchRunState from '../../types' directly */
-  BatchState as InputBatchState,
+	UseInputProcessingDeps,
+	UseInputProcessingReturn,
+	/** @deprecated Use BatchRunState from '../../types' directly */
+	BatchState as InputBatchState,
 } from './useInputProcessing';
 
 // Input state synchronization
@@ -20,9 +20,9 @@ export type { UseInputSyncReturn, UseInputSyncDeps } from './useInputSync';
 // File/path tab completion
 export { useTabCompletion } from './useTabCompletion';
 export type {
-  TabCompletionSuggestion,
-  TabCompletionFilter,
-  UseTabCompletionReturn,
+	TabCompletionSuggestion,
+	TabCompletionFilter,
+	UseTabCompletionReturn,
 } from './useTabCompletion';
 
 // @-mention autocomplete

@@ -15,19 +15,19 @@ import { useState, useEffect, useRef, useCallback } from 'react';
  * @returns The debounced value
  */
 export function useDebouncedValue<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState<T>(value);
+	const [debouncedValue, setDebouncedValue] = useState<T>(value);
 
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
+	useEffect(() => {
+		const timer = setTimeout(() => {
+			setDebouncedValue(value);
+		}, delay);
 
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [value, delay]);
+		return () => {
+			clearTimeout(timer);
+		};
+	}, [value, delay]);
 
-  return debouncedValue;
+	return debouncedValue;
 }
 
 /**
@@ -39,46 +39,49 @@ export function useDebouncedValue<T>(value: T, delay: number): T {
  * @returns Throttled callback
  */
 export function useThrottledCallback<T extends (...args: unknown[]) => void>(
-  callback: T,
-  delay: number
+	callback: T,
+	delay: number
 ): T {
-  const lastCallRef = useRef<number>(0);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const callbackRef = useRef(callback);
+	const lastCallRef = useRef<number>(0);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const callbackRef = useRef(callback);
 
-  // Keep callback ref up to date
-  callbackRef.current = callback;
+	// Keep callback ref up to date
+	callbackRef.current = callback;
 
-  const throttled = useCallback((...args: Parameters<T>) => {
-    const now = Date.now();
-    const timeSinceLastCall = now - lastCallRef.current;
+	const throttled = useCallback(
+		(...args: Parameters<T>) => {
+			const now = Date.now();
+			const timeSinceLastCall = now - lastCallRef.current;
 
-    if (timeSinceLastCall >= delay) {
-      // Enough time has passed, execute immediately
-      lastCallRef.current = now;
-      callbackRef.current(...args);
-    } else {
-      // Schedule for later if not already scheduled
-      if (!timeoutRef.current) {
-        timeoutRef.current = setTimeout(() => {
-          lastCallRef.current = Date.now();
-          callbackRef.current(...args);
-          timeoutRef.current = null;
-        }, delay - timeSinceLastCall);
-      }
-    }
-  }, [delay]) as T;
+			if (timeSinceLastCall >= delay) {
+				// Enough time has passed, execute immediately
+				lastCallRef.current = now;
+				callbackRef.current(...args);
+			} else {
+				// Schedule for later if not already scheduled
+				if (!timeoutRef.current) {
+					timeoutRef.current = setTimeout(() => {
+						lastCallRef.current = Date.now();
+						callbackRef.current(...args);
+						timeoutRef.current = null;
+					}, delay - timeSinceLastCall);
+				}
+			}
+		},
+		[delay]
+	) as T;
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
+	// Cleanup on unmount
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+			}
+		};
+	}, []);
 
-  return throttled;
+	return throttled;
 }
 
 /**
@@ -93,55 +96,58 @@ export function useThrottledCallback<T extends (...args: unknown[]) => void>(
  * @returns Debounced callback and flush function
  */
 export function useDebouncedCallback<T extends (...args: unknown[]) => void>(
-  callback: T,
-  delay: number
+	callback: T,
+	delay: number
 ): { debouncedCallback: T; flush: () => void; cancel: () => void } {
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const callbackRef = useRef(callback);
-  const pendingArgsRef = useRef<Parameters<T> | null>(null);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const callbackRef = useRef(callback);
+	const pendingArgsRef = useRef<Parameters<T> | null>(null);
 
-  // Keep callback ref up to date
-  callbackRef.current = callback;
+	// Keep callback ref up to date
+	callbackRef.current = callback;
 
-  const cancel = useCallback(() => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-    }
-    pendingArgsRef.current = null;
-  }, []);
+	const cancel = useCallback(() => {
+		if (timeoutRef.current) {
+			clearTimeout(timeoutRef.current);
+			timeoutRef.current = null;
+		}
+		pendingArgsRef.current = null;
+	}, []);
 
-  const flush = useCallback(() => {
-    if (timeoutRef.current && pendingArgsRef.current) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
-      callbackRef.current(...pendingArgsRef.current);
-      pendingArgsRef.current = null;
-    }
-  }, []);
+	const flush = useCallback(() => {
+		if (timeoutRef.current && pendingArgsRef.current) {
+			clearTimeout(timeoutRef.current);
+			timeoutRef.current = null;
+			callbackRef.current(...pendingArgsRef.current);
+			pendingArgsRef.current = null;
+		}
+	}, []);
 
-  const debouncedCallback = useCallback((...args: Parameters<T>) => {
-    pendingArgsRef.current = args;
+	const debouncedCallback = useCallback(
+		(...args: Parameters<T>) => {
+			pendingArgsRef.current = args;
 
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+			}
 
-    timeoutRef.current = setTimeout(() => {
-      callbackRef.current(...args);
-      timeoutRef.current = null;
-      pendingArgsRef.current = null;
-    }, delay);
-  }, [delay]) as T;
+			timeoutRef.current = setTimeout(() => {
+				callbackRef.current(...args);
+				timeoutRef.current = null;
+				pendingArgsRef.current = null;
+			}, delay);
+		},
+		[delay]
+	) as T;
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
+	// Cleanup on unmount
+	useEffect(() => {
+		return () => {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+			}
+		};
+	}, []);
 
-  return { debouncedCallback, flush, cancel };
+	return { debouncedCallback, flush, cancel };
 }

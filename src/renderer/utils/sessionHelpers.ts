@@ -16,64 +16,68 @@ import { createMergedSession } from './tabHelpers';
  * Used when transferring context to a different agent.
  */
 export interface CreateSessionForAgentOptions {
-  /** Target agent type (e.g., 'claude-code', 'opencode', 'codex') */
-  agentType: ToolType;
-  /** Project root directory for the new session */
-  projectRoot: string;
-  /** Display name for the session */
-  name: string;
-  /** Initial context to send to the agent (groomed context from transfer) */
-  initialContext: string;
-  /** Optional group ID to assign the session to */
-  groupId?: string;
-  /** Whether to save completions to history (default: true) */
-  saveToHistory?: boolean;
+	/** Target agent type (e.g., 'claude-code', 'opencode', 'codex') */
+	agentType: ToolType;
+	/** Project root directory for the new session */
+	projectRoot: string;
+	/** Display name for the session */
+	name: string;
+	/** Initial context to send to the agent (groomed context from transfer) */
+	initialContext: string;
+	/** Optional group ID to assign the session to */
+	groupId?: string;
+	/** Whether to save completions to history (default: true) */
+	saveToHistory?: boolean;
 }
 
 /**
  * Result of creating a session for an agent.
  */
 export interface CreateSessionForAgentResult {
-  /** The newly created session */
-  session: Session;
-  /** The ID of the active tab in the new session */
-  tabId: string;
-  /** Spawn configuration for initializing the agent */
-  spawnConfig: ProcessConfig;
+	/** The newly created session */
+	session: Session;
+	/** The ID of the active tab in the new session */
+	tabId: string;
+	/** Spawn configuration for initializing the agent */
+	spawnConfig: ProcessConfig;
 }
 
 /**
  * Options for building spawn configuration.
  */
 export interface BuildSpawnConfigOptions {
-  /** Session ID for the spawn */
-  sessionId: string;
-  /** Agent type */
-  toolType: ToolType;
-  /** Working directory */
-  cwd: string;
-  /** Initial prompt to send to the agent */
-  prompt?: string;
-  /** Agent session ID for resume (optional) */
-  agentSessionId?: string;
-  /** Whether to spawn in read-only/plan mode */
-  readOnlyMode?: boolean;
-  /** Model ID for agents that support model selection */
-  modelId?: string;
-  /** Whether to use YOLO/full-access mode */
-  yoloMode?: boolean;
-  /** Per-session custom path override */
-  sessionCustomPath?: string;
-  /** Per-session custom args override */
-  sessionCustomArgs?: string;
-  /** Per-session custom environment variables */
-  sessionCustomEnvVars?: Record<string, string>;
-  /** Per-session custom model override */
-  sessionCustomModel?: string;
-  /** Per-session custom context window */
-  sessionCustomContextWindow?: number;
-  /** Per-session SSH remote config (takes precedence over agent-level SSH config) */
-  sessionSshRemoteConfig?: { enabled: boolean; remoteId: string | null; workingDirOverride?: string };
+	/** Session ID for the spawn */
+	sessionId: string;
+	/** Agent type */
+	toolType: ToolType;
+	/** Working directory */
+	cwd: string;
+	/** Initial prompt to send to the agent */
+	prompt?: string;
+	/** Agent session ID for resume (optional) */
+	agentSessionId?: string;
+	/** Whether to spawn in read-only/plan mode */
+	readOnlyMode?: boolean;
+	/** Model ID for agents that support model selection */
+	modelId?: string;
+	/** Whether to use YOLO/full-access mode */
+	yoloMode?: boolean;
+	/** Per-session custom path override */
+	sessionCustomPath?: string;
+	/** Per-session custom args override */
+	sessionCustomArgs?: string;
+	/** Per-session custom environment variables */
+	sessionCustomEnvVars?: Record<string, string>;
+	/** Per-session custom model override */
+	sessionCustomModel?: string;
+	/** Per-session custom context window */
+	sessionCustomContextWindow?: number;
+	/** Per-session SSH remote config (takes precedence over agent-level SSH config) */
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 }
 
 /**
@@ -98,67 +102,67 @@ export interface BuildSpawnConfigOptions {
  * await window.maestro.process.spawn(spawnConfig);
  */
 export async function buildSpawnConfigForAgent(
-  options: BuildSpawnConfigOptions
+	options: BuildSpawnConfigOptions
 ): Promise<ProcessConfig | null> {
-  const {
-    sessionId,
-    toolType,
-    cwd,
-    prompt,
-    agentSessionId,
-    readOnlyMode,
-    modelId,
-    yoloMode,
-    sessionCustomPath,
-    sessionCustomArgs,
-    sessionCustomEnvVars,
-    sessionCustomModel,
-    sessionCustomContextWindow,
-    sessionSshRemoteConfig,
-  } = options;
+	const {
+		sessionId,
+		toolType,
+		cwd,
+		prompt,
+		agentSessionId,
+		readOnlyMode,
+		modelId,
+		yoloMode,
+		sessionCustomPath,
+		sessionCustomArgs,
+		sessionCustomEnvVars,
+		sessionCustomModel,
+		sessionCustomContextWindow,
+		sessionSshRemoteConfig,
+	} = options;
 
-  // Fetch the agent configuration from main process
-  const agentConfig = await window.maestro.agents.get(toolType);
+	// Fetch the agent configuration from main process
+	const agentConfig = await window.maestro.agents.get(toolType);
 
-  if (!agentConfig) {
-    console.error(`[sessionHelpers] Agent not found: ${toolType}`);
-    return null;
-  }
+	if (!agentConfig) {
+		console.error(`[sessionHelpers] Agent not found: ${toolType}`);
+		return null;
+	}
 
-  if (!agentConfig.available) {
-    console.error(`[sessionHelpers] Agent not available: ${toolType}`);
-    return null;
-  }
+	if (!agentConfig.available) {
+		console.error(`[sessionHelpers] Agent not available: ${toolType}`);
+		return null;
+	}
 
-  // Use the agent's path (resolved location) or command
-  const command = agentConfig.path || agentConfig.command;
+	// Use the agent's path (resolved location) or command
+	const command = agentConfig.path || agentConfig.command;
 
-  // Build the spawn config
-  // The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
-  // to construct the final command line arguments
-  const spawnConfig: ProcessConfig = {
-    sessionId,
-    toolType,
-    cwd,
-    command,
-    args: agentConfig.args || [],
-    prompt,
-    // Generic spawn options - main process builds agent-specific args
-    agentSessionId,
-    readOnlyMode,
-    modelId,
-    yoloMode,
-    // Per-session config overrides
-    sessionCustomPath,
-    sessionCustomArgs,
-    sessionCustomEnvVars,
-    sessionCustomModel,
-    sessionCustomContextWindow,
-    // Per-session SSH remote config (takes precedence over agent-level SSH config)
-    sessionSshRemoteConfig,
-  };
+	// Build the spawn config
+	// The main process will use the agent's argument builders (resumeArgs, readOnlyArgs, etc.)
+	// to construct the final command line arguments
+	const spawnConfig: ProcessConfig = {
+		sessionId,
+		toolType,
+		cwd,
+		command,
+		args: agentConfig.args || [],
+		prompt,
+		// Generic spawn options - main process builds agent-specific args
+		agentSessionId,
+		readOnlyMode,
+		modelId,
+		yoloMode,
+		// Per-session config overrides
+		sessionCustomPath,
+		sessionCustomArgs,
+		sessionCustomEnvVars,
+		sessionCustomModel,
+		sessionCustomContextWindow,
+		// Per-session SSH remote config (takes precedence over agent-level SSH config)
+		sessionSshRemoteConfig,
+	};
 
-  return spawnConfig;
+	return spawnConfig;
 }
 
 /**
@@ -196,60 +200,53 @@ export async function buildSpawnConfigForAgent(
  * }
  */
 export async function createSessionForAgent(
-  options: CreateSessionForAgentOptions
+	options: CreateSessionForAgentOptions
 ): Promise<CreateSessionForAgentResult | null> {
-  const {
-    agentType,
-    projectRoot,
-    name,
-    initialContext,
-    groupId,
-    saveToHistory = true,
-  } = options;
+	const { agentType, projectRoot, name, initialContext, groupId, saveToHistory = true } = options;
 
-  // Verify the agent is available
-  const agentConfig = await window.maestro.agents.get(agentType);
+	// Verify the agent is available
+	const agentConfig = await window.maestro.agents.get(agentType);
 
-  if (!agentConfig) {
-    console.error(`[sessionHelpers] Agent not found: ${agentType}`);
-    return null;
-  }
+	if (!agentConfig) {
+		console.error(`[sessionHelpers] Agent not found: ${agentType}`);
+		return null;
+	}
 
-  if (!agentConfig.available) {
-    console.error(`[sessionHelpers] Agent not available: ${agentType}`);
-    return null;
-  }
+	if (!agentConfig.available) {
+		console.error(`[sessionHelpers] Agent not available: ${agentType}`);
+		return null;
+	}
 
-  // Create the session structure using the existing helper
-  // We pass empty mergedLogs since the context will be sent as a prompt
-  const { session, tabId } = createMergedSession({
-    name,
-    projectRoot,
-    toolType: agentType,
-    mergedLogs: [], // Context is sent as initial prompt, not as pre-existing logs
-    groupId,
-    saveToHistory,
-  });
+	// Create the session structure using the existing helper
+	// We pass empty mergedLogs since the context will be sent as a prompt
+	const { session, tabId } = createMergedSession({
+		name,
+		projectRoot,
+		toolType: agentType,
+		mergedLogs: [], // Context is sent as initial prompt, not as pre-existing logs
+		groupId,
+		saveToHistory,
+	});
 
-  // Build the spawn configuration
-  const spawnConfig = await buildSpawnConfigForAgent({
-    sessionId: session.id,
-    toolType: agentType,
-    cwd: projectRoot,
-    prompt: initialContext,
-    // New session - no resume, no read-only mode by default
-    readOnlyMode: false,
-  });
+	// Build the spawn configuration
+	const spawnConfig = await buildSpawnConfigForAgent({
+		sessionId: session.id,
+		toolType: agentType,
+		cwd: projectRoot,
+		prompt: initialContext,
+		// New session - no resume, no read-only mode by default
+		readOnlyMode: false,
+	});
 
-  if (!spawnConfig) {
-    return null;
-  }
+	if (!spawnConfig) {
+		return null;
+	}
 
-  return {
-    session,
-    tabId,
-    spawnConfig,
-  };
+	return {
+		session,
+		tabId,
+		spawnConfig,
+	};
 }
 
 /**
@@ -259,8 +256,8 @@ export async function createSessionForAgent(
  * @returns True if the agent supports receiving transferred context
  */
 export async function agentSupportsContextTransfer(agentType: ToolType): Promise<boolean> {
-  const capabilities = await window.maestro.agents.getCapabilities(agentType);
-  return capabilities?.supportsContextMerge ?? false;
+	const capabilities = await window.maestro.agents.getCapabilities(agentType);
+	return capabilities?.supportsContextMerge ?? false;
 }
 
 /**
@@ -270,21 +267,21 @@ export async function agentSupportsContextTransfer(agentType: ToolType): Promise
  * @returns Agent name and availability status
  */
 export async function getAgentInfo(agentType: ToolType): Promise<{
-  name: string;
-  available: boolean;
-  capabilities: any;
+	name: string;
+	available: boolean;
+	capabilities: any;
 } | null> {
-  const agentConfig = await window.maestro.agents.get(agentType);
+	const agentConfig = await window.maestro.agents.get(agentType);
 
-  if (!agentConfig) {
-    return null;
-  }
+	if (!agentConfig) {
+		return null;
+	}
 
-  return {
-    name: agentConfig.name,
-    available: agentConfig.available,
-    capabilities: agentConfig.capabilities,
-  };
+	return {
+		name: agentConfig.name,
+		available: agentConfig.available,
+		capabilities: agentConfig.capabilities,
+	};
 }
 
 /**
@@ -292,14 +289,14 @@ export async function getAgentInfo(agentType: ToolType): Promise<{
  * Used to avoid importing full Session type in places where only SSH info is needed.
  */
 export interface SessionSshInfo {
-  /** SSH remote ID set after AI agent spawns */
-  sshRemoteId?: string;
-  /** SSH remote config set before spawn (user configuration) */
-  sessionSshRemoteConfig?: {
-    enabled: boolean;
-    remoteId: string | null;
-    workingDirOverride?: string;
-  };
+	/** SSH remote ID set after AI agent spawns */
+	sshRemoteId?: string;
+	/** SSH remote config set before spawn (user configuration) */
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 }
 
 /**
@@ -326,9 +323,11 @@ export interface SessionSshInfo {
  * await window.maestro.fs.readFile(path, getSessionSshRemoteId(session));
  * await gitService.isRepo(path, getSessionSshRemoteId(session));
  */
-export function getSessionSshRemoteId(session: SessionSshInfo | null | undefined): string | undefined {
-  if (!session) return undefined;
-  return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+export function getSessionSshRemoteId(
+	session: SessionSshInfo | null | undefined
+): string | undefined {
+	if (!session) return undefined;
+	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
 }
 
 /**
@@ -348,6 +347,6 @@ export function getSessionSshRemoteId(session: SessionSshInfo | null | undefined
  * const isRemote = isSessionRemote(session);
  */
 export function isSessionRemote(session: SessionSshInfo | null | undefined): boolean {
-  if (!session) return false;
-  return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
+	if (!session) return false;
+	return !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
 }

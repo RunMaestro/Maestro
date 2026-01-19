@@ -35,10 +35,10 @@ const KEYBOARD_VISIBILITY_THRESHOLD = 50;
 
 /** Return value from useKeyboardVisibility hook */
 export interface UseKeyboardVisibilityReturn {
-  /** Current keyboard offset in pixels (0 when keyboard is hidden) */
-  keyboardOffset: number;
-  /** Whether the keyboard is currently visible */
-  isKeyboardVisible: boolean;
+	/** Current keyboard offset in pixels (0 when keyboard is hidden) */
+	keyboardOffset: number;
+	/** Whether the keyboard is currently visible */
+	isKeyboardVisible: boolean;
 }
 
 /**
@@ -55,69 +55,69 @@ export interface UseKeyboardVisibilityReturn {
  * @returns Keyboard visibility state and offset
  */
 export function useKeyboardVisibility(): UseKeyboardVisibilityReturn {
-  const [keyboardOffset, setKeyboardOffset] = useState(0);
-  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+	const [keyboardOffset, setKeyboardOffset] = useState(0);
+	const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
-  // Use ref to track isKeyboardVisible for scroll handler to avoid stale closure
-  const isKeyboardVisibleRef = useRef(isKeyboardVisible);
-  isKeyboardVisibleRef.current = isKeyboardVisible;
+	// Use ref to track isKeyboardVisible for scroll handler to avoid stale closure
+	const isKeyboardVisibleRef = useRef(isKeyboardVisible);
+	isKeyboardVisibleRef.current = isKeyboardVisible;
 
-  /**
-   * Calculate keyboard offset from viewport dimensions
-   */
-  const calculateOffset = useCallback(() => {
-    if (typeof window === 'undefined') return;
-    const viewport = window.visualViewport;
-    if (!viewport) return;
+	/**
+	 * Calculate keyboard offset from viewport dimensions
+	 */
+	const calculateOffset = useCallback(() => {
+		if (typeof window === 'undefined') return;
+		const viewport = window.visualViewport;
+		if (!viewport) return;
 
-    // Calculate the offset caused by keyboard
-    // windowHeight - viewportHeight - offsetTop = space taken by keyboard
-    const windowHeight = window.innerHeight;
-    const viewportHeight = viewport.height;
-    const offset = windowHeight - viewportHeight - viewport.offsetTop;
+		// Calculate the offset caused by keyboard
+		// windowHeight - viewportHeight - offsetTop = space taken by keyboard
+		const windowHeight = window.innerHeight;
+		const viewportHeight = viewport.height;
+		const offset = windowHeight - viewportHeight - viewport.offsetTop;
 
-    // Only update if there's a significant change (keyboard appearing/disappearing)
-    if (offset > KEYBOARD_VISIBILITY_THRESHOLD) {
-      setKeyboardOffset(offset);
-      setIsKeyboardVisible(true);
-    } else {
-      setKeyboardOffset(0);
-      setIsKeyboardVisible(false);
-    }
-  }, []);
+		// Only update if there's a significant change (keyboard appearing/disappearing)
+		if (offset > KEYBOARD_VISIBILITY_THRESHOLD) {
+			setKeyboardOffset(offset);
+			setIsKeyboardVisible(true);
+		} else {
+			setKeyboardOffset(0);
+			setIsKeyboardVisible(false);
+		}
+	}, []);
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const viewport = window.visualViewport;
-    if (!viewport) return;
+	useEffect(() => {
+		if (typeof window === 'undefined') return;
+		const viewport = window.visualViewport;
+		if (!viewport) return;
 
-    const handleResize = () => {
-      calculateOffset();
-    };
+		const handleResize = () => {
+			calculateOffset();
+		};
 
-    const handleScroll = () => {
-      // Re-adjust on scroll to keep elements in view when keyboard is visible
-      if (isKeyboardVisibleRef.current) {
-        calculateOffset();
-      }
-    };
+		const handleScroll = () => {
+			// Re-adjust on scroll to keep elements in view when keyboard is visible
+			if (isKeyboardVisibleRef.current) {
+				calculateOffset();
+			}
+		};
 
-    viewport.addEventListener('resize', handleResize);
-    viewport.addEventListener('scroll', handleScroll);
+		viewport.addEventListener('resize', handleResize);
+		viewport.addEventListener('scroll', handleScroll);
 
-    // Initial check
-    calculateOffset();
+		// Initial check
+		calculateOffset();
 
-    return () => {
-      viewport.removeEventListener('resize', handleResize);
-      viewport.removeEventListener('scroll', handleScroll);
-    };
-  }, [calculateOffset]);
+		return () => {
+			viewport.removeEventListener('resize', handleResize);
+			viewport.removeEventListener('scroll', handleScroll);
+		};
+	}, [calculateOffset]);
 
-  return {
-    keyboardOffset,
-    isKeyboardVisible,
-  };
+	return {
+		keyboardOffset,
+		isKeyboardVisible,
+	};
 }
 
 export default useKeyboardVisibility;

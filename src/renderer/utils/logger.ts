@@ -10,21 +10,21 @@ import { PerformanceMetrics, type PerformanceMetric } from '../../shared/perform
 export type LogLevel = BaseLogLevel;
 
 class RendererLogger {
-  debug(message: string, context?: string, data?: unknown): void {
-    window.maestro?.logger?.log('debug', message, context, data);
-  }
+	debug(message: string, context?: string, data?: unknown): void {
+		window.maestro?.logger?.log('debug', message, context, data);
+	}
 
-  info(message: string, context?: string, data?: unknown): void {
-    window.maestro?.logger?.log('info', message, context, data);
-  }
+	info(message: string, context?: string, data?: unknown): void {
+		window.maestro?.logger?.log('info', message, context, data);
+	}
 
-  warn(message: string, context?: string, data?: unknown): void {
-    window.maestro?.logger?.log('warn', message, context, data);
-  }
+	warn(message: string, context?: string, data?: unknown): void {
+		window.maestro?.logger?.log('warn', message, context, data);
+	}
 
-  error(message: string, context?: string, data?: unknown): void {
-    window.maestro?.logger?.log('error', message, context, data);
-  }
+	error(message: string, context?: string, data?: unknown): void {
+		window.maestro?.logger?.log('error', message, context, data);
+	}
 }
 
 // Export singleton instance
@@ -52,16 +52,16 @@ let rendererPerfEnabled = false;
  * @returns PerformanceMetrics instance for the component
  */
 export function getRendererPerfMetrics(context: string): PerformanceMetrics {
-  let instance = rendererPerfInstances.get(context);
-  if (!instance) {
-    instance = new PerformanceMetrics(
-      context,
-      (message, ctx) => logger.debug(message, ctx),
-      rendererPerfEnabled
-    );
-    rendererPerfInstances.set(context, instance);
-  }
-  return instance;
+	let instance = rendererPerfInstances.get(context);
+	if (!instance) {
+		instance = new PerformanceMetrics(
+			context,
+			(message, ctx) => logger.debug(message, ctx),
+			rendererPerfEnabled
+		);
+		rendererPerfInstances.set(context, instance);
+	}
+	return instance;
 }
 
 /**
@@ -70,39 +70,36 @@ export function getRendererPerfMetrics(context: string): PerformanceMetrics {
  * @param enabled - Whether to enable performance metrics
  */
 export function setRendererPerfEnabled(enabled: boolean): void {
-  rendererPerfEnabled = enabled;
-  for (const instance of rendererPerfInstances.values()) {
-    instance.setEnabled(enabled);
-  }
-  logger.info(
-    `Renderer performance metrics ${enabled ? 'enabled' : 'disabled'}`,
-    '[RendererPerf]'
-  );
+	rendererPerfEnabled = enabled;
+	for (const instance of rendererPerfInstances.values()) {
+		instance.setEnabled(enabled);
+	}
+	logger.info(`Renderer performance metrics ${enabled ? 'enabled' : 'disabled'}`, '[RendererPerf]');
 }
 
 /**
  * Check if renderer performance metrics are enabled.
  */
 export function isRendererPerfEnabled(): boolean {
-  return rendererPerfEnabled;
+	return rendererPerfEnabled;
 }
 
 /**
  * Get all collected performance metrics from all renderer components.
  */
 export function getAllRendererPerfMetrics(): PerformanceMetric[] {
-  const allMetrics: PerformanceMetric[] = [];
-  for (const instance of rendererPerfInstances.values()) {
-    allMetrics.push(...instance.getMetrics());
-  }
-  return allMetrics.sort((a, b) => a.timestamp - b.timestamp);
+	const allMetrics: PerformanceMetric[] = [];
+	for (const instance of rendererPerfInstances.values()) {
+		allMetrics.push(...instance.getMetrics());
+	}
+	return allMetrics.sort((a, b) => a.timestamp - b.timestamp);
 }
 
 /**
  * Clear all renderer performance metrics.
  */
 export function clearAllRendererPerfMetrics(): void {
-  for (const instance of rendererPerfInstances.values()) {
-    instance.clearMetrics();
-  }
+	for (const instance of rendererPerfInstances.values()) {
+		instance.clearMetrics();
+	}
 }

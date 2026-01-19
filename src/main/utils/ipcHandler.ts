@@ -18,13 +18,13 @@ import { logger } from './logger';
  * Standard IPC response format for operations that return data
  */
 export interface IpcSuccessResponse<T = unknown> {
-  success: true;
-  data: T;
+	success: true;
+	data: T;
 }
 
 export interface IpcErrorResponse {
-  success: false;
-  error: string;
+	success: false;
+	error: string;
 }
 
 export type IpcResponse<T = unknown> = IpcSuccessResponse<T> | IpcErrorResponse;
@@ -34,21 +34,21 @@ export type IpcResponse<T = unknown> = IpcSuccessResponse<T> | IpcErrorResponse;
  * (e.g., { success: true, files: [], tree: [] })
  */
 export type IpcCustomResponse<T extends Record<string, unknown>> =
-  | (T & { success: true })
-  | { success: false; error: string };
+	| (T & { success: true })
+	| { success: false; error: string };
 
 /**
  * Options for the IPC handler wrapper
  */
 export interface CreateHandlerOptions {
-  /** Log context prefix (e.g., '[AutoRun]') */
-  context: string;
-  /** Operation name for logging (e.g., 'listDocs') */
-  operation: string;
-  /** Whether to log success (default: true) */
-  logSuccess?: boolean;
-  /** Additional data to log on success */
-  successLogData?: Record<string, unknown>;
+	/** Log context prefix (e.g., '[AutoRun]') */
+	context: string;
+	/** Operation name for logging (e.g., 'listDocs') */
+	operation: string;
+	/** Whether to log success (default: true) */
+	logSuccess?: boolean;
+	/** Additional data to log on success */
+	successLogData?: Record<string, unknown>;
 }
 
 /**
@@ -72,25 +72,25 @@ export interface CreateHandlerOptions {
  * @returns Wrapped handler function with error handling
  */
 export function createHandler<TArgs extends unknown[], TResult extends Record<string, unknown>>(
-  options: CreateHandlerOptions,
-  handler: (...args: TArgs) => Promise<TResult>
+	options: CreateHandlerOptions,
+	handler: (...args: TArgs) => Promise<TResult>
 ): (...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
-  const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData } = options;
 
-  return async (...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
-    try {
-      const result = await handler(...args);
+	return async (...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
+		try {
+			const result = await handler(...args);
 
-      if (logSuccess) {
-        logger.info(`${operation} success`, context, successLogData);
-      }
+			if (logSuccess) {
+				logger.info(`${operation} success`, context, successLogData);
+			}
 
-      return { success: true, ...result };
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      return { success: false, error: String(error) };
-    }
-  };
+			return { success: true, ...result };
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			return { success: false, error: String(error) };
+		}
+	};
 }
 
 /**
@@ -112,25 +112,25 @@ export function createHandler<TArgs extends unknown[], TResult extends Record<st
  * @returns Wrapped handler function with { success, data } response
  */
 export function createDataHandler<TArgs extends unknown[], TData>(
-  options: CreateHandlerOptions,
-  handler: (...args: TArgs) => Promise<TData>
+	options: CreateHandlerOptions,
+	handler: (...args: TArgs) => Promise<TData>
 ): (...args: TArgs) => Promise<IpcResponse<TData>> {
-  const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData } = options;
 
-  return async (...args: TArgs): Promise<IpcResponse<TData>> => {
-    try {
-      const data = await handler(...args);
+	return async (...args: TArgs): Promise<IpcResponse<TData>> => {
+		try {
+			const data = await handler(...args);
 
-      if (logSuccess) {
-        logger.info(`${operation} success`, context, successLogData);
-      }
+			if (logSuccess) {
+				logger.info(`${operation} success`, context, successLogData);
+			}
 
-      return { success: true, data };
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      return { success: false, error: String(error) };
-    }
-  };
+			return { success: true, data };
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			return { success: false, error: String(error) };
+		}
+	};
 }
 
 /**
@@ -152,19 +152,19 @@ export function createDataHandler<TArgs extends unknown[], TData>(
  * @returns Wrapped handler function with error logging
  */
 export function withErrorLogging<TArgs extends unknown[], TResult>(
-  options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
-  handler: (...args: TArgs) => Promise<TResult>
+	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
+	handler: (...args: TArgs) => Promise<TResult>
 ): (...args: TArgs) => Promise<TResult> {
-  const { context, operation } = options;
+	const { context, operation } = options;
 
-  return async (...args: TArgs): Promise<TResult> => {
-    try {
-      return await handler(...args);
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      throw error;
-    }
-  };
+	return async (...args: TArgs): Promise<TResult> => {
+		try {
+			return await handler(...args);
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			throw error;
+		}
+	};
 }
 
 /**
@@ -189,19 +189,19 @@ export function withErrorLogging<TArgs extends unknown[], TResult>(
  * @returns Wrapped handler function compatible with ipcMain.handle
  */
 export function withIpcErrorLogging<TArgs extends unknown[], TResult>(
-  options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
-  handler: (...args: TArgs) => Promise<TResult>
+	options: Pick<CreateHandlerOptions, 'context' | 'operation'>,
+	handler: (...args: TArgs) => Promise<TResult>
 ): (_event: unknown, ...args: TArgs) => Promise<TResult> {
-  const { context, operation } = options;
+	const { context, operation } = options;
 
-  return async (_event: unknown, ...args: TArgs): Promise<TResult> => {
-    try {
-      return await handler(...args);
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      throw error;
-    }
-  };
+	return async (_event: unknown, ...args: TArgs): Promise<TResult> => {
+		try {
+			return await handler(...args);
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			throw error;
+		}
+	};
 }
 
 /**
@@ -227,25 +227,25 @@ export function withIpcErrorLogging<TArgs extends unknown[], TResult>(
  * @returns Wrapped handler function compatible with ipcMain.handle
  */
 export function createIpcHandler<TArgs extends unknown[], TResult extends Record<string, unknown>>(
-  options: CreateHandlerOptions,
-  handler: (...args: TArgs) => Promise<TResult>
+	options: CreateHandlerOptions,
+	handler: (...args: TArgs) => Promise<TResult>
 ): (_event: unknown, ...args: TArgs) => Promise<IpcCustomResponse<TResult>> {
-  const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData } = options;
 
-  return async (_event: unknown, ...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
-    try {
-      const result = await handler(...args);
+	return async (_event: unknown, ...args: TArgs): Promise<IpcCustomResponse<TResult>> => {
+		try {
+			const result = await handler(...args);
 
-      if (logSuccess) {
-        logger.info(`${operation} success`, context, successLogData);
-      }
+			if (logSuccess) {
+				logger.info(`${operation} success`, context, successLogData);
+			}
 
-      return { success: true, ...result };
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      return { success: false, error: String(error) };
-    }
-  };
+			return { success: true, ...result };
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			return { success: false, error: String(error) };
+		}
+	};
 }
 
 /**
@@ -257,25 +257,25 @@ export function createIpcHandler<TArgs extends unknown[], TResult extends Record
  * @returns Wrapped handler function compatible with ipcMain.handle
  */
 export function createIpcDataHandler<TArgs extends unknown[], TData>(
-  options: CreateHandlerOptions,
-  handler: (...args: TArgs) => Promise<TData>
+	options: CreateHandlerOptions,
+	handler: (...args: TArgs) => Promise<TData>
 ): (_event: unknown, ...args: TArgs) => Promise<IpcResponse<TData>> {
-  const { context, operation, logSuccess = true, successLogData } = options;
+	const { context, operation, logSuccess = true, successLogData } = options;
 
-  return async (_event: unknown, ...args: TArgs): Promise<IpcResponse<TData>> => {
-    try {
-      const data = await handler(...args);
+	return async (_event: unknown, ...args: TArgs): Promise<IpcResponse<TData>> => {
+		try {
+			const data = await handler(...args);
 
-      if (logSuccess) {
-        logger.info(`${operation} success`, context, successLogData);
-      }
+			if (logSuccess) {
+				logger.info(`${operation} success`, context, successLogData);
+			}
 
-      return { success: true, data };
-    } catch (error) {
-      logger.error(`${operation} error`, context, error);
-      return { success: false, error: String(error) };
-    }
-  };
+			return { success: true, data };
+		} catch (error) {
+			logger.error(`${operation} error`, context, error);
+			return { success: false, error: String(error) };
+		}
+	};
 }
 
 /**
@@ -298,13 +298,13 @@ export function createIpcDataHandler<TArgs extends unknown[], TData>(
  * @throws Error if ProcessManager is not initialized
  */
 export function requireProcessManager(
-  getProcessManager: () => ProcessManager | null
+	getProcessManager: () => ProcessManager | null
 ): ProcessManager {
-  const processManager = getProcessManager();
-  if (!processManager) {
-    throw new Error('Process manager not initialized');
-  }
-  return processManager;
+	const processManager = getProcessManager();
+	if (!processManager) {
+		throw new Error('Process manager not initialized');
+	}
+	return processManager;
 }
 
 /**
@@ -320,13 +320,10 @@ export function requireProcessManager(
  * @returns The dependency instance
  * @throws Error if dependency is not initialized
  */
-export function requireDependency<T>(
-  getter: () => T | null,
-  name: string
-): T {
-  const dependency = getter();
-  if (!dependency) {
-    throw new Error(`${name} not initialized`);
-  }
-  return dependency;
+export function requireDependency<T>(getter: () => T | null, name: string): T {
+	const dependency = getter();
+	if (!dependency) {
+		throw new Error(`${name} not initialized`);
+	}
+	return dependency;
 }

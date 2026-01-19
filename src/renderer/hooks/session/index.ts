@@ -14,15 +14,19 @@ export { useSessionNavigation } from './useSessionNavigation';
 export type { UseSessionNavigationReturn, UseSessionNavigationDeps } from './useSessionNavigation';
 
 // Session sorting utilities
-export { useSortedSessions, stripLeadingEmojis, compareNamesIgnoringEmojis } from './useSortedSessions';
+export {
+	useSortedSessions,
+	stripLeadingEmojis,
+	compareNamesIgnoringEmojis,
+} from './useSortedSessions';
 export type { UseSortedSessionsDeps, UseSortedSessionsReturn } from './useSortedSessions';
 
 // Group management
 export { useGroupManagement } from './useGroupManagement';
 export type {
-  UseGroupManagementDeps,
-  UseGroupManagementReturn,
-  GroupModalState,
+	UseGroupManagementDeps,
+	UseGroupManagementReturn,
+	GroupModalState,
 } from './useGroupManagement';
 
 // Batched session updates for performance

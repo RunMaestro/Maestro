@@ -25,12 +25,12 @@ export type LogLevel = MainLogLevel;
  * Lower numbers = more verbose, higher numbers = more severe.
  */
 export const LOG_LEVEL_PRIORITY: Record<MainLogLevel, number> = {
-  debug: 0,
-  info: 1,
-  warn: 2,
-  error: 3,
-  toast: 1, // Toast notifications always logged at info priority (always visible)
-  autorun: 1, // Auto Run logs always logged at info priority (always visible)
+	debug: 0,
+	info: 1,
+	warn: 2,
+	error: 3,
+	toast: 1, // Toast notifications always logged at info priority (always visible)
+	autorun: 1, // Auto Run logs always logged at info priority (always visible)
 };
 
 /**
@@ -43,21 +43,21 @@ export const DEFAULT_MAX_LOGS = 1000;
  * Note: This is different from session LogEntry used in renderer types.
  */
 export interface SystemLogEntry {
-  /** Unix timestamp in milliseconds */
-  timestamp: number;
-  /** Log level */
-  level: MainLogLevel;
-  /** Log message */
-  message: string;
-  /** Optional context identifier (e.g., component name) */
-  context?: string;
-  /** Optional additional data */
-  data?: unknown;
+	/** Unix timestamp in milliseconds */
+	timestamp: number;
+	/** Log level */
+	level: MainLogLevel;
+	/** Log message */
+	message: string;
+	/** Optional context identifier (e.g., component name) */
+	context?: string;
+	/** Optional additional data */
+	data?: unknown;
 }
 
 /**
  * Check if a log level should be logged given the minimum level.
  */
 export function shouldLogLevel(level: MainLogLevel, minLevel: MainLogLevel): boolean {
-  return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[minLevel];
+	return LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[minLevel];
 }

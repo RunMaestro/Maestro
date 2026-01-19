@@ -23,91 +23,91 @@ import type { GraphNodeData, DocumentNodeData, ExternalLinkNodeData } from './gr
  * Position and visual state for a mind map node
  */
 export interface MindMapNode {
-  id: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  depth: number;
-  side: 'left' | 'right' | 'center' | 'external';
-  nodeType: 'document' | 'external';
-  label: string;
-  filePath?: string;
-  /** Description from frontmatter */
-  description?: string;
-  /** Plaintext content preview (fallback when no description) */
-  contentPreview?: string;
-  descriptionExpanded?: boolean;
-  domain?: string;
-  urls?: string[];
-  lineCount?: number;
-  wordCount?: number;
-  size?: string;
-  brokenLinks?: string[];
-  isLargeFile?: boolean;
-  isSelected?: boolean;
-  isFocused?: boolean;
-  connectionCount?: number;
-  neighbors?: Set<string>;
+	id: string;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	depth: number;
+	side: 'left' | 'right' | 'center' | 'external';
+	nodeType: 'document' | 'external';
+	label: string;
+	filePath?: string;
+	/** Description from frontmatter */
+	description?: string;
+	/** Plaintext content preview (fallback when no description) */
+	contentPreview?: string;
+	descriptionExpanded?: boolean;
+	domain?: string;
+	urls?: string[];
+	lineCount?: number;
+	wordCount?: number;
+	size?: string;
+	brokenLinks?: string[];
+	isLargeFile?: boolean;
+	isSelected?: boolean;
+	isFocused?: boolean;
+	connectionCount?: number;
+	neighbors?: Set<string>;
 }
 
 /**
  * Link between two nodes
  */
 export interface MindMapLink {
-  source: string;
-  target: string;
-  type: 'internal' | 'external';
+	source: string;
+	target: string;
+	type: 'internal' | 'external';
 }
 
 /**
  * Custom node position override
  */
 export interface NodePositionOverride {
-  x: number;
-  y: number;
+	x: number;
+	y: number;
 }
 
 /**
  * Props for the MindMap component
  */
 export interface MindMapProps {
-  /** Required - the file path of the center document */
-  centerFilePath: string;
-  /** All nodes from graphDataBuilder */
-  nodes: MindMapNode[];
-  /** All links from graphDataBuilder */
-  links: MindMapLink[];
-  /** Current theme */
-  theme: Theme;
-  /** Width of the canvas container */
-  width: number;
-  /** Height of the canvas container */
-  height: number;
-  /** Maximum depth to show (1-5) */
-  maxDepth: number;
-  /** Whether to show external link nodes */
-  showExternalLinks: boolean;
-  /** Currently selected node ID */
-  selectedNodeId: string | null;
-  /** Callback when a node is selected */
-  onNodeSelect: (node: MindMapNode | null) => void;
-  /** Callback when a node is double-clicked (recenter on document) */
-  onNodeDoubleClick: (node: MindMapNode) => void;
-  /** Callback for context menu */
-  onNodeContextMenu: (node: MindMapNode, event: MouseEvent) => void;
-  /** Callback to open a document in file preview */
-  onOpenFile: (filePath: string) => void;
-  /** Search query for highlighting */
-  searchQuery: string;
-  /** Character limit for preview text (description or content preview) */
-  previewCharLimit?: number;
-  /** Custom position overrides for nodes (from user drag operations) */
-  nodePositions?: Map<string, NodePositionOverride>;
-  /** Callback when a node position is changed via drag */
-  onNodePositionChange?: (nodeId: string, position: NodePositionOverride) => void;
-  /** Optional ref to the container div for external focus control */
-  containerRef?: React.RefObject<HTMLDivElement>;
+	/** Required - the file path of the center document */
+	centerFilePath: string;
+	/** All nodes from graphDataBuilder */
+	nodes: MindMapNode[];
+	/** All links from graphDataBuilder */
+	links: MindMapLink[];
+	/** Current theme */
+	theme: Theme;
+	/** Width of the canvas container */
+	width: number;
+	/** Height of the canvas container */
+	height: number;
+	/** Maximum depth to show (1-5) */
+	maxDepth: number;
+	/** Whether to show external link nodes */
+	showExternalLinks: boolean;
+	/** Currently selected node ID */
+	selectedNodeId: string | null;
+	/** Callback when a node is selected */
+	onNodeSelect: (node: MindMapNode | null) => void;
+	/** Callback when a node is double-clicked (recenter on document) */
+	onNodeDoubleClick: (node: MindMapNode) => void;
+	/** Callback for context menu */
+	onNodeContextMenu: (node: MindMapNode, event: MouseEvent) => void;
+	/** Callback to open a document in file preview */
+	onOpenFile: (filePath: string) => void;
+	/** Search query for highlighting */
+	searchQuery: string;
+	/** Character limit for preview text (description or content preview) */
+	previewCharLimit?: number;
+	/** Custom position overrides for nodes (from user drag operations) */
+	nodePositions?: Map<string, NodePositionOverride>;
+	/** Callback when a node position is changed via drag */
+	onNodePositionChange?: (nodeId: string, position: NodePositionOverride) => void;
+	/** Optional ref to the container div for external focus control */
+	containerRef?: React.RefObject<HTMLDivElement>;
 }
 
 // ============================================================================
@@ -143,27 +143,27 @@ const nodeHeightCache = new Map<string, number>();
  * Calculate node height based on actual content length (with caching)
  */
 function calculateNodeHeight(previewText: string | undefined, previewCharLimit: number): number {
-  if (!previewText) {
-    return NODE_HEIGHT_BASE;
-  }
+	if (!previewText) {
+		return NODE_HEIGHT_BASE;
+	}
 
-  // Use text length as cache key (exact content not needed, just length matters for height)
-  const cacheKey = `${Math.min(previewText.length, previewCharLimit)}:${previewCharLimit}`;
-  const cached = nodeHeightCache.get(cacheKey);
-  if (cached !== undefined) {
-    return cached;
-  }
+	// Use text length as cache key (exact content not needed, just length matters for height)
+	const cacheKey = `${Math.min(previewText.length, previewCharLimit)}:${previewCharLimit}`;
+	const cached = nodeHeightCache.get(cacheKey);
+	if (cached !== undefined) {
+		return cached;
+	}
 
-  // Truncate to the limit, then calculate actual lines needed
-  const truncatedLength = Math.min(previewText.length, previewCharLimit);
-  const actualLines = Math.ceil(truncatedLength / CHARS_PER_LINE);
-  // Minimum 1 line, cap at reasonable max
-  const lines = Math.max(1, Math.min(actualLines, 15));
-  const height = NODE_HEIGHT_BASE + (lines * DESC_LINE_HEIGHT) + DESC_PADDING;
+	// Truncate to the limit, then calculate actual lines needed
+	const truncatedLength = Math.min(previewText.length, previewCharLimit);
+	const actualLines = Math.ceil(truncatedLength / CHARS_PER_LINE);
+	// Minimum 1 line, cap at reasonable max
+	const lines = Math.max(1, Math.min(actualLines, 15));
+	const height = NODE_HEIGHT_BASE + lines * DESC_LINE_HEIGHT + DESC_PADDING;
 
-  // Cache the result
-  nodeHeightCache.set(cacheKey, height);
-  return height;
+	// Cache the result
+	nodeHeightCache.set(cacheKey, height);
+	return height;
 }
 /** Scale factor for center node */
 const CENTER_NODE_SCALE = 1.15;
@@ -190,167 +190,167 @@ const OPEN_ICON_PADDING = 8;
  * Truncate text to a maximum length with ellipsis
  */
 function truncateText(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  return text.slice(0, maxLength - 3) + '...';
+	if (text.length <= maxLength) return text;
+	return text.slice(0, maxLength - 3) + '...';
 }
 
 /**
  * Draw a rounded rectangle path
  */
 function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number,
+	width: number,
+	height: number,
+	radius: number
 ): void {
-  ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + width - radius, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-  ctx.lineTo(x + width, y + height - radius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  ctx.lineTo(x + radius, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
-  ctx.closePath();
+	ctx.beginPath();
+	ctx.moveTo(x + radius, y);
+	ctx.lineTo(x + width - radius, y);
+	ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+	ctx.lineTo(x + width, y + height - radius);
+	ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+	ctx.lineTo(x + radius, y + height);
+	ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+	ctx.lineTo(x, y + radius);
+	ctx.quadraticCurveTo(x, y, x + radius, y);
+	ctx.closePath();
 }
 
 /**
  * Draw an "external link" icon (square with arrow)
  */
 function drawOpenIcon(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  color: string
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number,
+	size: number,
+	color: string
 ): void {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.5;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+	ctx.strokeStyle = color;
+	ctx.lineWidth = 1.5;
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
 
-  const padding = size * 0.15;
-  const boxSize = size - padding * 2;
+	const padding = size * 0.15;
+	const boxSize = size - padding * 2;
 
-  // Draw square
-  ctx.beginPath();
-  ctx.rect(x + padding, y + padding + boxSize * 0.25, boxSize * 0.75, boxSize * 0.75);
-  ctx.stroke();
+	// Draw square
+	ctx.beginPath();
+	ctx.rect(x + padding, y + padding + boxSize * 0.25, boxSize * 0.75, boxSize * 0.75);
+	ctx.stroke();
 
-  // Draw arrow pointing up-right
-  const arrowStart = { x: x + padding + boxSize * 0.35, y: y + padding + boxSize * 0.65 };
-  const arrowEnd = { x: x + padding + boxSize, y: y + padding };
+	// Draw arrow pointing up-right
+	const arrowStart = { x: x + padding + boxSize * 0.35, y: y + padding + boxSize * 0.65 };
+	const arrowEnd = { x: x + padding + boxSize, y: y + padding };
 
-  ctx.beginPath();
-  ctx.moveTo(arrowStart.x, arrowStart.y);
-  ctx.lineTo(arrowEnd.x, arrowEnd.y);
-  ctx.stroke();
+	ctx.beginPath();
+	ctx.moveTo(arrowStart.x, arrowStart.y);
+	ctx.lineTo(arrowEnd.x, arrowEnd.y);
+	ctx.stroke();
 
-  // Arrow head
-  ctx.beginPath();
-  ctx.moveTo(arrowEnd.x - boxSize * 0.3, arrowEnd.y);
-  ctx.lineTo(arrowEnd.x, arrowEnd.y);
-  ctx.lineTo(arrowEnd.x, arrowEnd.y + boxSize * 0.3);
-  ctx.stroke();
+	// Arrow head
+	ctx.beginPath();
+	ctx.moveTo(arrowEnd.x - boxSize * 0.3, arrowEnd.y);
+	ctx.lineTo(arrowEnd.x, arrowEnd.y);
+	ctx.lineTo(arrowEnd.x, arrowEnd.y + boxSize * 0.3);
+	ctx.stroke();
 }
 
 /**
  * Draw a folder icon
  */
 function drawFolderIcon(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  size: number,
-  color: string
+	ctx: CanvasRenderingContext2D,
+	x: number,
+	y: number,
+	size: number,
+	color: string
 ): void {
-  ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+	ctx.fillStyle = color;
+	ctx.strokeStyle = color;
+	ctx.lineWidth = 1;
+	ctx.lineCap = 'round';
+	ctx.lineJoin = 'round';
 
-  const w = size;
-  const h = size * 0.75;
-  const tabWidth = w * 0.35;
-  const tabHeight = h * 0.2;
-  const cornerRadius = 1.5;
+	const w = size;
+	const h = size * 0.75;
+	const tabWidth = w * 0.35;
+	const tabHeight = h * 0.2;
+	const cornerRadius = 1.5;
 
-  // Draw folder shape
-  ctx.beginPath();
-  // Start at bottom left
-  ctx.moveTo(x + cornerRadius, y + h);
-  // Bottom edge
-  ctx.lineTo(x + w - cornerRadius, y + h);
-  // Bottom right corner
-  ctx.quadraticCurveTo(x + w, y + h, x + w, y + h - cornerRadius);
-  // Right edge
-  ctx.lineTo(x + w, y + tabHeight + cornerRadius);
-  // Top right corner
-  ctx.quadraticCurveTo(x + w, y + tabHeight, x + w - cornerRadius, y + tabHeight);
-  // Top edge (right of tab)
-  ctx.lineTo(x + tabWidth + cornerRadius, y + tabHeight);
-  // Tab right corner
-  ctx.lineTo(x + tabWidth, y + cornerRadius);
-  // Tab top corner
-  ctx.quadraticCurveTo(x + tabWidth, y, x + tabWidth - cornerRadius, y);
-  // Tab top edge
-  ctx.lineTo(x + cornerRadius, y);
-  // Top left corner
-  ctx.quadraticCurveTo(x, y, x, y + cornerRadius);
-  // Left edge
-  ctx.lineTo(x, y + h - cornerRadius);
-  // Bottom left corner
-  ctx.quadraticCurveTo(x, y + h, x + cornerRadius, y + h);
-  ctx.closePath();
-  ctx.fill();
+	// Draw folder shape
+	ctx.beginPath();
+	// Start at bottom left
+	ctx.moveTo(x + cornerRadius, y + h);
+	// Bottom edge
+	ctx.lineTo(x + w - cornerRadius, y + h);
+	// Bottom right corner
+	ctx.quadraticCurveTo(x + w, y + h, x + w, y + h - cornerRadius);
+	// Right edge
+	ctx.lineTo(x + w, y + tabHeight + cornerRadius);
+	// Top right corner
+	ctx.quadraticCurveTo(x + w, y + tabHeight, x + w - cornerRadius, y + tabHeight);
+	// Top edge (right of tab)
+	ctx.lineTo(x + tabWidth + cornerRadius, y + tabHeight);
+	// Tab right corner
+	ctx.lineTo(x + tabWidth, y + cornerRadius);
+	// Tab top corner
+	ctx.quadraticCurveTo(x + tabWidth, y, x + tabWidth - cornerRadius, y);
+	// Tab top edge
+	ctx.lineTo(x + cornerRadius, y);
+	// Top left corner
+	ctx.quadraticCurveTo(x, y, x, y + cornerRadius);
+	// Left edge
+	ctx.lineTo(x, y + h - cornerRadius);
+	// Bottom left corner
+	ctx.quadraticCurveTo(x, y + h, x + cornerRadius, y + h);
+	ctx.closePath();
+	ctx.fill();
 }
 
 /**
  * Draw a bezier curve link between two nodes
  */
 function drawLink(
-  ctx: CanvasRenderingContext2D,
-  sourceX: number,
-  sourceY: number,
-  targetX: number,
-  targetY: number,
-  color: string,
-  lineWidth: number,
-  isDashed: boolean = false
+	ctx: CanvasRenderingContext2D,
+	sourceX: number,
+	sourceY: number,
+	targetX: number,
+	targetY: number,
+	color: string,
+	lineWidth: number,
+	isDashed: boolean = false
 ): void {
-  ctx.strokeStyle = color;
-  ctx.lineWidth = lineWidth;
+	ctx.strokeStyle = color;
+	ctx.lineWidth = lineWidth;
 
-  if (isDashed) {
-    ctx.setLineDash([6, 4]);
-  } else {
-    ctx.setLineDash([]);
-  }
+	if (isDashed) {
+		ctx.setLineDash([6, 4]);
+	} else {
+		ctx.setLineDash([]);
+	}
 
-  // Calculate control points for smooth bezier curve
-  const dx = Math.abs(targetX - sourceX);
-  const controlOffset = Math.min(dx * 0.5, 100);
+	// Calculate control points for smooth bezier curve
+	const dx = Math.abs(targetX - sourceX);
+	const controlOffset = Math.min(dx * 0.5, 100);
 
-  ctx.beginPath();
-  ctx.moveTo(sourceX, sourceY);
+	ctx.beginPath();
+	ctx.moveTo(sourceX, sourceY);
 
-  // Use quadratic bezier for horizontal-ish connections
-  if (Math.abs(sourceY - targetY) < 20) {
-    ctx.lineTo(targetX, targetY);
-  } else {
-    // Use cubic bezier for better curves
-    const cp1x = sourceX + (sourceX < targetX ? controlOffset : -controlOffset);
-    const cp2x = targetX + (targetX < sourceX ? controlOffset : -controlOffset);
-    ctx.bezierCurveTo(cp1x, sourceY, cp2x, targetY, targetX, targetY);
-  }
+	// Use quadratic bezier for horizontal-ish connections
+	if (Math.abs(sourceY - targetY) < 20) {
+		ctx.lineTo(targetX, targetY);
+	} else {
+		// Use cubic bezier for better curves
+		const cp1x = sourceX + (sourceX < targetX ? controlOffset : -controlOffset);
+		const cp2x = targetX + (targetX < sourceX ? controlOffset : -controlOffset);
+		ctx.bezierCurveTo(cp1x, sourceY, cp2x, targetY, targetX, targetY);
+	}
 
-  ctx.stroke();
-  ctx.setLineDash([]);
+	ctx.stroke();
+	ctx.setLineDash([]);
 }
 
 // ============================================================================
@@ -358,9 +358,9 @@ function drawLink(
 // ============================================================================
 
 interface LayoutResult {
-  nodes: MindMapNode[];
-  links: MindMapLink[];
-  bounds: { minX: number; maxX: number; minY: number; maxY: number };
+	nodes: MindMapNode[];
+	links: MindMapLink[];
+	bounds: { minX: number; maxX: number; minY: number; maxY: number };
 }
 
 /**
@@ -368,341 +368,344 @@ interface LayoutResult {
  * This is extracted to allow memoization at the component level.
  */
 function buildAdjacencyMap(links: MindMapLink[]): Map<string, Set<string>> {
-  const adjacency = new Map<string, Set<string>>();
-  for (const link of links) {
-    if (!adjacency.has(link.source)) adjacency.set(link.source, new Set());
-    if (!adjacency.has(link.target)) adjacency.set(link.target, new Set());
-    adjacency.get(link.source)!.add(link.target);
-    adjacency.get(link.target)!.add(link.source);
-  }
-  return adjacency;
+	const adjacency = new Map<string, Set<string>>();
+	for (const link of links) {
+		if (!adjacency.has(link.source)) adjacency.set(link.source, new Set());
+		if (!adjacency.has(link.target)) adjacency.set(link.target, new Set());
+		adjacency.get(link.source)!.add(link.target);
+		adjacency.get(link.target)!.add(link.source);
+	}
+	return adjacency;
 }
 
 /**
  * Calculate the mind map layout with center node and branching structure
  */
 function calculateMindMapLayout(
-  allNodes: MindMapNode[],
-  allLinks: MindMapLink[],
-  adjacency: Map<string, Set<string>>,
-  centerFilePath: string,
-  maxDepth: number,
-  canvasWidth: number,
-  canvasHeight: number,
-  showExternalLinks: boolean,
-  previewCharLimit: number = 100
+	allNodes: MindMapNode[],
+	allLinks: MindMapLink[],
+	adjacency: Map<string, Set<string>>,
+	centerFilePath: string,
+	maxDepth: number,
+	canvasWidth: number,
+	canvasHeight: number,
+	showExternalLinks: boolean,
+	previewCharLimit: number = 100
 ): LayoutResult {
-  // Find center node - try multiple path variations
-  // The centerFilePath might be relative to the root, but node filePaths might be
-  // relative to a subdirectory (e.g., "docs/index.md" vs "index.md")
+	// Find center node - try multiple path variations
+	// The centerFilePath might be relative to the root, but node filePaths might be
+	// relative to a subdirectory (e.g., "docs/index.md" vs "index.md")
 
-  let centerNode: MindMapNode | undefined;
-  let actualCenterNodeId: string = '';
+	let centerNode: MindMapNode | undefined;
+	let actualCenterNodeId: string = '';
 
-  // Get all document nodes for searching
-  const documentNodes = allNodes.filter(n => n.nodeType === 'document');
+	// Get all document nodes for searching
+	const documentNodes = allNodes.filter((n) => n.nodeType === 'document');
 
-  // Build a list of all node IDs and filePaths for matching
-  const nodeIdSet = new Set(documentNodes.map(n => n.id));
-  const filePathToNode = new Map<string, MindMapNode>();
-  documentNodes.forEach(n => {
-    if (n.filePath) {
-      // Index by full path
-      filePathToNode.set(n.filePath, n);
-      // Index by filename only
-      const filename = n.filePath.split('/').pop();
-      if (filename && !filePathToNode.has(filename)) {
-        filePathToNode.set(filename, n);
-      }
-    }
-  });
+	// Build a list of all node IDs and filePaths for matching
+	const nodeIdSet = new Set(documentNodes.map((n) => n.id));
+	const filePathToNode = new Map<string, MindMapNode>();
+	documentNodes.forEach((n) => {
+		if (n.filePath) {
+			// Index by full path
+			filePathToNode.set(n.filePath, n);
+			// Index by filename only
+			const filename = n.filePath.split('/').pop();
+			if (filename && !filePathToNode.has(filename)) {
+				filePathToNode.set(filename, n);
+			}
+		}
+	});
 
-  // Generate all possible variations of the centerFilePath
-  const searchVariations = [
-    centerFilePath,
-    centerFilePath.replace(/^\/+/, ''),
-    centerFilePath.split('/').pop() || centerFilePath,
-  ];
+	// Generate all possible variations of the centerFilePath
+	const searchVariations = [
+		centerFilePath,
+		centerFilePath.replace(/^\/+/, ''),
+		centerFilePath.split('/').pop() || centerFilePath,
+	];
 
-  // Try to find by node ID first
-  for (const variation of searchVariations) {
-    const nodeId = `doc-${variation}`;
-    if (nodeIdSet.has(nodeId)) {
-      centerNode = documentNodes.find(n => n.id === nodeId);
-      if (centerNode) {
-        actualCenterNodeId = nodeId;
-        break;
-      }
-    }
-  }
+	// Try to find by node ID first
+	for (const variation of searchVariations) {
+		const nodeId = `doc-${variation}`;
+		if (nodeIdSet.has(nodeId)) {
+			centerNode = documentNodes.find((n) => n.id === nodeId);
+			if (centerNode) {
+				actualCenterNodeId = nodeId;
+				break;
+			}
+		}
+	}
 
-  // Try to find by filePath
-  if (!centerNode) {
-    for (const variation of searchVariations) {
-      const node = filePathToNode.get(variation);
-      if (node) {
-        centerNode = node;
-        actualCenterNodeId = node.id;
-        break;
-      }
-    }
-  }
+	// Try to find by filePath
+	if (!centerNode) {
+		for (const variation of searchVariations) {
+			const node = filePathToNode.get(variation);
+			if (node) {
+				centerNode = node;
+				actualCenterNodeId = node.id;
+				break;
+			}
+		}
+	}
 
-  // Try fuzzy filename match (case-insensitive, without extension)
-  if (!centerNode) {
-    const targetFilename = (centerFilePath.split('/').pop() || centerFilePath).toLowerCase();
-    const targetBasename = targetFilename.replace(/\.md$/i, '');
+	// Try fuzzy filename match (case-insensitive, without extension)
+	if (!centerNode) {
+		const targetFilename = (centerFilePath.split('/').pop() || centerFilePath).toLowerCase();
+		const targetBasename = targetFilename.replace(/\.md$/i, '');
 
-    for (const node of documentNodes) {
-      const nodeFilename = (node.filePath?.split('/').pop() || node.label || '').toLowerCase();
-      const nodeBasename = nodeFilename.replace(/\.md$/i, '');
+		for (const node of documentNodes) {
+			const nodeFilename = (node.filePath?.split('/').pop() || node.label || '').toLowerCase();
+			const nodeBasename = nodeFilename.replace(/\.md$/i, '');
 
-      if (nodeFilename === targetFilename || nodeBasename === targetBasename) {
-        centerNode = node;
-        actualCenterNodeId = node.id;
-        break;
-      }
-    }
-  }
+			if (nodeFilename === targetFilename || nodeBasename === targetBasename) {
+				centerNode = node;
+				actualCenterNodeId = node.id;
+				break;
+			}
+		}
+	}
 
-  // Fallback: if still not found and we have document nodes, use the first one
-  if (!centerNode && documentNodes.length > 0) {
-    console.warn(
-      `[MindMap] Center node not found for path: "${centerFilePath}"`,
-      '\nSearched variations:', searchVariations,
-      '\nAvailable document nodes:',
-      documentNodes.map(n => ({ id: n.id, filePath: n.filePath })).slice(0, 10),
-      documentNodes.length > 10 ? `... and ${documentNodes.length - 10} more` : ''
-    );
-    centerNode = documentNodes[0];
-    actualCenterNodeId = centerNode.id;
-  }
+	// Fallback: if still not found and we have document nodes, use the first one
+	if (!centerNode && documentNodes.length > 0) {
+		console.warn(
+			`[MindMap] Center node not found for path: "${centerFilePath}"`,
+			'\nSearched variations:',
+			searchVariations,
+			'\nAvailable document nodes:',
+			documentNodes.map((n) => ({ id: n.id, filePath: n.filePath })).slice(0, 10),
+			documentNodes.length > 10 ? `... and ${documentNodes.length - 10} more` : ''
+		);
+		centerNode = documentNodes[0];
+		actualCenterNodeId = centerNode.id;
+	}
 
-  if (!centerNode) {
-    // No document nodes at all
-    console.warn(`[MindMap] No document nodes available for center`);
-    return {
-      nodes: [],
-      links: [],
-      bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight }
-    };
-  }
+	if (!centerNode) {
+		// No document nodes at all
+		console.warn(`[MindMap] No document nodes available for center`);
+		return {
+			nodes: [],
+			links: [],
+			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
+		};
+	}
 
-  // BFS to find nodes within maxDepth (adjacency map is pre-built and passed in)
-  const visited = new Map<string, number>(); // nodeId -> depth
-  const queue: Array<{ id: string; depth: number }> = [{ id: actualCenterNodeId, depth: 0 }];
-  visited.set(actualCenterNodeId, 0);
+	// BFS to find nodes within maxDepth (adjacency map is pre-built and passed in)
+	const visited = new Map<string, number>(); // nodeId -> depth
+	const queue: Array<{ id: string; depth: number }> = [{ id: actualCenterNodeId, depth: 0 }];
+	visited.set(actualCenterNodeId, 0);
 
-  while (queue.length > 0) {
-    const { id, depth } = queue.shift()!;
-    if (depth >= maxDepth) continue;
+	while (queue.length > 0) {
+		const { id, depth } = queue.shift()!;
+		if (depth >= maxDepth) continue;
 
-    const neighbors = adjacency.get(id) || new Set();
-    neighbors.forEach(neighborId => {
-      if (!visited.has(neighborId)) {
-        visited.set(neighborId, depth + 1);
-        queue.push({ id: neighborId, depth: depth + 1 });
-      }
-    });
-  }
+		const neighbors = adjacency.get(id) || new Set();
+		neighbors.forEach((neighborId) => {
+			if (!visited.has(neighborId)) {
+				visited.set(neighborId, depth + 1);
+				queue.push({ id: neighborId, depth: depth + 1 });
+			}
+		});
+	}
 
-  // Filter nodes to only those within depth
-  const nodesInRange = allNodes.filter(n => {
-    // Filter out external nodes if not showing them
-    if (n.nodeType === 'external' && !showExternalLinks) return false;
-    return visited.has(n.id);
-  });
+	// Filter nodes to only those within depth
+	const nodesInRange = allNodes.filter((n) => {
+		// Filter out external nodes if not showing them
+		if (n.nodeType === 'external' && !showExternalLinks) return false;
+		return visited.has(n.id);
+	});
 
-  // Separate document and external nodes from the filtered set
-  const visibleDocumentNodes = nodesInRange.filter(n => n.nodeType === 'document');
-  const externalNodes = nodesInRange.filter(n => n.nodeType === 'external');
+	// Separate document and external nodes from the filtered set
+	const visibleDocumentNodes = nodesInRange.filter((n) => n.nodeType === 'document');
+	const externalNodes = nodesInRange.filter((n) => n.nodeType === 'external');
 
-  // Position center node
-  const centerX = canvasWidth / 2;
-  const centerY = canvasHeight / 2 - (showExternalLinks && externalNodes.length > 0 ? 50 : 0);
-  const centerWidth = NODE_WIDTH * CENTER_NODE_SCALE;
-  const centerPreviewText = centerNode.description || centerNode.contentPreview;
-  const centerHeight = calculateNodeHeight(centerPreviewText, previewCharLimit) * CENTER_NODE_SCALE;
+	// Position center node
+	const centerX = canvasWidth / 2;
+	const centerY = canvasHeight / 2 - (showExternalLinks && externalNodes.length > 0 ? 50 : 0);
+	const centerWidth = NODE_WIDTH * CENTER_NODE_SCALE;
+	const centerPreviewText = centerNode.description || centerNode.contentPreview;
+	const centerHeight = calculateNodeHeight(centerPreviewText, previewCharLimit) * CENTER_NODE_SCALE;
 
-  const positionedNodes: MindMapNode[] = [];
-  const usedLinks: MindMapLink[] = [];
+	const positionedNodes: MindMapNode[] = [];
+	const usedLinks: MindMapLink[] = [];
 
-  // Add center node
-  positionedNodes.push({
-    ...centerNode,
-    x: centerX,
-    y: centerY,
-    width: centerWidth,
-    height: centerHeight,
-    depth: 0,
-    side: 'center',
-    isFocused: true,
-  });
+	// Add center node
+	positionedNodes.push({
+		...centerNode,
+		x: centerX,
+		y: centerY,
+		width: centerWidth,
+		height: centerHeight,
+		depth: 0,
+		side: 'center',
+		isFocused: true,
+	});
 
-  // Group nodes by depth
-  const nodesByDepth = new Map<number, MindMapNode[]>();
-  visibleDocumentNodes.forEach(node => {
-    if (node.id === actualCenterNodeId) return;
-    const depth = visited.get(node.id) || 1;
-    if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
-    nodesByDepth.get(depth)!.push(node);
-  });
+	// Group nodes by depth
+	const nodesByDepth = new Map<number, MindMapNode[]>();
+	visibleDocumentNodes.forEach((node) => {
+		if (node.id === actualCenterNodeId) return;
+		const depth = visited.get(node.id) || 1;
+		if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
+		nodesByDepth.get(depth)!.push(node);
+	});
 
-  // Process each depth level
-  for (let depth = 1; depth <= maxDepth; depth++) {
-    const nodesAtDepth = nodesByDepth.get(depth) || [];
-    if (nodesAtDepth.length === 0) continue;
+	// Process each depth level
+	for (let depth = 1; depth <= maxDepth; depth++) {
+		const nodesAtDepth = nodesByDepth.get(depth) || [];
+		if (nodesAtDepth.length === 0) continue;
 
-    // Sort alphabetically by label
-    nodesAtDepth.sort((a, b) => a.label.localeCompare(b.label));
+		// Sort alphabetically by label
+		nodesAtDepth.sort((a, b) => a.label.localeCompare(b.label));
 
-    // Split into left and right columns
-    const midpoint = Math.ceil(nodesAtDepth.length / 2);
-    const leftNodes = nodesAtDepth.slice(0, midpoint);
-    const rightNodes = nodesAtDepth.slice(midpoint);
+		// Split into left and right columns
+		const midpoint = Math.ceil(nodesAtDepth.length / 2);
+		const leftNodes = nodesAtDepth.slice(0, midpoint);
+		const rightNodes = nodesAtDepth.slice(midpoint);
 
-    // Calculate positions for left column - use actual node heights
-    const leftX = centerX - (HORIZONTAL_SPACING * depth);
+		// Calculate positions for left column - use actual node heights
+		const leftX = centerX - HORIZONTAL_SPACING * depth;
 
-    // First pass: calculate heights for all left nodes
-    const leftNodeHeights = leftNodes.map(node => {
-      const previewText = node.description || node.contentPreview;
-      return calculateNodeHeight(previewText, previewCharLimit);
-    });
+		// First pass: calculate heights for all left nodes
+		const leftNodeHeights = leftNodes.map((node) => {
+			const previewText = node.description || node.contentPreview;
+			return calculateNodeHeight(previewText, previewCharLimit);
+		});
 
-    // Calculate total height needed (sum of heights + gaps between nodes)
-    const leftTotalHeight = leftNodeHeights.reduce((sum, h) => sum + h, 0) +
-      Math.max(0, leftNodes.length - 1) * VERTICAL_GAP;
+		// Calculate total height needed (sum of heights + gaps between nodes)
+		const leftTotalHeight =
+			leftNodeHeights.reduce((sum, h) => sum + h, 0) +
+			Math.max(0, leftNodes.length - 1) * VERTICAL_GAP;
 
-    // Start position: center the column vertically
-    let leftCurrentY = centerY - leftTotalHeight / 2;
+		// Start position: center the column vertically
+		let leftCurrentY = centerY - leftTotalHeight / 2;
 
-    leftNodes.forEach((node, index) => {
-      const height = leftNodeHeights[index];
-      // Position at center of this node's space
-      const nodeY = leftCurrentY + height / 2;
+		leftNodes.forEach((node, index) => {
+			const height = leftNodeHeights[index];
+			// Position at center of this node's space
+			const nodeY = leftCurrentY + height / 2;
 
-      positionedNodes.push({
-        ...node,
-        x: leftX,
-        y: nodeY,
-        width: NODE_WIDTH,
-        height,
-        depth,
-        side: 'left',
-      });
+			positionedNodes.push({
+				...node,
+				x: leftX,
+				y: nodeY,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side: 'left',
+			});
 
-      // Move to next position: current node's height + gap
-      leftCurrentY += height + VERTICAL_GAP;
-    });
+			// Move to next position: current node's height + gap
+			leftCurrentY += height + VERTICAL_GAP;
+		});
 
-    // Calculate positions for right column - use actual node heights
-    const rightX = centerX + (HORIZONTAL_SPACING * depth);
+		// Calculate positions for right column - use actual node heights
+		const rightX = centerX + HORIZONTAL_SPACING * depth;
 
-    // First pass: calculate heights for all right nodes
-    const rightNodeHeights = rightNodes.map(node => {
-      const previewText = node.description || node.contentPreview;
-      return calculateNodeHeight(previewText, previewCharLimit);
-    });
+		// First pass: calculate heights for all right nodes
+		const rightNodeHeights = rightNodes.map((node) => {
+			const previewText = node.description || node.contentPreview;
+			return calculateNodeHeight(previewText, previewCharLimit);
+		});
 
-    // Calculate total height needed (sum of heights + gaps between nodes)
-    const rightTotalHeight = rightNodeHeights.reduce((sum, h) => sum + h, 0) +
-      Math.max(0, rightNodes.length - 1) * VERTICAL_GAP;
+		// Calculate total height needed (sum of heights + gaps between nodes)
+		const rightTotalHeight =
+			rightNodeHeights.reduce((sum, h) => sum + h, 0) +
+			Math.max(0, rightNodes.length - 1) * VERTICAL_GAP;
 
-    // Start position: center the column vertically
-    let rightCurrentY = centerY - rightTotalHeight / 2;
+		// Start position: center the column vertically
+		let rightCurrentY = centerY - rightTotalHeight / 2;
 
-    rightNodes.forEach((node, index) => {
-      const height = rightNodeHeights[index];
-      // Position at center of this node's space
-      const nodeY = rightCurrentY + height / 2;
+		rightNodes.forEach((node, index) => {
+			const height = rightNodeHeights[index];
+			// Position at center of this node's space
+			const nodeY = rightCurrentY + height / 2;
 
-      positionedNodes.push({
-        ...node,
-        x: rightX,
-        y: nodeY,
-        width: NODE_WIDTH,
-        height,
-        depth,
-        side: 'right',
-      });
+			positionedNodes.push({
+				...node,
+				x: rightX,
+				y: nodeY,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side: 'right',
+			});
 
-      // Move to next position: current node's height + gap
-      rightCurrentY += height + VERTICAL_GAP;
-    });
-  }
+			// Move to next position: current node's height + gap
+			rightCurrentY += height + VERTICAL_GAP;
+		});
+	}
 
-  // Position external nodes at the bottom
-  if (showExternalLinks && externalNodes.length > 0) {
-    // Sort alphabetically by domain
-    externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
+	// Position external nodes at the bottom
+	if (showExternalLinks && externalNodes.length > 0) {
+		// Sort alphabetically by domain
+		externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
 
-    // PERF: Single-pass filter+map using reduce instead of chained filter().map()
-    const maxYDistance = positionedNodes.reduce((max, n) => {
-      if (n.side === 'external') return max;
-      const dist = Math.abs(n.y - centerY);
-      return dist > max ? dist : max;
-    }, 0);
-    const externalY = centerY + maxYDistance + EXTERNAL_CLUSTER_OFFSET;
+		// PERF: Single-pass filter+map using reduce instead of chained filter().map()
+		const maxYDistance = positionedNodes.reduce((max, n) => {
+			if (n.side === 'external') return max;
+			const dist = Math.abs(n.y - centerY);
+			return dist > max ? dist : max;
+		}, 0);
+		const externalY = centerY + maxYDistance + EXTERNAL_CLUSTER_OFFSET;
 
-    const totalExternalWidth = externalNodes.length * (EXTERNAL_NODE_WIDTH + 20);
-    const externalStartX = centerX - totalExternalWidth / 2 + EXTERNAL_NODE_WIDTH / 2;
+		const totalExternalWidth = externalNodes.length * (EXTERNAL_NODE_WIDTH + 20);
+		const externalStartX = centerX - totalExternalWidth / 2 + EXTERNAL_NODE_WIDTH / 2;
 
-    externalNodes.forEach((node, index) => {
-      positionedNodes.push({
-        ...node,
-        x: externalStartX + index * (EXTERNAL_NODE_WIDTH + 20),
-        y: externalY,
-        width: EXTERNAL_NODE_WIDTH,
-        height: EXTERNAL_NODE_HEIGHT,
-        depth: 1,
-        side: 'external',
-      });
-    });
-  }
+		externalNodes.forEach((node, index) => {
+			positionedNodes.push({
+				...node,
+				x: externalStartX + index * (EXTERNAL_NODE_WIDTH + 20),
+				y: externalY,
+				width: EXTERNAL_NODE_WIDTH,
+				height: EXTERNAL_NODE_HEIGHT,
+				depth: 1,
+				side: 'external',
+			});
+		});
+	}
 
-  // Filter links to only include "inside-out" connections (adjacent depth levels)
-  // This prevents crossing lines by only connecting:
-  // - Center (depth 0) to depth 1
-  // - Depth N to depth N+1
-  // - Documents to their external links
-  const positionedNodeIds = new Set(positionedNodes.map(n => n.id));
-  const nodeDepthMap = new Map(positionedNodes.map(n => [n.id, n.depth]));
-  const nodeTypeMap = new Map(positionedNodes.map(n => [n.id, n.nodeType]));
+	// Filter links to only include "inside-out" connections (adjacent depth levels)
+	// This prevents crossing lines by only connecting:
+	// - Center (depth 0) to depth 1
+	// - Depth N to depth N+1
+	// - Documents to their external links
+	const positionedNodeIds = new Set(positionedNodes.map((n) => n.id));
+	const nodeDepthMap = new Map(positionedNodes.map((n) => [n.id, n.depth]));
+	const nodeTypeMap = new Map(positionedNodes.map((n) => [n.id, n.nodeType]));
 
-  allLinks.forEach(link => {
-    if (!positionedNodeIds.has(link.source) || !positionedNodeIds.has(link.target)) {
-      return; // Skip if either node isn't positioned
-    }
+	allLinks.forEach((link) => {
+		if (!positionedNodeIds.has(link.source) || !positionedNodeIds.has(link.target)) {
+			return; // Skip if either node isn't positioned
+		}
 
-    const sourceDepth = nodeDepthMap.get(link.source) ?? 0;
-    const targetDepth = nodeDepthMap.get(link.target) ?? 0;
-    const sourceType = nodeTypeMap.get(link.source);
-    const targetType = nodeTypeMap.get(link.target);
+		const sourceDepth = nodeDepthMap.get(link.source) ?? 0;
+		const targetDepth = nodeDepthMap.get(link.target) ?? 0;
+		const sourceType = nodeTypeMap.get(link.source);
+		const targetType = nodeTypeMap.get(link.target);
 
-    // Allow connections if:
-    // 1. Adjacent depth levels (difference of 1)
-    // 2. External link connections (document to external domain)
-    const depthDiff = Math.abs(sourceDepth - targetDepth);
-    const isExternalLink = sourceType === 'external' || targetType === 'external';
+		// Allow connections if:
+		// 1. Adjacent depth levels (difference of 1)
+		// 2. External link connections (document to external domain)
+		const depthDiff = Math.abs(sourceDepth - targetDepth);
+		const isExternalLink = sourceType === 'external' || targetType === 'external';
 
-    if (depthDiff <= 1 || isExternalLink) {
-      usedLinks.push(link);
-    }
-  });
+		if (depthDiff <= 1 || isExternalLink) {
+			usedLinks.push(link);
+		}
+	});
 
-  // Calculate bounds - use max node height for padding (simulate full preview text)
-  const maxNodeHeight = calculateNodeHeight('x'.repeat(previewCharLimit), previewCharLimit);
-  const xs = positionedNodes.map(n => n.x);
-  const ys = positionedNodes.map(n => n.y);
-  const bounds = {
-    minX: Math.min(...xs) - NODE_WIDTH / 2 - CANVAS_PADDING,
-    maxX: Math.max(...xs) + NODE_WIDTH / 2 + CANVAS_PADDING,
-    minY: Math.min(...ys) - maxNodeHeight / 2 - CANVAS_PADDING,
-    maxY: Math.max(...ys) + maxNodeHeight / 2 + CANVAS_PADDING,
-  };
+	// Calculate bounds - use max node height for padding (simulate full preview text)
+	const maxNodeHeight = calculateNodeHeight('x'.repeat(previewCharLimit), previewCharLimit);
+	const xs = positionedNodes.map((n) => n.x);
+	const ys = positionedNodes.map((n) => n.y);
+	const bounds = {
+		minX: Math.min(...xs) - NODE_WIDTH / 2 - CANVAS_PADDING,
+		maxX: Math.max(...xs) + NODE_WIDTH / 2 + CANVAS_PADDING,
+		minY: Math.min(...ys) - maxNodeHeight / 2 - CANVAS_PADDING,
+		maxY: Math.max(...ys) + maxNodeHeight / 2 + CANVAS_PADDING,
+	};
 
-  return { nodes: positionedNodes, links: usedLinks, bounds };
+	return { nodes: positionedNodes, links: usedLinks, bounds };
 }
 
 // ============================================================================
@@ -713,214 +716,235 @@ function calculateMindMapLayout(
  * Wrap text to fit within a maximum width, returning lines
  */
 function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxLines: number = 2
+	ctx: CanvasRenderingContext2D,
+	text: string,
+	maxWidth: number,
+	maxLines: number = 2
 ): string[] {
-  const words = text.split(' ');
-  const lines: string[] = [];
-  let currentLine = '';
+	const words = text.split(' ');
+	const lines: string[] = [];
+	let currentLine = '';
 
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word;
-    const metrics = ctx.measureText(testLine);
+	for (const word of words) {
+		const testLine = currentLine ? `${currentLine} ${word}` : word;
+		const metrics = ctx.measureText(testLine);
 
-    if (metrics.width > maxWidth && currentLine) {
-      lines.push(currentLine);
-      currentLine = word;
-      if (lines.length >= maxLines) break;
-    } else {
-      currentLine = testLine;
-    }
-  }
+		if (metrics.width > maxWidth && currentLine) {
+			lines.push(currentLine);
+			currentLine = word;
+			if (lines.length >= maxLines) break;
+		} else {
+			currentLine = testLine;
+		}
+	}
 
-  if (currentLine && lines.length < maxLines) {
-    lines.push(currentLine);
-  }
+	if (currentLine && lines.length < maxLines) {
+		lines.push(currentLine);
+	}
 
-  // If we hit maxLines and there's more text, add ellipsis to last line
-  if (lines.length === maxLines && currentLine && !lines.includes(currentLine)) {
-    const lastLine = lines[maxLines - 1];
-    lines[maxLines - 1] = truncateText(lastLine, lastLine.length - 3) + '...';
-  }
+	// If we hit maxLines and there's more text, add ellipsis to last line
+	if (lines.length === maxLines && currentLine && !lines.includes(currentLine)) {
+		const lastLine = lines[maxLines - 1];
+		lines[maxLines - 1] = truncateText(lastLine, lastLine.length - 3) + '...';
+	}
 
-  return lines;
+	return lines;
 }
 
 /**
  * Render a document node on the canvas with themed header
  */
 function renderDocumentNode(
-  ctx: CanvasRenderingContext2D,
-  node: MindMapNode,
-  theme: Theme,
-  isHovered: boolean,
-  matchesSearch: boolean,
-  searchActive: boolean,
-  previewCharLimit: number = 100
+	ctx: CanvasRenderingContext2D,
+	node: MindMapNode,
+	theme: Theme,
+	isHovered: boolean,
+	matchesSearch: boolean,
+	searchActive: boolean,
+	previewCharLimit: number = 100
 ): void {
-  const { x, y, width, height, label, description, contentPreview, filePath, isSelected, isFocused } = node;
-  // Use description (frontmatter) or fall back to contentPreview (plaintext)
-  const previewText = description || contentPreview;
+	const {
+		x,
+		y,
+		width,
+		height,
+		label,
+		description,
+		contentPreview,
+		filePath,
+		isSelected,
+		isFocused,
+	} = node;
+	// Use description (frontmatter) or fall back to contentPreview (plaintext)
+	const previewText = description || contentPreview;
 
-  // Calculate opacity based on search state
-  const alpha = searchActive && !matchesSearch ? 0.3 : 1;
-  ctx.globalAlpha = alpha;
+	// Calculate opacity based on search state
+	const alpha = searchActive && !matchesSearch ? 0.3 : 1;
+	ctx.globalAlpha = alpha;
 
-  const nodeLeft = x - width / 2;
-  const nodeTop = y - height / 2;
+	const nodeLeft = x - width / 2;
+	const nodeTop = y - height / 2;
 
-  // Draw body background first
-  const bodyColor = theme.colors.bgActivity;
-  ctx.fillStyle = bodyColor;
-  roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
-  ctx.fill();
+	// Draw body background first
+	const bodyColor = theme.colors.bgActivity;
+	ctx.fillStyle = bodyColor;
+	roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
+	ctx.fill();
 
-  // Draw header background (accent colored)
-  const headerColor = isFocused || isSelected
-    ? theme.colors.accent
-    : isHovered
-      ? `${theme.colors.accent}CC`
-      : `${theme.colors.accent}99`;
-  ctx.fillStyle = headerColor;
+	// Draw header background (accent colored)
+	const headerColor =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isHovered
+				? `${theme.colors.accent}CC`
+				: `${theme.colors.accent}99`;
+	ctx.fillStyle = headerColor;
 
-  // Draw header with rounded top corners only
-  ctx.beginPath();
-  ctx.moveTo(nodeLeft + NODE_BORDER_RADIUS, nodeTop);
-  ctx.lineTo(nodeLeft + width - NODE_BORDER_RADIUS, nodeTop);
-  ctx.quadraticCurveTo(nodeLeft + width, nodeTop, nodeLeft + width, nodeTop + NODE_BORDER_RADIUS);
-  ctx.lineTo(nodeLeft + width, nodeTop + NODE_HEADER_HEIGHT);
-  ctx.lineTo(nodeLeft, nodeTop + NODE_HEADER_HEIGHT);
-  ctx.lineTo(nodeLeft, nodeTop + NODE_BORDER_RADIUS);
-  ctx.quadraticCurveTo(nodeLeft, nodeTop, nodeLeft + NODE_BORDER_RADIUS, nodeTop);
-  ctx.closePath();
-  ctx.fill();
+	// Draw header with rounded top corners only
+	ctx.beginPath();
+	ctx.moveTo(nodeLeft + NODE_BORDER_RADIUS, nodeTop);
+	ctx.lineTo(nodeLeft + width - NODE_BORDER_RADIUS, nodeTop);
+	ctx.quadraticCurveTo(nodeLeft + width, nodeTop, nodeLeft + width, nodeTop + NODE_BORDER_RADIUS);
+	ctx.lineTo(nodeLeft + width, nodeTop + NODE_HEADER_HEIGHT);
+	ctx.lineTo(nodeLeft, nodeTop + NODE_HEADER_HEIGHT);
+	ctx.lineTo(nodeLeft, nodeTop + NODE_BORDER_RADIUS);
+	ctx.quadraticCurveTo(nodeLeft, nodeTop, nodeLeft + NODE_BORDER_RADIUS, nodeTop);
+	ctx.closePath();
+	ctx.fill();
 
-  // Draw sub-header background (lighter accent) for folder path
-  const subHeaderColor = isFocused || isSelected
-    ? `${theme.colors.accent}40`
-    : `${theme.colors.accent}25`;
-  ctx.fillStyle = subHeaderColor;
-  ctx.fillRect(nodeLeft, nodeTop + NODE_HEADER_HEIGHT, width, NODE_SUBHEADER_HEIGHT);
+	// Draw sub-header background (lighter accent) for folder path
+	const subHeaderColor =
+		isFocused || isSelected ? `${theme.colors.accent}40` : `${theme.colors.accent}25`;
+	ctx.fillStyle = subHeaderColor;
+	ctx.fillRect(nodeLeft, nodeTop + NODE_HEADER_HEIGHT, width, NODE_SUBHEADER_HEIGHT);
 
-  // Draw border around entire node
-  ctx.strokeStyle = isFocused || isSelected
-    ? theme.colors.accent
-    : isHovered
-      ? `${theme.colors.accent}80`
-      : theme.colors.border;
-  ctx.lineWidth = isFocused || isSelected ? 2 : 1;
-  roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
-  ctx.stroke();
+	// Draw border around entire node
+	ctx.strokeStyle =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isHovered
+				? `${theme.colors.accent}80`
+				: theme.colors.border;
+	ctx.lineWidth = isFocused || isSelected ? 2 : 1;
+	roundRect(ctx, nodeLeft, nodeTop, width, height, NODE_BORDER_RADIUS);
+	ctx.stroke();
 
-  // Title text (in header, white or light colored for contrast)
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-  ctx.textAlign = 'left';
-  ctx.textBaseline = 'middle';
-  const maxTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
-  const titleText = truncateText(label, Math.floor(maxTitleWidth / 7)); // Approximate char width
-  ctx.fillText(titleText, nodeLeft + 12, nodeTop + NODE_HEADER_HEIGHT / 2);
+	// Title text (in header, white or light colored for contrast)
+	ctx.fillStyle = '#FFFFFF';
+	ctx.font = `600 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+	ctx.textAlign = 'left';
+	ctx.textBaseline = 'middle';
+	const maxTitleWidth = width - OPEN_ICON_SIZE - OPEN_ICON_PADDING * 3 - 12;
+	const titleText = truncateText(label, Math.floor(maxTitleWidth / 7)); // Approximate char width
+	ctx.fillText(titleText, nodeLeft + 12, nodeTop + NODE_HEADER_HEIGHT / 2);
 
-  // Open file icon (in header, right side)
-  const iconX = nodeLeft + width - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-  const iconY = nodeTop + (NODE_HEADER_HEIGHT - OPEN_ICON_SIZE) / 2;
-  drawOpenIcon(ctx, iconX, iconY, OPEN_ICON_SIZE, isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)');
+	// Open file icon (in header, right side)
+	const iconX = nodeLeft + width - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
+	const iconY = nodeTop + (NODE_HEADER_HEIGHT - OPEN_ICON_SIZE) / 2;
+	drawOpenIcon(ctx, iconX, iconY, OPEN_ICON_SIZE, isHovered ? '#FFFFFF' : 'rgba(255,255,255,0.7)');
 
-  // Sub-header: folder icon and path
-  const subHeaderY = nodeTop + NODE_HEADER_HEIGHT;
-  const folderIconSize = 12;
-  const folderIconX = nodeLeft + 10;
-  const folderIconY = subHeaderY + (NODE_SUBHEADER_HEIGHT - folderIconSize * 0.75) / 2;
-  const folderColor = isFocused || isSelected ? theme.colors.accent : `${theme.colors.accent}CC`;
-  drawFolderIcon(ctx, folderIconX, folderIconY, folderIconSize, folderColor);
+	// Sub-header: folder icon and path
+	const subHeaderY = nodeTop + NODE_HEADER_HEIGHT;
+	const folderIconSize = 12;
+	const folderIconX = nodeLeft + 10;
+	const folderIconY = subHeaderY + (NODE_SUBHEADER_HEIGHT - folderIconSize * 0.75) / 2;
+	const folderColor = isFocused || isSelected ? theme.colors.accent : `${theme.colors.accent}CC`;
+	drawFolderIcon(ctx, folderIconX, folderIconY, folderIconSize, folderColor);
 
-  // Folder path text (extract directory from filePath)
-  if (filePath) {
-    const pathParts = filePath.split('/');
-    pathParts.pop(); // Remove filename
-    const folderPath = pathParts.length > 0 ? pathParts.join('/') : './';
+	// Folder path text (extract directory from filePath)
+	if (filePath) {
+		const pathParts = filePath.split('/');
+		pathParts.pop(); // Remove filename
+		const folderPath = pathParts.length > 0 ? pathParts.join('/') : './';
 
-    ctx.fillStyle = theme.colors.textDim;
-    ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
+		ctx.fillStyle = theme.colors.textDim;
+		ctx.font = '10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'middle';
 
-    const maxPathWidth = width - folderIconSize - 24;
-    const pathText = truncateText(folderPath || './', Math.floor(maxPathWidth / 5.5));
-    ctx.fillText(pathText, folderIconX + folderIconSize + 6, subHeaderY + NODE_SUBHEADER_HEIGHT / 2);
-  }
+		const maxPathWidth = width - folderIconSize - 24;
+		const pathText = truncateText(folderPath || './', Math.floor(maxPathWidth / 5.5));
+		ctx.fillText(
+			pathText,
+			folderIconX + folderIconSize + 6,
+			subHeaderY + NODE_SUBHEADER_HEIGHT / 2
+		);
+	}
 
-  // Preview text (description or content preview, in body, if present)
-  if (previewText) {
-    ctx.fillStyle = theme.colors.textDim;
-    ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
+	// Preview text (description or content preview, in body, if present)
+	if (previewText) {
+		ctx.fillStyle = theme.colors.textDim;
+		ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'top';
 
-    const bodyPadding = 10;
-    const maxDescWidth = width - bodyPadding * 2;
-    // Truncate preview text based on character limit before wrapping
-    const truncatedPreview = previewText.length > previewCharLimit
-      ? previewText.slice(0, previewCharLimit).trim() + '...'
-      : previewText;
-    // Calculate max lines based on character limit (same formula as calculateNodeHeight)
-    const estimatedMaxLines = Math.max(2, Math.min(Math.ceil(previewCharLimit / CHARS_PER_LINE), 15));
-    const descLines = wrapText(ctx, truncatedPreview, maxDescWidth, estimatedMaxLines);
+		const bodyPadding = 10;
+		const maxDescWidth = width - bodyPadding * 2;
+		// Truncate preview text based on character limit before wrapping
+		const truncatedPreview =
+			previewText.length > previewCharLimit
+				? previewText.slice(0, previewCharLimit).trim() + '...'
+				: previewText;
+		// Calculate max lines based on character limit (same formula as calculateNodeHeight)
+		const estimatedMaxLines = Math.max(
+			2,
+			Math.min(Math.ceil(previewCharLimit / CHARS_PER_LINE), 15)
+		);
+		const descLines = wrapText(ctx, truncatedPreview, maxDescWidth, estimatedMaxLines);
 
-    const lineHeight = DESC_LINE_HEIGHT;
-    const descStartY = nodeTop + NODE_HEADER_HEIGHT + NODE_SUBHEADER_HEIGHT + bodyPadding;
+		const lineHeight = DESC_LINE_HEIGHT;
+		const descStartY = nodeTop + NODE_HEADER_HEIGHT + NODE_SUBHEADER_HEIGHT + bodyPadding;
 
-    descLines.forEach((line, i) => {
-      ctx.fillText(line, nodeLeft + bodyPadding, descStartY + i * lineHeight);
-    });
-  }
+		descLines.forEach((line, i) => {
+			ctx.fillText(line, nodeLeft + bodyPadding, descStartY + i * lineHeight);
+		});
+	}
 
-  ctx.globalAlpha = 1;
+	ctx.globalAlpha = 1;
 }
 
 /**
  * Render an external node on the canvas
  */
 function renderExternalNode(
-  ctx: CanvasRenderingContext2D,
-  node: MindMapNode,
-  theme: Theme,
-  isHovered: boolean,
-  matchesSearch: boolean,
-  searchActive: boolean
+	ctx: CanvasRenderingContext2D,
+	node: MindMapNode,
+	theme: Theme,
+	isHovered: boolean,
+	matchesSearch: boolean,
+	searchActive: boolean
 ): void {
-  const { x, y, width, height, domain, isSelected, isFocused } = node;
+	const { x, y, width, height, domain, isSelected, isFocused } = node;
 
-  // Calculate opacity based on search state
-  const alpha = searchActive && !matchesSearch ? 0.3 : 1;
+	// Calculate opacity based on search state
+	const alpha = searchActive && !matchesSearch ? 0.3 : 1;
 
-  ctx.globalAlpha = alpha;
+	ctx.globalAlpha = alpha;
 
-  // Pill background
-  ctx.fillStyle = theme.colors.bgMain;
-  roundRect(ctx, x - width / 2, y - height / 2, width, height, height / 2);
-  ctx.fill();
+	// Pill background
+	ctx.fillStyle = theme.colors.bgMain;
+	roundRect(ctx, x - width / 2, y - height / 2, width, height, height / 2);
+	ctx.fill();
 
-  // Border
-  ctx.strokeStyle = isFocused || isSelected
-    ? theme.colors.accent
-    : isHovered
-      ? theme.colors.textDim
-      : `${theme.colors.border}80`;
-  ctx.lineWidth = 1;
-  roundRect(ctx, x - width / 2, y - height / 2, width, height, height / 2);
-  ctx.stroke();
+	// Border
+	ctx.strokeStyle =
+		isFocused || isSelected
+			? theme.colors.accent
+			: isHovered
+				? theme.colors.textDim
+				: `${theme.colors.border}80`;
+	ctx.lineWidth = 1;
+	roundRect(ctx, x - width / 2, y - height / 2, width, height, height / 2);
+	ctx.stroke();
 
-  // Domain text
-  ctx.fillStyle = theme.colors.textDim;
-  ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(truncateText(domain || '', 18), x, y);
+	// Domain text
+	ctx.fillStyle = theme.colors.textDim;
+	ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+	ctx.textAlign = 'center';
+	ctx.textBaseline = 'middle';
+	ctx.fillText(truncateText(domain || '', 18), x, y);
 
-  ctx.globalAlpha = 1;
+	ctx.globalAlpha = 1;
 }
 
 // ============================================================================
@@ -931,607 +955,665 @@ function renderExternalNode(
  * MindMap component - renders the deterministic mind map visualization
  */
 export function MindMap({
-  centerFilePath,
-  nodes: rawNodes,
-  links: rawLinks,
-  theme,
-  width,
-  height,
-  maxDepth,
-  showExternalLinks,
-  selectedNodeId,
-  onNodeSelect,
-  onNodeDoubleClick,
-  onNodeContextMenu,
-  onOpenFile,
-  searchQuery,
-  previewCharLimit = 100,
-  nodePositions,
-  onNodePositionChange,
-  containerRef: externalContainerRef,
+	centerFilePath,
+	nodes: rawNodes,
+	links: rawLinks,
+	theme,
+	width,
+	height,
+	maxDepth,
+	showExternalLinks,
+	selectedNodeId,
+	onNodeSelect,
+	onNodeDoubleClick,
+	onNodeContextMenu,
+	onOpenFile,
+	searchQuery,
+	previewCharLimit = 100,
+	nodePositions,
+	onNodePositionChange,
+	containerRef: externalContainerRef,
 }: MindMapProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const internalContainerRef = useRef<HTMLDivElement>(null);
-  // Use external ref if provided, otherwise use internal ref
-  const containerRef = externalContainerRef || internalContainerRef;
-
-  // State - combine zoom and pan into single transform state to avoid jitter
-  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
-  const [transform, setTransform] = useState({ zoom: 1, panX: 0, panY: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-
-  // Node dragging state
-  const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
-  const [nodeDragStart, setNodeDragStart] = useState({ nodeX: 0, nodeY: 0, mouseX: 0, mouseY: 0 });
-
-  // Derived values for convenience
-  const zoom = transform.zoom;
-  const pan = { x: transform.panX, y: transform.panY };
-
-  // Double-click detection
-  const lastClickRef = useRef<{ nodeId: string; time: number } | null>(null);
-  const DOUBLE_CLICK_THRESHOLD = 300;
-
-  // Memoize adjacency map - only rebuilds when links change
-  const adjacencyMap = useMemo(() => buildAdjacencyMap(rawLinks), [rawLinks]);
-
-  // Calculate layout
-  const layout = useMemo(() => {
-    return calculateMindMapLayout(
-      rawNodes,
-      rawLinks,
-      adjacencyMap,
-      centerFilePath,
-      maxDepth,
-      width,
-      height,
-      showExternalLinks,
-      previewCharLimit
-    );
-  }, [rawNodes, rawLinks, adjacencyMap, centerFilePath, maxDepth, width, height, showExternalLinks, previewCharLimit]);
-
-  // Set initial focus to center node when center file changes
-  useEffect(() => {
-    const centerNode = layout.nodes.find(n => n.isFocused);
-    if (centerNode) {
-      setFocusedNodeId(centerNode.id);
-      onNodeSelect(centerNode);
-    }
-  }, [centerFilePath]); // Only trigger when center file changes, not on every layout/callback update
-
-  // Sync focusedNodeId when selectedNodeId changes from parent (e.g., returning from search)
-  useEffect(() => {
-    if (selectedNodeId && selectedNodeId !== focusedNodeId) {
-      setFocusedNodeId(selectedNodeId);
-    }
-  }, [selectedNodeId, focusedNodeId]);
-
-  // Apply selection state and custom positions to nodes
-  const nodesWithState = useMemo(() => {
-    return layout.nodes.map(node => {
-      const customPos = nodePositions?.get(node.id);
-      return {
-        ...node,
-        // Apply custom position if available
-        x: customPos?.x ?? node.x,
-        y: customPos?.y ?? node.y,
-        isSelected: node.id === selectedNodeId,
-      };
-    });
-  }, [layout.nodes, selectedNodeId, nodePositions]);
-
-  // Check if node matches search
-  const nodeMatchesSearch = useCallback((node: MindMapNode): boolean => {
-    if (!searchQuery.trim()) return true;
-    const query = searchQuery.toLowerCase();
-
-    if (node.nodeType === 'document') {
-      return (
-        (node.label?.toLowerCase().includes(query) ?? false) ||
-        (node.filePath?.toLowerCase().includes(query) ?? false) ||
-        (node.description?.toLowerCase().includes(query) ?? false) ||
-        (node.contentPreview?.toLowerCase().includes(query) ?? false)
-      );
-    } else {
-      return (
-        (node.domain?.toLowerCase().includes(query) ?? false) ||
-        (node.urls?.some(url => url.toLowerCase().includes(query)) ?? false)
-      );
-    }
-  }, [searchQuery]);
-
-  // Convert screen coordinates to canvas coordinates
-  const screenToCanvas = useCallback((screenX: number, screenY: number) => {
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return { x: screenX, y: screenY };
-
-    return {
-      x: (screenX - rect.left - pan.x) / zoom,
-      y: (screenY - rect.top - pan.y) / zoom,
-    };
-  }, [pan, zoom]);
-
-  // Find node at canvas coordinates
-  const findNodeAtPoint = useCallback((canvasX: number, canvasY: number): MindMapNode | null => {
-    // Check in reverse order so top-most nodes are found first
-    for (let i = nodesWithState.length - 1; i >= 0; i--) {
-      const node = nodesWithState[i];
-      const halfWidth = node.width / 2;
-      const halfHeight = node.height / 2;
-
-      if (
-        canvasX >= node.x - halfWidth &&
-        canvasX <= node.x + halfWidth &&
-        canvasY >= node.y - halfHeight &&
-        canvasY <= node.y + halfHeight
-      ) {
-        return node;
-      }
-    }
-    return null;
-  }, [nodesWithState]);
-
-  // Check if click is on the open icon
-  const isClickOnOpenIcon = useCallback((node: MindMapNode, canvasX: number, canvasY: number): boolean => {
-    if (node.nodeType !== 'document') return false;
-
-    const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
-    const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
-
-    return (
-      canvasX >= iconX &&
-      canvasX <= iconX + OPEN_ICON_SIZE &&
-      canvasY >= iconY &&
-      canvasY <= iconY + OPEN_ICON_SIZE
-    );
-  }, []);
-
-  // Render the canvas
-  const render = useCallback(() => {
-    const canvas = canvasRef.current;
-    const ctx = canvas?.getContext('2d');
-    if (!canvas || !ctx) return;
-
-    // Set canvas size for high DPI
-    const dpr = window.devicePixelRatio || 1;
-    canvas.width = width * dpr;
-    canvas.height = height * dpr;
-    ctx.scale(dpr, dpr);
-
-    // Clear canvas
-    ctx.fillStyle = theme.colors.bgMain;
-    ctx.fillRect(0, 0, width, height);
-
-    // Apply transformations
-    ctx.save();
-    ctx.translate(pan.x, pan.y);
-    ctx.scale(zoom, zoom);
-
-    // Render links first (behind nodes)
-    const nodeMap = new Map(nodesWithState.map(n => [n.id, n]));
-    layout.links.forEach(link => {
-      const sourceNode = nodeMap.get(link.source);
-      const targetNode = nodeMap.get(link.target);
-      if (!sourceNode || !targetNode) return;
-
-      const isHighlighted =
-        sourceNode.id === selectedNodeId ||
-        targetNode.id === selectedNodeId ||
-        sourceNode.id === hoveredNodeId ||
-        targetNode.id === hoveredNodeId;
-
-      const color = isHighlighted
-        ? `${theme.colors.accent}CC`
-        : link.type === 'external'
-          ? `${theme.colors.textDim}44`
-          : `${theme.colors.textDim}66`;
-
-      const lineWidth = isHighlighted ? 3 : 1.5;
-
-      // Calculate connection points based on node positions
-      let sourceX = sourceNode.x;
-      let targetX = targetNode.x;
-
-      // Adjust connection points to node edges
-      if (sourceNode.x < targetNode.x) {
-        sourceX = sourceNode.x + sourceNode.width / 2;
-        targetX = targetNode.x - targetNode.width / 2;
-      } else if (sourceNode.x > targetNode.x) {
-        sourceX = sourceNode.x - sourceNode.width / 2;
-        targetX = targetNode.x + targetNode.width / 2;
-      }
-
-      drawLink(
-        ctx,
-        sourceX,
-        sourceNode.y,
-        targetX,
-        targetNode.y,
-        color,
-        lineWidth,
-        link.type === 'external'
-      );
-    });
-
-    // Render nodes
-    const searchActive = searchQuery.trim().length > 0;
-    nodesWithState.forEach(node => {
-      const isHovered = node.id === hoveredNodeId;
-      const matchesSearch = nodeMatchesSearch(node);
-
-      if (node.nodeType === 'document') {
-        renderDocumentNode(ctx, node, theme, isHovered, matchesSearch, searchActive, previewCharLimit);
-      } else {
-        renderExternalNode(ctx, node, theme, isHovered, matchesSearch, searchActive);
-      }
-    });
-
-    ctx.restore();
-
-    // Draw keyboard focus indicator (outside transform for crisp rendering)
-    if (focusedNodeId) {
-      const focusedNode = nodesWithState.find(n => n.id === focusedNodeId);
-      if (focusedNode) {
-        ctx.save();
-        ctx.translate(pan.x, pan.y);
-        ctx.scale(zoom, zoom);
-
-        ctx.strokeStyle = theme.colors.accent;
-        ctx.lineWidth = 3;
-        ctx.setLineDash([4, 4]);
-        roundRect(
-          ctx,
-          focusedNode.x - focusedNode.width / 2 - 4,
-          focusedNode.y - focusedNode.height / 2 - 4,
-          focusedNode.width + 8,
-          focusedNode.height + 8,
-          NODE_BORDER_RADIUS + 4
-        );
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        ctx.restore();
-      }
-    }
-  }, [
-    width,
-    height,
-    theme,
-    pan,
-    zoom,
-    nodesWithState,
-    layout.links,
-    selectedNodeId,
-    hoveredNodeId,
-    focusedNodeId,
-    searchQuery,
-    nodeMatchesSearch,
-  ]);
-
-  // Render on changes
-  useEffect(() => {
-    render();
-  }, [render]);
-
-  // Center view on mount and when center file changes
-  useEffect(() => {
-    if (layout.nodes.length > 0) {
-      // Center on the center node
-      const centerNode = layout.nodes.find(n => n.isFocused);
-      if (centerNode) {
-        setTransform(prev => ({
-          ...prev,
-          panX: width / 2 - centerNode.x * prev.zoom,
-          panY: height / 2 - centerNode.y * prev.zoom,
-        }));
-      }
-    }
-  }, [centerFilePath, width, height, layout.nodes]);
-
-  // Mouse event handlers
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    const { x, y } = screenToCanvas(e.clientX, e.clientY);
-    const node = findNodeAtPoint(x, y);
-
-    if (node) {
-      // Check if clicking on open icon
-      if (node.nodeType === 'document' && node.filePath && isClickOnOpenIcon(node, x, y)) {
-        onOpenFile(node.filePath);
-        return;
-      }
-
-      // Handle click/double-click on node
-      const now = Date.now();
-      const lastClick = lastClickRef.current;
-
-      if (lastClick && lastClick.nodeId === node.id && now - lastClick.time < DOUBLE_CLICK_THRESHOLD) {
-        // Double-click - trigger re-layout with this node as center
-        onNodeDoubleClick(node);
-        lastClickRef.current = null;
-      } else {
-        // Single click - select node and start drag
-        onNodeSelect(node);
-        setFocusedNodeId(node.id);
-        lastClickRef.current = { nodeId: node.id, time: now };
-
-        // Start node drag
-        setDraggingNodeId(node.id);
-        setNodeDragStart({
-          nodeX: node.x,
-          nodeY: node.y,
-          mouseX: e.clientX,
-          mouseY: e.clientY,
-        });
-      }
-    } else {
-      // Click on background - start panning
-      setIsPanning(true);
-      setPanStart({ x: e.clientX - transform.panX, y: e.clientY - transform.panY });
-      onNodeSelect(null);
-      setFocusedNodeId(null);
-    }
-  }, [screenToCanvas, findNodeAtPoint, isClickOnOpenIcon, onOpenFile, onNodeDoubleClick, onNodeSelect, transform.panX, transform.panY]);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (draggingNodeId && onNodePositionChange) {
-      // Dragging a node - calculate new position
-      const deltaX = (e.clientX - nodeDragStart.mouseX) / zoom;
-      const deltaY = (e.clientY - nodeDragStart.mouseY) / zoom;
-      const newX = nodeDragStart.nodeX + deltaX;
-      const newY = nodeDragStart.nodeY + deltaY;
-
-      onNodePositionChange(draggingNodeId, { x: newX, y: newY });
-
-      // Update cursor
-      if (canvasRef.current) {
-        canvasRef.current.style.cursor = 'grabbing';
-      }
-    } else if (isPanning) {
-      setTransform(prev => ({
-        ...prev,
-        panX: e.clientX - panStart.x,
-        panY: e.clientY - panStart.y,
-      }));
-    } else {
-      const { x, y } = screenToCanvas(e.clientX, e.clientY);
-      const node = findNodeAtPoint(x, y);
-      setHoveredNodeId(node?.id ?? null);
-
-      // Update cursor
-      if (canvasRef.current) {
-        canvasRef.current.style.cursor = node ? 'grab' : 'default';
-      }
-    }
-  }, [draggingNodeId, nodeDragStart, zoom, onNodePositionChange, isPanning, panStart, screenToCanvas, findNodeAtPoint]);
-
-  const handleMouseUp = useCallback(() => {
-    setDraggingNodeId(null);
-    setIsPanning(false);
-    if (canvasRef.current) {
-      canvasRef.current.style.cursor = hoveredNodeId ? 'grab' : 'default';
-    }
-  }, [hoveredNodeId]);
-
-  const handleMouseLeave = useCallback(() => {
-    setDraggingNodeId(null);
-    setIsPanning(false);
-    setHoveredNodeId(null);
-  }, []);
-
-  const handleContextMenu = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const { x, y } = screenToCanvas(e.clientX, e.clientY);
-    const node = findNodeAtPoint(x, y);
-
-    if (node) {
-      onNodeContextMenu(node, e.nativeEvent);
-    }
-  }, [screenToCanvas, findNodeAtPoint, onNodeContextMenu]);
-
-  // Wheel handler for zooming - must be attached manually with passive: false
-  // Uses functional updater to avoid stale closures and jitter
-  const handleWheel = useCallback((e: WheelEvent) => {
-    e.preventDefault();
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    setTransform(prev => {
-      // Calculate new zoom
-      const delta = -e.deltaY * 0.001;
-      const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, 0.2), 3);
-
-      // Adjust pan to zoom towards mouse position
-      const zoomRatio = newZoom / prev.zoom;
-      const newPanX = mouseX - (mouseX - prev.panX) * zoomRatio;
-      const newPanY = mouseY - (mouseY - prev.panY) * zoomRatio;
-
-      return { zoom: newZoom, panX: newPanX, panY: newPanY };
-    });
-  }, []); // No dependencies - stable callback
-
-  // Attach wheel event listener with passive: false to allow preventDefault
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-
-    canvas.addEventListener('wheel', handleWheel, { passive: false });
-    return () => {
-      canvas.removeEventListener('wheel', handleWheel);
-    };
-  }, [handleWheel]);
-
-  // Keyboard navigation
-  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!focusedNodeId) {
-      // If no node is focused, focus the center node on any arrow key
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        const centerNode = nodesWithState.find(n => n.isFocused);
-        if (centerNode) {
-          setFocusedNodeId(centerNode.id);
-          onNodeSelect(centerNode);
-        }
-        e.preventDefault();
-      }
-      return;
-    }
-
-    const focusedNode = nodesWithState.find(n => n.id === focusedNodeId);
-    if (!focusedNode) return;
-
-    // Spatial navigation based on X/Y coordinates
-    // Column threshold: nodes within this X distance are considered same column
-    const COLUMN_THRESHOLD = 50;
-
-    // Find nodes in same column (similar X coordinate)
-    const sameColumn = nodesWithState.filter(
-      n => n.id !== focusedNodeId && Math.abs(n.x - focusedNode.x) < COLUMN_THRESHOLD
-    );
-
-    // Find nodes to the left (X is smaller)
-    const leftNodes = nodesWithState.filter(n => n.x < focusedNode.x - COLUMN_THRESHOLD);
-
-    // Find nodes to the right (X is larger)
-    const rightNodes = nodesWithState.filter(n => n.x > focusedNode.x + COLUMN_THRESHOLD);
-
-    let nextNode: MindMapNode | undefined;
-
-    switch (e.key) {
-      case 'ArrowUp':
-        // Find closest node above in same column (smaller Y)
-        nextNode = sameColumn
-          .filter(n => n.y < focusedNode.y)
-          .sort((a, b) => b.y - a.y)[0]; // Closest above (largest Y that's still smaller)
-        e.preventDefault();
-        break;
-
-      case 'ArrowDown':
-        // Find closest node below in same column (larger Y)
-        nextNode = sameColumn
-          .filter(n => n.y > focusedNode.y)
-          .sort((a, b) => a.y - b.y)[0]; // Closest below (smallest Y that's still larger)
-        e.preventDefault();
-        break;
-
-      case 'ArrowLeft':
-        // Find closest node to the left, preferring similar Y position
-        nextNode = leftNodes
-          .sort((a, b) => {
-            // Primary: prefer nodes in the closest column (largest X)
-            // Secondary: prefer nodes at similar Y position
-            const xDiffA = focusedNode.x - a.x;
-            const xDiffB = focusedNode.x - b.x;
-            const yDistA = Math.abs(a.y - focusedNode.y);
-            const yDistB = Math.abs(b.y - focusedNode.y);
-            // Group by column (nodes with similar X), then sort by Y distance
-            if (Math.abs(xDiffA - xDiffB) < COLUMN_THRESHOLD) {
-              return yDistA - yDistB;
-            }
-            return xDiffA - xDiffB; // Prefer closer columns
-          })[0];
-        e.preventDefault();
-        break;
-
-      case 'ArrowRight':
-        // Find closest node to the right, preferring similar Y position
-        nextNode = rightNodes
-          .sort((a, b) => {
-            // Primary: prefer nodes in the closest column (smallest X)
-            // Secondary: prefer nodes at similar Y position
-            const xDiffA = a.x - focusedNode.x;
-            const xDiffB = b.x - focusedNode.x;
-            const yDistA = Math.abs(a.y - focusedNode.y);
-            const yDistB = Math.abs(b.y - focusedNode.y);
-            // Group by column (nodes with similar X), then sort by Y distance
-            if (Math.abs(xDiffA - xDiffB) < COLUMN_THRESHOLD) {
-              return yDistA - yDistB;
-            }
-            return xDiffA - xDiffB; // Prefer closer columns
-          })[0];
-        e.preventDefault();
-        break;
-
-      case 'Enter':
-        // Re-layout with focused document node as center
-        if (focusedNode.nodeType === 'document') {
-          onNodeDoubleClick(focusedNode);
-        } else if (focusedNode.nodeType === 'external' && focusedNode.urls?.[0]) {
-          // Open external URL
-          window.open(focusedNode.urls[0], '_blank');
-        }
-        e.preventDefault();
-        break;
-
-      case 'o':
-      case 'O':
-        // Open focused document in file preview
-        if (focusedNode.nodeType === 'document' && focusedNode.filePath) {
-          onOpenFile(focusedNode.filePath);
-        }
-        e.preventDefault();
-        break;
-    }
-
-    if (nextNode) {
-      setFocusedNodeId(nextNode.id);
-      onNodeSelect(nextNode);
-
-      // Pan to keep focused node visible
-      setTransform(prev => {
-        const nodeScreenX = nextNode.x * prev.zoom + prev.panX;
-        const nodeScreenY = nextNode.y * prev.zoom + prev.panY;
-        const padding = 100;
-
-        let newPanX = prev.panX;
-        let newPanY = prev.panY;
-
-        if (nodeScreenX < padding) {
-          newPanX = padding - nextNode.x * prev.zoom;
-        } else if (nodeScreenX > width - padding) {
-          newPanX = width - padding - nextNode.x * prev.zoom;
-        }
-
-        if (nodeScreenY < padding) {
-          newPanY = padding - nextNode.y * prev.zoom;
-        } else if (nodeScreenY > height - padding) {
-          newPanY = height - padding - nextNode.y * prev.zoom;
-        }
-
-        if (newPanX !== prev.panX || newPanY !== prev.panY) {
-          return { ...prev, panX: newPanX, panY: newPanY };
-        }
-        return prev;
-      });
-    }
-  }, [focusedNodeId, nodesWithState, onNodeSelect, onNodeDoubleClick, onOpenFile, width, height]);
-
-  return (
-    <div
-      ref={containerRef}
-      className="relative w-full h-full outline-none"
-      tabIndex={0}
-      onKeyDown={handleKeyDown}
-    >
-      <canvas
-        ref={canvasRef}
-        style={{
-          width,
-          height,
-          cursor: draggingNodeId || isPanning ? 'grabbing' : hoveredNodeId ? 'grab' : 'default',
-        }}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-        onContextMenu={handleContextMenu}
-      />
-    </div>
-  );
+	const canvasRef = useRef<HTMLCanvasElement>(null);
+	const internalContainerRef = useRef<HTMLDivElement>(null);
+	// Use external ref if provided, otherwise use internal ref
+	const containerRef = externalContainerRef || internalContainerRef;
+
+	// State - combine zoom and pan into single transform state to avoid jitter
+	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+	const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
+	const [transform, setTransform] = useState({ zoom: 1, panX: 0, panY: 0 });
+	const [isPanning, setIsPanning] = useState(false);
+	const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+	// Node dragging state
+	const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+	const [nodeDragStart, setNodeDragStart] = useState({ nodeX: 0, nodeY: 0, mouseX: 0, mouseY: 0 });
+
+	// Derived values for convenience
+	const zoom = transform.zoom;
+	const pan = { x: transform.panX, y: transform.panY };
+
+	// Double-click detection
+	const lastClickRef = useRef<{ nodeId: string; time: number } | null>(null);
+	const DOUBLE_CLICK_THRESHOLD = 300;
+
+	// Memoize adjacency map - only rebuilds when links change
+	const adjacencyMap = useMemo(() => buildAdjacencyMap(rawLinks), [rawLinks]);
+
+	// Calculate layout
+	const layout = useMemo(() => {
+		return calculateMindMapLayout(
+			rawNodes,
+			rawLinks,
+			adjacencyMap,
+			centerFilePath,
+			maxDepth,
+			width,
+			height,
+			showExternalLinks,
+			previewCharLimit
+		);
+	}, [
+		rawNodes,
+		rawLinks,
+		adjacencyMap,
+		centerFilePath,
+		maxDepth,
+		width,
+		height,
+		showExternalLinks,
+		previewCharLimit,
+	]);
+
+	// Set initial focus to center node when center file changes
+	useEffect(() => {
+		const centerNode = layout.nodes.find((n) => n.isFocused);
+		if (centerNode) {
+			setFocusedNodeId(centerNode.id);
+			onNodeSelect(centerNode);
+		}
+	}, [centerFilePath]); // Only trigger when center file changes, not on every layout/callback update
+
+	// Sync focusedNodeId when selectedNodeId changes from parent (e.g., returning from search)
+	useEffect(() => {
+		if (selectedNodeId && selectedNodeId !== focusedNodeId) {
+			setFocusedNodeId(selectedNodeId);
+		}
+	}, [selectedNodeId, focusedNodeId]);
+
+	// Apply selection state and custom positions to nodes
+	const nodesWithState = useMemo(() => {
+		return layout.nodes.map((node) => {
+			const customPos = nodePositions?.get(node.id);
+			return {
+				...node,
+				// Apply custom position if available
+				x: customPos?.x ?? node.x,
+				y: customPos?.y ?? node.y,
+				isSelected: node.id === selectedNodeId,
+			};
+		});
+	}, [layout.nodes, selectedNodeId, nodePositions]);
+
+	// Check if node matches search
+	const nodeMatchesSearch = useCallback(
+		(node: MindMapNode): boolean => {
+			if (!searchQuery.trim()) return true;
+			const query = searchQuery.toLowerCase();
+
+			if (node.nodeType === 'document') {
+				return (
+					(node.label?.toLowerCase().includes(query) ?? false) ||
+					(node.filePath?.toLowerCase().includes(query) ?? false) ||
+					(node.description?.toLowerCase().includes(query) ?? false) ||
+					(node.contentPreview?.toLowerCase().includes(query) ?? false)
+				);
+			} else {
+				return (
+					(node.domain?.toLowerCase().includes(query) ?? false) ||
+					(node.urls?.some((url) => url.toLowerCase().includes(query)) ?? false)
+				);
+			}
+		},
+		[searchQuery]
+	);
+
+	// Convert screen coordinates to canvas coordinates
+	const screenToCanvas = useCallback(
+		(screenX: number, screenY: number) => {
+			const rect = canvasRef.current?.getBoundingClientRect();
+			if (!rect) return { x: screenX, y: screenY };
+
+			return {
+				x: (screenX - rect.left - pan.x) / zoom,
+				y: (screenY - rect.top - pan.y) / zoom,
+			};
+		},
+		[pan, zoom]
+	);
+
+	// Find node at canvas coordinates
+	const findNodeAtPoint = useCallback(
+		(canvasX: number, canvasY: number): MindMapNode | null => {
+			// Check in reverse order so top-most nodes are found first
+			for (let i = nodesWithState.length - 1; i >= 0; i--) {
+				const node = nodesWithState[i];
+				const halfWidth = node.width / 2;
+				const halfHeight = node.height / 2;
+
+				if (
+					canvasX >= node.x - halfWidth &&
+					canvasX <= node.x + halfWidth &&
+					canvasY >= node.y - halfHeight &&
+					canvasY <= node.y + halfHeight
+				) {
+					return node;
+				}
+			}
+			return null;
+		},
+		[nodesWithState]
+	);
+
+	// Check if click is on the open icon
+	const isClickOnOpenIcon = useCallback(
+		(node: MindMapNode, canvasX: number, canvasY: number): boolean => {
+			if (node.nodeType !== 'document') return false;
+
+			const iconX = node.x + node.width / 2 - OPEN_ICON_SIZE - OPEN_ICON_PADDING;
+			const iconY = node.y - node.height / 2 + OPEN_ICON_PADDING;
+
+			return (
+				canvasX >= iconX &&
+				canvasX <= iconX + OPEN_ICON_SIZE &&
+				canvasY >= iconY &&
+				canvasY <= iconY + OPEN_ICON_SIZE
+			);
+		},
+		[]
+	);
+
+	// Render the canvas
+	const render = useCallback(() => {
+		const canvas = canvasRef.current;
+		const ctx = canvas?.getContext('2d');
+		if (!canvas || !ctx) return;
+
+		// Set canvas size for high DPI
+		const dpr = window.devicePixelRatio || 1;
+		canvas.width = width * dpr;
+		canvas.height = height * dpr;
+		ctx.scale(dpr, dpr);
+
+		// Clear canvas
+		ctx.fillStyle = theme.colors.bgMain;
+		ctx.fillRect(0, 0, width, height);
+
+		// Apply transformations
+		ctx.save();
+		ctx.translate(pan.x, pan.y);
+		ctx.scale(zoom, zoom);
+
+		// Render links first (behind nodes)
+		const nodeMap = new Map(nodesWithState.map((n) => [n.id, n]));
+		layout.links.forEach((link) => {
+			const sourceNode = nodeMap.get(link.source);
+			const targetNode = nodeMap.get(link.target);
+			if (!sourceNode || !targetNode) return;
+
+			const isHighlighted =
+				sourceNode.id === selectedNodeId ||
+				targetNode.id === selectedNodeId ||
+				sourceNode.id === hoveredNodeId ||
+				targetNode.id === hoveredNodeId;
+
+			const color = isHighlighted
+				? `${theme.colors.accent}CC`
+				: link.type === 'external'
+					? `${theme.colors.textDim}44`
+					: `${theme.colors.textDim}66`;
+
+			const lineWidth = isHighlighted ? 3 : 1.5;
+
+			// Calculate connection points based on node positions
+			let sourceX = sourceNode.x;
+			let targetX = targetNode.x;
+
+			// Adjust connection points to node edges
+			if (sourceNode.x < targetNode.x) {
+				sourceX = sourceNode.x + sourceNode.width / 2;
+				targetX = targetNode.x - targetNode.width / 2;
+			} else if (sourceNode.x > targetNode.x) {
+				sourceX = sourceNode.x - sourceNode.width / 2;
+				targetX = targetNode.x + targetNode.width / 2;
+			}
+
+			drawLink(
+				ctx,
+				sourceX,
+				sourceNode.y,
+				targetX,
+				targetNode.y,
+				color,
+				lineWidth,
+				link.type === 'external'
+			);
+		});
+
+		// Render nodes
+		const searchActive = searchQuery.trim().length > 0;
+		nodesWithState.forEach((node) => {
+			const isHovered = node.id === hoveredNodeId;
+			const matchesSearch = nodeMatchesSearch(node);
+
+			if (node.nodeType === 'document') {
+				renderDocumentNode(
+					ctx,
+					node,
+					theme,
+					isHovered,
+					matchesSearch,
+					searchActive,
+					previewCharLimit
+				);
+			} else {
+				renderExternalNode(ctx, node, theme, isHovered, matchesSearch, searchActive);
+			}
+		});
+
+		ctx.restore();
+
+		// Draw keyboard focus indicator (outside transform for crisp rendering)
+		if (focusedNodeId) {
+			const focusedNode = nodesWithState.find((n) => n.id === focusedNodeId);
+			if (focusedNode) {
+				ctx.save();
+				ctx.translate(pan.x, pan.y);
+				ctx.scale(zoom, zoom);
+
+				ctx.strokeStyle = theme.colors.accent;
+				ctx.lineWidth = 3;
+				ctx.setLineDash([4, 4]);
+				roundRect(
+					ctx,
+					focusedNode.x - focusedNode.width / 2 - 4,
+					focusedNode.y - focusedNode.height / 2 - 4,
+					focusedNode.width + 8,
+					focusedNode.height + 8,
+					NODE_BORDER_RADIUS + 4
+				);
+				ctx.stroke();
+				ctx.setLineDash([]);
+
+				ctx.restore();
+			}
+		}
+	}, [
+		width,
+		height,
+		theme,
+		pan,
+		zoom,
+		nodesWithState,
+		layout.links,
+		selectedNodeId,
+		hoveredNodeId,
+		focusedNodeId,
+		searchQuery,
+		nodeMatchesSearch,
+	]);
+
+	// Render on changes
+	useEffect(() => {
+		render();
+	}, [render]);
+
+	// Center view on mount and when center file changes
+	useEffect(() => {
+		if (layout.nodes.length > 0) {
+			// Center on the center node
+			const centerNode = layout.nodes.find((n) => n.isFocused);
+			if (centerNode) {
+				setTransform((prev) => ({
+					...prev,
+					panX: width / 2 - centerNode.x * prev.zoom,
+					panY: height / 2 - centerNode.y * prev.zoom,
+				}));
+			}
+		}
+	}, [centerFilePath, width, height, layout.nodes]);
+
+	// Mouse event handlers
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			const { x, y } = screenToCanvas(e.clientX, e.clientY);
+			const node = findNodeAtPoint(x, y);
+
+			if (node) {
+				// Check if clicking on open icon
+				if (node.nodeType === 'document' && node.filePath && isClickOnOpenIcon(node, x, y)) {
+					onOpenFile(node.filePath);
+					return;
+				}
+
+				// Handle click/double-click on node
+				const now = Date.now();
+				const lastClick = lastClickRef.current;
+
+				if (
+					lastClick &&
+					lastClick.nodeId === node.id &&
+					now - lastClick.time < DOUBLE_CLICK_THRESHOLD
+				) {
+					// Double-click - trigger re-layout with this node as center
+					onNodeDoubleClick(node);
+					lastClickRef.current = null;
+				} else {
+					// Single click - select node and start drag
+					onNodeSelect(node);
+					setFocusedNodeId(node.id);
+					lastClickRef.current = { nodeId: node.id, time: now };
+
+					// Start node drag
+					setDraggingNodeId(node.id);
+					setNodeDragStart({
+						nodeX: node.x,
+						nodeY: node.y,
+						mouseX: e.clientX,
+						mouseY: e.clientY,
+					});
+				}
+			} else {
+				// Click on background - start panning
+				setIsPanning(true);
+				setPanStart({ x: e.clientX - transform.panX, y: e.clientY - transform.panY });
+				onNodeSelect(null);
+				setFocusedNodeId(null);
+			}
+		},
+		[
+			screenToCanvas,
+			findNodeAtPoint,
+			isClickOnOpenIcon,
+			onOpenFile,
+			onNodeDoubleClick,
+			onNodeSelect,
+			transform.panX,
+			transform.panY,
+		]
+	);
+
+	const handleMouseMove = useCallback(
+		(e: React.MouseEvent) => {
+			if (draggingNodeId && onNodePositionChange) {
+				// Dragging a node - calculate new position
+				const deltaX = (e.clientX - nodeDragStart.mouseX) / zoom;
+				const deltaY = (e.clientY - nodeDragStart.mouseY) / zoom;
+				const newX = nodeDragStart.nodeX + deltaX;
+				const newY = nodeDragStart.nodeY + deltaY;
+
+				onNodePositionChange(draggingNodeId, { x: newX, y: newY });
+
+				// Update cursor
+				if (canvasRef.current) {
+					canvasRef.current.style.cursor = 'grabbing';
+				}
+			} else if (isPanning) {
+				setTransform((prev) => ({
+					...prev,
+					panX: e.clientX - panStart.x,
+					panY: e.clientY - panStart.y,
+				}));
+			} else {
+				const { x, y } = screenToCanvas(e.clientX, e.clientY);
+				const node = findNodeAtPoint(x, y);
+				setHoveredNodeId(node?.id ?? null);
+
+				// Update cursor
+				if (canvasRef.current) {
+					canvasRef.current.style.cursor = node ? 'grab' : 'default';
+				}
+			}
+		},
+		[
+			draggingNodeId,
+			nodeDragStart,
+			zoom,
+			onNodePositionChange,
+			isPanning,
+			panStart,
+			screenToCanvas,
+			findNodeAtPoint,
+		]
+	);
+
+	const handleMouseUp = useCallback(() => {
+		setDraggingNodeId(null);
+		setIsPanning(false);
+		if (canvasRef.current) {
+			canvasRef.current.style.cursor = hoveredNodeId ? 'grab' : 'default';
+		}
+	}, [hoveredNodeId]);
+
+	const handleMouseLeave = useCallback(() => {
+		setDraggingNodeId(null);
+		setIsPanning(false);
+		setHoveredNodeId(null);
+	}, []);
+
+	const handleContextMenu = useCallback(
+		(e: React.MouseEvent) => {
+			e.preventDefault();
+			const { x, y } = screenToCanvas(e.clientX, e.clientY);
+			const node = findNodeAtPoint(x, y);
+
+			if (node) {
+				onNodeContextMenu(node, e.nativeEvent);
+			}
+		},
+		[screenToCanvas, findNodeAtPoint, onNodeContextMenu]
+	);
+
+	// Wheel handler for zooming - must be attached manually with passive: false
+	// Uses functional updater to avoid stale closures and jitter
+	const handleWheel = useCallback((e: WheelEvent) => {
+		e.preventDefault();
+
+		const rect = canvasRef.current?.getBoundingClientRect();
+		if (!rect) return;
+
+		const mouseX = e.clientX - rect.left;
+		const mouseY = e.clientY - rect.top;
+
+		setTransform((prev) => {
+			// Calculate new zoom
+			const delta = -e.deltaY * 0.001;
+			const newZoom = Math.min(Math.max(prev.zoom + delta * prev.zoom, 0.2), 3);
+
+			// Adjust pan to zoom towards mouse position
+			const zoomRatio = newZoom / prev.zoom;
+			const newPanX = mouseX - (mouseX - prev.panX) * zoomRatio;
+			const newPanY = mouseY - (mouseY - prev.panY) * zoomRatio;
+
+			return { zoom: newZoom, panX: newPanX, panY: newPanY };
+		});
+	}, []); // No dependencies - stable callback
+
+	// Attach wheel event listener with passive: false to allow preventDefault
+	useEffect(() => {
+		const canvas = canvasRef.current;
+		if (!canvas) return;
+
+		canvas.addEventListener('wheel', handleWheel, { passive: false });
+		return () => {
+			canvas.removeEventListener('wheel', handleWheel);
+		};
+	}, [handleWheel]);
+
+	// Keyboard navigation
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (!focusedNodeId) {
+				// If no node is focused, focus the center node on any arrow key
+				if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+					const centerNode = nodesWithState.find((n) => n.isFocused);
+					if (centerNode) {
+						setFocusedNodeId(centerNode.id);
+						onNodeSelect(centerNode);
+					}
+					e.preventDefault();
+				}
+				return;
+			}
+
+			const focusedNode = nodesWithState.find((n) => n.id === focusedNodeId);
+			if (!focusedNode) return;
+
+			// Spatial navigation based on X/Y coordinates
+			// Column threshold: nodes within this X distance are considered same column
+			const COLUMN_THRESHOLD = 50;
+
+			// Find nodes in same column (similar X coordinate)
+			const sameColumn = nodesWithState.filter(
+				(n) => n.id !== focusedNodeId && Math.abs(n.x - focusedNode.x) < COLUMN_THRESHOLD
+			);
+
+			// Find nodes to the left (X is smaller)
+			const leftNodes = nodesWithState.filter((n) => n.x < focusedNode.x - COLUMN_THRESHOLD);
+
+			// Find nodes to the right (X is larger)
+			const rightNodes = nodesWithState.filter((n) => n.x > focusedNode.x + COLUMN_THRESHOLD);
+
+			let nextNode: MindMapNode | undefined;
+
+			switch (e.key) {
+				case 'ArrowUp':
+					// Find closest node above in same column (smaller Y)
+					nextNode = sameColumn.filter((n) => n.y < focusedNode.y).sort((a, b) => b.y - a.y)[0]; // Closest above (largest Y that's still smaller)
+					e.preventDefault();
+					break;
+
+				case 'ArrowDown':
+					// Find closest node below in same column (larger Y)
+					nextNode = sameColumn.filter((n) => n.y > focusedNode.y).sort((a, b) => a.y - b.y)[0]; // Closest below (smallest Y that's still larger)
+					e.preventDefault();
+					break;
+
+				case 'ArrowLeft':
+					// Find closest node to the left, preferring similar Y position
+					nextNode = leftNodes.sort((a, b) => {
+						// Primary: prefer nodes in the closest column (largest X)
+						// Secondary: prefer nodes at similar Y position
+						const xDiffA = focusedNode.x - a.x;
+						const xDiffB = focusedNode.x - b.x;
+						const yDistA = Math.abs(a.y - focusedNode.y);
+						const yDistB = Math.abs(b.y - focusedNode.y);
+						// Group by column (nodes with similar X), then sort by Y distance
+						if (Math.abs(xDiffA - xDiffB) < COLUMN_THRESHOLD) {
+							return yDistA - yDistB;
+						}
+						return xDiffA - xDiffB; // Prefer closer columns
+					})[0];
+					e.preventDefault();
+					break;
+
+				case 'ArrowRight':
+					// Find closest node to the right, preferring similar Y position
+					nextNode = rightNodes.sort((a, b) => {
+						// Primary: prefer nodes in the closest column (smallest X)
+						// Secondary: prefer nodes at similar Y position
+						const xDiffA = a.x - focusedNode.x;
+						const xDiffB = b.x - focusedNode.x;
+						const yDistA = Math.abs(a.y - focusedNode.y);
+						const yDistB = Math.abs(b.y - focusedNode.y);
+						// Group by column (nodes with similar X), then sort by Y distance
+						if (Math.abs(xDiffA - xDiffB) < COLUMN_THRESHOLD) {
+							return yDistA - yDistB;
+						}
+						return xDiffA - xDiffB; // Prefer closer columns
+					})[0];
+					e.preventDefault();
+					break;
+
+				case 'Enter':
+					// Re-layout with focused document node as center
+					if (focusedNode.nodeType === 'document') {
+						onNodeDoubleClick(focusedNode);
+					} else if (focusedNode.nodeType === 'external' && focusedNode.urls?.[0]) {
+						// Open external URL
+						window.open(focusedNode.urls[0], '_blank');
+					}
+					e.preventDefault();
+					break;
+
+				case 'o':
+				case 'O':
+					// Open focused document in file preview
+					if (focusedNode.nodeType === 'document' && focusedNode.filePath) {
+						onOpenFile(focusedNode.filePath);
+					}
+					e.preventDefault();
+					break;
+			}
+
+			if (nextNode) {
+				setFocusedNodeId(nextNode.id);
+				onNodeSelect(nextNode);
+
+				// Pan to keep focused node visible
+				setTransform((prev) => {
+					const nodeScreenX = nextNode.x * prev.zoom + prev.panX;
+					const nodeScreenY = nextNode.y * prev.zoom + prev.panY;
+					const padding = 100;
+
+					let newPanX = prev.panX;
+					let newPanY = prev.panY;
+
+					if (nodeScreenX < padding) {
+						newPanX = padding - nextNode.x * prev.zoom;
+					} else if (nodeScreenX > width - padding) {
+						newPanX = width - padding - nextNode.x * prev.zoom;
+					}
+
+					if (nodeScreenY < padding) {
+						newPanY = padding - nextNode.y * prev.zoom;
+					} else if (nodeScreenY > height - padding) {
+						newPanY = height - padding - nextNode.y * prev.zoom;
+					}
+
+					if (newPanX !== prev.panX || newPanY !== prev.panY) {
+						return { ...prev, panX: newPanX, panY: newPanY };
+					}
+					return prev;
+				});
+			}
+		},
+		[focusedNodeId, nodesWithState, onNodeSelect, onNodeDoubleClick, onOpenFile, width, height]
+	);
+
+	return (
+		<div
+			ref={containerRef}
+			className="relative w-full h-full outline-none"
+			tabIndex={0}
+			onKeyDown={handleKeyDown}
+		>
+			<canvas
+				ref={canvasRef}
+				style={{
+					width,
+					height,
+					cursor: draggingNodeId || isPanning ? 'grabbing' : hoveredNodeId ? 'grab' : 'default',
+				}}
+				onMouseDown={handleMouseDown}
+				onMouseMove={handleMouseMove}
+				onMouseUp={handleMouseUp}
+				onMouseLeave={handleMouseLeave}
+				onContextMenu={handleContextMenu}
+			/>
+		</div>
+	);
 }
 
 // ============================================================================
@@ -1543,109 +1625,109 @@ export function MindMap({
  * Ensures no duplicate nodes by using a Map for deduplication
  */
 export function convertToMindMapData(
-  graphNodes: Array<{ id: string; data: GraphNodeData }>,
-  graphEdges: Array<{ source: string; target: string; type?: string }>,
-  previewCharLimit: number = 100
+	graphNodes: Array<{ id: string; data: GraphNodeData }>,
+	graphEdges: Array<{ source: string; target: string; type?: string }>,
+	previewCharLimit: number = 100
 ): { nodes: MindMapNode[]; links: MindMapLink[] } {
-  // Build neighbor map for connection counting
-  const neighborMap = new Map<string, Set<string>>();
+	// Build neighbor map for connection counting
+	const neighborMap = new Map<string, Set<string>>();
 
-  graphEdges.forEach(edge => {
-    if (!neighborMap.has(edge.source)) {
-      neighborMap.set(edge.source, new Set());
-    }
-    if (!neighborMap.has(edge.target)) {
-      neighborMap.set(edge.target, new Set());
-    }
-    neighborMap.get(edge.source)!.add(edge.target);
-    neighborMap.get(edge.target)!.add(edge.source);
-  });
+	graphEdges.forEach((edge) => {
+		if (!neighborMap.has(edge.source)) {
+			neighborMap.set(edge.source, new Set());
+		}
+		if (!neighborMap.has(edge.target)) {
+			neighborMap.set(edge.target, new Set());
+		}
+		neighborMap.get(edge.source)!.add(edge.target);
+		neighborMap.get(edge.target)!.add(edge.source);
+	});
 
-  // Use Map for deduplication - prevents duplicate nodes with same ID
-  const nodeMap = new Map<string, MindMapNode>();
+	// Use Map for deduplication - prevents duplicate nodes with same ID
+	const nodeMap = new Map<string, MindMapNode>();
 
-  graphNodes.forEach(node => {
-    // Skip if we've already processed this node ID
-    if (nodeMap.has(node.id)) {
-      console.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
-      return;
-    }
+	graphNodes.forEach((node) => {
+		// Skip if we've already processed this node ID
+		if (nodeMap.has(node.id)) {
+			console.warn(`[MindMap] Skipping duplicate node: ${node.id}`);
+			return;
+		}
 
-    const neighbors = neighborMap.get(node.id) || new Set();
-    const connectionCount = neighbors.size;
+		const neighbors = neighborMap.get(node.id) || new Set();
+		const connectionCount = neighbors.size;
 
-    let mindMapNode: MindMapNode;
+		let mindMapNode: MindMapNode;
 
-    if (node.data.nodeType === 'document') {
-      const docData = node.data as DocumentNodeData;
-      // Use description (frontmatter) or contentPreview (plaintext) for display
-      const previewText = docData.description || docData.contentPreview;
-      // Extract filename without extension for the label (node header)
-      const filename = docData.filePath?.split('/').pop()?.replace(/\.md$/i, '') || docData.title;
-      mindMapNode = {
-        id: node.id,
-        x: 0,
-        y: 0,
-        width: NODE_WIDTH,
-        height: calculateNodeHeight(previewText, previewCharLimit),
-        depth: 0,
-        side: 'center' as const,
-        nodeType: 'document' as const,
-        label: filename,
-        filePath: docData.filePath,
-        description: docData.description,
-        contentPreview: docData.contentPreview,
-        lineCount: docData.lineCount,
-        wordCount: docData.wordCount,
-        size: docData.size,
-        brokenLinks: docData.brokenLinks,
-        isLargeFile: docData.isLargeFile,
-        neighbors,
-        connectionCount,
-      };
-    } else {
-      const extData = node.data as ExternalLinkNodeData;
-      mindMapNode = {
-        id: node.id,
-        x: 0,
-        y: 0,
-        width: EXTERNAL_NODE_WIDTH,
-        height: EXTERNAL_NODE_HEIGHT,
-        depth: 0,
-        side: 'external' as const,
-        nodeType: 'external' as const,
-        label: extData.domain,
-        domain: extData.domain,
-        urls: extData.urls,
-        neighbors,
-        connectionCount,
-      };
-    }
+		if (node.data.nodeType === 'document') {
+			const docData = node.data as DocumentNodeData;
+			// Use description (frontmatter) or contentPreview (plaintext) for display
+			const previewText = docData.description || docData.contentPreview;
+			// Extract filename without extension for the label (node header)
+			const filename = docData.filePath?.split('/').pop()?.replace(/\.md$/i, '') || docData.title;
+			mindMapNode = {
+				id: node.id,
+				x: 0,
+				y: 0,
+				width: NODE_WIDTH,
+				height: calculateNodeHeight(previewText, previewCharLimit),
+				depth: 0,
+				side: 'center' as const,
+				nodeType: 'document' as const,
+				label: filename,
+				filePath: docData.filePath,
+				description: docData.description,
+				contentPreview: docData.contentPreview,
+				lineCount: docData.lineCount,
+				wordCount: docData.wordCount,
+				size: docData.size,
+				brokenLinks: docData.brokenLinks,
+				isLargeFile: docData.isLargeFile,
+				neighbors,
+				connectionCount,
+			};
+		} else {
+			const extData = node.data as ExternalLinkNodeData;
+			mindMapNode = {
+				id: node.id,
+				x: 0,
+				y: 0,
+				width: EXTERNAL_NODE_WIDTH,
+				height: EXTERNAL_NODE_HEIGHT,
+				depth: 0,
+				side: 'external' as const,
+				nodeType: 'external' as const,
+				label: extData.domain,
+				domain: extData.domain,
+				urls: extData.urls,
+				neighbors,
+				connectionCount,
+			};
+		}
 
-    nodeMap.set(node.id, mindMapNode);
-  });
+		nodeMap.set(node.id, mindMapNode);
+	});
 
-  const nodes = Array.from(nodeMap.values());
+	const nodes = Array.from(nodeMap.values());
 
-  // Deduplicate links as well
-  const linkSet = new Set<string>();
-  const links: MindMapLink[] = [];
+	// Deduplicate links as well
+	const linkSet = new Set<string>();
+	const links: MindMapLink[] = [];
 
-  graphEdges.forEach(edge => {
-    // Create a canonical key for the edge (sorted to avoid A->B and B->A duplicates)
-    const sortedKey = [edge.source, edge.target].sort().join('|');
+	graphEdges.forEach((edge) => {
+		// Create a canonical key for the edge (sorted to avoid A->B and B->A duplicates)
+		const sortedKey = [edge.source, edge.target].sort().join('|');
 
-    if (!linkSet.has(sortedKey)) {
-      linkSet.add(sortedKey);
-      links.push({
-        source: edge.source,
-        target: edge.target,
-        type: edge.type === 'external' ? 'external' : 'internal',
-      });
-    }
-  });
+		if (!linkSet.has(sortedKey)) {
+			linkSet.add(sortedKey);
+			links.push({
+				source: edge.source,
+				target: edge.target,
+				type: edge.type === 'external' ? 'external' : 'internal',
+			});
+		}
+	});
 
-  return { nodes, links };
+	return { nodes, links };
 }
 
 export default MindMap;

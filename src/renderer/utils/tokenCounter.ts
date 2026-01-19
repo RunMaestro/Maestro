@@ -17,10 +17,10 @@ let encoderPromise: Promise<Tiktoken> | null = null;
  * Uses cl100k_base encoding which is compatible with Claude and GPT-4.
  */
 export function getEncoder(): Promise<Tiktoken> {
-  if (!encoderPromise) {
-    encoderPromise = Promise.resolve(getEncoding('cl100k_base'));
-  }
-  return encoderPromise;
+	if (!encoderPromise) {
+		encoderPromise = Promise.resolve(getEncoding('cl100k_base'));
+	}
+	return encoderPromise;
 }
 
 /**
@@ -34,14 +34,14 @@ export function getEncoder(): Promise<Tiktoken> {
  * console.log(`Text has ${count} tokens`);
  */
 export async function countTokens(text: string): Promise<number> {
-  try {
-    const encoder = await getEncoder();
-    return encoder.encode(text).length;
-  } catch (error) {
-    console.error('Failed to count tokens:', error);
-    // Fall back to character-based estimate if tokenizer fails
-    return estimateTokens(text);
-  }
+	try {
+		const encoder = await getEncoder();
+		return encoder.encode(text).length;
+	} catch (error) {
+		console.error('Failed to count tokens:', error);
+		// Fall back to character-based estimate if tokenizer fails
+		return estimateTokens(text);
+	}
 }
 
 /**
@@ -53,9 +53,9 @@ export async function countTokens(text: string): Promise<number> {
  * @returns Estimated token count
  */
 export function estimateTokens(text: string): number {
-  // Average of ~4 characters per token for English text
-  // Code tends to be denser (~3 chars/token), but this is a reasonable average
-  return Math.ceil(text.length / 4);
+	// Average of ~4 characters per token for English text
+	// Code tends to be denser (~3 chars/token), but this is a reasonable average
+	return Math.ceil(text.length / 4);
 }
 
 /**
@@ -65,11 +65,11 @@ export function estimateTokens(text: string): number {
  * @returns Formatted string (e.g., "1.2k", "15k", "1.5M")
  */
 export function formatTokenCount(count: number): string {
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1)}M`;
-  }
-  if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(1)}k`;
-  }
-  return count.toString();
+	if (count >= 1_000_000) {
+		return `${(count / 1_000_000).toFixed(1)}M`;
+	}
+	if (count >= 1_000) {
+		return `${(count / 1_000).toFixed(1)}k`;
+	}
+	return count.toString();
 }

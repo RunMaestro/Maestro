@@ -23,7 +23,11 @@ export type { UseExpandedSetOptions, UseExpandedSetReturn } from './useExpandedS
 
 // Scroll position tracking
 export { useScrollPosition } from './useScrollPosition';
-export type { UseScrollPositionOptions, UseScrollPositionReturn, ScrollMetrics } from './useScrollPosition';
+export type {
+	UseScrollPositionOptions,
+	UseScrollPositionReturn,
+	ScrollMetrics,
+} from './useScrollPosition';
 
 // Scroll into view helper
 export { useScrollIntoView } from './useScrollIntoView';

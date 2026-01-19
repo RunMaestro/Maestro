@@ -19,30 +19,30 @@ import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
  * Options for resolving SSH remote configuration.
  */
 export interface SshRemoteResolveOptions {
-  /**
-   * Session-specific SSH remote configuration (optional).
-   * If provided and enabled, the session will execute via SSH.
-   * This is the ONLY way to enable SSH - there are no agent-level or global defaults.
-   */
-  sessionSshConfig?: AgentSshRemoteConfig;
+	/**
+	 * Session-specific SSH remote configuration (optional).
+	 * If provided and enabled, the session will execute via SSH.
+	 * This is the ONLY way to enable SSH - there are no agent-level or global defaults.
+	 */
+	sessionSshConfig?: AgentSshRemoteConfig;
 }
 
 /**
  * Result of SSH remote configuration resolution.
  */
 export interface SshRemoteResolveResult {
-  /**
-   * The resolved SSH remote configuration, or null for local execution.
-   */
-  config: SshRemoteConfig | null;
+	/**
+	 * The resolved SSH remote configuration, or null for local execution.
+	 */
+	config: SshRemoteConfig | null;
 
-  /**
-   * How the configuration was resolved.
-   * - 'session': Session-level SSH config was used
-   * - 'disabled': SSH remote is explicitly disabled for this session
-   * - 'none': No SSH remote configured (local execution)
-   */
-  source: 'session' | 'disabled' | 'none';
+	/**
+	 * How the configuration was resolved.
+	 * - 'session': Session-level SSH config was used
+	 * - 'disabled': SSH remote is explicitly disabled for this session
+	 * - 'none': No SSH remote configured (local execution)
+	 */
+	source: 'session' | 'disabled' | 'none';
 }
 
 /**
@@ -50,10 +50,10 @@ export interface SshRemoteResolveResult {
  * This allows dependency injection for testing.
  */
 export interface SshRemoteSettingsStore {
-  /**
-   * Get all SSH remote configurations.
-   */
-  getSshRemotes(): SshRemoteConfig[];
+	/**
+	 * Get all SSH remote configurations.
+	 */
+	getSshRemotes(): SshRemoteConfig[];
 }
 
 /**
@@ -80,45 +80,43 @@ export interface SshRemoteSettingsStore {
  * });
  */
 export function getSshRemoteConfig(
-  store: SshRemoteSettingsStore,
-  options: SshRemoteResolveOptions = {}
+	store: SshRemoteSettingsStore,
+	options: SshRemoteResolveOptions = {}
 ): SshRemoteResolveResult {
-  const { sessionSshConfig } = options;
+	const { sessionSshConfig } = options;
 
-  // Get all available SSH remotes
-  const sshRemotes = store.getSshRemotes();
+	// Get all available SSH remotes
+	const sshRemotes = store.getSshRemotes();
 
-  // Check session-specific configuration (the ONLY way to enable SSH)
-  if (sessionSshConfig) {
-    // If explicitly disabled for this session, return null (local execution)
-    if (!sessionSshConfig.enabled) {
-      return {
-        config: null,
-        source: 'disabled',
-      };
-    }
+	// Check session-specific configuration (the ONLY way to enable SSH)
+	if (sessionSshConfig) {
+		// If explicitly disabled for this session, return null (local execution)
+		if (!sessionSshConfig.enabled) {
+			return {
+				config: null,
+				source: 'disabled',
+			};
+		}
 
-    // If session has a specific remote ID configured, use it
-    if (sessionSshConfig.remoteId) {
-      const config = sshRemotes.find(
-        (r) => r.id === sessionSshConfig.remoteId && r.enabled
-      );
+		// If session has a specific remote ID configured, use it
+		if (sessionSshConfig.remoteId) {
+			const config = sshRemotes.find((r) => r.id === sessionSshConfig.remoteId && r.enabled);
 
-      if (config) {
-        return {
-          config,
-          source: 'session',
-        };
-      }
-      // If the specified remote doesn't exist or is disabled, fall through to local execution
-    }
-  }
+			if (config) {
+				return {
+					config,
+					source: 'session',
+				};
+			}
+			// If the specified remote doesn't exist or is disabled, fall through to local execution
+		}
+	}
 
-  // No SSH remote configured - local execution
-  return {
-    config: null,
-    source: 'none',
-  };
+	// No SSH remote configured - local execution
+	return {
+		config: null,
+		source: 'none',
+	};
 }
 
 /**
@@ -137,11 +135,11 @@ export function getSshRemoteConfig(
  * });
  */
 export function createSshRemoteStoreAdapter<
-  T extends {
-    get(key: 'sshRemotes', defaultValue: SshRemoteConfig[]): SshRemoteConfig[];
-  }
+	T extends {
+		get(key: 'sshRemotes', defaultValue: SshRemoteConfig[]): SshRemoteConfig[];
+	},
 >(store: T): SshRemoteSettingsStore {
-  return {
-    getSshRemotes: () => store.get('sshRemotes', []),
-  };
+	return {
+		getSshRemotes: () => store.get('sshRemotes', []),
+	};
 }

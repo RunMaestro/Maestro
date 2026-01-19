@@ -59,7 +59,9 @@ export class ExitHandler {
 			console.log(`[GroupChat:Debug:ProcessManager] Exit code: ${code}`);
 			console.log(`[GroupChat:Debug:ProcessManager] isStreamJsonMode: ${isStreamJsonMode}`);
 			console.log(`[GroupChat:Debug:ProcessManager] isBatchMode: ${isBatchMode}`);
-			console.log(`[GroupChat:Debug:ProcessManager] resultEmitted: ${managedProcess.resultEmitted}`);
+			console.log(
+				`[GroupChat:Debug:ProcessManager] resultEmitted: ${managedProcess.resultEmitted}`
+			);
 			console.log(
 				`[GroupChat:Debug:ProcessManager] streamedText length: ${managedProcess.streamedText?.length || 0}`
 			);
@@ -114,7 +116,11 @@ export class ExitHandler {
 		}
 
 		// Check for SSH-specific errors at exit (only when running via SSH remote)
-		if (!managedProcess.errorEmitted && managedProcess.sshRemoteId && (code !== 0 || managedProcess.stderrBuffer)) {
+		if (
+			!managedProcess.errorEmitted &&
+			managedProcess.sshRemoteId &&
+			(code !== 0 || managedProcess.stderrBuffer)
+		) {
 			const stderrToCheck = managedProcess.stderrBuffer || '';
 			const sshError = matchSshErrorPattern(stderrToCheck);
 			if (sshError) {
@@ -189,7 +195,11 @@ export class ExitHandler {
 			}
 
 			// Extract and emit usage statistics
-			if (jsonResponse.modelUsage || jsonResponse.usage || jsonResponse.total_cost_usd !== undefined) {
+			if (
+				jsonResponse.modelUsage ||
+				jsonResponse.usage ||
+				jsonResponse.total_cost_usd !== undefined
+			) {
 				const usageStats = aggregateModelUsage(
 					jsonResponse.modelUsage,
 					jsonResponse.usage || {},

@@ -16,27 +16,27 @@ let wslDetectionCache: boolean | null = null;
  * Result is cached after first call.
  */
 export function isWsl(): boolean {
-  if (wslDetectionCache !== null) {
-    return wslDetectionCache;
-  }
+	if (wslDetectionCache !== null) {
+		return wslDetectionCache;
+	}
 
-  if (process.platform !== 'linux') {
-    wslDetectionCache = false;
-    return false;
-  }
+	if (process.platform !== 'linux') {
+		wslDetectionCache = false;
+		return false;
+	}
 
-  try {
-    if (fs.existsSync('/proc/version')) {
-      const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
-      wslDetectionCache = version.includes('microsoft') || version.includes('wsl');
-      return wslDetectionCache;
-    }
-  } catch {
-    // Ignore read errors
-  }
+	try {
+		if (fs.existsSync('/proc/version')) {
+			const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
+			wslDetectionCache = version.includes('microsoft') || version.includes('wsl');
+			return wslDetectionCache;
+		}
+	} catch {
+		// Ignore read errors
+	}
 
-  wslDetectionCache = false;
-  return false;
+	wslDetectionCache = false;
+	return false;
 }
 
 /**
@@ -44,7 +44,7 @@ export function isWsl(): boolean {
  * Windows mounts are typically at /mnt/c, /mnt/d, etc.
  */
 export function isWindowsMountPath(filepath: string): boolean {
-  return /^\/mnt\/[a-zA-Z](\/|$)/.test(filepath);
+	return /^\/mnt\/[a-zA-Z](\/|$)/.test(filepath);
 }
 
 /**
@@ -55,39 +55,39 @@ export function isWindowsMountPath(filepath: string): boolean {
  * @returns true if running from a problematic Windows mount path
  */
 export function checkWslEnvironment(cwd: string): boolean {
-  if (!isWsl()) {
-    return false;
-  }
+	if (!isWsl()) {
+		return false;
+	}
 
-  if (isWindowsMountPath(cwd)) {
-    logger.warn(
-      '[WSL] Running from Windows mount path - this may cause socket binding failures, ' +
-        'Electron sandbox crashes, npm install issues, and git corruption. ' +
-        'Consider moving your project to the Linux filesystem (e.g., ~/projects/maestro).',
-      'WSLDetector',
-      { cwd }
-    );
-    return true;
-  }
+	if (isWindowsMountPath(cwd)) {
+		logger.warn(
+			'[WSL] Running from Windows mount path - this may cause socket binding failures, ' +
+				'Electron sandbox crashes, npm install issues, and git corruption. ' +
+				'Consider moving your project to the Linux filesystem (e.g., ~/projects/maestro).',
+			'WSLDetector',
+			{ cwd }
+		);
+		return true;
+	}
 
-  logger.debug('[WSL] Running from Linux filesystem - OK', 'WSLDetector', { cwd });
-  return false;
+	logger.debug('[WSL] Running from Linux filesystem - OK', 'WSLDetector', { cwd });
+	return false;
 }
 
 /**
  * Get a user-friendly warning message for WSL + Windows mount issues.
  */
 export function getWslWarningMessage(): string {
-  return (
-    'You appear to be running Maestro from a Windows-mounted path in WSL2. ' +
-    'This configuration causes critical issues including:\n\n' +
-    '• Socket binding failures (dev server won\'t start)\n' +
-    '• Electron sandbox crashes\n' +
-    '• npm install failures\n' +
-    '• Git index corruption\n\n' +
-    'Please move your project to the Linux filesystem:\n' +
-    '  mv /mnt/c/projects/maestro ~/maestro\n' +
-    '  cd ~/maestro && npm install\n\n' +
-    'See: https://docs.runmaestro.ai/installation#wsl2-users-windows-subsystem-for-linux'
-  );
+	return (
+		'You appear to be running Maestro from a Windows-mounted path in WSL2. ' +
+		'This configuration causes critical issues including:\n\n' +
+		"• Socket binding failures (dev server won't start)\n" +
+		'• Electron sandbox crashes\n' +
+		'• npm install failures\n' +
+		'• Git index corruption\n\n' +
+		'Please move your project to the Linux filesystem:\n' +
+		'  mv /mnt/c/projects/maestro ~/maestro\n' +
+		'  cd ~/maestro && npm install\n\n' +
+		'See: https://docs.runmaestro.ai/installation#wsl2-users-windows-subsystem-for-linux'
+	);
 }

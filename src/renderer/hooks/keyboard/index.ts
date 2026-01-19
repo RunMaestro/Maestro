@@ -11,15 +11,15 @@ export type { UseMainKeyboardHandlerReturn } from './useMainKeyboardHandler';
 // Arrow/Tab keyboard navigation
 export { useKeyboardNavigation } from './useKeyboardNavigation';
 export type {
-  UseKeyboardNavigationDeps,
-  UseKeyboardNavigationReturn,
+	UseKeyboardNavigationDeps,
+	UseKeyboardNavigationReturn,
 } from './useKeyboardNavigation';
 
 // Shortcut matching utilities
 export { useKeyboardShortcutHelpers } from './useKeyboardShortcutHelpers';
 export type {
-  UseKeyboardShortcutHelpersDeps,
-  UseKeyboardShortcutHelpersReturn,
+	UseKeyboardShortcutHelpersDeps,
+	UseKeyboardShortcutHelpersReturn,
 } from './useKeyboardShortcutHelpers';
 
 // Generic list navigation

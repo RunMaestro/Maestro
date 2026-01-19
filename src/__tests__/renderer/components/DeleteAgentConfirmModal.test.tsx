@@ -18,339 +18,341 @@ import type { Theme } from '../../../renderer/types';
 
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
-  X: () => <svg data-testid="x-icon" />,
-  AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
-  Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-    <svg data-testid="trash2-icon" className={className} style={style} />
-  ),
+	X: () => <svg data-testid="x-icon" />,
+	AlertTriangle: () => <svg data-testid="alert-triangle-icon" />,
+	Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="trash2-icon" className={className} style={style} />
+	),
 }));
 
 // Create a test theme
 const testTheme: Theme = {
-  id: 'test-theme',
-  name: 'Test Theme',
-  mode: 'dark',
-  colors: {
-    bgMain: '#1e1e1e',
-    bgSidebar: '#252526',
-    bgActivity: '#333333',
-    textMain: '#d4d4d4',
-    textDim: '#808080',
-    accent: '#007acc',
-    accentDim: '#007acc80',
-    accentText: '#ffffff',
-    accentForeground: '#ffffff',
-    border: '#404040',
-    error: '#f14c4c',
-    warning: '#cca700',
-    success: '#89d185',
-  },
+	id: 'test-theme',
+	name: 'Test Theme',
+	mode: 'dark',
+	colors: {
+		bgMain: '#1e1e1e',
+		bgSidebar: '#252526',
+		bgActivity: '#333333',
+		textMain: '#d4d4d4',
+		textDim: '#808080',
+		accent: '#007acc',
+		accentDim: '#007acc80',
+		accentText: '#ffffff',
+		accentForeground: '#ffffff',
+		border: '#404040',
+		error: '#f14c4c',
+		warning: '#cca700',
+		success: '#89d185',
+	},
 };
 
 // Helper to render with LayerStackProvider
 const renderWithLayerStack = (ui: React.ReactElement) => {
-  return render(<LayerStackProvider>{ui}</LayerStackProvider>);
+	return render(<LayerStackProvider>{ui}</LayerStackProvider>);
 };
 
 describe('DeleteAgentConfirmModal', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  describe('rendering', () => {
-    it('renders with agent name and three action buttons', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+	describe('rendering', () => {
+		it('renders with agent name and three action buttons', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByText(/TestAgent/)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Confirm and Erase' })).toBeInTheDocument();
-    });
+			expect(screen.getByText(/TestAgent/)).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Confirm' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Confirm and Erase' })).toBeInTheDocument();
+		});
 
-    it('renders working directory path', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('renders working directory path', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByText('/home/user/project')).toBeInTheDocument();
-    });
+			expect(screen.getByText('/home/user/project')).toBeInTheDocument();
+		});
 
-    it('renders explanatory text about Confirm and Erase', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('renders explanatory text about Confirm and Erase', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      // Check the explanatory text (in a <strong> tag within a <p>)
-      expect(screen.getByText(/will also move the working directory to the trash/)).toBeInTheDocument();
-    });
+			// Check the explanatory text (in a <strong> tag within a <p>)
+			expect(
+				screen.getByText(/will also move the working directory to the trash/)
+			).toBeInTheDocument();
+		});
 
-    it('renders header with title and close button', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('renders header with title and close button', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
-      expect(screen.getByTestId('x-icon')).toBeInTheDocument();
-    });
+			expect(screen.getByText('Confirm Delete')).toBeInTheDocument();
+			expect(screen.getByTestId('x-icon')).toBeInTheDocument();
+		});
 
-    it('has correct ARIA attributes', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('has correct ARIA attributes', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      const dialog = screen.getByRole('dialog');
-      expect(dialog).toHaveAttribute('aria-modal', 'true');
-      expect(dialog).toHaveAttribute('aria-label', 'Confirm Delete');
-    });
-  });
+			const dialog = screen.getByRole('dialog');
+			expect(dialog).toHaveAttribute('aria-modal', 'true');
+			expect(dialog).toHaveAttribute('aria-label', 'Confirm Delete');
+		});
+	});
 
-  describe('focus management', () => {
-    it('focuses Confirm button on mount (not Confirm and Erase)', async () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+	describe('focus management', () => {
+		it('focuses Confirm button on mount (not Confirm and Erase)', async () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      await waitFor(() => {
-        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Confirm' }));
-      });
-    });
-  });
+			await waitFor(() => {
+				expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Confirm' }));
+			});
+		});
+	});
 
-  describe('button handlers', () => {
-    it('calls onClose when X button is clicked', () => {
-      const onClose = vi.fn();
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={onClose}
-        />
-      );
+	describe('button handlers', () => {
+		it('calls onClose when X button is clicked', () => {
+			const onClose = vi.fn();
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={onClose}
+				/>
+			);
 
-      const closeButton = screen.getByTestId('x-icon').closest('button');
-      fireEvent.click(closeButton!);
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
+			const closeButton = screen.getByTestId('x-icon').closest('button');
+			fireEvent.click(closeButton!);
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
 
-    it('calls onClose when Cancel is clicked', () => {
-      const onClose = vi.fn();
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={onClose}
-        />
-      );
+		it('calls onClose when Cancel is clicked', () => {
+			const onClose = vi.fn();
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={onClose}
+				/>
+			);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(onClose).toHaveBeenCalledTimes(1);
-    });
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
 
-    it('calls onConfirm then onClose when Confirm is clicked', () => {
-      const callOrder: string[] = [];
-      const onClose = vi.fn(() => callOrder.push('close'));
-      const onConfirm = vi.fn(() => callOrder.push('confirm'));
-      const onConfirmAndErase = vi.fn();
+		it('calls onConfirm then onClose when Confirm is clicked', () => {
+			const callOrder: string[] = [];
+			const onClose = vi.fn(() => callOrder.push('close'));
+			const onConfirm = vi.fn(() => callOrder.push('confirm'));
+			const onConfirmAndErase = vi.fn();
 
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={onConfirm}
-          onConfirmAndErase={onConfirmAndErase}
-          onClose={onClose}
-        />
-      );
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={onConfirm}
+					onConfirmAndErase={onConfirmAndErase}
+					onClose={onClose}
+				/>
+			);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
-      expect(callOrder).toEqual(['confirm', 'close']);
-      expect(onConfirmAndErase).not.toHaveBeenCalled();
-    });
+			fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+			expect(callOrder).toEqual(['confirm', 'close']);
+			expect(onConfirmAndErase).not.toHaveBeenCalled();
+		});
 
-    it('calls onConfirmAndErase then onClose when Confirm and Erase is clicked', () => {
-      const callOrder: string[] = [];
-      const onClose = vi.fn(() => callOrder.push('close'));
-      const onConfirm = vi.fn();
-      const onConfirmAndErase = vi.fn(() => callOrder.push('confirmAndErase'));
+		it('calls onConfirmAndErase then onClose when Confirm and Erase is clicked', () => {
+			const callOrder: string[] = [];
+			const onClose = vi.fn(() => callOrder.push('close'));
+			const onConfirm = vi.fn();
+			const onConfirmAndErase = vi.fn(() => callOrder.push('confirmAndErase'));
 
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={onConfirm}
-          onConfirmAndErase={onConfirmAndErase}
-          onClose={onClose}
-        />
-      );
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={onConfirm}
+					onConfirmAndErase={onConfirmAndErase}
+					onClose={onClose}
+				/>
+			);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Confirm and Erase' }));
-      expect(callOrder).toEqual(['confirmAndErase', 'close']);
-      expect(onConfirm).not.toHaveBeenCalled();
-    });
+			fireEvent.click(screen.getByRole('button', { name: 'Confirm and Erase' }));
+			expect(callOrder).toEqual(['confirmAndErase', 'close']);
+			expect(onConfirm).not.toHaveBeenCalled();
+		});
 
-    it('Cancel does not call onConfirm or onConfirmAndErase', () => {
-      const onConfirm = vi.fn();
-      const onConfirmAndErase = vi.fn();
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={onConfirm}
-          onConfirmAndErase={onConfirmAndErase}
-          onClose={vi.fn()}
-        />
-      );
+		it('Cancel does not call onConfirm or onConfirmAndErase', () => {
+			const onConfirm = vi.fn();
+			const onConfirmAndErase = vi.fn();
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={onConfirm}
+					onConfirmAndErase={onConfirmAndErase}
+					onClose={vi.fn()}
+				/>
+			);
 
-      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-      expect(onConfirm).not.toHaveBeenCalled();
-      expect(onConfirmAndErase).not.toHaveBeenCalled();
-    });
-  });
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			expect(onConfirm).not.toHaveBeenCalled();
+			expect(onConfirmAndErase).not.toHaveBeenCalled();
+		});
+	});
 
-  describe('keyboard interaction', () => {
-    it('stops propagation of keydown events', () => {
-      const parentHandler = vi.fn();
+	describe('keyboard interaction', () => {
+		it('stops propagation of keydown events', () => {
+			const parentHandler = vi.fn();
 
-      render(
-        <div onKeyDown={parentHandler}>
-          <LayerStackProvider>
-            <DeleteAgentConfirmModal
-              theme={testTheme}
-              agentName="TestAgent"
-              workingDirectory="/home/user/project"
-              onConfirm={vi.fn()}
-              onConfirmAndErase={vi.fn()}
-              onClose={vi.fn()}
-            />
-          </LayerStackProvider>
-        </div>
-      );
+			render(
+				<div onKeyDown={parentHandler}>
+					<LayerStackProvider>
+						<DeleteAgentConfirmModal
+							theme={testTheme}
+							agentName="TestAgent"
+							workingDirectory="/home/user/project"
+							onConfirm={vi.fn()}
+							onConfirmAndErase={vi.fn()}
+							onClose={vi.fn()}
+						/>
+					</LayerStackProvider>
+				</div>
+			);
 
-      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'a' });
-      expect(parentHandler).not.toHaveBeenCalled();
-    });
-  });
+			fireEvent.keyDown(screen.getByRole('dialog'), { key: 'a' });
+			expect(parentHandler).not.toHaveBeenCalled();
+		});
+	});
 
-  describe('layer stack integration', () => {
-    it('registers and unregisters without errors', () => {
-      const { unmount } = renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+	describe('layer stack integration', () => {
+		it('registers and unregisters without errors', () => {
+			const { unmount } = renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByRole('dialog')).toBeInTheDocument();
-      expect(() => unmount()).not.toThrow();
-    });
-  });
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+			expect(() => unmount()).not.toThrow();
+		});
+	});
 
-  describe('accessibility', () => {
-    it('has tabIndex on dialog for focus', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+	describe('accessibility', () => {
+		it('has tabIndex on dialog for focus', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByRole('dialog')).toHaveAttribute('tabIndex', '-1');
-    });
+			expect(screen.getByRole('dialog')).toHaveAttribute('tabIndex', '-1');
+		});
 
-    it('has semantic button elements', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('has semantic button elements', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      // X, Cancel, Confirm, Confirm and Erase
-      expect(screen.getAllByRole('button')).toHaveLength(4);
-    });
+			// X, Cancel, Confirm, Confirm and Erase
+			expect(screen.getAllByRole('button')).toHaveLength(4);
+		});
 
-    it('has heading for modal title', () => {
-      renderWithLayerStack(
-        <DeleteAgentConfirmModal
-          theme={testTheme}
-          agentName="TestAgent"
-          workingDirectory="/home/user/project"
-          onConfirm={vi.fn()}
-          onConfirmAndErase={vi.fn()}
-          onClose={vi.fn()}
-        />
-      );
+		it('has heading for modal title', () => {
+			renderWithLayerStack(
+				<DeleteAgentConfirmModal
+					theme={testTheme}
+					agentName="TestAgent"
+					workingDirectory="/home/user/project"
+					onConfirm={vi.fn()}
+					onConfirmAndErase={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
 
-      expect(screen.getByRole('heading', { name: 'Confirm Delete' })).toBeInTheDocument();
-    });
-  });
+			expect(screen.getByRole('heading', { name: 'Confirm Delete' })).toBeInTheDocument();
+		});
+	});
 });

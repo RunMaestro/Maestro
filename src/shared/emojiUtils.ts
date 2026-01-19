@@ -18,9 +18,10 @@
  * stripLeadingEmojis("No emoji") // returns "No emoji"
  */
 export const stripLeadingEmojis = (str: string): string => {
-  // Match emojis at the start: emoji characters, variation selectors, ZWJ sequences, etc.
-  const emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F?|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?)+\s*/gu;
-  return str.replace(emojiRegex, '').trim();
+	// Match emojis at the start: emoji characters, variation selectors, ZWJ sequences, etc.
+	const emojiRegex =
+		/^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F?|\p{Emoji_Modifier_Base}\p{Emoji_Modifier}?)+\s*/gu;
+	return str.replace(emojiRegex, '').trim();
 };
 
 /**
@@ -36,7 +37,7 @@ export const stripLeadingEmojis = (str: string): string => {
  * compareNamesIgnoringEmojis("🎉 Zebra", "Alpha") // returns positive (Zebra > Alpha)
  */
 export const compareNamesIgnoringEmojis = (a: string, b: string): number => {
-  const aStripped = stripLeadingEmojis(a);
-  const bStripped = stripLeadingEmojis(b);
-  return aStripped.localeCompare(bStripped);
+	const aStripped = stripLeadingEmojis(a);
+	const bStripped = stripLeadingEmojis(b);
+	return aStripped.localeCompare(bStripped);
 };

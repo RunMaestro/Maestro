@@ -1,12 +1,23 @@
 import { useState, useEffect } from 'react';
-import { History, Play, Clock, DollarSign, BarChart2, CheckCircle, Bot, User, Eye, Layers } from 'lucide-react';
+import {
+	History,
+	Play,
+	Clock,
+	DollarSign,
+	BarChart2,
+	CheckCircle,
+	Bot,
+	User,
+	Eye,
+	Layers,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 
 interface HistoryHelpModalProps {
-  theme: Theme;
-  onClose: () => void;
+	theme: Theme;
+	onClose: () => void;
 }
 
 /**
@@ -14,328 +25,322 @@ interface HistoryHelpModalProps {
  * Replaces home directory with ~ for shorter display.
  */
 function formatHistoryPath(storagePath: string, homeDir: string): string {
-  // Detect Windows by checking for drive letter or backslash
-  const isWindows = /^[A-Za-z]:/.test(storagePath) || storagePath.includes('\\');
-  const separator = isWindows ? '\\' : '/';
-  const historySubpath = `history${separator}<sessionId>.json`;
+	// Detect Windows by checking for drive letter or backslash
+	const isWindows = /^[A-Za-z]:/.test(storagePath) || storagePath.includes('\\');
+	const separator = isWindows ? '\\' : '/';
+	const historySubpath = `history${separator}<sessionId>.json`;
 
-  let displayPath = storagePath;
+	let displayPath = storagePath;
 
-  // Replace home directory with ~ for cleaner display
-  if (homeDir && storagePath.startsWith(homeDir)) {
-    displayPath = '~' + storagePath.slice(homeDir.length);
-  }
+	// Replace home directory with ~ for cleaner display
+	if (homeDir && storagePath.startsWith(homeDir)) {
+		displayPath = '~' + storagePath.slice(homeDir.length);
+	}
 
-  // Ensure proper path separator
-  return `${displayPath}${separator}${historySubpath}`;
+	// Ensure proper path separator
+	return `${displayPath}${separator}${historySubpath}`;
 }
 
 export function HistoryHelpModal({ theme, onClose }: HistoryHelpModalProps) {
-  const [historyPath, setHistoryPath] = useState<string>('');
+	const [historyPath, setHistoryPath] = useState<string>('');
 
-  useEffect(() => {
-    async function loadPath() {
-      try {
-        const [storagePath, homeDir] = await Promise.all([
-          window.maestro.sync.getCurrentStoragePath(),
-          window.maestro.fs.homeDir(),
-        ]);
-        setHistoryPath(formatHistoryPath(storagePath, homeDir));
-      } catch {
-        // Fallback to generic path if API unavailable
-        setHistoryPath('<storage-folder>/history/<sessionId>.json');
-      }
-    }
-    loadPath();
-  }, []);
-  return (
-    <Modal
-      theme={theme}
-      title="History Panel Guide"
-      priority={MODAL_PRIORITIES.CONFIRM}
-      onClose={onClose}
-      width={672}
-      maxHeight="80vh"
-      closeOnBackdropClick
-      zIndex={50}
-      footer={
-        <button
-          onClick={onClose}
-          className="px-4 py-2 rounded text-sm font-medium transition-colors hover:opacity-90"
-          style={{
-            backgroundColor: theme.colors.accent,
-            color: 'white'
-          }}
-        >
-          Got it
-        </button>
-      }
-    >
-      <div
-        className="space-y-6"
-        style={{ color: theme.colors.textMain }}
-      >
-          {/* Introduction */}
-          <section>
-            <p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
-              The History panel tracks a synopsis of your work sessions, providing a searchable
-              log of completed tasks with full context preservation.
-            </p>
-          </section>
+	useEffect(() => {
+		async function loadPath() {
+			try {
+				const [storagePath, homeDir] = await Promise.all([
+					window.maestro.sync.getCurrentStoragePath(),
+					window.maestro.fs.homeDir(),
+				]);
+				setHistoryPath(formatHistoryPath(storagePath, homeDir));
+			} catch {
+				// Fallback to generic path if API unavailable
+				setHistoryPath('<storage-folder>/history/<sessionId>.json');
+			}
+		}
+		loadPath();
+	}, []);
+	return (
+		<Modal
+			theme={theme}
+			title="History Panel Guide"
+			priority={MODAL_PRIORITIES.CONFIRM}
+			onClose={onClose}
+			width={672}
+			maxHeight="80vh"
+			closeOnBackdropClick
+			zIndex={50}
+			footer={
+				<button
+					onClick={onClose}
+					className="px-4 py-2 rounded text-sm font-medium transition-colors hover:opacity-90"
+					style={{
+						backgroundColor: theme.colors.accent,
+						color: 'white',
+					}}
+				>
+					Got it
+				</button>
+			}
+		>
+			<div className="space-y-6" style={{ color: theme.colors.textMain }}>
+				{/* Introduction */}
+				<section>
+					<p className="text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
+						The History panel tracks a synopsis of your work sessions, providing a searchable log of
+						completed tasks with full context preservation.
+					</p>
+				</section>
 
-          {/* Entry Types */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <History className="w-5 h-5" style={{ color: theme.colors.accent }} />
-              <h3 className="font-bold">Entry Types</h3>
-            </div>
-            <div
-              className="text-sm space-y-3 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <div className="flex items-start gap-3">
-                <span
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
-                  style={{
-                    backgroundColor: theme.colors.accent + '20',
-                    color: theme.colors.accent,
-                    border: `1px solid ${theme.colors.accent}40`
-                  }}
-                >
-                  <User className="w-2.5 h-2.5" />
-                  USER
-                </span>
-                <p>
-                  Synopsis entries from your interactive work sessions. Created manually with{' '}
-                  <code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>/history</code>{' '}
-                  (creates a synopsis of everything since the last{' '}
-                  <code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>/history</code>)
-                  or automatically when using{' '}
-                  <code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>/clear</code>.
-                </p>
-              </div>
-              <div className="flex items-start gap-3">
-                <span
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
-                  style={{
-                    backgroundColor: theme.colors.warning + '20',
-                    color: theme.colors.warning,
-                    border: `1px solid ${theme.colors.warning}40`
-                  }}
-                >
-                  <Bot className="w-2.5 h-2.5" />
-                  AUTO
-                </span>
-                <p>
-                  Entries automatically generated by the Auto Runner after each task completes.
-                  These include success/failure indicators and human validation status.
-                </p>
-              </div>
-            </div>
-          </section>
+				{/* Entry Types */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<History className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Entry Types</h3>
+					</div>
+					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
+						<div className="flex items-start gap-3">
+							<span
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								style={{
+									backgroundColor: theme.colors.accent + '20',
+									color: theme.colors.accent,
+									border: `1px solid ${theme.colors.accent}40`,
+								}}
+							>
+								<User className="w-2.5 h-2.5" />
+								USER
+							</span>
+							<p>
+								Synopsis entries from your interactive work sessions. Created manually with{' '}
+								<code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+									/history
+								</code>{' '}
+								(creates a synopsis of everything since the last{' '}
+								<code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+									/history
+								</code>
+								) or automatically when using{' '}
+								<code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
+									/clear
+								</code>
+								.
+							</p>
+						</div>
+						<div className="flex items-start gap-3">
+							<span
+								className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase shrink-0"
+								style={{
+									backgroundColor: theme.colors.warning + '20',
+									color: theme.colors.warning,
+									border: `1px solid ${theme.colors.warning}40`,
+								}}
+							>
+								<Bot className="w-2.5 h-2.5" />
+								AUTO
+							</span>
+							<p>
+								Entries automatically generated by the Auto Runner after each task completes. These
+								include success/failure indicators and human validation status.
+							</p>
+						</div>
+					</div>
+				</section>
 
-          {/* Success Indicators */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <CheckCircle className="w-5 h-5" style={{ color: theme.colors.success }} />
-              <h3 className="font-bold">Status Indicators</h3>
-            </div>
-            <div
-              className="text-sm space-y-3 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                <span style={{ color: theme.colors.warning }}>AUTO</span> entries show a status indicator:
-              </p>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="flex items-center justify-center w-5 h-5 rounded-full"
-                    style={{
-                      backgroundColor: theme.colors.success + '20',
-                      border: `1px solid ${theme.colors.success}40`
-                    }}
-                  >
-                    <CheckCircle className="w-3 h-3" style={{ color: theme.colors.success }} />
-                  </span>
-                  <span>Task completed successfully</span>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="flex items-center justify-center w-5 h-5 rounded-full"
-                    style={{
-                      backgroundColor: theme.colors.success + '40',
-                      border: `1px solid ${theme.colors.success}60`
-                    }}
-                  >
-                    <svg className="w-3 h-3" style={{ color: theme.colors.success }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="15 6 6 17 1 12" />
-                      <polyline points="23 6 14 17 11 14" />
-                    </svg>
-                  </span>
-                  <span>Task completed successfully <strong style={{ color: theme.colors.textMain }}>and human-validated</strong></span>
-                </div>
-              </div>
-              <p className="mt-2">
-                You can validate auto tasks from the detail view by toggling the{' '}
-                <strong style={{ color: theme.colors.textMain }}>Validated</strong> option.
-              </p>
-            </div>
-          </section>
+				{/* Success Indicators */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<CheckCircle className="w-5 h-5" style={{ color: theme.colors.success }} />
+						<h3 className="font-bold">Status Indicators</h3>
+					</div>
+					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							<span style={{ color: theme.colors.warning }}>AUTO</span> entries show a status
+							indicator:
+						</p>
+						<div className="flex items-center gap-4">
+							<div className="flex items-center gap-2">
+								<span
+									className="flex items-center justify-center w-5 h-5 rounded-full"
+									style={{
+										backgroundColor: theme.colors.success + '20',
+										border: `1px solid ${theme.colors.success}40`,
+									}}
+								>
+									<CheckCircle className="w-3 h-3" style={{ color: theme.colors.success }} />
+								</span>
+								<span>Task completed successfully</span>
+							</div>
+						</div>
+						<div className="flex items-center gap-4">
+							<div className="flex items-center gap-2">
+								<span
+									className="flex items-center justify-center w-5 h-5 rounded-full"
+									style={{
+										backgroundColor: theme.colors.success + '40',
+										border: `1px solid ${theme.colors.success}60`,
+									}}
+								>
+									<svg
+										className="w-3 h-3"
+										style={{ color: theme.colors.success }}
+										viewBox="0 0 24 24"
+										fill="none"
+										stroke="currentColor"
+										strokeWidth="3"
+										strokeLinecap="round"
+										strokeLinejoin="round"
+									>
+										<polyline points="15 6 6 17 1 12" />
+										<polyline points="23 6 14 17 11 14" />
+									</svg>
+								</span>
+								<span>
+									Task completed successfully{' '}
+									<strong style={{ color: theme.colors.textMain }}>and human-validated</strong>
+								</span>
+							</div>
+						</div>
+						<p className="mt-2">
+							You can validate auto tasks from the detail view by toggling the{' '}
+							<strong style={{ color: theme.colors.textMain }}>Validated</strong> option.
+						</p>
+					</div>
+				</section>
 
-          {/* Detail View */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <Eye className="w-5 h-5" style={{ color: theme.colors.accent }} />
-              <h3 className="font-bold">Viewing Details</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                Click any history entry to open the full details view, which shows:
-              </p>
-              <ul className="list-disc list-inside space-y-1 ml-2">
-                <li>Complete synopsis text</li>
-                <li>Token usage (input/output counts)</li>
-                <li>Context window utilization</li>
-                <li>Total elapsed time</li>
-                <li>Cost for that task</li>
-              </ul>
-            </div>
-          </section>
+				{/* Detail View */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Eye className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Viewing Details</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>Click any history entry to open the full details view, which shows:</p>
+						<ul className="list-disc list-inside space-y-1 ml-2">
+							<li>Complete synopsis text</li>
+							<li>Token usage (input/output counts)</li>
+							<li>Context window utilization</li>
+							<li>Total elapsed time</li>
+							<li>Cost for that task</li>
+						</ul>
+					</div>
+				</section>
 
-          {/* Resume Session */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <Play className="w-5 h-5" style={{ color: theme.colors.success }} />
-              <h3 className="font-bold">Resuming Sessions</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                Each history entry preserves the Claude session ID. Click{' '}
-                <strong style={{ color: theme.colors.success }}>Resume</strong> to continue
-                that conversation with all its context intact.
-              </p>
-              <p>
-                This lets you pick up exactly where the task left off, make tweaks,
-                or continue building on the work that was done.
-              </p>
-            </div>
-          </section>
+				{/* Resume Session */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Play className="w-5 h-5" style={{ color: theme.colors.success }} />
+						<h3 className="font-bold">Resuming Sessions</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Each history entry preserves the Claude session ID. Click{' '}
+							<strong style={{ color: theme.colors.success }}>Resume</strong> to continue that
+							conversation with all its context intact.
+						</p>
+						<p>
+							This lets you pick up exactly where the task left off, make tweaks, or continue
+							building on the work that was done.
+						</p>
+					</div>
+				</section>
 
-          {/* Time and Cost */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <div className="flex items-center gap-1">
-                <Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
-                <DollarSign className="w-5 h-5" style={{ color: theme.colors.success }} />
-              </div>
-              <h3 className="font-bold">Time & Cost Tracking</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                Each entry displays the elapsed time and cost (when available), helping you
-                understand the resource usage of individual tasks.
-              </p>
-            </div>
-          </section>
+				{/* Time and Cost */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<div className="flex items-center gap-1">
+							<Clock className="w-5 h-5" style={{ color: theme.colors.accent }} />
+							<DollarSign className="w-5 h-5" style={{ color: theme.colors.success }} />
+						</div>
+						<h3 className="font-bold">Time & Cost Tracking</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Each entry displays the elapsed time and cost (when available), helping you understand
+							the resource usage of individual tasks.
+						</p>
+					</div>
+				</section>
 
-          {/* Activity Graph */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <BarChart2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
-              <h3 className="font-bold">Activity Graph</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                The bar graph in the header visualizes your activity over a configurable time period.
-              </p>
-              <p className="mt-2">
-                <strong style={{ color: theme.colors.textMain }}>Right-click the graph</strong> to choose from multiple lookback periods:
-                24 hours, 72 hours, 1 week, 2 weeks, 1 month, 6 months, 1 year, or all time.
-              </p>
-              <p>
-                <strong style={{ color: theme.colors.textMain }}>Click any bar</strong> to filter the history list to entries within that time bucket.
-              </p>
-              <p>
-                Hover over any bar to see the exact count and time range.
-              </p>
-            </div>
-          </section>
+				{/* Activity Graph */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<BarChart2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Activity Graph</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							The bar graph in the header visualizes your activity over a configurable time period.
+						</p>
+						<p className="mt-2">
+							<strong style={{ color: theme.colors.textMain }}>Right-click the graph</strong> to
+							choose from multiple lookback periods: 24 hours, 72 hours, 1 week, 2 weeks, 1 month, 6
+							months, 1 year, or all time.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Click any bar</strong> to filter the
+							history list to entries within that time bucket.
+						</p>
+						<p>Hover over any bar to see the exact count and time range.</p>
+					</div>
+				</section>
 
-          {/* Per-Session Storage */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
-              <h3 className="font-bold">Per-Session Storage</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                History is stored in per-session files with a limit of{' '}
-                <strong style={{ color: theme.colors.textMain }}>5,000 entries per session</strong>.
-                This provides better isolation and scalability compared to a single global file.
-              </p>
-              <p>
-                Use the{' '}
-                <span
-                  className="inline-flex items-center justify-center w-5 h-5 rounded"
-                  style={{
-                    border: `1px solid ${theme.colors.border}`,
-                    verticalAlign: 'middle'
-                  }}
-                >
-                  <Layers className="w-3 h-3" />
-                </span>{' '}
-                toggle button to switch between viewing only the current session's history
-                or a cross-session view of all history for the project.
-              </p>
-            </div>
-          </section>
+				{/* Per-Session Storage */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Per-Session Storage</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							History is stored in per-session files with a limit of{' '}
+							<strong style={{ color: theme.colors.textMain }}>5,000 entries per session</strong>.
+							This provides better isolation and scalability compared to a single global file.
+						</p>
+						<p>
+							Use the{' '}
+							<span
+								className="inline-flex items-center justify-center w-5 h-5 rounded"
+								style={{
+									border: `1px solid ${theme.colors.border}`,
+									verticalAlign: 'middle',
+								}}
+							>
+								<Layers className="w-3 h-3" />
+							</span>{' '}
+							toggle button to switch between viewing only the current session's history or a
+							cross-session view of all history for the project.
+						</p>
+					</div>
+				</section>
 
-          {/* AI Context Integration */}
-          <section>
-            <div className="flex items-center gap-2 mb-3">
-              <Bot className="w-5 h-5" style={{ color: theme.colors.accent }} />
-              <h3 className="font-bold">AI Context Integration</h3>
-            </div>
-            <div
-              className="text-sm space-y-2 pl-7"
-              style={{ color: theme.colors.textDim }}
-            >
-              <p>
-                History files can be passed directly to AI agents as context. Each session's
-                history is stored as a JSON file that the AI can read to understand past work.
-              </p>
-              <p>
-                <strong style={{ color: theme.colors.textMain }}>File location:</strong>{' '}
-                <code className="px-1.5 py-0.5 rounded text-[11px]" style={{ backgroundColor: theme.colors.bgActivity }}>
-                  {historyPath || 'Loading...'}
-                </code>
-              </p>
-              <p>
-                <strong style={{ color: theme.colors.textMain }}>Usage with Claude Code:</strong>{' '}
-                Reference the history file in your prompts to give the AI context about
-                completed tasks, decisions made, and work patterns in your session.
-              </p>
-            </div>
-          </section>
-      </div>
-    </Modal>
-  );
+				{/* AI Context Integration */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Bot className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">AI Context Integration</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							History files can be passed directly to AI agents as context. Each session's history
+							is stored as a JSON file that the AI can read to understand past work.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>File location:</strong>{' '}
+							<code
+								className="px-1.5 py-0.5 rounded text-[11px]"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								{historyPath || 'Loading...'}
+							</code>
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Usage with Claude Code:</strong>{' '}
+							Reference the history file in your prompts to give the AI context about completed
+							tasks, decisions made, and work patterns in your session.
+						</p>
+					</div>
+				</section>
+			</div>
+		</Modal>
+	);
 }

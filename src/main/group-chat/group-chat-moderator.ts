@@ -8,16 +8,9 @@
  * - Aggregates responses and maintains conversation flow
  */
 
-import {
-  GroupChat,
-  loadGroupChat,
-  updateGroupChat,
-} from './group-chat-storage';
+import { GroupChat, loadGroupChat, updateGroupChat } from './group-chat-storage';
 import { appendToLog, readLog } from './group-chat-log';
-import {
-  groupChatModeratorSystemPrompt,
-  groupChatModeratorSynthesisPrompt,
-} from '../../prompts';
+import { groupChatModeratorSystemPrompt, groupChatModeratorSynthesisPrompt } from '../../prompts';
 import { powerManager } from '../power-manager';
 
 /**
@@ -25,23 +18,23 @@ import { powerManager } from '../power-manager';
  * This allows for easy mocking in tests.
  */
 export interface IProcessManager {
-  spawn(config: {
-    sessionId: string;
-    toolType: string;
-    cwd: string;
-    command: string;
-    args: string[];
-    readOnlyMode?: boolean;
-    prompt?: string;
-    customEnvVars?: Record<string, string>;
-    contextWindow?: number;
-    promptArgs?: (prompt: string) => string[];
-    noPromptSeparator?: boolean;
-  }): { pid: number; success: boolean };
+	spawn(config: {
+		sessionId: string;
+		toolType: string;
+		cwd: string;
+		command: string;
+		args: string[];
+		readOnlyMode?: boolean;
+		prompt?: string;
+		customEnvVars?: Record<string, string>;
+		contextWindow?: number;
+		promptArgs?: (prompt: string) => string[];
+		noPromptSeparator?: boolean;
+	}): { pid: number; success: boolean };
 
-  write(sessionId: string, data: string): boolean;
+	write(sessionId: string, data: string): boolean;
 
-  kill(sessionId: string): boolean;
+	kill(sessionId: string): boolean;
 }
 
 /**
@@ -72,28 +65,31 @@ let cleanupIntervalId: NodeJS.Timeout | null = null;
  * Should be called once during application initialization.
  */
 export function startSessionCleanup(): void {
-  if (cleanupIntervalId) return; // Already running
+	if (cleanupIntervalId) return; // Already running
 
-  // Run cleanup every 10 minutes
-  cleanupIntervalId = setInterval(() => {
-    const now = Date.now();
-    const staleIds: string[] = [];
+	// Run cleanup every 10 minutes
+	cleanupIntervalId = setInterval(
+		() => {
+			const now = Date.now();
+			const staleIds: string[] = [];
 
-    for (const [groupChatId, timestamp] of sessionActivityTimestamps) {
-      if (now - timestamp > STALE_SESSION_THRESHOLD_MS) {
-        staleIds.push(groupChatId);
-      }
-    }
+			for (const [groupChatId, timestamp] of sessionActivityTimestamps) {
+				if (now - timestamp > STALE_SESSION_THRESHOLD_MS) {
+					staleIds.push(groupChatId);
+				}
+			}
 
-    for (const id of staleIds) {
-      activeModeratorSessions.delete(id);
-      sessionActivityTimestamps.delete(id);
-    }
+			for (const id of staleIds) {
+				activeModeratorSessions.delete(id);
+				sessionActivityTimestamps.delete(id);
+			}
 
-    if (staleIds.length > 0) {
-      console.log(`[GroupChatModerator] Cleaned up ${staleIds.length} stale session(s)`);
-    }
-  }, 10 * 60 * 1000);
+			if (staleIds.length > 0) {
+				console.log(`[GroupChatModerator] Cleaned up ${staleIds.length} stale session(s)`);
+			}
+		},
+		10 * 60 * 1000
+	);
 }
 
 /**
@@ -101,10 +97,10 @@ export function startSessionCleanup(): void {
  * Should be called during application shutdown.
  */
 export function stopSessionCleanup(): void {
-  if (cleanupIntervalId) {
-    clearInterval(cleanupIntervalId);
-    cleanupIntervalId = null;
-  }
+	if (cleanupIntervalId) {
+		clearInterval(cleanupIntervalId);
+		cleanupIntervalId = null;
+	}
 }
 
 /**
@@ -112,7 +108,7 @@ export function stopSessionCleanup(): void {
  * Call this when the session is actively used.
  */
 function touchSession(groupChatId: string): void {
-  sessionActivityTimestamps.set(groupChatId, Date.now());
+	sessionActivityTimestamps.set(groupChatId, Date.now());
 }
 
 /**
@@ -121,7 +117,7 @@ function touchSession(groupChatId: string): void {
  * Loaded from src/prompts/group-chat-moderator-system.md
  */
 export function getModeratorSystemPrompt(): string {
-  return groupChatModeratorSystemPrompt;
+	return groupChatModeratorSystemPrompt;
 }
 
 /**
@@ -130,7 +126,7 @@ export function getModeratorSystemPrompt(): string {
  * Loaded from src/prompts/group-chat-moderator-synthesis.md
  */
 export function getModeratorSynthesisPrompt(): string {
-  return groupChatModeratorSynthesisPrompt;
+	return groupChatModeratorSynthesisPrompt;
 }
 
 /**
@@ -145,35 +141,35 @@ export function getModeratorSynthesisPrompt(): string {
  * @returns The session ID prefix that will be used for moderator messages
  */
 export async function spawnModerator(
-  chat: GroupChat,
-  _processManager: IProcessManager,
-  _cwd: string = process.env.HOME || '/tmp'
+	chat: GroupChat,
+	_processManager: IProcessManager,
+	_cwd: string = process.env.HOME || '/tmp'
 ): Promise<string> {
-  console.log(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
-  console.log(`[GroupChat:Debug] Chat ID: ${chat.id}`);
-  console.log(`[GroupChat:Debug] Chat Name: ${chat.name}`);
-  console.log(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
+	console.log(`[GroupChat:Debug] ========== SPAWNING MODERATOR ==========`);
+	console.log(`[GroupChat:Debug] Chat ID: ${chat.id}`);
+	console.log(`[GroupChat:Debug] Chat Name: ${chat.name}`);
+	console.log(`[GroupChat:Debug] Moderator Agent ID: ${chat.moderatorAgentId}`);
 
-  // Generate a session ID prefix for this group chat's moderator
-  // Each message will use this prefix with a timestamp suffix
-  const sessionIdPrefix = `group-chat-${chat.id}-moderator`;
+	// Generate a session ID prefix for this group chat's moderator
+	// Each message will use this prefix with a timestamp suffix
+	const sessionIdPrefix = `group-chat-${chat.id}-moderator`;
 
-  console.log(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
+	console.log(`[GroupChat:Debug] Generated session ID prefix: ${sessionIdPrefix}`);
 
-  // Store the session mapping (using prefix as identifier)
-  activeModeratorSessions.set(chat.id, sessionIdPrefix);
+	// Store the session mapping (using prefix as identifier)
+	activeModeratorSessions.set(chat.id, sessionIdPrefix);
 
-  // Track session activity for cleanup
-  touchSession(chat.id);
+	// Track session activity for cleanup
+	touchSession(chat.id);
 
-  // Update the group chat with the moderator session ID prefix
-  await updateGroupChat(chat.id, { moderatorSessionId: sessionIdPrefix });
+	// Update the group chat with the moderator session ID prefix
+	await updateGroupChat(chat.id, { moderatorSessionId: sessionIdPrefix });
 
-  console.log(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
-  console.log(`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`);
-  console.log(`[GroupChat:Debug] ==========================================`);
+	console.log(`[GroupChat:Debug] Moderator initialized and stored in active sessions`);
+	console.log(`[GroupChat:Debug] Active moderator sessions count: ${activeModeratorSessions.size}`);
+	console.log(`[GroupChat:Debug] ==========================================`);
 
-  return sessionIdPrefix;
+	return sessionIdPrefix;
 }
 
 /**
@@ -184,28 +180,28 @@ export async function spawnModerator(
  * @param processManager - The process manager (optional, for sending to agent)
  */
 export async function sendToModerator(
-  groupChatId: string,
-  message: string,
-  processManager?: IProcessManager
+	groupChatId: string,
+	message: string,
+	processManager?: IProcessManager
 ): Promise<void> {
-  const chat = await loadGroupChat(groupChatId);
-  if (!chat) {
-    throw new Error(`Group chat not found: ${groupChatId}`);
-  }
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		throw new Error(`Group chat not found: ${groupChatId}`);
+	}
 
-  // Log the message
-  await appendToLog(chat.logPath, 'user', message);
+	// Log the message
+	await appendToLog(chat.logPath, 'user', message);
 
-  // Update session activity
-  touchSession(groupChatId);
+	// Update session activity
+	touchSession(groupChatId);
 
-  // If process manager is provided, also send to the moderator session
-  if (processManager) {
-    const sessionId = activeModeratorSessions.get(groupChatId);
-    if (sessionId) {
-      processManager.write(sessionId, message + '\n');
-    }
-  }
+	// If process manager is provided, also send to the moderator session
+	if (processManager) {
+		const sessionId = activeModeratorSessions.get(groupChatId);
+		if (sessionId) {
+			processManager.write(sessionId, message + '\n');
+		}
+	}
 }
 
 /**
@@ -215,27 +211,27 @@ export async function sendToModerator(
  * @param processManager - The process manager (optional, for killing the process)
  */
 export async function killModerator(
-  groupChatId: string,
-  processManager?: IProcessManager
+	groupChatId: string,
+	processManager?: IProcessManager
 ): Promise<void> {
-  const sessionId = activeModeratorSessions.get(groupChatId);
+	const sessionId = activeModeratorSessions.get(groupChatId);
 
-  if (sessionId && processManager) {
-    processManager.kill(sessionId);
-  }
+	if (sessionId && processManager) {
+		processManager.kill(sessionId);
+	}
 
-  activeModeratorSessions.delete(groupChatId);
-  sessionActivityTimestamps.delete(groupChatId);
+	activeModeratorSessions.delete(groupChatId);
+	sessionActivityTimestamps.delete(groupChatId);
 
-  // Remove power block reason when moderator is killed
-  powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+	// Remove power block reason when moderator is killed
+	powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 
-  // Clear the session ID in storage
-  try {
-    await updateGroupChat(groupChatId, { moderatorSessionId: '' });
-  } catch {
-    // Chat may already be deleted
-  }
+	// Clear the session ID in storage
+	try {
+		await updateGroupChat(groupChatId, { moderatorSessionId: '' });
+	} catch {
+		// Chat may already be deleted
+	}
 }
 
 /**
@@ -245,7 +241,7 @@ export async function killModerator(
  * @returns The session ID, or undefined if no moderator is active
  */
 export function getModeratorSessionId(groupChatId: string): string | undefined {
-  return activeModeratorSessions.get(groupChatId);
+	return activeModeratorSessions.get(groupChatId);
 }
 
 /**
@@ -255,7 +251,7 @@ export function getModeratorSessionId(groupChatId: string): string | undefined {
  * @returns True if a moderator is active
  */
 export function isModeratorActive(groupChatId: string): boolean {
-  return activeModeratorSessions.has(groupChatId);
+	return activeModeratorSessions.has(groupChatId);
 }
 
 /**
@@ -263,8 +259,8 @@ export function isModeratorActive(groupChatId: string): boolean {
  * Useful for cleanup during shutdown or testing.
  */
 export function clearAllModeratorSessions(): void {
-  activeModeratorSessions.clear();
-  sessionActivityTimestamps.clear();
+	activeModeratorSessions.clear();
+	sessionActivityTimestamps.clear();
 }
 
 /**
@@ -275,10 +271,10 @@ export function clearAllModeratorSessions(): void {
  * @returns Array of messages from the chat log
  */
 export async function getModeratorChatLog(groupChatId: string) {
-  const chat = await loadGroupChat(groupChatId);
-  if (!chat) {
-    throw new Error(`Group chat not found: ${groupChatId}`);
-  }
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		throw new Error(`Group chat not found: ${groupChatId}`);
+	}
 
-  return readLog(chat.logPath);
+	return readLog(chat.logPath);
 }

@@ -5,8 +5,8 @@ import type { RightPanelHandle } from '../../components/RightPanel';
  * Dependencies for the useWebBroadcasting hook.
  */
 export interface UseWebBroadcastingDeps {
-  /** Ref to RightPanel for refreshing history panel */
-  rightPanelRef: React.RefObject<RightPanelHandle | null>;
+	/** Ref to RightPanel for refreshing history panel */
+	rightPanelRef: React.RefObject<RightPanelHandle | null>;
 }
 
 /**
@@ -14,7 +14,7 @@ export interface UseWebBroadcastingDeps {
  * Currently empty as all functionality is side effects.
  */
 export interface UseWebBroadcastingReturn {
-  // No return values - all functionality is via side effects
+	// No return values - all functionality is via side effects
 }
 
 /**
@@ -31,17 +31,17 @@ export interface UseWebBroadcastingReturn {
  * @returns Empty object (all functionality via side effects)
  */
 export function useWebBroadcasting(deps: UseWebBroadcastingDeps): UseWebBroadcastingReturn {
-  const { rightPanelRef } = deps;
+	const { rightPanelRef } = deps;
 
-  // Listen for external history changes (e.g., from CLI) and refresh history panel
-  useEffect(() => {
-    const unsubscribe = window.maestro.history.onExternalChange(async () => {
-      // Reload from disk before refreshing (to bypass electron-store cache)
-      await window.maestro.history.reload();
-      rightPanelRef.current?.refreshHistoryPanel();
-    });
-    return unsubscribe;
-  }, [rightPanelRef]);
+	// Listen for external history changes (e.g., from CLI) and refresh history panel
+	useEffect(() => {
+		const unsubscribe = window.maestro.history.onExternalChange(async () => {
+			// Reload from disk before refreshing (to bypass electron-store cache)
+			await window.maestro.history.reload();
+			rightPanelRef.current?.refreshHistoryPanel();
+		});
+		return unsubscribe;
+	}, [rightPanelRef]);
 
-  return {};
+	return {};
 }

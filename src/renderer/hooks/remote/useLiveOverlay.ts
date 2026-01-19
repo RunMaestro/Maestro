@@ -15,41 +15,41 @@ export type UrlTab = 'local' | 'remote';
  * Return type for the useLiveOverlay hook
  */
 export interface UseLiveOverlayReturn {
-  // Overlay state
-  /** Whether the live overlay panel is open */
-  liveOverlayOpen: boolean;
-  /** Set the live overlay open state */
-  setLiveOverlayOpen: (open: boolean) => void;
-  /** Ref for the overlay container (for click-outside detection) */
-  liveOverlayRef: RefObject<HTMLDivElement>;
+	// Overlay state
+	/** Whether the live overlay panel is open */
+	liveOverlayOpen: boolean;
+	/** Set the live overlay open state */
+	setLiveOverlayOpen: (open: boolean) => void;
+	/** Ref for the overlay container (for click-outside detection) */
+	liveOverlayRef: RefObject<HTMLDivElement>;
 
-  // Cloudflared state
-  /** Whether cloudflared is installed (null = not checked yet) */
-  cloudflaredInstalled: boolean | null;
-  /** Whether we've checked for cloudflared installation */
-  cloudflaredChecked: boolean;
+	// Cloudflared state
+	/** Whether cloudflared is installed (null = not checked yet) */
+	cloudflaredInstalled: boolean | null;
+	/** Whether we've checked for cloudflared installation */
+	cloudflaredChecked: boolean;
 
-  // Tunnel state
-  /** Current tunnel status */
-  tunnelStatus: TunnelStatus;
-  /** Remote tunnel URL when connected */
-  tunnelUrl: string | null;
-  /** Error message if tunnel fails to start */
-  tunnelError: string | null;
-  /** Currently active URL tab (local or remote) */
-  activeUrlTab: UrlTab;
-  /** Set the active URL tab */
-  setActiveUrlTab: (tab: UrlTab) => void;
+	// Tunnel state
+	/** Current tunnel status */
+	tunnelStatus: TunnelStatus;
+	/** Remote tunnel URL when connected */
+	tunnelUrl: string | null;
+	/** Error message if tunnel fails to start */
+	tunnelError: string | null;
+	/** Currently active URL tab (local or remote) */
+	activeUrlTab: UrlTab;
+	/** Set the active URL tab */
+	setActiveUrlTab: (tab: UrlTab) => void;
 
-  // Copy flash state
-  /** Flash message shown after copying URL */
-  copyFlash: string | null;
-  /** Set the copy flash message (auto-clears after 2s) */
-  setCopyFlash: (message: string | null) => void;
+	// Copy flash state
+	/** Flash message shown after copying URL */
+	copyFlash: string | null;
+	/** Set the copy flash message (auto-clears after 2s) */
+	setCopyFlash: (message: string | null) => void;
 
-  // Handlers
-  /** Toggle the tunnel on/off */
-  handleTunnelToggle: () => Promise<void>;
+	// Handlers
+	/** Toggle the tunnel on/off */
+	handleTunnelToggle: () => Promise<void>;
 }
 
 /**
@@ -69,113 +69,113 @@ export interface UseLiveOverlayReturn {
  * @returns Object containing overlay state, tunnel state, and handlers
  */
 export function useLiveOverlay(isLiveMode: boolean): UseLiveOverlayReturn {
-  // Overlay state
-  const [liveOverlayOpen, setLiveOverlayOpen] = useState(false);
-  const liveOverlayRef = useRef<HTMLDivElement>(null);
+	// Overlay state
+	const [liveOverlayOpen, setLiveOverlayOpen] = useState(false);
+	const liveOverlayRef = useRef<HTMLDivElement>(null);
 
-  // Cloudflared installation status (cached after first check)
-  const [cloudflaredInstalled, setCloudflaredInstalled] = useState<boolean | null>(null);
-  const [cloudflaredChecked, setCloudflaredChecked] = useState(false);
+	// Cloudflared installation status (cached after first check)
+	const [cloudflaredInstalled, setCloudflaredInstalled] = useState<boolean | null>(null);
+	const [cloudflaredChecked, setCloudflaredChecked] = useState(false);
 
-  // Tunnel state
-  const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>('off');
-  const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
-  const [tunnelError, setTunnelError] = useState<string | null>(null);
-  const [activeUrlTab, setActiveUrlTab] = useState<UrlTab>('local');
+	// Tunnel state
+	const [tunnelStatus, setTunnelStatus] = useState<TunnelStatus>('off');
+	const [tunnelUrl, setTunnelUrl] = useState<string | null>(null);
+	const [tunnelError, setTunnelError] = useState<string | null>(null);
+	const [activeUrlTab, setActiveUrlTab] = useState<UrlTab>('local');
 
-  // Copy flash state
-  const [copyFlash, setCopyFlashState] = useState<string | null>(null);
+	// Copy flash state
+	const [copyFlash, setCopyFlashState] = useState<string | null>(null);
 
-  // Wrapper for setCopyFlash that auto-clears after 2 seconds
-  const setCopyFlash = useCallback((message: string | null) => {
-    setCopyFlashState(message);
-    if (message) {
-      setTimeout(() => setCopyFlashState(null), 2000);
-    }
-  }, []);
+	// Wrapper for setCopyFlash that auto-clears after 2 seconds
+	const setCopyFlash = useCallback((message: string | null) => {
+		setCopyFlashState(message);
+		if (message) {
+			setTimeout(() => setCopyFlashState(null), 2000);
+		}
+	}, []);
 
-  // Close live overlay when clicking outside
-  useClickOutside(liveOverlayRef, () => setLiveOverlayOpen(false), liveOverlayOpen);
+	// Close live overlay when clicking outside
+	useClickOutside(liveOverlayRef, () => setLiveOverlayOpen(false), liveOverlayOpen);
 
-  // Check for cloudflared installation when Live overlay opens
-  useEffect(() => {
-    if (isLiveMode && liveOverlayOpen && !cloudflaredChecked) {
-      window.maestro.tunnel.isCloudflaredInstalled().then((installed: boolean) => {
-        setCloudflaredInstalled(installed);
-        setCloudflaredChecked(true);
-      });
-    }
-  }, [isLiveMode, liveOverlayOpen, cloudflaredChecked]);
+	// Check for cloudflared installation when Live overlay opens
+	useEffect(() => {
+		if (isLiveMode && liveOverlayOpen && !cloudflaredChecked) {
+			window.maestro.tunnel.isCloudflaredInstalled().then((installed: boolean) => {
+				setCloudflaredInstalled(installed);
+				setCloudflaredChecked(true);
+			});
+		}
+	}, [isLiveMode, liveOverlayOpen, cloudflaredChecked]);
 
-  // Reset tunnel state when live mode is disabled
-  useEffect(() => {
-    if (!isLiveMode) {
-      setTunnelStatus('off');
-      setTunnelUrl(null);
-      setTunnelError(null);
-      setActiveUrlTab('local');
-    }
-  }, [isLiveMode]);
+	// Reset tunnel state when live mode is disabled
+	useEffect(() => {
+		if (!isLiveMode) {
+			setTunnelStatus('off');
+			setTunnelUrl(null);
+			setTunnelError(null);
+			setActiveUrlTab('local');
+		}
+	}, [isLiveMode]);
 
-  // Handle tunnel toggle (start/stop remote access)
-  const handleTunnelToggle = useCallback(async () => {
-    if (tunnelStatus === 'connected') {
-      // Turn off tunnel
-      try {
-        await window.maestro.tunnel.stop();
-      } catch (error) {
-        console.error('[handleTunnelToggle] Failed to stop tunnel:', error);
-        // Continue anyway - we still want to update UI state
-      }
-      setTunnelStatus('off');
-      setTunnelUrl(null);
-      setTunnelError(null);
-      setActiveUrlTab('local'); // Switch back to local tab
-    } else if (tunnelStatus === 'off') {
-      // Turn on tunnel
-      setTunnelStatus('starting');
-      setTunnelError(null);
+	// Handle tunnel toggle (start/stop remote access)
+	const handleTunnelToggle = useCallback(async () => {
+		if (tunnelStatus === 'connected') {
+			// Turn off tunnel
+			try {
+				await window.maestro.tunnel.stop();
+			} catch (error) {
+				console.error('[handleTunnelToggle] Failed to stop tunnel:', error);
+				// Continue anyway - we still want to update UI state
+			}
+			setTunnelStatus('off');
+			setTunnelUrl(null);
+			setTunnelError(null);
+			setActiveUrlTab('local'); // Switch back to local tab
+		} else if (tunnelStatus === 'off') {
+			// Turn on tunnel
+			setTunnelStatus('starting');
+			setTunnelError(null);
 
-      try {
-        const result = await window.maestro.tunnel.start();
-        if (result.success && result.url) {
-          setTunnelStatus('connected');
-          setTunnelUrl(result.url);
-          setActiveUrlTab('remote'); // Auto-switch to remote tab
-        } else {
-          setTunnelStatus('error');
-          setTunnelError(result.error || 'Failed to start tunnel');
-        }
-      } catch (error) {
-        console.error('[handleTunnelToggle] Failed to start tunnel:', error);
-        setTunnelStatus('error');
-        setTunnelError(error instanceof Error ? error.message : 'Failed to start tunnel');
-      }
-    }
-  }, [tunnelStatus]);
+			try {
+				const result = await window.maestro.tunnel.start();
+				if (result.success && result.url) {
+					setTunnelStatus('connected');
+					setTunnelUrl(result.url);
+					setActiveUrlTab('remote'); // Auto-switch to remote tab
+				} else {
+					setTunnelStatus('error');
+					setTunnelError(result.error || 'Failed to start tunnel');
+				}
+			} catch (error) {
+				console.error('[handleTunnelToggle] Failed to start tunnel:', error);
+				setTunnelStatus('error');
+				setTunnelError(error instanceof Error ? error.message : 'Failed to start tunnel');
+			}
+		}
+	}, [tunnelStatus]);
 
-  return {
-    // Overlay state
-    liveOverlayOpen,
-    setLiveOverlayOpen,
-    liveOverlayRef,
+	return {
+		// Overlay state
+		liveOverlayOpen,
+		setLiveOverlayOpen,
+		liveOverlayRef,
 
-    // Cloudflared state
-    cloudflaredInstalled,
-    cloudflaredChecked,
+		// Cloudflared state
+		cloudflaredInstalled,
+		cloudflaredChecked,
 
-    // Tunnel state
-    tunnelStatus,
-    tunnelUrl,
-    tunnelError,
-    activeUrlTab,
-    setActiveUrlTab,
+		// Tunnel state
+		tunnelStatus,
+		tunnelUrl,
+		tunnelError,
+		activeUrlTab,
+		setActiveUrlTab,
 
-    // Copy flash state
-    copyFlash,
-    setCopyFlash,
+		// Copy flash state
+		copyFlash,
+		setCopyFlash,
 
-    // Handlers
-    handleTunnelToggle,
-  };
+		// Handlers
+		handleTunnelToggle,
+	};
 }

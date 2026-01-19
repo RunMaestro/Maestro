@@ -21,85 +21,85 @@ import { EventEmitter } from 'events';
 // Create mock spawn function at module level
 const mockSpawn = vi.fn();
 const mockStdin = {
-  end: vi.fn(),
+	end: vi.fn(),
 };
 const mockStdout = new EventEmitter();
 const mockStderr = new EventEmitter();
 const mockChild = Object.assign(new EventEmitter(), {
-  stdin: mockStdin,
-  stdout: mockStdout,
-  stderr: mockStderr,
+	stdin: mockStdin,
+	stdout: mockStdout,
+	stderr: mockStderr,
 });
 
 // Mock child_process before imports
 vi.mock('child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('child_process')>();
-  return {
-    ...actual,
-    spawn: (...args: unknown[]) => mockSpawn(...args),
-    default: {
-      ...actual,
-      spawn: (...args: unknown[]) => mockSpawn(...args),
-    },
-  };
+	const actual = await importOriginal<typeof import('child_process')>();
+	return {
+		...actual,
+		spawn: (...args: unknown[]) => mockSpawn(...args),
+		default: {
+			...actual,
+			spawn: (...args: unknown[]) => mockSpawn(...args),
+		},
+	};
 });
 
 // Mock fs module
 vi.mock('fs', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs')>();
-  return {
-    ...actual,
-    readFileSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    promises: {
-      stat: vi.fn(),
-      access: vi.fn(),
-    },
-    constants: {
-      X_OK: 1,
-    },
-  };
+	const actual = await importOriginal<typeof import('fs')>();
+	return {
+		...actual,
+		readFileSync: vi.fn(),
+		writeFileSync: vi.fn(),
+		promises: {
+			stat: vi.fn(),
+			access: vi.fn(),
+		},
+		constants: {
+			X_OK: 1,
+		},
+	};
 });
 
 // Mock os module
 vi.mock('os', () => ({
-  homedir: vi.fn(() => '/Users/testuser'),
+	homedir: vi.fn(() => '/Users/testuser'),
 }));
 
 // Mock storage service
 const mockGetAgentCustomPath = vi.fn();
 vi.mock('../../../cli/services/storage', () => ({
-  getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
+	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
 }));
 
 import {
-  readDocAndCountTasks,
-  readDocAndGetTasks,
-  uncheckAllTasks,
-  writeDoc,
-  getClaudeCommand,
-  detectClaude,
-  spawnAgent,
-  AgentResult,
+	readDocAndCountTasks,
+	readDocAndGetTasks,
+	uncheckAllTasks,
+	writeDoc,
+	getClaudeCommand,
+	detectClaude,
+	spawnAgent,
+	AgentResult,
 } from '../../../cli/services/agent-spawner';
 
 describe('agent-spawner', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Reset mock child emitter for each test
-    mockStdout.removeAllListeners();
-    mockStderr.removeAllListeners();
-    (mockChild as EventEmitter).removeAllListeners();
-    mockGetAgentCustomPath.mockReturnValue(undefined);
-  });
+	beforeEach(() => {
+		vi.clearAllMocks();
+		// Reset mock child emitter for each test
+		mockStdout.removeAllListeners();
+		mockStderr.removeAllListeners();
+		(mockChild as EventEmitter).removeAllListeners();
+		mockGetAgentCustomPath.mockReturnValue(undefined);
+	});
 
-  afterEach(() => {
-    vi.restoreAllMocks();
-  });
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
 
-  describe('readDocAndCountTasks', () => {
-    it('should count unchecked tasks in a document', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+	describe('readDocAndCountTasks', () => {
+		it('should count unchecked tasks in a document', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 # Task List
 
 - [ ] First task
@@ -108,68 +108,68 @@ describe('agent-spawner', () => {
 - [ ] Third task
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'tasks');
+			const result = readDocAndCountTasks('/playbooks', 'tasks');
 
-      expect(result.taskCount).toBe(3);
-      expect(result.content).toContain('First task');
-    });
+			expect(result.taskCount).toBe(3);
+			expect(result.content).toContain('First task');
+		});
 
-    it('should return zero count for document with no unchecked tasks', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should return zero count for document with no unchecked tasks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 # Task List
 
 - [x] Completed task
 - [x] Another completed
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'tasks');
+			const result = readDocAndCountTasks('/playbooks', 'tasks');
 
-      expect(result.taskCount).toBe(0);
-    });
+			expect(result.taskCount).toBe(0);
+		});
 
-    it('should return empty content and zero count when file does not exist', () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error('ENOENT');
-      });
+		it('should return empty content and zero count when file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
 
-      const result = readDocAndCountTasks('/playbooks', 'missing');
+			const result = readDocAndCountTasks('/playbooks', 'missing');
 
-      expect(result.content).toBe('');
-      expect(result.taskCount).toBe(0);
-    });
+			expect(result.content).toBe('');
+			expect(result.taskCount).toBe(0);
+		});
 
-    it('should handle various checkbox formats', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should handle various checkbox formats', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ] Basic unchecked
   - [ ] Nested unchecked
     - [ ] Deeply nested
 - [ ]    Extra spaces after checkbox
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'tasks');
+			const result = readDocAndCountTasks('/playbooks', 'tasks');
 
-      expect(result.taskCount).toBe(4);
-    });
+			expect(result.taskCount).toBe(4);
+		});
 
-    it('should append .md extension to filename', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue('- [ ] Task');
+		it('should append .md extension to filename', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue('- [ ] Task');
 
-      readDocAndCountTasks('/playbooks', 'tasks');
+			readDocAndCountTasks('/playbooks', 'tasks');
 
-      expect(fs.readFileSync).toHaveBeenCalledWith('/playbooks/tasks.md', 'utf-8');
-    });
+			expect(fs.readFileSync).toHaveBeenCalledWith('/playbooks/tasks.md', 'utf-8');
+		});
 
-    it('should handle document with only whitespace', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue('   \n  \n   ');
+		it('should handle document with only whitespace', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue('   \n  \n   ');
 
-      const result = readDocAndCountTasks('/playbooks', 'empty');
+			const result = readDocAndCountTasks('/playbooks', 'empty');
 
-      expect(result.taskCount).toBe(0);
-      expect(result.content).toBe('   \n  \n   ');
-    });
+			expect(result.taskCount).toBe(0);
+			expect(result.content).toBe('   \n  \n   ');
+		});
 
-    it('should count tasks with varying indentation levels', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should count tasks with varying indentation levels', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ] No indent
  - [ ] One space
   - [ ] Two spaces
@@ -177,40 +177,40 @@ describe('agent-spawner', () => {
     - [ ] Four spaces
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'indented');
+			const result = readDocAndCountTasks('/playbooks', 'indented');
 
-      expect(result.taskCount).toBe(5);
-    });
+			expect(result.taskCount).toBe(5);
+		});
 
-    it('should not count tasks with text before checkbox', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should not count tasks with text before checkbox', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 text - [ ] This should not count
 - [ ] This should count
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'mixed');
+			const result = readDocAndCountTasks('/playbooks', 'mixed');
 
-      // The regex only matches lines starting with optional whitespace then -
-      expect(result.taskCount).toBe(1);
-    });
+			// The regex only matches lines starting with optional whitespace then -
+			expect(result.taskCount).toBe(1);
+		});
 
-    it('should count empty checkbox tasks', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should count empty checkbox tasks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ]
 - [ ] Task with content
       `);
 
-      const result = readDocAndCountTasks('/playbooks', 'empty-tasks');
+			const result = readDocAndCountTasks('/playbooks', 'empty-tasks');
 
-      // Empty checkbox line might not match due to regex requiring content
-      // Let's verify behavior
-      expect(result.taskCount).toBeGreaterThanOrEqual(1);
-    });
-  });
+			// Empty checkbox line might not match due to regex requiring content
+			// Let's verify behavior
+			expect(result.taskCount).toBeGreaterThanOrEqual(1);
+		});
+	});
 
-  describe('readDocAndGetTasks', () => {
-    it('should extract task text from unchecked items', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+	describe('readDocAndGetTasks', () => {
+		it('should extract task text from unchecked items', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 # Task List
 
 - [ ] First task
@@ -219,93 +219,85 @@ text - [ ] This should not count
 - [ ] Third task
       `);
 
-      const result = readDocAndGetTasks('/playbooks', 'tasks');
+			const result = readDocAndGetTasks('/playbooks', 'tasks');
 
-      expect(result.tasks).toEqual([
-        'First task',
-        'Second task with details',
-        'Third task',
-      ]);
-    });
+			expect(result.tasks).toEqual(['First task', 'Second task with details', 'Third task']);
+		});
 
-    it('should return empty array for document with no unchecked tasks', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should return empty array for document with no unchecked tasks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 # All Done!
 
 - [x] Completed
       `);
 
-      const result = readDocAndGetTasks('/playbooks', 'tasks');
+			const result = readDocAndGetTasks('/playbooks', 'tasks');
 
-      expect(result.tasks).toEqual([]);
-    });
+			expect(result.tasks).toEqual([]);
+		});
 
-    it('should return empty content and tasks when file does not exist', () => {
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
-        throw new Error('ENOENT');
-      });
+		it('should return empty content and tasks when file does not exist', () => {
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw new Error('ENOENT');
+			});
 
-      const result = readDocAndGetTasks('/playbooks', 'missing');
+			const result = readDocAndGetTasks('/playbooks', 'missing');
 
-      expect(result.content).toBe('');
-      expect(result.tasks).toEqual([]);
-    });
+			expect(result.content).toBe('');
+			expect(result.tasks).toEqual([]);
+		});
 
-    it('should trim task text properly', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should trim task text properly', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ]    Task with leading spaces
 - [ ] Task with trailing spaces
       `);
 
-      const result = readDocAndGetTasks('/playbooks', 'tasks');
+			const result = readDocAndGetTasks('/playbooks', 'tasks');
 
-      expect(result.tasks[0]).toBe('Task with leading spaces');
-      expect(result.tasks[1]).toBe('Task with trailing spaces');
-    });
+			expect(result.tasks[0]).toBe('Task with leading spaces');
+			expect(result.tasks[1]).toBe('Task with trailing spaces');
+		});
 
-    it('should preserve task content with special characters', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should preserve task content with special characters', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ] Task with "quotes" and 'apostrophes'
 - [ ] Task with code: \`npm install\`
 - [ ] Task with **bold** and *italic*
 - [ ] Task with emoji 🚀
       `);
 
-      const result = readDocAndGetTasks('/playbooks', 'special');
+			const result = readDocAndGetTasks('/playbooks', 'special');
 
-      expect(result.tasks).toHaveLength(4);
-      expect(result.tasks[0]).toContain('"quotes"');
-      expect(result.tasks[3]).toContain('🚀');
-    });
+			expect(result.tasks).toHaveLength(4);
+			expect(result.tasks[0]).toContain('"quotes"');
+			expect(result.tasks[3]).toContain('🚀');
+		});
 
-    it('should handle nested tasks', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue(`
+		it('should handle nested tasks', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue(`
 - [ ] Parent task
   - [ ] Child task
     - [ ] Grandchild task
       `);
 
-      const result = readDocAndGetTasks('/playbooks', 'nested');
+			const result = readDocAndGetTasks('/playbooks', 'nested');
 
-      expect(result.tasks).toEqual([
-        'Parent task',
-        'Child task',
-        'Grandchild task',
-      ]);
-    });
+			expect(result.tasks).toEqual(['Parent task', 'Child task', 'Grandchild task']);
+		});
 
-    it('should append .md extension to filename', () => {
-      vi.mocked(fs.readFileSync).mockReturnValue('- [ ] Task');
+		it('should append .md extension to filename', () => {
+			vi.mocked(fs.readFileSync).mockReturnValue('- [ ] Task');
 
-      readDocAndGetTasks('/playbooks', 'tasks');
+			readDocAndGetTasks('/playbooks', 'tasks');
 
-      expect(fs.readFileSync).toHaveBeenCalledWith('/playbooks/tasks.md', 'utf-8');
-    });
-  });
+			expect(fs.readFileSync).toHaveBeenCalledWith('/playbooks/tasks.md', 'utf-8');
+		});
+	});
 
-  describe('uncheckAllTasks', () => {
-    it('should uncheck all checked tasks', () => {
-      const content = `
+	describe('uncheckAllTasks', () => {
+		it('should uncheck all checked tasks', () => {
+			const content = `
 # Task List
 
 - [x] First completed
@@ -314,27 +306,27 @@ text - [ ] This should not count
 - [x] Third completed
       `;
 
-      const result = uncheckAllTasks(content);
+			const result = uncheckAllTasks(content);
 
-      expect(result).not.toContain('[x]');
-      expect(result).not.toContain('[X]');
-      expect(result.match(/\[ \]/g)?.length).toBe(4);
-    });
+			expect(result).not.toContain('[x]');
+			expect(result).not.toContain('[X]');
+			expect(result.match(/\[ \]/g)?.length).toBe(4);
+		});
 
-    it('should preserve indentation', () => {
-      const content = `
+		it('should preserve indentation', () => {
+			const content = `
   - [x] Indented task
     - [x] Nested task
       `;
 
-      const result = uncheckAllTasks(content);
+			const result = uncheckAllTasks(content);
 
-      expect(result).toContain('  - [ ] Indented task');
-      expect(result).toContain('    - [ ] Nested task');
-    });
+			expect(result).toContain('  - [ ] Indented task');
+			expect(result).toContain('    - [ ] Nested task');
+		});
 
-    it('should not modify non-list checkbox patterns', () => {
-      const content = `
+		it('should not modify non-list checkbox patterns', () => {
+			const content = `
 # Title
 
 Some text with [x] in it that's not a checkbox
@@ -342,40 +334,40 @@ Some text with [x] in it that's not a checkbox
 - [x] Real checkbox
       `;
 
-      const result = uncheckAllTasks(content);
+			const result = uncheckAllTasks(content);
 
-      // The inline [x] should not be changed - only list item checkboxes
-      expect(result).toContain('# Title');
-      expect(result).toContain('Some text with [x] in it');
-      expect(result).toContain('- [ ] Real checkbox');
-    });
+			// The inline [x] should not be changed - only list item checkboxes
+			expect(result).toContain('# Title');
+			expect(result).toContain('Some text with [x] in it');
+			expect(result).toContain('- [ ] Real checkbox');
+		});
 
-    it('should handle empty content', () => {
-      expect(uncheckAllTasks('')).toBe('');
-    });
+		it('should handle empty content', () => {
+			expect(uncheckAllTasks('')).toBe('');
+		});
 
-    it('should handle content with no checkboxes', () => {
-      const content = '# Just a title\n\nSome text';
-      expect(uncheckAllTasks(content)).toBe(content);
-    });
+		it('should handle content with no checkboxes', () => {
+			const content = '# Just a title\n\nSome text';
+			expect(uncheckAllTasks(content)).toBe(content);
+		});
 
-    it('should handle mixed checked and unchecked tasks', () => {
-      const content = `
+		it('should handle mixed checked and unchecked tasks', () => {
+			const content = `
 - [x] Done
 - [ ] Not done
 - [X] Also done
 - [ ] Also not done
       `;
 
-      const result = uncheckAllTasks(content);
+			const result = uncheckAllTasks(content);
 
-      // All should be unchecked now
-      const checkboxMatches = result.match(/- \[.\]/g) || [];
-      expect(checkboxMatches.every(m => m === '- [ ]')).toBe(true);
-    });
+			// All should be unchecked now
+			const checkboxMatches = result.match(/- \[.\]/g) || [];
+			expect(checkboxMatches.every((m) => m === '- [ ]')).toBe(true);
+		});
 
-    it('should handle multiline content correctly', () => {
-      const content = `# Project Tasks
+		it('should handle multiline content correctly', () => {
+			const content = `# Project Tasks
 
 ## Phase 1
 - [x] Setup repository
@@ -388,16 +380,16 @@ Some text with [x] in it that's not a checkbox
 - [x] Write tests
 `;
 
-      const result = uncheckAllTasks(content);
+			const result = uncheckAllTasks(content);
 
-      expect(result).toContain('## Phase 1');
-      expect(result).toContain('## Phase 2');
-      expect(result).not.toContain('[x]');
-      expect(result).not.toContain('[X]');
-    });
+			expect(result).toContain('## Phase 1');
+			expect(result).toContain('## Phase 2');
+			expect(result).not.toContain('[x]');
+			expect(result).not.toContain('[X]');
+		});
 
-    it('should preserve other markdown formatting', () => {
-      const content = `
+		it('should preserve other markdown formatting', () => {
+			const content = `
 **Bold text**
 *Italic text*
 \`code\`
@@ -408,848 +400,866 @@ Some text with [x] in it that's not a checkbox
 2. Another item
       `;
 
-      const result = uncheckAllTasks(content);
-
-      expect(result).toContain('**Bold text**');
-      expect(result).toContain('*Italic text*');
-      expect(result).toContain('`code`');
-      expect(result).toContain('> Blockquote');
-      expect(result).toContain('1. Numbered item');
-    });
-
-    it('should handle Windows line endings', () => {
-      const content = '- [x] Task 1\r\n- [x] Task 2\r\n';
-
-      const result = uncheckAllTasks(content);
-
-      expect(result).toContain('- [ ] Task 1');
-      expect(result).toContain('- [ ] Task 2');
-    });
-
-    it('should handle tasks with no space after checkbox', () => {
-      // Edge case: malformed checkbox
-      const content = '- [x]Task without space';
-
-      const result = uncheckAllTasks(content);
-
-      // The regex requires - [x] pattern at line start
-      expect(result).toContain('- [ ]Task without space');
-    });
-  });
-
-  describe('writeDoc', () => {
-    it('should write content to file', () => {
-      writeDoc('/playbooks', 'tasks.md', '# New Content');
-
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/playbooks/tasks.md',
-        '# New Content',
-        'utf-8'
-      );
-    });
-
-    it('should write to correct path', () => {
-      writeDoc('/path/to/folder', 'doc.md', 'content');
-
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/path/to/folder/doc.md',
-        'content',
-        'utf-8'
-      );
-    });
-
-    it('should handle empty content', () => {
-      writeDoc('/playbooks', 'empty.md', '');
-
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/playbooks/empty.md',
-        '',
-        'utf-8'
-      );
-    });
-
-    it('should handle content with special characters', () => {
-      const content = '# Title\n\n- [ ] Task with "quotes" and \'apostrophes\' and `code`';
-
-      writeDoc('/playbooks', 'special.md', content);
-
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/playbooks/special.md',
-        content,
-        'utf-8'
-      );
-    });
-
-    it('should handle unicode content', () => {
-      const content = '# 任务列表\n\n- [ ] 任务一 🚀';
-
-      writeDoc('/playbooks', 'unicode.md', content);
-
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
-        '/playbooks/unicode.md',
-        content,
-        'utf-8'
-      );
-    });
-
-    it('should concatenate folder and filename with slash', () => {
-      writeDoc('/some/path', 'file.md', 'content');
-
-      const calledPath = (fs.writeFileSync as Mock).mock.calls[0][0];
-      expect(calledPath).toBe('/some/path/file.md');
-    });
-  });
-
-  describe('getClaudeCommand', () => {
-    it('should return a non-empty string', () => {
-      const command = getClaudeCommand();
-      expect(typeof command).toBe('string');
-      expect(command.length).toBeGreaterThan(0);
-    });
-
-    it('should return default command when no cached path', () => {
-      // Before any detection is done, should return default 'claude'
-      const command = getClaudeCommand();
-      // Either 'claude' or a cached path
-      expect(command).toBeTruthy();
-    });
-  });
+			const result = uncheckAllTasks(content);
 
-  describe('detectClaude', () => {
-    beforeEach(() => {
-      // Reset the cached path by reimporting
-      vi.resetModules();
-    });
+			expect(result).toContain('**Bold text**');
+			expect(result).toContain('*Italic text*');
+			expect(result).toContain('`code`');
+			expect(result).toContain('> Blockquote');
+			expect(result).toContain('1. Numbered item');
+		});
 
-    it('should detect Claude with custom path from settings', async () => {
-      // Mock custom path from settings
-      mockGetAgentCustomPath.mockReturnValue('/custom/path/to/claude');
+		it('should handle Windows line endings', () => {
+			const content = '- [x] Task 1\r\n- [x] Task 2\r\n';
 
-      // Mock file exists and is executable
-      vi.mocked(fs.promises.stat).mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
-      vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			const result = uncheckAllTasks(content);
 
-      // Re-import to get fresh module without cached path
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			expect(result).toContain('- [ ] Task 1');
+			expect(result).toContain('- [ ] Task 2');
+		});
+
+		it('should handle tasks with no space after checkbox', () => {
+			// Edge case: malformed checkbox
+			const content = '- [x]Task without space';
+
+			const result = uncheckAllTasks(content);
 
-      const result = await freshDetectClaude();
+			// The regex requires - [x] pattern at line start
+			expect(result).toContain('- [ ]Task without space');
+		});
+	});
 
-      expect(result.available).toBe(true);
-      expect(result.path).toBe('/custom/path/to/claude');
-      expect(result.source).toBe('settings');
-    });
+	describe('writeDoc', () => {
+		it('should write content to file', () => {
+			writeDoc('/playbooks', 'tasks.md', '# New Content');
 
-    it('should fall back to PATH detection when custom path is invalid', async () => {
-      // Mock custom path from settings
-      mockGetAgentCustomPath.mockReturnValue('/invalid/path/to/claude');
+			expect(fs.writeFileSync).toHaveBeenCalledWith(
+				'/playbooks/tasks.md',
+				'# New Content',
+				'utf-8'
+			);
+		});
 
-      // Mock file does not exist
-      vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
+		it('should write to correct path', () => {
+			writeDoc('/path/to/folder', 'doc.md', 'content');
 
-      // Mock which command finding claude
-      mockSpawn.mockReturnValue(mockChild);
+			expect(fs.writeFileSync).toHaveBeenCalledWith('/path/to/folder/doc.md', 'content', 'utf-8');
+		});
 
-      // Re-import to get fresh module
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+		it('should handle empty content', () => {
+			writeDoc('/playbooks', 'empty.md', '');
 
-      const resultPromise = freshDetectClaude();
+			expect(fs.writeFileSync).toHaveBeenCalledWith('/playbooks/empty.md', '', 'utf-8');
+		});
 
-      // Simulate which finding claude
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockStdout.emit('data', Buffer.from('/usr/local/bin/claude\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+		it('should handle content with special characters', () => {
+			const content = '# Title\n\n- [ ] Task with "quotes" and \'apostrophes\' and `code`';
 
-      const result = await resultPromise;
+			writeDoc('/playbooks', 'special.md', content);
 
-      expect(result.available).toBe(true);
-      expect(result.path).toBe('/usr/local/bin/claude');
-      expect(result.source).toBe('path');
-    });
+			expect(fs.writeFileSync).toHaveBeenCalledWith('/playbooks/special.md', content, 'utf-8');
+		});
 
-    it('should return unavailable when Claude is not found', async () => {
-      // No custom path
-      mockGetAgentCustomPath.mockReturnValue(undefined);
+		it('should handle unicode content', () => {
+			const content = '# 任务列表\n\n- [ ] 任务一 🚀';
 
-      // Mock which command not finding claude
-      mockSpawn.mockReturnValue(mockChild);
+			writeDoc('/playbooks', 'unicode.md', content);
 
-      // Re-import to get fresh module
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			expect(fs.writeFileSync).toHaveBeenCalledWith('/playbooks/unicode.md', content, 'utf-8');
+		});
 
-      const resultPromise = freshDetectClaude();
+		it('should concatenate folder and filename with slash', () => {
+			writeDoc('/some/path', 'file.md', 'content');
 
-      // Simulate which not finding claude
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+			const calledPath = (fs.writeFileSync as Mock).mock.calls[0][0];
+			expect(calledPath).toBe('/some/path/file.md');
+		});
+	});
 
-      const result = await resultPromise;
+	describe('getClaudeCommand', () => {
+		it('should return a non-empty string', () => {
+			const command = getClaudeCommand();
+			expect(typeof command).toBe('string');
+			expect(command.length).toBeGreaterThan(0);
+		});
 
-      expect(result.available).toBe(false);
-      expect(result.path).toBeUndefined();
-    });
+		it('should return default command when no cached path', () => {
+			// Before any detection is done, should return default 'claude'
+			const command = getClaudeCommand();
+			// Either 'claude' or a cached path
+			expect(command).toBeTruthy();
+		});
+	});
 
-    it('should handle which command error', async () => {
-      mockGetAgentCustomPath.mockReturnValue(undefined);
-      mockSpawn.mockReturnValue(mockChild);
+	describe('detectClaude', () => {
+		beforeEach(() => {
+			// Reset the cached path by reimporting
+			vi.resetModules();
+		});
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+		it('should detect Claude with custom path from settings', async () => {
+			// Mock custom path from settings
+			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/claude');
 
-      const resultPromise = freshDetectClaude();
+			// Mock file exists and is executable
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
 
-      // Simulate error event
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('error', new Error('spawn error'));
+			// Re-import to get fresh module without cached path
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      const result = await resultPromise;
+			const result = await freshDetectClaude();
 
-      expect(result.available).toBe(false);
-    });
+			expect(result.available).toBe(true);
+			expect(result.path).toBe('/custom/path/to/claude');
+			expect(result.source).toBe('settings');
+		});
 
-    it('should return cached result on subsequent calls', async () => {
-      // First call - setup
-      mockGetAgentCustomPath.mockReturnValue('/custom/path/to/claude');
-      vi.mocked(fs.promises.stat).mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
-      vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+		it('should fall back to PATH detection when custom path is invalid', async () => {
+			// Mock custom path from settings
+			mockGetAgentCustomPath.mockReturnValue('/invalid/path/to/claude');
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			// Mock file does not exist
+			vi.mocked(fs.promises.stat).mockRejectedValue(new Error('ENOENT'));
 
-      const result1 = await freshDetectClaude();
-      expect(result1.available).toBe(true);
+			// Mock which command finding claude
+			mockSpawn.mockReturnValue(mockChild);
 
-      // Clear the mock to verify caching
-      vi.mocked(fs.promises.stat).mockClear();
+			// Re-import to get fresh module
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      // Second call - should use cache
-      const result2 = await freshDetectClaude();
-      expect(result2.available).toBe(true);
-      expect(result2.source).toBe('settings');
+			const resultPromise = freshDetectClaude();
 
-      // stat should not be called again (cached)
-      // Note: Due to how caching works, if path is cached, isExecutable isn't rechecked
-    });
+			// Simulate which finding claude
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockStdout.emit('data', Buffer.from('/usr/local/bin/claude\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-    it('should reject non-file paths', async () => {
-      mockGetAgentCustomPath.mockReturnValue('/path/to/directory');
+			const result = await resultPromise;
 
-      // Mock stat returning directory
-      vi.mocked(fs.promises.stat).mockResolvedValue({
-        isFile: () => false,
-      } as fs.Stats);
+			expect(result.available).toBe(true);
+			expect(result.path).toBe('/usr/local/bin/claude');
+			expect(result.source).toBe('path');
+		});
 
-      // Mock which not finding claude
-      mockSpawn.mockReturnValue(mockChild);
+		it('should return unavailable when Claude is not found', async () => {
+			// No custom path
+			mockGetAgentCustomPath.mockReturnValue(undefined);
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			// Mock which command not finding claude
+			mockSpawn.mockReturnValue(mockChild);
 
-      const resultPromise = freshDetectClaude();
+			// Re-import to get fresh module
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      // which command won't find it either
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+			const resultPromise = freshDetectClaude();
 
-      const result = await resultPromise;
+			// Simulate which not finding claude
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-      expect(result.available).toBe(false);
-    });
+			const result = await resultPromise;
 
-    it('should reject non-executable files on Unix', async () => {
-      // Save original platform
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+			expect(result.available).toBe(false);
+			expect(result.path).toBeUndefined();
+		});
 
-      mockGetAgentCustomPath.mockReturnValue('/path/to/claude');
+		it('should handle which command error', async () => {
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
 
-      // Mock file exists but is not executable
-      vi.mocked(fs.promises.stat).mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
-      vi.mocked(fs.promises.access).mockRejectedValue(new Error('EACCES'));
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      // Mock which not finding claude
-      mockSpawn.mockReturnValue(mockChild);
+			const resultPromise = freshDetectClaude();
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			// Simulate error event
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('error', new Error('spawn error'));
 
-      const resultPromise = freshDetectClaude();
+			const result = await resultPromise;
 
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+			expect(result.available).toBe(false);
+		});
 
-      const result = await resultPromise;
+		it('should return cached result on subsequent calls', async () => {
+			// First call - setup
+			mockGetAgentCustomPath.mockReturnValue('/custom/path/to/claude');
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
 
-      // Restore platform
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      expect(result.available).toBe(false);
-    });
-  });
+			const result1 = await freshDetectClaude();
+			expect(result1.available).toBe(true);
 
-  describe('spawnAgent', () => {
-    beforeEach(() => {
-      mockSpawn.mockReturnValue(mockChild);
-    });
+			// Clear the mock to verify caching
+			vi.mocked(fs.promises.stat).mockClear();
 
-    it('should spawn Claude with correct arguments', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt');
+			// Second call - should use cache
+			const result2 = await freshDetectClaude();
+			expect(result2.available).toBe(true);
+			expect(result2.source).toBe('settings');
 
-      // Let the async operations start
-      await new Promise(resolve => setTimeout(resolve, 0));
+			// stat should not be called again (cached)
+			// Note: Due to how caching works, if path is cached, isExecutable isn't rechecked
+		});
 
-      // Verify spawn was called
-      expect(mockSpawn).toHaveBeenCalled();
-      const [cmd, args, options] = mockSpawn.mock.calls[0];
+		it('should reject non-file paths', async () => {
+			mockGetAgentCustomPath.mockReturnValue('/path/to/directory');
 
-      // Command should be 'claude' or cached path
-      expect(cmd).toBeTruthy();
+			// Mock stat returning directory
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => false,
+			} as fs.Stats);
 
-      // Should have base args + session-id + prompt
-      expect(args).toContain('--print');
-      expect(args).toContain('--verbose');
-      expect(args).toContain('--output-format');
-      expect(args).toContain('stream-json');
-      expect(args).toContain('--dangerously-skip-permissions');
-      expect(args).toContain('--session-id');
-      expect(args).toContain('--');
-      expect(args).toContain('Test prompt');
+			// Mock which not finding claude
+			mockSpawn.mockReturnValue(mockChild);
 
-      // Options
-      expect(options.cwd).toBe('/project/path');
-      expect(options.env.PATH).toBeDefined();
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      // Complete the spawn
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Success"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			const resultPromise = freshDetectClaude();
 
-      const result = await resultPromise;
-      expect(result.success).toBe(true);
-    });
+			// which command won't find it either
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-    it('should use --resume for existing session', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt', 'existing-session-id');
+			const result = await resultPromise;
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			expect(result.available).toBe(false);
+		});
 
-      const [, args] = mockSpawn.mock.calls[0];
-      expect(args).toContain('--resume');
-      expect(args).toContain('existing-session-id');
-      expect(args).not.toContain('--session-id');
+		it('should reject non-executable files on Unix', async () => {
+			// Save original platform
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
-      // Complete
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			mockGetAgentCustomPath.mockReturnValue('/path/to/claude');
 
-      const result = await resultPromise;
-      expect(result.success).toBe(true);
-    });
+			// Mock file exists but is not executable
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			vi.mocked(fs.promises.access).mockRejectedValue(new Error('EACCES'));
 
-    it('should parse result from stdout', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			// Mock which not finding claude
+			mockSpawn.mockReturnValue(mockChild);
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      // Emit result JSON
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"The response text"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
-
-      const result = await resultPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.response).toBe('The response text');
-    });
-
-    it('should capture session_id from stdout', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Emit session_id and result
-      mockStdout.emit('data', Buffer.from('{"session_id":"abc-123"}\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
-
-      const result = await resultPromise;
-
-      expect(result.success).toBe(true);
-      expect(result.agentSessionId).toBe('abc-123');
-    });
-
-    it('should parse usage statistics from modelUsage', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Emit usage stats
-      mockStdout.emit('data', Buffer.from(JSON.stringify({
-        modelUsage: {
-          'claude-3': {
-            inputTokens: 100,
-            outputTokens: 50,
-            cacheReadInputTokens: 20,
-            cacheCreationInputTokens: 10,
-            contextWindow: 200000,
-          },
-        },
-        total_cost_usd: 0.05,
-      }) + '\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			const resultPromise = freshDetectClaude();
 
-      const result = await resultPromise;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-      expect(result.success).toBe(true);
-      expect(result.usageStats).toEqual({
-        inputTokens: 100,
-        outputTokens: 50,
-        cacheReadInputTokens: 20,
-        cacheCreationInputTokens: 10,
-        totalCostUsd: 0.05,
-        contextWindow: 200000,
-      });
-    });
+			const result = await resultPromise;
 
-    it('should parse usage statistics from usage field', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			// Restore platform
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			expect(result.available).toBe(false);
+		});
+	});
 
-      // Emit usage stats via 'usage' field
-      mockStdout.emit('data', Buffer.from(JSON.stringify({
-        usage: {
-          input_tokens: 200,
-          output_tokens: 100,
-          cache_read_input_tokens: 30,
-          cache_creation_input_tokens: 15,
-        },
-        total_cost_usd: 0.08,
-      }) + '\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+	describe('spawnAgent', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
 
-      const result = await resultPromise;
+		it('should spawn Claude with correct arguments', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project/path', 'Test prompt');
 
-      expect(result.usageStats?.inputTokens).toBe(200);
-      expect(result.usageStats?.outputTokens).toBe(100);
-    });
+			// Let the async operations start
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-    it('should aggregate usage from multiple models', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			// Verify spawn was called
+			expect(mockSpawn).toHaveBeenCalled();
+			const [cmd, args, options] = mockSpawn.mock.calls[0];
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			// Command should be 'claude' or cached path
+			expect(cmd).toBeTruthy();
 
-      mockStdout.emit('data', Buffer.from(JSON.stringify({
-        modelUsage: {
-          'model-a': {
-            inputTokens: 100,
-            outputTokens: 50,
-          },
-          'model-b': {
-            inputTokens: 200,
-            outputTokens: 100,
-            contextWindow: 300000,
-          },
-        },
-        total_cost_usd: 0.1,
-      }) + '\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			// Should have base args + session-id + prompt
+			expect(args).toContain('--print');
+			expect(args).toContain('--verbose');
+			expect(args).toContain('--output-format');
+			expect(args).toContain('stream-json');
+			expect(args).toContain('--dangerously-skip-permissions');
+			expect(args).toContain('--session-id');
+			expect(args).toContain('--');
+			expect(args).toContain('Test prompt');
 
-      const result = await resultPromise;
+			// Options
+			expect(options.cwd).toBe('/project/path');
+			expect(options.env.PATH).toBeDefined();
 
-      expect(result.usageStats?.inputTokens).toBe(300); // 100 + 200
-      expect(result.usageStats?.outputTokens).toBe(150); // 50 + 100
-      expect(result.usageStats?.contextWindow).toBe(300000); // Larger window
-    });
+			// Complete the spawn
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Success"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+		});
+
+		it('should use --resume for existing session', async () => {
+			const resultPromise = spawnAgent(
+				'claude-code',
+				'/project/path',
+				'Test prompt',
+				'existing-session-id'
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			const [, args] = mockSpawn.mock.calls[0];
+			expect(args).toContain('--resume');
+			expect(args).toContain('existing-session-id');
+			expect(args).not.toContain('--session-id');
+
+			// Complete
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+		});
+
+		it('should parse result from stdout', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Emit result JSON
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"The response text"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('The response text');
+		});
+
+		it('should capture session_id from stdout', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Emit session_id and result
+			mockStdout.emit('data', Buffer.from('{"session_id":"abc-123"}\n'));
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.agentSessionId).toBe('abc-123');
+		});
+
+		it('should parse usage statistics from modelUsage', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Emit usage stats
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						modelUsage: {
+							'claude-3': {
+								inputTokens: 100,
+								outputTokens: 50,
+								cacheReadInputTokens: 20,
+								cacheCreationInputTokens: 10,
+								contextWindow: 200000,
+							},
+						},
+						total_cost_usd: 0.05,
+					}) + '\n'
+				)
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.success).toBe(true);
+			expect(result.usageStats).toEqual({
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 20,
+				cacheCreationInputTokens: 10,
+				totalCostUsd: 0.05,
+				contextWindow: 200000,
+			});
+		});
+
+		it('should parse usage statistics from usage field', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			// Emit usage stats via 'usage' field
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						usage: {
+							input_tokens: 200,
+							output_tokens: 100,
+							cache_read_input_tokens: 30,
+							cache_creation_input_tokens: 15,
+						},
+						total_cost_usd: 0.08,
+					}) + '\n'
+				)
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+
+			expect(result.usageStats?.inputTokens).toBe(200);
+			expect(result.usageStats?.outputTokens).toBe(100);
+		});
+
+		it('should aggregate usage from multiple models', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			mockStdout.emit(
+				'data',
+				Buffer.from(
+					JSON.stringify({
+						modelUsage: {
+							'model-a': {
+								inputTokens: 100,
+								outputTokens: 50,
+							},
+							'model-b': {
+								inputTokens: 200,
+								outputTokens: 100,
+								contextWindow: 300000,
+							},
+						},
+						total_cost_usd: 0.1,
+					}) + '\n'
+				)
+			);
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-    it('should return error on non-zero exit code', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			const result = await resultPromise;
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			expect(result.usageStats?.inputTokens).toBe(300); // 100 + 200
+			expect(result.usageStats?.outputTokens).toBe(150); // 50 + 100
+			expect(result.usageStats?.contextWindow).toBe(300000); // Larger window
+		});
+
+		it('should return error on non-zero exit code', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      // Emit stderr
-      mockStderr.emit('data', Buffer.from('Error: Something went wrong\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			// Emit stderr
+			mockStderr.emit('data', Buffer.from('Error: Something went wrong\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Something went wrong');
-    });
+			const result = await resultPromise;
 
-    it('should return error when no result and non-zero exit', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Something went wrong');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+		it('should return error when no result and non-zero exit', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      const result = await resultPromise;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Process exited with code 1');
-    });
+			const result = await resultPromise;
 
-    it('should handle spawn error', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Process exited with code 1');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('error', new Error('spawn ENOENT'));
+		it('should handle spawn error', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      const result = await resultPromise;
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('error', new Error('spawn ENOENT'));
 
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('Failed to spawn Claude');
-      expect(result.error).toContain('spawn ENOENT');
-    });
+			const result = await resultPromise;
 
-    it('should close stdin immediately', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Failed to spawn Claude');
+			expect(result.error).toContain('spawn ENOENT');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should close stdin immediately', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      expect(mockStdin.end).toHaveBeenCalled();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
+			expect(mockStdin.end).toHaveBeenCalled();
 
-      await resultPromise;
-    });
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
 
-    it('should handle partial JSON lines (buffering)', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await resultPromise;
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should handle partial JSON lines (buffering)', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      // Send data in chunks
-      mockStdout.emit('data', Buffer.from('{"type":"result",'));
-      mockStdout.emit('data', Buffer.from('"result":"Complete"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			// Send data in chunks
+			mockStdout.emit('data', Buffer.from('{"type":"result",'));
+			mockStdout.emit('data', Buffer.from('"result":"Complete"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-      expect(result.success).toBe(true);
-      expect(result.response).toBe('Complete');
-    });
+			const result = await resultPromise;
 
-    it('should ignore non-JSON lines', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Complete');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should ignore non-JSON lines', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      // Mix of JSON and non-JSON
-      mockStdout.emit('data', Buffer.from('Some debug output\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockStdout.emit('data', Buffer.from('More output\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			// Mix of JSON and non-JSON
+			mockStdout.emit('data', Buffer.from('Some debug output\n'));
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockStdout.emit('data', Buffer.from('More output\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-      expect(result.success).toBe(true);
-      expect(result.response).toBe('Done');
-    });
+			const result = await resultPromise;
 
-    it('should only capture first result', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(true);
+			expect(result.response).toBe('Done');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should only capture first result', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      // Multiple results
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"First"}\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Second"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			// Multiple results
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"First"}\n'));
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Second"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-      expect(result.response).toBe('First');
-    });
+			const result = await resultPromise;
 
-    it('should only capture first session_id', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.response).toBe('First');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should only capture first session_id', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      mockStdout.emit('data', Buffer.from('{"session_id":"first-id"}\n'));
-      mockStdout.emit('data', Buffer.from('{"session_id":"second-id"}\n'));
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			mockStdout.emit('data', Buffer.from('{"session_id":"first-id"}\n'));
+			mockStdout.emit('data', Buffer.from('{"session_id":"second-id"}\n'));
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-      expect(result.agentSessionId).toBe('first-id');
-    });
+			const result = await resultPromise;
 
-    it('should preserve session_id and usageStats on error', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.agentSessionId).toBe('first-id');
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should preserve session_id and usageStats on error', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      mockStdout.emit('data', Buffer.from('{"session_id":"error-session"}\n'));
-      mockStdout.emit('data', Buffer.from('{"total_cost_usd":0.01}\n'));
-      mockStderr.emit('data', Buffer.from('Error!\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 1);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			mockStdout.emit('data', Buffer.from('{"session_id":"error-session"}\n'));
+			mockStdout.emit('data', Buffer.from('{"total_cost_usd":0.01}\n'));
+			mockStderr.emit('data', Buffer.from('Error!\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
 
-      expect(result.success).toBe(false);
-      expect(result.agentSessionId).toBe('error-session');
-      expect(result.usageStats?.totalCostUsd).toBe(0.01);
-    });
+			const result = await resultPromise;
 
-    it('should handle empty lines in output', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(false);
+			expect(result.agentSessionId).toBe('error-session');
+			expect(result.usageStats?.totalCostUsd).toBe(0.01);
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should handle empty lines in output', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      mockStdout.emit('data', Buffer.from('\n\n{"type":"result","result":"Done"}\n\n'));
-      await new Promise(resolve => setTimeout(resolve, 0));
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			mockStdout.emit('data', Buffer.from('\n\n{"type":"result","result":"Done"}\n\n'));
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 0);
 
-      expect(result.success).toBe(true);
-    });
+			const result = await resultPromise;
 
-    it('should handle success without result field', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			expect(result.success).toBe(true);
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should handle success without result field', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      // No result emitted, but process exits cleanly
-      mockChild.emit('close', 0);
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const result = await resultPromise;
+			// No result emitted, but process exits cleanly
+			mockChild.emit('close', 0);
 
-      // Without a result, success is false even with exit code 0
-      expect(result.success).toBe(false);
-    });
+			const result = await resultPromise;
 
-    it('should include expanded PATH in environment', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			// Without a result, success is false even with exit code 0
+			expect(result.success).toBe(false);
+		});
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+		it('should include expanded PATH in environment', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
 
-      const [, , options] = mockSpawn.mock.calls[0];
-      const pathEnv = options.env.PATH;
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // Should include common paths
-      expect(pathEnv).toContain('/opt/homebrew/bin');
-      expect(pathEnv).toContain('/usr/local/bin');
-      expect(pathEnv).toContain('/Users/testuser/.local/bin');
+			const [, , options] = mockSpawn.mock.calls[0];
+			const pathEnv = options.env.PATH;
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
+			// Should include common paths
+			expect(pathEnv).toContain('/opt/homebrew/bin');
+			expect(pathEnv).toContain('/usr/local/bin');
+			expect(pathEnv).toContain('/Users/testuser/.local/bin');
 
-      await resultPromise;
-    });
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+
+			await resultPromise;
+		});
+
+		it('should generate unique session-id for each spawn', async () => {
+			// First spawn
+			const promise1 = spawnAgent('claude-code', '/project', 'prompt1');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const args1 = mockSpawn.mock.calls[0][1];
 
-    it('should generate unique session-id for each spawn', async () => {
-      // First spawn
-      const promise1 = spawnAgent('claude-code', '/project', 'prompt1');
-      await new Promise(resolve => setTimeout(resolve, 0));
-      const args1 = mockSpawn.mock.calls[0][1];
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await promise1;
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await promise1;
+			// Reset emitters
+			mockStdout.removeAllListeners();
+			mockStderr.removeAllListeners();
+			(mockChild as EventEmitter).removeAllListeners();
+			mockSpawn.mockClear();
+			mockSpawn.mockReturnValue(mockChild);
 
-      // Reset emitters
-      mockStdout.removeAllListeners();
-      mockStderr.removeAllListeners();
-      (mockChild as EventEmitter).removeAllListeners();
-      mockSpawn.mockClear();
-      mockSpawn.mockReturnValue(mockChild);
+			// Second spawn
+			const promise2 = spawnAgent('claude-code', '/project', 'prompt2');
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			const args2 = mockSpawn.mock.calls[0][1];
 
-      // Second spawn
-      const promise2 = spawnAgent('claude-code', '/project', 'prompt2');
-      await new Promise(resolve => setTimeout(resolve, 0));
-      const args2 = mockSpawn.mock.calls[0][1];
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await promise2;
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await promise2;
+			// Extract session IDs
+			const sessionIdIndex1 = args1.indexOf('--session-id');
+			const sessionIdIndex2 = args2.indexOf('--session-id');
 
-      // Extract session IDs
-      const sessionIdIndex1 = args1.indexOf('--session-id');
-      const sessionIdIndex2 = args2.indexOf('--session-id');
+			if (sessionIdIndex1 !== -1 && sessionIdIndex2 !== -1) {
+				const id1 = args1[sessionIdIndex1 + 1];
+				const id2 = args2[sessionIdIndex2 + 1];
 
-      if (sessionIdIndex1 !== -1 && sessionIdIndex2 !== -1) {
-        const id1 = args1[sessionIdIndex1 + 1];
-        const id2 = args2[sessionIdIndex2 + 1];
+				// UUIDs should be different
+				expect(id1).not.toBe(id2);
+				// Should be valid UUID format
+				expect(id1).toMatch(
+					/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+				);
+				expect(id2).toMatch(
+					/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+				);
+			}
+		});
+	});
 
-        // UUIDs should be different
-        expect(id1).not.toBe(id2);
-        // Should be valid UUID format
-        expect(id1).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-        expect(id2).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-      }
-    });
-  });
+	describe('PATH expansion (via spawnAgent)', () => {
+		beforeEach(() => {
+			mockSpawn.mockReturnValue(mockChild);
+		});
 
-  describe('PATH expansion (via spawnAgent)', () => {
-    beforeEach(() => {
-      mockSpawn.mockReturnValue(mockChild);
-    });
+		it('should include homebrew paths', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-    it('should include homebrew paths', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-      await new Promise(resolve => setTimeout(resolve, 0));
+			const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
+			expect(pathEnv).toContain('/opt/homebrew/bin');
+			expect(pathEnv).toContain('/opt/homebrew/sbin');
 
-      const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
-      expect(pathEnv).toContain('/opt/homebrew/bin');
-      expect(pathEnv).toContain('/opt/homebrew/sbin');
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await resultPromise;
-    });
+		it('should include user home paths', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-    it('should include user home paths', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-      await new Promise(resolve => setTimeout(resolve, 0));
+			const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
+			expect(pathEnv).toContain('/Users/testuser/.local/bin');
+			expect(pathEnv).toContain('/Users/testuser/.npm-global/bin');
+			expect(pathEnv).toContain('/Users/testuser/bin');
+			expect(pathEnv).toContain('/Users/testuser/.claude/local');
 
-      const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
-      expect(pathEnv).toContain('/Users/testuser/.local/bin');
-      expect(pathEnv).toContain('/Users/testuser/.npm-global/bin');
-      expect(pathEnv).toContain('/Users/testuser/bin');
-      expect(pathEnv).toContain('/Users/testuser/.claude/local');
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await resultPromise;
-    });
+		it('should include system paths', async () => {
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-    it('should include system paths', async () => {
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-      await new Promise(resolve => setTimeout(resolve, 0));
+			const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
+			expect(pathEnv).toContain('/usr/bin');
+			expect(pathEnv).toContain('/bin');
+			expect(pathEnv).toContain('/usr/sbin');
+			expect(pathEnv).toContain('/sbin');
+			expect(pathEnv).toContain('/usr/local/bin');
+			expect(pathEnv).toContain('/usr/local/sbin');
 
-      const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
-      expect(pathEnv).toContain('/usr/bin');
-      expect(pathEnv).toContain('/bin');
-      expect(pathEnv).toContain('/usr/sbin');
-      expect(pathEnv).toContain('/sbin');
-      expect(pathEnv).toContain('/usr/local/bin');
-      expect(pathEnv).toContain('/usr/local/sbin');
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await resultPromise;
-    });
+		it('should not duplicate existing paths', async () => {
+			// Set PATH to include a path that would be added
+			const originalPath = process.env.PATH;
+			process.env.PATH = '/opt/homebrew/bin:/usr/bin';
 
-    it('should not duplicate existing paths', async () => {
-      // Set PATH to include a path that would be added
-      const originalPath = process.env.PATH;
-      process.env.PATH = '/opt/homebrew/bin:/usr/bin';
+			const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      const resultPromise = spawnAgent('claude-code', '/project', 'prompt');
-      await new Promise(resolve => setTimeout(resolve, 0));
+			const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
 
-      const pathEnv = mockSpawn.mock.calls[0][2].env.PATH;
+			// Count occurrences of /opt/homebrew/bin
+			const parts = pathEnv.split(':');
+			const homebrewCount = parts.filter((p: string) => p === '/opt/homebrew/bin').length;
 
-      // Count occurrences of /opt/homebrew/bin
-      const parts = pathEnv.split(':');
-      const homebrewCount = parts.filter((p: string) => p === '/opt/homebrew/bin').length;
+			// Should only appear once
+			expect(homebrewCount).toBe(1);
 
-      // Should only appear once
-      expect(homebrewCount).toBe(1);
+			// Restore
+			process.env.PATH = originalPath;
 
-      // Restore
-      process.env.PATH = originalPath;
+			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+	});
 
-      mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
-      mockChild.emit('close', 0);
-      await resultPromise;
-    });
-  });
+	describe('platform-specific behavior', () => {
+		it('should use where command on Windows for findClaudeInPath', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-  describe('platform-specific behavior', () => {
-    it('should use where command on Windows for findClaudeInPath', async () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
 
-      mockGetAgentCustomPath.mockReturnValue(undefined);
-      mockSpawn.mockReturnValue(mockChild);
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			const resultPromise = freshDetectClaude();
 
-      const resultPromise = freshDetectClaude();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			// On Windows, 'where' should be used
+			const command = mockSpawn.mock.calls[0][0];
+			expect(command).toBe('where');
 
-      // On Windows, 'where' should be used
-      const command = mockSpawn.mock.calls[0][0];
-      expect(command).toBe('where');
+			mockChild.emit('close', 1);
+			await resultPromise;
 
-      mockChild.emit('close', 1);
-      await resultPromise;
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
 
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    });
+		it('should use which command on Unix', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
 
-    it('should use which command on Unix', async () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
 
-      mockGetAgentCustomPath.mockReturnValue(undefined);
-      mockSpawn.mockReturnValue(mockChild);
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			const resultPromise = freshDetectClaude();
 
-      const resultPromise = freshDetectClaude();
+			await new Promise((resolve) => setTimeout(resolve, 0));
 
-      await new Promise(resolve => setTimeout(resolve, 0));
+			const command = mockSpawn.mock.calls[0][0];
+			expect(command).toBe('which');
 
-      const command = mockSpawn.mock.calls[0][0];
-      expect(command).toBe('which');
+			mockChild.emit('close', 1);
+			await resultPromise;
 
-      mockChild.emit('close', 1);
-      await resultPromise;
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
 
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    });
+		it('should skip X_OK check on Windows', async () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
 
-    it('should skip X_OK check on Windows', async () => {
-      const originalPlatform = process.platform;
-      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			mockGetAgentCustomPath.mockReturnValue('C:\\Program Files\\claude\\claude.exe');
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			// Don't mock access - it shouldn't be called on Windows
 
-      mockGetAgentCustomPath.mockReturnValue('C:\\Program Files\\claude\\claude.exe');
-      vi.mocked(fs.promises.stat).mockResolvedValue({
-        isFile: () => true,
-      } as fs.Stats);
-      // Don't mock access - it shouldn't be called on Windows
+			vi.resetModules();
+			const { detectClaude: freshDetectClaude } =
+				await import('../../../cli/services/agent-spawner');
 
-      vi.resetModules();
-      const { detectClaude: freshDetectClaude } = await import('../../../cli/services/agent-spawner');
+			const result = await freshDetectClaude();
 
-      const result = await freshDetectClaude();
+			// On Windows, just checking if it's a file is enough
+			expect(result.available).toBe(true);
+			expect(fs.promises.access).not.toHaveBeenCalled();
 
-      // On Windows, just checking if it's a file is enough
-      expect(result.available).toBe(true);
-      expect(fs.promises.access).not.toHaveBeenCalled();
-
-      Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
-    });
-  });
+			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+		});
+	});
 });

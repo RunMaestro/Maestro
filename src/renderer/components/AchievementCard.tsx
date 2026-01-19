@@ -1,15 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Trophy, Clock, Zap, Star, ExternalLink, ChevronDown, History, Share2, Copy, Download, Check } from 'lucide-react';
+import {
+	Trophy,
+	Clock,
+	Zap,
+	Star,
+	ExternalLink,
+	ChevronDown,
+	History,
+	Share2,
+	Copy,
+	Download,
+	Check,
+} from 'lucide-react';
 import type { Theme, LeaderboardRegistration } from '../types';
 import type { AutoRunStats, MaestroUsageStats } from '../types';
 import {
-  CONDUCTOR_BADGES,
-  getBadgeForTime,
-  getNextBadge,
-  getProgressToNextBadge,
-  formatTimeRemaining,
-  formatCumulativeTime,
-  type ConductorBadge,
+	CONDUCTOR_BADGES,
+	getBadgeForTime,
+	getNextBadge,
+	getProgressToNextBadge,
+	formatTimeRemaining,
+	formatCumulativeTime,
+	type ConductorBadge,
 } from '../constants/conductorBadges';
 import { MaestroSilhouette } from './MaestroSilhouette';
 import { formatTokensCompact } from '../utils/formatters';
@@ -19,1206 +31,1267 @@ import maestroWandIcon from '../assets/icon-wand.png';
  * Circular progress ring with 11 segments that fill as badges are unlocked
  */
 interface BadgeProgressRingProps {
-  currentLevel: number;
-  size: number;
-  theme: Theme;
+	currentLevel: number;
+	size: number;
+	theme: Theme;
 }
 
 function BadgeProgressRing({ currentLevel, size, theme }: BadgeProgressRingProps) {
-  const segments = 11;
-  const strokeWidth = 4;
-  const gap = 4; // Gap between segments in degrees
-  const radius = (size - strokeWidth) / 2;
-  const center = size / 2;
+	const segments = 11;
+	const strokeWidth = 4;
+	const gap = 4; // Gap between segments in degrees
+	const radius = (size - strokeWidth) / 2;
+	const center = size / 2;
 
-  // Each segment takes up (360 - total gaps) / segments degrees
-  const totalGapDegrees = gap * segments;
-  const segmentDegrees = (360 - totalGapDegrees) / segments;
+	// Each segment takes up (360 - total gaps) / segments degrees
+	const totalGapDegrees = gap * segments;
+	const segmentDegrees = (360 - totalGapDegrees) / segments;
 
-  // Start from top (-90 degrees) and go clockwise
-  const startAngle = -90;
+	// Start from top (-90 degrees) and go clockwise
+	const startAngle = -90;
 
-  // Generate SVG arc path for a segment
-  const getArcPath = (segmentIndex: number): string => {
-    const segmentStart = startAngle + segmentIndex * (segmentDegrees + gap);
-    const segmentEnd = segmentStart + segmentDegrees;
+	// Generate SVG arc path for a segment
+	const getArcPath = (segmentIndex: number): string => {
+		const segmentStart = startAngle + segmentIndex * (segmentDegrees + gap);
+		const segmentEnd = segmentStart + segmentDegrees;
 
-    const startRad = (segmentStart * Math.PI) / 180;
-    const endRad = (segmentEnd * Math.PI) / 180;
+		const startRad = (segmentStart * Math.PI) / 180;
+		const endRad = (segmentEnd * Math.PI) / 180;
 
-    const x1 = center + radius * Math.cos(startRad);
-    const y1 = center + radius * Math.sin(startRad);
-    const x2 = center + radius * Math.cos(endRad);
-    const y2 = center + radius * Math.sin(endRad);
+		const x1 = center + radius * Math.cos(startRad);
+		const y1 = center + radius * Math.sin(startRad);
+		const x2 = center + radius * Math.cos(endRad);
+		const y2 = center + radius * Math.sin(endRad);
 
-    // Large arc flag is 0 since each segment is less than 180 degrees
-    return `M ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2}`;
-  };
+		// Large arc flag is 0 since each segment is less than 180 degrees
+		return `M ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2}`;
+	};
 
-  // Get color for segment based on its level
-  const getSegmentColor = (level: number, isUnlocked: boolean): string => {
-    if (!isUnlocked) {
-      return theme.colors.border;
-    }
-    // Same gradient logic as the horizontal bar
-    if (level <= 3) {
-      return theme.colors.accent;
-    } else if (level <= 7) {
-      // Transition from accent to gold
-      const t = (level - 3) / 4;
-      return interpolateColor(theme.colors.accent, '#FFD700', t);
-    } else {
-      // Transition from gold to orange
-      const t = (level - 7) / 4;
-      return interpolateColor('#FFD700', '#FF6B35', t);
-    }
-  };
+	// Get color for segment based on its level
+	const getSegmentColor = (level: number, isUnlocked: boolean): string => {
+		if (!isUnlocked) {
+			return theme.colors.border;
+		}
+		// Same gradient logic as the horizontal bar
+		if (level <= 3) {
+			return theme.colors.accent;
+		} else if (level <= 7) {
+			// Transition from accent to gold
+			const t = (level - 3) / 4;
+			return interpolateColor(theme.colors.accent, '#FFD700', t);
+		} else {
+			// Transition from gold to orange
+			const t = (level - 7) / 4;
+			return interpolateColor('#FFD700', '#FF6B35', t);
+		}
+	};
 
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox={`0 0 ${size} ${size}`}
-      className="absolute inset-0"
-      style={{ transform: 'rotate(0deg)' }}
-    >
-      {Array.from({ length: segments }, (_, i) => {
-        const level = i + 1;
-        const isUnlocked = level <= currentLevel;
-        const color = getSegmentColor(level, isUnlocked);
+	return (
+		<svg
+			width={size}
+			height={size}
+			viewBox={`0 0 ${size} ${size}`}
+			className="absolute inset-0"
+			style={{ transform: 'rotate(0deg)' }}
+		>
+			{Array.from({ length: segments }, (_, i) => {
+				const level = i + 1;
+				const isUnlocked = level <= currentLevel;
+				const color = getSegmentColor(level, isUnlocked);
 
-        return (
-          <path
-            key={i}
-            d={getArcPath(i)}
-            fill="none"
-            stroke={color}
-            strokeWidth={strokeWidth}
-            strokeLinecap="round"
-            opacity={isUnlocked ? 1 : 0.3}
-            style={{
-              filter: isUnlocked ? `drop-shadow(0 0 2px ${color}60)` : 'none',
-              transition: 'all 0.5s ease-out',
-            }}
-          />
-        );
-      })}
-    </svg>
-  );
+				return (
+					<path
+						key={i}
+						d={getArcPath(i)}
+						fill="none"
+						stroke={color}
+						strokeWidth={strokeWidth}
+						strokeLinecap="round"
+						opacity={isUnlocked ? 1 : 0.3}
+						style={{
+							filter: isUnlocked ? `drop-shadow(0 0 2px ${color}60)` : 'none',
+							transition: 'all 0.5s ease-out',
+						}}
+					/>
+				);
+			})}
+		</svg>
+	);
 }
 
 // Helper to interpolate between two hex colors
 function interpolateColor(color1: string, color2: string, t: number): string {
-  const hex1 = color1.replace('#', '');
-  const hex2 = color2.replace('#', '');
+	const hex1 = color1.replace('#', '');
+	const hex2 = color2.replace('#', '');
 
-  const r1 = parseInt(hex1.substring(0, 2), 16);
-  const g1 = parseInt(hex1.substring(2, 4), 16);
-  const b1 = parseInt(hex1.substring(4, 6), 16);
+	const r1 = parseInt(hex1.substring(0, 2), 16);
+	const g1 = parseInt(hex1.substring(2, 4), 16);
+	const b1 = parseInt(hex1.substring(4, 6), 16);
 
-  const r2 = parseInt(hex2.substring(0, 2), 16);
-  const g2 = parseInt(hex2.substring(2, 4), 16);
-  const b2 = parseInt(hex2.substring(4, 6), 16);
+	const r2 = parseInt(hex2.substring(0, 2), 16);
+	const g2 = parseInt(hex2.substring(2, 4), 16);
+	const b2 = parseInt(hex2.substring(4, 6), 16);
 
-  const r = Math.round(r1 + (r2 - r1) * t);
-  const g = Math.round(g1 + (g2 - g1) * t);
-  const b = Math.round(b1 + (b2 - b1) * t);
+	const r = Math.round(r1 + (r2 - r1) * t);
+	const g = Math.round(g1 + (g2 - g1) * t);
+	const b = Math.round(b1 + (b2 - b1) * t);
 
-  return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+	return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
 /** Global stats interface - compatible with both old Claude stats and new multi-provider stats */
 interface GlobalStatsSubset {
-  totalSessions: number;
-  totalMessages: number;
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCacheReadTokens: number;
-  totalCacheCreationTokens: number;
-  totalCostUsd: number;
-  totalSizeBytes: number;
-  isComplete?: boolean;
-  // Optional fields from new multi-provider interface
-  hasCostData?: boolean;
-  byProvider?: Record<string, unknown>;
+	totalSessions: number;
+	totalMessages: number;
+	totalInputTokens: number;
+	totalOutputTokens: number;
+	totalCacheReadTokens: number;
+	totalCacheCreationTokens: number;
+	totalCostUsd: number;
+	totalSizeBytes: number;
+	isComplete?: boolean;
+	// Optional fields from new multi-provider interface
+	hasCostData?: boolean;
+	byProvider?: Record<string, unknown>;
 }
 
 interface AchievementCardProps {
-  theme: Theme;
-  autoRunStats: AutoRunStats;
-  globalStats?: GlobalStatsSubset | null;
-  usageStats?: MaestroUsageStats | null;
-  handsOnTimeMs?: number;
-  leaderboardRegistration?: LeaderboardRegistration | null;
+	theme: Theme;
+	autoRunStats: AutoRunStats;
+	globalStats?: GlobalStatsSubset | null;
+	usageStats?: MaestroUsageStats | null;
+	handsOnTimeMs?: number;
+	leaderboardRegistration?: LeaderboardRegistration | null;
 }
 
 interface BadgeTooltipProps {
-  badge: ConductorBadge;
-  theme: Theme;
-  isUnlocked: boolean;
-  position: 'left' | 'center' | 'right';
-  onClose: () => void;
+	badge: ConductorBadge;
+	theme: Theme;
+	isUnlocked: boolean;
+	position: 'left' | 'center' | 'right';
+	onClose: () => void;
 }
 
-function BadgeTooltip({ badge, theme, isUnlocked, position, onClose: _onClose }: BadgeTooltipProps) {
-  // Calculate horizontal positioning based on badge position
-  const getPositionStyles = () => {
-    switch (position) {
-      case 'left':
-        return { left: 0, transform: 'translateX(0)' };
-      case 'right':
-        return { right: 0, transform: 'translateX(0)' };
-      default:
-        return { left: '50%', transform: 'translateX(-50%)' };
-    }
-  };
+function BadgeTooltip({
+	badge,
+	theme,
+	isUnlocked,
+	position,
+	onClose: _onClose,
+}: BadgeTooltipProps) {
+	// Calculate horizontal positioning based on badge position
+	const getPositionStyles = () => {
+		switch (position) {
+			case 'left':
+				return { left: 0, transform: 'translateX(0)' };
+			case 'right':
+				return { right: 0, transform: 'translateX(0)' };
+			default:
+				return { left: '50%', transform: 'translateX(-50%)' };
+		}
+	};
 
-  const getArrowStyles = () => {
-    switch (position) {
-      case 'left':
-        return { left: '16px', transform: 'translateX(0)' };
-      case 'right':
-        return { right: '16px', left: 'auto', transform: 'translateX(0)' };
-      default:
-        return { left: '50%', transform: 'translateX(-50%)' };
-    }
-  };
+	const getArrowStyles = () => {
+		switch (position) {
+			case 'left':
+				return { left: '16px', transform: 'translateX(0)' };
+			case 'right':
+				return { right: '16px', left: 'auto', transform: 'translateX(0)' };
+			default:
+				return { left: '50%', transform: 'translateX(-50%)' };
+		}
+	};
 
-  return (
-    <div
-      className="absolute bottom-full mb-2 p-3 rounded-lg shadow-xl z-[100] w-64"
-      style={{
-        backgroundColor: theme.colors.bgSidebar,
-        border: `1px solid ${theme.colors.border}`,
-        boxShadow: `0 4px 20px rgba(0,0,0,0.3)`,
-        ...getPositionStyles(),
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* Level number - prominent */}
-      <div className="text-center mb-1">
-        <span className="text-lg font-bold" style={{ color: theme.colors.accent }}>
-          Level {badge.level}
-        </span>
-      </div>
+	return (
+		<div
+			className="absolute bottom-full mb-2 p-3 rounded-lg shadow-xl z-[100] w-64"
+			style={{
+				backgroundColor: theme.colors.bgSidebar,
+				border: `1px solid ${theme.colors.border}`,
+				boxShadow: `0 4px 20px rgba(0,0,0,0.3)`,
+				...getPositionStyles(),
+			}}
+			onClick={(e) => e.stopPropagation()}
+		>
+			{/* Level number - prominent */}
+			<div className="text-center mb-1">
+				<span className="text-lg font-bold" style={{ color: theme.colors.accent }}>
+					Level {badge.level}
+				</span>
+			</div>
 
-      {/* Badge title */}
-      <div className="text-center mb-2">
-        <span className="font-bold text-sm" style={{ color: theme.colors.textMain }}>
-          {badge.name}
-        </span>
-      </div>
+			{/* Badge title */}
+			<div className="text-center mb-2">
+				<span className="font-bold text-sm" style={{ color: theme.colors.textMain }}>
+					{badge.name}
+				</span>
+			</div>
 
-      {/* Description */}
-      <p className="text-xs mb-2 text-center" style={{ color: theme.colors.textDim }}>
-        {badge.description}
-      </p>
+			{/* Description */}
+			<p className="text-xs mb-2 text-center" style={{ color: theme.colors.textDim }}>
+				{badge.description}
+			</p>
 
-      {/* Flavor text if unlocked */}
-      {isUnlocked && (
-        <p className="text-xs italic mb-2 text-center" style={{ color: theme.colors.textMain }}>
-          "{badge.flavorText}"
-        </p>
-      )}
+			{/* Flavor text if unlocked */}
+			{isUnlocked && (
+				<p className="text-xs italic mb-2 text-center" style={{ color: theme.colors.textMain }}>
+					"{badge.flavorText}"
+				</p>
+			)}
 
-      {/* Required time and status */}
-      <div className="flex items-center justify-between text-xs pt-2 border-t" style={{ borderColor: theme.colors.border }}>
-        <span style={{ color: theme.colors.textDim }}>
-          Required: {formatCumulativeTime(badge.requiredTimeMs)}
-        </span>
-        {isUnlocked ? (
-          <span style={{ color: theme.colors.success }}>Unlocked</span>
-        ) : (
-          <span style={{ color: theme.colors.textDim }}>Locked</span>
-        )}
-      </div>
+			{/* Required time and status */}
+			<div
+				className="flex items-center justify-between text-xs pt-2 border-t"
+				style={{ borderColor: theme.colors.border }}
+			>
+				<span style={{ color: theme.colors.textDim }}>
+					Required: {formatCumulativeTime(badge.requiredTimeMs)}
+				</span>
+				{isUnlocked ? (
+					<span style={{ color: theme.colors.success }}>Unlocked</span>
+				) : (
+					<span style={{ color: theme.colors.textDim }}>Locked</span>
+				)}
+			</div>
 
-      {/* Example conductor link */}
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          window.maestro.shell.openExternal(badge.exampleConductor.wikipediaUrl);
-        }}
-        className="flex items-center justify-center gap-1 text-xs mt-2 hover:underline w-full"
-        style={{ color: theme.colors.accent }}
-      >
-        <ExternalLink className="w-3 h-3" />
-        {badge.exampleConductor.name}
-      </button>
+			{/* Example conductor link */}
+			<button
+				onClick={(e) => {
+					e.stopPropagation();
+					window.maestro.shell.openExternal(badge.exampleConductor.wikipediaUrl);
+				}}
+				className="flex items-center justify-center gap-1 text-xs mt-2 hover:underline w-full"
+				style={{ color: theme.colors.accent }}
+			>
+				<ExternalLink className="w-3 h-3" />
+				{badge.exampleConductor.name}
+			</button>
 
-      {/* Arrow pointing down */}
-      <div
-        className="absolute top-full w-0 h-0"
-        style={{
-          borderLeft: '6px solid transparent',
-          borderRight: '6px solid transparent',
-          borderTop: `6px solid ${theme.colors.border}`,
-          ...getArrowStyles(),
-        }}
-      />
-    </div>
-  );
+			{/* Arrow pointing down */}
+			<div
+				className="absolute top-full w-0 h-0"
+				style={{
+					borderLeft: '6px solid transparent',
+					borderRight: '6px solid transparent',
+					borderTop: `6px solid ${theme.colors.border}`,
+					...getArrowStyles(),
+				}}
+			/>
+		</div>
+	);
 }
 
 /**
  * Achievement card component for displaying in the About modal
  * Shows current badge, progress to next level, and stats
  */
-export function AchievementCard({ theme, autoRunStats, globalStats, usageStats, handsOnTimeMs, leaderboardRegistration, onEscapeWithBadgeOpen }: AchievementCardProps & { onEscapeWithBadgeOpen?: (handler: (() => boolean) | null) => void }) {
-  const [selectedBadge, setSelectedBadge] = useState<number | null>(null);
-  const [historyExpanded, setHistoryExpanded] = useState(false);
-  const [shareMenuOpen, setShareMenuOpen] = useState(false);
-  const [copySuccess, setCopySuccess] = useState(false);
-  const badgeContainerRef = useRef<HTMLDivElement>(null);
-  const shareMenuRef = useRef<HTMLDivElement>(null);
-
-  // Register escape handler with parent when badge is selected
-  useEffect(() => {
-    if (onEscapeWithBadgeOpen) {
-      if (selectedBadge !== null) {
-        // Return a handler that closes the badge and returns true (handled)
-        onEscapeWithBadgeOpen(() => {
-          setSelectedBadge(null);
-          return true;
-        });
-      } else {
-        onEscapeWithBadgeOpen(null);
-      }
-    }
-  }, [selectedBadge, onEscapeWithBadgeOpen]);
-
-  // Handle click outside to close badge tooltip
-  useEffect(() => {
-    if (selectedBadge === null) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (badgeContainerRef.current && !badgeContainerRef.current.contains(e.target as Node)) {
-        setSelectedBadge(null);
-      }
-    };
-
-    // Use setTimeout to avoid immediate trigger from the click that opened it
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('click', handleClickOutside);
-    }, 0);
-
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('click', handleClickOutside);
-    };
-  }, [selectedBadge]);
-
-  // Determine tooltip position based on badge level
-  const getTooltipPosition = (level: number): 'left' | 'center' | 'right' => {
-    if (level <= 2) return 'left';
-    if (level >= 10) return 'right';
-    return 'center';
-  };
-
-  const currentBadge = getBadgeForTime(autoRunStats.cumulativeTimeMs);
-  const nextBadge = getNextBadge(currentBadge);
-  const progressPercent = getProgressToNextBadge(
-    autoRunStats.cumulativeTimeMs,
-    currentBadge,
-    nextBadge
-  );
-
-  const currentLevel = currentBadge?.level || 0;
-  const goldColor = '#FFD700';
-
-  // Close share menu when clicking outside
-  useEffect(() => {
-    if (!shareMenuOpen) return;
-
-    const handleClickOutside = (e: MouseEvent) => {
-      if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
-        setShareMenuOpen(false);
-      }
-    };
-
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('click', handleClickOutside);
-    }, 0);
-
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('click', handleClickOutside);
-    };
-  }, [shareMenuOpen]);
-
-  // Helper to wrap text for canvas
-  const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
-    const words = text.split(' ');
-    const lines: string[] = [];
-    let currentLine = '';
-
-    words.forEach(word => {
-      const testLine = currentLine ? `${currentLine} ${word}` : word;
-      const metrics = ctx.measureText(testLine);
-      if (metrics.width > maxWidth && currentLine) {
-        lines.push(currentLine);
-        currentLine = word;
-      } else {
-        currentLine = testLine;
-      }
-    });
-    if (currentLine) lines.push(currentLine);
-    return lines;
-  };
-
-  // formatTokensCompact imported from ../utils/formatters
-
-  // Format hands-on time for display
-  const formatHandsOnTime = (ms: number): string => {
-    if (ms < 1000) return '0m';
-    const totalMinutes = Math.floor(ms / 60000);
-    const hours = Math.floor(totalMinutes / 60);
-    const minutes = totalMinutes % 60;
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    return `${minutes}m`;
-  };
-
-  // Helper to load an image from URL - fetches via main process to avoid CORS issues
-  const loadImage = useCallback(async (url: string): Promise<HTMLImageElement | null> => {
-    try {
-      // Use IPC to fetch the image from main process (avoids CORS)
-      const base64DataUrl = await window.maestro.fs.fetchImageAsBase64(url);
-      if (!base64DataUrl) {
-        return null;
-      }
-      // Create image from the base64 data URL
-      return new Promise((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => resolve(null);
-        img.src = base64DataUrl;
-      });
-    } catch (error) {
-      console.error('Failed to load image:', error);
-      return null;
-    }
-  }, []);
-
-  // Generate shareable achievement card as canvas
-  const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d')!;
-
-    // Check if we have personalization data
-    const hasPersonalization = leaderboardRegistration?.displayName;
-    const displayName = leaderboardRegistration?.displayName;
-    const githubUsername = leaderboardRegistration?.githubUsername;
-    const twitterHandle = leaderboardRegistration?.twitterHandle;
-    const linkedinHandle = leaderboardRegistration?.linkedinHandle;
-    const discordUsername = leaderboardRegistration?.discordUsername;
-
-    // Collect social handles for display
-    const socialHandles: { icon: string; handle: string; color: string }[] = [];
-    if (githubUsername) socialHandles.push({ icon: 'github', handle: githubUsername, color: '#FFFFFF' });
-    if (twitterHandle) socialHandles.push({ icon: 'twitter', handle: twitterHandle, color: '#FFFFFF' });
-    if (linkedinHandle) socialHandles.push({ icon: 'linkedin', handle: linkedinHandle, color: '#0A66C2' });
-    if (discordUsername) socialHandles.push({ icon: 'discord', handle: discordUsername, color: '#5865F2' });
-
-    // Calculate height based on whether we have social handles
-    const hasSocialHandles = socialHandles.length > 0;
-
-    // High-DPI rendering for crisp text
-    const scale = 3;  // 3x resolution for sharp output
-    const width = 600;
-    // Reduced height - tighter layout with social handles integrated into footer area
-    const height = hasSocialHandles ? 580 : 540;
-    canvas.width = width * scale;
-    canvas.height = height * scale;
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
-    ctx.scale(scale, scale);
-
-    // Enable font smoothing
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-
-    // Try to load GitHub avatar if available
-    let avatarImage: HTMLImageElement | null = null;
-    if (githubUsername) {
-      avatarImage = await loadImage(`https://github.com/${githubUsername}.png?size=200`);
-    }
-
-    // Load GitHub logo for social icons
-    const githubLogoImage = await loadImage('https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png');
-
-    // Load Maestro wand icon (local asset, doesn't need IPC fetch)
-    const wandIconImage = await new Promise<HTMLImageElement | null>((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = () => resolve(null);
-      img.src = maestroWandIcon;
-    });
-
-    // Background gradient matching app icon (radial gradient from center)
-    const bgGradient = ctx.createRadialGradient(
-      width / 2, height / 2, 0,
-      width / 2, height / 2, width * 0.7
-    );
-    bgGradient.addColorStop(0, '#2d1f4e');  // Lighter purple center
-    bgGradient.addColorStop(1, '#1a1a2e');  // Dark purple edges
-    ctx.fillStyle = bgGradient;
-    ctx.roundRect(0, 0, width, height, 20);
-    ctx.fill();
-
-    // Subtle gradient overlay for depth
-    const overlayGradient = ctx.createLinearGradient(0, 0, 0, height);
-    overlayGradient.addColorStop(0, 'rgba(139, 92, 246, 0.15)');
-    overlayGradient.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
-    overlayGradient.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
-    ctx.fillStyle = overlayGradient;
-    ctx.roundRect(0, 0, width, height, 20);
-    ctx.fill();
-
-    // Border with purple glow effect
-    ctx.strokeStyle = '#8B5CF6';
-    ctx.lineWidth = 2;
-    ctx.roundRect(0, 0, width, height, 20);
-    ctx.stroke();
-
-    // Outer glow border
-    ctx.strokeStyle = 'rgba(139, 92, 246, 0.3)';
-    ctx.lineWidth = 4;
-    ctx.roundRect(-2, -2, width + 4, height + 4, 22);
-    ctx.stroke();
-
-    // Avatar/Trophy icon - larger with more vertical space at top
-    const iconX = width / 2;
-    const iconY = 70;  // More breathing room at top
-    const iconRadius = 40;  // Larger radius
-
-    if (avatarImage) {
-      // Draw avatar in a circular clip
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(iconX, iconY, iconRadius, 0, Math.PI * 2);
-      ctx.closePath();
-      ctx.clip();
-      ctx.drawImage(avatarImage, iconX - iconRadius, iconY - iconRadius, iconRadius * 2, iconRadius * 2);
-      ctx.restore();
-
-      // Add a bright gold border around the avatar
-      ctx.beginPath();
-      ctx.arc(iconX, iconY, iconRadius + 2, 0, Math.PI * 2);
-      ctx.strokeStyle = '#FFD700';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Add Maestro wand badge in the bottom-right corner
-      const badgeRadius = 18;
-      const badgeX = iconX + iconRadius - 6;
-      const badgeY = iconY + iconRadius - 6;
-
-      // Draw the actual Maestro wand icon in a circular clip
-      if (wandIconImage) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
-        ctx.closePath();
-        ctx.clip();
-        ctx.drawImage(wandIconImage, badgeX - badgeRadius, badgeY - badgeRadius, badgeRadius * 2, badgeRadius * 2);
-        ctx.restore();
-        // Add a subtle border
-        ctx.beginPath();
-        ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
-        ctx.strokeStyle = '#DDD6FE';
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-    } else {
-      // Default trophy icon with purple gradient background
-      ctx.beginPath();
-      ctx.arc(iconX, iconY, iconRadius, 0, Math.PI * 2);
-      const defaultGradient = ctx.createRadialGradient(iconX - 10, iconY - 10, 0, iconX, iconY, iconRadius);
-      defaultGradient.addColorStop(0, '#C4B5FD');  // Light purple center
-      defaultGradient.addColorStop(0.5, '#A78BFA');  // Medium purple
-      defaultGradient.addColorStop(1, '#8B5CF6');  // Accent purple edge
-      ctx.fillStyle = defaultGradient;
-      ctx.fill();
-      ctx.strokeStyle = '#DDD6FE';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-
-      // Trophy emoji
-      ctx.font = '38px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('🏆', iconX, iconY + 2);
-    }
-
-    // Title - show display name if personalized, otherwise generic title
-    // Positioned with more breathing room after larger icon
-    const titleY = iconY + iconRadius + 32;
-    ctx.font = '600 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillStyle = '#F472B6';
-    ctx.textAlign = 'center';
-    if (hasPersonalization && displayName) {
-      ctx.fillText(displayName.toUpperCase(), width / 2, titleY);
-    } else {
-      ctx.fillText('MAESTRO ACHIEVEMENTS', width / 2, titleY);
-    }
-
-    // Badge info area
-    const levelY = titleY + 28;
-    const badgeNameY = levelY + 32;
-    let flavorEndY = badgeNameY + 20;
-
-    if (currentBadge) {
-      // Level indicator with stars
-      ctx.font = '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = goldColor;
-      ctx.fillText(`★ Level ${currentBadge.level} of 11 ★`, width / 2, levelY);
-
-      // Badge name - larger and more prominent
-      ctx.font = '700 26px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#F472B6';
-      ctx.fillText(currentBadge.name, width / 2, badgeNameY);
-
-      // Flavor text in quotes
-      ctx.font = 'italic 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      const flavorLines = wrapText(ctx, `"${currentBadge.flavorText}"`, width - 100);
-      let yOffset = badgeNameY + 30;
-      flavorLines.forEach(line => {
-        ctx.fillText(line, width / 2, yOffset);
-        yOffset += 18;
-      });
-      flavorEndY = yOffset;
-    } else {
-      // No badge yet
-      ctx.font = '700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.fillText('Journey Just Beginning...', width / 2, badgeNameY);
-
-      ctx.font = '400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillText('Complete 15 minutes of AutoRun to unlock first badge', width / 2, badgeNameY + 28);
-      flavorEndY = badgeNameY + 46;
-    }
-
-    // Get stat values
-    const totalTokens = globalStats
-      ? globalStats.totalInputTokens + globalStats.totalOutputTokens
-      : 0;
-    const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '—';
-    const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '—';
-    const handsOnValue = handsOnTimeMs ? formatHandsOnTime(handsOnTimeMs) : '—';
-    const autoRunTotal = formatCumulativeTime(autoRunStats.cumulativeTimeMs);
-    const autoRunBest = formatCumulativeTime(autoRunStats.longestRunMs);
-
-    // Get peak values from usageStats
-    const maxAgents = usageStats?.maxAgents?.toString() || '0';
-    const maxAutoRuns = usageStats?.maxSimultaneousAutoRuns?.toString() || '0';
-    const maxQueries = usageStats?.maxSimultaneousQueries?.toString() || '0';
-    const maxQueue = usageStats?.maxQueueDepth?.toString() || '0';
-
-    const rowHeight = 56;
-    const rowGap = 10;
-
-    // --- Row 1: Sessions & Tokens (2 columns) ---
-    const row1Y = flavorEndY + 14;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-    ctx.roundRect(30, row1Y, width - 60, rowHeight, 12);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(139, 92, 246, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.roundRect(30, row1Y, width - 60, rowHeight, 12);
-    ctx.stroke();
-
-    const row1ColWidth = (width - 60) / 2;
-    const row1CenterY = row1Y + rowHeight / 2;
-
-    // Helper to draw a stat
-    const drawStatInRow = (x: number, centerY: number, value: string, label: string, fontSize: number = 20) => {
-      ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-      ctx.fillStyle = '#FFFFFF';
-      ctx.textAlign = 'center';
-      ctx.fillText(value, x, centerY - 3);
-
-      ctx.font = '500 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.fillText(label, x, centerY + 14);
-    };
-
-    drawStatInRow(30 + row1ColWidth * 0.5, row1CenterY, sessionsValue, 'Sessions', 22);
-    drawStatInRow(30 + row1ColWidth * 1.5, row1CenterY, tokensValue, 'Total Tokens', 22);
-
-    // --- Row 2: AutoRun Total, AutoRun Best, Hands-on Time (3 columns) ---
-    const row2Y = row1Y + rowHeight + rowGap;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
-    ctx.roundRect(30, row2Y, width - 60, rowHeight, 12);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(139, 92, 246, 0.25)';
-    ctx.lineWidth = 1;
-    ctx.roundRect(30, row2Y, width - 60, rowHeight, 12);
-    ctx.stroke();
-
-    const row2ColWidth = (width - 60) / 3;
-    const row2CenterY = row2Y + rowHeight / 2;
-
-    drawStatInRow(30 + row2ColWidth * 0.5, row2CenterY, autoRunTotal, 'Total AutoRun', 18);
-    drawStatInRow(30 + row2ColWidth * 1.5, row2CenterY, autoRunBest, 'Longest AutoRun', 18);
-    drawStatInRow(30 + row2ColWidth * 2.5, row2CenterY, handsOnValue, 'Hands-on Time', 18);
-
-    // --- Row 3: Peak Usage (4 columns) ---
-    const row3Y = row2Y + rowHeight + rowGap;
-    const row3Height = 66;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-    ctx.roundRect(30, row3Y, width - 60, row3Height, 12);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(139, 92, 246, 0.2)';
-    ctx.lineWidth = 1;
-    ctx.roundRect(30, row3Y, width - 60, row3Height, 12);
-    ctx.stroke();
-
-    // Peak stats header
-    ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.textAlign = 'center';
-    ctx.fillText('PEAK USAGE', width / 2, row3Y + 14);
-
-    const row3ColWidth = (width - 60) / 4;
-    const row3CenterY = row3Y + row3Height / 2 + 8;
-
-    // Helper to draw peak stat
-    const drawPeakStat = (x: number, value: string, label: string) => {
-      ctx.font = '700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = '#FFFFFF';
-      ctx.textAlign = 'center';
-      ctx.fillText(value, x, row3CenterY - 3);
-
-      ctx.font = '500 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.fillText(label, x, row3CenterY + 12);
-    };
-
-    drawPeakStat(30 + row3ColWidth * 0.5, maxAgents, 'Registered Agents');
-    drawPeakStat(30 + row3ColWidth * 1.5, maxAutoRuns, 'Parallel AutoRuns');
-    drawPeakStat(30 + row3ColWidth * 2.5, maxQueries, 'Parallel Queries');
-    drawPeakStat(30 + row3ColWidth * 3.5, maxQueue, 'Queue Depth');
-
-    // --- Social Handles Row (if personalized) - positioned closer to footer ---
-    if (hasSocialHandles) {
-      // Position social handles right above the footer, not after the stats
-      const socialY = height - 70;  // 70px from bottom, leaving room for footer
-      const socialHeight = 20;
-
-      // Draw social handles centered
-      ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-
-      // Calculate total width needed for all handles
-      const handleGap = 24;
-      const iconSize = 14;
-      const iconGap = 6;
-      let totalWidth = 0;
-      socialHandles.forEach((social) => {
-        const textWidth = ctx.measureText(social.handle).width;
-        totalWidth += iconSize + iconGap + textWidth;
-      });
-      totalWidth += handleGap * (socialHandles.length - 1);
-
-      // Start position to center all handles
-      let currentX = (width - totalWidth) / 2;
-
-      // Helper to draw social icon using proper brand shapes
-      const drawSocialIcon = (x: number, y: number, icon: string, size: number) => {
-        ctx.save();
-        const halfSize = size / 2;
-
-        if (icon === 'github') {
-          // Use the real GitHub logo if loaded, otherwise draw a circle with "GH"
-          if (githubLogoImage) {
-            // Draw the GitHub logo image in a circular clip
-            ctx.save();
-            ctx.beginPath();
-            ctx.arc(x, y, halfSize, 0, Math.PI * 2);
-            ctx.closePath();
-            ctx.clip();
-            ctx.drawImage(githubLogoImage, x - halfSize, y - halfSize, size, size);
-            ctx.restore();
-          } else {
-            // Fallback: white circle with "GH" text
-            ctx.fillStyle = '#FFFFFF';
-            ctx.beginPath();
-            ctx.arc(x, y, halfSize, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#1a1a2e';
-            ctx.font = `bold ${size * 0.45}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('GH', x, y + 1);
-          }
-        } else if (icon === 'twitter') {
-          // X/Twitter - simple X shape
-          ctx.strokeStyle = '#FFFFFF';
-          ctx.lineWidth = 2;
-          ctx.lineCap = 'round';
-          ctx.beginPath();
-          ctx.moveTo(x - halfSize * 0.6, y - halfSize * 0.6);
-          ctx.lineTo(x + halfSize * 0.6, y + halfSize * 0.6);
-          ctx.moveTo(x + halfSize * 0.6, y - halfSize * 0.6);
-          ctx.lineTo(x - halfSize * 0.6, y + halfSize * 0.6);
-          ctx.stroke();
-        } else if (icon === 'linkedin') {
-          // LinkedIn - rounded square with 'in'
-          ctx.fillStyle = '#0A66C2';
-          ctx.beginPath();
-          ctx.roundRect(x - halfSize, y - halfSize, size, size, 2);
-          ctx.fill();
-          ctx.fillStyle = '#FFFFFF';
-          ctx.font = `bold ${size * 0.6}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('in', x, y + 1);
-        } else if (icon === 'discord') {
-          // Discord Clyde logo - the controller/gamepad face
-          ctx.fillStyle = '#5865F2';
-          ctx.beginPath();
-          ctx.roundRect(x - halfSize, y - halfSize, size, size, 3);
-          ctx.fill();
-          // Draw the Discord Clyde face (simplified game controller shape)
-          ctx.fillStyle = '#FFFFFF';
-          const s = halfSize * 0.8;
-          // Main body shape (rounded trapezoid/controller)
-          ctx.beginPath();
-          ctx.moveTo(x - s * 0.8, y - s * 0.3);
-          // Top left curve going up
-          ctx.quadraticCurveTo(x - s * 0.7, y - s * 0.7, x - s * 0.3, y - s * 0.55);
-          // Top center dip
-          ctx.quadraticCurveTo(x, y - s * 0.45, x + s * 0.3, y - s * 0.55);
-          // Top right curve
-          ctx.quadraticCurveTo(x + s * 0.7, y - s * 0.7, x + s * 0.8, y - s * 0.3);
-          // Right side down
-          ctx.quadraticCurveTo(x + s * 0.9, y + s * 0.2, x + s * 0.5, y + s * 0.65);
-          // Bottom
-          ctx.quadraticCurveTo(x, y + s * 0.75, x - s * 0.5, y + s * 0.65);
-          // Left side up
-          ctx.quadraticCurveTo(x - s * 0.9, y + s * 0.2, x - s * 0.8, y - s * 0.3);
-          ctx.closePath();
-          ctx.fill();
-          // Cut out eyes (draw background color circles)
-          ctx.fillStyle = '#5865F2';
-          // Left eye
-          ctx.beginPath();
-          ctx.ellipse(x - s * 0.35, y - s * 0.05, s * 0.18, s * 0.22, 0, 0, Math.PI * 2);
-          ctx.fill();
-          // Right eye
-          ctx.beginPath();
-          ctx.ellipse(x + s * 0.35, y - s * 0.05, s * 0.18, s * 0.22, 0, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      };
-
-      socialHandles.forEach((social, index) => {
-        // Draw icon
-        drawSocialIcon(currentX + iconSize / 2, socialY + socialHeight / 2, social.icon, iconSize);
-        currentX += iconSize + iconGap;
-
-        // Draw handle text
-        ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-        ctx.fillText(social.handle, currentX, socialY + socialHeight / 2 + 4);
-
-        const textWidth = ctx.measureText(social.handle).width;
-        currentX += textWidth;
-
-        // Add gap between handles (except after last one)
-        if (index < socialHandles.length - 1) {
-          currentX += handleGap;
-        }
-      });
-    }
-
-    // Footer with branding - single line at bottom
-    const footerY = height - 20;
-    ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
-    ctx.fillStyle = 'rgba(139, 92, 246, 0.8)';
-    ctx.textAlign = 'center';
-    ctx.fillText('RunMaestro.ai • Agent Orchestration Command Center', width / 2, footerY);
-
-    return canvas;
-  }, [currentBadge, autoRunStats.cumulativeTimeMs, autoRunStats.longestRunMs, globalStats, usageStats, handsOnTimeMs, wrapText, leaderboardRegistration, loadImage]);
-
-  // Copy to clipboard
-  const copyToClipboard = useCallback(async () => {
-    try {
-      const canvas = await generateShareImage();
-      canvas.toBlob(async (blob) => {
-        if (blob) {
-          await navigator.clipboard.write([
-            new ClipboardItem({ 'image/png': blob })
-          ]);
-          setCopySuccess(true);
-          setTimeout(() => setCopySuccess(false), 2000);
-        }
-      }, 'image/png');
-    } catch (error) {
-      console.error('Failed to copy to clipboard:', error);
-    }
-  }, [generateShareImage]);
-
-  // Download as image
-  const downloadImage = useCallback(async () => {
-    try {
-      const canvas = await generateShareImage();
-      const link = document.createElement('a');
-      link.download = `maestro-achievement-level-${currentLevel}.png`;
-      link.href = canvas.toDataURL('image/png');
-      link.click();
-    } catch (error) {
-      console.error('Failed to download image:', error);
-    }
-  }, [generateShareImage, currentLevel]);
-
-  return (
-    <div
-      className="p-4 rounded border"
-      style={{
-        borderColor: theme.colors.border,
-        backgroundColor: theme.colors.bgActivity,
-      }}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <Trophy className="w-4 h-4" style={{ color: '#FFD700' }} />
-          <span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
-            Maestro Achievements
-          </span>
-        </div>
-
-        {/* Share button */}
-        <div className="relative" ref={shareMenuRef}>
-          <button
-            onClick={() => setShareMenuOpen(!shareMenuOpen)}
-            className="p-1.5 rounded-md transition-colors hover:bg-white/10"
-            style={{ color: theme.colors.textDim }}
-            title="Share achievements"
-          >
-            <Share2 className="w-4 h-4" />
-          </button>
-
-          {shareMenuOpen && (
-            <div
-              className="absolute right-0 top-full mt-1 p-1.5 rounded-lg shadow-xl z-50"
-              style={{
-                backgroundColor: theme.colors.bgSidebar,
-                border: `1px solid ${theme.colors.border}`,
-              }}
-            >
-              <button
-                onClick={() => {
-                  copyToClipboard();
-                  setShareMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
-              >
-                {copySuccess ? (
-                  <Check className="w-4 h-4 shrink-0" style={{ color: theme.colors.success }} />
-                ) : (
-                  <Copy className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
-                )}
-                <span style={{ color: theme.colors.textMain }}>
-                  {copySuccess ? 'Copied!' : 'Copy to Clipboard'}
-                </span>
-              </button>
-              <button
-                onClick={() => {
-                  downloadImage();
-                  setShareMenuOpen(false);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
-              >
-                <Download className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
-                <span style={{ color: theme.colors.textMain }}>Save as Image</span>
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Current badge display */}
-      <div className="flex items-center gap-4 mb-4">
-        {/* Maestro icon with circular progress ring */}
-        <div className="relative flex-shrink-0" style={{ width: 72, height: 72 }}>
-          {/* Circular progress ring - 11 segments */}
-          <BadgeProgressRing currentLevel={currentLevel} size={72} theme={theme} />
-
-          {/* Inner circle with Maestro icon - always use dark bg with light silhouette for visibility */}
-          <div
-            className="absolute rounded-full flex items-center justify-center overflow-hidden"
-            style={{
-              top: 8,
-              left: 8,
-              width: 56,
-              height: 56,
-              background: currentLevel > 0 ? '#2d2d44' : theme.colors.bgMain,
-              border: `2px solid ${currentLevel > 0 ? '#FFD700' : theme.colors.border}`,
-            }}
-          >
-            <MaestroSilhouette
-              variant="light"
-              size={36}
-              style={{ opacity: currentLevel > 0 ? 1 : 0.3 }}
-            />
-          </div>
-
-          {/* Level number badge - positioned outside the ring */}
-          {currentLevel > 0 && (
-            <div
-              className="absolute flex items-center justify-center text-xs font-bold"
-              style={{
-                top: -2,
-                right: -2,
-                width: 20,
-                height: 20,
-                borderRadius: '50%',
-                background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
-                color: '#000',
-                boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
-              }}
-            >
-              {currentLevel}
-            </div>
-          )}
-        </div>
-
-        {/* Badge info */}
-        <div className="flex-1 min-w-0">
-          {currentBadge ? (
-            <>
-              <div className="font-medium truncate" style={{ color: theme.colors.textMain }}>
-                {currentBadge.name}
-              </div>
-              <div className="text-xs" style={{ color: theme.colors.textDim }}>
-                Level {currentBadge.level} of 11
-              </div>
-            </>
-          ) : (
-            <>
-              <div className="font-medium" style={{ color: theme.colors.textDim }}>
-                No Badge Yet
-              </div>
-              <div className="text-xs" style={{ color: theme.colors.textDim }}>
-                Complete 15 minutes of AutoRun to unlock
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar to next level */}
-      {nextBadge && (
-        <div className="mb-4">
-          <div className="flex items-center justify-between text-xs mb-1">
-            <span style={{ color: theme.colors.textDim }}>
-              Next: {nextBadge.shortName}
-            </span>
-            <span style={{ color: theme.colors.accent }}>
-              {formatTimeRemaining(autoRunStats.cumulativeTimeMs, nextBadge)}
-            </span>
-          </div>
-          <div
-            className="h-2 rounded-full overflow-hidden"
-            style={{ backgroundColor: theme.colors.bgMain }}
-          >
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${progressPercent}%`,
-                background: `linear-gradient(90deg, ${theme.colors.accent} 0%, #FFD700 100%)`,
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Stats grid */}
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
-          <div className="flex items-center justify-center gap-1 mb-1">
-            <Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-          </div>
-          <div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
-            {formatCumulativeTime(autoRunStats.cumulativeTimeMs)}
-          </div>
-          <div className="text-xs" style={{ color: theme.colors.textDim }}>
-            Total Time
-          </div>
-        </div>
-
-        <div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
-          <div className="flex items-center justify-center gap-1 mb-1">
-            <Trophy className="w-3 h-3" style={{ color: '#FFD700' }} />
-          </div>
-          <div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
-            {formatCumulativeTime(autoRunStats.longestRunMs)}
-          </div>
-          <div className="text-xs" style={{ color: theme.colors.textDim }}>
-            Longest Run
-          </div>
-        </div>
-
-        <div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
-          <div className="flex items-center justify-center gap-1 mb-1">
-            <Zap className="w-3 h-3" style={{ color: theme.colors.accent }} />
-          </div>
-          <div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
-            {autoRunStats.totalRuns}
-          </div>
-          <div className="text-xs" style={{ color: theme.colors.textDim }}>
-            Total Runs
-          </div>
-        </div>
-      </div>
-
-      {/* Badge progression preview */}
-      <div ref={badgeContainerRef}>
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs" style={{ color: theme.colors.textDim }}>
-            Badge Progression
-          </span>
-          <span className="text-xs" style={{ color: theme.colors.textDim }}>
-            {currentLevel}/11 unlocked
-          </span>
-        </div>
-        <div className="flex gap-1">
-          {CONDUCTOR_BADGES.map((badge) => {
-            const isUnlocked = badge.level <= currentLevel;
-            const isCurrent = badge.level === currentLevel;
-            const isSelected = selectedBadge === badge.level;
-
-            return (
-              <div
-                key={badge.id}
-                className="relative flex-1"
-                onClick={() => setSelectedBadge(isSelected ? null : badge.level)}
-              >
-                <div
-                  className="h-3 rounded-full cursor-pointer transition-all hover:scale-110"
-                  style={{
-                    backgroundColor: isUnlocked
-                      ? badge.level <= 3
-                        ? theme.colors.accent
-                        : badge.level <= 7
-                          ? '#FFD700'
-                          : '#FF6B35'
-                      : theme.colors.border,
-                    opacity: isUnlocked ? 1 : 0.5,
-                    border: isUnlocked ? 'none' : `1px dashed ${theme.colors.textDim}`,
-                    boxShadow: isCurrent ? `0 0 0 2px ${theme.colors.bgActivity}, 0 0 0 4px #FFD700` : 'none',
-                  }}
-                  title={`${badge.name} - Click to view details`}
-                />
-                {isSelected && (
-                  <BadgeTooltip
-                    badge={badge}
-                    theme={theme}
-                    isUnlocked={isUnlocked}
-                    position={getTooltipPosition(badge.level)}
-                    onClose={() => setSelectedBadge(null)}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Badge Unlock History - only visible at level 2+ */}
-      {autoRunStats.badgeHistory && autoRunStats.badgeHistory.length > 1 && (
-        <div className="mt-3">
-          <button
-            onClick={() => setHistoryExpanded(!historyExpanded)}
-            className="flex items-center gap-1.5 text-xs w-full hover:opacity-80 transition-opacity"
-            style={{ color: theme.colors.textDim }}
-          >
-            <History className="w-3 h-3" />
-            <span>Path to the Podium: Timeline</span>
-            <ChevronDown
-              className={`w-3 h-3 ml-auto transition-transform duration-200 ${
-                historyExpanded ? 'rotate-180' : ''
-              }`}
-            />
-          </button>
-          {historyExpanded && (
-            <div
-              className="mt-2 p-2 rounded space-y-1.5 max-h-32 overflow-y-auto"
-              style={{ backgroundColor: theme.colors.bgMain }}
-            >
-              {[...autoRunStats.badgeHistory]
-                .sort((a, b) => a.level - b.level)
-                .map((record) => {
-                  const badge = CONDUCTOR_BADGES.find((b) => b.level === record.level);
-                  if (!badge) return null;
-                  return (
-                    <div
-                      key={record.level}
-                      className="flex items-center justify-between text-xs"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
-                          style={{
-                            background:
-                              badge.level <= 3
-                                ? theme.colors.accent
-                                : badge.level <= 7
-                                  ? '#FFD700'
-                                  : '#FF6B35',
-                            color: '#000',
-                          }}
-                        >
-                          {badge.level}
-                        </div>
-                        <span style={{ color: theme.colors.textMain }}>{badge.shortName}</span>
-                      </div>
-                      <span style={{ color: theme.colors.textDim }}>
-                        {new Date(record.unlockedAt).toLocaleDateString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </span>
-                    </div>
-                  );
-                })}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Max level celebration */}
-      {!nextBadge && currentBadge && (
-        <div
-          className="mt-4 p-3 rounded-lg text-center"
-          style={{
-            background: `linear-gradient(135deg, ${theme.colors.accent}20 0%, #FFD70020 100%)`,
-            border: `1px solid #FFD700`,
-          }}
-        >
-          <div className="flex items-center justify-center gap-2 mb-1">
-            <Star className="w-4 h-4" style={{ color: '#FFD700' }} />
-            <span className="font-bold" style={{ color: '#FFD700' }}>
-              Maximum Level Achieved!
-            </span>
-            <Star className="w-4 h-4" style={{ color: '#FFD700' }} />
-          </div>
-          <p className="text-xs" style={{ color: theme.colors.textDim }}>
-            You are a true Titan of the Baton
-          </p>
-        </div>
-      )}
-    </div>
-  );
+export function AchievementCard({
+	theme,
+	autoRunStats,
+	globalStats,
+	usageStats,
+	handsOnTimeMs,
+	leaderboardRegistration,
+	onEscapeWithBadgeOpen,
+}: AchievementCardProps & { onEscapeWithBadgeOpen?: (handler: (() => boolean) | null) => void }) {
+	const [selectedBadge, setSelectedBadge] = useState<number | null>(null);
+	const [historyExpanded, setHistoryExpanded] = useState(false);
+	const [shareMenuOpen, setShareMenuOpen] = useState(false);
+	const [copySuccess, setCopySuccess] = useState(false);
+	const badgeContainerRef = useRef<HTMLDivElement>(null);
+	const shareMenuRef = useRef<HTMLDivElement>(null);
+
+	// Register escape handler with parent when badge is selected
+	useEffect(() => {
+		if (onEscapeWithBadgeOpen) {
+			if (selectedBadge !== null) {
+				// Return a handler that closes the badge and returns true (handled)
+				onEscapeWithBadgeOpen(() => {
+					setSelectedBadge(null);
+					return true;
+				});
+			} else {
+				onEscapeWithBadgeOpen(null);
+			}
+		}
+	}, [selectedBadge, onEscapeWithBadgeOpen]);
+
+	// Handle click outside to close badge tooltip
+	useEffect(() => {
+		if (selectedBadge === null) return;
+
+		const handleClickOutside = (e: MouseEvent) => {
+			if (badgeContainerRef.current && !badgeContainerRef.current.contains(e.target as Node)) {
+				setSelectedBadge(null);
+			}
+		};
+
+		// Use setTimeout to avoid immediate trigger from the click that opened it
+		const timeoutId = setTimeout(() => {
+			document.addEventListener('click', handleClickOutside);
+		}, 0);
+
+		return () => {
+			clearTimeout(timeoutId);
+			document.removeEventListener('click', handleClickOutside);
+		};
+	}, [selectedBadge]);
+
+	// Determine tooltip position based on badge level
+	const getTooltipPosition = (level: number): 'left' | 'center' | 'right' => {
+		if (level <= 2) return 'left';
+		if (level >= 10) return 'right';
+		return 'center';
+	};
+
+	const currentBadge = getBadgeForTime(autoRunStats.cumulativeTimeMs);
+	const nextBadge = getNextBadge(currentBadge);
+	const progressPercent = getProgressToNextBadge(
+		autoRunStats.cumulativeTimeMs,
+		currentBadge,
+		nextBadge
+	);
+
+	const currentLevel = currentBadge?.level || 0;
+	const goldColor = '#FFD700';
+
+	// Close share menu when clicking outside
+	useEffect(() => {
+		if (!shareMenuOpen) return;
+
+		const handleClickOutside = (e: MouseEvent) => {
+			if (shareMenuRef.current && !shareMenuRef.current.contains(e.target as Node)) {
+				setShareMenuOpen(false);
+			}
+		};
+
+		const timeoutId = setTimeout(() => {
+			document.addEventListener('click', handleClickOutside);
+		}, 0);
+
+		return () => {
+			clearTimeout(timeoutId);
+			document.removeEventListener('click', handleClickOutside);
+		};
+	}, [shareMenuOpen]);
+
+	// Helper to wrap text for canvas
+	const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] => {
+		const words = text.split(' ');
+		const lines: string[] = [];
+		let currentLine = '';
+
+		words.forEach((word) => {
+			const testLine = currentLine ? `${currentLine} ${word}` : word;
+			const metrics = ctx.measureText(testLine);
+			if (metrics.width > maxWidth && currentLine) {
+				lines.push(currentLine);
+				currentLine = word;
+			} else {
+				currentLine = testLine;
+			}
+		});
+		if (currentLine) lines.push(currentLine);
+		return lines;
+	};
+
+	// formatTokensCompact imported from ../utils/formatters
+
+	// Format hands-on time for display
+	const formatHandsOnTime = (ms: number): string => {
+		if (ms < 1000) return '0m';
+		const totalMinutes = Math.floor(ms / 60000);
+		const hours = Math.floor(totalMinutes / 60);
+		const minutes = totalMinutes % 60;
+		if (hours > 0) {
+			return `${hours}h ${minutes}m`;
+		}
+		return `${minutes}m`;
+	};
+
+	// Helper to load an image from URL - fetches via main process to avoid CORS issues
+	const loadImage = useCallback(async (url: string): Promise<HTMLImageElement | null> => {
+		try {
+			// Use IPC to fetch the image from main process (avoids CORS)
+			const base64DataUrl = await window.maestro.fs.fetchImageAsBase64(url);
+			if (!base64DataUrl) {
+				return null;
+			}
+			// Create image from the base64 data URL
+			return new Promise((resolve) => {
+				const img = new Image();
+				img.onload = () => resolve(img);
+				img.onerror = () => resolve(null);
+				img.src = base64DataUrl;
+			});
+		} catch (error) {
+			console.error('Failed to load image:', error);
+			return null;
+		}
+	}, []);
+
+	// Generate shareable achievement card as canvas
+	const generateShareImage = useCallback(async (): Promise<HTMLCanvasElement> => {
+		const canvas = document.createElement('canvas');
+		const ctx = canvas.getContext('2d')!;
+
+		// Check if we have personalization data
+		const hasPersonalization = leaderboardRegistration?.displayName;
+		const displayName = leaderboardRegistration?.displayName;
+		const githubUsername = leaderboardRegistration?.githubUsername;
+		const twitterHandle = leaderboardRegistration?.twitterHandle;
+		const linkedinHandle = leaderboardRegistration?.linkedinHandle;
+		const discordUsername = leaderboardRegistration?.discordUsername;
+
+		// Collect social handles for display
+		const socialHandles: { icon: string; handle: string; color: string }[] = [];
+		if (githubUsername)
+			socialHandles.push({ icon: 'github', handle: githubUsername, color: '#FFFFFF' });
+		if (twitterHandle)
+			socialHandles.push({ icon: 'twitter', handle: twitterHandle, color: '#FFFFFF' });
+		if (linkedinHandle)
+			socialHandles.push({ icon: 'linkedin', handle: linkedinHandle, color: '#0A66C2' });
+		if (discordUsername)
+			socialHandles.push({ icon: 'discord', handle: discordUsername, color: '#5865F2' });
+
+		// Calculate height based on whether we have social handles
+		const hasSocialHandles = socialHandles.length > 0;
+
+		// High-DPI rendering for crisp text
+		const scale = 3; // 3x resolution for sharp output
+		const width = 600;
+		// Reduced height - tighter layout with social handles integrated into footer area
+		const height = hasSocialHandles ? 580 : 540;
+		canvas.width = width * scale;
+		canvas.height = height * scale;
+		canvas.style.width = `${width}px`;
+		canvas.style.height = `${height}px`;
+		ctx.scale(scale, scale);
+
+		// Enable font smoothing
+		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingQuality = 'high';
+
+		// Try to load GitHub avatar if available
+		let avatarImage: HTMLImageElement | null = null;
+		if (githubUsername) {
+			avatarImage = await loadImage(`https://github.com/${githubUsername}.png?size=200`);
+		}
+
+		// Load GitHub logo for social icons
+		const githubLogoImage = await loadImage(
+			'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
+		);
+
+		// Load Maestro wand icon (local asset, doesn't need IPC fetch)
+		const wandIconImage = await new Promise<HTMLImageElement | null>((resolve) => {
+			const img = new Image();
+			img.onload = () => resolve(img);
+			img.onerror = () => resolve(null);
+			img.src = maestroWandIcon;
+		});
+
+		// Background gradient matching app icon (radial gradient from center)
+		const bgGradient = ctx.createRadialGradient(
+			width / 2,
+			height / 2,
+			0,
+			width / 2,
+			height / 2,
+			width * 0.7
+		);
+		bgGradient.addColorStop(0, '#2d1f4e'); // Lighter purple center
+		bgGradient.addColorStop(1, '#1a1a2e'); // Dark purple edges
+		ctx.fillStyle = bgGradient;
+		ctx.roundRect(0, 0, width, height, 20);
+		ctx.fill();
+
+		// Subtle gradient overlay for depth
+		const overlayGradient = ctx.createLinearGradient(0, 0, 0, height);
+		overlayGradient.addColorStop(0, 'rgba(139, 92, 246, 0.15)');
+		overlayGradient.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+		overlayGradient.addColorStop(1, 'rgba(0, 0, 0, 0.2)');
+		ctx.fillStyle = overlayGradient;
+		ctx.roundRect(0, 0, width, height, 20);
+		ctx.fill();
+
+		// Border with purple glow effect
+		ctx.strokeStyle = '#8B5CF6';
+		ctx.lineWidth = 2;
+		ctx.roundRect(0, 0, width, height, 20);
+		ctx.stroke();
+
+		// Outer glow border
+		ctx.strokeStyle = 'rgba(139, 92, 246, 0.3)';
+		ctx.lineWidth = 4;
+		ctx.roundRect(-2, -2, width + 4, height + 4, 22);
+		ctx.stroke();
+
+		// Avatar/Trophy icon - larger with more vertical space at top
+		const iconX = width / 2;
+		const iconY = 70; // More breathing room at top
+		const iconRadius = 40; // Larger radius
+
+		if (avatarImage) {
+			// Draw avatar in a circular clip
+			ctx.save();
+			ctx.beginPath();
+			ctx.arc(iconX, iconY, iconRadius, 0, Math.PI * 2);
+			ctx.closePath();
+			ctx.clip();
+			ctx.drawImage(
+				avatarImage,
+				iconX - iconRadius,
+				iconY - iconRadius,
+				iconRadius * 2,
+				iconRadius * 2
+			);
+			ctx.restore();
+
+			// Add a bright gold border around the avatar
+			ctx.beginPath();
+			ctx.arc(iconX, iconY, iconRadius + 2, 0, Math.PI * 2);
+			ctx.strokeStyle = '#FFD700';
+			ctx.lineWidth = 3;
+			ctx.stroke();
+
+			// Add Maestro wand badge in the bottom-right corner
+			const badgeRadius = 18;
+			const badgeX = iconX + iconRadius - 6;
+			const badgeY = iconY + iconRadius - 6;
+
+			// Draw the actual Maestro wand icon in a circular clip
+			if (wandIconImage) {
+				ctx.save();
+				ctx.beginPath();
+				ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+				ctx.closePath();
+				ctx.clip();
+				ctx.drawImage(
+					wandIconImage,
+					badgeX - badgeRadius,
+					badgeY - badgeRadius,
+					badgeRadius * 2,
+					badgeRadius * 2
+				);
+				ctx.restore();
+				// Add a subtle border
+				ctx.beginPath();
+				ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2);
+				ctx.strokeStyle = '#DDD6FE';
+				ctx.lineWidth = 2;
+				ctx.stroke();
+			}
+		} else {
+			// Default trophy icon with purple gradient background
+			ctx.beginPath();
+			ctx.arc(iconX, iconY, iconRadius, 0, Math.PI * 2);
+			const defaultGradient = ctx.createRadialGradient(
+				iconX - 10,
+				iconY - 10,
+				0,
+				iconX,
+				iconY,
+				iconRadius
+			);
+			defaultGradient.addColorStop(0, '#C4B5FD'); // Light purple center
+			defaultGradient.addColorStop(0.5, '#A78BFA'); // Medium purple
+			defaultGradient.addColorStop(1, '#8B5CF6'); // Accent purple edge
+			ctx.fillStyle = defaultGradient;
+			ctx.fill();
+			ctx.strokeStyle = '#DDD6FE';
+			ctx.lineWidth = 3;
+			ctx.stroke();
+
+			// Trophy emoji
+			ctx.font = '38px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillText('🏆', iconX, iconY + 2);
+		}
+
+		// Title - show display name if personalized, otherwise generic title
+		// Positioned with more breathing room after larger icon
+		const titleY = iconY + iconRadius + 32;
+		ctx.font = '600 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.fillStyle = '#F472B6';
+		ctx.textAlign = 'center';
+		if (hasPersonalization && displayName) {
+			ctx.fillText(displayName.toUpperCase(), width / 2, titleY);
+		} else {
+			ctx.fillText('MAESTRO ACHIEVEMENTS', width / 2, titleY);
+		}
+
+		// Badge info area
+		const levelY = titleY + 28;
+		const badgeNameY = levelY + 32;
+		let flavorEndY = badgeNameY + 20;
+
+		if (currentBadge) {
+			// Level indicator with stars
+			ctx.font = '600 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = goldColor;
+			ctx.fillText(`★ Level ${currentBadge.level} of 11 ★`, width / 2, levelY);
+
+			// Badge name - larger and more prominent
+			ctx.font = '700 26px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = '#F472B6';
+			ctx.fillText(currentBadge.name, width / 2, badgeNameY);
+
+			// Flavor text in quotes
+			ctx.font = 'italic 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+			const flavorLines = wrapText(ctx, `"${currentBadge.flavorText}"`, width - 100);
+			let yOffset = badgeNameY + 30;
+			flavorLines.forEach((line) => {
+				ctx.fillText(line, width / 2, yOffset);
+				yOffset += 18;
+			});
+			flavorEndY = yOffset;
+		} else {
+			// No badge yet
+			ctx.font = '700 22px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+			ctx.fillText('Journey Just Beginning...', width / 2, badgeNameY);
+
+			ctx.font = '400 14px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+			ctx.fillText(
+				'Complete 15 minutes of AutoRun to unlock first badge',
+				width / 2,
+				badgeNameY + 28
+			);
+			flavorEndY = badgeNameY + 46;
+		}
+
+		// Get stat values
+		const totalTokens = globalStats
+			? globalStats.totalInputTokens + globalStats.totalOutputTokens
+			: 0;
+		const tokensValue = totalTokens > 0 ? formatTokensCompact(totalTokens) : '—';
+		const sessionsValue = globalStats?.totalSessions?.toLocaleString() || '—';
+		const handsOnValue = handsOnTimeMs ? formatHandsOnTime(handsOnTimeMs) : '—';
+		const autoRunTotal = formatCumulativeTime(autoRunStats.cumulativeTimeMs);
+		const autoRunBest = formatCumulativeTime(autoRunStats.longestRunMs);
+
+		// Get peak values from usageStats
+		const maxAgents = usageStats?.maxAgents?.toString() || '0';
+		const maxAutoRuns = usageStats?.maxSimultaneousAutoRuns?.toString() || '0';
+		const maxQueries = usageStats?.maxSimultaneousQueries?.toString() || '0';
+		const maxQueue = usageStats?.maxQueueDepth?.toString() || '0';
+
+		const rowHeight = 56;
+		const rowGap = 10;
+
+		// --- Row 1: Sessions & Tokens (2 columns) ---
+		const row1Y = flavorEndY + 14;
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+		ctx.roundRect(30, row1Y, width - 60, rowHeight, 12);
+		ctx.fill();
+		ctx.strokeStyle = 'rgba(139, 92, 246, 0.3)';
+		ctx.lineWidth = 1;
+		ctx.roundRect(30, row1Y, width - 60, rowHeight, 12);
+		ctx.stroke();
+
+		const row1ColWidth = (width - 60) / 2;
+		const row1CenterY = row1Y + rowHeight / 2;
+
+		// Helper to draw a stat
+		const drawStatInRow = (
+			x: number,
+			centerY: number,
+			value: string,
+			label: string,
+			fontSize: number = 20
+		) => {
+			ctx.font = `700 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+			ctx.fillStyle = '#FFFFFF';
+			ctx.textAlign = 'center';
+			ctx.fillText(value, x, centerY - 3);
+
+			ctx.font = '500 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+			ctx.fillText(label, x, centerY + 14);
+		};
+
+		drawStatInRow(30 + row1ColWidth * 0.5, row1CenterY, sessionsValue, 'Sessions', 22);
+		drawStatInRow(30 + row1ColWidth * 1.5, row1CenterY, tokensValue, 'Total Tokens', 22);
+
+		// --- Row 2: AutoRun Total, AutoRun Best, Hands-on Time (3 columns) ---
+		const row2Y = row1Y + rowHeight + rowGap;
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.30)';
+		ctx.roundRect(30, row2Y, width - 60, rowHeight, 12);
+		ctx.fill();
+		ctx.strokeStyle = 'rgba(139, 92, 246, 0.25)';
+		ctx.lineWidth = 1;
+		ctx.roundRect(30, row2Y, width - 60, rowHeight, 12);
+		ctx.stroke();
+
+		const row2ColWidth = (width - 60) / 3;
+		const row2CenterY = row2Y + rowHeight / 2;
+
+		drawStatInRow(30 + row2ColWidth * 0.5, row2CenterY, autoRunTotal, 'Total AutoRun', 18);
+		drawStatInRow(30 + row2ColWidth * 1.5, row2CenterY, autoRunBest, 'Longest AutoRun', 18);
+		drawStatInRow(30 + row2ColWidth * 2.5, row2CenterY, handsOnValue, 'Hands-on Time', 18);
+
+		// --- Row 3: Peak Usage (4 columns) ---
+		const row3Y = row2Y + rowHeight + rowGap;
+		const row3Height = 66;
+		ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+		ctx.roundRect(30, row3Y, width - 60, row3Height, 12);
+		ctx.fill();
+		ctx.strokeStyle = 'rgba(139, 92, 246, 0.2)';
+		ctx.lineWidth = 1;
+		ctx.roundRect(30, row3Y, width - 60, row3Height, 12);
+		ctx.stroke();
+
+		// Peak stats header
+		ctx.font = '600 10px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+		ctx.textAlign = 'center';
+		ctx.fillText('PEAK USAGE', width / 2, row3Y + 14);
+
+		const row3ColWidth = (width - 60) / 4;
+		const row3CenterY = row3Y + row3Height / 2 + 8;
+
+		// Helper to draw peak stat
+		const drawPeakStat = (x: number, value: string, label: string) => {
+			ctx.font = '700 18px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = '#FFFFFF';
+			ctx.textAlign = 'center';
+			ctx.fillText(value, x, row3CenterY - 3);
+
+			ctx.font = '500 9px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+			ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+			ctx.fillText(label, x, row3CenterY + 12);
+		};
+
+		drawPeakStat(30 + row3ColWidth * 0.5, maxAgents, 'Registered Agents');
+		drawPeakStat(30 + row3ColWidth * 1.5, maxAutoRuns, 'Parallel AutoRuns');
+		drawPeakStat(30 + row3ColWidth * 2.5, maxQueries, 'Parallel Queries');
+		drawPeakStat(30 + row3ColWidth * 3.5, maxQueue, 'Queue Depth');
+
+		// --- Social Handles Row (if personalized) - positioned closer to footer ---
+		if (hasSocialHandles) {
+			// Position social handles right above the footer, not after the stats
+			const socialY = height - 70; // 70px from bottom, leaving room for footer
+			const socialHeight = 20;
+
+			// Draw social handles centered
+			ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+			// Calculate total width needed for all handles
+			const handleGap = 24;
+			const iconSize = 14;
+			const iconGap = 6;
+			let totalWidth = 0;
+			socialHandles.forEach((social) => {
+				const textWidth = ctx.measureText(social.handle).width;
+				totalWidth += iconSize + iconGap + textWidth;
+			});
+			totalWidth += handleGap * (socialHandles.length - 1);
+
+			// Start position to center all handles
+			let currentX = (width - totalWidth) / 2;
+
+			// Helper to draw social icon using proper brand shapes
+			const drawSocialIcon = (x: number, y: number, icon: string, size: number) => {
+				ctx.save();
+				const halfSize = size / 2;
+
+				if (icon === 'github') {
+					// Use the real GitHub logo if loaded, otherwise draw a circle with "GH"
+					if (githubLogoImage) {
+						// Draw the GitHub logo image in a circular clip
+						ctx.save();
+						ctx.beginPath();
+						ctx.arc(x, y, halfSize, 0, Math.PI * 2);
+						ctx.closePath();
+						ctx.clip();
+						ctx.drawImage(githubLogoImage, x - halfSize, y - halfSize, size, size);
+						ctx.restore();
+					} else {
+						// Fallback: white circle with "GH" text
+						ctx.fillStyle = '#FFFFFF';
+						ctx.beginPath();
+						ctx.arc(x, y, halfSize, 0, Math.PI * 2);
+						ctx.fill();
+						ctx.fillStyle = '#1a1a2e';
+						ctx.font = `bold ${size * 0.45}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+						ctx.textAlign = 'center';
+						ctx.textBaseline = 'middle';
+						ctx.fillText('GH', x, y + 1);
+					}
+				} else if (icon === 'twitter') {
+					// X/Twitter - simple X shape
+					ctx.strokeStyle = '#FFFFFF';
+					ctx.lineWidth = 2;
+					ctx.lineCap = 'round';
+					ctx.beginPath();
+					ctx.moveTo(x - halfSize * 0.6, y - halfSize * 0.6);
+					ctx.lineTo(x + halfSize * 0.6, y + halfSize * 0.6);
+					ctx.moveTo(x + halfSize * 0.6, y - halfSize * 0.6);
+					ctx.lineTo(x - halfSize * 0.6, y + halfSize * 0.6);
+					ctx.stroke();
+				} else if (icon === 'linkedin') {
+					// LinkedIn - rounded square with 'in'
+					ctx.fillStyle = '#0A66C2';
+					ctx.beginPath();
+					ctx.roundRect(x - halfSize, y - halfSize, size, size, 2);
+					ctx.fill();
+					ctx.fillStyle = '#FFFFFF';
+					ctx.font = `bold ${size * 0.6}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+					ctx.textAlign = 'center';
+					ctx.textBaseline = 'middle';
+					ctx.fillText('in', x, y + 1);
+				} else if (icon === 'discord') {
+					// Discord Clyde logo - the controller/gamepad face
+					ctx.fillStyle = '#5865F2';
+					ctx.beginPath();
+					ctx.roundRect(x - halfSize, y - halfSize, size, size, 3);
+					ctx.fill();
+					// Draw the Discord Clyde face (simplified game controller shape)
+					ctx.fillStyle = '#FFFFFF';
+					const s = halfSize * 0.8;
+					// Main body shape (rounded trapezoid/controller)
+					ctx.beginPath();
+					ctx.moveTo(x - s * 0.8, y - s * 0.3);
+					// Top left curve going up
+					ctx.quadraticCurveTo(x - s * 0.7, y - s * 0.7, x - s * 0.3, y - s * 0.55);
+					// Top center dip
+					ctx.quadraticCurveTo(x, y - s * 0.45, x + s * 0.3, y - s * 0.55);
+					// Top right curve
+					ctx.quadraticCurveTo(x + s * 0.7, y - s * 0.7, x + s * 0.8, y - s * 0.3);
+					// Right side down
+					ctx.quadraticCurveTo(x + s * 0.9, y + s * 0.2, x + s * 0.5, y + s * 0.65);
+					// Bottom
+					ctx.quadraticCurveTo(x, y + s * 0.75, x - s * 0.5, y + s * 0.65);
+					// Left side up
+					ctx.quadraticCurveTo(x - s * 0.9, y + s * 0.2, x - s * 0.8, y - s * 0.3);
+					ctx.closePath();
+					ctx.fill();
+					// Cut out eyes (draw background color circles)
+					ctx.fillStyle = '#5865F2';
+					// Left eye
+					ctx.beginPath();
+					ctx.ellipse(x - s * 0.35, y - s * 0.05, s * 0.18, s * 0.22, 0, 0, Math.PI * 2);
+					ctx.fill();
+					// Right eye
+					ctx.beginPath();
+					ctx.ellipse(x + s * 0.35, y - s * 0.05, s * 0.18, s * 0.22, 0, 0, Math.PI * 2);
+					ctx.fill();
+				}
+				ctx.restore();
+			};
+
+			socialHandles.forEach((social, index) => {
+				// Draw icon
+				drawSocialIcon(currentX + iconSize / 2, socialY + socialHeight / 2, social.icon, iconSize);
+				currentX += iconSize + iconGap;
+
+				// Draw handle text
+				ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+				ctx.textAlign = 'left';
+				ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+				ctx.fillText(social.handle, currentX, socialY + socialHeight / 2 + 4);
+
+				const textWidth = ctx.measureText(social.handle).width;
+				currentX += textWidth;
+
+				// Add gap between handles (except after last one)
+				if (index < socialHandles.length - 1) {
+					currentX += handleGap;
+				}
+			});
+		}
+
+		// Footer with branding - single line at bottom
+		const footerY = height - 20;
+		ctx.font = '500 11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+		ctx.fillStyle = 'rgba(139, 92, 246, 0.8)';
+		ctx.textAlign = 'center';
+		ctx.fillText('RunMaestro.ai • Agent Orchestration Command Center', width / 2, footerY);
+
+		return canvas;
+	}, [
+		currentBadge,
+		autoRunStats.cumulativeTimeMs,
+		autoRunStats.longestRunMs,
+		globalStats,
+		usageStats,
+		handsOnTimeMs,
+		wrapText,
+		leaderboardRegistration,
+		loadImage,
+	]);
+
+	// Copy to clipboard
+	const copyToClipboard = useCallback(async () => {
+		try {
+			const canvas = await generateShareImage();
+			canvas.toBlob(async (blob) => {
+				if (blob) {
+					await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+					setCopySuccess(true);
+					setTimeout(() => setCopySuccess(false), 2000);
+				}
+			}, 'image/png');
+		} catch (error) {
+			console.error('Failed to copy to clipboard:', error);
+		}
+	}, [generateShareImage]);
+
+	// Download as image
+	const downloadImage = useCallback(async () => {
+		try {
+			const canvas = await generateShareImage();
+			const link = document.createElement('a');
+			link.download = `maestro-achievement-level-${currentLevel}.png`;
+			link.href = canvas.toDataURL('image/png');
+			link.click();
+		} catch (error) {
+			console.error('Failed to download image:', error);
+		}
+	}, [generateShareImage, currentLevel]);
+
+	return (
+		<div
+			className="p-4 rounded border"
+			style={{
+				borderColor: theme.colors.border,
+				backgroundColor: theme.colors.bgActivity,
+			}}
+		>
+			{/* Header */}
+			<div className="flex items-center justify-between mb-3">
+				<div className="flex items-center gap-2">
+					<Trophy className="w-4 h-4" style={{ color: '#FFD700' }} />
+					<span className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+						Maestro Achievements
+					</span>
+				</div>
+
+				{/* Share button */}
+				<div className="relative" ref={shareMenuRef}>
+					<button
+						onClick={() => setShareMenuOpen(!shareMenuOpen)}
+						className="p-1.5 rounded-md transition-colors hover:bg-white/10"
+						style={{ color: theme.colors.textDim }}
+						title="Share achievements"
+					>
+						<Share2 className="w-4 h-4" />
+					</button>
+
+					{shareMenuOpen && (
+						<div
+							className="absolute right-0 top-full mt-1 p-1.5 rounded-lg shadow-xl z-50"
+							style={{
+								backgroundColor: theme.colors.bgSidebar,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+						>
+							<button
+								onClick={() => {
+									copyToClipboard();
+									setShareMenuOpen(false);
+								}}
+								className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
+							>
+								{copySuccess ? (
+									<Check className="w-4 h-4 shrink-0" style={{ color: theme.colors.success }} />
+								) : (
+									<Copy className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
+								)}
+								<span style={{ color: theme.colors.textMain }}>
+									{copySuccess ? 'Copied!' : 'Copy to Clipboard'}
+								</span>
+							</button>
+							<button
+								onClick={() => {
+									downloadImage();
+									setShareMenuOpen(false);
+								}}
+								className="w-full flex items-center gap-2 px-3 py-2 rounded text-sm whitespace-nowrap hover:bg-white/10 transition-colors"
+							>
+								<Download className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
+								<span style={{ color: theme.colors.textMain }}>Save as Image</span>
+							</button>
+						</div>
+					)}
+				</div>
+			</div>
+
+			{/* Current badge display */}
+			<div className="flex items-center gap-4 mb-4">
+				{/* Maestro icon with circular progress ring */}
+				<div className="relative flex-shrink-0" style={{ width: 72, height: 72 }}>
+					{/* Circular progress ring - 11 segments */}
+					<BadgeProgressRing currentLevel={currentLevel} size={72} theme={theme} />
+
+					{/* Inner circle with Maestro icon - always use dark bg with light silhouette for visibility */}
+					<div
+						className="absolute rounded-full flex items-center justify-center overflow-hidden"
+						style={{
+							top: 8,
+							left: 8,
+							width: 56,
+							height: 56,
+							background: currentLevel > 0 ? '#2d2d44' : theme.colors.bgMain,
+							border: `2px solid ${currentLevel > 0 ? '#FFD700' : theme.colors.border}`,
+						}}
+					>
+						<MaestroSilhouette
+							variant="light"
+							size={36}
+							style={{ opacity: currentLevel > 0 ? 1 : 0.3 }}
+						/>
+					</div>
+
+					{/* Level number badge - positioned outside the ring */}
+					{currentLevel > 0 && (
+						<div
+							className="absolute flex items-center justify-center text-xs font-bold"
+							style={{
+								top: -2,
+								right: -2,
+								width: 20,
+								height: 20,
+								borderRadius: '50%',
+								background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
+								color: '#000',
+								boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+							}}
+						>
+							{currentLevel}
+						</div>
+					)}
+				</div>
+
+				{/* Badge info */}
+				<div className="flex-1 min-w-0">
+					{currentBadge ? (
+						<>
+							<div className="font-medium truncate" style={{ color: theme.colors.textMain }}>
+								{currentBadge.name}
+							</div>
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Level {currentBadge.level} of 11
+							</div>
+						</>
+					) : (
+						<>
+							<div className="font-medium" style={{ color: theme.colors.textDim }}>
+								No Badge Yet
+							</div>
+							<div className="text-xs" style={{ color: theme.colors.textDim }}>
+								Complete 15 minutes of AutoRun to unlock
+							</div>
+						</>
+					)}
+				</div>
+			</div>
+
+			{/* Progress bar to next level */}
+			{nextBadge && (
+				<div className="mb-4">
+					<div className="flex items-center justify-between text-xs mb-1">
+						<span style={{ color: theme.colors.textDim }}>Next: {nextBadge.shortName}</span>
+						<span style={{ color: theme.colors.accent }}>
+							{formatTimeRemaining(autoRunStats.cumulativeTimeMs, nextBadge)}
+						</span>
+					</div>
+					<div
+						className="h-2 rounded-full overflow-hidden"
+						style={{ backgroundColor: theme.colors.bgMain }}
+					>
+						<div
+							className="h-full rounded-full transition-all duration-500"
+							style={{
+								width: `${progressPercent}%`,
+								background: `linear-gradient(90deg, ${theme.colors.accent} 0%, #FFD700 100%)`,
+							}}
+						/>
+					</div>
+				</div>
+			)}
+
+			{/* Stats grid */}
+			<div className="grid grid-cols-3 gap-2 mb-4">
+				<div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
+					<div className="flex items-center justify-center gap-1 mb-1">
+						<Clock className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+					</div>
+					<div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
+						{formatCumulativeTime(autoRunStats.cumulativeTimeMs)}
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Total Time
+					</div>
+				</div>
+
+				<div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
+					<div className="flex items-center justify-center gap-1 mb-1">
+						<Trophy className="w-3 h-3" style={{ color: '#FFD700' }} />
+					</div>
+					<div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
+						{formatCumulativeTime(autoRunStats.longestRunMs)}
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Longest Run
+					</div>
+				</div>
+
+				<div className="text-center p-2 rounded" style={{ backgroundColor: theme.colors.bgMain }}>
+					<div className="flex items-center justify-center gap-1 mb-1">
+						<Zap className="w-3 h-3" style={{ color: theme.colors.accent }} />
+					</div>
+					<div className="text-xs font-mono font-bold" style={{ color: theme.colors.textMain }}>
+						{autoRunStats.totalRuns}
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Total Runs
+					</div>
+				</div>
+			</div>
+
+			{/* Badge progression preview */}
+			<div ref={badgeContainerRef}>
+				<div className="flex items-center justify-between mb-2">
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						Badge Progression
+					</span>
+					<span className="text-xs" style={{ color: theme.colors.textDim }}>
+						{currentLevel}/11 unlocked
+					</span>
+				</div>
+				<div className="flex gap-1">
+					{CONDUCTOR_BADGES.map((badge) => {
+						const isUnlocked = badge.level <= currentLevel;
+						const isCurrent = badge.level === currentLevel;
+						const isSelected = selectedBadge === badge.level;
+
+						return (
+							<div
+								key={badge.id}
+								className="relative flex-1"
+								onClick={() => setSelectedBadge(isSelected ? null : badge.level)}
+							>
+								<div
+									className="h-3 rounded-full cursor-pointer transition-all hover:scale-110"
+									style={{
+										backgroundColor: isUnlocked
+											? badge.level <= 3
+												? theme.colors.accent
+												: badge.level <= 7
+													? '#FFD700'
+													: '#FF6B35'
+											: theme.colors.border,
+										opacity: isUnlocked ? 1 : 0.5,
+										border: isUnlocked ? 'none' : `1px dashed ${theme.colors.textDim}`,
+										boxShadow: isCurrent
+											? `0 0 0 2px ${theme.colors.bgActivity}, 0 0 0 4px #FFD700`
+											: 'none',
+									}}
+									title={`${badge.name} - Click to view details`}
+								/>
+								{isSelected && (
+									<BadgeTooltip
+										badge={badge}
+										theme={theme}
+										isUnlocked={isUnlocked}
+										position={getTooltipPosition(badge.level)}
+										onClose={() => setSelectedBadge(null)}
+									/>
+								)}
+							</div>
+						);
+					})}
+				</div>
+			</div>
+
+			{/* Badge Unlock History - only visible at level 2+ */}
+			{autoRunStats.badgeHistory && autoRunStats.badgeHistory.length > 1 && (
+				<div className="mt-3">
+					<button
+						onClick={() => setHistoryExpanded(!historyExpanded)}
+						className="flex items-center gap-1.5 text-xs w-full hover:opacity-80 transition-opacity"
+						style={{ color: theme.colors.textDim }}
+					>
+						<History className="w-3 h-3" />
+						<span>Path to the Podium: Timeline</span>
+						<ChevronDown
+							className={`w-3 h-3 ml-auto transition-transform duration-200 ${
+								historyExpanded ? 'rotate-180' : ''
+							}`}
+						/>
+					</button>
+					{historyExpanded && (
+						<div
+							className="mt-2 p-2 rounded space-y-1.5 max-h-32 overflow-y-auto"
+							style={{ backgroundColor: theme.colors.bgMain }}
+						>
+							{[...autoRunStats.badgeHistory]
+								.sort((a, b) => a.level - b.level)
+								.map((record) => {
+									const badge = CONDUCTOR_BADGES.find((b) => b.level === record.level);
+									if (!badge) return null;
+									return (
+										<div key={record.level} className="flex items-center justify-between text-xs">
+											<div className="flex items-center gap-2">
+												<div
+													className="w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold"
+													style={{
+														background:
+															badge.level <= 3
+																? theme.colors.accent
+																: badge.level <= 7
+																	? '#FFD700'
+																	: '#FF6B35',
+														color: '#000',
+													}}
+												>
+													{badge.level}
+												</div>
+												<span style={{ color: theme.colors.textMain }}>{badge.shortName}</span>
+											</div>
+											<span style={{ color: theme.colors.textDim }}>
+												{new Date(record.unlockedAt).toLocaleDateString(undefined, {
+													month: 'short',
+													day: 'numeric',
+													year: 'numeric',
+												})}
+											</span>
+										</div>
+									);
+								})}
+						</div>
+					)}
+				</div>
+			)}
+
+			{/* Max level celebration */}
+			{!nextBadge && currentBadge && (
+				<div
+					className="mt-4 p-3 rounded-lg text-center"
+					style={{
+						background: `linear-gradient(135deg, ${theme.colors.accent}20 0%, #FFD70020 100%)`,
+						border: `1px solid #FFD700`,
+					}}
+				>
+					<div className="flex items-center justify-center gap-2 mb-1">
+						<Star className="w-4 h-4" style={{ color: '#FFD700' }} />
+						<span className="font-bold" style={{ color: '#FFD700' }}>
+							Maximum Level Achieved!
+						</span>
+						<Star className="w-4 h-4" style={{ color: '#FFD700' }} />
+					</div>
+					<p className="text-xs" style={{ color: theme.colors.textDim }}>
+						You are a true Titan of the Baton
+					</p>
+				</div>
+			)}
+		</div>
+	);
 }
 
 export default AchievementCard;

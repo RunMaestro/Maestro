@@ -23,58 +23,58 @@ export type FocusTrapMode = 'strict' | 'lenient' | 'none';
  * Base properties shared by all layer types
  */
 export interface BaseLayer {
-  /** Unique identifier for this layer */
-  id: string;
+	/** Unique identifier for this layer */
+	id: string;
 
-  /** Type of layer (discriminant for the union) */
-  type: LayerType;
+	/** Type of layer (discriminant for the union) */
+	type: LayerType;
 
-  /** Priority value - higher numbers appear on top */
-  priority: number;
+	/** Priority value - higher numbers appear on top */
+	priority: number;
 
-  /** Whether this layer blocks interaction with layers below it */
-  blocksLowerLayers: boolean;
+	/** Whether this layer blocks interaction with layers below it */
+	blocksLowerLayers: boolean;
 
-  /** Whether this layer captures keyboard focus */
-  capturesFocus: boolean;
+	/** Whether this layer captures keyboard focus */
+	capturesFocus: boolean;
 
-  /** Focus trapping behavior */
-  focusTrap: FocusTrapMode;
+	/** Focus trapping behavior */
+	focusTrap: FocusTrapMode;
 
-  /** Optional ARIA label for accessibility */
-  ariaLabel?: string;
+	/** Optional ARIA label for accessibility */
+	ariaLabel?: string;
 }
 
 /**
  * Modal layer - Full dialogs that block the entire UI
  */
 export interface ModalLayer extends BaseLayer {
-  type: 'modal';
+	type: 'modal';
 
-  /** Whether the modal has unsaved changes */
-  isDirty?: boolean;
+	/** Whether the modal has unsaved changes */
+	isDirty?: boolean;
 
-  /** Callback to confirm closing when dirty - return false to prevent close */
-  onBeforeClose?: () => boolean | Promise<boolean>;
+	/** Callback to confirm closing when dirty - return false to prevent close */
+	onBeforeClose?: () => boolean | Promise<boolean>;
 
-  /** Handler called when Escape is pressed */
-  onEscape: () => void;
+	/** Handler called when Escape is pressed */
+	onEscape: () => void;
 
-  /** Optional parent modal ID for nested modals */
-  parentModalId?: string;
+	/** Optional parent modal ID for nested modals */
+	parentModalId?: string;
 }
 
 /**
  * Overlay layer - Semi-transparent overlays like file preview, lightbox
  */
 export interface OverlayLayer extends BaseLayer {
-  type: 'overlay';
+	type: 'overlay';
 
-  /** Handler called when Escape is pressed */
-  onEscape: () => void;
+	/** Handler called when Escape is pressed */
+	onEscape: () => void;
 
-  /** Whether clicking outside the overlay should close it */
-  allowClickOutside: boolean;
+	/** Whether clicking outside the overlay should close it */
+	allowClickOutside: boolean;
 }
 
 /**
@@ -95,7 +95,7 @@ export type LayerInput = ModalLayerInput | OverlayLayerInput;
  * @internal Only used in tests - production code uses direct property checks
  */
 export function isModalLayer(layer: Layer): layer is ModalLayer {
-  return layer.type === 'modal';
+	return layer.type === 'modal';
 }
 
 /**
@@ -103,5 +103,5 @@ export function isModalLayer(layer: Layer): layer is ModalLayer {
  * @internal Only used in tests - production code uses direct property checks
  */
 export function isOverlayLayer(layer: Layer): layer is OverlayLayer {
-  return layer.type === 'overlay';
+	return layer.type === 'overlay';
 }

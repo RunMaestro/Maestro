@@ -23,28 +23,28 @@ import type { ToolType } from '../types';
  * Icons should be recognizable and distinct for each agent type.
  */
 export const AGENT_ICONS: Record<string, string> = {
-  // Primary agents
-  'claude-code': '🤖',
-  'claude': '🤖',
+	// Primary agents
+	'claude-code': '🤖',
+	claude: '🤖',
 
-  // OpenAI family
-  'openai-codex': '◇',
-  'codex': '◇',
+	// OpenAI family
+	'openai-codex': '◇',
+	codex: '◇',
 
-  // Google family
-  'gemini-cli': '🔷',
-  'gemini': '🔷',
+	// Google family
+	'gemini-cli': '🔷',
+	gemini: '🔷',
 
-  // Alibaba family
-  'qwen3-coder': '⬡',
-  'qwen': '⬡',
+	// Alibaba family
+	'qwen3-coder': '⬡',
+	qwen: '⬡',
 
-  // Open-source alternatives
-  'opencode': '📟',
-  'aider': '🛠️',
+	// Open-source alternatives
+	opencode: '📟',
+	aider: '🛠️',
 
-  // Terminal/shell (internal)
-  'terminal': '💻',
+	// Terminal/shell (internal)
+	terminal: '💻',
 };
 
 /**
@@ -60,7 +60,7 @@ export const DEFAULT_AGENT_ICON = '🔧';
  * @returns The corresponding icon string
  */
 export function getAgentIcon(agentId: string): string {
-  return AGENT_ICONS[agentId] || DEFAULT_AGENT_ICON;
+	return AGENT_ICONS[agentId] || DEFAULT_AGENT_ICON;
 }
 
 /**
@@ -71,7 +71,7 @@ export function getAgentIcon(agentId: string): string {
  * @returns The corresponding icon string
  */
 export function getAgentIconForToolType(toolType: ToolType): string {
-  return getAgentIcon(toolType);
+	return getAgentIcon(toolType);
 }
 
 export default AGENT_ICONS;

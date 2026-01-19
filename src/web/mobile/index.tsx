@@ -28,16 +28,16 @@ import { CommandHistoryDrawer, type CommandHistoryDrawerProps } from './CommandH
 
 // Re-export constants from dedicated file to avoid circular dependencies
 export {
-  type MobileConfig,
-  defaultMobileConfig,
-  MOBILE_BREAKPOINTS,
-  SAFE_AREA_DEFAULTS,
-  GESTURE_THRESHOLDS,
-  HAPTIC_PATTERNS,
-  isMobileViewport,
-  supportsHaptics,
-  triggerHaptic,
-  supportsVoiceInput,
+	type MobileConfig,
+	defaultMobileConfig,
+	MOBILE_BREAKPOINTS,
+	SAFE_AREA_DEFAULTS,
+	GESTURE_THRESHOLDS,
+	HAPTIC_PATTERNS,
+	isMobileViewport,
+	supportsHaptics,
+	triggerHaptic,
+	supportsVoiceInput,
 } from './constants';
 
 // Re-export the main app component as both default and named

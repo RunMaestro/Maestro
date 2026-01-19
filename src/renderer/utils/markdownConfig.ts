@@ -27,40 +27,40 @@ import type { Theme } from '../types';
 // ============================================================================
 
 export interface ProseStylesOptions {
-  /** Theme object with color values */
-  theme: Theme;
-  /** Use colored headings (h1=accent, h2=success, h3=warning) - default false */
-  coloredHeadings?: boolean;
-  /** Use compact spacing for terminal output - default false */
-  compactSpacing?: boolean;
-  /** Include checkbox styling - default true */
-  includeCheckboxStyles?: boolean;
-  /** CSS selector to scope styles (e.g., '.autorun-panel') - prevents conflicts between components */
-  scopeSelector?: string;
+	/** Theme object with color values */
+	theme: Theme;
+	/** Use colored headings (h1=accent, h2=success, h3=warning) - default false */
+	coloredHeadings?: boolean;
+	/** Use compact spacing for terminal output - default false */
+	compactSpacing?: boolean;
+	/** Include checkbox styling - default true */
+	includeCheckboxStyles?: boolean;
+	/** CSS selector to scope styles (e.g., '.autorun-panel') - prevents conflicts between components */
+	scopeSelector?: string;
 }
 
 export interface MarkdownComponentsOptions {
-  /** Theme object with color values */
-  theme: Theme;
-  /** Custom image renderer - if not provided, default img tag is used */
-  imageRenderer?: React.ComponentType<{ src?: string; alt?: string }>;
-  /** Custom code block renderer for specific languages (e.g., mermaid) */
-  customLanguageRenderers?: Record<string, React.ComponentType<{ code: string; theme: Theme }>>;
-  /** Callback when internal file link is clicked (maestro-file:// protocol) */
-  onFileClick?: (filePath: string) => void;
-  /** Callback when external link is clicked - if not provided, uses default browser behavior */
-  onExternalLinkClick?: (href: string) => void;
-  /** Callback when anchor link is clicked (same-page #section links) */
-  onAnchorClick?: (anchorId: string) => void;
-  /** Container ref for scrolling to anchors - if not provided, uses document.getElementById */
-  containerRef?: React.RefObject<HTMLElement>;
-  /** Search highlighting options */
-  searchHighlight?: {
-    query: string;
-    currentMatchIndex: number;
-    /** Callback to track match index for scrolling */
-    onMatchRendered?: (index: number, element: HTMLElement) => void;
-  };
+	/** Theme object with color values */
+	theme: Theme;
+	/** Custom image renderer - if not provided, default img tag is used */
+	imageRenderer?: React.ComponentType<{ src?: string; alt?: string }>;
+	/** Custom code block renderer for specific languages (e.g., mermaid) */
+	customLanguageRenderers?: Record<string, React.ComponentType<{ code: string; theme: Theme }>>;
+	/** Callback when internal file link is clicked (maestro-file:// protocol) */
+	onFileClick?: (filePath: string) => void;
+	/** Callback when external link is clicked - if not provided, uses default browser behavior */
+	onExternalLinkClick?: (href: string) => void;
+	/** Callback when anchor link is clicked (same-page #section links) */
+	onAnchorClick?: (anchorId: string) => void;
+	/** Container ref for scrolling to anchors - if not provided, uses document.getElementById */
+	containerRef?: React.RefObject<HTMLElement>;
+	/** Search highlighting options */
+	searchHighlight?: {
+		query: string;
+		currentMatchIndex: number;
+		/** Callback to track match index for scrolling */
+		onMatchRendered?: (index: number, element: HTMLElement) => void;
+	};
 }
 
 // ============================================================================
@@ -78,28 +78,34 @@ export interface MarkdownComponentsOptions {
  * // In component: <style>{styles}</style>
  */
 export function generateProseStyles(options: ProseStylesOptions): string {
-  const { theme, coloredHeadings = false, compactSpacing = false, includeCheckboxStyles = true, scopeSelector = '' } = options;
-  const colors = theme.colors;
+	const {
+		theme,
+		coloredHeadings = false,
+		compactSpacing = false,
+		includeCheckboxStyles = true,
+		scopeSelector = '',
+	} = options;
+	const colors = theme.colors;
 
-  // Build selector prefix - if scopeSelector provided, prefix .prose with it
-  const s = scopeSelector ? `${scopeSelector} .prose` : '.prose';
+	// Build selector prefix - if scopeSelector provided, prefix .prose with it
+	const s = scopeSelector ? `${scopeSelector} .prose` : '.prose';
 
-  // Margin values based on spacing mode
-  const headingMargin = compactSpacing ? '0.25em 0' : '0.67em 0';
-  const headingMarginSmall = compactSpacing ? '0.2em 0' : '0.83em 0';
-  const paragraphMargin = compactSpacing ? '0' : '0.5em 0';
-  const listMargin = compactSpacing ? '0.25em 0' : '0.5em 0';
-  const hrMargin = compactSpacing ? '0.5em 0' : '1em 0';
+	// Margin values based on spacing mode
+	const headingMargin = compactSpacing ? '0.25em 0' : '0.67em 0';
+	const headingMarginSmall = compactSpacing ? '0.2em 0' : '0.83em 0';
+	const paragraphMargin = compactSpacing ? '0' : '0.5em 0';
+	const listMargin = compactSpacing ? '0.25em 0' : '0.5em 0';
+	const hrMargin = compactSpacing ? '0.5em 0' : '1em 0';
 
-  // Heading colors based on mode
-  const h1Color = coloredHeadings ? colors.accent : colors.textMain;
-  const h2Color = coloredHeadings ? colors.success : colors.textMain;
-  const h3Color = coloredHeadings ? colors.warning : colors.textMain;
-  const h4Color = colors.textMain;
-  const h5Color = colors.textMain;
-  const h6Color = coloredHeadings ? colors.textDim : colors.textMain;
+	// Heading colors based on mode
+	const h1Color = coloredHeadings ? colors.accent : colors.textMain;
+	const h2Color = coloredHeadings ? colors.success : colors.textMain;
+	const h3Color = coloredHeadings ? colors.warning : colors.textMain;
+	const h4Color = colors.textMain;
+	const h5Color = colors.textMain;
+	const h6Color = coloredHeadings ? colors.textDim : colors.textMain;
 
-  let styles = `
+	let styles = `
     ${s} { line-height: 1.4; overflow: visible; }
     ${compactSpacing ? `${s} > *:first-child { margin-top: 0 !important; }` : ''}
     ${compactSpacing ? `${s} > *:last-child { margin-bottom: 0 !important; }` : ''}
@@ -135,9 +141,9 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} em { font-style: italic; }
   `.trim();
 
-  // Add checkbox styles if requested
-  if (includeCheckboxStyles) {
-    styles += `
+	// Add checkbox styles if requested
+	if (includeCheckboxStyles) {
+		styles += `
     ${s} input[type="checkbox"] {
       appearance: none;
       -webkit-appearance: none;
@@ -175,9 +181,9 @@ export function generateProseStyles(options: ProseStylesOptions): string {
       margin-left: -1.5em;
     }
     `;
-  }
+	}
 
-  return styles;
+	return styles;
 }
 
 // ============================================================================
@@ -206,216 +212,237 @@ let globalMatchCounter = 0;
  * Recursively processes children to find and highlight text matches.
  */
 function highlightSearchMatches(
-  children: React.ReactNode,
-  searchHighlight: NonNullable<MarkdownComponentsOptions['searchHighlight']>,
-  theme: Theme
+	children: React.ReactNode,
+	searchHighlight: NonNullable<MarkdownComponentsOptions['searchHighlight']>,
+	theme: Theme
 ): React.ReactNode {
-  const { query, currentMatchIndex, onMatchRendered } = searchHighlight;
+	const { query, currentMatchIndex, onMatchRendered } = searchHighlight;
 
-  // Process each child
-  const processChild = (child: React.ReactNode, childIndex: number): React.ReactNode => {
-    // Handle string children - this is where we do the actual highlighting
-    if (typeof child === 'string') {
-      const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`(${escapedQuery})`, 'gi');
-      const parts = child.split(regex);
+	// Process each child
+	const processChild = (child: React.ReactNode, childIndex: number): React.ReactNode => {
+		// Handle string children - this is where we do the actual highlighting
+		if (typeof child === 'string') {
+			const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+			const regex = new RegExp(`(${escapedQuery})`, 'gi');
+			const parts = child.split(regex);
 
-      // If no matches, return original string
-      if (parts.length === 1) {
-        return child;
-      }
+			// If no matches, return original string
+			if (parts.length === 1) {
+				return child;
+			}
 
-      // Build highlighted elements
-      const elements: React.ReactNode[] = [];
-      parts.forEach((part, i) => {
-        if (part.toLowerCase() === query.toLowerCase()) {
-          const matchIndex = globalMatchCounter++;
-          const isCurrent = matchIndex === currentMatchIndex;
-          elements.push(
-            React.createElement('mark', {
-              key: `match-${childIndex}-${i}`,
-              className: 'search-match',
-              'data-match-index': matchIndex,
-              'data-current': isCurrent ? 'true' : undefined,
-              style: {
-                padding: '0 2px',
-                borderRadius: '2px',
-                backgroundColor: isCurrent ? theme.colors.accent : '#ffd700',
-                color: isCurrent ? '#fff' : '#000',
-              },
-              ref: isCurrent && onMatchRendered
-                ? (el: HTMLElement | null) => el && onMatchRendered(matchIndex, el)
-                : undefined,
-            }, part)
-          );
-        } else if (part) {
-          elements.push(part);
-        }
-      });
+			// Build highlighted elements
+			const elements: React.ReactNode[] = [];
+			parts.forEach((part, i) => {
+				if (part.toLowerCase() === query.toLowerCase()) {
+					const matchIndex = globalMatchCounter++;
+					const isCurrent = matchIndex === currentMatchIndex;
+					elements.push(
+						React.createElement(
+							'mark',
+							{
+								key: `match-${childIndex}-${i}`,
+								className: 'search-match',
+								'data-match-index': matchIndex,
+								'data-current': isCurrent ? 'true' : undefined,
+								style: {
+									padding: '0 2px',
+									borderRadius: '2px',
+									backgroundColor: isCurrent ? theme.colors.accent : '#ffd700',
+									color: isCurrent ? '#fff' : '#000',
+								},
+								ref:
+									isCurrent && onMatchRendered
+										? (el: HTMLElement | null) => el && onMatchRendered(matchIndex, el)
+										: undefined,
+							},
+							part
+						)
+					);
+				} else if (part) {
+					elements.push(part);
+				}
+			});
 
-      return React.createElement(React.Fragment, { key: `text-${childIndex}` }, ...elements);
-    }
+			return React.createElement(React.Fragment, { key: `text-${childIndex}` }, ...elements);
+		}
 
-    // Handle React elements - recursively process their children
-    if (React.isValidElement(child)) {
-      const element = child as React.ReactElement<any>;
-      const elementChildren = element.props.children;
+		// Handle React elements - recursively process their children
+		if (React.isValidElement(child)) {
+			const element = child as React.ReactElement<any>;
+			const elementChildren = element.props.children;
 
-      // If element has children, recursively process them
-      if (elementChildren !== undefined) {
-        const processedChildren = highlightSearchMatches(elementChildren, searchHighlight, theme);
-        // Clone the element with processed children
-        return React.cloneElement(element, { key: element.key || `elem-${childIndex}` }, processedChildren);
-      }
+			// If element has children, recursively process them
+			if (elementChildren !== undefined) {
+				const processedChildren = highlightSearchMatches(elementChildren, searchHighlight, theme);
+				// Clone the element with processed children
+				return React.cloneElement(
+					element,
+					{ key: element.key || `elem-${childIndex}` },
+					processedChildren
+				);
+			}
 
-      return child;
-    }
+			return child;
+		}
 
-    // Handle arrays of children
-    if (Array.isArray(child)) {
-      return child.map((c, i) => processChild(c, i));
-    }
+		// Handle arrays of children
+		if (Array.isArray(child)) {
+			return child.map((c, i) => processChild(c, i));
+		}
 
-    // Return other types as-is (numbers, null, undefined, etc.)
-    return child;
-  };
+		// Return other types as-is (numbers, null, undefined, etc.)
+		return child;
+	};
 
-  // Handle array of children
-  if (Array.isArray(children)) {
-    return children.map((child, i) => processChild(child, i));
-  }
+	// Handle array of children
+	if (Array.isArray(children)) {
+		return children.map((child, i) => processChild(child, i));
+	}
 
-  // Handle single child
-  return processChild(children, 0);
+	// Handle single child
+	return processChild(children, 0);
 }
 
 export function createMarkdownComponents(options: MarkdownComponentsOptions): Partial<Components> {
-  const { theme, imageRenderer, customLanguageRenderers = {}, onFileClick, onExternalLinkClick, onAnchorClick, containerRef, searchHighlight } = options;
+	const {
+		theme,
+		imageRenderer,
+		customLanguageRenderers = {},
+		onFileClick,
+		onExternalLinkClick,
+		onAnchorClick,
+		containerRef,
+		searchHighlight,
+	} = options;
 
-  // Reset match counter at start of each render
-  globalMatchCounter = 0;
+	// Reset match counter at start of each render
+	globalMatchCounter = 0;
 
-  // Helper to wrap children with search highlighting
-  const withHighlight = (children: React.ReactNode): React.ReactNode => {
-    if (!searchHighlight || !searchHighlight.query.trim()) {
-      return children;
-    }
-    return highlightSearchMatches(children, searchHighlight, theme);
-  };
+	// Helper to wrap children with search highlighting
+	const withHighlight = (children: React.ReactNode): React.ReactNode => {
+		if (!searchHighlight || !searchHighlight.query.trim()) {
+			return children;
+		}
+		return highlightSearchMatches(children, searchHighlight, theme);
+	};
 
-  const components: Partial<Components> = {
-    // Override paragraph to apply search highlighting
-    p: ({ children }: any) => React.createElement('p', null, withHighlight(children)),
+	const components: Partial<Components> = {
+		// Override paragraph to apply search highlighting
+		p: ({ children }: any) => React.createElement('p', null, withHighlight(children)),
 
-    // Override headings to apply search highlighting
-    h1: ({ children }: any) => React.createElement('h1', null, withHighlight(children)),
-    h2: ({ children }: any) => React.createElement('h2', null, withHighlight(children)),
-    h3: ({ children }: any) => React.createElement('h3', null, withHighlight(children)),
-    h4: ({ children }: any) => React.createElement('h4', null, withHighlight(children)),
-    h5: ({ children }: any) => React.createElement('h5', null, withHighlight(children)),
-    h6: ({ children }: any) => React.createElement('h6', null, withHighlight(children)),
+		// Override headings to apply search highlighting
+		h1: ({ children }: any) => React.createElement('h1', null, withHighlight(children)),
+		h2: ({ children }: any) => React.createElement('h2', null, withHighlight(children)),
+		h3: ({ children }: any) => React.createElement('h3', null, withHighlight(children)),
+		h4: ({ children }: any) => React.createElement('h4', null, withHighlight(children)),
+		h5: ({ children }: any) => React.createElement('h5', null, withHighlight(children)),
+		h6: ({ children }: any) => React.createElement('h6', null, withHighlight(children)),
 
-    // Override list items to apply search highlighting
-    li: ({ children }: any) => React.createElement('li', null, withHighlight(children)),
+		// Override list items to apply search highlighting
+		li: ({ children }: any) => React.createElement('li', null, withHighlight(children)),
 
-    // Override table cells to apply search highlighting
-    td: ({ children }: any) => React.createElement('td', null, withHighlight(children)),
-    th: ({ children }: any) => React.createElement('th', null, withHighlight(children)),
+		// Override table cells to apply search highlighting
+		td: ({ children }: any) => React.createElement('td', null, withHighlight(children)),
+		th: ({ children }: any) => React.createElement('th', null, withHighlight(children)),
 
-    // Override blockquote to apply search highlighting
-    blockquote: ({ children }: any) => React.createElement('blockquote', null, withHighlight(children)),
+		// Override blockquote to apply search highlighting
+		blockquote: ({ children }: any) =>
+			React.createElement('blockquote', null, withHighlight(children)),
 
-    // Override strong/em to apply search highlighting
-    strong: ({ children }: any) => React.createElement('strong', null, withHighlight(children)),
-    em: ({ children }: any) => React.createElement('em', null, withHighlight(children)),
-    // Code block with syntax highlighting and custom language support
-    code: ({ node: _node, inline, className, children, ...props }: any) => {
-      const match = (className || '').match(/language-(\w+)/);
-      const language = match ? match[1] : 'text';
-      const codeContent = String(children).replace(/\n$/, '');
+		// Override strong/em to apply search highlighting
+		strong: ({ children }: any) => React.createElement('strong', null, withHighlight(children)),
+		em: ({ children }: any) => React.createElement('em', null, withHighlight(children)),
+		// Code block with syntax highlighting and custom language support
+		code: ({ node: _node, inline, className, children, ...props }: any) => {
+			const match = (className || '').match(/language-(\w+)/);
+			const language = match ? match[1] : 'text';
+			const codeContent = String(children).replace(/\n$/, '');
 
-      // Check for custom language renderer (e.g., mermaid)
-      if (!inline && customLanguageRenderers[language]) {
-        const CustomRenderer = customLanguageRenderers[language];
-        return React.createElement(CustomRenderer, { code: codeContent, theme });
-      }
+			// Check for custom language renderer (e.g., mermaid)
+			if (!inline && customLanguageRenderers[language]) {
+				const CustomRenderer = customLanguageRenderers[language];
+				return React.createElement(CustomRenderer, { code: codeContent, theme });
+			}
 
-      // Standard syntax-highlighted code block
-      if (!inline && match) {
-        return React.createElement(SyntaxHighlighter, {
-          language,
-          style: vscDarkPlus,
-          customStyle: {
-            margin: '0.5em 0',
-            padding: '1em',
-            background: theme.colors.bgActivity,
-            fontSize: '0.9em',
-            borderRadius: '6px',
-          },
-          PreTag: 'div',
-          children: codeContent,
-        });
-      }
+			// Standard syntax-highlighted code block
+			if (!inline && match) {
+				return React.createElement(SyntaxHighlighter, {
+					language,
+					style: vscDarkPlus,
+					customStyle: {
+						margin: '0.5em 0',
+						padding: '1em',
+						background: theme.colors.bgActivity,
+						fontSize: '0.9em',
+						borderRadius: '6px',
+					},
+					PreTag: 'div',
+					children: codeContent,
+				});
+			}
 
-      // Inline code
-      return React.createElement('code', { className, ...props }, children);
-    },
-  };
+			// Inline code
+			return React.createElement('code', { className, ...props }, children);
+		},
+	};
 
-  // Custom image renderer if provided
-  if (imageRenderer) {
-    components.img = ({ node: _node, src, alt, ...props }: any) => {
-      return React.createElement(imageRenderer, { src, alt, ...props });
-    };
-  }
+	// Custom image renderer if provided
+	if (imageRenderer) {
+		components.img = ({ node: _node, src, alt, ...props }: any) => {
+			return React.createElement(imageRenderer, { src, alt, ...props });
+		};
+	}
 
-  // Link handler - supports internal file links, anchor links, and external links
-  if (onFileClick || onExternalLinkClick || onAnchorClick) {
-    components.a = ({ node: _node, href, children, ...props }: any) => {
-      // Check for maestro-file:// protocol OR data-maestro-file attribute
-      // (data attribute is fallback when rehype strips custom protocols)
-      const dataFilePath = props['data-maestro-file'];
-      const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
-      const filePath = dataFilePath || (href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
+	// Link handler - supports internal file links, anchor links, and external links
+	if (onFileClick || onExternalLinkClick || onAnchorClick) {
+		components.a = ({ node: _node, href, children, ...props }: any) => {
+			// Check for maestro-file:// protocol OR data-maestro-file attribute
+			// (data attribute is fallback when rehype strips custom protocols)
+			const dataFilePath = props['data-maestro-file'];
+			const isMaestroFile = href?.startsWith('maestro-file://') || !!dataFilePath;
+			const filePath =
+				dataFilePath ||
+				(href?.startsWith('maestro-file://') ? href.replace('maestro-file://', '') : null);
 
-      // Check for anchor links (same-page navigation)
-      const isAnchorLink = href?.startsWith('#');
-      const anchorId = isAnchorLink ? href.slice(1) : null;
+			// Check for anchor links (same-page navigation)
+			const isAnchorLink = href?.startsWith('#');
+			const anchorId = isAnchorLink ? href.slice(1) : null;
 
-      return React.createElement(
-        'a',
-        {
-          href,
-          ...props,
-          onClick: (e: React.MouseEvent) => {
-            e.preventDefault();
-            if (isMaestroFile && filePath && onFileClick) {
-              onFileClick(filePath);
-            } else if (isAnchorLink && anchorId) {
-              // Handle anchor links - scroll to the target element
-              if (onAnchorClick) {
-                onAnchorClick(anchorId);
-              } else {
-                // Default behavior: find element by ID and scroll to it
-                const targetElement = containerRef?.current
-                  ? containerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
-                  : document.getElementById(anchorId);
-                if (targetElement) {
-                  targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                }
-              }
-            } else if (href && onExternalLinkClick) {
-              onExternalLinkClick(href);
-            }
-          },
-          style: { color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' },
-        },
-        children
-      );
-    };
-  }
+			return React.createElement(
+				'a',
+				{
+					href,
+					...props,
+					onClick: (e: React.MouseEvent) => {
+						e.preventDefault();
+						if (isMaestroFile && filePath && onFileClick) {
+							onFileClick(filePath);
+						} else if (isAnchorLink && anchorId) {
+							// Handle anchor links - scroll to the target element
+							if (onAnchorClick) {
+								onAnchorClick(anchorId);
+							} else {
+								// Default behavior: find element by ID and scroll to it
+								const targetElement = containerRef?.current
+									? containerRef.current.querySelector(`#${CSS.escape(anchorId)}`)
+									: document.getElementById(anchorId);
+								if (targetElement) {
+									targetElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+								}
+							}
+						} else if (href && onExternalLinkClick) {
+							onExternalLinkClick(href);
+						}
+					},
+					style: { color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' },
+				},
+				children
+			);
+		};
+	}
 
-  return components;
+	return components;
 }
 
 // ============================================================================
@@ -428,13 +455,13 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
  * Scoped to .autorun-panel to avoid CSS conflicts with other prose containers.
  */
 export function generateAutoRunProseStyles(theme: Theme): string {
-  return generateProseStyles({
-    theme,
-    coloredHeadings: true,
-    compactSpacing: false,
-    includeCheckboxStyles: true,
-    scopeSelector: '.autorun-panel',
-  });
+	return generateProseStyles({
+		theme,
+		coloredHeadings: true,
+		compactSpacing: false,
+		includeCheckboxStyles: true,
+		scopeSelector: '.autorun-panel',
+	});
 }
 
 /**
@@ -445,10 +472,10 @@ export function generateAutoRunProseStyles(theme: Theme): string {
  * @param scopeSelector CSS selector to scope styles (e.g., '.terminal-output' or '.group-chat-messages')
  */
 export function generateTerminalProseStyles(theme: Theme, scopeSelector: string): string {
-  const c = theme.colors;
-  const s = `${scopeSelector} .prose`;
+	const c = theme.colors;
+	const s = `${scopeSelector} .prose`;
 
-  return `
+	return `
     ${s} { line-height: 1.4; overflow: visible; }
     ${s} > *:first-child { margin-top: 0 !important; }
     ${s} > *:last-child { margin-bottom: 0 !important; }
@@ -492,9 +519,9 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
  * @returns CSS string to be injected via <style> tag
  */
 export function generateDiffViewStyles(theme: Theme): string {
-  const c = theme.colors;
+	const c = theme.colors;
 
-  return `
+	return `
     .diff-gutter {
       background-color: ${c.bgSidebar} !important;
       color: ${c.textDim} !important;

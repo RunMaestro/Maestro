@@ -8,38 +8,38 @@
  */
 
 export {
-  // Wizard
-  wizardSystemPrompt,
-  wizardSystemContinuationPrompt,
-  wizardDocumentGenerationPrompt,
+	// Wizard
+	wizardSystemPrompt,
+	wizardSystemContinuationPrompt,
+	wizardDocumentGenerationPrompt,
 
-  // Inline Wizard
-  wizardInlineSystemPrompt,
-  wizardInlineIteratePrompt,
-  wizardInlineNewPrompt,
-  wizardInlineIterateGenerationPrompt,
+	// Inline Wizard
+	wizardInlineSystemPrompt,
+	wizardInlineIteratePrompt,
+	wizardInlineNewPrompt,
+	wizardInlineIterateGenerationPrompt,
 
-  // AutoRun
-  autorunDefaultPrompt,
-  autorunSynopsisPrompt,
+	// AutoRun
+	autorunDefaultPrompt,
+	autorunSynopsisPrompt,
 
-  // Input processing
-  imageOnlyDefaultPrompt,
+	// Input processing
+	imageOnlyDefaultPrompt,
 
-  // Commands
-  commitCommandPrompt,
+	// Commands
+	commitCommandPrompt,
 
-  // Maestro system prompt
-  maestroSystemPrompt,
+	// Maestro system prompt
+	maestroSystemPrompt,
 
-  // Group chat prompts
-  groupChatModeratorSystemPrompt,
-  groupChatModeratorSynthesisPrompt,
-  groupChatParticipantPrompt,
-  groupChatParticipantRequestPrompt,
+	// Group chat prompts
+	groupChatModeratorSystemPrompt,
+	groupChatModeratorSynthesisPrompt,
+	groupChatParticipantPrompt,
+	groupChatParticipantRequestPrompt,
 
-  // Context management
-  contextGroomingPrompt,
-  contextTransferPrompt,
-  contextSummarizePrompt,
+	// Context management
+	contextGroomingPrompt,
+	contextTransferPrompt,
+	contextSummarizePrompt,
 } from '../generated/prompts';

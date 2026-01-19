@@ -22,29 +22,32 @@ import { logger } from './logger';
  * Stores stats for all Claude Code sessions within a specific project directory.
  */
 export interface SessionStatsCache {
-  /** Per-session stats keyed by session ID */
-  sessions: Record<string, {
-    messages: number;
-    costUsd: number;
-    sizeBytes: number;
-    tokens: number;
-    oldestTimestamp: string | null;
-    /** File modification time to detect external changes */
-    fileMtimeMs: number;
-  }>;
-  /** Aggregate totals computed from all sessions */
-  totals: {
-    totalSessions: number;
-    totalMessages: number;
-    totalCostUsd: number;
-    totalSizeBytes: number;
-    totalTokens: number;
-    oldestTimestamp: string | null;
-  };
-  /** Unix timestamp when cache was last updated */
-  lastUpdated: number;
-  /** Cache version - bump to invalidate old caches */
-  version: number;
+	/** Per-session stats keyed by session ID */
+	sessions: Record<
+		string,
+		{
+			messages: number;
+			costUsd: number;
+			sizeBytes: number;
+			tokens: number;
+			oldestTimestamp: string | null;
+			/** File modification time to detect external changes */
+			fileMtimeMs: number;
+		}
+	>;
+	/** Aggregate totals computed from all sessions */
+	totals: {
+		totalSessions: number;
+		totalMessages: number;
+		totalCostUsd: number;
+		totalSizeBytes: number;
+		totalTokens: number;
+		oldestTimestamp: string | null;
+	};
+	/** Unix timestamp when cache was last updated */
+	lastUpdated: number;
+	/** Cache version - bump to invalidate old caches */
+	version: number;
 }
 
 /** Current per-project stats cache version. Bump to force cache invalidation. */
@@ -55,7 +58,7 @@ export const STATS_CACHE_VERSION = 1;
  * Claude replaces both '/' and '.' with '-' in the path encoding.
  */
 export function encodeClaudeProjectPath(projectPath: string): string {
-  return projectPath.replace(/[/.]/g, '-');
+	return projectPath.replace(/[/.]/g, '-');
 }
 
 /**
@@ -64,8 +67,8 @@ export function encodeClaudeProjectPath(projectPath: string): string {
  * @returns Absolute path to the cache JSON file
  */
 export function getStatsCachePath(projectPath: string): string {
-  const encodedPath = encodeClaudeProjectPath(projectPath);
-  return path.join(app.getPath('userData'), 'stats-cache', `${encodedPath}.json`);
+	const encodedPath = encodeClaudeProjectPath(projectPath);
+	return path.join(app.getPath('userData'), 'stats-cache', `${encodedPath}.json`);
 }
 
 /**
@@ -74,18 +77,18 @@ export function getStatsCachePath(projectPath: string): string {
  * @param projectPath - The project directory path
  */
 export async function loadStatsCache(projectPath: string): Promise<SessionStatsCache | null> {
-  try {
-    const cachePath = getStatsCachePath(projectPath);
-    const content = await fs.readFile(cachePath, 'utf-8');
-    const cache = JSON.parse(content) as SessionStatsCache;
-    // Invalidate cache if version mismatch
-    if (cache.version !== STATS_CACHE_VERSION) {
-      return null;
-    }
-    return cache;
-  } catch {
-    return null;
-  }
+	try {
+		const cachePath = getStatsCachePath(projectPath);
+		const content = await fs.readFile(cachePath, 'utf-8');
+		const cache = JSON.parse(content) as SessionStatsCache;
+		// Invalidate cache if version mismatch
+		if (cache.version !== STATS_CACHE_VERSION) {
+			return null;
+		}
+		return cache;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -95,14 +98,14 @@ export async function loadStatsCache(projectPath: string): Promise<SessionStatsC
  * @param cache - The cache object to save
  */
 export async function saveStatsCache(projectPath: string, cache: SessionStatsCache): Promise<void> {
-  try {
-    const cachePath = getStatsCachePath(projectPath);
-    const cacheDir = path.dirname(cachePath);
-    await fs.mkdir(cacheDir, { recursive: true });
-    await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
-  } catch (error) {
-    logger.warn('Failed to save stats cache', 'ClaudeSessions', { projectPath, error });
-  }
+	try {
+		const cachePath = getStatsCachePath(projectPath);
+		const cacheDir = path.dirname(cachePath);
+		await fs.mkdir(cacheDir, { recursive: true });
+		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
+	} catch (error) {
+		logger.warn('Failed to save stats cache', 'ClaudeSessions', { projectPath, error });
+	}
 }
 
 // ============================================================================
@@ -113,20 +116,20 @@ export async function saveStatsCache(projectPath: string, cache: SessionStatsCac
  * Per-session cached stats
  */
 export interface CachedSessionStats {
-  messages: number;
-  inputTokens: number;
-  outputTokens: number;
-  cacheReadTokens: number;
-  cacheCreationTokens: number;
-  cachedInputTokens: number;
-  sizeBytes: number;
-  /** File modification time to detect external changes */
-  fileMtimeMs: number;
-  /**
-   * Whether the source JSONL file has been deleted.
-   * Archived sessions are preserved in cache so lifetime costs survive file cleanup.
-   */
-  archived?: boolean;
+	messages: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	cachedInputTokens: number;
+	sizeBytes: number;
+	/** File modification time to detect external changes */
+	fileMtimeMs: number;
+	/**
+	 * Whether the source JSONL file has been deleted.
+	 * Archived sessions are preserved in cache so lifetime costs survive file cleanup.
+	 */
+	archived?: boolean;
 }
 
 /**
@@ -134,14 +137,17 @@ export interface CachedSessionStats {
  * Aggregates stats across all agent sessions from all projects.
  */
 export interface GlobalStatsCache {
-  /** Per-provider session stats, keyed by provider then "projectDir/sessionId" or "date/sessionId" */
-  providers: Record<string, {
-    sessions: Record<string, CachedSessionStats>;
-  }>;
-  /** Unix timestamp when cache was last updated */
-  lastUpdated: number;
-  /** Cache version - bump to invalidate old caches */
-  version: number;
+	/** Per-provider session stats, keyed by provider then "projectDir/sessionId" or "date/sessionId" */
+	providers: Record<
+		string,
+		{
+			sessions: Record<string, CachedSessionStats>;
+		}
+	>;
+	/** Unix timestamp when cache was last updated */
+	lastUpdated: number;
+	/** Cache version - bump to invalidate old caches */
+	version: number;
 }
 
 /** Current global stats cache version. Bump to force cache invalidation. */
@@ -152,7 +158,7 @@ export const GLOBAL_STATS_CACHE_VERSION = 3;
  * @returns Absolute path to the global stats cache JSON file
  */
 export function getGlobalStatsCachePath(): string {
-  return path.join(app.getPath('userData'), 'stats-cache', 'global-stats.json');
+	return path.join(app.getPath('userData'), 'stats-cache', 'global-stats.json');
 }
 
 /**
@@ -160,17 +166,17 @@ export function getGlobalStatsCachePath(): string {
  * Returns null if cache doesn't exist, is corrupted, or has version mismatch.
  */
 export async function loadGlobalStatsCache(): Promise<GlobalStatsCache | null> {
-  try {
-    const cachePath = getGlobalStatsCachePath();
-    const content = await fs.readFile(cachePath, 'utf-8');
-    const cache = JSON.parse(content) as GlobalStatsCache;
-    if (cache.version !== GLOBAL_STATS_CACHE_VERSION) {
-      return null;
-    }
-    return cache;
-  } catch {
-    return null;
-  }
+	try {
+		const cachePath = getGlobalStatsCachePath();
+		const content = await fs.readFile(cachePath, 'utf-8');
+		const cache = JSON.parse(content) as GlobalStatsCache;
+		if (cache.version !== GLOBAL_STATS_CACHE_VERSION) {
+			return null;
+		}
+		return cache;
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -179,12 +185,12 @@ export async function loadGlobalStatsCache(): Promise<GlobalStatsCache | null> {
  * @param cache - The cache object to save
  */
 export async function saveGlobalStatsCache(cache: GlobalStatsCache): Promise<void> {
-  try {
-    const cachePath = getGlobalStatsCachePath();
-    const cacheDir = path.dirname(cachePath);
-    await fs.mkdir(cacheDir, { recursive: true });
-    await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
-  } catch (error) {
-    logger.warn('Failed to save global stats cache', 'ClaudeSessions', { error });
-  }
+	try {
+		const cachePath = getGlobalStatsCachePath();
+		const cacheDir = path.dirname(cachePath);
+		await fs.mkdir(cacheDir, { recursive: true });
+		await fs.writeFile(cachePath, JSON.stringify(cache), 'utf-8');
+	} catch (error) {
+		logger.warn('Failed to save global stats cache', 'ClaudeSessions', { error });
+	}
 }

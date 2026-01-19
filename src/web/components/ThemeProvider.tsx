@@ -18,16 +18,16 @@ import { useDeviceColorScheme, type ColorSchemePreference } from '../hooks/useDe
  * Context value containing the current theme and utility functions
  */
 interface ThemeContextValue {
-  /** Current theme object */
-  theme: Theme;
-  /** Whether the theme is a light theme */
-  isLight: boolean;
-  /** Whether the theme is a dark theme */
-  isDark: boolean;
-  /** Whether the theme is a vibe theme */
-  isVibe: boolean;
-  /** Whether the theme is based on device preference (not overridden by desktop app) */
-  isDevicePreference: boolean;
+	/** Current theme object */
+	theme: Theme;
+	/** Whether the theme is a light theme */
+	isLight: boolean;
+	/** Whether the theme is a dark theme */
+	isDark: boolean;
+	/** Whether the theme is a vibe theme */
+	isVibe: boolean;
+	/** Whether the theme is based on device preference (not overridden by desktop app) */
+	isDevicePreference: boolean;
 }
 
 /**
@@ -35,24 +35,24 @@ interface ThemeContextValue {
  * Matches the Dracula theme from the desktop app
  */
 const defaultDarkTheme: Theme = {
-  id: 'dracula',
-  name: 'Dracula',
-  mode: 'dark',
-  colors: {
-    bgMain: '#0b0b0d',
-    bgSidebar: '#111113',
-    bgActivity: '#1c1c1f',
-    border: '#27272a',
-    textMain: '#e4e4e7',
-    textDim: '#a1a1aa',
-    accent: '#6366f1',
-    accentDim: 'rgba(99, 102, 241, 0.2)',
-    accentText: '#a5b4fc',
-    accentForeground: '#0b0b0d',
-    success: '#22c55e',
-    warning: '#eab308',
-    error: '#ef4444',
-  },
+	id: 'dracula',
+	name: 'Dracula',
+	mode: 'dark',
+	colors: {
+		bgMain: '#0b0b0d',
+		bgSidebar: '#111113',
+		bgActivity: '#1c1c1f',
+		border: '#27272a',
+		textMain: '#e4e4e7',
+		textDim: '#a1a1aa',
+		accent: '#6366f1',
+		accentDim: 'rgba(99, 102, 241, 0.2)',
+		accentText: '#a5b4fc',
+		accentForeground: '#0b0b0d',
+		success: '#22c55e',
+		warning: '#eab308',
+		error: '#ef4444',
+	},
 };
 
 /**
@@ -60,31 +60,31 @@ const defaultDarkTheme: Theme = {
  * Matches the GitHub Light theme from the desktop app
  */
 const defaultLightTheme: Theme = {
-  id: 'github-light',
-  name: 'GitHub',
-  mode: 'light',
-  colors: {
-    bgMain: '#ffffff',
-    bgSidebar: '#f6f8fa',
-    bgActivity: '#eff2f5',
-    border: '#d0d7de',
-    textMain: '#24292f',
-    textDim: '#57606a',
-    accent: '#0969da',
-    accentDim: 'rgba(9, 105, 218, 0.1)',
-    accentText: '#0969da',
-    accentForeground: '#ffffff',
-    success: '#1a7f37',
-    warning: '#9a6700',
-    error: '#cf222e',
-  },
+	id: 'github-light',
+	name: 'GitHub',
+	mode: 'light',
+	colors: {
+		bgMain: '#ffffff',
+		bgSidebar: '#f6f8fa',
+		bgActivity: '#eff2f5',
+		border: '#d0d7de',
+		textMain: '#24292f',
+		textDim: '#57606a',
+		accent: '#0969da',
+		accentDim: 'rgba(9, 105, 218, 0.1)',
+		accentText: '#0969da',
+		accentForeground: '#ffffff',
+		success: '#1a7f37',
+		warning: '#9a6700',
+		error: '#cf222e',
+	},
 };
 
 /**
  * Get the default theme based on device color scheme preference
  */
 function getDefaultThemeForScheme(colorScheme: ColorSchemePreference): Theme {
-  return colorScheme === 'light' ? defaultLightTheme : defaultDarkTheme;
+	return colorScheme === 'light' ? defaultLightTheme : defaultDarkTheme;
 }
 
 // Keep backwards compatibility - export defaultTheme as alias for defaultDarkTheme
@@ -93,22 +93,22 @@ const _defaultTheme = defaultDarkTheme;
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export interface ThemeProviderProps {
-  /**
-   * Theme object to provide to children.
-   * If not provided and useDevicePreference is true, uses theme based on device preference.
-   * If not provided and useDevicePreference is false, uses default dark theme.
-   */
-  theme?: Theme;
-  /**
-   * Whether to respect the device's color scheme preference (dark/light mode).
-   * When true and no theme prop is provided, the theme will automatically
-   * switch based on the user's device preference (prefers-color-scheme).
-   * When false, always uses the default dark theme if no theme is provided.
-   * @default false
-   */
-  useDevicePreference?: boolean;
-  /** Children components that will have access to the theme */
-  children: React.ReactNode;
+	/**
+	 * Theme object to provide to children.
+	 * If not provided and useDevicePreference is true, uses theme based on device preference.
+	 * If not provided and useDevicePreference is false, uses default dark theme.
+	 */
+	theme?: Theme;
+	/**
+	 * Whether to respect the device's color scheme preference (dark/light mode).
+	 * When true and no theme prop is provided, the theme will automatically
+	 * switch based on the user's device preference (prefers-color-scheme).
+	 * When false, always uses the default dark theme if no theme is provided.
+	 * @default false
+	 */
+	useDevicePreference?: boolean;
+	/** Children components that will have access to the theme */
+	children: React.ReactNode;
 }
 
 /**
@@ -131,61 +131,57 @@ export interface ThemeProviderProps {
  * ```
  */
 export function ThemeProvider({
-  theme: themeProp,
-  useDevicePreference = false,
-  children,
+	theme: themeProp,
+	useDevicePreference = false,
+	children,
 }: ThemeProviderProps) {
-  // Get device color scheme preference
-  const { colorScheme } = useDeviceColorScheme();
+	// Get device color scheme preference
+	const { colorScheme } = useDeviceColorScheme();
 
-  // Determine the active theme:
-  // 1. If a theme prop is provided (from desktop app), use it (override)
-  // 2. If useDevicePreference is true and no theme prop, use device preference
-  // 3. Otherwise, use default dark theme
-  const { activeTheme, isDevicePreference } = useMemo(() => {
-    // Theme prop provided - this is an override from desktop app
-    if (themeProp) {
-      return { activeTheme: themeProp, isDevicePreference: false };
-    }
+	// Determine the active theme:
+	// 1. If a theme prop is provided (from desktop app), use it (override)
+	// 2. If useDevicePreference is true and no theme prop, use device preference
+	// 3. Otherwise, use default dark theme
+	const { activeTheme, isDevicePreference } = useMemo(() => {
+		// Theme prop provided - this is an override from desktop app
+		if (themeProp) {
+			return { activeTheme: themeProp, isDevicePreference: false };
+		}
 
-    // No theme prop - check if we should use device preference
-    if (useDevicePreference) {
-      return {
-        activeTheme: getDefaultThemeForScheme(colorScheme),
-        isDevicePreference: true,
-      };
-    }
+		// No theme prop - check if we should use device preference
+		if (useDevicePreference) {
+			return {
+				activeTheme: getDefaultThemeForScheme(colorScheme),
+				isDevicePreference: true,
+			};
+		}
 
-    // Default to dark theme
-    return { activeTheme: defaultDarkTheme, isDevicePreference: false };
-  }, [themeProp, useDevicePreference, colorScheme]);
+		// Default to dark theme
+		return { activeTheme: defaultDarkTheme, isDevicePreference: false };
+	}, [themeProp, useDevicePreference, colorScheme]);
 
-  const contextValue = useMemo<ThemeContextValue>(
-    () => ({
-      theme: activeTheme,
-      isLight: activeTheme.mode === 'light',
-      isDark: activeTheme.mode === 'dark',
-      isVibe: activeTheme.mode === 'vibe',
-      isDevicePreference,
-    }),
-    [activeTheme, isDevicePreference]
-  );
+	const contextValue = useMemo<ThemeContextValue>(
+		() => ({
+			theme: activeTheme,
+			isLight: activeTheme.mode === 'light',
+			isDark: activeTheme.mode === 'dark',
+			isVibe: activeTheme.mode === 'vibe',
+			isDevicePreference,
+		}),
+		[activeTheme, isDevicePreference]
+	);
 
-  // Inject CSS custom properties whenever the theme changes
-  useEffect(() => {
-    injectCSSProperties(activeTheme);
+	// Inject CSS custom properties whenever the theme changes
+	useEffect(() => {
+		injectCSSProperties(activeTheme);
 
-    // Cleanup on unmount
-    return () => {
-      removeCSSProperties();
-    };
-  }, [activeTheme]);
+		// Cleanup on unmount
+		return () => {
+			removeCSSProperties();
+		};
+	}, [activeTheme]);
 
-  return (
-    <ThemeContext.Provider value={contextValue}>
-      {children}
-    </ThemeContext.Provider>
-  );
+	return <ThemeContext.Provider value={contextValue}>{children}</ThemeContext.Provider>;
 }
 
 /**
@@ -206,11 +202,11 @@ export function ThemeProvider({
  * ```
  */
 export function useTheme(): ThemeContextValue {
-  const context = useContext(ThemeContext);
-  if (!context) {
-    throw new Error('useTheme must be used within a ThemeProvider');
-  }
-  return context;
+	const context = useContext(ThemeContext);
+	if (!context) {
+		throw new Error('useTheme must be used within a ThemeProvider');
+	}
+	return context;
 }
 
 /**
@@ -234,8 +230,8 @@ export function useTheme(): ThemeContextValue {
  * ```
  */
 export function useThemeColors(): ThemeColors {
-  const { theme } = useTheme();
-  return theme.colors;
+	const { theme } = useTheme();
+	return theme.colors;
 }
 
 export { ThemeContext };

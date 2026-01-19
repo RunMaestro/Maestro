@@ -6,10 +6,7 @@
 
 // Web client communication
 export { useRemoteIntegration } from './useRemoteIntegration';
-export type {
-  UseRemoteIntegrationDeps,
-  UseRemoteIntegrationReturn,
-} from './useRemoteIntegration';
+export type { UseRemoteIntegrationDeps, UseRemoteIntegrationReturn } from './useRemoteIntegration';
 
 // Live overlay panel state
 export { useLiveOverlay } from './useLiveOverlay';
@@ -17,10 +14,7 @@ export type { UseLiveOverlayReturn, TunnelStatus, UrlTab } from './useLiveOverla
 
 // Event broadcasting to web clients
 export { useWebBroadcasting } from './useWebBroadcasting';
-export type {
-  UseWebBroadcastingDeps,
-  UseWebBroadcastingReturn,
-} from './useWebBroadcasting';
+export type { UseWebBroadcastingDeps, UseWebBroadcastingReturn } from './useWebBroadcasting';
 
 // Mobile landscape detection
 export { useMobileLandscape } from './useMobileLandscape';
@@ -28,8 +22,8 @@ export { useMobileLandscape } from './useMobileLandscape';
 // CLI activity detection
 export { useCliActivityMonitoring } from './useCliActivityMonitoring';
 export type {
-  UseCliActivityMonitoringDeps,
-  UseCliActivityMonitoringReturn,
+	UseCliActivityMonitoringDeps,
+	UseCliActivityMonitoringReturn,
 } from './useCliActivityMonitoring';
 
 // SSH remote configuration management

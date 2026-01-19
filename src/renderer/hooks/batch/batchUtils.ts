@@ -18,8 +18,8 @@ const CHECKED_TASK_REGEX = /^(\s*[-*]\s*)\[[xX✓✔]\]/gm;
  * Matches lines like: - [ ] task description
  */
 export function countUnfinishedTasks(content: string): number {
-  const matches = content.match(UNCHECKED_TASK_REGEX);
-  return matches ? matches.length : 0;
+	const matches = content.match(UNCHECKED_TASK_REGEX);
+	return matches ? matches.length : 0;
 }
 
 /**
@@ -27,8 +27,8 @@ export function countUnfinishedTasks(content: string): number {
  * Matches lines like: - [x] task description
  */
 export function countCheckedTasks(content: string): number {
-  const matches = content.match(CHECKED_TASK_COUNT_REGEX);
-  return matches ? matches.length : 0;
+	const matches = content.match(CHECKED_TASK_COUNT_REGEX);
+	return matches ? matches.length : 0;
 }
 
 /**
@@ -36,5 +36,5 @@ export function countCheckedTasks(content: string): number {
  * Converts all - [x] to - [ ] (case insensitive)
  */
 export function uncheckAllTasks(content: string): string {
-  return content.replace(CHECKED_TASK_REGEX, '$1[ ]');
+	return content.replace(CHECKED_TASK_REGEX, '$1[ ]');
 }

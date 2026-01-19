@@ -13,12 +13,12 @@ import type { UsageStats } from '../../shared/types';
  * Used as fallback when the agent doesn't report its context window size.
  */
 export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
-  'claude-code': 200000,  // Claude 3.5 Sonnet/Claude 4 default context
-  'claude': 200000,       // Legacy Claude
-  'codex': 200000,        // OpenAI o3/o4-mini context window
-  'opencode': 128000,     // OpenCode (depends on model, 128k is conservative default)
-  'aider': 128000,        // Aider (varies by model, 128k is conservative default)
-  'terminal': 0,          // Terminal has no context window
+	'claude-code': 200000, // Claude 3.5 Sonnet/Claude 4 default context
+	claude: 200000, // Legacy Claude
+	codex: 200000, // OpenAI o3/o4-mini context window
+	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
+	aider: 128000, // Aider (varies by model, 128k is conservative default)
+	terminal: 0, // Terminal has no context window
 };
 
 /**
@@ -44,24 +44,25 @@ const COMBINED_CONTEXT_AGENTS: Set<ToolType> = new Set(['codex']);
  * @returns Total context tokens used
  */
 export function calculateContextTokens(
-  stats: Pick<UsageStats, 'inputTokens' | 'outputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens'>,
-  agentId?: ToolType
+	stats: Pick<
+		UsageStats,
+		'inputTokens' | 'outputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens'
+	>,
+	agentId?: ToolType
 ): number {
-  // For Claude: inputTokens = uncached new tokens, cacheCreationInputTokens = newly cached tokens
-  // cacheReadInputTokens are EXCLUDED because they represent already-cached context
-  // that Claude Code reports cumulatively across the session, not per-request.
-  // Including them would cause context % to exceed 100% impossibly.
-  const baseTokens =
-    stats.inputTokens +
-    (stats.cacheCreationInputTokens || 0);
+	// For Claude: inputTokens = uncached new tokens, cacheCreationInputTokens = newly cached tokens
+	// cacheReadInputTokens are EXCLUDED because they represent already-cached context
+	// that Claude Code reports cumulatively across the session, not per-request.
+	// Including them would cause context % to exceed 100% impossibly.
+	const baseTokens = stats.inputTokens + (stats.cacheCreationInputTokens || 0);
 
-  // OpenAI models have combined input+output context limits
-  if (agentId && COMBINED_CONTEXT_AGENTS.has(agentId)) {
-    return baseTokens + stats.outputTokens;
-  }
+	// OpenAI models have combined input+output context limits
+	if (agentId && COMBINED_CONTEXT_AGENTS.has(agentId)) {
+		return baseTokens + stats.outputTokens;
+	}
 
-  // Claude models: output tokens don't consume context window
-  return baseTokens;
+	// Claude models: output tokens don't consume context window
+	return baseTokens;
 }
 
 /**
@@ -83,31 +84,38 @@ export function calculateContextTokens(
  * @returns Estimated context usage percentage (0-100), or null if cannot be estimated
  */
 export function estimateContextUsage(
-  stats: Pick<UsageStats, 'inputTokens' | 'outputTokens' | 'cacheReadInputTokens' | 'cacheCreationInputTokens' | 'contextWindow'>,
-  agentId?: ToolType
+	stats: Pick<
+		UsageStats,
+		| 'inputTokens'
+		| 'outputTokens'
+		| 'cacheReadInputTokens'
+		| 'cacheCreationInputTokens'
+		| 'contextWindow'
+	>,
+	agentId?: ToolType
 ): number | null {
-  // Calculate total context using agent-specific semantics
-  const totalContextTokens = calculateContextTokens(stats, agentId);
+	// Calculate total context using agent-specific semantics
+	const totalContextTokens = calculateContextTokens(stats, agentId);
 
-  // If context window is provided and valid, use it
-  if (stats.contextWindow && stats.contextWindow > 0) {
-    return Math.min(100, Math.round((totalContextTokens / stats.contextWindow) * 100));
-  }
+	// If context window is provided and valid, use it
+	if (stats.contextWindow && stats.contextWindow > 0) {
+		return Math.min(100, Math.round((totalContextTokens / stats.contextWindow) * 100));
+	}
 
-  // If no agent specified or terminal, cannot estimate
-  if (!agentId || agentId === 'terminal') {
-    return null;
-  }
+	// If no agent specified or terminal, cannot estimate
+	if (!agentId || agentId === 'terminal') {
+		return null;
+	}
 
-  // Use agent-specific default context window
-  const defaultContextWindow = DEFAULT_CONTEXT_WINDOWS[agentId];
-  if (!defaultContextWindow || defaultContextWindow <= 0) {
-    return null;
-  }
+	// Use agent-specific default context window
+	const defaultContextWindow = DEFAULT_CONTEXT_WINDOWS[agentId];
+	if (!defaultContextWindow || defaultContextWindow <= 0) {
+		return null;
+	}
 
-  if (totalContextTokens <= 0) {
-    return 0;
-  }
+	if (totalContextTokens <= 0) {
+		return 0;
+	}
 
-  return Math.min(100, Math.round((totalContextTokens / defaultContextWindow) * 100));
+	return Math.min(100, Math.round((totalContextTokens / defaultContextWindow) * 100));
 }

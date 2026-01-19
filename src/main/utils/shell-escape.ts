@@ -23,15 +23,15 @@
  * shellEscape("$HOME")       // => "'$HOME'" (no expansion)
  */
 export function shellEscape(str: string): string {
-  // Handle empty string
-  if (str === '') {
-    return "''";
-  }
+	// Handle empty string
+	if (str === '') {
+		return "''";
+	}
 
-  // Use single quotes and escape any single quotes within
-  // The pattern 'text'\''more' breaks out of single quotes,
-  // adds an escaped single quote, then re-enters single quotes
-  return `'${str.replace(/'/g, "'\\''")}'`;
+	// Use single quotes and escape any single quotes within
+	// The pattern 'text'\''more' breaks out of single quotes,
+	// adds an escaped single quote, then re-enters single quotes
+	return `'${str.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -41,7 +41,7 @@ export function shellEscape(str: string): string {
  * @returns Array of escaped strings
  */
 export function shellEscapeArgs(args: string[]): string[] {
-  return args.map(shellEscape);
+	return args.map(shellEscape);
 }
 
 /**
@@ -56,7 +56,7 @@ export function shellEscapeArgs(args: string[]): string[] {
  * // => "echo 'hello' 'world'"
  */
 export function buildShellCommand(command: string, args: string[]): string {
-  return [command, ...shellEscapeArgs(args)].join(' ');
+	return [command, ...shellEscapeArgs(args)].join(' ');
 }
 
 /**
@@ -76,10 +76,10 @@ export function buildShellCommand(command: string, args: string[]): string {
  * @returns The escaped string (without surrounding quotes)
  */
 export function shellEscapeForDoubleQuotes(str: string): string {
-  return str
-    .replace(/\\/g, '\\\\')  // Escape backslashes first
-    .replace(/"/g, '\\"')    // Escape double quotes
-    .replace(/\$/g, '\\$')   // Escape dollar signs
-    .replace(/`/g, '\\`')    // Escape backticks
-    .replace(/!/g, '\\!');   // Escape history expansion
+	return str
+		.replace(/\\/g, '\\\\') // Escape backslashes first
+		.replace(/"/g, '\\"') // Escape double quotes
+		.replace(/\$/g, '\\$') // Escape dollar signs
+		.replace(/`/g, '\\`') // Escape backticks
+		.replace(/!/g, '\\!'); // Escape history expansion
 }

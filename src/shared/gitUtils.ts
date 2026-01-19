@@ -15,25 +15,25 @@
  * Represents a file change from git status output
  */
 export interface GitFileStatus {
-  path: string;
-  status: string;
+	path: string;
+	status: string;
 }
 
 /**
  * Represents a file with numstat information (additions/deletions)
  */
 export interface GitNumstatFile {
-  path: string;
-  additions: number;
-  deletions: number;
+	path: string;
+	additions: number;
+	deletions: number;
 }
 
 /**
  * Behind/ahead counts relative to upstream
  */
 export interface GitBehindAhead {
-  behind: number;
-  ahead: number;
+	behind: number;
+	ahead: number;
 }
 
 /**
@@ -55,25 +55,28 @@ export interface GitBehindAhead {
  * ```
  */
 export function parseGitStatusPorcelain(stdout: string): GitFileStatus[] {
-  if (!stdout || !stdout.trim()) {
-    return [];
-  }
+	if (!stdout || !stdout.trim()) {
+		return [];
+	}
 
-  // Split on newlines but don't trim the whole string - leading spaces are significant!
-  // Only trim trailing whitespace to remove the final newline
-  const lines = stdout.replace(/\s+$/, '').split('\n').filter(line => line.length > 0);
-  const files: GitFileStatus[] = [];
+	// Split on newlines but don't trim the whole string - leading spaces are significant!
+	// Only trim trailing whitespace to remove the final newline
+	const lines = stdout
+		.replace(/\s+$/, '')
+		.split('\n')
+		.filter((line) => line.length > 0);
+	const files: GitFileStatus[] = [];
 
-  for (const line of lines) {
-    // Porcelain format: XY PATH or XY PATH -> NEWPATH (for renames)
-    // XY is exactly 2 characters, followed by a space, then the path
-    const status = line.substring(0, 2);
-    const path = line.substring(3).split(' -> ')[0]; // Handle renames
+	for (const line of lines) {
+		// Porcelain format: XY PATH or XY PATH -> NEWPATH (for renames)
+		// XY is exactly 2 characters, followed by a space, then the path
+		const status = line.substring(0, 2);
+		const path = line.substring(3).split(' -> ')[0]; // Handle renames
 
-    files.push({ path, status });
-  }
+		files.push({ path, status });
+	}
 
-  return files;
+	return files;
 }
 
 /**
@@ -83,10 +86,13 @@ export function parseGitStatusPorcelain(stdout: string): GitFileStatus[] {
  * @returns Number of uncommitted changes
  */
 export function countUncommittedChanges(stdout: string): number {
-  if (!stdout || !stdout.trim()) {
-    return 0;
-  }
-  return stdout.trim().split('\n').filter(line => line.length > 0).length;
+	if (!stdout || !stdout.trim()) {
+		return 0;
+	}
+	return stdout
+		.trim()
+		.split('\n')
+		.filter((line) => line.length > 0).length;
 }
 
 /**
@@ -96,7 +102,7 @@ export function countUncommittedChanges(stdout: string): number {
  * @returns True if there are any uncommitted changes
  */
 export function hasUncommittedChanges(stdout: string): boolean {
-  return stdout.trim().length > 0;
+	return stdout.trim().length > 0;
 }
 
 /**
@@ -118,26 +124,29 @@ export function hasUncommittedChanges(stdout: string): boolean {
  * ```
  */
 export function parseGitNumstat(stdout: string): GitNumstatFile[] {
-  if (!stdout || !stdout.trim()) {
-    return [];
-  }
+	if (!stdout || !stdout.trim()) {
+		return [];
+	}
 
-  const lines = stdout.trim().split('\n').filter(line => line.length > 0);
-  const files: GitNumstatFile[] = [];
+	const lines = stdout
+		.trim()
+		.split('\n')
+		.filter((line) => line.length > 0);
+	const files: GitNumstatFile[] = [];
 
-  for (const line of lines) {
-    const parts = line.split('\t');
-    if (parts.length >= 3) {
-      // Binary files show '-' for additions/deletions
-      const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
-      const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-      const path = parts[2];
+	for (const line of lines) {
+		const parts = line.split('\t');
+		if (parts.length >= 3) {
+			// Binary files show '-' for additions/deletions
+			const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
+			const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
+			const path = parts[2];
 
-      files.push({ path, additions, deletions });
-    }
-  }
+			files.push({ path, additions, deletions });
+		}
+	}
 
-  return files;
+	return files;
 }
 
 /**
@@ -155,15 +164,15 @@ export function parseGitNumstat(stdout: string): GitNumstatFile[] {
  * ```
  */
 export function parseGitBehindAhead(stdout: string): GitBehindAhead {
-  if (!stdout || !stdout.trim()) {
-    return { behind: 0, ahead: 0 };
-  }
+	if (!stdout || !stdout.trim()) {
+		return { behind: 0, ahead: 0 };
+	}
 
-  const parts = stdout.trim().split(/\s+/);
-  return {
-    behind: parseInt(parts[0], 10) || 0,
-    ahead: parseInt(parts[1], 10) || 0,
-  };
+	const parts = stdout.trim().split(/\s+/);
+	return {
+		behind: parseInt(parts[0], 10) || 0,
+		ahead: parseInt(parts[1], 10) || 0,
+	};
 }
 
 /**
@@ -182,20 +191,22 @@ export function parseGitBehindAhead(stdout: string): GitBehindAhead {
  * ```
  */
 export function parseGitBranches(stdout: string): string[] {
-  if (!stdout || !stdout.trim()) {
-    return [];
-  }
+	if (!stdout || !stdout.trim()) {
+		return [];
+	}
 
-  return stdout
-    .split('\n')
-    .map(b => b.trim())
-    .filter(b => b.length > 0)
-    // Clean up remote branch names (origin/main -> main for remotes)
-    .map(b => b.replace(/^origin\//, ''))
-    // Remove duplicates (local and remote might have same name)
-    .filter((b, i, arr) => arr.indexOf(b) === i)
-    // Filter out HEAD pointer
-    .filter(b => b !== 'HEAD');
+	return (
+		stdout
+			.split('\n')
+			.map((b) => b.trim())
+			.filter((b) => b.length > 0)
+			// Clean up remote branch names (origin/main -> main for remotes)
+			.map((b) => b.replace(/^origin\//, ''))
+			// Remove duplicates (local and remote might have same name)
+			.filter((b, i, arr) => arr.indexOf(b) === i)
+			// Filter out HEAD pointer
+			.filter((b) => b !== 'HEAD')
+	);
 }
 
 /**
@@ -205,14 +216,14 @@ export function parseGitBranches(stdout: string): string[] {
  * @returns Array of tag names
  */
 export function parseGitTags(stdout: string): string[] {
-  if (!stdout || !stdout.trim()) {
-    return [];
-  }
+	if (!stdout || !stdout.trim()) {
+		return [];
+	}
 
-  return stdout
-    .split('\n')
-    .map(t => t.trim())
-    .filter(t => t.length > 0);
+	return stdout
+		.split('\n')
+		.map((t) => t.trim())
+		.filter((t) => t.length > 0);
 }
 
 /**
@@ -224,7 +235,7 @@ export function parseGitTags(stdout: string): string[] {
  * @internal Currently used only in tests; available for future use
  */
 export function cleanBranchName(stdout: string): string {
-  return stdout?.trim() || '';
+	return stdout?.trim() || '';
 }
 
 /**
@@ -236,7 +247,7 @@ export function cleanBranchName(stdout: string): string {
  * @internal Currently used only in tests; available for future use
  */
 export function cleanGitPath(stdout: string): string {
-  return stdout?.trim() || '';
+	return stdout?.trim() || '';
 }
 
 /**
@@ -256,35 +267,35 @@ export function cleanGitPath(stdout: string): string {
  * ```
  */
 export function remoteUrlToBrowserUrl(remoteUrl: string): string | null {
-  if (!remoteUrl) return null;
+	if (!remoteUrl) return null;
 
-  let url = remoteUrl.trim();
+	let url = remoteUrl.trim();
 
-  // Handle SSH format: git@github.com:user/repo.git
-  if (url.startsWith('git@')) {
-    url = url
-      .replace(/^git@/, 'https://')
-      .replace(/:([^/])/, '/$1') // Replace first : with / (but not :// from https)
-      .replace(/\.git$/, '');
-    return url;
-  }
+	// Handle SSH format: git@github.com:user/repo.git
+	if (url.startsWith('git@')) {
+		url = url
+			.replace(/^git@/, 'https://')
+			.replace(/:([^/])/, '/$1') // Replace first : with / (but not :// from https)
+			.replace(/\.git$/, '');
+		return url;
+	}
 
-  // Handle HTTPS format: https://github.com/user/repo.git
-  if (url.startsWith('https://') || url.startsWith('http://')) {
-    url = url.replace(/\.git$/, '');
-    return url;
-  }
+	// Handle HTTPS format: https://github.com/user/repo.git
+	if (url.startsWith('https://') || url.startsWith('http://')) {
+		url = url.replace(/\.git$/, '');
+		return url;
+	}
 
-  // Handle SSH format without git@: ssh://git@github.com/user/repo.git
-  if (url.startsWith('ssh://')) {
-    url = url
-      .replace(/^ssh:\/\/git@/, 'https://')
-      .replace(/^ssh:\/\//, 'https://')
-      .replace(/\.git$/, '');
-    return url;
-  }
+	// Handle SSH format without git@: ssh://git@github.com/user/repo.git
+	if (url.startsWith('ssh://')) {
+		url = url
+			.replace(/^ssh:\/\/git@/, 'https://')
+			.replace(/^ssh:\/\//, 'https://')
+			.replace(/\.git$/, '');
+		return url;
+	}
 
-  return null;
+	return null;
 }
 
 /**
@@ -299,8 +310,8 @@ export const GIT_IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp',
  * @returns True if the file is an image
  */
 export function isImageFile(filePath: string): boolean {
-  const ext = filePath.split('.').pop()?.toLowerCase() || '';
-  return GIT_IMAGE_EXTENSIONS.includes(ext);
+	const ext = filePath.split('.').pop()?.toLowerCase() || '';
+	return GIT_IMAGE_EXTENSIONS.includes(ext);
 }
 
 /**
@@ -310,7 +321,7 @@ export function isImageFile(filePath: string): boolean {
  * @returns MIME type string
  */
 export function getImageMimeType(ext: string): string {
-  if (ext === 'svg') return 'image/svg+xml';
-  if (ext === 'jpg') return 'image/jpeg';
-  return `image/${ext}`;
+	if (ext === 'svg') return 'image/svg+xml';
+	if (ext === 'jpg') return 'image/jpeg';
+	return `image/${ext}`;
 }

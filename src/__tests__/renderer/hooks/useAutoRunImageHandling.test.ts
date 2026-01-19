@@ -14,9 +14,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import {
-  useAutoRunImageHandling,
-  imageCache,
-  type UseAutoRunImageHandlingDeps,
+	useAutoRunImageHandling,
+	imageCache,
+	type UseAutoRunImageHandlingDeps,
 } from '../../../renderer/hooks';
 import React from 'react';
 
@@ -24,114 +24,119 @@ import React from 'react';
 // Test Helpers
 // ============================================================================
 
-const createMockDeps = (overrides: Partial<UseAutoRunImageHandlingDeps> = {}): UseAutoRunImageHandlingDeps => {
-  const textareaRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
-  const lastUndoSnapshotRef = { current: '' };
+const createMockDeps = (
+	overrides: Partial<UseAutoRunImageHandlingDeps> = {}
+): UseAutoRunImageHandlingDeps => {
+	const textareaRef = { current: null } as React.RefObject<HTMLTextAreaElement>;
+	const lastUndoSnapshotRef = { current: '' };
 
-  return {
-    folderPath: '/test/autorun',
-    selectedFile: 'Phase 1',
-    localContent: '# Phase 1\n\nSome content',
-    setLocalContent: vi.fn(),
-    handleContentChange: vi.fn(),
-    isLocked: false,
-    textareaRef,
-    pushUndoState: vi.fn(),
-    lastUndoSnapshotRef,
-    ...overrides,
-  };
+	return {
+		folderPath: '/test/autorun',
+		selectedFile: 'Phase 1',
+		localContent: '# Phase 1\n\nSome content',
+		setLocalContent: vi.fn(),
+		handleContentChange: vi.fn(),
+		isLocked: false,
+		textareaRef,
+		pushUndoState: vi.fn(),
+		lastUndoSnapshotRef,
+		...overrides,
+	};
 };
 
 const createMockTextarea = (selectionStart = 0): HTMLTextAreaElement => {
-  const textarea = document.createElement('textarea');
-  textarea.value = '# Phase 1\n\nSome content';
-  textarea.selectionStart = selectionStart;
-  textarea.selectionEnd = selectionStart;
-  // Mock setSelectionRange
-  textarea.setSelectionRange = vi.fn();
-  textarea.focus = vi.fn();
-  return textarea;
+	const textarea = document.createElement('textarea');
+	textarea.value = '# Phase 1\n\nSome content';
+	textarea.selectionStart = selectionStart;
+	textarea.selectionEnd = selectionStart;
+	// Mock setSelectionRange
+	textarea.setSelectionRange = vi.fn();
+	textarea.focus = vi.fn();
+	return textarea;
 };
 
 const createMockClipboardEvent = (imageType = 'image/png'): React.ClipboardEvent => {
-  const mockFile = new File(['test image data'], 'test.png', { type: imageType });
+	const mockFile = new File(['test image data'], 'test.png', { type: imageType });
 
-  const mockDataTransferItem: DataTransferItem = {
-    kind: 'file',
-    type: imageType,
-    getAsFile: () => mockFile,
-    getAsString: () => {},
-    webkitGetAsEntry: () => null,
-  };
+	const mockDataTransferItem: DataTransferItem = {
+		kind: 'file',
+		type: imageType,
+		getAsFile: () => mockFile,
+		getAsString: () => {},
+		webkitGetAsEntry: () => null,
+	};
 
-  const mockDataTransferItemList: DataTransferItemList = {
-    length: 1,
-    add: () => null,
-    clear: () => {},
-    remove: () => {},
-    item: (index: number) => (index === 0 ? mockDataTransferItem : null),
-    [Symbol.iterator]: function* () {
-      yield mockDataTransferItem;
-    },
-    0: mockDataTransferItem,
-  } as unknown as DataTransferItemList;
+	const mockDataTransferItemList: DataTransferItemList = {
+		length: 1,
+		add: () => null,
+		clear: () => {},
+		remove: () => {},
+		item: (index: number) => (index === 0 ? mockDataTransferItem : null),
+		[Symbol.iterator]: function* () {
+			yield mockDataTransferItem;
+		},
+		0: mockDataTransferItem,
+	} as unknown as DataTransferItemList;
 
-  return {
-    clipboardData: {
-      items: mockDataTransferItemList,
-      getData: () => '',
-      setData: () => {},
-      clearData: () => {},
-      types: ['Files'],
-      files: [mockFile] as unknown as FileList,
-      dropEffect: 'none',
-      effectAllowed: 'none',
-      setDragImage: () => {},
-    },
-    preventDefault: vi.fn(),
-    stopPropagation: vi.fn(),
-    nativeEvent: { type: 'paste' },
-    currentTarget: document.createElement('div'),
-    target: document.createElement('div'),
-    bubbles: true,
-    cancelable: true,
-    defaultPrevented: false,
-    eventPhase: 2,
-    isTrusted: true,
-    timeStamp: Date.now(),
-    type: 'paste',
-    isDefaultPrevented: () => false,
-    isPropagationStopped: () => false,
-    persist: () => {},
-  } as unknown as React.ClipboardEvent;
+	return {
+		clipboardData: {
+			items: mockDataTransferItemList,
+			getData: () => '',
+			setData: () => {},
+			clearData: () => {},
+			types: ['Files'],
+			files: [mockFile] as unknown as FileList,
+			dropEffect: 'none',
+			effectAllowed: 'none',
+			setDragImage: () => {},
+		},
+		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
+		nativeEvent: { type: 'paste' },
+		currentTarget: document.createElement('div'),
+		target: document.createElement('div'),
+		bubbles: true,
+		cancelable: true,
+		defaultPrevented: false,
+		eventPhase: 2,
+		isTrusted: true,
+		timeStamp: Date.now(),
+		type: 'paste',
+		isDefaultPrevented: () => false,
+		isPropagationStopped: () => false,
+		persist: () => {},
+	} as unknown as React.ClipboardEvent;
 };
 
-const createMockFileInputEvent = (filename = 'test.png', fileType = 'image/png'): React.ChangeEvent<HTMLInputElement> => {
-  const mockFile = new File(['test image data'], filename, { type: fileType });
+const createMockFileInputEvent = (
+	filename = 'test.png',
+	fileType = 'image/png'
+): React.ChangeEvent<HTMLInputElement> => {
+	const mockFile = new File(['test image data'], filename, { type: fileType });
 
-  const input = document.createElement('input');
-  input.type = 'file';
-  Object.defineProperty(input, 'files', {
-    value: [mockFile],
-  });
+	const input = document.createElement('input');
+	input.type = 'file';
+	Object.defineProperty(input, 'files', {
+		value: [mockFile],
+	});
 
-  return {
-    target: input,
-    currentTarget: input,
-    nativeEvent: new Event('change'),
-    bubbles: true,
-    cancelable: false,
-    defaultPrevented: false,
-    eventPhase: 2,
-    isTrusted: true,
-    timeStamp: Date.now(),
-    type: 'change',
-    isDefaultPrevented: () => false,
-    isPropagationStopped: () => false,
-    persist: () => {},
-    preventDefault: vi.fn(),
-    stopPropagation: vi.fn(),
-  } as unknown as React.ChangeEvent<HTMLInputElement>;
+	return {
+		target: input,
+		currentTarget: input,
+		nativeEvent: new Event('change'),
+		bubbles: true,
+		cancelable: false,
+		defaultPrevented: false,
+		eventPhase: 2,
+		isTrusted: true,
+		timeStamp: Date.now(),
+		type: 'change',
+		isDefaultPrevented: () => false,
+		isPropagationStopped: () => false,
+		persist: () => {},
+		preventDefault: vi.fn(),
+		stopPropagation: vi.fn(),
+	} as unknown as React.ChangeEvent<HTMLInputElement>;
 };
 
 // ============================================================================
@@ -140,64 +145,65 @@ const createMockFileInputEvent = (filename = 'test.png', fileType = 'image/png')
 
 // Create a proper FileReader mock class
 class MockFileReader {
-  result: string | ArrayBuffer | null = null;
-  onload: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  onerror: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  readyState = 0;
-  error: DOMException | null = null;
-  onabort: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  onloadend: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  onloadstart: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  onprogress: ((ev: ProgressEvent<FileReader>) => any) | null = null;
-  EMPTY = 0;
-  LOADING = 1;
-  DONE = 2;
+	result: string | ArrayBuffer | null = null;
+	onload: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	onerror: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	readyState = 0;
+	error: DOMException | null = null;
+	onabort: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	onloadend: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	onloadstart: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	onprogress: ((ev: ProgressEvent<FileReader>) => any) | null = null;
+	EMPTY = 0;
+	LOADING = 1;
+	DONE = 2;
 
-  abort = vi.fn();
-  readAsArrayBuffer = vi.fn();
-  readAsBinaryString = vi.fn();
-  readAsText = vi.fn();
+	abort = vi.fn();
+	readAsArrayBuffer = vi.fn();
+	readAsBinaryString = vi.fn();
+	readAsText = vi.fn();
 
-  readAsDataURL = vi.fn(function (this: MockFileReader) {
-    setTimeout(() => {
-      this.result = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
-      this.readyState = 2;
-      if (this.onload) {
-        this.onload({ target: { result: this.result } } as unknown as ProgressEvent<FileReader>);
-      }
-    }, 0);
-  });
+	readAsDataURL = vi.fn(function (this: MockFileReader) {
+		setTimeout(() => {
+			this.result =
+				'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+			this.readyState = 2;
+			if (this.onload) {
+				this.onload({ target: { result: this.result } } as unknown as ProgressEvent<FileReader>);
+			}
+		}, 0);
+	});
 
-  addEventListener = vi.fn();
-  removeEventListener = vi.fn();
-  dispatchEvent = vi.fn().mockReturnValue(true);
+	addEventListener = vi.fn();
+	removeEventListener = vi.fn();
+	dispatchEvent = vi.fn().mockReturnValue(true);
 }
 
 // Extend the global mock with image-related methods
 beforeEach(() => {
-  vi.clearAllMocks();
-  imageCache.clear();
+	vi.clearAllMocks();
+	imageCache.clear();
 
-  // Add/reset image-related mocks on window.maestro.autorun
-  (window.maestro.autorun as any).listImages = vi.fn().mockResolvedValue({
-    success: true,
-    images: [],
-  });
-  (window.maestro.autorun as any).saveImage = vi.fn().mockResolvedValue({
-    success: true,
-    relativePath: 'images/Phase 1-1234567890.png',
-  });
-  (window.maestro.autorun as any).deleteImage = vi.fn().mockResolvedValue({
-    success: true,
-  });
+	// Add/reset image-related mocks on window.maestro.autorun
+	(window.maestro.autorun as any).listImages = vi.fn().mockResolvedValue({
+		success: true,
+		images: [],
+	});
+	(window.maestro.autorun as any).saveImage = vi.fn().mockResolvedValue({
+		success: true,
+		relativePath: 'images/Phase 1-1234567890.png',
+	});
+	(window.maestro.autorun as any).deleteImage = vi.fn().mockResolvedValue({
+		success: true,
+	});
 
-  // Mock FileReader with a proper class constructor
-  global.FileReader = MockFileReader as unknown as typeof FileReader;
+	// Mock FileReader with a proper class constructor
+	global.FileReader = MockFileReader as unknown as typeof FileReader;
 });
 
 afterEach(() => {
-  vi.useRealTimers();
-  imageCache.clear();
+	vi.useRealTimers();
+	imageCache.clear();
 });
 
 // ============================================================================
@@ -205,1041 +211,1056 @@ afterEach(() => {
 // ============================================================================
 
 describe('useAutoRunImageHandling', () => {
-  describe('loadAttachments (useEffect behavior)', () => {
-    it('should load existing images when folderPath and selectedFile are provided', async () => {
-      const mockDeps = createMockDeps();
+	describe('loadAttachments (useEffect behavior)', () => {
+		it('should load existing images when folderPath and selectedFile are provided', async () => {
+			const mockDeps = createMockDeps();
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [
-          { filename: 'Phase 1-123.png', relativePath: 'images/Phase 1-123.png' },
-          { filename: 'Phase 1-456.jpg', relativePath: 'images/Phase 1-456.jpg' },
-        ],
-      });
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [
+					{ filename: 'Phase 1-123.png', relativePath: 'images/Phase 1-123.png' },
+					{ filename: 'Phase 1-456.jpg', relativePath: 'images/Phase 1-456.jpg' },
+				],
+			});
 
-      (window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,abc123');
+			(window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,abc123');
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await waitFor(() => {
-        expect(result.current.attachmentsList).toHaveLength(2);
-      });
+			await waitFor(() => {
+				expect(result.current.attachmentsList).toHaveLength(2);
+			});
 
-      expect(window.maestro.autorun.listImages).toHaveBeenCalledWith('/test/autorun', 'Phase 1');
-      expect(result.current.attachmentsList).toContain('images/Phase 1-123.png');
-      expect(result.current.attachmentsList).toContain('images/Phase 1-456.jpg');
-    });
+			expect(window.maestro.autorun.listImages).toHaveBeenCalledWith('/test/autorun', 'Phase 1');
+			expect(result.current.attachmentsList).toContain('images/Phase 1-123.png');
+			expect(result.current.attachmentsList).toContain('images/Phase 1-456.jpg');
+		});
 
-    it('should load previews for images from fs.readFile', async () => {
-      const mockDeps = createMockDeps();
+		it('should load previews for images from fs.readFile', async () => {
+			const mockDeps = createMockDeps();
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
-      });
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
+			});
 
-      (window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,preview123');
+			(window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,preview123');
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await waitFor(() => {
-        expect(result.current.attachmentPreviews.size).toBe(1);
-      });
+			await waitFor(() => {
+				expect(result.current.attachmentPreviews.size).toBe(1);
+			});
 
-      expect(window.maestro.fs.readFile).toHaveBeenCalledWith('/test/autorun/images/test.png', undefined);
-      expect(result.current.attachmentPreviews.get('images/test.png')).toBe('data:image/png;base64,preview123');
-    });
+			expect(window.maestro.fs.readFile).toHaveBeenCalledWith(
+				'/test/autorun/images/test.png',
+				undefined
+			);
+			expect(result.current.attachmentPreviews.get('images/test.png')).toBe(
+				'data:image/png;base64,preview123'
+			);
+		});
 
-    it('should clear attachments when folderPath is null', async () => {
-      const mockDeps = createMockDeps({ folderPath: null });
+		it('should clear attachments when folderPath is null', async () => {
+			const mockDeps = createMockDeps({ folderPath: null });
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(result.current.attachmentsList).toEqual([]);
-      expect(result.current.attachmentPreviews.size).toBe(0);
-      expect(window.maestro.autorun.listImages).not.toHaveBeenCalled();
-    });
+			expect(result.current.attachmentsList).toEqual([]);
+			expect(result.current.attachmentPreviews.size).toBe(0);
+			expect(window.maestro.autorun.listImages).not.toHaveBeenCalled();
+		});
 
-    it('should clear attachments when selectedFile is null', async () => {
-      const mockDeps = createMockDeps({ selectedFile: null });
+		it('should clear attachments when selectedFile is null', async () => {
+			const mockDeps = createMockDeps({ selectedFile: null });
+
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			expect(result.current.attachmentsList).toEqual([]);
+			expect(result.current.attachmentPreviews.size).toBe(0);
+			expect(window.maestro.autorun.listImages).not.toHaveBeenCalled();
+		});
 
-      expect(result.current.attachmentsList).toEqual([]);
-      expect(result.current.attachmentPreviews.size).toBe(0);
-      expect(window.maestro.autorun.listImages).not.toHaveBeenCalled();
-    });
+		it('should handle listImages failure gracefully', async () => {
+			const mockDeps = createMockDeps();
 
-    it('should handle listImages failure gracefully', async () => {
-      const mockDeps = createMockDeps();
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: false,
+				error: 'Failed to list images',
+			});
+
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+			await waitFor(() => {
+				expect(window.maestro.autorun.listImages).toHaveBeenCalled();
+			});
+
+			// Should have empty list on failure
+			expect(result.current.attachmentsList).toEqual([]);
+		});
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: false,
-        error: 'Failed to list images',
-      });
+		it('should handle fs.readFile failure gracefully (missing image file)', async () => {
+			const mockDeps = createMockDeps();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'missing.png', relativePath: 'images/missing.png' }],
+			});
 
-      await waitFor(() => {
-        expect(window.maestro.autorun.listImages).toHaveBeenCalled();
-      });
+			(window.maestro.fs.readFile as any).mockRejectedValue(new Error('File not found'));
 
-      // Should have empty list on failure
-      expect(result.current.attachmentsList).toEqual([]);
-    });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    it('should handle fs.readFile failure gracefully (missing image file)', async () => {
-      const mockDeps = createMockDeps();
+			await waitFor(() => {
+				expect(result.current.attachmentsList).toHaveLength(1);
+			});
+
+			// Should still have the attachment in list even if preview failed
+			expect(result.current.attachmentsList).toContain('images/missing.png');
+			// But preview should not be set
+			expect(result.current.attachmentPreviews.get('images/missing.png')).toBeUndefined();
+		});
+
+		it('should reload attachments when selectedFile changes', async () => {
+			const mockDeps = createMockDeps();
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'missing.png', relativePath: 'images/missing.png' }],
-      });
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'doc1-img.png', relativePath: 'images/doc1-img.png' }],
+			});
 
-      (window.maestro.fs.readFile as any).mockRejectedValue(new Error('File not found'));
+			const { result, rerender } = renderHook(({ deps }) => useAutoRunImageHandling(deps), {
+				initialProps: { deps: mockDeps },
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			await waitFor(() => {
+				expect(result.current.attachmentsList).toHaveLength(1);
+			});
 
-      await waitFor(() => {
-        expect(result.current.attachmentsList).toHaveLength(1);
-      });
+			// Change selectedFile
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'doc2-img.png', relativePath: 'images/doc2-img.png' }],
+			});
 
-      // Should still have the attachment in list even if preview failed
-      expect(result.current.attachmentsList).toContain('images/missing.png');
-      // But preview should not be set
-      expect(result.current.attachmentPreviews.get('images/missing.png')).toBeUndefined();
-    });
+			rerender({ deps: { ...mockDeps, selectedFile: 'Phase 2' } });
 
-    it('should reload attachments when selectedFile changes', async () => {
-      const mockDeps = createMockDeps();
+			await waitFor(() => {
+				expect(result.current.attachmentsList).toContain('images/doc2-img.png');
+			});
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'doc1-img.png', relativePath: 'images/doc1-img.png' }],
-      });
+			expect(window.maestro.autorun.listImages).toHaveBeenLastCalledWith(
+				'/test/autorun',
+				'Phase 2'
+			);
+		});
+	});
 
-      const { result, rerender } = renderHook(
-        ({ deps }) => useAutoRunImageHandling(deps),
-        { initialProps: { deps: mockDeps } }
-      );
+	// ============================================================================
+	// Tests for handlePaste (clipboard image handling)
+	// ============================================================================
 
-      await waitFor(() => {
-        expect(result.current.attachmentsList).toHaveLength(1);
-      });
+	describe('handlePaste (clipboard image handling)', () => {
+		it('should save pasted image and insert markdown at cursor position', async () => {
+			vi.useFakeTimers();
 
-      // Change selectedFile
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'doc2-img.png', relativePath: 'images/doc2-img.png' }],
-      });
+			const textarea = createMockTextarea(10); // Cursor at position 10
+			const mockDeps = createMockDeps({
+				textareaRef: { current: textarea },
+				localContent: '# Phase 1\n\nSome content',
+			});
 
-      rerender({ deps: { ...mockDeps, selectedFile: 'Phase 2' } });
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-1234567890.png',
+			});
 
-      await waitFor(() => {
-        expect(result.current.attachmentsList).toContain('images/doc2-img.png');
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(window.maestro.autorun.listImages).toHaveBeenLastCalledWith('/test/autorun', 'Phase 2');
-    });
-  });
+			const clipboardEvent = createMockClipboardEvent();
 
-  // ============================================================================
-  // Tests for handlePaste (clipboard image handling)
-  // ============================================================================
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+				vi.runAllTimers();
+			});
 
-  describe('handlePaste (clipboard image handling)', () => {
-    it('should save pasted image and insert markdown at cursor position', async () => {
-      vi.useFakeTimers();
+			expect(clipboardEvent.preventDefault).toHaveBeenCalled();
+			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'Phase 1',
+				expect.any(String), // base64 content
+				'png'
+			);
+		});
 
-      const textarea = createMockTextarea(10); // Cursor at position 10
-      const mockDeps = createMockDeps({
-        textareaRef: { current: textarea },
-        localContent: '# Phase 1\n\nSome content',
-      });
+		it('should NOT paste when isLocked is true', async () => {
+			const mockDeps = createMockDeps({ isLocked: true });
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-1234567890.png',
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const clipboardEvent = createMockClipboardEvent();
 
-      const clipboardEvent = createMockClipboardEvent();
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+			});
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-        vi.runAllTimers();
-      });
+			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      expect(clipboardEvent.preventDefault).toHaveBeenCalled();
-      expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-        '/test/autorun',
-        'Phase 1',
-        expect.any(String), // base64 content
-        'png'
-      );
-    });
+		it('should NOT paste when folderPath is null', async () => {
+			const mockDeps = createMockDeps({ folderPath: null });
 
-    it('should NOT paste when isLocked is true', async () => {
-      const mockDeps = createMockDeps({ isLocked: true });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const clipboardEvent = createMockClipboardEvent();
 
-      const clipboardEvent = createMockClipboardEvent();
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+			});
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-      });
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+		it('should NOT paste when selectedFile is null', async () => {
+			const mockDeps = createMockDeps({ selectedFile: null });
 
-    it('should NOT paste when folderPath is null', async () => {
-      const mockDeps = createMockDeps({ folderPath: null });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const clipboardEvent = createMockClipboardEvent();
 
-      const clipboardEvent = createMockClipboardEvent();
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+			});
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-      });
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+		it('should handle different image types (jpeg)', async () => {
+			vi.useFakeTimers();
 
-    it('should NOT paste when selectedFile is null', async () => {
-      const mockDeps = createMockDeps({ selectedFile: null });
+			const textarea = createMockTextarea(0);
+			const mockDeps = createMockDeps({
+				textareaRef: { current: textarea },
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-123.jpeg',
+			});
 
-      const clipboardEvent = createMockClipboardEvent();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-      });
+			const clipboardEvent = createMockClipboardEvent('image/jpeg');
 
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+				vi.runAllTimers();
+			});
 
-    it('should handle different image types (jpeg)', async () => {
-      vi.useFakeTimers();
+			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'Phase 1',
+				expect.any(String),
+				'jpeg'
+			);
+		});
 
-      const textarea = createMockTextarea(0);
-      const mockDeps = createMockDeps({
-        textareaRef: { current: textarea },
-      });
+		it('should push undo state before modifying content', async () => {
+			vi.useFakeTimers();
+
+			const textarea = createMockTextarea(0);
+			const mockDeps = createMockDeps({
+				textareaRef: { current: textarea },
+			});
+
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-123.png',
+			});
+
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+
+			const clipboardEvent = createMockClipboardEvent();
+
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+				vi.runAllTimers();
+			});
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-123.jpeg',
-      });
+			expect(mockDeps.pushUndoState).toHaveBeenCalled();
+		});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+		it('should update attachmentsList after successful paste', async () => {
+			vi.useFakeTimers();
+
+			const textarea = createMockTextarea(0);
+			const mockDeps = createMockDeps({
+				textareaRef: { current: textarea },
+			});
 
-      const clipboardEvent = createMockClipboardEvent('image/jpeg');
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-newimg.png',
+			});
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-        vi.runAllTimers();
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-        '/test/autorun',
-        'Phase 1',
-        expect.any(String),
-        'jpeg'
-      );
-    });
+			const clipboardEvent = createMockClipboardEvent();
 
-    it('should push undo state before modifying content', async () => {
-      vi.useFakeTimers();
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+				vi.runAllTimers();
+			});
+
+			expect(result.current.attachmentsList).toContain('images/Phase 1-newimg.png');
+		});
 
-      const textarea = createMockTextarea(0);
-      const mockDeps = createMockDeps({
-        textareaRef: { current: textarea },
-      });
+		it('should NOT update state when saveImage fails', async () => {
+			vi.useFakeTimers();
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-123.png',
-      });
+			const textarea = createMockTextarea(0);
+			const mockDeps = createMockDeps({
+				textareaRef: { current: textarea },
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: false,
+				error: 'Failed to save',
+			});
 
-      const clipboardEvent = createMockClipboardEvent();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-        vi.runAllTimers();
-      });
+			const clipboardEvent = createMockClipboardEvent();
 
-      expect(mockDeps.pushUndoState).toHaveBeenCalled();
-    });
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+				vi.runAllTimers();
+			});
 
-    it('should update attachmentsList after successful paste', async () => {
-      vi.useFakeTimers();
+			expect(result.current.attachmentsList).toEqual([]);
+			expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
+		});
 
-      const textarea = createMockTextarea(0);
-      const mockDeps = createMockDeps({
-        textareaRef: { current: textarea },
-      });
+		it('should ignore non-image clipboard items', async () => {
+			const mockDeps = createMockDeps();
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-newimg.png',
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			// Create a clipboard event with text/plain item
+			const textItem: DataTransferItem = {
+				kind: 'string',
+				type: 'text/plain',
+				getAsFile: () => null,
+				getAsString: (callback) => callback?.('some text'),
+				webkitGetAsEntry: () => null,
+			};
 
-      const clipboardEvent = createMockClipboardEvent();
+			const clipboardEvent = {
+				clipboardData: {
+					items: {
+						length: 1,
+						0: textItem,
+						item: (i: number) => (i === 0 ? textItem : null),
+						[Symbol.iterator]: function* () {
+							yield textItem;
+						},
+					} as unknown as DataTransferItemList,
+				},
+				preventDefault: vi.fn(),
+			} as unknown as React.ClipboardEvent;
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-        vi.runAllTimers();
-      });
+			await act(async () => {
+				await result.current.handlePaste(clipboardEvent);
+			});
 
-      expect(result.current.attachmentsList).toContain('images/Phase 1-newimg.png');
-    });
+			expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
+	});
 
-    it('should NOT update state when saveImage fails', async () => {
-      vi.useFakeTimers();
+	// ============================================================================
+	// Tests for handleFileSelect (manual upload)
+	// ============================================================================
 
-      const textarea = createMockTextarea(0);
-      const mockDeps = createMockDeps({
-        textareaRef: { current: textarea },
-      });
+	describe('handleFileSelect (manual upload)', () => {
+		it('should save uploaded file and insert markdown at end', async () => {
+			vi.useFakeTimers();
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: false,
-        error: 'Failed to save',
-      });
+			const mockDeps = createMockDeps();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-uploaded.png',
+			});
 
-      const clipboardEvent = createMockClipboardEvent();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-        vi.runAllTimers();
-      });
+			const fileEvent = createMockFileInputEvent('uploaded.png', 'image/png');
 
-      expect(result.current.attachmentsList).toEqual([]);
-      expect(mockDeps.setLocalContent).not.toHaveBeenCalled();
-    });
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+				vi.runAllTimers();
+			});
 
-    it('should ignore non-image clipboard items', async () => {
-      const mockDeps = createMockDeps();
+			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'Phase 1',
+				expect.any(String),
+				'png'
+			);
+		});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+		it('should update attachmentsList after successful upload', async () => {
+			vi.useFakeTimers();
 
-      // Create a clipboard event with text/plain item
-      const textItem: DataTransferItem = {
-        kind: 'string',
-        type: 'text/plain',
-        getAsFile: () => null,
-        getAsString: (callback) => callback?.('some text'),
-        webkitGetAsEntry: () => null,
-      };
+			const mockDeps = createMockDeps();
 
-      const clipboardEvent = {
-        clipboardData: {
-          items: {
-            length: 1,
-            0: textItem,
-            item: (i: number) => (i === 0 ? textItem : null),
-            [Symbol.iterator]: function* () {
-              yield textItem;
-            },
-          } as unknown as DataTransferItemList,
-        },
-        preventDefault: vi.fn(),
-      } as unknown as React.ClipboardEvent;
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/Phase 1-upload.png',
+			});
 
-      await act(async () => {
-        await result.current.handlePaste(clipboardEvent);
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(clipboardEvent.preventDefault).not.toHaveBeenCalled();
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
-  });
+			const fileEvent = createMockFileInputEvent();
 
-  // ============================================================================
-  // Tests for handleFileSelect (manual upload)
-  // ============================================================================
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+				vi.runAllTimers();
+			});
 
-  describe('handleFileSelect (manual upload)', () => {
-    it('should save uploaded file and insert markdown at end', async () => {
-      vi.useFakeTimers();
+			expect(result.current.attachmentsList).toContain('images/Phase 1-upload.png');
+		});
 
-      const mockDeps = createMockDeps();
+		it('should reset file input value after selection', async () => {
+			vi.useFakeTimers();
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-uploaded.png',
-      });
+			const mockDeps = createMockDeps();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/test.png',
+			});
 
-      const fileEvent = createMockFileInputEvent('uploaded.png', 'image/png');
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-        vi.runAllTimers();
-      });
+			const fileEvent = createMockFileInputEvent();
 
-      expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-        '/test/autorun',
-        'Phase 1',
-        expect.any(String),
-        'png'
-      );
-    });
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+				vi.runAllTimers();
+			});
 
-    it('should update attachmentsList after successful upload', async () => {
-      vi.useFakeTimers();
+			expect(fileEvent.target.value).toBe('');
+		});
 
-      const mockDeps = createMockDeps();
+		it('should NOT upload when folderPath is null', async () => {
+			const mockDeps = createMockDeps({ folderPath: null });
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/Phase 1-upload.png',
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const fileEvent = createMockFileInputEvent();
 
-      const fileEvent = createMockFileInputEvent();
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+			});
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-        vi.runAllTimers();
-      });
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      expect(result.current.attachmentsList).toContain('images/Phase 1-upload.png');
-    });
+		it('should NOT upload when selectedFile is null', async () => {
+			const mockDeps = createMockDeps({ selectedFile: null });
 
-    it('should reset file input value after selection', async () => {
-      vi.useFakeTimers();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const mockDeps = createMockDeps();
+			const fileEvent = createMockFileInputEvent();
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/test.png',
-      });
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      const fileEvent = createMockFileInputEvent();
+		it('should do nothing when no file is selected', async () => {
+			const mockDeps = createMockDeps();
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-        vi.runAllTimers();
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(fileEvent.target.value).toBe('');
-    });
+			const input = document.createElement('input');
+			input.type = 'file';
+			Object.defineProperty(input, 'files', { value: [] });
 
-    it('should NOT upload when folderPath is null', async () => {
-      const mockDeps = createMockDeps({ folderPath: null });
+			const fileEvent = {
+				target: input,
+			} as unknown as React.ChangeEvent<HTMLInputElement>;
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+			});
 
-      const fileEvent = createMockFileInputEvent();
+			expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
+		});
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-      });
+		it('should push undo state before modifying content', async () => {
+			vi.useFakeTimers();
 
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+			const mockDeps = createMockDeps();
 
-    it('should NOT upload when selectedFile is null', async () => {
-      const mockDeps = createMockDeps({ selectedFile: null });
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/test.png',
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const fileEvent = createMockFileInputEvent();
+			const fileEvent = createMockFileInputEvent();
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-      });
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+				vi.runAllTimers();
+			});
 
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+			expect(mockDeps.pushUndoState).toHaveBeenCalled();
+		});
 
-    it('should do nothing when no file is selected', async () => {
-      const mockDeps = createMockDeps();
+		it('should extract extension from filename', async () => {
+			vi.useFakeTimers();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const mockDeps = createMockDeps();
 
-      const input = document.createElement('input');
-      input.type = 'file';
-      Object.defineProperty(input, 'files', { value: [] });
+			(window.maestro.autorun as any).saveImage.mockResolvedValue({
+				success: true,
+				relativePath: 'images/test.gif',
+			});
 
-      const fileEvent = {
-        target: input,
-      } as unknown as React.ChangeEvent<HTMLInputElement>;
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-      });
+			const fileEvent = createMockFileInputEvent('animation.gif', 'image/gif');
 
-      expect(window.maestro.autorun.saveImage).not.toHaveBeenCalled();
-    });
+			await act(async () => {
+				await result.current.handleFileSelect(fileEvent);
+				vi.runAllTimers();
+			});
 
-    it('should push undo state before modifying content', async () => {
-      vi.useFakeTimers();
+			expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'Phase 1',
+				expect.any(String),
+				'gif'
+			);
+		});
+	});
 
-      const mockDeps = createMockDeps();
+	// ============================================================================
+	// Tests for handleRemoveAttachment (delete image)
+	// ============================================================================
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/test.png',
-      });
+	describe('handleRemoveAttachment (delete image)', () => {
+		it('should delete image file and remove from attachmentsList', async () => {
+			const mockDeps = createMockDeps({
+				localContent: '# Phase 1\n\n![test.png](images/test.png)\n\nMore content',
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
+			});
 
-      const fileEvent = createMockFileInputEvent();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-        vi.runAllTimers();
-      });
+			await waitFor(() => {
+				expect(result.current.attachmentsList).toContain('images/test.png');
+			});
 
-      expect(mockDeps.pushUndoState).toHaveBeenCalled();
-    });
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-    it('should extract extension from filename', async () => {
-      vi.useFakeTimers();
+			expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'images/test.png'
+			);
+			expect(result.current.attachmentsList).not.toContain('images/test.png');
+		});
 
-      const mockDeps = createMockDeps();
+		it('should remove markdown reference from content', async () => {
+			const mockDeps = createMockDeps({
+				localContent: '# Phase 1\n\n![test.png](images/test.png)\n\nMore content',
+			});
 
-      (window.maestro.autorun as any).saveImage.mockResolvedValue({
-        success: true,
-        relativePath: 'images/test.gif',
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-      const fileEvent = createMockFileInputEvent('animation.gif', 'image/gif');
+			expect(mockDeps.setLocalContent).toHaveBeenCalled();
+			const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
+			expect(newContent).not.toContain('![test.png](images/test.png)');
+		});
 
-      await act(async () => {
-        await result.current.handleFileSelect(fileEvent);
-        vi.runAllTimers();
-      });
+		it('should push undo state before removing', async () => {
+			const mockDeps = createMockDeps();
 
-      expect(window.maestro.autorun.saveImage).toHaveBeenCalledWith(
-        '/test/autorun',
-        'Phase 1',
-        expect.any(String),
-        'gif'
-      );
-    });
-  });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-  // ============================================================================
-  // Tests for handleRemoveAttachment (delete image)
-  // ============================================================================
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-  describe('handleRemoveAttachment (delete image)', () => {
-    it('should delete image file and remove from attachmentsList', async () => {
-      const mockDeps = createMockDeps({
-        localContent: '# Phase 1\n\n![test.png](images/test.png)\n\nMore content',
-      });
+			expect(mockDeps.pushUndoState).toHaveBeenCalled();
+		});
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
-      });
+		it('should remove from attachmentPreviews', async () => {
+			const mockDeps = createMockDeps();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
+			});
+			(window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,preview');
 
-      await waitFor(() => {
-        expect(result.current.attachmentsList).toContain('images/test.png');
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+			await waitFor(() => {
+				expect(result.current.attachmentPreviews.size).toBe(1);
+			});
 
-      expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith('/test/autorun', 'images/test.png');
-      expect(result.current.attachmentsList).not.toContain('images/test.png');
-    });
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-    it('should remove markdown reference from content', async () => {
-      const mockDeps = createMockDeps({
-        localContent: '# Phase 1\n\n![test.png](images/test.png)\n\nMore content',
-      });
+			expect(result.current.attachmentPreviews.get('images/test.png')).toBeUndefined();
+		});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+		it('should do nothing when folderPath is null', async () => {
+			const mockDeps = createMockDeps({ folderPath: null });
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      expect(mockDeps.setLocalContent).toHaveBeenCalled();
-      const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
-      expect(newContent).not.toContain('![test.png](images/test.png)');
-    });
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-    it('should push undo state before removing', async () => {
-      const mockDeps = createMockDeps();
+			expect(window.maestro.autorun.deleteImage).not.toHaveBeenCalled();
+		});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+		it('should clear from imageCache', async () => {
+			const mockDeps = createMockDeps();
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+			// Pre-populate the cache
+			imageCache.set('/test/autorun:images/test.png', 'data:image/png;base64,cached');
 
-      expect(mockDeps.pushUndoState).toHaveBeenCalled();
-    });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    it('should remove from attachmentPreviews', async () => {
-      const mockDeps = createMockDeps();
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/test.png');
+			});
 
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [{ filename: 'test.png', relativePath: 'images/test.png' }],
-      });
-      (window.maestro.fs.readFile as any).mockResolvedValue('data:image/png;base64,preview');
+			expect(imageCache.get('/test/autorun:images/test.png')).toBeUndefined();
+		});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+		it('should handle special characters in filename', async () => {
+			const mockDeps = createMockDeps({
+				localContent: '# Phase 1\n\n![file (1).png](images/file (1).png)\n',
+			});
 
-      await waitFor(() => {
-        expect(result.current.attachmentPreviews.size).toBe(1);
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/file (1).png');
+			});
 
-      expect(result.current.attachmentPreviews.get('images/test.png')).toBeUndefined();
-    });
+			expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith(
+				'/test/autorun',
+				'images/file (1).png'
+			);
+			const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
+			expect(newContent).not.toContain('file (1).png');
+		});
+	});
 
-    it('should do nothing when folderPath is null', async () => {
-      const mockDeps = createMockDeps({ folderPath: null });
+	// ============================================================================
+	// Tests for imageCache behavior
+	// ============================================================================
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+	describe('imageCache behavior', () => {
+		it('should be a module-level singleton', () => {
+			// imageCache is exported from the module
+			expect(imageCache).toBeInstanceOf(Map);
+		});
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+		it('should be cleared in beforeEach (test isolation)', () => {
+			expect(imageCache.size).toBe(0);
+		});
 
-      expect(window.maestro.autorun.deleteImage).not.toHaveBeenCalled();
-    });
+		it('should clear specific entry on image removal', async () => {
+			const mockDeps = createMockDeps();
 
-    it('should clear from imageCache', async () => {
-      const mockDeps = createMockDeps();
+			// Pre-populate cache with multiple entries
+			imageCache.set('/test/autorun:images/img1.png', 'data1');
+			imageCache.set('/test/autorun:images/img2.png', 'data2');
 
-      // Pre-populate the cache
-      imageCache.set('/test/autorun:images/test.png', 'data:image/png;base64,cached');
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/img1.png');
+			});
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/test.png');
-      });
+			// Only img1 should be removed
+			expect(imageCache.get('/test/autorun:images/img1.png')).toBeUndefined();
+			expect(imageCache.get('/test/autorun:images/img2.png')).toBe('data2');
+		});
 
-      expect(imageCache.get('/test/autorun:images/test.png')).toBeUndefined();
-    });
+		it('should clear specific entry on lightbox delete', async () => {
+			const mockDeps = createMockDeps();
 
-    it('should handle special characters in filename', async () => {
-      const mockDeps = createMockDeps({
-        localContent: '# Phase 1\n\n![file (1).png](images/file (1).png)\n',
-      });
+			imageCache.set('/test/autorun:images/lightbox-img.png', 'dataUrl');
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/file (1).png');
-      });
+			await act(async () => {
+				await result.current.handleLightboxDelete('images/lightbox-img.png');
+			});
 
-      expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith('/test/autorun', 'images/file (1).png');
-      const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
-      expect(newContent).not.toContain('file (1).png');
-    });
-  });
+			expect(imageCache.get('/test/autorun:images/lightbox-img.png')).toBeUndefined();
+		});
+	});
 
-  // ============================================================================
-  // Tests for imageCache behavior
-  // ============================================================================
+	// ============================================================================
+	// Tests for lightbox operations
+	// ============================================================================
 
-  describe('imageCache behavior', () => {
-    it('should be a module-level singleton', () => {
-      // imageCache is exported from the module
-      expect(imageCache).toBeInstanceOf(Map);
-    });
+	describe('lightbox operations', () => {
+		describe('openLightboxByFilename', () => {
+			it('should open lightbox with attachment filename', () => {
+				const mockDeps = createMockDeps();
 
-    it('should be cleared in beforeEach (test isolation)', () => {
-      expect(imageCache.size).toBe(0);
-    });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    it('should clear specific entry on image removal', async () => {
-      const mockDeps = createMockDeps();
+				act(() => {
+					result.current.openLightboxByFilename('images/photo.png');
+				});
 
-      // Pre-populate cache with multiple entries
-      imageCache.set('/test/autorun:images/img1.png', 'data1');
-      imageCache.set('/test/autorun:images/img2.png', 'data2');
+				expect(result.current.lightboxFilename).toBe('images/photo.png');
+				expect(result.current.lightboxExternalUrl).toBeNull();
+			});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			it('should handle http URL', () => {
+				const mockDeps = createMockDeps();
 
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/img1.png');
-      });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      // Only img1 should be removed
-      expect(imageCache.get('/test/autorun:images/img1.png')).toBeUndefined();
-      expect(imageCache.get('/test/autorun:images/img2.png')).toBe('data2');
-    });
+				act(() => {
+					result.current.openLightboxByFilename('http://example.com/image.png');
+				});
 
-    it('should clear specific entry on lightbox delete', async () => {
-      const mockDeps = createMockDeps();
+				expect(result.current.lightboxFilename).toBe('http://example.com/image.png');
+				expect(result.current.lightboxExternalUrl).toBe('http://example.com/image.png');
+			});
 
-      imageCache.set('/test/autorun:images/lightbox-img.png', 'dataUrl');
+			it('should handle https URL', () => {
+				const mockDeps = createMockDeps();
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      await act(async () => {
-        await result.current.handleLightboxDelete('images/lightbox-img.png');
-      });
+				act(() => {
+					result.current.openLightboxByFilename('https://secure.example.com/image.jpg');
+				});
 
-      expect(imageCache.get('/test/autorun:images/lightbox-img.png')).toBeUndefined();
-    });
-  });
+				expect(result.current.lightboxFilename).toBe('https://secure.example.com/image.jpg');
+				expect(result.current.lightboxExternalUrl).toBe('https://secure.example.com/image.jpg');
+			});
 
-  // ============================================================================
-  // Tests for lightbox operations
-  // ============================================================================
+			it('should handle data: URL', () => {
+				const mockDeps = createMockDeps();
 
-  describe('lightbox operations', () => {
-    describe('openLightboxByFilename', () => {
-      it('should open lightbox with attachment filename', () => {
-        const mockDeps = createMockDeps();
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=';
 
-        act(() => {
-          result.current.openLightboxByFilename('images/photo.png');
-        });
+				act(() => {
+					result.current.openLightboxByFilename(dataUrl);
+				});
 
-        expect(result.current.lightboxFilename).toBe('images/photo.png');
-        expect(result.current.lightboxExternalUrl).toBeNull();
-      });
+				expect(result.current.lightboxFilename).toBe(dataUrl);
+				expect(result.current.lightboxExternalUrl).toBe(dataUrl);
+			});
+		});
 
-      it('should handle http URL', () => {
-        const mockDeps = createMockDeps();
+		describe('closeLightbox', () => {
+			it('should clear lightbox state', () => {
+				const mockDeps = createMockDeps();
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        act(() => {
-          result.current.openLightboxByFilename('http://example.com/image.png');
-        });
+				// Open first
+				act(() => {
+					result.current.openLightboxByFilename('images/photo.png');
+				});
 
-        expect(result.current.lightboxFilename).toBe('http://example.com/image.png');
-        expect(result.current.lightboxExternalUrl).toBe('http://example.com/image.png');
-      });
+				expect(result.current.lightboxFilename).toBe('images/photo.png');
 
-      it('should handle https URL', () => {
-        const mockDeps = createMockDeps();
+				// Then close
+				act(() => {
+					result.current.closeLightbox();
+				});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				expect(result.current.lightboxFilename).toBeNull();
+				expect(result.current.lightboxExternalUrl).toBeNull();
+			});
+		});
 
-        act(() => {
-          result.current.openLightboxByFilename('https://secure.example.com/image.jpg');
-        });
+		describe('handleLightboxNavigate', () => {
+			it('should update lightboxFilename', () => {
+				const mockDeps = createMockDeps();
 
-        expect(result.current.lightboxFilename).toBe('https://secure.example.com/image.jpg');
-        expect(result.current.lightboxExternalUrl).toBe('https://secure.example.com/image.jpg');
-      });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      it('should handle data: URL', () => {
-        const mockDeps = createMockDeps();
+				act(() => {
+					result.current.openLightboxByFilename('images/photo1.png');
+				});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				act(() => {
+					result.current.handleLightboxNavigate('images/photo2.png');
+				});
 
-        const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAE=';
+				expect(result.current.lightboxFilename).toBe('images/photo2.png');
+			});
 
-        act(() => {
-          result.current.openLightboxByFilename(dataUrl);
-        });
+			it('should handle null to close', () => {
+				const mockDeps = createMockDeps();
 
-        expect(result.current.lightboxFilename).toBe(dataUrl);
-        expect(result.current.lightboxExternalUrl).toBe(dataUrl);
-      });
-    });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    describe('closeLightbox', () => {
-      it('should clear lightbox state', () => {
-        const mockDeps = createMockDeps();
+				act(() => {
+					result.current.openLightboxByFilename('images/photo.png');
+				});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				act(() => {
+					result.current.handleLightboxNavigate(null);
+				});
 
-        // Open first
-        act(() => {
-          result.current.openLightboxByFilename('images/photo.png');
-        });
+				expect(result.current.lightboxFilename).toBeNull();
+			});
+		});
 
-        expect(result.current.lightboxFilename).toBe('images/photo.png');
+		describe('handleLightboxDelete', () => {
+			it('should delete image and remove markdown reference', async () => {
+				const mockDeps = createMockDeps({
+					localContent: '# Doc\n\n![img.png](images/img.png)\n',
+				});
 
-        // Then close
-        act(() => {
-          result.current.closeLightbox();
-        });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        expect(result.current.lightboxFilename).toBeNull();
-        expect(result.current.lightboxExternalUrl).toBeNull();
-      });
-    });
+				await act(async () => {
+					await result.current.handleLightboxDelete('images/img.png');
+				});
 
-    describe('handleLightboxNavigate', () => {
-      it('should update lightboxFilename', () => {
-        const mockDeps = createMockDeps();
+				expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith(
+					'/test/autorun',
+					'images/img.png'
+				);
+				expect(mockDeps.pushUndoState).toHaveBeenCalled();
+				expect(mockDeps.setLocalContent).toHaveBeenCalled();
+			});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			it('should remove markdown reference with raw path characters', async () => {
+				const mockDeps = createMockDeps({
+					localContent: '# Doc\n\n![file (1).png](images/file (1).png)\n',
+				});
 
-        act(() => {
-          result.current.openLightboxByFilename('images/photo1.png');
-        });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        act(() => {
-          result.current.handleLightboxNavigate('images/photo2.png');
-        });
+				await act(async () => {
+					await result.current.handleLightboxDelete('images/file (1).png');
+				});
 
-        expect(result.current.lightboxFilename).toBe('images/photo2.png');
-      });
+				const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
+				expect(newContent).not.toContain('file (1).png');
+			});
 
-      it('should handle null to close', () => {
-        const mockDeps = createMockDeps();
+			it('should remove from attachmentsList', async () => {
+				const mockDeps = createMockDeps();
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+				(window.maestro.autorun as any).listImages.mockResolvedValue({
+					success: true,
+					images: [{ filename: 'todelete.png', relativePath: 'images/todelete.png' }],
+				});
 
-        act(() => {
-          result.current.openLightboxByFilename('images/photo.png');
-        });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        act(() => {
-          result.current.handleLightboxNavigate(null);
-        });
+				await waitFor(() => {
+					expect(result.current.attachmentsList).toContain('images/todelete.png');
+				});
 
-        expect(result.current.lightboxFilename).toBeNull();
-      });
-    });
+				await act(async () => {
+					await result.current.handleLightboxDelete('images/todelete.png');
+				});
 
-    describe('handleLightboxDelete', () => {
-      it('should delete image and remove markdown reference', async () => {
-        const mockDeps = createMockDeps({
-          localContent: '# Doc\n\n![img.png](images/img.png)\n',
-        });
+				expect(result.current.attachmentsList).not.toContain('images/todelete.png');
+			});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			it('should do nothing when folderPath is null', async () => {
+				const mockDeps = createMockDeps({ folderPath: null });
 
-        await act(async () => {
-          await result.current.handleLightboxDelete('images/img.png');
-        });
+				const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        expect(window.maestro.autorun.deleteImage).toHaveBeenCalledWith('/test/autorun', 'images/img.png');
-        expect(mockDeps.pushUndoState).toHaveBeenCalled();
-        expect(mockDeps.setLocalContent).toHaveBeenCalled();
-      });
+				await act(async () => {
+					await result.current.handleLightboxDelete('images/test.png');
+				});
 
-      it('should remove markdown reference with raw path characters', async () => {
-        const mockDeps = createMockDeps({
-          localContent: '# Doc\n\n![file (1).png](images/file (1).png)\n',
-        });
+				expect(window.maestro.autorun.deleteImage).not.toHaveBeenCalled();
+			});
+		});
+	});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+	// ============================================================================
+	// Tests for attachmentsExpanded state
+	// ============================================================================
 
-        await act(async () => {
-          await result.current.handleLightboxDelete('images/file (1).png');
-        });
+	describe('attachmentsExpanded state', () => {
+		it('should default to true', () => {
+			const mockDeps = createMockDeps();
 
-        const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
-        expect(newContent).not.toContain('file (1).png');
-      });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      it('should remove from attachmentsList', async () => {
-        const mockDeps = createMockDeps();
+			expect(result.current.attachmentsExpanded).toBe(true);
+		});
 
-        (window.maestro.autorun as any).listImages.mockResolvedValue({
-          success: true,
-          images: [{ filename: 'todelete.png', relativePath: 'images/todelete.png' }],
-        });
+		it('should toggle via setAttachmentsExpanded', () => {
+			const mockDeps = createMockDeps();
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-        await waitFor(() => {
-          expect(result.current.attachmentsList).toContain('images/todelete.png');
-        });
+			act(() => {
+				result.current.setAttachmentsExpanded(false);
+			});
 
-        await act(async () => {
-          await result.current.handleLightboxDelete('images/todelete.png');
-        });
+			expect(result.current.attachmentsExpanded).toBe(false);
 
-        expect(result.current.attachmentsList).not.toContain('images/todelete.png');
-      });
+			act(() => {
+				result.current.setAttachmentsExpanded(true);
+			});
 
-      it('should do nothing when folderPath is null', async () => {
-        const mockDeps = createMockDeps({ folderPath: null });
+			expect(result.current.attachmentsExpanded).toBe(true);
+		});
+	});
 
-        const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+	// ============================================================================
+	// Tests for fileInputRef
+	// ============================================================================
 
-        await act(async () => {
-          await result.current.handleLightboxDelete('images/test.png');
-        });
+	describe('fileInputRef', () => {
+		it('should provide a ref for file input element', () => {
+			const mockDeps = createMockDeps();
 
-        expect(window.maestro.autorun.deleteImage).not.toHaveBeenCalled();
-      });
-    });
-  });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-  // ============================================================================
-  // Tests for attachmentsExpanded state
-  // ============================================================================
+			expect(result.current.fileInputRef).toBeDefined();
+			expect(result.current.fileInputRef.current).toBeNull(); // Initially null until attached
+		});
+	});
 
-  describe('attachmentsExpanded state', () => {
-    it('should default to true', () => {
-      const mockDeps = createMockDeps();
+	// ============================================================================
+	// Tests for handler stability (memoization)
+	// ============================================================================
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+	describe('handler memoization', () => {
+		it('should maintain stable handler references when deps unchanged', () => {
+			const mockDeps = createMockDeps();
 
-      expect(result.current.attachmentsExpanded).toBe(true);
-    });
+			const { result, rerender } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    it('should toggle via setAttachmentsExpanded', () => {
-      const mockDeps = createMockDeps();
+			const firstRender = {
+				handlePaste: result.current.handlePaste,
+				handleFileSelect: result.current.handleFileSelect,
+				handleRemoveAttachment: result.current.handleRemoveAttachment,
+				openLightboxByFilename: result.current.openLightboxByFilename,
+				closeLightbox: result.current.closeLightbox,
+				handleLightboxNavigate: result.current.handleLightboxNavigate,
+				handleLightboxDelete: result.current.handleLightboxDelete,
+			};
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			rerender();
 
-      act(() => {
-        result.current.setAttachmentsExpanded(false);
-      });
+			// Due to useCallback with stable deps, these should be the same references
+			expect(result.current.openLightboxByFilename).toBe(firstRender.openLightboxByFilename);
+			expect(result.current.closeLightbox).toBe(firstRender.closeLightbox);
+			expect(result.current.handleLightboxNavigate).toBe(firstRender.handleLightboxNavigate);
+		});
 
-      expect(result.current.attachmentsExpanded).toBe(false);
+		it('should update handlers when localContent changes', () => {
+			const mockDeps = createMockDeps();
 
-      act(() => {
-        result.current.setAttachmentsExpanded(true);
-      });
+			const { result, rerender } = renderHook(({ deps }) => useAutoRunImageHandling(deps), {
+				initialProps: { deps: mockDeps },
+			});
 
-      expect(result.current.attachmentsExpanded).toBe(true);
-    });
-  });
+			const firstPaste = result.current.handlePaste;
 
-  // ============================================================================
-  // Tests for fileInputRef
-  // ============================================================================
+			rerender({ deps: { ...mockDeps, localContent: 'New content' } });
 
-  describe('fileInputRef', () => {
-    it('should provide a ref for file input element', () => {
-      const mockDeps = createMockDeps();
+			// Handler depends on localContent, so should change
+			expect(result.current.handlePaste).not.toBe(firstPaste);
+		});
+	});
 
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
+	// ============================================================================
+	// Edge cases and error handling
+	// ============================================================================
 
-      expect(result.current.fileInputRef).toBeDefined();
-      expect(result.current.fileInputRef.current).toBeNull(); // Initially null until attached
-    });
-  });
+	describe('edge cases', () => {
+		it('should handle empty attachments list', async () => {
+			const mockDeps = createMockDeps();
 
-  // ============================================================================
-  // Tests for handler stability (memoization)
-  // ============================================================================
+			(window.maestro.autorun as any).listImages.mockResolvedValue({
+				success: true,
+				images: [],
+			});
 
-  describe('handler memoization', () => {
-    it('should maintain stable handler references when deps unchanged', () => {
-      const mockDeps = createMockDeps();
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      const { result, rerender } = renderHook(() => useAutoRunImageHandling(mockDeps));
+			await waitFor(() => {
+				expect(window.maestro.autorun.listImages).toHaveBeenCalled();
+			});
 
-      const firstRender = {
-        handlePaste: result.current.handlePaste,
-        handleFileSelect: result.current.handleFileSelect,
-        handleRemoveAttachment: result.current.handleRemoveAttachment,
-        openLightboxByFilename: result.current.openLightboxByFilename,
-        closeLightbox: result.current.closeLightbox,
-        handleLightboxNavigate: result.current.handleLightboxNavigate,
-        handleLightboxDelete: result.current.handleLightboxDelete,
-      };
+			expect(result.current.attachmentsList).toEqual([]);
+			expect(result.current.attachmentPreviews.size).toBe(0);
+		});
 
-      rerender();
+		it('should handle markdown reference with newline removal', async () => {
+			const mockDeps = createMockDeps({
+				localContent: 'Before\n![img.png](images/img.png)\nAfter',
+			});
 
-      // Due to useCallback with stable deps, these should be the same references
-      expect(result.current.openLightboxByFilename).toBe(firstRender.openLightboxByFilename);
-      expect(result.current.closeLightbox).toBe(firstRender.closeLightbox);
-      expect(result.current.handleLightboxNavigate).toBe(firstRender.handleLightboxNavigate);
-    });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-    it('should update handlers when localContent changes', () => {
-      const mockDeps = createMockDeps();
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/img.png');
+			});
 
-      const { result, rerender } = renderHook(
-        ({ deps }) => useAutoRunImageHandling(deps),
-        { initialProps: { deps: mockDeps } }
-      );
+			const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
+			// Should remove the image reference and trailing newline
+			expect(newContent).toBe('Before\nAfter');
+		});
 
-      const firstPaste = result.current.handlePaste;
+		it('should handle multiple image references in content', async () => {
+			const mockDeps = createMockDeps({
+				localContent: '![img.png](images/img.png)\nText\n![img.png](images/img.png)\n',
+			});
 
-      rerender({ deps: { ...mockDeps, localContent: 'New content' } });
+			const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
 
-      // Handler depends on localContent, so should change
-      expect(result.current.handlePaste).not.toBe(firstPaste);
-    });
-  });
+			await act(async () => {
+				await result.current.handleRemoveAttachment('images/img.png');
+			});
 
-  // ============================================================================
-  // Edge cases and error handling
-  // ============================================================================
-
-  describe('edge cases', () => {
-    it('should handle empty attachments list', async () => {
-      const mockDeps = createMockDeps();
-
-      (window.maestro.autorun as any).listImages.mockResolvedValue({
-        success: true,
-        images: [],
-      });
-
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-      await waitFor(() => {
-        expect(window.maestro.autorun.listImages).toHaveBeenCalled();
-      });
-
-      expect(result.current.attachmentsList).toEqual([]);
-      expect(result.current.attachmentPreviews.size).toBe(0);
-    });
-
-    it('should handle markdown reference with newline removal', async () => {
-      const mockDeps = createMockDeps({
-        localContent: 'Before\n![img.png](images/img.png)\nAfter',
-      });
-
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/img.png');
-      });
-
-      const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
-      // Should remove the image reference and trailing newline
-      expect(newContent).toBe('Before\nAfter');
-    });
-
-    it('should handle multiple image references in content', async () => {
-      const mockDeps = createMockDeps({
-        localContent: '![img.png](images/img.png)\nText\n![img.png](images/img.png)\n',
-      });
-
-      const { result } = renderHook(() => useAutoRunImageHandling(mockDeps));
-
-      await act(async () => {
-        await result.current.handleRemoveAttachment('images/img.png');
-      });
-
-      const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
-      // Should remove all occurrences
-      expect(newContent).not.toContain('images/img.png');
-    });
-  });
+			const newContent = (mockDeps.setLocalContent as any).mock.calls[0][0];
+			// Should remove all occurrences
+			expect(newContent).not.toContain('images/img.png');
+		});
+	});
 });

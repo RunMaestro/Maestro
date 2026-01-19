@@ -29,43 +29,43 @@ const LOG_CONTEXT = '[SessionRecovery]';
  * @returns true if session_not_found error detected
  */
 export function detectSessionNotFoundError(output: string, agentId?: string): boolean {
-  if (!output) return false;
+	if (!output) return false;
 
-  // Get error patterns for this agent (or use claude-code as default)
-  const patterns = getErrorPatterns(agentId || 'claude-code');
+	// Get error patterns for this agent (or use claude-code as default)
+	const patterns = getErrorPatterns(agentId || 'claude-code');
 
-  // Check each line for session_not_found pattern
-  const lines = output.split('\n');
-  for (const line of lines) {
-    const match = matchErrorPattern(patterns, line);
-    if (match && match.type === 'session_not_found') {
-      logger.info('Detected session_not_found error', LOG_CONTEXT, {
-        agentId,
-        errorMessage: match.message,
-        line: line.substring(0, 200),
-      });
-      return true;
-    }
-  }
+	// Check each line for session_not_found pattern
+	const lines = output.split('\n');
+	for (const line of lines) {
+		const match = matchErrorPattern(patterns, line);
+		if (match && match.type === 'session_not_found') {
+			logger.info('Detected session_not_found error', LOG_CONTEXT, {
+				agentId,
+				errorMessage: match.message,
+				line: line.substring(0, 200),
+			});
+			return true;
+		}
+	}
 
-  // Also check for raw error message that might not be in JSON format
-  const sessionNotFoundPatterns = [
-    /no conversation found with session id/i,
-    /session.*not found/i,
-    /invalid.*session.*id/i,
-  ];
+	// Also check for raw error message that might not be in JSON format
+	const sessionNotFoundPatterns = [
+		/no conversation found with session id/i,
+		/session.*not found/i,
+		/invalid.*session.*id/i,
+	];
 
-  for (const pattern of sessionNotFoundPatterns) {
-    if (pattern.test(output)) {
-      logger.info('Detected session_not_found error (raw pattern)', LOG_CONTEXT, {
-        agentId,
-        pattern: pattern.source,
-      });
-      return true;
-    }
-  }
+	for (const pattern of sessionNotFoundPatterns) {
+		if (pattern.test(output)) {
+			logger.info('Detected session_not_found error (raw pattern)', LOG_CONTEXT, {
+				agentId,
+				pattern: pattern.source,
+			});
+			return true;
+		}
+	}
 
-  return false;
+	return false;
 }
 
 /**
@@ -82,72 +82,80 @@ export function detectSessionNotFoundError(output: string, agentId?: string): bo
  * @returns Context string to prepend to the retry prompt
  */
 export async function buildRecoveryContext(
-  groupChatId: string,
-  participantName: string,
-  lastMessages = 30
+	groupChatId: string,
+	participantName: string,
+	lastMessages = 30
 ): Promise<string> {
-  const chat = await loadGroupChat(groupChatId);
-  if (!chat) {
-    logger.warn('Cannot build recovery context - chat not found', LOG_CONTEXT, { groupChatId });
-    return '';
-  }
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		logger.warn('Cannot build recovery context - chat not found', LOG_CONTEXT, { groupChatId });
+		return '';
+	}
 
-  // Read the chat history
-  const chatHistory = await readLog(chat.logPath);
-  const recentMessages = chatHistory.slice(-lastMessages);
+	// Read the chat history
+	const chatHistory = await readLog(chat.logPath);
+	const recentMessages = chatHistory.slice(-lastMessages);
 
-  if (recentMessages.length === 0) {
-    return '';
-  }
+	if (recentMessages.length === 0) {
+		return '';
+	}
 
-  // Separate messages into "your statements" and "others' statements"
-  const yourStatements: GroupChatMessage[] = [];
-  const otherStatements: GroupChatMessage[] = [];
+	// Separate messages into "your statements" and "others' statements"
+	const yourStatements: GroupChatMessage[] = [];
+	const otherStatements: GroupChatMessage[] = [];
 
-  for (const msg of recentMessages) {
-    if (msg.from === participantName) {
-      yourStatements.push(msg);
-    } else {
-      otherStatements.push(msg);
-    }
-  }
+	for (const msg of recentMessages) {
+		if (msg.from === participantName) {
+			yourStatements.push(msg);
+		} else {
+			otherStatements.push(msg);
+		}
+	}
 
-  // Build the recovery context
-  const parts: string[] = [];
+	// Build the recovery context
+	const parts: string[] = [];
 
-  parts.push(`## Session Recovery Context`);
-  parts.push(`Your previous session was unavailable, so you're starting with a fresh session.`);
-  parts.push(`To maintain continuity, here's the context from our group chat "${chat.name}":`);
-  parts.push('');
+	parts.push(`## Session Recovery Context`);
+	parts.push(`Your previous session was unavailable, so you're starting with a fresh session.`);
+	parts.push(`To maintain continuity, here's the context from our group chat "${chat.name}":`);
+	parts.push('');
 
-  // Include the participant's own prior statements prominently
-  if (yourStatements.length > 0) {
-    parts.push(`### Your Previous Statements (as ${participantName})`);
-    parts.push(`You previously said the following in this conversation:`);
-    parts.push('');
-    for (const msg of yourStatements) {
-      const timestamp = new Date(msg.timestamp).toLocaleTimeString();
-      parts.push(`[${timestamp}] You said: ${msg.content.substring(0, 1000)}${msg.content.length > 1000 ? '...' : ''}`);
-    }
-    parts.push('');
-  }
+	// Include the participant's own prior statements prominently
+	if (yourStatements.length > 0) {
+		parts.push(`### Your Previous Statements (as ${participantName})`);
+		parts.push(`You previously said the following in this conversation:`);
+		parts.push('');
+		for (const msg of yourStatements) {
+			const timestamp = new Date(msg.timestamp).toLocaleTimeString();
+			parts.push(
+				`[${timestamp}] You said: ${msg.content.substring(0, 1000)}${msg.content.length > 1000 ? '...' : ''}`
+			);
+		}
+		parts.push('');
+	}
 
-  // Include full conversation history for context
-  parts.push(`### Recent Conversation History`);
-  parts.push(`Here's the recent conversation flow:`);
-  parts.push('');
-  for (const msg of recentMessages) {
-    const timestamp = new Date(msg.timestamp).toLocaleTimeString();
-    const isYou = msg.from === participantName;
-    const prefix = isYou ? `[${timestamp}] **YOU (${participantName}):**` : `[${timestamp}] [${msg.from}]:`;
-    parts.push(`${prefix} ${msg.content.substring(0, 500)}${msg.content.length > 500 ? '...' : ''}`);
-  }
-  parts.push('');
-  parts.push(`---`);
-  parts.push(`Please continue from where you left off. Maintain consistency with your previous statements.`);
-  parts.push('');
+	// Include full conversation history for context
+	parts.push(`### Recent Conversation History`);
+	parts.push(`Here's the recent conversation flow:`);
+	parts.push('');
+	for (const msg of recentMessages) {
+		const timestamp = new Date(msg.timestamp).toLocaleTimeString();
+		const isYou = msg.from === participantName;
+		const prefix = isYou
+			? `[${timestamp}] **YOU (${participantName}):**`
+			: `[${timestamp}] [${msg.from}]:`;
+		parts.push(
+			`${prefix} ${msg.content.substring(0, 500)}${msg.content.length > 500 ? '...' : ''}`
+		);
+	}
+	parts.push('');
+	parts.push(`---`);
+	parts.push(
+		`Please continue from where you left off. Maintain consistency with your previous statements.`
+	);
+	parts.push('');
 
-  return parts.join('\n');
+	return parts.join('\n');
 }
 
 /**
@@ -161,34 +169,34 @@ export async function buildRecoveryContext(
  * @returns true if recovery was initiated successfully
  */
 export async function initiateSessionRecovery(
-  groupChatId: string,
-  participantName: string
+	groupChatId: string,
+	participantName: string
 ): Promise<boolean> {
-  try {
-    logger.info('Initiating session recovery', LOG_CONTEXT, {
-      groupChatId,
-      participantName,
-    });
+	try {
+		logger.info('Initiating session recovery', LOG_CONTEXT, {
+			groupChatId,
+			participantName,
+		});
 
-    // Clear the agentSessionId so next spawn uses fresh session
-    await updateParticipant(groupChatId, participantName, {
-      agentSessionId: undefined,
-    });
+		// Clear the agentSessionId so next spawn uses fresh session
+		await updateParticipant(groupChatId, participantName, {
+			agentSessionId: undefined,
+		});
 
-    logger.info('Session recovery initiated - cleared agentSessionId', LOG_CONTEXT, {
-      groupChatId,
-      participantName,
-    });
+		logger.info('Session recovery initiated - cleared agentSessionId', LOG_CONTEXT, {
+			groupChatId,
+			participantName,
+		});
 
-    return true;
-  } catch (error) {
-    logger.error('Failed to initiate session recovery', LOG_CONTEXT, {
-      groupChatId,
-      participantName,
-      error: String(error),
-    });
-    return false;
-  }
+		return true;
+	} catch (error) {
+		logger.error('Failed to initiate session recovery', LOG_CONTEXT, {
+			groupChatId,
+			participantName,
+			error: String(error),
+		});
+		return false;
+	}
 }
 
 /**
@@ -199,7 +207,7 @@ export async function initiateSessionRecovery(
  * @returns true if session recovery is needed
  */
 export function needsSessionRecovery(output: string, agentId?: string): boolean {
-  return detectSessionNotFoundError(output, agentId);
+	return detectSessionNotFoundError(output, agentId);
 }
 
 /**

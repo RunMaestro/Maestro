@@ -35,21 +35,21 @@ import * as fs from 'fs';
  * ```
  */
 export function expandTilde(filePath: string, homeDir?: string): string {
-  if (!filePath) {
-    return filePath;
-  }
+	if (!filePath) {
+		return filePath;
+	}
 
-  const home = homeDir ?? os.homedir();
+	const home = homeDir ?? os.homedir();
 
-  if (filePath === '~') {
-    return home;
-  }
+	if (filePath === '~') {
+		return home;
+	}
 
-  if (filePath.startsWith('~/')) {
-    return path.join(home, filePath.slice(2));
-  }
+	if (filePath.startsWith('~/')) {
+		return path.join(home, filePath.slice(2));
+	}
 
-  return filePath;
+	return filePath;
 }
 
 /**
@@ -65,8 +65,8 @@ export function expandTilde(filePath: string, homeDir?: string): string {
  * ```
  */
 export function parseVersion(version: string): number[] {
-  const cleaned = version.replace(/^v/, '');
-  return cleaned.split('.').map(n => parseInt(n, 10) || 0);
+	const cleaned = version.replace(/^v/, '');
+	return cleaned.split('.').map((n) => parseInt(n, 10) || 0);
 }
 
 /**
@@ -93,20 +93,20 @@ export function parseVersion(version: string): number[] {
  * ```
  */
 export function compareVersions(a: string, b: string): number {
-  const partsA = parseVersion(a);
-  const partsB = parseVersion(b);
+	const partsA = parseVersion(a);
+	const partsB = parseVersion(b);
 
-  const maxLength = Math.max(partsA.length, partsB.length);
+	const maxLength = Math.max(partsA.length, partsB.length);
 
-  for (let i = 0; i < maxLength; i++) {
-    const numA = partsA[i] || 0;
-    const numB = partsB[i] || 0;
+	for (let i = 0; i < maxLength; i++) {
+		const numA = partsA[i] || 0;
+		const numB = partsB[i] || 0;
 
-    if (numA > numB) return 1;
-    if (numA < numB) return -1;
-  }
+		if (numA > numB) return 1;
+		if (numA < numB) return -1;
+	}
 
-  return 0;
+	return 0;
 }
 
 /**
@@ -125,103 +125,103 @@ export function compareVersions(a: string, b: string): number {
  * ```
  */
 export function detectNodeVersionManagerBinPaths(): string[] {
-  if (process.platform === 'win32') {
-    return []; // Windows has different version manager paths handled elsewhere
-  }
+	if (process.platform === 'win32') {
+		return []; // Windows has different version manager paths handled elsewhere
+	}
 
-  const home = os.homedir();
-  const detectedPaths: string[] = [];
+	const home = os.homedir();
+	const detectedPaths: string[] = [];
 
-  // nvm: Check for ~/.nvm and find installed node versions
-  const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
-  if (fs.existsSync(nvmDir)) {
-    // Check nvm/current symlink first (preferred)
-    const nvmCurrentBin = path.join(nvmDir, 'current', 'bin');
-    if (fs.existsSync(nvmCurrentBin)) {
-      detectedPaths.push(nvmCurrentBin);
-    }
+	// nvm: Check for ~/.nvm and find installed node versions
+	const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+	if (fs.existsSync(nvmDir)) {
+		// Check nvm/current symlink first (preferred)
+		const nvmCurrentBin = path.join(nvmDir, 'current', 'bin');
+		if (fs.existsSync(nvmCurrentBin)) {
+			detectedPaths.push(nvmCurrentBin);
+		}
 
-    // Also check all installed versions
-    const versionsDir = path.join(nvmDir, 'versions', 'node');
-    if (fs.existsSync(versionsDir)) {
-      try {
-        const versions = fs.readdirSync(versionsDir).filter(v => v.startsWith('v'));
-        // Sort versions descending to check newest first
-        versions.sort((a, b) => compareVersions(b, a));
-        for (const version of versions) {
-          const versionBin = path.join(versionsDir, version, 'bin');
-          if (fs.existsSync(versionBin) && !detectedPaths.includes(versionBin)) {
-            detectedPaths.push(versionBin);
-          }
-        }
-      } catch {
-        // Ignore errors reading versions directory
-      }
-    }
-  }
+		// Also check all installed versions
+		const versionsDir = path.join(nvmDir, 'versions', 'node');
+		if (fs.existsSync(versionsDir)) {
+			try {
+				const versions = fs.readdirSync(versionsDir).filter((v) => v.startsWith('v'));
+				// Sort versions descending to check newest first
+				versions.sort((a, b) => compareVersions(b, a));
+				for (const version of versions) {
+					const versionBin = path.join(versionsDir, version, 'bin');
+					if (fs.existsSync(versionBin) && !detectedPaths.includes(versionBin)) {
+						detectedPaths.push(versionBin);
+					}
+				}
+			} catch {
+				// Ignore errors reading versions directory
+			}
+		}
+	}
 
-  // fnm: Fast Node Manager
-  // - macOS: ~/Library/Application Support/fnm (default) or ~/.fnm
-  // - Linux: ~/.local/share/fnm (default) or ~/.fnm
-  const fnmPaths = [
-    path.join(home, 'Library', 'Application Support', 'fnm'), // macOS default
-    path.join(home, '.local', 'share', 'fnm'), // Linux default
-    path.join(home, '.fnm'), // Legacy/custom location
-  ];
-  for (const fnmDir of fnmPaths) {
-    if (fs.existsSync(fnmDir)) {
-      // fnm uses aliases/current or node-versions/<version>
-      const fnmCurrentBin = path.join(fnmDir, 'aliases', 'default', 'bin');
-      if (fs.existsSync(fnmCurrentBin)) {
-        detectedPaths.push(fnmCurrentBin);
-      }
+	// fnm: Fast Node Manager
+	// - macOS: ~/Library/Application Support/fnm (default) or ~/.fnm
+	// - Linux: ~/.local/share/fnm (default) or ~/.fnm
+	const fnmPaths = [
+		path.join(home, 'Library', 'Application Support', 'fnm'), // macOS default
+		path.join(home, '.local', 'share', 'fnm'), // Linux default
+		path.join(home, '.fnm'), // Legacy/custom location
+	];
+	for (const fnmDir of fnmPaths) {
+		if (fs.existsSync(fnmDir)) {
+			// fnm uses aliases/current or node-versions/<version>
+			const fnmCurrentBin = path.join(fnmDir, 'aliases', 'default', 'bin');
+			if (fs.existsSync(fnmCurrentBin)) {
+				detectedPaths.push(fnmCurrentBin);
+			}
 
-      const fnmNodeVersions = path.join(fnmDir, 'node-versions');
-      if (fs.existsSync(fnmNodeVersions)) {
-        try {
-          const versions = fs.readdirSync(fnmNodeVersions).filter(v => v.startsWith('v'));
-          versions.sort((a, b) => compareVersions(b, a));
-          for (const version of versions) {
-            const versionBin = path.join(fnmNodeVersions, version, 'installation', 'bin');
-            if (fs.existsSync(versionBin)) {
-              detectedPaths.push(versionBin);
-            }
-          }
-        } catch {
-          // Ignore errors
-        }
-      }
-      break; // Only use the first fnm installation found
-    }
-  }
+			const fnmNodeVersions = path.join(fnmDir, 'node-versions');
+			if (fs.existsSync(fnmNodeVersions)) {
+				try {
+					const versions = fs.readdirSync(fnmNodeVersions).filter((v) => v.startsWith('v'));
+					versions.sort((a, b) => compareVersions(b, a));
+					for (const version of versions) {
+						const versionBin = path.join(fnmNodeVersions, version, 'installation', 'bin');
+						if (fs.existsSync(versionBin)) {
+							detectedPaths.push(versionBin);
+						}
+					}
+				} catch {
+					// Ignore errors
+				}
+			}
+			break; // Only use the first fnm installation found
+		}
+	}
 
-  // volta: Uses ~/.volta/bin for shims
-  const voltaBin = path.join(home, '.volta', 'bin');
-  if (fs.existsSync(voltaBin)) {
-    detectedPaths.push(voltaBin);
-  }
+	// volta: Uses ~/.volta/bin for shims
+	const voltaBin = path.join(home, '.volta', 'bin');
+	if (fs.existsSync(voltaBin)) {
+		detectedPaths.push(voltaBin);
+	}
 
-  // mise (formerly rtx): Uses ~/.local/share/mise/shims
-  const miseShims = path.join(home, '.local', 'share', 'mise', 'shims');
-  if (fs.existsSync(miseShims)) {
-    detectedPaths.push(miseShims);
-  }
+	// mise (formerly rtx): Uses ~/.local/share/mise/shims
+	const miseShims = path.join(home, '.local', 'share', 'mise', 'shims');
+	if (fs.existsSync(miseShims)) {
+		detectedPaths.push(miseShims);
+	}
 
-  // asdf: Uses ~/.asdf/shims
-  const asdfShims = path.join(home, '.asdf', 'shims');
-  if (fs.existsSync(asdfShims)) {
-    detectedPaths.push(asdfShims);
-  }
+	// asdf: Uses ~/.asdf/shims
+	const asdfShims = path.join(home, '.asdf', 'shims');
+	if (fs.existsSync(asdfShims)) {
+		detectedPaths.push(asdfShims);
+	}
 
-  // n: Node version manager - uses /usr/local/n/versions or N_PREFIX
-  const nPrefix = process.env.N_PREFIX || '/usr/local';
-  const nBin = path.join(nPrefix, 'bin');
-  // Only add if n is actually managing node (check for n binary)
-  if (fs.existsSync(path.join(nPrefix, 'n', 'versions'))) {
-    if (fs.existsSync(nBin)) {
-      detectedPaths.push(nBin);
-    }
-  }
+	// n: Node version manager - uses /usr/local/n/versions or N_PREFIX
+	const nPrefix = process.env.N_PREFIX || '/usr/local';
+	const nBin = path.join(nPrefix, 'bin');
+	// Only add if n is actually managing node (check for n binary)
+	if (fs.existsSync(path.join(nPrefix, 'n', 'versions'))) {
+		if (fs.existsSync(nBin)) {
+			detectedPaths.push(nBin);
+		}
+	}
 
-  return detectedPaths;
+	return detectedPaths;
 }

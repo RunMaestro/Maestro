@@ -16,10 +16,10 @@ import { stripAnsiCodes } from './stringUtils';
 export const NOTHING_TO_REPORT = 'NOTHING_TO_REPORT';
 
 export interface ParsedSynopsis {
-  shortSummary: string;
-  fullSynopsis: string;
-  /** True if the AI indicated there was nothing meaningful to report */
-  nothingToReport: boolean;
+	shortSummary: string;
+	fullSynopsis: string;
+	/** True if the AI indicated there was nothing meaningful to report */
+	nothingToReport: boolean;
 }
 
 /**
@@ -27,15 +27,15 @@ export interface ParsedSynopsis {
  * These appear when the model outputs the format instructions literally.
  */
 function isTemplatePlaceholder(text: string): boolean {
-  const placeholderPatterns = [
-    /^\[.*sentences.*\]$/i,           // [1-2 sentences describing...]
-    /^\[.*paragraph.*\]$/i,           // [A paragraph with...]
-    /^\.\.\.\s*\(/,                    // ... (1-2 sentences)
-    /^\.\.\.\s*then\s+blank/i,        // ... then blank line
-    /^then\s+blank/i,                 // then blank line
-    /^\(1-2\s+sentences\)/i,          // (1-2 sentences)
-  ];
-  return placeholderPatterns.some(pattern => pattern.test(text.trim()));
+	const placeholderPatterns = [
+		/^\[.*sentences.*\]$/i, // [1-2 sentences describing...]
+		/^\[.*paragraph.*\]$/i, // [A paragraph with...]
+		/^\.\.\.\s*\(/, // ... (1-2 sentences)
+		/^\.\.\.\s*then\s+blank/i, // ... then blank line
+		/^then\s+blank/i, // then blank line
+		/^\(1-2\s+sentences\)/i, // (1-2 sentences)
+	];
+	return placeholderPatterns.some((pattern) => pattern.test(text.trim()));
 }
 
 /**
@@ -46,12 +46,12 @@ function isTemplatePlaceholder(text: string): boolean {
  * @returns True if the response contains NOTHING_TO_REPORT
  */
 export function isNothingToReport(response: string): boolean {
-  const clean = stripAnsiCodes(response)
-    .replace(/─+/g, '')
-    .replace(/[│┌┐└┘├┤┬┴┼]/g, '')
-    .trim();
+	const clean = stripAnsiCodes(response)
+		.replace(/─+/g, '')
+		.replace(/[│┌┐└┘├┤┬┴┼]/g, '')
+		.trim();
 
-  return clean.includes(NOTHING_TO_REPORT);
+	return clean.includes(NOTHING_TO_REPORT);
 }
 
 /**
@@ -72,52 +72,54 @@ export function isNothingToReport(response: string): boolean {
  * @returns Parsed synopsis with shortSummary, fullSynopsis, and nothingToReport flag
  */
 export function parseSynopsis(response: string): ParsedSynopsis {
-  // Clean up ANSI codes and box drawing characters
-  const clean = stripAnsiCodes(response)
-    .replace(/─+/g, '')
-    .replace(/[│┌┐└┘├┤┬┴┼]/g, '')
-    .trim();
+	// Clean up ANSI codes and box drawing characters
+	const clean = stripAnsiCodes(response)
+		.replace(/─+/g, '')
+		.replace(/[│┌┐└┘├┤┬┴┼]/g, '')
+		.trim();
 
-  // Check for the sentinel token first
-  if (clean.includes(NOTHING_TO_REPORT)) {
-    return {
-      shortSummary: '',
-      fullSynopsis: '',
-      nothingToReport: true,
-    };
-  }
+	// Check for the sentinel token first
+	if (clean.includes(NOTHING_TO_REPORT)) {
+		return {
+			shortSummary: '',
+			fullSynopsis: '',
+			nothingToReport: true,
+		};
+	}
 
-  // Try to extract Summary and Details sections
-  const summaryMatch = clean.match(/\*\*Summary:\*\*\s*(.+?)(?=\*\*Details:\*\*|$)/is);
-  const detailsMatch = clean.match(/\*\*Details:\*\*\s*(.+?)$/is);
+	// Try to extract Summary and Details sections
+	const summaryMatch = clean.match(/\*\*Summary:\*\*\s*(.+?)(?=\*\*Details:\*\*|$)/is);
+	const detailsMatch = clean.match(/\*\*Details:\*\*\s*(.+?)$/is);
 
-  let shortSummary = summaryMatch?.[1]?.trim() || '';
-  let details = detailsMatch?.[1]?.trim() || '';
+	let shortSummary = summaryMatch?.[1]?.trim() || '';
+	let details = detailsMatch?.[1]?.trim() || '';
 
-  // Check if summary is a template placeholder (model output format instructions literally)
-  if (!shortSummary || isTemplatePlaceholder(shortSummary)) {
-    // Try to find actual content by looking for non-placeholder lines
-    const lines = clean.split('\n').filter(line => {
-      const trimmed = line.trim();
-      return trimmed &&
-        !trimmed.startsWith('**') &&
-        !isTemplatePlaceholder(trimmed) &&
-        !trimmed.match(/^Rules:/i) &&
-        !trimmed.match(/^-\s+Be specific/i) &&
-        !trimmed.match(/^-\s+Focus only/i) &&
-        !trimmed.match(/^-\s+If nothing/i) &&
-        !trimmed.match(/^Provide a brief synopsis/i);
-    });
-    shortSummary = lines[0]?.trim() || 'Task completed';
-  }
+	// Check if summary is a template placeholder (model output format instructions literally)
+	if (!shortSummary || isTemplatePlaceholder(shortSummary)) {
+		// Try to find actual content by looking for non-placeholder lines
+		const lines = clean.split('\n').filter((line) => {
+			const trimmed = line.trim();
+			return (
+				trimmed &&
+				!trimmed.startsWith('**') &&
+				!isTemplatePlaceholder(trimmed) &&
+				!trimmed.match(/^Rules:/i) &&
+				!trimmed.match(/^-\s+Be specific/i) &&
+				!trimmed.match(/^-\s+Focus only/i) &&
+				!trimmed.match(/^-\s+If nothing/i) &&
+				!trimmed.match(/^Provide a brief synopsis/i)
+			);
+		});
+		shortSummary = lines[0]?.trim() || 'Task completed';
+	}
 
-  // Check if details is a template placeholder
-  if (isTemplatePlaceholder(details)) {
-    details = '';
-  }
+	// Check if details is a template placeholder
+	if (isTemplatePlaceholder(details)) {
+		details = '';
+	}
 
-  // Full synopsis includes both parts
-  const fullSynopsis = details ? `${shortSummary}\n\n${details}` : shortSummary;
+	// Full synopsis includes both parts
+	const fullSynopsis = details ? `${shortSummary}\n\n${details}` : shortSummary;
 
-  return { shortSummary, fullSynopsis, nothingToReport: false };
+	return { shortSummary, fullSynopsis, nothingToReport: false };
 }

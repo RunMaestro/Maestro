@@ -17,28 +17,32 @@
 import type { ToolType } from '../../shared/types';
 import type { SummarizeRequest, SummarizeProgress } from '../types/contextMerge';
 import type { LogEntry } from '../types';
-import { formatLogsForGrooming, parseGroomedOutput, estimateTextTokenCount } from '../utils/contextExtractor';
+import {
+	formatLogsForGrooming,
+	parseGroomedOutput,
+	estimateTextTokenCount,
+} from '../utils/contextExtractor';
 import { contextSummarizePrompt } from '../../prompts';
 
 /**
  * Configuration options for the summarization service.
  */
 export interface SummarizationConfig {
-  /** Maximum time to wait for summarization response (ms) */
-  timeoutMs?: number;
-  /** Default agent type for summarization session */
-  defaultAgentType?: ToolType;
-  /** Minimum context usage percentage to allow summarization (0-100) */
-  minContextUsagePercent?: number;
+	/** Maximum time to wait for summarization response (ms) */
+	timeoutMs?: number;
+	/** Default agent type for summarization session */
+	defaultAgentType?: ToolType;
+	/** Minimum context usage percentage to allow summarization (0-100) */
+	minContextUsagePercent?: number;
 }
 
 /**
  * Default configuration for summarization operations.
  */
 const DEFAULT_CONFIG: Required<SummarizationConfig> = {
-  timeoutMs: 120000, // 2 minutes
-  defaultAgentType: 'claude-code',
-  minContextUsagePercent: 25, // Don't allow summarization under 25% context usage
+	timeoutMs: 120000, // 2 minutes
+	defaultAgentType: 'claude-code',
+	minContextUsagePercent: 25, // Don't allow summarization under 25% context usage
 };
 
 /**
@@ -88,201 +92,205 @@ const MAX_CONSOLIDATION_DEPTH = 3;
  * );
  */
 export class ContextSummarizationService {
-  private config: Required<SummarizationConfig>;
+	private config: Required<SummarizationConfig>;
 
-  constructor(config: SummarizationConfig = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
-  }
+	constructor(config: SummarizationConfig = {}) {
+		this.config = { ...DEFAULT_CONFIG, ...config };
+	}
 
-  /**
-   * Summarize a tab's context and prepare it for a new compacted tab.
-   *
-   * This method orchestrates the entire summarization process:
-   * 1. Extracts full context from the source tab
-   * 2. Creates a temporary summarization session
-   * 3. Sends the context with summarization instructions
-   * 4. Returns the summarized content and token statistics
-   *
-   * @param request - The summarization request containing source tab info
-   * @param sourceLogs - The logs from the source tab
-   * @param onProgress - Callback for progress updates during the summarization process
-   * @returns Promise resolving to the summarization result
-   */
-  async summarizeContext(
-    request: SummarizeRequest,
-    sourceLogs: LogEntry[],
-    onProgress: (progress: SummarizeProgress) => void
-  ): Promise<{ summarizedLogs: LogEntry[]; originalTokens: number; compactedTokens: number } | null> {
-    // Initial progress update
-    onProgress({
-      stage: 'extracting',
-      progress: 0,
-      message: 'Extracting context...',
-    });
+	/**
+	 * Summarize a tab's context and prepare it for a new compacted tab.
+	 *
+	 * This method orchestrates the entire summarization process:
+	 * 1. Extracts full context from the source tab
+	 * 2. Creates a temporary summarization session
+	 * 3. Sends the context with summarization instructions
+	 * 4. Returns the summarized content and token statistics
+	 *
+	 * @param request - The summarization request containing source tab info
+	 * @param sourceLogs - The logs from the source tab
+	 * @param onProgress - Callback for progress updates during the summarization process
+	 * @returns Promise resolving to the summarization result
+	 */
+	async summarizeContext(
+		request: SummarizeRequest,
+		sourceLogs: LogEntry[],
+		onProgress: (progress: SummarizeProgress) => void
+	): Promise<{
+		summarizedLogs: LogEntry[];
+		originalTokens: number;
+		compactedTokens: number;
+	} | null> {
+		// Initial progress update
+		onProgress({
+			stage: 'extracting',
+			progress: 0,
+			message: 'Extracting context...',
+		});
 
-    try {
-      // Stage 1: Extract and format context
-      const formattedContext = formatLogsForGrooming(sourceLogs);
-      const originalTokens = estimateTextTokenCount(formattedContext);
+		try {
+			// Stage 1: Extract and format context
+			const formattedContext = formatLogsForGrooming(sourceLogs);
+			const originalTokens = estimateTextTokenCount(formattedContext);
 
-      onProgress({
-        stage: 'extracting',
-        progress: 20,
-        message: `Extracted ~${originalTokens.toLocaleString()} tokens`,
-      });
+			onProgress({
+				stage: 'extracting',
+				progress: 20,
+				message: `Extracted ~${originalTokens.toLocaleString()} tokens`,
+			});
 
-      // Check if context is too large and needs chunking
-      if (originalTokens > MAX_SUMMARIZE_TOKENS) {
-        onProgress({
-          stage: 'summarizing',
-          progress: 25,
-          message: 'Large context detected, using chunked summarization...',
-        });
-        // For very large contexts, chunk and summarize in parts
-        return await this.summarizeInChunks(
-          request,
-          sourceLogs,
-          originalTokens,
-          onProgress
-        );
-      }
+			// Check if context is too large and needs chunking
+			if (originalTokens > MAX_SUMMARIZE_TOKENS) {
+				onProgress({
+					stage: 'summarizing',
+					progress: 25,
+					message: 'Large context detected, using chunked summarization...',
+				});
+				// For very large contexts, chunk and summarize in parts
+				return await this.summarizeInChunks(request, sourceLogs, originalTokens, onProgress);
+			}
 
-      // Stage 2: Send to AI for summarization using the single-call groomContext API
-      onProgress({
-        stage: 'summarizing',
-        progress: 30,
-        message: 'Sending context for compaction...',
-      });
+			// Stage 2: Send to AI for summarization using the single-call groomContext API
+			onProgress({
+				stage: 'summarizing',
+				progress: 30,
+				message: 'Sending context for compaction...',
+			});
 
-      const prompt = this.buildSummarizationPrompt(formattedContext);
-      console.log('[ContextSummarizer] Calling groomContext API, prompt length:', prompt.length);
+			const prompt = this.buildSummarizationPrompt(formattedContext);
+			console.log('[ContextSummarizer] Calling groomContext API, prompt length:', prompt.length);
 
-      const summarizedText = await window.maestro.context.groomContext(
-        request.projectRoot,
-        this.config.defaultAgentType,
-        prompt
-      );
-      console.log('[ContextSummarizer] Received response, length:', summarizedText?.length || 0);
+			const summarizedText = await window.maestro.context.groomContext(
+				request.projectRoot,
+				this.config.defaultAgentType,
+				prompt
+			);
+			console.log('[ContextSummarizer] Received response, length:', summarizedText?.length || 0);
 
-      onProgress({
-        stage: 'summarizing',
-        progress: 75,
-        message: 'Processing summarized output...',
-      });
+			onProgress({
+				stage: 'summarizing',
+				progress: 75,
+				message: 'Processing summarized output...',
+			});
 
-      // Stage 3: Parse the summarized output
-      const summarizedLogs = parseGroomedOutput(summarizedText);
-      const compactedTokens = estimateTextTokenCount(summarizedText);
+			// Stage 3: Parse the summarized output
+			const summarizedLogs = parseGroomedOutput(summarizedText);
+			const compactedTokens = estimateTextTokenCount(summarizedText);
 
-      onProgress({
-        stage: 'creating',
-        progress: 90,
-        message: 'Finalizing compacted context...',
-      });
+			onProgress({
+				stage: 'creating',
+				progress: 90,
+				message: 'Finalizing compacted context...',
+			});
 
-      return {
-        summarizedLogs,
-        originalTokens,
-        compactedTokens,
-      };
-    } catch {
-      // The groomContext API handles its own cleanup - rethrow
-      throw new Error('Context summarization failed');
-    }
-  }
+			return {
+				summarizedLogs,
+				originalTokens,
+				compactedTokens,
+			};
+		} catch {
+			// The groomContext API handles its own cleanup - rethrow
+			throw new Error('Context summarization failed');
+		}
+	}
 
-  /**
-   * Summarize large contexts by breaking them into chunks.
-   * If the combined chunk summaries are still too large, performs
-   * additional consolidation passes until under the target size.
-   */
-  private async summarizeInChunks(
-    request: SummarizeRequest,
-    sourceLogs: LogEntry[],
-    _originalTokens: number,
-    onProgress: (progress: SummarizeProgress) => void
-  ): Promise<{ summarizedLogs: LogEntry[]; originalTokens: number; compactedTokens: number }> {
-    // Split logs into chunks that fit within token limits
-    const chunks = this.chunkLogs(sourceLogs, MAX_SUMMARIZE_TOKENS);
-    const chunkSummaries: string[] = [];
-    let totalOriginalTokens = 0;
+	/**
+	 * Summarize large contexts by breaking them into chunks.
+	 * If the combined chunk summaries are still too large, performs
+	 * additional consolidation passes until under the target size.
+	 */
+	private async summarizeInChunks(
+		request: SummarizeRequest,
+		sourceLogs: LogEntry[],
+		_originalTokens: number,
+		onProgress: (progress: SummarizeProgress) => void
+	): Promise<{ summarizedLogs: LogEntry[]; originalTokens: number; compactedTokens: number }> {
+		// Split logs into chunks that fit within token limits
+		const chunks = this.chunkLogs(sourceLogs, MAX_SUMMARIZE_TOKENS);
+		const chunkSummaries: string[] = [];
+		let totalOriginalTokens = 0;
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const chunkText = formatLogsForGrooming(chunk);
-      totalOriginalTokens += estimateTextTokenCount(chunkText);
+		for (let i = 0; i < chunks.length; i++) {
+			const chunk = chunks[i];
+			const chunkText = formatLogsForGrooming(chunk);
+			totalOriginalTokens += estimateTextTokenCount(chunkText);
 
-      onProgress({
-        stage: 'summarizing',
-        progress: 30 + Math.round((i / chunks.length) * 40),
-        message: `Summarizing chunk ${i + 1}/${chunks.length}...`,
-      });
+			onProgress({
+				stage: 'summarizing',
+				progress: 30 + Math.round((i / chunks.length) * 40),
+				message: `Summarizing chunk ${i + 1}/${chunks.length}...`,
+			});
 
-      const prompt = this.buildSummarizationPrompt(chunkText);
-      // Use the new single-call groomContext API (spawns batch process with prompt)
-      const summary = await window.maestro.context.groomContext(
-        request.projectRoot,
-        this.config.defaultAgentType,
-        prompt
-      );
-      chunkSummaries.push(summary);
-    }
+			const prompt = this.buildSummarizationPrompt(chunkText);
+			// Use the new single-call groomContext API (spawns batch process with prompt)
+			const summary = await window.maestro.context.groomContext(
+				request.projectRoot,
+				this.config.defaultAgentType,
+				prompt
+			);
+			chunkSummaries.push(summary);
+		}
 
-    // Combine chunk summaries
-    let combinedSummary = chunkSummaries.join('\n\n---\n\n');
-    let compactedTokens = estimateTextTokenCount(combinedSummary);
+		// Combine chunk summaries
+		let combinedSummary = chunkSummaries.join('\n\n---\n\n');
+		let compactedTokens = estimateTextTokenCount(combinedSummary);
 
-    // If combined summaries are still too large, do consolidation passes
-    let consolidationDepth = 0;
-    while (compactedTokens > TARGET_COMPACTED_TOKENS && consolidationDepth < MAX_CONSOLIDATION_DEPTH) {
-      consolidationDepth++;
+		// If combined summaries are still too large, do consolidation passes
+		let consolidationDepth = 0;
+		while (
+			compactedTokens > TARGET_COMPACTED_TOKENS &&
+			consolidationDepth < MAX_CONSOLIDATION_DEPTH
+		) {
+			consolidationDepth++;
 
-      onProgress({
-        stage: 'summarizing',
-        progress: 70 + consolidationDepth * 5,
-        message: `Consolidation pass ${consolidationDepth}/${MAX_CONSOLIDATION_DEPTH}...`,
-      });
+			onProgress({
+				stage: 'summarizing',
+				progress: 70 + consolidationDepth * 5,
+				message: `Consolidation pass ${consolidationDepth}/${MAX_CONSOLIDATION_DEPTH}...`,
+			});
 
-      console.log(`[ContextSummarizer] Consolidation pass ${consolidationDepth}: ${compactedTokens} tokens > ${TARGET_COMPACTED_TOKENS} target`);
+			console.log(
+				`[ContextSummarizer] Consolidation pass ${consolidationDepth}: ${compactedTokens} tokens > ${TARGET_COMPACTED_TOKENS} target`
+			);
 
-      // Build a consolidation prompt that asks for a more aggressive summary
-      const consolidationPrompt = this.buildConsolidationPrompt(combinedSummary, compactedTokens);
+			// Build a consolidation prompt that asks for a more aggressive summary
+			const consolidationPrompt = this.buildConsolidationPrompt(combinedSummary, compactedTokens);
 
-      const consolidated = await window.maestro.context.groomContext(
-        request.projectRoot,
-        this.config.defaultAgentType,
-        consolidationPrompt
-      );
+			const consolidated = await window.maestro.context.groomContext(
+				request.projectRoot,
+				this.config.defaultAgentType,
+				consolidationPrompt
+			);
 
-      const newTokens = estimateTextTokenCount(consolidated);
+			const newTokens = estimateTextTokenCount(consolidated);
 
-      // Only accept if we actually reduced the size
-      if (newTokens < compactedTokens * 0.9) {
-        combinedSummary = consolidated;
-        compactedTokens = newTokens;
-        console.log(`[ContextSummarizer] Consolidation reduced to ${compactedTokens} tokens`);
-      } else {
-        // Not making progress, stop trying
-        console.log(`[ContextSummarizer] Consolidation not reducing size, stopping`);
-        break;
-      }
-    }
+			// Only accept if we actually reduced the size
+			if (newTokens < compactedTokens * 0.9) {
+				combinedSummary = consolidated;
+				compactedTokens = newTokens;
+				console.log(`[ContextSummarizer] Consolidation reduced to ${compactedTokens} tokens`);
+			} else {
+				// Not making progress, stop trying
+				console.log(`[ContextSummarizer] Consolidation not reducing size, stopping`);
+				break;
+			}
+		}
 
-    const summarizedLogs = parseGroomedOutput(combinedSummary);
+		const summarizedLogs = parseGroomedOutput(combinedSummary);
 
-    return {
-      summarizedLogs,
-      originalTokens: totalOriginalTokens,
-      compactedTokens,
-    };
-  }
+		return {
+			summarizedLogs,
+			originalTokens: totalOriginalTokens,
+			compactedTokens,
+		};
+	}
 
-  /**
-   * Build a prompt for consolidation passes when summaries are still too large.
-   */
-  private buildConsolidationPrompt(currentSummary: string, currentTokens: number): string {
-    const targetTokens = Math.round(TARGET_COMPACTED_TOKENS * 0.8); // Aim for 80% of target
-    return `The following is a summary of a conversation that is still too large (approximately ${currentTokens.toLocaleString()} tokens). Please create a more concise version targeting approximately ${targetTokens.toLocaleString()} tokens while preserving:
+	/**
+	 * Build a prompt for consolidation passes when summaries are still too large.
+	 */
+	private buildConsolidationPrompt(currentSummary: string, currentTokens: number): string {
+		const targetTokens = Math.round(TARGET_COMPACTED_TOKENS * 0.8); // Aim for 80% of target
+		return `The following is a summary of a conversation that is still too large (approximately ${currentTokens.toLocaleString()} tokens). Please create a more concise version targeting approximately ${targetTokens.toLocaleString()} tokens while preserving:
 
 1. All key technical decisions and their rationale
 2. Important code changes and file paths
@@ -301,135 +309,135 @@ ${currentSummary}
 ---
 
 Please provide the consolidated summary:`;
-  }
+	}
 
-  /**
-   * Split logs into chunks that fit within token limits.
-   */
-  private chunkLogs(logs: LogEntry[], maxTokensPerChunk: number): LogEntry[][] {
-    const chunks: LogEntry[][] = [];
-    let currentChunk: LogEntry[] = [];
-    let currentTokens = 0;
+	/**
+	 * Split logs into chunks that fit within token limits.
+	 */
+	private chunkLogs(logs: LogEntry[], maxTokensPerChunk: number): LogEntry[][] {
+		const chunks: LogEntry[][] = [];
+		let currentChunk: LogEntry[] = [];
+		let currentTokens = 0;
 
-    for (const log of logs) {
-      const logTokens = estimateTextTokenCount(log.text);
+		for (const log of logs) {
+			const logTokens = estimateTextTokenCount(log.text);
 
-      if (currentTokens + logTokens > maxTokensPerChunk && currentChunk.length > 0) {
-        chunks.push(currentChunk);
-        currentChunk = [];
-        currentTokens = 0;
-      }
+			if (currentTokens + logTokens > maxTokensPerChunk && currentChunk.length > 0) {
+				chunks.push(currentChunk);
+				currentChunk = [];
+				currentTokens = 0;
+			}
 
-      currentChunk.push(log);
-      currentTokens += logTokens;
-    }
+			currentChunk.push(log);
+			currentTokens += logTokens;
+		}
 
-    if (currentChunk.length > 0) {
-      chunks.push(currentChunk);
-    }
+		if (currentChunk.length > 0) {
+			chunks.push(currentChunk);
+		}
 
-    return chunks;
-  }
+		return chunks;
+	}
 
-  /**
-   * Build the complete summarization prompt with system instructions and context.
-   *
-   * @param formattedContext - The formatted context string
-   * @returns Complete prompt to send to the summarization agent
-   */
-  private buildSummarizationPrompt(formattedContext: string): string {
-    return `${contextSummarizePrompt}
+	/**
+	 * Build the complete summarization prompt with system instructions and context.
+	 *
+	 * @param formattedContext - The formatted context string
+	 * @returns Complete prompt to send to the summarization agent
+	 */
+	private buildSummarizationPrompt(formattedContext: string): string {
+		return `${contextSummarizePrompt}
 
 ${formattedContext}
 
 ---
 
 Please provide a comprehensive but compacted summary of the above conversation, following the output format specified. Preserve all technical details, code snippets, and decisions while removing redundant content.`;
-  }
+	}
 
-  /**
-   * Format a compacted tab name from the original name.
-   *
-   * @param originalName - The original tab name
-   * @returns The new tab name with "Compacted YYYY-MM-DD" suffix
-   */
-  formatCompactedTabName(originalName: string | null): string {
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const baseName = originalName || 'Session';
-    return `${baseName} Compacted ${date}`;
-  }
+	/**
+	 * Format a compacted tab name from the original name.
+	 *
+	 * @param originalName - The original tab name
+	 * @returns The new tab name with "Compacted YYYY-MM-DD" suffix
+	 */
+	formatCompactedTabName(originalName: string | null): string {
+		const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+		const baseName = originalName || 'Session';
+		return `${baseName} Compacted ${date}`;
+	}
 
-  /**
-   * Check if a session has enough context to warrant summarization.
-   * Summarization is allowed when ANY of these conditions are met:
-   * 1. Context usage percentage is above the minimum threshold (25%), OR
-   * 2. Estimated token count from logs exceeds the minimum token threshold (2k), OR
-   * 3. Number of meaningful log entries exceeds the minimum (8 entries)
-   *
-   * Multiple fallbacks handle cases where:
-   * - The agent doesn't report context usage percentage
-   * - The context gauge resets to 0 when the context fills
-   * - The conversation has many short messages
-   *
-   * @param contextUsage - The current context usage percentage (0-100)
-   * @param logs - Optional array of log entries to estimate tokens from
-   * @returns True if context is large enough for summarization
-   */
-  canSummarize(contextUsage: number, logs?: LogEntry[]): boolean {
-    // Primary check: context usage percentage
-    if (contextUsage >= this.config.minContextUsagePercent) {
-      return true;
-    }
+	/**
+	 * Check if a session has enough context to warrant summarization.
+	 * Summarization is allowed when ANY of these conditions are met:
+	 * 1. Context usage percentage is above the minimum threshold (25%), OR
+	 * 2. Estimated token count from logs exceeds the minimum token threshold (2k), OR
+	 * 3. Number of meaningful log entries exceeds the minimum (8 entries)
+	 *
+	 * Multiple fallbacks handle cases where:
+	 * - The agent doesn't report context usage percentage
+	 * - The context gauge resets to 0 when the context fills
+	 * - The conversation has many short messages
+	 *
+	 * @param contextUsage - The current context usage percentage (0-100)
+	 * @param logs - Optional array of log entries to estimate tokens from
+	 * @returns True if context is large enough for summarization
+	 */
+	canSummarize(contextUsage: number, logs?: LogEntry[]): boolean {
+		// Primary check: context usage percentage
+		if (contextUsage >= this.config.minContextUsagePercent) {
+			return true;
+		}
 
-    // Fallback checks require logs
-    if (logs && logs.length > 0) {
-      // Fallback 1: estimate tokens from logs
-      const formattedContext = formatLogsForGrooming(logs);
-      const estimatedTokens = estimateTextTokenCount(formattedContext);
-      if (estimatedTokens >= MIN_TOKENS_FOR_SUMMARIZATION) {
-        return true;
-      }
+		// Fallback checks require logs
+		if (logs && logs.length > 0) {
+			// Fallback 1: estimate tokens from logs
+			const formattedContext = formatLogsForGrooming(logs);
+			const estimatedTokens = estimateTextTokenCount(formattedContext);
+			if (estimatedTokens >= MIN_TOKENS_FOR_SUMMARIZATION) {
+				return true;
+			}
 
-      // Fallback 2: count meaningful log entries (user and AI messages)
-      const meaningfulLogs = logs.filter(log =>
-        log.source === 'user' || log.source === 'ai' || log.source === 'stdout'
-      );
-      if (meaningfulLogs.length >= MIN_LOG_ENTRIES_FOR_SUMMARIZATION) {
-        return true;
-      }
-    }
+			// Fallback 2: count meaningful log entries (user and AI messages)
+			const meaningfulLogs = logs.filter(
+				(log) => log.source === 'user' || log.source === 'ai' || log.source === 'stdout'
+			);
+			if (meaningfulLogs.length >= MIN_LOG_ENTRIES_FOR_SUMMARIZATION) {
+				return true;
+			}
+		}
 
-    return false;
-  }
+		return false;
+	}
 
-  /**
-   * Get the minimum context usage percentage required for summarization.
-   */
-  getMinContextUsagePercent(): number {
-    return this.config.minContextUsagePercent;
-  }
+	/**
+	 * Get the minimum context usage percentage required for summarization.
+	 */
+	getMinContextUsagePercent(): number {
+		return this.config.minContextUsagePercent;
+	}
 
-  /**
-   * Cancel any active summarization operation.
-   * Calls the main process to kill all active grooming sessions.
-   */
-  async cancelSummarization(): Promise<void> {
-    try {
-      await window.maestro.context.cancelGrooming();
-    } catch (error) {
-      console.error('[ContextSummarizer] Failed to cancel grooming:', error);
-    }
-  }
+	/**
+	 * Cancel any active summarization operation.
+	 * Calls the main process to kill all active grooming sessions.
+	 */
+	async cancelSummarization(): Promise<void> {
+		try {
+			await window.maestro.context.cancelGrooming();
+		} catch (error) {
+			console.error('[ContextSummarizer] Failed to cancel grooming:', error);
+		}
+	}
 
-  /**
-   * Check if a summarization operation is currently in progress.
-   * Note: With the groomContext API, the caller tracks active state.
-   * This method is kept for API compatibility but always returns false.
-   */
-  isSummarizationActive(): boolean {
-    // State tracking is now done by the caller (useSummarizeAndContinue hook)
-    return false;
-  }
+	/**
+	 * Check if a summarization operation is currently in progress.
+	 * Note: With the groomContext API, the caller tracks active state.
+	 * This method is kept for API compatibility but always returns false.
+	 */
+	isSummarizationActive(): boolean {
+		// State tracking is now done by the caller (useSummarizeAndContinue hook)
+		return false;
+	}
 }
 
 /**

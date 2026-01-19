@@ -8,10 +8,7 @@
  * - Cleanup functions for test isolation
  */
 
-import {
-  loadGroupChat,
-  deleteGroupChat,
-} from '../../main/group-chat/group-chat-storage';
+import { loadGroupChat, deleteGroupChat } from '../../main/group-chat/group-chat-storage';
 import { readLog } from '../../main/group-chat/group-chat-log';
 import { killModerator } from '../../main/group-chat/group-chat-moderator';
 
@@ -19,9 +16,9 @@ import { killModerator } from '../../main/group-chat/group-chat-moderator';
  * Selection of agents for integration test roles.
  */
 export interface TestAgentSelection {
-  moderator: string;
-  agentA: string;
-  agentB: string;
+	moderator: string;
+	agentA: string;
+	agentB: string;
 }
 
 /**
@@ -30,14 +27,14 @@ export interface TestAgentSelection {
  * we need to access the main process APIs.
  */
 export async function getAvailableAgents(): Promise<string[]> {
-  // In a real integration test environment, this would call the agent detector
-  // For now, we return common agents that might be available
-  // The actual implementation would integrate with the electron main process
-  const potentialAgents = ['claude-code', 'opencode'];
+	// In a real integration test environment, this would call the agent detector
+	// For now, we return common agents that might be available
+	// The actual implementation would integrate with the electron main process
+	const potentialAgents = ['claude-code', 'opencode'];
 
-  // In practice, you'd check which are actually installed
-  // For integration tests, we assume at least one is available
-  return potentialAgents;
+	// In practice, you'd check which are actually installed
+	// For integration tests, we assume at least one is available
+	return potentialAgents;
 }
 
 /**
@@ -47,16 +44,16 @@ export async function getAvailableAgents(): Promise<string[]> {
  * @returns Selection of agents for moderator and participant roles
  */
 export function selectTestAgents(available: string[]): TestAgentSelection {
-  if (available.length === 0) {
-    throw new Error('No agents available for testing');
-  }
+	if (available.length === 0) {
+		throw new Error('No agents available for testing');
+	}
 
-  const shuffled = [...available].sort(() => Math.random() - 0.5);
-  return {
-    moderator: shuffled[0],
-    agentA: shuffled[Math.min(1, shuffled.length - 1)],
-    agentB: shuffled[Math.min(2, shuffled.length - 1)],
-  };
+	const shuffled = [...available].sort(() => Math.random() - 0.5);
+	return {
+		moderator: shuffled[0],
+		agentA: shuffled[Math.min(1, shuffled.length - 1)],
+		agentB: shuffled[Math.min(2, shuffled.length - 1)],
+	};
 }
 
 /**
@@ -69,40 +66,38 @@ export function selectTestAgents(available: string[]): TestAgentSelection {
  * @throws Error if timeout is reached
  */
 export async function waitForAgentResponse(
-  groupChatId: string,
-  participantName: string,
-  timeoutMs: number = 60000
+	groupChatId: string,
+	participantName: string,
+	timeoutMs: number = 60000
 ): Promise<string> {
-  const startTime = Date.now();
-  const chat = await loadGroupChat(groupChatId);
+	const startTime = Date.now();
+	const chat = await loadGroupChat(groupChatId);
 
-  if (!chat) {
-    throw new Error(`Group chat not found: ${groupChatId}`);
-  }
+	if (!chat) {
+		throw new Error(`Group chat not found: ${groupChatId}`);
+	}
 
-  let lastMessageCount = (await readLog(chat.logPath)).length;
+	let lastMessageCount = (await readLog(chat.logPath)).length;
 
-  while (Date.now() - startTime < timeoutMs) {
-    const messages = await readLog(chat.logPath);
-    const newMessages = messages.slice(lastMessageCount);
-    const agentMsg = newMessages.find((m) => m.from === participantName);
+	while (Date.now() - startTime < timeoutMs) {
+		const messages = await readLog(chat.logPath);
+		const newMessages = messages.slice(lastMessageCount);
+		const agentMsg = newMessages.find((m) => m.from === participantName);
 
-    if (agentMsg) {
-      return agentMsg.content;
-    }
+		if (agentMsg) {
+			return agentMsg.content;
+		}
 
-    // Update count to avoid re-checking old messages
-    if (messages.length > lastMessageCount) {
-      lastMessageCount = messages.length;
-    }
+		// Update count to avoid re-checking old messages
+		if (messages.length > lastMessageCount) {
+			lastMessageCount = messages.length;
+		}
 
-    // Poll every 500ms
-    await new Promise((r) => setTimeout(r, 500));
-  }
+		// Poll every 500ms
+		await new Promise((r) => setTimeout(r, 500));
+	}
 
-  throw new Error(
-    `Timeout waiting for ${participantName} response after ${timeoutMs}ms`
-  );
+	throw new Error(`Timeout waiting for ${participantName} response after ${timeoutMs}ms`);
 }
 
 /**
@@ -113,10 +108,10 @@ export async function waitForAgentResponse(
  * @returns The content of the moderator's response
  */
 export async function waitForModeratorResponse(
-  groupChatId: string,
-  timeoutMs: number = 30000
+	groupChatId: string,
+	timeoutMs: number = 30000
 ): Promise<string> {
-  return waitForAgentResponse(groupChatId, 'moderator', timeoutMs);
+	return waitForAgentResponse(groupChatId, 'moderator', timeoutMs);
 }
 
 /**
@@ -127,11 +122,11 @@ export async function waitForModeratorResponse(
  * @throws Error if no number is found
  */
 export function extractNumber(text: string): number {
-  const match = text.match(/\d+/);
-  if (!match) {
-    throw new Error(`No number found in: ${text}`);
-  }
-  return parseInt(match[0], 10);
+	const match = text.match(/\d+/);
+	if (!match) {
+		throw new Error(`No number found in: ${text}`);
+	}
+	return parseInt(match[0], 10);
 }
 
 /**
@@ -141,19 +136,19 @@ export function extractNumber(text: string): number {
  * @param id - The ID of the group chat to clean up
  */
 export async function cleanupGroupChat(id: string): Promise<void> {
-  try {
-    // Try to kill the moderator if active
-    await killModerator(id);
-  } catch {
-    // Ignore errors - moderator might not be active
-  }
+	try {
+		// Try to kill the moderator if active
+		await killModerator(id);
+	} catch {
+		// Ignore errors - moderator might not be active
+	}
 
-  try {
-    // Delete all group chat data
-    await deleteGroupChat(id);
-  } catch {
-    // Ignore errors - chat might already be deleted
-  }
+	try {
+		// Delete all group chat data
+		await deleteGroupChat(id);
+	} catch {
+		// Ignore errors - chat might already be deleted
+	}
 }
 
 /**
@@ -161,7 +156,7 @@ export async function cleanupGroupChat(id: string): Promise<void> {
  * Integration tests are skipped when SKIP_INTEGRATION_TESTS is set.
  */
 export function shouldSkipIntegrationTests(): boolean {
-  return process.env.SKIP_INTEGRATION_TESTS === 'true';
+	return process.env.SKIP_INTEGRATION_TESTS === 'true';
 }
 
 /**
@@ -174,20 +169,20 @@ export function shouldSkipIntegrationTests(): boolean {
  * @throws Error on timeout
  */
 export async function waitForCondition(
-  condition: () => Promise<boolean> | boolean,
-  timeoutMs: number = 30000,
-  pollIntervalMs: number = 500
+	condition: () => Promise<boolean> | boolean,
+	timeoutMs: number = 30000,
+	pollIntervalMs: number = 500
 ): Promise<void> {
-  const startTime = Date.now();
+	const startTime = Date.now();
 
-  while (Date.now() - startTime < timeoutMs) {
-    if (await condition()) {
-      return;
-    }
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
-  }
+	while (Date.now() - startTime < timeoutMs) {
+		if (await condition()) {
+			return;
+		}
+		await new Promise((r) => setTimeout(r, pollIntervalMs));
+	}
 
-  throw new Error(`Condition not met within ${timeoutMs}ms`);
+	throw new Error(`Condition not met within ${timeoutMs}ms`);
 }
 
 /**
@@ -198,16 +193,14 @@ export async function waitForCondition(
  * @returns Array of messages from that participant
  */
 export async function getParticipantMessages(
-  groupChatId: string,
-  participantName: string
+	groupChatId: string,
+	participantName: string
 ): Promise<string[]> {
-  const chat = await loadGroupChat(groupChatId);
-  if (!chat) {
-    throw new Error(`Group chat not found: ${groupChatId}`);
-  }
+	const chat = await loadGroupChat(groupChatId);
+	if (!chat) {
+		throw new Error(`Group chat not found: ${groupChatId}`);
+	}
 
-  const messages = await readLog(chat.logPath);
-  return messages
-    .filter((m) => m.from === participantName)
-    .map((m) => m.content);
+	const messages = await readLog(chat.logPath);
+	return messages.filter((m) => m.from === participantName).map((m) => m.content);
 }

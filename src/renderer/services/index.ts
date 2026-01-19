@@ -12,10 +12,10 @@ export type { GitStatus, GitDiff, GitNumstat } from './git';
 // Process management service
 export { processService } from './process';
 export type {
-  ProcessConfig,
-  ProcessDataHandler,
-  ProcessExitHandler,
-  ProcessSessionIdHandler,
+	ProcessConfig,
+	ProcessDataHandler,
+	ProcessExitHandler,
+	ProcessSessionIdHandler,
 } from './process';
 
 // IPC wrapper utility
@@ -31,9 +31,5 @@ export { ContextSummarizationService, contextSummarizationService } from './cont
 export type { SummarizationConfig } from './contextSummarizer';
 
 // Wizard intent parser service
-export {
-  parseWizardIntent,
-  suggestsIterateIntent,
-  suggestsNewIntent,
-} from './wizardIntentParser';
+export { parseWizardIntent, suggestsIterateIntent, suggestsNewIntent } from './wizardIntentParser';
 export type { WizardIntentResult } from './wizardIntentParser';

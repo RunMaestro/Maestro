@@ -7,16 +7,16 @@
 // Git status polling
 export { useGitStatusPolling } from './useGitStatusPolling';
 export type {
-  UseGitStatusPollingReturn,
-  UseGitStatusPollingOptions,
-  GitStatusData,
-  GitFileChange,
+	UseGitStatusPollingReturn,
+	UseGitStatusPollingOptions,
+	GitStatusData,
+	GitFileChange,
 } from './useGitStatusPolling';
 
 // File tree state management
 export { useFileTreeManagement } from './useFileTreeManagement';
 export type {
-  UseFileTreeManagementDeps,
-  UseFileTreeManagementReturn,
-  RightPanelHandle,
+	UseFileTreeManagementDeps,
+	UseFileTreeManagementReturn,
+	RightPanelHandle,
 } from './useFileTreeManagement';

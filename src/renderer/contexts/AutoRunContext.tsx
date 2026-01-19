@@ -24,40 +24,40 @@ import type { AutoRunTreeNode } from '../hooks';
  * Task count entry - tracks completed vs total tasks for a document
  */
 export interface TaskCountEntry {
-  completed: number;
-  total: number;
+	completed: number;
+	total: number;
 }
 
 /**
  * Auto Run context value - all Auto Run states and their setters
  */
 export interface AutoRunContextValue {
-  // Document List State
-  documentList: string[];
-  setDocumentList: React.Dispatch<React.SetStateAction<string[]>>;
+	// Document List State
+	documentList: string[];
+	setDocumentList: React.Dispatch<React.SetStateAction<string[]>>;
 
-  // Document Tree State (hierarchical view)
-  documentTree: AutoRunTreeNode[];
-  setDocumentTree: React.Dispatch<React.SetStateAction<AutoRunTreeNode[]>>;
+	// Document Tree State (hierarchical view)
+	documentTree: AutoRunTreeNode[];
+	setDocumentTree: React.Dispatch<React.SetStateAction<AutoRunTreeNode[]>>;
 
-  // Loading State
-  isLoadingDocuments: boolean;
-  setIsLoadingDocuments: React.Dispatch<React.SetStateAction<boolean>>;
+	// Loading State
+	isLoadingDocuments: boolean;
+	setIsLoadingDocuments: React.Dispatch<React.SetStateAction<boolean>>;
 
-  // Task Counts (per-document)
-  documentTaskCounts: Map<string, TaskCountEntry>;
-  setDocumentTaskCounts: React.Dispatch<React.SetStateAction<Map<string, TaskCountEntry>>>;
+	// Task Counts (per-document)
+	documentTaskCounts: Map<string, TaskCountEntry>;
+	setDocumentTaskCounts: React.Dispatch<React.SetStateAction<Map<string, TaskCountEntry>>>;
 
-  // Convenience methods
-  clearDocumentList: () => void;
-  updateTaskCount: (filename: string, completed: number, total: number) => void;
+	// Convenience methods
+	clearDocumentList: () => void;
+	updateTaskCount: (filename: string, completed: number, total: number) => void;
 }
 
 // Create context with null as default (will throw if used outside provider)
 const AutoRunContext = createContext<AutoRunContextValue | null>(null);
 
 interface AutoRunProviderProps {
-  children: ReactNode;
+	children: ReactNode;
 }
 
 /**
@@ -78,74 +78,75 @@ interface AutoRunProviderProps {
  * </AutoRunProvider>
  */
 export function AutoRunProvider({ children }: AutoRunProviderProps) {
-  // Document List State
-  const [documentList, setDocumentList] = useState<string[]>([]);
+	// Document List State
+	const [documentList, setDocumentList] = useState<string[]>([]);
 
-  // Document Tree State (hierarchical view)
-  const [documentTree, setDocumentTree] = useState<AutoRunTreeNode[]>([]);
+	// Document Tree State (hierarchical view)
+	const [documentTree, setDocumentTree] = useState<AutoRunTreeNode[]>([]);
 
-  // Loading State
-  const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
+	// Loading State
+	const [isLoadingDocuments, setIsLoadingDocuments] = useState(false);
 
-  // Task Counts (per-document)
-  const [documentTaskCounts, setDocumentTaskCounts] = useState<Map<string, TaskCountEntry>>(new Map());
+	// Task Counts (per-document)
+	const [documentTaskCounts, setDocumentTaskCounts] = useState<Map<string, TaskCountEntry>>(
+		new Map()
+	);
 
-  // Convenience method to clear document list
-  const clearDocumentList = useCallback(() => {
-    setDocumentList([]);
-    setDocumentTree([]);
-    setDocumentTaskCounts(new Map());
-  }, []);
+	// Convenience method to clear document list
+	const clearDocumentList = useCallback(() => {
+		setDocumentList([]);
+		setDocumentTree([]);
+		setDocumentTaskCounts(new Map());
+	}, []);
 
-  // Convenience method to update task count for a document
-  const updateTaskCount = useCallback((filename: string, completed: number, total: number) => {
-    setDocumentTaskCounts(prev => {
-      const newMap = new Map(prev);
-      newMap.set(filename, { completed, total });
-      return newMap;
-    });
-  }, []);
+	// Convenience method to update task count for a document
+	const updateTaskCount = useCallback((filename: string, completed: number, total: number) => {
+		setDocumentTaskCounts((prev) => {
+			const newMap = new Map(prev);
+			newMap.set(filename, { completed, total });
+			return newMap;
+		});
+	}, []);
 
-  // Memoize the context value to prevent unnecessary re-renders
-  const value = useMemo<AutoRunContextValue>(() => ({
-    // Document List State
-    documentList,
-    setDocumentList,
+	// Memoize the context value to prevent unnecessary re-renders
+	const value = useMemo<AutoRunContextValue>(
+		() => ({
+			// Document List State
+			documentList,
+			setDocumentList,
 
-    // Document Tree State
-    documentTree,
-    setDocumentTree,
+			// Document Tree State
+			documentTree,
+			setDocumentTree,
 
-    // Loading State
-    isLoadingDocuments,
-    setIsLoadingDocuments,
+			// Loading State
+			isLoadingDocuments,
+			setIsLoadingDocuments,
 
-    // Task Counts
-    documentTaskCounts,
-    setDocumentTaskCounts,
+			// Task Counts
+			documentTaskCounts,
+			setDocumentTaskCounts,
 
-    // Convenience methods
-    clearDocumentList,
-    updateTaskCount,
-  }), [
-    // Document List State
-    documentList,
-    // Document Tree State
-    documentTree,
-    // Loading State
-    isLoadingDocuments,
-    // Task Counts
-    documentTaskCounts,
-    // Convenience methods
-    clearDocumentList,
-    updateTaskCount,
-  ]);
+			// Convenience methods
+			clearDocumentList,
+			updateTaskCount,
+		}),
+		[
+			// Document List State
+			documentList,
+			// Document Tree State
+			documentTree,
+			// Loading State
+			isLoadingDocuments,
+			// Task Counts
+			documentTaskCounts,
+			// Convenience methods
+			clearDocumentList,
+			updateTaskCount,
+		]
+	);
 
-  return (
-    <AutoRunContext.Provider value={value}>
-      {children}
-    </AutoRunContext.Provider>
-  );
+	return <AutoRunContext.Provider value={value}>{children}</AutoRunContext.Provider>;
 }
 
 /**
@@ -171,11 +172,11 @@ export function AutoRunProvider({ children }: AutoRunProviderProps) {
  * updateTaskCount('my-doc', 3, 10); // 3 of 10 tasks completed
  */
 export function useAutoRun(): AutoRunContextValue {
-  const context = useContext(AutoRunContext);
+	const context = useContext(AutoRunContext);
 
-  if (!context) {
-    throw new Error('useAutoRun must be used within an AutoRunProvider');
-  }
+	if (!context) {
+		throw new Error('useAutoRun must be used within an AutoRunProvider');
+	}
 
-  return context;
+	return context;
 }

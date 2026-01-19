@@ -12,8 +12,8 @@ export { useOfflineStatus, useMaestroMode, useDesktopTheme } from './App';
 // Mount the application
 const container = document.getElementById('root');
 if (container) {
-  const root = createRoot(container);
-  root.render(<AppRoot />);
+	const root = createRoot(container);
+	root.render(<AppRoot />);
 } else {
-  webLogger.error('Root element not found', 'App');
+	webLogger.error('Root element not found', 'App');
 }

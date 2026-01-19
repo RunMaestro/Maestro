@@ -14,7 +14,7 @@ import React, {
 	useCallback,
 	useMemo,
 	ReactNode,
-	useRef
+	useRef,
 } from 'react';
 import type { FocusArea, RightPanelTab } from '../types';
 import type { FlatFileItem } from '../components/FileSearchModal';
@@ -148,21 +148,15 @@ export function UILayoutProvider({ children }: UILayoutProviderProps) {
 	const [fileTreeFilterOpen, setFileTreeFilterOpen] = useState(false);
 
 	// Flash notification state
-	const [flashNotification, setFlashNotification] = useState<string | null>(
-		null
-	);
-	const [successFlashNotification, setSuccessFlashNotification] = useState<
-		string | null
-	>(null);
+	const [flashNotification, setFlashNotification] = useState<string | null>(null);
+	const [successFlashNotification, setSuccessFlashNotification] = useState<string | null>(null);
 
 	// Output search state
 	const [outputSearchOpen, setOutputSearchOpen] = useState(false);
 	const [outputSearchQuery, setOutputSearchQuery] = useState('');
 
 	// Drag and drop state
-	const [draggingSessionId, setDraggingSessionId] = useState<string | null>(
-		null
-	);
+	const [draggingSessionId, setDraggingSessionId] = useState<string | null>(null);
 	const [isDraggingImage, setIsDraggingImage] = useState(false);
 	const dragCounterRef = useRef(0); // Track nested drag enter/leave events
 
@@ -172,23 +166,23 @@ export function UILayoutProvider({ children }: UILayoutProviderProps) {
 
 	// Convenience toggle methods
 	const toggleLeftSidebar = useCallback(() => {
-		setLeftSidebarOpen(open => !open);
+		setLeftSidebarOpen((open) => !open);
 	}, []);
 
 	const toggleRightPanel = useCallback(() => {
-		setRightPanelOpen(open => !open);
+		setRightPanelOpen((open) => !open);
 	}, []);
 
 	const toggleBookmarksCollapsed = useCallback(() => {
-		setBookmarksCollapsed(collapsed => !collapsed);
+		setBookmarksCollapsed((collapsed) => !collapsed);
 	}, []);
 
 	const toggleGroupChatsExpanded = useCallback(() => {
-		setGroupChatsExpanded(expanded => !expanded);
+		setGroupChatsExpanded((expanded) => !expanded);
 	}, []);
 
 	const toggleShowUnreadOnly = useCallback(() => {
-		setShowUnreadOnly(show => !show);
+		setShowUnreadOnly((show) => !show);
 	}, []);
 
 	// Memoize the context value to prevent unnecessary re-renders
@@ -261,7 +255,7 @@ export function UILayoutProvider({ children }: UILayoutProviderProps) {
 			editingGroupId,
 			setEditingGroupId,
 			editingSessionId,
-			setEditingSessionId
+			setEditingSessionId,
 		}),
 		[
 			// Sidebar State
@@ -299,15 +293,11 @@ export function UILayoutProvider({ children }: UILayoutProviderProps) {
 			isDraggingImage,
 			// Editing state
 			editingGroupId,
-			editingSessionId
+			editingSessionId,
 		]
 	);
 
-	return (
-		<UILayoutContext.Provider value={value}>
-			{children}
-		</UILayoutContext.Provider>
-	);
+	return <UILayoutContext.Provider value={value}>{children}</UILayoutContext.Provider>;
 }
 
 /**

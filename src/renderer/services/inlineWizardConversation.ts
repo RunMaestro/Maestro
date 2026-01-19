@@ -13,13 +13,10 @@ import type { ToolType } from '../types';
 import type { InlineWizardMessage } from '../hooks/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
+import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
 import {
-  wizardInlineIteratePrompt,
-  wizardInlineNewPrompt,
-} from '../../prompts';
-import {
-  parseStructuredOutput,
-  getConfidenceColor,
+	parseStructuredOutput,
+	getConfidenceColor,
 } from '../components/Wizard/services/wizardPrompts';
 
 /**
@@ -28,8 +25,8 @@ import {
  * this interface adds the content field needed for the iterate mode prompt.
  */
 export interface ExistingDocumentWithContent extends BaseExistingDocument {
-  /** Document content (must be loaded before passing to conversation) */
-  content: string;
+	/** Document content (must be loaded before passing to conversation) */
+	content: string;
 }
 
 /**
@@ -42,78 +39,75 @@ export type ExistingDocument = BaseExistingDocument | ExistingDocumentWithConten
  * Type guard to check if a document has content loaded.
  */
 function hasContent(doc: ExistingDocument): doc is ExistingDocumentWithContent {
-  return 'content' in doc && typeof doc.content === 'string';
+	return 'content' in doc && typeof doc.content === 'string';
 }
-import {
-  substituteTemplateVariables,
-  type TemplateContext,
-} from '../utils/templateVariables';
+import { substituteTemplateVariables, type TemplateContext } from '../utils/templateVariables';
 
 /**
  * Structured response format expected from the agent.
  * Same format as the onboarding wizard for consistency.
  */
 export interface WizardResponse {
-  /** Confidence level (0-100) indicating how well the agent understands the work */
-  confidence: number;
-  /** Whether the agent feels ready to proceed with document generation */
-  ready: boolean;
-  /** The agent's message to display to the user */
-  message: string;
+	/** Confidence level (0-100) indicating how well the agent understands the work */
+	confidence: number;
+	/** Whether the agent feels ready to proceed with document generation */
+	ready: boolean;
+	/** The agent's message to display to the user */
+	message: string;
 }
 
 /**
  * Result of sending a message to the wizard conversation.
  */
 export interface InlineWizardSendResult {
-  /** Whether the operation was successful */
-  success: boolean;
-  /** The parsed response (if successful) */
-  response?: WizardResponse;
-  /** Error message (if unsuccessful) */
-  error?: string;
-  /** Raw output from the agent (for debugging) */
-  rawOutput?: string;
-  /** The Claude agent session ID (session_id) extracted from output - can be used to resume */
-  agentSessionId?: string;
+	/** Whether the operation was successful */
+	success: boolean;
+	/** The parsed response (if successful) */
+	response?: WizardResponse;
+	/** Error message (if unsuccessful) */
+	error?: string;
+	/** Raw output from the agent (for debugging) */
+	rawOutput?: string;
+	/** The Claude agent session ID (session_id) extracted from output - can be used to resume */
+	agentSessionId?: string;
 }
 
 /**
  * Configuration for starting an inline wizard conversation.
  */
 export interface InlineWizardConversationConfig {
-  /** Wizard mode ('new' or 'iterate') */
-  mode: 'new' | 'iterate';
-  /** The AI agent type to use */
-  agentType: ToolType;
-  /** Working directory path */
-  directoryPath: string;
-  /** Project name (derived from session or directory) */
-  projectName: string;
-  /** Goal for iterate mode (what the user wants to add/change) */
-  goal?: string;
-  /** Existing Auto Run documents (for iterate mode context) */
-  existingDocs?: ExistingDocument[];
-  /** Auto Run folder path */
-  autoRunFolderPath?: string;
+	/** Wizard mode ('new' or 'iterate') */
+	mode: 'new' | 'iterate';
+	/** The AI agent type to use */
+	agentType: ToolType;
+	/** Working directory path */
+	directoryPath: string;
+	/** Project name (derived from session or directory) */
+	projectName: string;
+	/** Goal for iterate mode (what the user wants to add/change) */
+	goal?: string;
+	/** Existing Auto Run documents (for iterate mode context) */
+	existingDocs?: ExistingDocument[];
+	/** Auto Run folder path */
+	autoRunFolderPath?: string;
 }
 
 /**
  * Session state for tracking the inline wizard conversation.
  */
 export interface InlineWizardConversationSession {
-  /** Unique session ID for this wizard conversation */
-  sessionId: string;
-  /** The agent type */
-  agentType: ToolType;
-  /** Working directory */
-  directoryPath: string;
-  /** Project name */
-  projectName: string;
-  /** The generated system prompt */
-  systemPrompt: string;
-  /** Whether the session is active */
-  isActive: boolean;
+	/** Unique session ID for this wizard conversation */
+	sessionId: string;
+	/** The agent type */
+	agentType: ToolType;
+	/** Working directory */
+	directoryPath: string;
+	/** Project name */
+	projectName: string;
+	/** The generated system prompt */
+	systemPrompt: string;
+	/** Whether the session is active */
+	isActive: boolean;
 }
 
 /**
@@ -125,20 +119,20 @@ export type OnChunkCallback = (chunk: string) => void;
  * Callbacks for conversation progress.
  */
 export interface ConversationCallbacks {
-  /** Called when message is being sent */
-  onSending?: () => void;
-  /** Called when agent starts responding */
-  onReceiving?: () => void;
-  /** Called with partial output chunks */
-  onChunk?: OnChunkCallback;
-  /** Called with thinking/reasoning content as it streams */
-  onThinkingChunk?: OnChunkCallback;
-  /** Called when a tool execution event is received (for showThinking display) */
-  onToolExecution?: (toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void;
-  /** Called when response is complete */
-  onComplete?: (result: InlineWizardSendResult) => void;
-  /** Called when an error occurs */
-  onError?: (error: string) => void;
+	/** Called when message is being sent */
+	onSending?: () => void;
+	/** Called when agent starts responding */
+	onReceiving?: () => void;
+	/** Called with partial output chunks */
+	onChunk?: OnChunkCallback;
+	/** Called with thinking/reasoning content as it streams */
+	onThinkingChunk?: OnChunkCallback;
+	/** Called when a tool execution event is received (for showThinking display) */
+	onToolExecution?: (toolEvent: { toolName: string; state?: unknown; timestamp: number }) => void;
+	/** Called when response is complete */
+	onComplete?: (result: InlineWizardSendResult) => void;
+	/** Called when an error occurs */
+	onError?: (error: string) => void;
 }
 
 /**
@@ -159,7 +153,7 @@ IMPORTANT: Remember to respond ONLY with valid JSON in this exact format:
  * Generate a unique session ID for wizard conversations.
  */
 function generateWizardSessionId(): string {
-  return `inline-wizard-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+	return `inline-wizard-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
 /**
@@ -169,60 +163,60 @@ function generateWizardSessionId(): string {
  * @returns The complete system prompt for the agent
  */
 export function generateInlineWizardPrompt(config: InlineWizardConversationConfig): string {
-  const { mode, projectName, directoryPath, goal, existingDocs, autoRunFolderPath } = config;
+	const { mode, projectName, directoryPath, goal, existingDocs, autoRunFolderPath } = config;
 
-  // Select the base prompt based on mode
-  let basePrompt: string;
-  if (mode === 'iterate') {
-    basePrompt = wizardInlineIteratePrompt;
-  } else {
-    // 'new' mode uses the new plan prompt
-    basePrompt = wizardInlineNewPrompt;
-  }
+	// Select the base prompt based on mode
+	let basePrompt: string;
+	if (mode === 'iterate') {
+		basePrompt = wizardInlineIteratePrompt;
+	} else {
+		// 'new' mode uses the new plan prompt
+		basePrompt = wizardInlineNewPrompt;
+	}
 
-  // Handle wizard-specific variables that have different semantics from the central template system
-  let prompt = basePrompt
-    .replace(/\{\{PROJECT_NAME\}\}/gi, projectName || 'this project')
-    .replace(/\{\{READY_CONFIDENCE_THRESHOLD\}\}/gi, String(READY_CONFIDENCE_THRESHOLD));
+	// Handle wizard-specific variables that have different semantics from the central template system
+	let prompt = basePrompt
+		.replace(/\{\{PROJECT_NAME\}\}/gi, projectName || 'this project')
+		.replace(/\{\{READY_CONFIDENCE_THRESHOLD\}\}/gi, String(READY_CONFIDENCE_THRESHOLD));
 
-  // For iterate mode, add existing docs and goal
-  if (mode === 'iterate') {
-    // Format existing documents - only include content if loaded
-    let docsContent = 'No existing documents found.';
-    if (existingDocs && existingDocs.length > 0) {
-      const formattedDocs = existingDocs.map(doc => {
-        if (hasContent(doc)) {
-          return `### ${doc.filename}\n\n${doc.content}`;
-        } else {
-          // Document exists but content not loaded - show just the filename
-          return `### ${doc.filename}\n\n(Content not loaded)`;
-        }
-      });
-      docsContent = formattedDocs.join('\n\n---\n\n');
-    }
+	// For iterate mode, add existing docs and goal
+	if (mode === 'iterate') {
+		// Format existing documents - only include content if loaded
+		let docsContent = 'No existing documents found.';
+		if (existingDocs && existingDocs.length > 0) {
+			const formattedDocs = existingDocs.map((doc) => {
+				if (hasContent(doc)) {
+					return `### ${doc.filename}\n\n${doc.content}`;
+				} else {
+					// Document exists but content not loaded - show just the filename
+					return `### ${doc.filename}\n\n(Content not loaded)`;
+				}
+			});
+			docsContent = formattedDocs.join('\n\n---\n\n');
+		}
 
-    prompt = prompt
-      .replace(/\{\{EXISTING_DOCS\}\}/gi, docsContent)
-      .replace(/\{\{ITERATE_GOAL\}\}/gi, goal || 'Not specified');
-  }
+		prompt = prompt
+			.replace(/\{\{EXISTING_DOCS\}\}/gi, docsContent)
+			.replace(/\{\{ITERATE_GOAL\}\}/gi, goal || 'Not specified');
+	}
 
-  // Build template context for remaining variables
-  const templateContext: TemplateContext = {
-    session: {
-      id: 'inline-wizard',
-      name: projectName,
-      toolType: config.agentType,
-      cwd: directoryPath,
-      fullPath: directoryPath,
-      autoRunFolderPath: autoRunFolderPath,
-    },
-    autoRunFolder: autoRunFolderPath,
-  };
+	// Build template context for remaining variables
+	const templateContext: TemplateContext = {
+		session: {
+			id: 'inline-wizard',
+			name: projectName,
+			toolType: config.agentType,
+			cwd: directoryPath,
+			fullPath: directoryPath,
+			autoRunFolderPath: autoRunFolderPath,
+		},
+		autoRunFolder: autoRunFolderPath,
+	};
 
-  // Substitute any remaining template variables
-  prompt = substituteTemplateVariables(prompt, templateContext);
+	// Substitute any remaining template variables
+	prompt = substituteTemplateVariables(prompt, templateContext);
 
-  return prompt;
+	return prompt;
 }
 
 /**
@@ -236,31 +230,27 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
  * @returns Session information for the conversation
  */
 export function startInlineWizardConversation(
-  config: InlineWizardConversationConfig
+	config: InlineWizardConversationConfig
 ): InlineWizardConversationSession {
-  const sessionId = generateWizardSessionId();
-  const systemPrompt = generateInlineWizardPrompt(config);
+	const sessionId = generateWizardSessionId();
+	const systemPrompt = generateInlineWizardPrompt(config);
 
-  logger.info(
-    `Created wizard conversation session`,
-    '[InlineWizardConversation]',
-    {
-      sessionId,
-      mode: config.mode,
-      agentType: config.agentType,
-      projectName: config.projectName,
-      promptLength: systemPrompt.length,
-    }
-  );
+	logger.info(`Created wizard conversation session`, '[InlineWizardConversation]', {
+		sessionId,
+		mode: config.mode,
+		agentType: config.agentType,
+		projectName: config.projectName,
+		promptLength: systemPrompt.length,
+	});
 
-  return {
-    sessionId,
-    agentType: config.agentType,
-    directoryPath: config.directoryPath,
-    projectName: config.projectName,
-    systemPrompt,
-    isActive: true,
-  };
+	return {
+		sessionId,
+		agentType: config.agentType,
+		directoryPath: config.directoryPath,
+		projectName: config.projectName,
+		systemPrompt,
+		isActive: true,
+	};
 }
 
 /**
@@ -274,26 +264,26 @@ export function startInlineWizardConversation(
  * @returns The complete prompt to send to the agent
  */
 function buildPromptWithContext(
-  session: InlineWizardConversationSession,
-  userMessage: string,
-  conversationHistory: InlineWizardMessage[]
+	session: InlineWizardConversationSession,
+	userMessage: string,
+	conversationHistory: InlineWizardMessage[]
 ): string {
-  const parts: string[] = [session.systemPrompt, ''];
+	const parts: string[] = [session.systemPrompt, ''];
 
-  // Add conversation history using array.join() for efficiency
-  if (conversationHistory.length > 0) {
-    parts.push('## Previous Conversation', '');
-    const historyLines = conversationHistory
-      .filter(msg => msg.role === 'user' || msg.role === 'assistant')
-      .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`);
-    parts.push(...historyLines, '');
-  }
+	// Add conversation history using array.join() for efficiency
+	if (conversationHistory.length > 0) {
+		parts.push('## Previous Conversation', '');
+		const historyLines = conversationHistory
+			.filter((msg) => msg.role === 'user' || msg.role === 'assistant')
+			.map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`);
+		parts.push(...historyLines, '');
+	}
 
-  // Add the current user message with structured output suffix
-  parts.push('## Current Message', '');
-  parts.push(userMessage + STRUCTURED_OUTPUT_SUFFIX);
+	// Add the current user message with structured output suffix
+	parts.push('## Current Message', '');
+	parts.push(userMessage + STRUCTURED_OUTPUT_SUFFIX);
 
-  return parts.join('\n');
+	return parts.join('\n');
 }
 
 /**
@@ -307,27 +297,27 @@ function buildPromptWithContext(
  * @returns Parsed WizardResponse or null if parsing failed
  */
 export function parseWizardResponse(response: string): WizardResponse | null {
-  const result = parseStructuredOutput(response);
+	const result = parseStructuredOutput(response);
 
-  if (result.parseSuccess && result.structured) {
-    // Apply our ready threshold check on top of the shared parsing
-    return {
-      confidence: result.structured.confidence,
-      ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
-      message: result.structured.message,
-    };
-  }
+	if (result.parseSuccess && result.structured) {
+		// Apply our ready threshold check on top of the shared parsing
+		return {
+			confidence: result.structured.confidence,
+			ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
+			message: result.structured.message,
+		};
+	}
 
-  // If parsing failed but we have a structured response from fallback, use it
-  if (result.structured) {
-    return {
-      confidence: result.structured.confidence,
-      ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
-      message: result.structured.message,
-    };
-  }
+	// If parsing failed but we have a structured response from fallback, use it
+	if (result.structured) {
+		return {
+			confidence: result.structured.confidence,
+			ready: result.structured.ready && result.structured.confidence >= READY_CONFIDENCE_THRESHOLD,
+			message: result.structured.message,
+		};
+	}
 
-  return null;
+	return null;
 }
 
 /**
@@ -336,24 +326,24 @@ export function parseWizardResponse(response: string): WizardResponse | null {
  * Returns the first session_id found in init or result messages.
  */
 function extractAgentSessionIdFromOutput(output: string): string | null {
-  try {
-    const lines = output.split('\n');
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line);
-        // session_id appears in init and result messages
-        if (msg.session_id) {
-          return msg.session_id;
-        }
-      } catch {
-        // Ignore non-JSON lines
-      }
-    }
-  } catch {
-    // Fallback
-  }
-  return null;
+	try {
+		const lines = output.split('\n');
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			try {
+				const msg = JSON.parse(line);
+				// session_id appears in init and result messages
+				if (msg.session_id) {
+					return msg.session_id;
+				}
+			} catch {
+				// Ignore non-JSON lines
+			}
+		}
+	} catch {
+		// Fallback
+	}
+	return null;
 }
 
 /**
@@ -361,70 +351,70 @@ function extractAgentSessionIdFromOutput(output: string): string | null {
  * Handles different agent output formats (Claude Code stream-json, etc.)
  */
 function extractResultFromStreamJson(output: string, agentType: ToolType): string | null {
-  try {
-    const lines = output.split('\n');
+	try {
+		const lines = output.split('\n');
 
-    // For OpenCode: concatenate all text parts
-    if (agentType === 'opencode') {
-      const textParts: string[] = [];
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.type === 'text' && msg.part?.text) {
-            textParts.push(msg.part.text);
-          }
-        } catch {
-          // Ignore non-JSON lines
-        }
-      }
-      if (textParts.length > 0) {
-        return textParts.join('');
-      }
-    }
+		// For OpenCode: concatenate all text parts
+		if (agentType === 'opencode') {
+			const textParts: string[] = [];
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'text' && msg.part?.text) {
+						textParts.push(msg.part.text);
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
+			}
+			if (textParts.length > 0) {
+				return textParts.join('');
+			}
+		}
 
-    // For Codex: look for message content
-    if (agentType === 'codex') {
-      const textParts: string[] = [];
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const msg = JSON.parse(line);
-          if (msg.type === 'agent_message' && msg.content) {
-            for (const block of msg.content) {
-              if (block.type === 'text' && block.text) {
-                textParts.push(block.text);
-              }
-            }
-          }
-          if (msg.type === 'message' && msg.text) {
-            textParts.push(msg.text);
-          }
-        } catch {
-          // Ignore non-JSON lines
-        }
-      }
-      if (textParts.length > 0) {
-        return textParts.join('');
-      }
-    }
+		// For Codex: look for message content
+		if (agentType === 'codex') {
+			const textParts: string[] = [];
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'agent_message' && msg.content) {
+						for (const block of msg.content) {
+							if (block.type === 'text' && block.text) {
+								textParts.push(block.text);
+							}
+						}
+					}
+					if (msg.type === 'message' && msg.text) {
+						textParts.push(msg.text);
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
+			}
+			if (textParts.length > 0) {
+				return textParts.join('');
+			}
+		}
 
-    // For Claude Code: look for result message
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        const msg = JSON.parse(line);
-        if (msg.type === 'result' && msg.result) {
-          return msg.result;
-        }
-      } catch {
-        // Ignore non-JSON lines
-      }
-    }
-  } catch {
-    // Fallback to raw output
-  }
-  return null;
+		// For Claude Code: look for result message
+		for (const line of lines) {
+			if (!line.trim()) continue;
+			try {
+				const msg = JSON.parse(line);
+				if (msg.type === 'result' && msg.result) {
+					return msg.result;
+				}
+			} catch {
+				// Ignore non-JSON lines
+			}
+		}
+	} catch {
+		// Fallback to raw output
+	}
+	return null;
 }
 
 /**
@@ -433,36 +423,36 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
  * to prevent the agent from making changes during the discovery phase.
  */
 function buildArgsForAgent(agent: any): string[] {
-  const agentId = agent.id;
+	const agentId = agent.id;
 
-  switch (agentId) {
-    case 'claude-code': {
-      const args = [...(agent.args || [])];
-      // Ensure stream-json output format for proper parsing and thinking-chunk events
-      if (!args.includes('--output-format')) {
-        args.push('--output-format', 'stream-json');
-      }
-      if (!args.includes('--include-partial-messages')) {
-        args.push('--include-partial-messages');
-      }
-      // Restrict to read-only tools during wizard conversation
-      // The agent can read files to understand the project, but cannot write/edit
-      // This ensures the wizard conversation phase doesn't make code changes
-      if (!args.includes('--allowedTools')) {
-        args.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS');
-      }
-      return args;
-    }
+	switch (agentId) {
+		case 'claude-code': {
+			const args = [...(agent.args || [])];
+			// Ensure stream-json output format for proper parsing and thinking-chunk events
+			if (!args.includes('--output-format')) {
+				args.push('--output-format', 'stream-json');
+			}
+			if (!args.includes('--include-partial-messages')) {
+				args.push('--include-partial-messages');
+			}
+			// Restrict to read-only tools during wizard conversation
+			// The agent can read files to understand the project, but cannot write/edit
+			// This ensures the wizard conversation phase doesn't make code changes
+			if (!args.includes('--allowedTools')) {
+				args.push('--allowedTools', 'Read', 'Glob', 'Grep', 'LS');
+			}
+			return args;
+		}
 
-    case 'codex':
-    case 'opencode': {
-      return [...(agent.args || [])];
-    }
+		case 'codex':
+		case 'opencode': {
+			return [...(agent.args || [])];
+		}
 
-    default: {
-      return [...(agent.args || [])];
-    }
-  }
+		default: {
+			return [...(agent.args || [])];
+		}
+	}
 }
 
 /**
@@ -478,216 +468,215 @@ function buildArgsForAgent(agent: any): string[] {
  * @returns The result of sending the message
  */
 export async function sendWizardMessage(
-  session: InlineWizardConversationSession,
-  userMessage: string,
-  conversationHistory: InlineWizardMessage[],
-  callbacks?: ConversationCallbacks
+	session: InlineWizardConversationSession,
+	userMessage: string,
+	conversationHistory: InlineWizardMessage[],
+	callbacks?: ConversationCallbacks
 ): Promise<InlineWizardSendResult> {
-  if (!session.isActive) {
-    return {
-      success: false,
-      error: 'Session is not active',
-    };
-  }
+	if (!session.isActive) {
+		return {
+			success: false,
+			error: 'Session is not active',
+		};
+	}
 
-  callbacks?.onSending?.();
+	callbacks?.onSending?.();
 
-  try {
-    // Get the agent configuration
-    const agent = await window.maestro.agents.get(session.agentType);
-    if (!agent || !agent.available) {
-      return {
-        success: false,
-        error: `Agent ${session.agentType} is not available`,
-      };
-    }
+	try {
+		// Get the agent configuration
+		const agent = await window.maestro.agents.get(session.agentType);
+		if (!agent || !agent.available) {
+			return {
+				success: false,
+				error: `Agent ${session.agentType} is not available`,
+			};
+		}
 
-    // Build the full prompt with conversation context
-    const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory);
+		// Build the full prompt with conversation context
+		const fullPrompt = buildPromptWithContext(session, userMessage, conversationHistory);
 
-    // Build args for the agent
-    const argsForSpawn = buildArgsForAgent(agent);
+		// Build args for the agent
+		const argsForSpawn = buildArgsForAgent(agent);
 
-    // Spawn agent and collect output
-    const result = await new Promise<InlineWizardSendResult>((resolve) => {
-      let outputBuffer = '';
-      let dataListenerCleanup: (() => void) | undefined;
-      let exitListenerCleanup: (() => void) | undefined;
+		// Spawn agent and collect output
+		const result = await new Promise<InlineWizardSendResult>((resolve) => {
+			let outputBuffer = '';
+			let dataListenerCleanup: (() => void) | undefined;
+			let exitListenerCleanup: (() => void) | undefined;
 
-      // Set up timeout (5 minutes for complex prompts)
-      const timeoutId = setTimeout(() => {
-        console.log('[InlineWizard] TIMEOUT fired! Session:', session.sessionId);
-        cleanupListeners();
-        // Kill the orphaned agent process to prevent resource leaks
-        window.maestro.process.kill(session.sessionId).catch((err) => {
-          console.warn('[InlineWizard] Failed to kill timed-out process:', err);
-        });
-        resolve({
-          success: false,
-          error: 'Response timeout - agent did not complete in time',
-          rawOutput: outputBuffer,
-        });
-      }, 300000);
+			// Set up timeout (5 minutes for complex prompts)
+			const timeoutId = setTimeout(() => {
+				console.log('[InlineWizard] TIMEOUT fired! Session:', session.sessionId);
+				cleanupListeners();
+				// Kill the orphaned agent process to prevent resource leaks
+				window.maestro.process.kill(session.sessionId).catch((err) => {
+					console.warn('[InlineWizard] Failed to kill timed-out process:', err);
+				});
+				resolve({
+					success: false,
+					error: 'Response timeout - agent did not complete in time',
+					rawOutput: outputBuffer,
+				});
+			}, 300000);
 
-      let thinkingListenerCleanup: (() => void) | undefined;
-      let toolExecutionListenerCleanup: (() => void) | undefined;
+			let thinkingListenerCleanup: (() => void) | undefined;
+			let toolExecutionListenerCleanup: (() => void) | undefined;
 
-      function cleanupListeners() {
-        if (dataListenerCleanup) {
-          dataListenerCleanup();
-          dataListenerCleanup = undefined;
-        }
-        if (exitListenerCleanup) {
-          exitListenerCleanup();
-          exitListenerCleanup = undefined;
-        }
-        if (thinkingListenerCleanup) {
-          thinkingListenerCleanup();
-          thinkingListenerCleanup = undefined;
-        }
-        if (toolExecutionListenerCleanup) {
-          toolExecutionListenerCleanup();
-          toolExecutionListenerCleanup = undefined;
-        }
-      }
+			function cleanupListeners() {
+				if (dataListenerCleanup) {
+					dataListenerCleanup();
+					dataListenerCleanup = undefined;
+				}
+				if (exitListenerCleanup) {
+					exitListenerCleanup();
+					exitListenerCleanup = undefined;
+				}
+				if (thinkingListenerCleanup) {
+					thinkingListenerCleanup();
+					thinkingListenerCleanup = undefined;
+				}
+				if (toolExecutionListenerCleanup) {
+					toolExecutionListenerCleanup();
+					toolExecutionListenerCleanup = undefined;
+				}
+			}
 
-      // Set up data listener
-      dataListenerCleanup = window.maestro.process.onData(
-        (receivedSessionId: string, data: string) => {
-          if (receivedSessionId === session.sessionId) {
-            outputBuffer += data;
-            callbacks?.onChunk?.(data);
-          }
-        }
-      );
+			// Set up data listener
+			dataListenerCleanup = window.maestro.process.onData(
+				(receivedSessionId: string, data: string) => {
+					if (receivedSessionId === session.sessionId) {
+						outputBuffer += data;
+						callbacks?.onChunk?.(data);
+					}
+				}
+			);
 
-      // Set up thinking chunk listener - uses the dedicated event from process-manager
-      // This receives parsed thinking content (isPartial text) that's already extracted
-      if (callbacks?.onThinkingChunk) {
-        thinkingListenerCleanup = window.maestro.process.onThinkingChunk(
-          (receivedSessionId: string, content: string) => {
-            if (receivedSessionId === session.sessionId && content) {
-              try {
-                callbacks.onThinkingChunk!(content);
-              } catch (err) {
-                console.error('[InlineWizard] onThinkingChunk callback threw error:', err);
-              }
-            }
-          }
-        );
-      }
+			// Set up thinking chunk listener - uses the dedicated event from process-manager
+			// This receives parsed thinking content (isPartial text) that's already extracted
+			if (callbacks?.onThinkingChunk) {
+				thinkingListenerCleanup = window.maestro.process.onThinkingChunk(
+					(receivedSessionId: string, content: string) => {
+						if (receivedSessionId === session.sessionId && content) {
+							try {
+								callbacks.onThinkingChunk!(content);
+							} catch (err) {
+								console.error('[InlineWizard] onThinkingChunk callback threw error:', err);
+							}
+						}
+					}
+				);
+			}
 
-      // Set up tool execution listener - shows tool use (Read, Write, etc.) when showThinking is enabled
-      // This is important because in batch mode, we don't get streaming assistant messages,
-      // but we DO get tool execution events which show what the agent is doing
-      if (callbacks?.onToolExecution) {
-        toolExecutionListenerCleanup = window.maestro.process.onToolExecution?.(
-          (receivedSessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
-            if (receivedSessionId === session.sessionId) {
-              try {
-                callbacks.onToolExecution!(toolEvent);
-              } catch (err) {
-                console.error('[InlineWizard] onToolExecution callback threw error:', err);
-              }
-            }
-          }
-        );
-      }
+			// Set up tool execution listener - shows tool use (Read, Write, etc.) when showThinking is enabled
+			// This is important because in batch mode, we don't get streaming assistant messages,
+			// but we DO get tool execution events which show what the agent is doing
+			if (callbacks?.onToolExecution) {
+				toolExecutionListenerCleanup = window.maestro.process.onToolExecution?.(
+					(
+						receivedSessionId: string,
+						toolEvent: { toolName: string; state?: unknown; timestamp: number }
+					) => {
+						if (receivedSessionId === session.sessionId) {
+							try {
+								callbacks.onToolExecution!(toolEvent);
+							} catch (err) {
+								console.error('[InlineWizard] onToolExecution callback threw error:', err);
+							}
+						}
+					}
+				);
+			}
 
-      // Set up exit listener
-      exitListenerCleanup = window.maestro.process.onExit(
-        (receivedSessionId: string, code: number) => {
-          if (receivedSessionId === session.sessionId) {
-            clearTimeout(timeoutId);
-            cleanupListeners();
+			// Set up exit listener
+			exitListenerCleanup = window.maestro.process.onExit(
+				(receivedSessionId: string, code: number) => {
+					if (receivedSessionId === session.sessionId) {
+						clearTimeout(timeoutId);
+						cleanupListeners();
 
-            // Extract the Claude agent session ID from output (for resume capability)
-            const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
+						// Extract the Claude agent session ID from output (for resume capability)
+						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
 
-            if (code === 0) {
-              // Extract result from stream-json format
-              const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-              const textToParse = extractedResult || outputBuffer;
+						if (code === 0) {
+							// Extract result from stream-json format
+							const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
+							const textToParse = extractedResult || outputBuffer;
 
-              // Parse the wizard response
-              const parsedResponse = parseWizardResponse(textToParse);
+							// Parse the wizard response
+							const parsedResponse = parseWizardResponse(textToParse);
 
-              if (parsedResponse) {
-                resolve({
-                  success: true,
-                  response: parsedResponse,
-                  rawOutput: outputBuffer,
-                  agentSessionId: agentSessionId || undefined,
-                });
-              } else {
-                resolve({
-                  success: false,
-                  error: 'Failed to parse agent response',
-                  rawOutput: outputBuffer,
-                  agentSessionId: agentSessionId || undefined,
-                });
-              }
-            } else {
-              resolve({
-                success: false,
-                error: `Agent exited with code ${code}`,
-                rawOutput: outputBuffer,
-                agentSessionId: agentSessionId || undefined,
-              });
-            }
-          }
-        }
-      );
+							if (parsedResponse) {
+								resolve({
+									success: true,
+									response: parsedResponse,
+									rawOutput: outputBuffer,
+									agentSessionId: agentSessionId || undefined,
+								});
+							} else {
+								resolve({
+									success: false,
+									error: 'Failed to parse agent response',
+									rawOutput: outputBuffer,
+									agentSessionId: agentSessionId || undefined,
+								});
+							}
+						} else {
+							resolve({
+								success: false,
+								error: `Agent exited with code ${code}`,
+								rawOutput: outputBuffer,
+								agentSessionId: agentSessionId || undefined,
+							});
+						}
+					}
+				}
+			);
 
-      // Spawn the agent process
-      logger.info(
-        `Spawning wizard agent process`,
-        '[InlineWizardConversation]',
-        {
-          sessionId: session.sessionId,
-          agentType: session.agentType,
-          cwd: session.directoryPath,
-          historyLength: conversationHistory.length,
-        }
-      );
+			// Spawn the agent process
+			logger.info(`Spawning wizard agent process`, '[InlineWizardConversation]', {
+				sessionId: session.sessionId,
+				agentType: session.agentType,
+				cwd: session.directoryPath,
+				historyLength: conversationHistory.length,
+			});
 
-      window.maestro.process
-        .spawn({
-          sessionId: session.sessionId,
-          toolType: session.agentType,
-          cwd: session.directoryPath,
-          command: agent.command,
-          args: argsForSpawn,
-          prompt: fullPrompt,
-        })
-        .then(() => {
-          callbacks?.onReceiving?.();
-        })
-        .catch((error: Error) => {
-          cleanupListeners();
-          clearTimeout(timeoutId);
-          resolve({
-            success: false,
-            error: `Failed to spawn agent: ${error.message}`,
-          });
-        });
-    });
+			window.maestro.process
+				.spawn({
+					sessionId: session.sessionId,
+					toolType: session.agentType,
+					cwd: session.directoryPath,
+					command: agent.command,
+					args: argsForSpawn,
+					prompt: fullPrompt,
+				})
+				.then(() => {
+					callbacks?.onReceiving?.();
+				})
+				.catch((error: Error) => {
+					cleanupListeners();
+					clearTimeout(timeoutId);
+					resolve({
+						success: false,
+						error: `Failed to spawn agent: ${error.message}`,
+					});
+				});
+		});
 
-    if (result.success) {
-      callbacks?.onComplete?.(result);
-    } else {
-      callbacks?.onError?.(result.error || 'Unknown error');
-    }
+		if (result.success) {
+			callbacks?.onComplete?.(result);
+		} else {
+			callbacks?.onError?.(result.error || 'Unknown error');
+		}
 
-    return result;
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-    callbacks?.onError?.(errorMessage);
-    return {
-      success: false,
-      error: errorMessage,
-    };
-  }
+		return result;
+	} catch (error) {
+		const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+		callbacks?.onError?.(errorMessage);
+		return {
+			success: false,
+			error: errorMessage,
+		};
+	}
 }
 
 /**
@@ -697,7 +686,7 @@ export async function sendWizardMessage(
  * @returns Whether the agent is ready (confidence >= threshold and ready=true)
  */
 export function isReadyToProceed(response: WizardResponse): boolean {
-  return response.ready && response.confidence >= READY_CONFIDENCE_THRESHOLD;
+	return response.ready && response.confidence >= READY_CONFIDENCE_THRESHOLD;
 }
 
 /**
@@ -706,19 +695,19 @@ export function isReadyToProceed(response: WizardResponse): boolean {
  * @param session The session to end
  */
 export async function endInlineWizardConversation(
-  session: InlineWizardConversationSession
+	session: InlineWizardConversationSession
 ): Promise<void> {
-  if (!session.isActive) return;
+	if (!session.isActive) return;
 
-  // Mark session as inactive
-  session.isActive = false;
+	// Mark session as inactive
+	session.isActive = false;
 
-  // Try to kill any running process
-  try {
-    await window.maestro.process.kill(session.sessionId);
-  } catch {
-    // Process may already be dead
-  }
+	// Try to kill any running process
+	try {
+		await window.maestro.process.kill(session.sessionId);
+	} catch {
+		// Process may already be dead
+	}
 }
 
 // Re-export getConfidenceColor from the shared location for backwards compatibility

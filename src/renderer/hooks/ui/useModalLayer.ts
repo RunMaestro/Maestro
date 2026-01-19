@@ -35,16 +35,16 @@ import { useLayerStack } from '../../contexts/LayerStackContext';
 import type { FocusTrapMode } from '../../types/layer';
 
 export interface UseModalLayerOptions {
-  /** Whether the modal has unsaved changes */
-  isDirty?: boolean;
-  /** Callback to confirm closing when dirty - return false to prevent close */
-  onBeforeClose?: () => boolean | Promise<boolean>;
-  /** Focus trap behavior. Defaults to 'strict' */
-  focusTrap?: FocusTrapMode;
-  /** Whether this layer blocks interaction with layers below. Defaults to true */
-  blocksLowerLayers?: boolean;
-  /** Whether this layer captures keyboard focus. Defaults to true */
-  capturesFocus?: boolean;
+	/** Whether the modal has unsaved changes */
+	isDirty?: boolean;
+	/** Callback to confirm closing when dirty - return false to prevent close */
+	onBeforeClose?: () => boolean | Promise<boolean>;
+	/** Focus trap behavior. Defaults to 'strict' */
+	focusTrap?: FocusTrapMode;
+	/** Whether this layer blocks interaction with layers below. Defaults to true */
+	blocksLowerLayers?: boolean;
+	/** Whether this layer captures keyboard focus. Defaults to true */
+	capturesFocus?: boolean;
 }
 
 /**
@@ -69,48 +69,58 @@ export interface UseModalLayerOptions {
  * });
  */
 export function useModalLayer(
-  priority: number,
-  ariaLabel: string,
-  onEscape: () => void,
-  options: UseModalLayerOptions = {}
+	priority: number,
+	ariaLabel: string,
+	onEscape: () => void,
+	options: UseModalLayerOptions = {}
 ): void {
-  const {
-    isDirty,
-    onBeforeClose,
-    focusTrap = 'strict',
-    blocksLowerLayers = true,
-    capturesFocus = true,
-  } = options;
+	const {
+		isDirty,
+		onBeforeClose,
+		focusTrap = 'strict',
+		blocksLowerLayers = true,
+		capturesFocus = true,
+	} = options;
 
-  const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
-  const layerIdRef = useRef<string>();
+	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
+	const layerIdRef = useRef<string>();
 
-  // Register layer on mount
-  useEffect(() => {
-    const id = registerLayer({
-      type: 'modal',
-      priority,
-      blocksLowerLayers,
-      capturesFocus,
-      focusTrap,
-      ariaLabel,
-      isDirty,
-      onBeforeClose,
-      onEscape,
-    });
-    layerIdRef.current = id;
+	// Register layer on mount
+	useEffect(() => {
+		const id = registerLayer({
+			type: 'modal',
+			priority,
+			blocksLowerLayers,
+			capturesFocus,
+			focusTrap,
+			ariaLabel,
+			isDirty,
+			onBeforeClose,
+			onEscape,
+		});
+		layerIdRef.current = id;
 
-    return () => {
-      if (layerIdRef.current) {
-        unregisterLayer(layerIdRef.current);
-      }
-    };
-  }, [registerLayer, unregisterLayer, priority, ariaLabel, blocksLowerLayers, capturesFocus, focusTrap, isDirty, onBeforeClose]);
+		return () => {
+			if (layerIdRef.current) {
+				unregisterLayer(layerIdRef.current);
+			}
+		};
+	}, [
+		registerLayer,
+		unregisterLayer,
+		priority,
+		ariaLabel,
+		blocksLowerLayers,
+		capturesFocus,
+		focusTrap,
+		isDirty,
+		onBeforeClose,
+	]);
 
-  // Update handler when onEscape changes (without re-registering)
-  useEffect(() => {
-    if (layerIdRef.current) {
-      updateLayerHandler(layerIdRef.current, onEscape);
-    }
-  }, [onEscape, updateLayerHandler]);
+	// Update handler when onEscape changes (without re-registering)
+	useEffect(() => {
+		if (layerIdRef.current) {
+			updateLayerHandler(layerIdRef.current, onEscape);
+		}
+	}, [onEscape, updateLayerHandler]);
 }

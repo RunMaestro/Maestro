@@ -18,24 +18,24 @@ import { resolveSshPath } from './cliDetection';
  * Contains the command and arguments to pass to spawn().
  */
 export interface SshCommandResult {
-  /** The command to execute ('ssh') */
-  command: string;
-  /** Arguments for the SSH command */
-  args: string[];
+	/** The command to execute ('ssh') */
+	command: string;
+	/** Arguments for the SSH command */
+	args: string[];
 }
 
 /**
  * Options for building the remote command.
  */
 export interface RemoteCommandOptions {
-  /** The command to execute on the remote host */
-  command: string;
-  /** Arguments for the command */
-  args: string[];
-  /** Working directory on the remote host (optional) */
-  cwd?: string;
-  /** Environment variables to set on the remote (optional) */
-  env?: Record<string, string>;
+	/** The command to execute on the remote host */
+	command: string;
+	/** Arguments for the command */
+	args: string[];
+	/** Working directory on the remote host (optional) */
+	cwd?: string;
+	/** Environment variables to set on the remote (optional) */
+	env?: Record<string, string>;
 }
 
 /**
@@ -43,12 +43,12 @@ export interface RemoteCommandOptions {
  * These options ensure non-interactive, key-based authentication.
  */
 const DEFAULT_SSH_OPTIONS: Record<string, string> = {
-  BatchMode: 'yes', // Disable password prompts (key-only)
-  StrictHostKeyChecking: 'accept-new', // Auto-accept new host keys
-  ConnectTimeout: '10', // Connection timeout in seconds
-  ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
-  RequestTTY: 'force', // Force TTY allocation - required for Claude Code's --print mode to produce output
-  LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
+	BatchMode: 'yes', // Disable password prompts (key-only)
+	StrictHostKeyChecking: 'accept-new', // Auto-accept new host keys
+	ConnectTimeout: '10', // Connection timeout in seconds
+	ClearAllForwardings: 'yes', // Disable port forwarding from SSH config (avoids "Address already in use" errors)
+	RequestTTY: 'force', // Force TTY allocation - required for Claude Code's --print mode to produce output
+	LogLevel: 'ERROR', // Suppress SSH warnings like "Pseudo-terminal will not be allocated..."
 };
 
 /**
@@ -75,43 +75,43 @@ const DEFAULT_SSH_OPTIONS: Record<string, string> = {
  * // => "cd '/home/user/project' && ANTHROPIC_API_KEY='sk-...' 'claude' '--print' '--verbose'"
  */
 export function buildRemoteCommand(options: RemoteCommandOptions): string {
-  const { command, args, cwd, env } = options;
+	const { command, args, cwd, env } = options;
 
-  const parts: string[] = [];
+	const parts: string[] = [];
 
-  // Add cd command if working directory is specified
-  if (cwd) {
-    parts.push(`cd ${shellEscape(cwd)}`);
-  }
+	// Add cd command if working directory is specified
+	if (cwd) {
+		parts.push(`cd ${shellEscape(cwd)}`);
+	}
 
-  // Build environment variable exports
-  const envExports: string[] = [];
-  if (env && Object.keys(env).length > 0) {
-    for (const [key, value] of Object.entries(env)) {
-      // Environment variable names are validated (alphanumeric + underscore)
-      // but we still escape the value to be safe
-      if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
-        envExports.push(`${key}=${shellEscape(value)}`);
-      }
-    }
-  }
+	// Build environment variable exports
+	const envExports: string[] = [];
+	if (env && Object.keys(env).length > 0) {
+		for (const [key, value] of Object.entries(env)) {
+			// Environment variable names are validated (alphanumeric + underscore)
+			// but we still escape the value to be safe
+			if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+				envExports.push(`${key}=${shellEscape(value)}`);
+			}
+		}
+	}
 
-  // Build the command with arguments
-  const commandWithArgs = buildShellCommand(command, args);
+	// Build the command with arguments
+	const commandWithArgs = buildShellCommand(command, args);
 
-  // Combine env exports with command
-  let fullCommand: string;
-  if (envExports.length > 0) {
-    // Prepend env vars inline: VAR1='val1' VAR2='val2' command args
-    fullCommand = `${envExports.join(' ')} ${commandWithArgs}`;
-  } else {
-    fullCommand = commandWithArgs;
-  }
+	// Combine env exports with command
+	let fullCommand: string;
+	if (envExports.length > 0) {
+		// Prepend env vars inline: VAR1='val1' VAR2='val2' command args
+		fullCommand = `${envExports.join(' ')} ${commandWithArgs}`;
+	} else {
+		fullCommand = commandWithArgs;
+	}
 
-  parts.push(fullCommand);
+	parts.push(fullCommand);
 
-  // Join with && to ensure cd succeeds before running command
-  return parts.join(' && ');
+	// Join with && to ensure cd succeeds before running command
+	return parts.join(' && ');
 }
 
 /**
@@ -167,118 +167,118 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
  * // }
  */
 export async function buildSshCommand(
-  config: SshRemoteConfig,
-  remoteOptions: RemoteCommandOptions
+	config: SshRemoteConfig,
+	remoteOptions: RemoteCommandOptions
 ): Promise<SshCommandResult> {
-  const args: string[] = [];
+	const args: string[] = [];
 
-  // Resolve the SSH binary path (handles packaged Electron apps where PATH is limited)
-  const sshPath = await resolveSshPath();
+	// Resolve the SSH binary path (handles packaged Electron apps where PATH is limited)
+	const sshPath = await resolveSshPath();
 
-  // Force TTY allocation - required for Claude Code's --print mode to produce output
-  // Without a TTY, Claude Code with --print hangs indefinitely
-  args.push('-tt');
+	// Force TTY allocation - required for Claude Code's --print mode to produce output
+	// Without a TTY, Claude Code with --print hangs indefinitely
+	args.push('-tt');
 
-  // When using SSH config, we let SSH handle authentication settings
-  // Only add explicit overrides if provided
-  if (config.useSshConfig) {
-    // Only specify identity file if explicitly provided (override SSH config)
-    if (config.privateKeyPath && config.privateKeyPath.trim()) {
-      args.push('-i', expandTilde(config.privateKeyPath));
-    }
-  } else {
-    // Direct connection: require private key
-    args.push('-i', expandTilde(config.privateKeyPath));
-  }
+	// When using SSH config, we let SSH handle authentication settings
+	// Only add explicit overrides if provided
+	if (config.useSshConfig) {
+		// Only specify identity file if explicitly provided (override SSH config)
+		if (config.privateKeyPath && config.privateKeyPath.trim()) {
+			args.push('-i', expandTilde(config.privateKeyPath));
+		}
+	} else {
+		// Direct connection: require private key
+		args.push('-i', expandTilde(config.privateKeyPath));
+	}
 
-  // Default SSH options for non-interactive operation
-  // These are always needed to ensure BatchMode behavior
-  for (const [key, value] of Object.entries(DEFAULT_SSH_OPTIONS)) {
-    args.push('-o', `${key}=${value}`);
-  }
+	// Default SSH options for non-interactive operation
+	// These are always needed to ensure BatchMode behavior
+	for (const [key, value] of Object.entries(DEFAULT_SSH_OPTIONS)) {
+		args.push('-o', `${key}=${value}`);
+	}
 
-  // Port specification - only add if not default and not using SSH config
-  // (when using SSH config, let SSH config handle the port)
-  if (!config.useSshConfig || config.port !== 22) {
-    args.push('-p', config.port.toString());
-  }
+	// Port specification - only add if not default and not using SSH config
+	// (when using SSH config, let SSH config handle the port)
+	if (!config.useSshConfig || config.port !== 22) {
+		args.push('-p', config.port.toString());
+	}
 
-  // Build the destination (user@host or just host for SSH config)
-  if (config.useSshConfig) {
-    // When using SSH config, just pass the Host pattern
-    // SSH will look up User, HostName, Port, IdentityFile from config
-    // But if username is explicitly provided, use it as override
-    if (config.username && config.username.trim()) {
-      args.push(`${config.username}@${config.host}`);
-    } else {
-      args.push(config.host);
-    }
-  } else {
-    // Direct connection: always include username
-    args.push(`${config.username}@${config.host}`);
-  }
+	// Build the destination (user@host or just host for SSH config)
+	if (config.useSshConfig) {
+		// When using SSH config, just pass the Host pattern
+		// SSH will look up User, HostName, Port, IdentityFile from config
+		// But if username is explicitly provided, use it as override
+		if (config.username && config.username.trim()) {
+			args.push(`${config.username}@${config.host}`);
+		} else {
+			args.push(config.host);
+		}
+	} else {
+		// Direct connection: always include username
+		args.push(`${config.username}@${config.host}`);
+	}
 
-  // Merge remote config's environment with the command-specific environment
-  // Command-specific env takes precedence over remote config env
-  const mergedEnv: Record<string, string> = {
-    ...(config.remoteEnv || {}),
-    ...(remoteOptions.env || {}),
-  };
+	// Merge remote config's environment with the command-specific environment
+	// Command-specific env takes precedence over remote config env
+	const mergedEnv: Record<string, string> = {
+		...(config.remoteEnv || {}),
+		...(remoteOptions.env || {}),
+	};
 
-  // Use working directory from remoteOptions if provided
-  // No cd if not specified - agent will start in remote home directory
-  const effectiveCwd = remoteOptions.cwd;
+	// Use working directory from remoteOptions if provided
+	// No cd if not specified - agent will start in remote home directory
+	const effectiveCwd = remoteOptions.cwd;
 
-  // Build the remote command string
-  const remoteCommand = buildRemoteCommand({
-    command: remoteOptions.command,
-    args: remoteOptions.args,
-    cwd: effectiveCwd,
-    env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
-  });
+	// Build the remote command string
+	const remoteCommand = buildRemoteCommand({
+		command: remoteOptions.command,
+		args: remoteOptions.args,
+		cwd: effectiveCwd,
+		env: Object.keys(mergedEnv).length > 0 ? mergedEnv : undefined,
+	});
 
-  // Wrap the command to execute via the user's login shell.
-  // $SHELL -ilc ensures the user's full PATH (including homebrew, nvm, etc.) is available.
-  // -i forces interactive mode (critical for .bashrc to not bail out)
-  // -l loads login profile for PATH
-  // -c executes the command
-  // Using $SHELL respects the user's configured shell (bash, zsh, etc.)
-  //
-  // WHY -i IS CRITICAL:
-  // On Ubuntu (and many Linux distros), .bashrc has a guard at the top:
-  //   case $- in *i*) ;; *) return;; esac
-  // This checks if the shell is interactive before running. Without -i,
-  // .bashrc exits early and user PATH additions (like ~/.local/bin) never load.
-  // The -i flag sets 'i' in $-, allowing .bashrc to run fully.
-  //
-  // CRITICAL: When Node.js spawn() passes this to SSH without shell:true, SSH runs
-  // the command through the remote's default shell. The key is escaping:
-  // 1. Double quotes around the command are NOT escaped - they delimit the -c argument
-  // 2. $ signs inside the command MUST be escaped as \$ so they defer to the login shell
-  //    (shellEscapeForDoubleQuotes handles this)
-  // 3. Single quotes inside the command pass through unchanged
-  //
-  // Example transformation for spawn():
-  //   Input:  cd '/path' && MYVAR='value' claude --print
-  //   After escaping: cd '/path' && MYVAR='value' claude --print (no $ to escape here)
-  //   Wrapped: $SHELL -ilc "cd '/path' && MYVAR='value' claude --print"
-  //   SSH receives this as one argument, passes to remote shell
-  //   Remote shell expands $SHELL, executes: /bin/zsh -ilc "cd '/path' ..."
-  //   The login shell runs with full PATH from ~/.zprofile AND ~/.bashrc
-  const escapedCommand = shellEscapeForDoubleQuotes(remoteCommand);
-  const wrappedCommand = `$SHELL -ilc "${escapedCommand}"`;
-  args.push(wrappedCommand);
+	// Wrap the command to execute via the user's login shell.
+	// $SHELL -ilc ensures the user's full PATH (including homebrew, nvm, etc.) is available.
+	// -i forces interactive mode (critical for .bashrc to not bail out)
+	// -l loads login profile for PATH
+	// -c executes the command
+	// Using $SHELL respects the user's configured shell (bash, zsh, etc.)
+	//
+	// WHY -i IS CRITICAL:
+	// On Ubuntu (and many Linux distros), .bashrc has a guard at the top:
+	//   case $- in *i*) ;; *) return;; esac
+	// This checks if the shell is interactive before running. Without -i,
+	// .bashrc exits early and user PATH additions (like ~/.local/bin) never load.
+	// The -i flag sets 'i' in $-, allowing .bashrc to run fully.
+	//
+	// CRITICAL: When Node.js spawn() passes this to SSH without shell:true, SSH runs
+	// the command through the remote's default shell. The key is escaping:
+	// 1. Double quotes around the command are NOT escaped - they delimit the -c argument
+	// 2. $ signs inside the command MUST be escaped as \$ so they defer to the login shell
+	//    (shellEscapeForDoubleQuotes handles this)
+	// 3. Single quotes inside the command pass through unchanged
+	//
+	// Example transformation for spawn():
+	//   Input:  cd '/path' && MYVAR='value' claude --print
+	//   After escaping: cd '/path' && MYVAR='value' claude --print (no $ to escape here)
+	//   Wrapped: $SHELL -ilc "cd '/path' && MYVAR='value' claude --print"
+	//   SSH receives this as one argument, passes to remote shell
+	//   Remote shell expands $SHELL, executes: /bin/zsh -ilc "cd '/path' ..."
+	//   The login shell runs with full PATH from ~/.zprofile AND ~/.bashrc
+	const escapedCommand = shellEscapeForDoubleQuotes(remoteCommand);
+	const wrappedCommand = `$SHELL -ilc "${escapedCommand}"`;
+	args.push(wrappedCommand);
 
-  // Debug logging to trace the exact command being built
-  logger.info('Built SSH command', '[ssh-command-builder]', {
-    remoteCommand,
-    wrappedCommand,
-    sshPath,
-    fullCommand: `${sshPath} ${args.join(' ')}`,
-  });
+	// Debug logging to trace the exact command being built
+	logger.info('Built SSH command', '[ssh-command-builder]', {
+		remoteCommand,
+		wrappedCommand,
+		sshPath,
+		fullCommand: `${sshPath} ${args.join(' ')}`,
+	});
 
-  return {
-    command: sshPath,
-    args,
-  };
+	return {
+		command: sshPath,
+		args,
+	};
 }

@@ -13,7 +13,11 @@ export { WizardPill } from './WizardPill';
 export { WizardConfidenceGauge } from './WizardConfidenceGauge';
 export { WizardInputPanel } from './WizardInputPanel';
 export { WizardModePrompt } from './WizardModePrompt';
-export { WizardMessageBubble, type WizardMessageBubbleProps, type WizardMessageBubbleMessage } from './WizardMessageBubble';
+export {
+	WizardMessageBubble,
+	type WizardMessageBubbleProps,
+	type WizardMessageBubbleMessage,
+} from './WizardMessageBubble';
 export { WizardConversationView, type WizardConversationViewProps } from './WizardConversationView';
 export { WizardExitConfirmDialog } from './WizardExitConfirmDialog';
 export { DocumentGenerationView, type DocumentGenerationViewProps } from './DocumentGenerationView';

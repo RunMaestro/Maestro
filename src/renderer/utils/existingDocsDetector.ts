@@ -14,12 +14,12 @@ export const AUTO_RUN_FOLDER_NAME = 'Auto Run Docs';
  * Represents an existing Auto Run document.
  */
 export interface ExistingDocument {
-  /** Filename without .md extension */
-  name: string;
-  /** Full filename including .md extension */
-  filename: string;
-  /** Full path to the document */
-  path: string;
+	/** Filename without .md extension */
+	name: string;
+	/** Full filename including .md extension */
+	filename: string;
+	/** Full path to the document */
+	path: string;
 }
 
 /**
@@ -29,9 +29,9 @@ export interface ExistingDocument {
  * @returns Full path to the Auto Run Docs folder
  */
 export function getAutoRunFolderPath(projectPath: string): string {
-  // Handle trailing slashes consistently
-  const normalizedPath = projectPath.endsWith('/') ? projectPath.slice(0, -1) : projectPath;
-  return `${normalizedPath}/${AUTO_RUN_FOLDER_NAME}`;
+	// Handle trailing slashes consistently
+	const normalizedPath = projectPath.endsWith('/') ? projectPath.slice(0, -1) : projectPath;
+	return `${normalizedPath}/${AUTO_RUN_FOLDER_NAME}`;
 }
 
 /**
@@ -52,22 +52,22 @@ export function getAutoRunFolderPath(projectPath: string): string {
  * }
  */
 export async function hasExistingAutoRunDocs(projectPath: string): Promise<boolean> {
-  try {
-    const folderPath = getAutoRunFolderPath(projectPath);
-    const result = await window.maestro.autorun.listDocs(folderPath);
+	try {
+		const folderPath = getAutoRunFolderPath(projectPath);
+		const result = await window.maestro.autorun.listDocs(folderPath);
 
-    if (!result.success) {
-      // Folder doesn't exist or can't be read - no existing docs
-      return false;
-    }
+		if (!result.success) {
+			// Folder doesn't exist or can't be read - no existing docs
+			return false;
+		}
 
-    // Check if there are any markdown files
-    return result.files.length > 0;
-  } catch (error) {
-    // Any error (folder doesn't exist, permission issues, etc.) means no existing docs
-    console.debug('[existingDocsDetector] hasExistingAutoRunDocs error:', error);
-    return false;
-  }
+		// Check if there are any markdown files
+		return result.files.length > 0;
+	} catch (error) {
+		// Any error (folder doesn't exist, permission issues, etc.) means no existing docs
+		console.debug('[existingDocsDetector] hasExistingAutoRunDocs error:', error);
+		return false;
+	}
 }
 
 /**
@@ -86,25 +86,25 @@ export async function hasExistingAutoRunDocs(projectPath: string): Promise<boole
  * }
  */
 export async function getExistingAutoRunDocs(projectPath: string): Promise<ExistingDocument[]> {
-  try {
-    const folderPath = getAutoRunFolderPath(projectPath);
-    const result = await window.maestro.autorun.listDocs(folderPath);
+	try {
+		const folderPath = getAutoRunFolderPath(projectPath);
+		const result = await window.maestro.autorun.listDocs(folderPath);
 
-    if (!result.success || !result.files) {
-      return [];
-    }
+		if (!result.success || !result.files) {
+			return [];
+		}
 
-    // The listDocs API returns filenames without .md extension
-    // Convert to ExistingDocument format
-    return result.files.map((name: string) => ({
-      name,
-      filename: `${name}.md`,
-      path: `${folderPath}/${name}.md`,
-    }));
-  } catch (error) {
-    console.debug('[existingDocsDetector] getExistingAutoRunDocs error:', error);
-    return [];
-  }
+		// The listDocs API returns filenames without .md extension
+		// Convert to ExistingDocument format
+		return result.files.map((name: string) => ({
+			name,
+			filename: `${name}.md`,
+			path: `${folderPath}/${name}.md`,
+		}));
+	} catch (error) {
+		console.debug('[existingDocsDetector] getExistingAutoRunDocs error:', error);
+		return [];
+	}
 }
 
 /**
@@ -116,17 +116,17 @@ export async function getExistingAutoRunDocs(projectPath: string): Promise<Exist
  * @returns Number of Auto Run documents, 0 if none or folder doesn't exist
  */
 export async function getExistingAutoRunDocsCount(projectPath: string): Promise<number> {
-  try {
-    const folderPath = getAutoRunFolderPath(projectPath);
-    const result = await window.maestro.autorun.listDocs(folderPath);
+	try {
+		const folderPath = getAutoRunFolderPath(projectPath);
+		const result = await window.maestro.autorun.listDocs(folderPath);
 
-    if (!result.success || !result.files) {
-      return 0;
-    }
+		if (!result.success || !result.files) {
+			return 0;
+		}
 
-    return result.files.length;
-  } catch (error) {
-    console.debug('[existingDocsDetector] getExistingAutoRunDocsCount error:', error);
-    return 0;
-  }
+		return result.files.length;
+	} catch (error) {
+		console.debug('[existingDocsDetector] getExistingAutoRunDocsCount error:', error);
+		return 0;
+	}
 }

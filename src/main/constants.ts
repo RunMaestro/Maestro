@@ -17,7 +17,8 @@ export const DEMO_MODE = process.argv.includes('--demo') || !!process.env.MAESTR
 /**
  * Demo data directory path (only meaningful when DEMO_MODE is true)
  */
-export const DEMO_DATA_PATH = process.env.MAESTRO_DEMO_DIR || path.join(os.tmpdir(), 'maestro-demo');
+export const DEMO_DATA_PATH =
+	process.env.MAESTRO_DEMO_DIR || path.join(os.tmpdir(), 'maestro-demo');
 
 /**
  * Token divisor for converting to millions (used in cost calculations)
@@ -29,14 +30,14 @@ export const TOKENS_PER_MILLION = 1_000_000;
  * These limits optimize scanning by avoiding full file reads for metadata extraction
  */
 export const CLAUDE_SESSION_PARSE_LIMITS = {
-  /** Max lines to scan from start of file to find first user message */
-  FIRST_MESSAGE_SCAN_LINES: 20,
-  /** Max lines to scan from end of file to find last timestamp */
-  LAST_TIMESTAMP_SCAN_LINES: 10,
-  /** Max lines to scan for oldest timestamp in stats calculation */
-  OLDEST_TIMESTAMP_SCAN_LINES: 5,
-  /** Max characters for first message preview */
-  FIRST_MESSAGE_PREVIEW_LENGTH: 200,
+	/** Max lines to scan from start of file to find first user message */
+	FIRST_MESSAGE_SCAN_LINES: 20,
+	/** Max lines to scan from end of file to find last timestamp */
+	LAST_TIMESTAMP_SCAN_LINES: 10,
+	/** Max lines to scan for oldest timestamp in stats calculation */
+	OLDEST_TIMESTAMP_SCAN_LINES: 5,
+	/** Max characters for first message preview */
+	FIRST_MESSAGE_PREVIEW_LENGTH: 200,
 } as const;
 
 /**
@@ -44,8 +45,8 @@ export const CLAUDE_SESSION_PARSE_LIMITS = {
  * Used for cost estimation in session statistics
  */
 export const CLAUDE_PRICING = {
-  INPUT_PER_MILLION: 3,
-  OUTPUT_PER_MILLION: 15,
-  CACHE_READ_PER_MILLION: 0.30,
-  CACHE_CREATION_PER_MILLION: 3.75,
+	INPUT_PER_MILLION: 3,
+	OUTPUT_PER_MILLION: 15,
+	CACHE_READ_PER_MILLION: 0.3,
+	CACHE_CREATION_PER_MILLION: 3.75,
 } as const;

@@ -12,34 +12,34 @@ import confetti from 'canvas-confetti';
  * Options for customizing the confetti animation
  */
 export interface ConfettiOptions {
-  /** Particle count (default: 150) */
-  particleCount?: number;
-  /** Spread angle in degrees (default: 70) */
-  spread?: number;
-  /** Origin point { x: 0-1, y: 0-1 } (default: center bottom { x: 0.5, y: 0.9 }) */
-  origin?: { x: number; y: number };
-  /** Custom colors array (default: celebratory palette) */
-  colors?: string[];
-  /** Whether to fire multiple bursts (default: true) */
-  multiBurst?: boolean;
-  /** Disable for users with reduced motion preference (default: true) */
-  respectReducedMotion?: boolean;
-  /** Skip confetti animation entirely (user preference from settings) */
-  disabled?: boolean;
+	/** Particle count (default: 150) */
+	particleCount?: number;
+	/** Spread angle in degrees (default: 70) */
+	spread?: number;
+	/** Origin point { x: 0-1, y: 0-1 } (default: center bottom { x: 0.5, y: 0.9 }) */
+	origin?: { x: number; y: number };
+	/** Custom colors array (default: celebratory palette) */
+	colors?: string[];
+	/** Whether to fire multiple bursts (default: true) */
+	multiBurst?: boolean;
+	/** Disable for users with reduced motion preference (default: true) */
+	respectReducedMotion?: boolean;
+	/** Skip confetti animation entirely (user preference from settings) */
+	disabled?: boolean;
 }
 
 /**
  * Default celebratory color palette
  */
 const DEFAULT_COLORS = [
-  '#FFD700', // Gold
-  '#FF6B6B', // Red
-  '#4ECDC4', // Teal
-  '#45B7D1', // Blue
-  '#FFA726', // Orange
-  '#BA68C8', // Purple
-  '#F48FB1', // Pink
-  '#FFEAA7', // Yellow
+	'#FFD700', // Gold
+	'#FF6B6B', // Red
+	'#4ECDC4', // Teal
+	'#45B7D1', // Blue
+	'#FFA726', // Orange
+	'#BA68C8', // Purple
+	'#F48FB1', // Pink
+	'#FFEAA7', // Yellow
 ];
 
 /**
@@ -75,72 +75,72 @@ const CONFETTI_Z_INDEX = 99998;
  * });
  */
 export function triggerConfetti(options: ConfettiOptions = {}): void {
-  const {
-    particleCount = 150,
-    spread = 70,
-    origin = { x: 0.5, y: 0.9 },
-    colors = DEFAULT_COLORS,
-    multiBurst = true,
-    respectReducedMotion = true,
-    disabled = false,
-  } = options;
+	const {
+		particleCount = 150,
+		spread = 70,
+		origin = { x: 0.5, y: 0.9 },
+		colors = DEFAULT_COLORS,
+		multiBurst = true,
+		respectReducedMotion = true,
+		disabled = false,
+	} = options;
 
-  // Skip if disabled by user setting
-  if (disabled) {
-    return;
-  }
+	// Skip if disabled by user setting
+	if (disabled) {
+		return;
+	}
 
-  // Respect reduced motion preference
-  if (respectReducedMotion) {
-    const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (prefersReducedMotion) {
-      return;
-    }
-  }
+	// Respect reduced motion preference
+	if (respectReducedMotion) {
+		const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		if (prefersReducedMotion) {
+			return;
+		}
+	}
 
-  const defaults = {
-    particleCount,
-    spread,
-    startVelocity: 45,
-    gravity: 1,
-    decay: 0.9,
-    drift: 0,
-    scalar: 1.1,
-    ticks: 200, // ~2 seconds at 60fps
-    shapes: ['circle', 'square'] as ('circle' | 'square')[],
-    colors,
-    zIndex: CONFETTI_Z_INDEX,
-    disableForReducedMotion: respectReducedMotion,
-  };
+	const defaults = {
+		particleCount,
+		spread,
+		startVelocity: 45,
+		gravity: 1,
+		decay: 0.9,
+		drift: 0,
+		scalar: 1.1,
+		ticks: 200, // ~2 seconds at 60fps
+		shapes: ['circle', 'square'] as ('circle' | 'square')[],
+		colors,
+		zIndex: CONFETTI_Z_INDEX,
+		disableForReducedMotion: respectReducedMotion,
+	};
 
-  // Main center burst
-  confetti({
-    ...defaults,
-    origin,
-    angle: 90,
-  });
+	// Main center burst
+	confetti({
+		...defaults,
+		origin,
+		angle: 90,
+	});
 
-  if (multiBurst) {
-    // Left burst - slightly delayed
-    setTimeout(() => {
-      confetti({
-        ...defaults,
-        particleCount: Math.floor(particleCount * 0.6),
-        origin: { x: origin.x - 0.3, y: origin.y },
-        angle: 60,
-      });
-    }, 100);
+	if (multiBurst) {
+		// Left burst - slightly delayed
+		setTimeout(() => {
+			confetti({
+				...defaults,
+				particleCount: Math.floor(particleCount * 0.6),
+				origin: { x: origin.x - 0.3, y: origin.y },
+				angle: 60,
+			});
+		}, 100);
 
-    // Right burst - slightly delayed
-    setTimeout(() => {
-      confetti({
-        ...defaults,
-        particleCount: Math.floor(particleCount * 0.6),
-        origin: { x: origin.x + 0.3, y: origin.y },
-        angle: 120,
-      });
-    }, 100);
-  }
+		// Right burst - slightly delayed
+		setTimeout(() => {
+			confetti({
+				...defaults,
+				particleCount: Math.floor(particleCount * 0.6),
+				origin: { x: origin.x + 0.3, y: origin.y },
+				angle: 120,
+			});
+		}, 100);
+	}
 }
 
 /**
@@ -154,33 +154,33 @@ export function triggerConfetti(options: ConfettiOptions = {}): void {
  * triggerCelebration();
  */
 export function triggerCelebration(disabled = false): void {
-  // Skip if disabled by user setting
-  if (disabled) {
-    return;
-  }
+	// Skip if disabled by user setting
+	if (disabled) {
+		return;
+	}
 
-  triggerConfetti({
-    particleCount: 300,
-    spread: 100,
-    multiBurst: true,
-  });
+	triggerConfetti({
+		particleCount: 300,
+		spread: 100,
+		multiBurst: true,
+	});
 
-  // Add a star burst from the center after a short delay
-  setTimeout(() => {
-    confetti({
-      particleCount: 50,
-      spread: 360,
-      origin: { x: 0.5, y: 0.5 },
-      startVelocity: 30,
-      gravity: 0.8,
-      scalar: 1.5,
-      ticks: 250,
-      shapes: ['star'] as ('star')[],
-      colors: ['#FFD700', '#FFA500', '#FFFFFF'],
-      zIndex: CONFETTI_Z_INDEX,
-      disableForReducedMotion: true,
-    });
-  }, 300);
+	// Add a star burst from the center after a short delay
+	setTimeout(() => {
+		confetti({
+			particleCount: 50,
+			spread: 360,
+			origin: { x: 0.5, y: 0.5 },
+			startVelocity: 30,
+			gravity: 0.8,
+			scalar: 1.5,
+			ticks: 250,
+			shapes: ['star'] as 'star'[],
+			colors: ['#FFD700', '#FFA500', '#FFFFFF'],
+			zIndex: CONFETTI_Z_INDEX,
+			disableForReducedMotion: true,
+		});
+	}, 300);
 }
 
 /**
@@ -188,5 +188,5 @@ export function triggerCelebration(disabled = false): void {
  * Useful for cleanup when navigating away or closing modals.
  */
 export function clearConfetti(): void {
-  confetti.reset();
+	confetti.reset();
 }

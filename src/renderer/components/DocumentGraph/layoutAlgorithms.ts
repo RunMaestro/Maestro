@@ -10,15 +10,15 @@
 
 import { Node, Edge } from 'reactflow';
 import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-  forceX,
-  forceY,
-  SimulationNodeDatum,
-  SimulationLinkDatum,
+	forceSimulation,
+	forceLink,
+	forceManyBody,
+	forceCenter,
+	forceCollide,
+	forceX,
+	forceY,
+	SimulationNodeDatum,
+	SimulationLinkDatum,
 } from 'd3-force';
 import dagre from '@dagrejs/dagre';
 import type { GraphNodeData, DocumentNodeData } from './graphDataBuilder';
@@ -27,33 +27,33 @@ import type { GraphNodeData, DocumentNodeData } from './graphDataBuilder';
  * Layout configuration options
  */
 export interface LayoutOptions {
-  /** Node width for layout calculations */
-  nodeWidth?: number;
-  /** Node height for layout calculations */
-  nodeHeight?: number;
-  /** Direction for hierarchical layout: 'TB' (top-bottom) or 'LR' (left-right) */
-  rankDirection?: 'TB' | 'LR';
-  /** Separation between nodes (hierarchical) or base distance (force) */
-  nodeSeparation?: number;
-  /** Separation between ranks/levels (hierarchical only) */
-  rankSeparation?: number;
-  /** Center X position for the layout */
-  centerX?: number;
-  /** Center Y position for the layout */
-  centerY?: number;
+	/** Node width for layout calculations */
+	nodeWidth?: number;
+	/** Node height for layout calculations */
+	nodeHeight?: number;
+	/** Direction for hierarchical layout: 'TB' (top-bottom) or 'LR' (left-right) */
+	rankDirection?: 'TB' | 'LR';
+	/** Separation between nodes (hierarchical) or base distance (force) */
+	nodeSeparation?: number;
+	/** Separation between ranks/levels (hierarchical only) */
+	rankSeparation?: number;
+	/** Center X position for the layout */
+	centerX?: number;
+	/** Center Y position for the layout */
+	centerY?: number;
 }
 
 /**
  * Default layout options
  */
 const DEFAULT_OPTIONS: Required<LayoutOptions> = {
-  nodeWidth: 220,
-  nodeHeight: 80,
-  rankDirection: 'TB',
-  nodeSeparation: 80,
-  rankSeparation: 150,
-  centerX: 0,
-  centerY: 0,
+	nodeWidth: 220,
+	nodeHeight: 80,
+	rankDirection: 'TB',
+	nodeSeparation: 80,
+	rankSeparation: 150,
+	centerX: 0,
+	centerY: 0,
 };
 
 /**
@@ -68,74 +68,75 @@ const nodeDimensionCache = new Map<string, { width: number; height: number }>();
  * Only works with document nodes (not external link nodes).
  */
 function estimateNodeDimensions(node: Node<DocumentNodeData>): { width: number; height: number } {
-  const data = node.data;
-  const titleText = data.title || '';
-  const previewText = data.description || data.contentPreview || '';
+	const data = node.data;
+	const titleText = data.title || '';
+	const previewText = data.description || data.contentPreview || '';
 
-  // Use content lengths as cache key
-  const cacheKey = `${Math.min(titleText.length, 40)}:${Math.min(previewText.length, 100)}`;
-  const cached = nodeDimensionCache.get(cacheKey);
-  if (cached) {
-    return cached;
-  }
+	// Use content lengths as cache key
+	const cacheKey = `${Math.min(titleText.length, 40)}:${Math.min(previewText.length, 100)}`;
+	const cached = nodeDimensionCache.get(cacheKey);
+	if (cached) {
+		return cached;
+	}
 
-  // Base dimensions (padding + minimum content)
-  const padding = 24; // 12px padding on each side
-  const minWidth = 160;
-  const maxWidth = 280;
+	// Base dimensions (padding + minimum content)
+	const padding = 24; // 12px padding on each side
+	const minWidth = 160;
+	const maxWidth = 280;
 
-  // Estimate title width (roughly 8px per character at 14px font)
-  const truncatedTitle = titleText.length > 40 ? titleText.slice(0, 40) + '...' : titleText;
-  const titleWidth = Math.min(truncatedTitle.length * 7.5 + 20, maxWidth - padding); // +20 for icon
+	// Estimate title width (roughly 8px per character at 14px font)
+	const truncatedTitle = titleText.length > 40 ? titleText.slice(0, 40) + '...' : titleText;
+	const titleWidth = Math.min(truncatedTitle.length * 7.5 + 20, maxWidth - padding); // +20 for icon
 
-  // Stats row is fixed width (roughly 100px for the three stats)
-  const statsWidth = 120;
+	// Stats row is fixed width (roughly 100px for the three stats)
+	const statsWidth = 120;
 
-  // Description width if present
-  let descriptionWidth = 0;
-  let descriptionHeight = 0;
+	// Description width if present
+	let descriptionWidth = 0;
+	let descriptionHeight = 0;
 
-  if (previewText) {
-    const truncatedPreview = previewText.length > 100 ? previewText.slice(0, 100) + '...' : previewText;
-    // Description wraps, estimate based on max width
-    descriptionWidth = Math.min(truncatedPreview.length * 6, maxWidth - padding);
-    // Estimate line count for height (roughly 17px per line at 12px font with 1.4 line height)
-    const charsPerLine = Math.floor((maxWidth - padding) / 6);
-    const lineCount = Math.ceil(truncatedPreview.length / charsPerLine);
-    descriptionHeight = lineCount * 17;
-  }
+	if (previewText) {
+		const truncatedPreview =
+			previewText.length > 100 ? previewText.slice(0, 100) + '...' : previewText;
+		// Description wraps, estimate based on max width
+		descriptionWidth = Math.min(truncatedPreview.length * 6, maxWidth - padding);
+		// Estimate line count for height (roughly 17px per line at 12px font with 1.4 line height)
+		const charsPerLine = Math.floor((maxWidth - padding) / 6);
+		const lineCount = Math.ceil(truncatedPreview.length / charsPerLine);
+		descriptionHeight = lineCount * 17;
+	}
 
-  // Calculate final dimensions
-  const contentWidth = Math.max(titleWidth, statsWidth, descriptionWidth);
-  const width = Math.max(minWidth, Math.min(contentWidth + padding, maxWidth));
+	// Calculate final dimensions
+	const contentWidth = Math.max(titleWidth, statsWidth, descriptionWidth);
+	const width = Math.max(minWidth, Math.min(contentWidth + padding, maxWidth));
 
-  // Height: title (20px) + margin (8px) + stats (16px) + margin (8px if desc) + description
-  let height = padding + 20 + 8 + 16; // Base: padding + title + margin + stats
-  if (descriptionHeight > 0) {
-    height += 8 + descriptionHeight; // margin + description
-  }
+	// Height: title (20px) + margin (8px) + stats (16px) + margin (8px if desc) + description
+	let height = padding + 20 + 8 + 16; // Base: padding + title + margin + stats
+	if (descriptionHeight > 0) {
+		height += 8 + descriptionHeight; // margin + description
+	}
 
-  const result = { width, height };
-  nodeDimensionCache.set(cacheKey, result);
-  return result;
+	const result = { width, height };
+	nodeDimensionCache.set(cacheKey, result);
+	return result;
 }
 
 /**
  * Extended node datum for d3-force simulation
  */
 interface ForceNodeDatum extends SimulationNodeDatum {
-  id: string;
-  width: number;
-  height: number;
-  isExternal: boolean;
+	id: string;
+	width: number;
+	height: number;
+	isExternal: boolean;
 }
 
 /**
  * Link datum for d3-force simulation
  */
 interface ForceLinkDatum extends SimulationLinkDatum<ForceNodeDatum> {
-  id: string;
-  isExternal: boolean;
+	id: string;
+	isExternal: boolean;
 }
 
 /**
@@ -153,146 +154,144 @@ interface ForceLinkDatum extends SimulationLinkDatum<ForceNodeDatum> {
  * @returns New array of nodes with updated positions
  */
 export function applyForceLayout(
-  nodes: Node<GraphNodeData>[],
-  edges: Edge[],
-  options: LayoutOptions = {}
+	nodes: Node<GraphNodeData>[],
+	edges: Edge[],
+	options: LayoutOptions = {}
 ): Node<GraphNodeData>[] {
-  if (nodes.length === 0) return [];
+	if (nodes.length === 0) return [];
 
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+	const opts = { ...DEFAULT_OPTIONS, ...options };
 
-  // Separate document nodes from external nodes
-  const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
-  const externalNodes = nodes.filter((n) => n.type === 'externalLinkNode');
+	// Separate document nodes from external nodes
+	const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
+	const externalNodes = nodes.filter((n) => n.type === 'externalLinkNode');
 
-  // If no document nodes, just arrange external nodes in a grid
-  if (documentNodes.length === 0) {
-    return arrangeNodesInGrid(externalNodes, opts);
-  }
+	// If no document nodes, just arrange external nodes in a grid
+	if (documentNodes.length === 0) {
+		return arrangeNodesInGrid(externalNodes, opts);
+	}
 
-  // PHASE 1: Layout document nodes only (internal links)
-  const internalEdges = edges.filter((e) => e.type !== 'external');
+	// PHASE 1: Layout document nodes only (internal links)
+	const internalEdges = edges.filter((e) => e.type !== 'external');
 
-  const simNodes: ForceNodeDatum[] = documentNodes.map((node) => {
-    const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
-    return {
-      id: node.id,
-      x: node.position.x || Math.random() * 400 - 200,
-      y: node.position.y || Math.random() * 400 - 200,
-      width: dims.width,
-      height: dims.height,
-      isExternal: false,
-    };
-  });
+	const simNodes: ForceNodeDatum[] = documentNodes.map((node) => {
+		const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
+		return {
+			id: node.id,
+			x: node.position.x || Math.random() * 400 - 200,
+			y: node.position.y || Math.random() * 400 - 200,
+			width: dims.width,
+			height: dims.height,
+			isExternal: false,
+		};
+	});
 
-  const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
+	const nodeMap = new Map(simNodes.map((n) => [n.id, n]));
 
-  const simLinks: ForceLinkDatum[] = internalEdges
-    .filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target))
-    .map((edge) => ({
-      id: edge.id,
-      source: edge.source,
-      target: edge.target,
-      isExternal: false,
-    }));
+	const simLinks: ForceLinkDatum[] = internalEdges
+		.filter((edge) => nodeMap.has(edge.source) && nodeMap.has(edge.target))
+		.map((edge) => ({
+			id: edge.id,
+			source: edge.source,
+			target: edge.target,
+			isExternal: false,
+		}));
 
-  const baseLinkDistance = opts.nodeSeparation + opts.nodeWidth * 0.8;
+	const baseLinkDistance = opts.nodeSeparation + opts.nodeWidth * 0.8;
 
-  const simulation = forceSimulation<ForceNodeDatum>(simNodes)
-    .force(
-      'link',
-      forceLink<ForceNodeDatum, ForceLinkDatum>(simLinks)
-        .id((d) => d.id)
-        .distance(baseLinkDistance)
-        .strength(0.5)
-    )
-    .force(
-      'charge',
-      forceManyBody<ForceNodeDatum>()
-        .strength(-500)
-        .distanceMax(800)
-    )
-    .force(
-      'collide',
-      forceCollide<ForceNodeDatum>()
-        .radius((d) => Math.max(d.width, d.height) / 2 + opts.nodeSeparation / 2 + 20)
-        .strength(1.0)
-        .iterations(3)
-    )
-    .force('center', forceCenter(opts.centerX, opts.centerY))
-    .force('x', forceX<ForceNodeDatum>(opts.centerX).strength(0.05))
-    .force('y', forceY<ForceNodeDatum>(opts.centerY).strength(0.05))
-    .stop();
+	const simulation = forceSimulation<ForceNodeDatum>(simNodes)
+		.force(
+			'link',
+			forceLink<ForceNodeDatum, ForceLinkDatum>(simLinks)
+				.id((d) => d.id)
+				.distance(baseLinkDistance)
+				.strength(0.5)
+		)
+		.force('charge', forceManyBody<ForceNodeDatum>().strength(-500).distanceMax(800))
+		.force(
+			'collide',
+			forceCollide<ForceNodeDatum>()
+				.radius((d) => Math.max(d.width, d.height) / 2 + opts.nodeSeparation / 2 + 20)
+				.strength(1.0)
+				.iterations(3)
+		)
+		.force('center', forceCenter(opts.centerX, opts.centerY))
+		.force('x', forceX<ForceNodeDatum>(opts.centerX).strength(0.05))
+		.force('y', forceY<ForceNodeDatum>(opts.centerY).strength(0.05))
+		.stop();
 
-  simulation.tick(400);
+	simulation.tick(400);
 
-  // Build position map for document nodes
-  const positionMap = new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
+	// Build position map for document nodes
+	const positionMap = new Map(simNodes.map((n) => [n.id, { x: n.x ?? 0, y: n.y ?? 0 }]));
 
-  // Calculate bounding box of document nodes
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const n of simNodes) {
-    const x = n.x ?? 0;
-    const y = n.y ?? 0;
-    minX = Math.min(minX, x - n.width / 2);
-    maxX = Math.max(maxX, x + n.width / 2);
-    minY = Math.min(minY, y - n.height / 2);
-    maxY = Math.max(maxY, y + n.height / 2);
-  }
+	// Calculate bounding box of document nodes
+	let minX = Infinity,
+		maxX = -Infinity,
+		minY = Infinity,
+		maxY = -Infinity;
+	for (const n of simNodes) {
+		const x = n.x ?? 0;
+		const y = n.y ?? 0;
+		minX = Math.min(minX, x - n.width / 2);
+		maxX = Math.max(maxX, x + n.width / 2);
+		minY = Math.min(minY, y - n.height / 2);
+		maxY = Math.max(maxY, y + n.height / 2);
+	}
 
-  // PHASE 2: Position external nodes around the periphery
-  if (externalNodes.length > 0) {
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-    const width = maxX - minX;
-    const height = maxY - minY;
+	// PHASE 2: Position external nodes around the periphery
+	if (externalNodes.length > 0) {
+		const centerX = (minX + maxX) / 2;
+		const centerY = (minY + maxY) / 2;
+		const width = maxX - minX;
+		const height = maxY - minY;
 
-    // Place external nodes in a ring outside the document cluster
-    const ringRadius = Math.max(width, height) / 2 + 250; // 250px outside the cluster
-    const angleStep = (2 * Math.PI) / externalNodes.length;
-    const startAngle = -Math.PI / 2; // Start at top
+		// Place external nodes in a ring outside the document cluster
+		const ringRadius = Math.max(width, height) / 2 + 250; // 250px outside the cluster
+		const angleStep = (2 * Math.PI) / externalNodes.length;
+		const startAngle = -Math.PI / 2; // Start at top
 
-    externalNodes.forEach((node, i) => {
-      const angle = startAngle + i * angleStep;
-      const x = centerX + ringRadius * Math.cos(angle);
-      const y = centerY + ringRadius * Math.sin(angle);
-      positionMap.set(node.id, { x: x - 80, y: y - 30 }); // Offset for node center
-    });
-  }
+		externalNodes.forEach((node, i) => {
+			const angle = startAngle + i * angleStep;
+			const x = centerX + ringRadius * Math.cos(angle);
+			const y = centerY + ringRadius * Math.sin(angle);
+			positionMap.set(node.id, { x: x - 80, y: y - 30 }); // Offset for node center
+		});
+	}
 
-  // Return all nodes with their positions
-  return nodes.map((node) => {
-    const pos = positionMap.get(node.id);
-    return {
-      ...node,
-      position: pos ?? node.position,
-    };
-  });
+	// Return all nodes with their positions
+	return nodes.map((node) => {
+		const pos = positionMap.get(node.id);
+		return {
+			...node,
+			position: pos ?? node.position,
+		};
+	});
 }
 
 /**
  * Arrange nodes in a simple grid layout
  */
 function arrangeNodesInGrid(
-  nodes: Node<GraphNodeData>[],
-  opts: Required<LayoutOptions>
+	nodes: Node<GraphNodeData>[],
+	opts: Required<LayoutOptions>
 ): Node<GraphNodeData>[] {
-  const cols = Math.ceil(Math.sqrt(nodes.length));
-  const nodeWidth = 180;
-  const nodeHeight = 80;
-  const gap = opts.nodeSeparation;
+	const cols = Math.ceil(Math.sqrt(nodes.length));
+	const nodeWidth = 180;
+	const nodeHeight = 80;
+	const gap = opts.nodeSeparation;
 
-  return nodes.map((node, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    return {
-      ...node,
-      position: {
-        x: col * (nodeWidth + gap) - (cols * (nodeWidth + gap)) / 2,
-        y: row * (nodeHeight + gap) - (Math.ceil(nodes.length / cols) * (nodeHeight + gap)) / 2,
-      },
-    };
-  });
+	return nodes.map((node, i) => {
+		const col = i % cols;
+		const row = Math.floor(i / cols);
+		return {
+			...node,
+			position: {
+				x: col * (nodeWidth + gap) - (cols * (nodeWidth + gap)) / 2,
+				y: row * (nodeHeight + gap) - (Math.ceil(nodes.length / cols) * (nodeHeight + gap)) / 2,
+			},
+		};
+	});
 }
 
 /**
@@ -310,111 +309,115 @@ function arrangeNodesInGrid(
  * @returns New array of nodes with updated positions
  */
 export function applyHierarchicalLayout(
-  nodes: Node<GraphNodeData>[],
-  edges: Edge[],
-  options: LayoutOptions = {}
+	nodes: Node<GraphNodeData>[],
+	edges: Edge[],
+	options: LayoutOptions = {}
 ): Node<GraphNodeData>[] {
-  if (nodes.length === 0) return [];
+	if (nodes.length === 0) return [];
 
-  const opts = { ...DEFAULT_OPTIONS, ...options };
+	const opts = { ...DEFAULT_OPTIONS, ...options };
 
-  // Separate document nodes from external nodes
-  const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
-  const externalNodes = nodes.filter((n) => n.type === 'externalLinkNode');
+	// Separate document nodes from external nodes
+	const documentNodes = nodes.filter((n) => n.type !== 'externalLinkNode');
+	const externalNodes = nodes.filter((n) => n.type === 'externalLinkNode');
 
-  // If no document nodes, just arrange external nodes in a grid
-  if (documentNodes.length === 0) {
-    return arrangeNodesInGrid(externalNodes, opts);
-  }
+	// If no document nodes, just arrange external nodes in a grid
+	if (documentNodes.length === 0) {
+		return arrangeNodesInGrid(externalNodes, opts);
+	}
 
-  // PHASE 1: Layout document nodes only using dagre
-  const internalEdges = edges.filter((e) => e.type !== 'external');
+	// PHASE 1: Layout document nodes only using dagre
+	const internalEdges = edges.filter((e) => e.type !== 'external');
 
-  const g = new dagre.graphlib.Graph();
+	const g = new dagre.graphlib.Graph();
 
-  g.setGraph({
-    rankdir: opts.rankDirection,
-    nodesep: opts.nodeSeparation,
-    ranksep: opts.rankSeparation,
-    marginx: 50,
-    marginy: 50,
-    ranker: 'network-simplex',
-  });
+	g.setGraph({
+		rankdir: opts.rankDirection,
+		nodesep: opts.nodeSeparation,
+		ranksep: opts.rankSeparation,
+		marginx: 50,
+		marginy: 50,
+		ranker: 'network-simplex',
+	});
 
-  g.setDefaultEdgeLabel(() => ({}));
+	g.setDefaultEdgeLabel(() => ({}));
 
-  // Store node dimensions for later use
-  const nodeDimensions = new Map<string, { width: number; height: number }>();
+	// Store node dimensions for later use
+	const nodeDimensions = new Map<string, { width: number; height: number }>();
 
-  // Add document nodes with estimated dimensions plus padding for spacing
-  for (const node of documentNodes) {
-    const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
-    nodeDimensions.set(node.id, dims);
-    g.setNode(node.id, {
-      width: dims.width + 20,
-      height: dims.height + 20,
-      label: node.id,
-    });
-  }
+	// Add document nodes with estimated dimensions plus padding for spacing
+	for (const node of documentNodes) {
+		const dims = estimateNodeDimensions(node as Node<DocumentNodeData>);
+		nodeDimensions.set(node.id, dims);
+		g.setNode(node.id, {
+			width: dims.width + 20,
+			height: dims.height + 20,
+			label: node.id,
+		});
+	}
 
-  // Add internal edges
-  for (const edge of internalEdges) {
-    if (g.hasNode(edge.source) && g.hasNode(edge.target)) {
-      g.setEdge(edge.source, edge.target);
-    }
-  }
+	// Add internal edges
+	for (const edge of internalEdges) {
+		if (g.hasNode(edge.source) && g.hasNode(edge.target)) {
+			g.setEdge(edge.source, edge.target);
+		}
+	}
 
-  dagre.layout(g);
+	dagre.layout(g);
 
-  // Build position map for document nodes
-  const positionMap = new Map<string, { x: number; y: number }>();
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+	// Build position map for document nodes
+	const positionMap = new Map<string, { x: number; y: number }>();
+	let minX = Infinity,
+		maxX = -Infinity,
+		minY = Infinity,
+		maxY = -Infinity;
 
-  for (const node of documentNodes) {
-    const dagreNode = g.node(node.id);
-    const dims = nodeDimensions.get(node.id) || { width: opts.nodeWidth, height: opts.nodeHeight };
-    if (dagreNode) {
-      const x = dagreNode.x - dims.width / 2;
-      const y = dagreNode.y - dims.height / 2;
-      positionMap.set(node.id, { x, y });
+	for (const node of documentNodes) {
+		const dagreNode = g.node(node.id);
+		const dims = nodeDimensions.get(node.id) || { width: opts.nodeWidth, height: opts.nodeHeight };
+		if (dagreNode) {
+			const x = dagreNode.x - dims.width / 2;
+			const y = dagreNode.y - dims.height / 2;
+			positionMap.set(node.id, { x, y });
 
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x + dims.width);
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y + dims.height);
-    }
-  }
+			minX = Math.min(minX, x);
+			maxX = Math.max(maxX, x + dims.width);
+			minY = Math.min(minY, y);
+			maxY = Math.max(maxY, y + dims.height);
+		}
+	}
 
-  // PHASE 2: Position external nodes in a row below the document tree
-  if (externalNodes.length > 0) {
-    const externalNodeWidth = 160;
-    const _externalNodeHeight = 60; // Reserved for future use
-    const externalGap = 40;
+	// PHASE 2: Position external nodes in a row below the document tree
+	if (externalNodes.length > 0) {
+		const externalNodeWidth = 160;
+		const _externalNodeHeight = 60; // Reserved for future use
+		const externalGap = 40;
 
-    // Calculate total width needed for external nodes
-    const totalExternalWidth = externalNodes.length * externalNodeWidth + (externalNodes.length - 1) * externalGap;
+		// Calculate total width needed for external nodes
+		const totalExternalWidth =
+			externalNodes.length * externalNodeWidth + (externalNodes.length - 1) * externalGap;
 
-    // Center the external nodes below the document tree
-    const centerX = (minX + maxX) / 2;
-    const startX = centerX - totalExternalWidth / 2;
-    const externalY = maxY + opts.rankSeparation; // Below the document tree
+		// Center the external nodes below the document tree
+		const centerX = (minX + maxX) / 2;
+		const startX = centerX - totalExternalWidth / 2;
+		const externalY = maxY + opts.rankSeparation; // Below the document tree
 
-    externalNodes.forEach((node, i) => {
-      positionMap.set(node.id, {
-        x: startX + i * (externalNodeWidth + externalGap),
-        y: externalY,
-      });
-    });
-  }
+		externalNodes.forEach((node, i) => {
+			positionMap.set(node.id, {
+				x: startX + i * (externalNodeWidth + externalGap),
+				y: externalY,
+			});
+		});
+	}
 
-  // Return all nodes with their positions
-  return nodes.map((node) => {
-    const pos = positionMap.get(node.id);
-    return {
-      ...node,
-      position: pos ?? node.position,
-    };
-  });
+	// Return all nodes with their positions
+	return nodes.map((node) => {
+		const pos = positionMap.get(node.id);
+		return {
+			...node,
+			position: pos ?? node.position,
+		};
+	});
 }
 
 /**
@@ -426,20 +429,20 @@ export function applyHierarchicalLayout(
  * @returns Interpolated position
  */
 export function interpolatePosition(
-  start: { x: number; y: number },
-  end: { x: number; y: number },
-  t: number
+	start: { x: number; y: number },
+	end: { x: number; y: number },
+	t: number
 ): { x: number; y: number } {
-  // Clamp t to [0, 1]
-  const clampedT = Math.max(0, Math.min(1, t));
+	// Clamp t to [0, 1]
+	const clampedT = Math.max(0, Math.min(1, t));
 
-  // Use easing function for smoother animation (ease-out cubic)
-  const easedT = 1 - Math.pow(1 - clampedT, 3);
+	// Use easing function for smoother animation (ease-out cubic)
+	const easedT = 1 - Math.pow(1 - clampedT, 3);
 
-  return {
-    x: start.x + (end.x - start.x) * easedT,
-    y: start.y + (end.y - start.y) * easedT,
-  };
+	return {
+		x: start.x + (end.x - start.x) * easedT,
+		y: start.y + (end.y - start.y) * easedT,
+	};
 }
 
 /**
@@ -451,35 +454,35 @@ export function interpolatePosition(
  * @returns Array of node arrays, one per frame
  */
 export function createLayoutTransitionFrames(
-  startNodes: Node<GraphNodeData>[],
-  endNodes: Node<GraphNodeData>[],
-  frameCount: number = 30
+	startNodes: Node<GraphNodeData>[],
+	endNodes: Node<GraphNodeData>[],
+	frameCount: number = 30
 ): Node<GraphNodeData>[][] {
-  if (startNodes.length === 0 || endNodes.length === 0) return [endNodes];
-  if (frameCount <= 1) return [endNodes];
+	if (startNodes.length === 0 || endNodes.length === 0) return [endNodes];
+	if (frameCount <= 1) return [endNodes];
 
-  // Create position lookup for end positions
-  const endPositions = new Map(endNodes.map((n) => [n.id, n.position]));
+	// Create position lookup for end positions
+	const endPositions = new Map(endNodes.map((n) => [n.id, n.position]));
 
-  const frames: Node<GraphNodeData>[][] = [];
+	const frames: Node<GraphNodeData>[][] = [];
 
-  for (let i = 0; i <= frameCount; i++) {
-    const t = i / frameCount;
+	for (let i = 0; i <= frameCount; i++) {
+		const t = i / frameCount;
 
-    const frameNodes = startNodes.map((node) => {
-      const endPos = endPositions.get(node.id);
-      if (!endPos) return node;
+		const frameNodes = startNodes.map((node) => {
+			const endPos = endPositions.get(node.id);
+			if (!endPos) return node;
 
-      return {
-        ...node,
-        position: interpolatePosition(node.position, endPos, t),
-      };
-    });
+			return {
+				...node,
+				position: interpolatePosition(node.position, endPos, t),
+			};
+		});
 
-    frames.push(frameNodes);
-  }
+		frames.push(frameNodes);
+	}
 
-  return frames;
+	return frames;
 }
 
 /**
@@ -495,13 +498,13 @@ const positionStore = new Map<string, Map<string, { x: number; y: number }>>();
  * @param nodes - Nodes with positions to save
  */
 export function saveNodePositions(graphId: string, nodes: Node<GraphNodeData>[]): void {
-  const positions = new Map<string, { x: number; y: number }>();
+	const positions = new Map<string, { x: number; y: number }>();
 
-  for (const node of nodes) {
-    positions.set(node.id, { ...node.position });
-  }
+	for (const node of nodes) {
+		positions.set(node.id, { ...node.position });
+	}
 
-  positionStore.set(graphId, positions);
+	positionStore.set(graphId, positions);
 }
 
 /**
@@ -512,21 +515,21 @@ export function saveNodePositions(graphId: string, nodes: Node<GraphNodeData>[])
  * @returns Nodes with restored positions (unchanged if no saved positions)
  */
 export function restoreNodePositions(
-  graphId: string,
-  nodes: Node<GraphNodeData>[]
+	graphId: string,
+	nodes: Node<GraphNodeData>[]
 ): Node<GraphNodeData>[] {
-  const savedPositions = positionStore.get(graphId);
-  if (!savedPositions) return nodes;
+	const savedPositions = positionStore.get(graphId);
+	if (!savedPositions) return nodes;
 
-  return nodes.map((node) => {
-    const savedPos = savedPositions.get(node.id);
-    if (!savedPos) return node;
+	return nodes.map((node) => {
+		const savedPos = savedPositions.get(node.id);
+		if (!savedPos) return node;
 
-    return {
-      ...node,
-      position: { ...savedPos },
-    };
-  });
+		return {
+			...node,
+			position: { ...savedPos },
+		};
+	});
 }
 
 /**
@@ -535,7 +538,7 @@ export function restoreNodePositions(
  * @param graphId - Unique identifier for the graph
  */
 export function clearNodePositions(graphId: string): void {
-  positionStore.delete(graphId);
+	positionStore.delete(graphId);
 }
 
 /**
@@ -545,37 +548,37 @@ export function clearNodePositions(graphId: string): void {
  * @returns True if positions are saved for this graph
  */
 export function hasSavedPositions(graphId: string): boolean {
-  return positionStore.has(graphId);
+	return positionStore.has(graphId);
 }
 
 /**
  * Animation state that can be attached to nodes for entry/exit animations.
  */
 export interface NodeAnimationState {
-  /** Current animation phase */
-  animationPhase: 'entering' | 'stable' | 'exiting';
-  /** Animation progress (0-1) */
-  animationProgress: number;
-  /** Original opacity before animation */
-  originalOpacity?: number;
-  /** Original scale before animation */
-  originalScale?: number;
+	/** Current animation phase */
+	animationPhase: 'entering' | 'stable' | 'exiting';
+	/** Animation progress (0-1) */
+	animationProgress: number;
+	/** Original opacity before animation */
+	originalOpacity?: number;
+	/** Original scale before animation */
+	originalScale?: number;
 }
 
 /**
  * Result of diffing two sets of nodes to detect additions and removals.
  */
 export interface NodeDiff<T> {
-  /** Nodes that exist in new set but not in old set */
-  added: Node<T>[];
-  /** Nodes that exist in old set but not in new set */
-  removed: Node<T>[];
-  /** Nodes that exist in both sets (potentially with updated data/position) */
-  unchanged: Node<T>[];
-  /** IDs of added nodes */
-  addedIds: Set<string>;
-  /** IDs of removed nodes */
-  removedIds: Set<string>;
+	/** Nodes that exist in new set but not in old set */
+	added: Node<T>[];
+	/** Nodes that exist in old set but not in new set */
+	removed: Node<T>[];
+	/** Nodes that exist in both sets (potentially with updated data/position) */
+	unchanged: Node<T>[];
+	/** IDs of added nodes */
+	addedIds: Set<string>;
+	/** IDs of removed nodes */
+	removedIds: Set<string>;
 }
 
 /**
@@ -585,39 +588,36 @@ export interface NodeDiff<T> {
  * @param newNodes - New set of nodes
  * @returns NodeDiff containing categorized nodes
  */
-export function diffNodes<T>(
-  oldNodes: Node<T>[],
-  newNodes: Node<T>[]
-): NodeDiff<T> {
-  const oldIds = new Set(oldNodes.map((n) => n.id));
-  const newIds = new Set(newNodes.map((n) => n.id));
+export function diffNodes<T>(oldNodes: Node<T>[], newNodes: Node<T>[]): NodeDiff<T> {
+	const oldIds = new Set(oldNodes.map((n) => n.id));
+	const newIds = new Set(newNodes.map((n) => n.id));
 
-  const addedIds = new Set<string>();
-  const removedIds = new Set<string>();
+	const addedIds = new Set<string>();
+	const removedIds = new Set<string>();
 
-  const added: Node<T>[] = [];
-  const removed: Node<T>[] = [];
-  const unchanged: Node<T>[] = [];
+	const added: Node<T>[] = [];
+	const removed: Node<T>[] = [];
+	const unchanged: Node<T>[] = [];
 
-  // Find added nodes (in new but not in old)
-  for (const node of newNodes) {
-    if (!oldIds.has(node.id)) {
-      added.push(node);
-      addedIds.add(node.id);
-    } else {
-      unchanged.push(node);
-    }
-  }
+	// Find added nodes (in new but not in old)
+	for (const node of newNodes) {
+		if (!oldIds.has(node.id)) {
+			added.push(node);
+			addedIds.add(node.id);
+		} else {
+			unchanged.push(node);
+		}
+	}
 
-  // Find removed nodes (in old but not in new)
-  for (const node of oldNodes) {
-    if (!newIds.has(node.id)) {
-      removed.push(node);
-      removedIds.add(node.id);
-    }
-  }
+	// Find removed nodes (in old but not in new)
+	for (const node of oldNodes) {
+		if (!newIds.has(node.id)) {
+			removed.push(node);
+			removedIds.add(node.id);
+		}
+	}
 
-  return { added, removed, unchanged, addedIds, removedIds };
+	return { added, removed, unchanged, addedIds, removedIds };
 }
 
 /**
@@ -629,39 +629,45 @@ export function diffNodes<T>(
  * @returns Array of node arrays, one per frame with updated animation state
  */
 export function createNodeEntryFrames<T>(
-  nodes: Node<T>[],
-  frameCount: number = 15
+	nodes: Node<T>[],
+	frameCount: number = 15
 ): Node<T & NodeAnimationState>[][] {
-  if (nodes.length === 0) return [];
-  if (frameCount <= 1) return [nodes.map((n) => ({ ...n, data: { ...n.data, animationPhase: 'stable' as const, animationProgress: 1 } }))];
+	if (nodes.length === 0) return [];
+	if (frameCount <= 1)
+		return [
+			nodes.map((n) => ({
+				...n,
+				data: { ...n.data, animationPhase: 'stable' as const, animationProgress: 1 },
+			})),
+		];
 
-  const frames: Node<T & NodeAnimationState>[][] = [];
+	const frames: Node<T & NodeAnimationState>[][] = [];
 
-  for (let i = 0; i <= frameCount; i++) {
-    const progress = i / frameCount;
-    // Use ease-out cubic for smooth entry
-    const easedProgress = 1 - Math.pow(1 - progress, 3);
+	for (let i = 0; i <= frameCount; i++) {
+		const progress = i / frameCount;
+		// Use ease-out cubic for smooth entry
+		const easedProgress = 1 - Math.pow(1 - progress, 3);
 
-    const frameNodes = nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        animationPhase: progress < 1 ? ('entering' as const) : ('stable' as const),
-        animationProgress: easedProgress,
-      },
-      // Store animation state in node style for CSS-based animation
-      style: {
-        ...node.style,
-        opacity: easedProgress,
-        transform: `scale(${0.5 + easedProgress * 0.5})`,
-        transition: 'none', // Disable CSS transitions during JS animation
-      },
-    }));
+		const frameNodes = nodes.map((node) => ({
+			...node,
+			data: {
+				...node.data,
+				animationPhase: progress < 1 ? ('entering' as const) : ('stable' as const),
+				animationProgress: easedProgress,
+			},
+			// Store animation state in node style for CSS-based animation
+			style: {
+				...node.style,
+				opacity: easedProgress,
+				transform: `scale(${0.5 + easedProgress * 0.5})`,
+				transition: 'none', // Disable CSS transitions during JS animation
+			},
+		}));
 
-    frames.push(frameNodes);
-  }
+		frames.push(frameNodes);
+	}
 
-  return frames;
+	return frames;
 }
 
 /**
@@ -673,39 +679,39 @@ export function createNodeEntryFrames<T>(
  * @returns Array of node arrays, one per frame with updated animation state
  */
 export function createNodeExitFrames<T>(
-  nodes: Node<T>[],
-  frameCount: number = 10
+	nodes: Node<T>[],
+	frameCount: number = 10
 ): Node<T & NodeAnimationState>[][] {
-  if (nodes.length === 0) return [];
-  if (frameCount <= 1) return []; // Exit ends with nodes removed
+	if (nodes.length === 0) return [];
+	if (frameCount <= 1) return []; // Exit ends with nodes removed
 
-  const frames: Node<T & NodeAnimationState>[][] = [];
+	const frames: Node<T & NodeAnimationState>[][] = [];
 
-  for (let i = 0; i <= frameCount; i++) {
-    const progress = i / frameCount;
-    // Use ease-in cubic for quick exit
-    const easedProgress = Math.pow(progress, 2);
-    const inverseProgress = 1 - easedProgress;
+	for (let i = 0; i <= frameCount; i++) {
+		const progress = i / frameCount;
+		// Use ease-in cubic for quick exit
+		const easedProgress = Math.pow(progress, 2);
+		const inverseProgress = 1 - easedProgress;
 
-    const frameNodes = nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        animationPhase: 'exiting' as const,
-        animationProgress: easedProgress,
-      },
-      style: {
-        ...node.style,
-        opacity: inverseProgress,
-        transform: `scale(${0.5 + inverseProgress * 0.5})`,
-        transition: 'none',
-      },
-    }));
+		const frameNodes = nodes.map((node) => ({
+			...node,
+			data: {
+				...node.data,
+				animationPhase: 'exiting' as const,
+				animationProgress: easedProgress,
+			},
+			style: {
+				...node.style,
+				opacity: inverseProgress,
+				transform: `scale(${0.5 + inverseProgress * 0.5})`,
+				transition: 'none',
+			},
+		}));
 
-    frames.push(frameNodes);
-  }
+		frames.push(frameNodes);
+	}
 
-  return frames;
+	return frames;
 }
 
 /**
@@ -717,26 +723,26 @@ export function createNodeExitFrames<T>(
  * @returns Combined array of all nodes
  */
 export function mergeAnimatingNodes<T>(
-  stableNodes: Node<T>[],
-  animatingNodes: Node<T>[]
+	stableNodes: Node<T>[],
+	animatingNodes: Node<T>[]
 ): Node<T>[] {
-  // Create a map of animating nodes for quick lookup
-  const animatingMap = new Map(animatingNodes.map((n) => [n.id, n]));
+	// Create a map of animating nodes for quick lookup
+	const animatingMap = new Map(animatingNodes.map((n) => [n.id, n]));
 
-  // Replace stable nodes with their animating counterparts if they exist
-  const merged = stableNodes.map((node) => {
-    const animating = animatingMap.get(node.id);
-    return animating ?? node;
-  });
+	// Replace stable nodes with their animating counterparts if they exist
+	const merged = stableNodes.map((node) => {
+		const animating = animatingMap.get(node.id);
+		return animating ?? node;
+	});
 
-  // Add any animating nodes that aren't in stable nodes (e.g., exiting nodes)
-  for (const node of animatingNodes) {
-    if (!stableNodes.some((n) => n.id === node.id)) {
-      merged.push(node);
-    }
-  }
+	// Add any animating nodes that aren't in stable nodes (e.g., exiting nodes)
+	for (const node of animatingNodes) {
+		if (!stableNodes.some((n) => n.id === node.id)) {
+			merged.push(node);
+		}
+	}
 
-  return merged;
+	return merged;
 }
 
 /**
@@ -750,56 +756,54 @@ export function mergeAnimatingNodes<T>(
  * @returns New nodes with initial positions near connected neighbors
  */
 export function positionNewNodesNearNeighbors<T extends GraphNodeData>(
-  newNodes: Node<T>[],
-  existingNodes: Node<T>[],
-  edges: Edge[],
-  options: LayoutOptions = {}
+	newNodes: Node<T>[],
+	existingNodes: Node<T>[],
+	edges: Edge[],
+	options: LayoutOptions = {}
 ): Node<T>[] {
-  const opts = { ...DEFAULT_OPTIONS, ...options };
-  const existingPositions = new Map(existingNodes.map((n) => [n.id, n.position]));
+	const opts = { ...DEFAULT_OPTIONS, ...options };
+	const existingPositions = new Map(existingNodes.map((n) => [n.id, n.position]));
 
-  return newNodes.map((node) => {
-    // Find edges connected to this node
-    const connectedEdges = edges.filter(
-      (e) => e.source === node.id || e.target === node.id
-    );
+	return newNodes.map((node) => {
+		// Find edges connected to this node
+		const connectedEdges = edges.filter((e) => e.source === node.id || e.target === node.id);
 
-    // Find positions of connected existing nodes
-    const neighborPositions: { x: number; y: number }[] = [];
-    for (const edge of connectedEdges) {
-      const neighborId = edge.source === node.id ? edge.target : edge.source;
-      const neighborPos = existingPositions.get(neighborId);
-      if (neighborPos) {
-        neighborPositions.push(neighborPos);
-      }
-    }
+		// Find positions of connected existing nodes
+		const neighborPositions: { x: number; y: number }[] = [];
+		for (const edge of connectedEdges) {
+			const neighborId = edge.source === node.id ? edge.target : edge.source;
+			const neighborPos = existingPositions.get(neighborId);
+			if (neighborPos) {
+				neighborPositions.push(neighborPos);
+			}
+		}
 
-    let initialPosition: { x: number; y: number };
+		let initialPosition: { x: number; y: number };
 
-    if (neighborPositions.length > 0) {
-      // Calculate centroid of connected neighbors
-      const avgX = neighborPositions.reduce((sum, p) => sum + p.x, 0) / neighborPositions.length;
-      const avgY = neighborPositions.reduce((sum, p) => sum + p.y, 0) / neighborPositions.length;
+		if (neighborPositions.length > 0) {
+			// Calculate centroid of connected neighbors
+			const avgX = neighborPositions.reduce((sum, p) => sum + p.x, 0) / neighborPositions.length;
+			const avgY = neighborPositions.reduce((sum, p) => sum + p.y, 0) / neighborPositions.length;
 
-      // Offset slightly to avoid exact overlap
-      const offset = opts.nodeSeparation;
-      const angle = Math.random() * Math.PI * 2;
-      initialPosition = {
-        x: avgX + Math.cos(angle) * offset,
-        y: avgY + Math.sin(angle) * offset,
-      };
-    } else {
-      // No connected neighbors, position at center with random offset
-      const offset = opts.nodeSeparation * 2;
-      initialPosition = {
-        x: opts.centerX + (Math.random() - 0.5) * offset,
-        y: opts.centerY + (Math.random() - 0.5) * offset,
-      };
-    }
+			// Offset slightly to avoid exact overlap
+			const offset = opts.nodeSeparation;
+			const angle = Math.random() * Math.PI * 2;
+			initialPosition = {
+				x: avgX + Math.cos(angle) * offset,
+				y: avgY + Math.sin(angle) * offset,
+			};
+		} else {
+			// No connected neighbors, position at center with random offset
+			const offset = opts.nodeSeparation * 2;
+			initialPosition = {
+				x: opts.centerX + (Math.random() - 0.5) * offset,
+				y: opts.centerY + (Math.random() - 0.5) * offset,
+			};
+		}
 
-    return {
-      ...node,
-      position: initialPosition,
-    };
-  });
+		return {
+			...node,
+			position: initialPosition,
+		};
+	});
 }

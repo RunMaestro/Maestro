@@ -11,62 +11,62 @@ const isMac = typeof navigator !== 'undefined' && navigator.userAgent.includes('
 
 // macOS key symbol mappings
 const MAC_KEY_MAP: Record<string, string> = {
-  Meta: '⌘',
-  Alt: '⌥',
-  Shift: '⇧',
-  Control: '⌃',
-  Ctrl: '⌃',
-  ArrowUp: '↑',
-  ArrowDown: '↓',
-  ArrowLeft: '←',
-  ArrowRight: '→',
-  Backspace: '⌫',
-  Delete: '⌦',
-  Enter: '↩',
-  Return: '↩',
-  Escape: '⎋',
-  Tab: '⇥',
-  Space: '␣',
+	Meta: '⌘',
+	Alt: '⌥',
+	Shift: '⇧',
+	Control: '⌃',
+	Ctrl: '⌃',
+	ArrowUp: '↑',
+	ArrowDown: '↓',
+	ArrowLeft: '←',
+	ArrowRight: '→',
+	Backspace: '⌫',
+	Delete: '⌦',
+	Enter: '↩',
+	Return: '↩',
+	Escape: '⎋',
+	Tab: '⇥',
+	Space: '␣',
 };
 
 // Windows/Linux key mappings (more readable text)
 const OTHER_KEY_MAP: Record<string, string> = {
-  Meta: 'Ctrl',
-  Alt: 'Alt',
-  Shift: 'Shift',
-  Control: 'Ctrl',
-  Ctrl: 'Ctrl',
-  ArrowUp: '↑',
-  ArrowDown: '↓',
-  ArrowLeft: '←',
-  ArrowRight: '→',
-  Backspace: 'Backspace',
-  Delete: 'Delete',
-  Enter: 'Enter',
-  Return: 'Enter',
-  Escape: 'Esc',
-  Tab: 'Tab',
-  Space: 'Space',
+	Meta: 'Ctrl',
+	Alt: 'Alt',
+	Shift: 'Shift',
+	Control: 'Ctrl',
+	Ctrl: 'Ctrl',
+	ArrowUp: '↑',
+	ArrowDown: '↓',
+	ArrowLeft: '←',
+	ArrowRight: '→',
+	Backspace: 'Backspace',
+	Delete: 'Delete',
+	Enter: 'Enter',
+	Return: 'Enter',
+	Escape: 'Esc',
+	Tab: 'Tab',
+	Space: 'Space',
 };
 
 /**
  * Format a single key for display based on platform.
  */
 export function formatKey(key: string): string {
-  const keyMap = isMac ? MAC_KEY_MAP : OTHER_KEY_MAP;
+	const keyMap = isMac ? MAC_KEY_MAP : OTHER_KEY_MAP;
 
-  // Check if there's a mapping for this key
-  if (keyMap[key]) {
-    return keyMap[key];
-  }
+	// Check if there's a mapping for this key
+	if (keyMap[key]) {
+		return keyMap[key];
+	}
 
-  // For single character keys, uppercase them
-  if (key.length === 1) {
-    return key.toUpperCase();
-  }
+	// For single character keys, uppercase them
+	if (key.length === 1) {
+		return key.toUpperCase();
+	}
 
-  // For other keys (like F1, F2, etc.), return as-is
-  return key;
+	// For other keys (like F1, F2, etc.), return as-is
+	return key;
 }
 
 /**
@@ -86,10 +86,10 @@ export function formatKey(key: string): string {
  * formatShortcutKeys(['Alt', 'Meta', 'ArrowRight']) // 'Alt+Ctrl+→'
  */
 export function formatShortcutKeys(keys: string[], separator?: string): string {
-  const defaultSeparator = isMac ? ' ' : '+';
-  const sep = separator ?? defaultSeparator;
+	const defaultSeparator = isMac ? ' ' : '+';
+	const sep = separator ?? defaultSeparator;
 
-  return keys.map(formatKey).join(sep);
+	return keys.map(formatKey).join(sep);
 }
 
 /**
@@ -97,5 +97,5 @@ export function formatShortcutKeys(keys: string[], separator?: string): string {
  * Useful for conditional rendering.
  */
 export function isMacOS(): boolean {
-  return isMac;
+	return isMac;
 }

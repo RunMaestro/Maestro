@@ -5,11 +5,11 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
 
 interface DeleteWorktreeModalProps {
-  theme: Theme;
-  session: Session;
-  onClose: () => void;
-  onConfirm: () => void;
-  onConfirmAndDelete: () => Promise<void>;
+	theme: Theme;
+	session: Session;
+	onClose: () => void;
+	onConfirm: () => void;
+	onConfirmAndDelete: () => Promise<void>;
 }
 
 /**
@@ -21,143 +21,160 @@ interface DeleteWorktreeModalProps {
  * - Confirm and Delete on Disk: Remove the sub-agent AND delete the worktree directory
  */
 export function DeleteWorktreeModal({
-  theme,
-  session,
-  onClose,
-  onConfirm,
-  onConfirmAndDelete,
+	theme,
+	session,
+	onClose,
+	onConfirm,
+	onConfirmAndDelete,
 }: DeleteWorktreeModalProps) {
-  const confirmButtonRef = useRef<HTMLButtonElement>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+	const confirmButtonRef = useRef<HTMLButtonElement>(null);
+	const [isDeleting, setIsDeleting] = useState(false);
+	const [error, setError] = useState<string | null>(null);
 
-  const handleConfirm = () => {
-    onConfirm();
-    onClose();
-  };
+	const handleConfirm = () => {
+		onConfirm();
+		onClose();
+	};
 
-  const handleConfirmAndDelete = async () => {
-    setIsDeleting(true);
-    setError(null);
-    try {
-      await onConfirmAndDelete();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete worktree');
-      setIsDeleting(false);
-    }
-  };
+	const handleConfirmAndDelete = async () => {
+		setIsDeleting(true);
+		setError(null);
+		try {
+			await onConfirmAndDelete();
+			onClose();
+		} catch (err) {
+			setError(err instanceof Error ? err.message : 'Failed to delete worktree');
+			setIsDeleting(false);
+		}
+	};
 
-  return (
-    <Modal
-      theme={theme}
-      title="Delete Worktree"
-      priority={MODAL_PRIORITIES.CONFIRM}
-      onClose={onClose}
-      headerIcon={<Trash2 className="w-4 h-4" style={{ color: theme.colors.error }} />}
-      width={500}
-      zIndex={10000}
-      initialFocusRef={confirmButtonRef}
-      footer={
-        <div className="flex items-center gap-2">
-          {isDeleting ? (
-            <button
-              type="button"
-              disabled
-              className="px-4 py-2 rounded transition-colors outline-none flex items-center justify-center gap-1.5 whitespace-nowrap"
-              style={{
-                backgroundColor: theme.colors.error,
-                color: '#ffffff',
-                opacity: 0.7,
-              }}
-            >
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Deleting...
-            </button>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onClose}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onClose(); } }}
-                className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
-                style={{
-                  borderColor: theme.colors.border,
-                  color: theme.colors.textMain,
-                }}
-              >
-                Cancel
-              </button>
-              <button
-                ref={confirmButtonRef}
-                type="button"
-                onClick={handleConfirm}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleConfirm(); } }}
-                className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
-                style={{
-                  backgroundColor: theme.colors.warning,
-                  color: '#ffffff',
-                }}
-              >
-                Remove
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmAndDelete}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); handleConfirmAndDelete(); } }}
-                className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 flex items-center justify-center gap-1.5 whitespace-nowrap"
-                style={{
-                  backgroundColor: theme.colors.error,
-                  color: '#ffffff',
-                }}
-              >
-                Remove and Delete
-              </button>
-            </>
-          )}
-        </div>
-      }
-    >
-      <div className="flex gap-4">
-        <div
-          className="flex-shrink-0 p-2 rounded-full h-fit"
-          style={{ backgroundColor: `${theme.colors.error}20` }}
-        >
-          <AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
-        </div>
-        <div className="space-y-3">
-          <p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-            Delete worktree session "<span className="font-semibold">{session.name}</span>"?
-          </p>
-          <div className="text-sm space-y-2" style={{ color: theme.colors.textDim }}>
-            <p>
-              <strong style={{ color: theme.colors.textMain }}>Remove:</strong> Removes the sub-agent from Maestro but keeps the git worktree directory on disk.
-            </p>
-            <p>
-              <strong style={{ color: theme.colors.textMain }}>Remove and Delete:</strong> Removes the sub-agent AND permanently deletes the worktree directory from disk.
-            </p>
-          </div>
-          {session.cwd && (
-            <p
-              className="text-xs font-mono px-2 py-1.5 rounded truncate"
-              style={{
-                backgroundColor: theme.colors.bgActivity,
-                color: theme.colors.textDim,
-              }}
-              title={session.cwd}
-            >
-              {session.cwd}
-            </p>
-          )}
-          {error && (
-            <p className="text-xs" style={{ color: theme.colors.error }}>
-              {error}
-            </p>
-          )}
-        </div>
-      </div>
-    </Modal>
-  );
+	return (
+		<Modal
+			theme={theme}
+			title="Delete Worktree"
+			priority={MODAL_PRIORITIES.CONFIRM}
+			onClose={onClose}
+			headerIcon={<Trash2 className="w-4 h-4" style={{ color: theme.colors.error }} />}
+			width={500}
+			zIndex={10000}
+			initialFocusRef={confirmButtonRef}
+			footer={
+				<div className="flex items-center gap-2">
+					{isDeleting ? (
+						<button
+							type="button"
+							disabled
+							className="px-4 py-2 rounded transition-colors outline-none flex items-center justify-center gap-1.5 whitespace-nowrap"
+							style={{
+								backgroundColor: theme.colors.error,
+								color: '#ffffff',
+								opacity: 0.7,
+							}}
+						>
+							<Loader2 className="w-4 h-4 animate-spin" />
+							Deleting...
+						</button>
+					) : (
+						<>
+							<button
+								type="button"
+								onClick={onClose}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') {
+										e.stopPropagation();
+										onClose();
+									}
+								}}
+								className="px-4 py-2 rounded border hover:bg-white/5 transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+								}}
+							>
+								Cancel
+							</button>
+							<button
+								ref={confirmButtonRef}
+								type="button"
+								onClick={handleConfirm}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') {
+										e.stopPropagation();
+										handleConfirm();
+									}
+								}}
+								className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1"
+								style={{
+									backgroundColor: theme.colors.warning,
+									color: '#ffffff',
+								}}
+							>
+								Remove
+							</button>
+							<button
+								type="button"
+								onClick={handleConfirmAndDelete}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter') {
+										e.stopPropagation();
+										handleConfirmAndDelete();
+									}
+								}}
+								className="px-4 py-2 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 flex items-center justify-center gap-1.5 whitespace-nowrap"
+								style={{
+									backgroundColor: theme.colors.error,
+									color: '#ffffff',
+								}}
+							>
+								Remove and Delete
+							</button>
+						</>
+					)}
+				</div>
+			}
+		>
+			<div className="flex gap-4">
+				<div
+					className="flex-shrink-0 p-2 rounded-full h-fit"
+					style={{ backgroundColor: `${theme.colors.error}20` }}
+				>
+					<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
+				</div>
+				<div className="space-y-3">
+					<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
+						Delete worktree session "<span className="font-semibold">{session.name}</span>"?
+					</p>
+					<div className="text-sm space-y-2" style={{ color: theme.colors.textDim }}>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Remove:</strong> Removes the
+							sub-agent from Maestro but keeps the git worktree directory on disk.
+						</p>
+						<p>
+							<strong style={{ color: theme.colors.textMain }}>Remove and Delete:</strong> Removes
+							the sub-agent AND permanently deletes the worktree directory from disk.
+						</p>
+					</div>
+					{session.cwd && (
+						<p
+							className="text-xs font-mono px-2 py-1.5 rounded truncate"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textDim,
+							}}
+							title={session.cwd}
+						>
+							{session.cwd}
+						</p>
+					)}
+					{error && (
+						<p className="text-xs" style={{ color: theme.colors.error }}>
+							{error}
+						</p>
+					)}
+				</div>
+			</div>
+		</Modal>
+	);
 }
 
 export default DeleteWorktreeModal;

@@ -24,11 +24,13 @@ const OSC_PATTERN = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g;
 // The pattern matches sequences terminated by the next ] or BEL (\x07)
 // For sequences that ARE followed by another ], the value can contain / (like CurrentDir=/Users/pedram)
 // For the LAST sequence (not followed by ]), the value ends at the first /
-const ITERM2_OSC_WITH_NEXT = /\]1337;(?:RemoteHost|CurrentDir|ShellIntegrationVersion|User|HostName|LocalPwd|FileInfo|Mark|Dir|ClearCapturedOutput|AddAnnotation|File|Copy|SetMark|StealFocus|SetBadge|ReportCellSize|ReportDirectory|ReportVariables|RequestAttention|SetBackgroundImageFile|SetHotstringEnd|SetKeyLabel|SetProfile|SetUserVar|SetPrecolorScheme|SetColors)=[^\]\x07]*(?=\])/g;
+const ITERM2_OSC_WITH_NEXT =
+	/\]1337;(?:RemoteHost|CurrentDir|ShellIntegrationVersion|User|HostName|LocalPwd|FileInfo|Mark|Dir|ClearCapturedOutput|AddAnnotation|File|Copy|SetMark|StealFocus|SetBadge|ReportCellSize|ReportDirectory|ReportVariables|RequestAttention|SetBackgroundImageFile|SetHotstringEnd|SetKeyLabel|SetProfile|SetUserVar|SetPrecolorScheme|SetColors)=[^\]\x07]*(?=\])/g;
 
 // Match the LAST sequence (followed by a path starting with /)
 // This one can't contain / in its value since that would be ambiguous with the actual path output
-const ITERM2_OSC_LAST = /\]1337;(?:ShellIntegrationVersion|RemoteHost|User|HostName|FileInfo|Mark|ClearCapturedOutput|AddAnnotation|File|Copy|SetMark|StealFocus|SetBadge|ReportCellSize|ReportDirectory|ReportVariables|RequestAttention|SetBackgroundImageFile|SetHotstringEnd|SetKeyLabel|SetProfile|SetUserVar|SetPrecolorScheme|SetColors)=[^\]\x07/]*(?=\/)/g;
+const ITERM2_OSC_LAST =
+	/\]1337;(?:ShellIntegrationVersion|RemoteHost|User|HostName|FileInfo|Mark|ClearCapturedOutput|AddAnnotation|File|Copy|SetMark|StealFocus|SetBadge|ReportCellSize|ReportDirectory|ReportVariables|RequestAttention|SetBackgroundImageFile|SetHotstringEnd|SetKeyLabel|SetProfile|SetUserVar|SetPrecolorScheme|SetColors)=[^\]\x07/]*(?=\/)/g;
 
 // Match bare OSC sequences terminated by BEL (\x07) - no ESC prefix
 // This handles sequences like ]1337;CurrentDir=/home/user\x07
@@ -40,10 +42,10 @@ const BARE_OSC_WITH_BEL = /\]1337;[^\x07]*\x07/g;
  * @returns The cleaned string with escape sequences removed
  */
 export function stripAnsi(str: string): string {
-  return str
-    .replace(OSC_PATTERN, '')
-    .replace(BARE_OSC_WITH_BEL, '')
-    .replace(ITERM2_OSC_WITH_NEXT, '')
-    .replace(ITERM2_OSC_LAST, '')
-    .replace(ANSI_ESCAPE_PATTERN, '');
+	return str
+		.replace(OSC_PATTERN, '')
+		.replace(BARE_OSC_WITH_BEL, '')
+		.replace(ITERM2_OSC_WITH_NEXT, '')
+		.replace(ITERM2_OSC_LAST, '')
+		.replace(ANSI_ESCAPE_PATTERN, '');
 }

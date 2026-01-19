@@ -19,8 +19,8 @@ import { CodexSessionStorage } from './codex-session-storage';
  * Options for initializing session storages
  */
 export interface InitializeSessionStoragesOptions {
-  /** The shared store for Claude session origins (names, starred status, etc.) */
-  claudeSessionOriginsStore?: Store<ClaudeSessionOriginsData>;
+	/** The shared store for Claude session origins (names, starred status, etc.) */
+	claudeSessionOriginsStore?: Store<ClaudeSessionOriginsData>;
 }
 
 /**
@@ -30,7 +30,7 @@ export interface InitializeSessionStoragesOptions {
  * @param options - Optional configuration including shared stores
  */
 export function initializeSessionStorages(options?: InitializeSessionStoragesOptions): void {
-  registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
-  registerSessionStorage(new OpenCodeSessionStorage());
-  registerSessionStorage(new CodexSessionStorage());
+	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
+	registerSessionStorage(new OpenCodeSessionStorage());
+	registerSessionStorage(new CodexSessionStorage());
 }

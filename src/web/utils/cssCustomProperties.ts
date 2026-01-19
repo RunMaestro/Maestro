@@ -17,58 +17,58 @@ import type { Theme, ThemeColors } from '../../shared/theme-types';
  * CSS custom property name for a theme color
  */
 export type ThemeCSSProperty =
-  | '--maestro-bg-main'
-  | '--maestro-bg-sidebar'
-  | '--maestro-bg-activity'
-  | '--maestro-border'
-  | '--maestro-text-main'
-  | '--maestro-text-dim'
-  | '--maestro-accent'
-  | '--maestro-accent-dim'
-  | '--maestro-accent-text'
-  | '--maestro-accent-foreground'
-  | '--maestro-success'
-  | '--maestro-warning'
-  | '--maestro-error'
-  | '--maestro-mode';
+	| '--maestro-bg-main'
+	| '--maestro-bg-sidebar'
+	| '--maestro-bg-activity'
+	| '--maestro-border'
+	| '--maestro-text-main'
+	| '--maestro-text-dim'
+	| '--maestro-accent'
+	| '--maestro-accent-dim'
+	| '--maestro-accent-text'
+	| '--maestro-accent-foreground'
+	| '--maestro-success'
+	| '--maestro-warning'
+	| '--maestro-error'
+	| '--maestro-mode';
 
 /**
  * Maps theme color keys to CSS custom property names
  */
 const colorToCSSProperty: Record<keyof ThemeColors, ThemeCSSProperty> = {
-  bgMain: '--maestro-bg-main',
-  bgSidebar: '--maestro-bg-sidebar',
-  bgActivity: '--maestro-bg-activity',
-  border: '--maestro-border',
-  textMain: '--maestro-text-main',
-  textDim: '--maestro-text-dim',
-  accent: '--maestro-accent',
-  accentDim: '--maestro-accent-dim',
-  accentText: '--maestro-accent-text',
-  accentForeground: '--maestro-accent-foreground',
-  success: '--maestro-success',
-  warning: '--maestro-warning',
-  error: '--maestro-error',
+	bgMain: '--maestro-bg-main',
+	bgSidebar: '--maestro-bg-sidebar',
+	bgActivity: '--maestro-bg-activity',
+	border: '--maestro-border',
+	textMain: '--maestro-text-main',
+	textDim: '--maestro-text-dim',
+	accent: '--maestro-accent',
+	accentDim: '--maestro-accent-dim',
+	accentText: '--maestro-accent-text',
+	accentForeground: '--maestro-accent-foreground',
+	success: '--maestro-success',
+	warning: '--maestro-warning',
+	error: '--maestro-error',
 };
 
 /**
  * All CSS custom property names used by the theme system
  */
 export const THEME_CSS_PROPERTIES: ThemeCSSProperty[] = [
-  '--maestro-bg-main',
-  '--maestro-bg-sidebar',
-  '--maestro-bg-activity',
-  '--maestro-border',
-  '--maestro-text-main',
-  '--maestro-text-dim',
-  '--maestro-accent',
-  '--maestro-accent-dim',
-  '--maestro-accent-text',
-  '--maestro-accent-foreground',
-  '--maestro-success',
-  '--maestro-warning',
-  '--maestro-error',
-  '--maestro-mode',
+	'--maestro-bg-main',
+	'--maestro-bg-sidebar',
+	'--maestro-bg-activity',
+	'--maestro-border',
+	'--maestro-text-main',
+	'--maestro-text-dim',
+	'--maestro-accent',
+	'--maestro-accent-dim',
+	'--maestro-accent-text',
+	'--maestro-accent-foreground',
+	'--maestro-success',
+	'--maestro-warning',
+	'--maestro-error',
+	'--maestro-mode',
 ];
 
 /**
@@ -90,18 +90,18 @@ export const THEME_CSS_PROPERTIES: ThemeCSSProperty[] = [
  * ```
  */
 export function generateCSSProperties(theme: Theme): Record<ThemeCSSProperty, string> {
-  const properties: Partial<Record<ThemeCSSProperty, string>> = {};
+	const properties: Partial<Record<ThemeCSSProperty, string>> = {};
 
-  // Add color properties
-  for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty)) {
-    const colorValue = theme.colors[colorKey as keyof ThemeColors];
-    properties[cssProperty] = colorValue;
-  }
+	// Add color properties
+	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty)) {
+		const colorValue = theme.colors[colorKey as keyof ThemeColors];
+		properties[cssProperty] = colorValue;
+	}
 
-  // Add mode property for CSS selectors based on theme mode
-  properties['--maestro-mode'] = theme.mode;
+	// Add mode property for CSS selectors based on theme mode
+	properties['--maestro-mode'] = theme.mode;
 
-  return properties as Record<ThemeCSSProperty, string>;
+	return properties as Record<ThemeCSSProperty, string>;
 }
 
 /**
@@ -123,12 +123,12 @@ export function generateCSSProperties(theme: Theme): Record<ThemeCSSProperty, st
  * ```
  */
 export function generateCSSString(theme: Theme, selector: string = ':root'): string {
-  const properties = generateCSSProperties(theme);
-  const declarations = Object.entries(properties)
-    .map(([prop, value]) => `  ${prop}: ${value};`)
-    .join('\n');
+	const properties = generateCSSProperties(theme);
+	const declarations = Object.entries(properties)
+		.map(([prop, value]) => `  ${prop}: ${value};`)
+		.join('\n');
 
-  return `${selector} {\n${declarations}\n}`;
+	return `${selector} {\n${declarations}\n}`;
 }
 
 /**
@@ -152,21 +152,21 @@ const STYLE_ELEMENT_ID = 'maestro-theme-css-properties';
  * ```
  */
 export function injectCSSProperties(theme: Theme): void {
-  if (typeof document === 'undefined') {
-    // SSR safety - no-op on server
-    return;
-  }
+	if (typeof document === 'undefined') {
+		// SSR safety - no-op on server
+		return;
+	}
 
-  let styleElement = document.getElementById(STYLE_ELEMENT_ID) as HTMLStyleElement | null;
+	let styleElement = document.getElementById(STYLE_ELEMENT_ID) as HTMLStyleElement | null;
 
-  if (!styleElement) {
-    styleElement = document.createElement('style');
-    styleElement.id = STYLE_ELEMENT_ID;
-    styleElement.setAttribute('data-maestro-theme', 'true');
-    document.head.appendChild(styleElement);
-  }
+	if (!styleElement) {
+		styleElement = document.createElement('style');
+		styleElement.id = STYLE_ELEMENT_ID;
+		styleElement.setAttribute('data-maestro-theme', 'true');
+		document.head.appendChild(styleElement);
+	}
 
-  styleElement.textContent = generateCSSString(theme);
+	styleElement.textContent = generateCSSString(theme);
 }
 
 /**
@@ -179,14 +179,14 @@ export function injectCSSProperties(theme: Theme): void {
  * ```
  */
 export function removeCSSProperties(): void {
-  if (typeof document === 'undefined') {
-    return;
-  }
+	if (typeof document === 'undefined') {
+		return;
+	}
 
-  const styleElement = document.getElementById(STYLE_ELEMENT_ID);
-  if (styleElement) {
-    styleElement.remove();
-  }
+	const styleElement = document.getElementById(STYLE_ELEMENT_ID);
+	if (styleElement) {
+		styleElement.remove();
+	}
 }
 
 /**
@@ -211,10 +211,10 @@ export function removeCSSProperties(): void {
  * ```
  */
 export function setElementCSSProperties(element: HTMLElement, theme: Theme): void {
-  const properties = generateCSSProperties(theme);
-  for (const [prop, value] of Object.entries(properties)) {
-    element.style.setProperty(prop, value);
-  }
+	const properties = generateCSSProperties(theme);
+	for (const [prop, value] of Object.entries(properties)) {
+		element.style.setProperty(prop, value);
+	}
 }
 
 /**
@@ -223,9 +223,9 @@ export function setElementCSSProperties(element: HTMLElement, theme: Theme): voi
  * @param element - The element to remove properties from
  */
 export function removeElementCSSProperties(element: HTMLElement): void {
-  for (const prop of THEME_CSS_PROPERTIES) {
-    element.style.removeProperty(prop);
-  }
+	for (const prop of THEME_CSS_PROPERTIES) {
+		element.style.removeProperty(prop);
+	}
 }
 
 /**
@@ -241,13 +241,13 @@ export function removeElementCSSProperties(element: HTMLElement): void {
  * ```
  */
 export function getCSSProperty(
-  property: ThemeCSSProperty,
-  element: Element = document.documentElement
+	property: ThemeCSSProperty,
+	element: Element = document.documentElement
 ): string {
-  if (typeof window === 'undefined') {
-    return '';
-  }
-  return getComputedStyle(element).getPropertyValue(property).trim();
+	if (typeof window === 'undefined') {
+		return '';
+	}
+	return getComputedStyle(element).getPropertyValue(property).trim();
 }
 
 /**
@@ -265,5 +265,5 @@ export function getCSSProperty(
  * ```
  */
 export function cssVar(property: ThemeCSSProperty, fallback?: string): string {
-  return fallback ? `var(${property}, ${fallback})` : `var(${property})`;
+	return fallback ? `var(${property}, ${fallback})` : `var(${property})`;
 }

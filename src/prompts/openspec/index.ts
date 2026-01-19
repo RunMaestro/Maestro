@@ -26,92 +26,86 @@ import implementPrompt from './openspec.implement.md?raw';
 import metadataJson from './metadata.json';
 
 export interface OpenSpecCommandDefinition {
-  id: string;
-  command: string;
-  description: string;
-  prompt: string;
-  isCustom: boolean;
+	id: string;
+	command: string;
+	description: string;
+	prompt: string;
+	isCustom: boolean;
 }
 
 export interface OpenSpecMetadata {
-  lastRefreshed: string;
-  commitSha: string;
-  sourceVersion: string;
-  sourceUrl: string;
+	lastRefreshed: string;
+	commitSha: string;
+	sourceVersion: string;
+	sourceUrl: string;
 }
 
 /**
  * All bundled OpenSpec commands
  */
 export const openspecCommands: OpenSpecCommandDefinition[] = [
-  {
-    id: 'help',
-    command: '/openspec.help',
-    description: 'Learn how to use OpenSpec with Maestro',
-    prompt: helpPrompt,
-    isCustom: true,
-  },
-  {
-    id: 'proposal',
-    command: '/openspec.proposal',
-    description: 'Create a change proposal with specs, tasks, and optional design docs',
-    prompt: proposalPrompt,
-    isCustom: false,
-  },
-  {
-    id: 'apply',
-    command: '/openspec.apply',
-    description: 'Implement an approved change proposal by executing tasks',
-    prompt: applyPrompt,
-    isCustom: false,
-  },
-  {
-    id: 'archive',
-    command: '/openspec.archive',
-    description: 'Archive a completed change after deployment',
-    prompt: archivePrompt,
-    isCustom: false,
-  },
-  {
-    id: 'implement',
-    command: '/openspec.implement',
-    description: 'Convert OpenSpec tasks to Maestro Auto Run documents',
-    prompt: implementPrompt,
-    isCustom: true,
-  },
+	{
+		id: 'help',
+		command: '/openspec.help',
+		description: 'Learn how to use OpenSpec with Maestro',
+		prompt: helpPrompt,
+		isCustom: true,
+	},
+	{
+		id: 'proposal',
+		command: '/openspec.proposal',
+		description: 'Create a change proposal with specs, tasks, and optional design docs',
+		prompt: proposalPrompt,
+		isCustom: false,
+	},
+	{
+		id: 'apply',
+		command: '/openspec.apply',
+		description: 'Implement an approved change proposal by executing tasks',
+		prompt: applyPrompt,
+		isCustom: false,
+	},
+	{
+		id: 'archive',
+		command: '/openspec.archive',
+		description: 'Archive a completed change after deployment',
+		prompt: archivePrompt,
+		isCustom: false,
+	},
+	{
+		id: 'implement',
+		command: '/openspec.implement',
+		description: 'Convert OpenSpec tasks to Maestro Auto Run documents',
+		prompt: implementPrompt,
+		isCustom: true,
+	},
 ];
 
 /**
  * Get an OpenSpec command by ID
  */
 export function getOpenSpecCommand(id: string): OpenSpecCommandDefinition | undefined {
-  return openspecCommands.find((cmd) => cmd.id === id);
+	return openspecCommands.find((cmd) => cmd.id === id);
 }
 
 /**
  * Get an OpenSpec command by slash command string
  */
 export function getOpenSpecCommandBySlash(command: string): OpenSpecCommandDefinition | undefined {
-  return openspecCommands.find((cmd) => cmd.command === command);
+	return openspecCommands.find((cmd) => cmd.command === command);
 }
 
 /**
  * Get the metadata for bundled OpenSpec prompts
  */
 export function getOpenSpecMetadata(): OpenSpecMetadata {
-  return {
-    lastRefreshed: metadataJson.lastRefreshed,
-    commitSha: metadataJson.commitSha,
-    sourceVersion: metadataJson.sourceVersion,
-    sourceUrl: metadataJson.sourceUrl,
-  };
+	return {
+		lastRefreshed: metadataJson.lastRefreshed,
+		commitSha: metadataJson.commitSha,
+		sourceVersion: metadataJson.sourceVersion,
+		sourceUrl: metadataJson.sourceUrl,
+	};
 }
 
 // Export individual prompts for direct access
-export {
-  helpPrompt,
-  proposalPrompt,
-  applyPrompt,
-  archivePrompt,
-  implementPrompt,
-};
+export { helpPrompt, proposalPrompt, applyPrompt, archivePrompt, implementPrompt };
