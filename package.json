@@ -281,6 +281,7 @@
     "electron-rebuild": "^3.2.9",
     "esbuild": "^0.24.2",
     "eslint": "^9.39.2",
+    "eslint-config-prettier": "^10.1.8",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "globals": "^16.5.0",
