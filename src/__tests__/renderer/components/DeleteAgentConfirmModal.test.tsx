@@ -22,6 +22,13 @@ vi.mock('lucide-react', () => ({
   Trash2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
     <svg data-testid="trash2-icon" className={className} style={style} />
   ),
+  AlertTriangle: ({
+    className,
+    style,
+  }: {
+    className?: string;
+    style?: React.CSSProperties;
+  }) => <svg data-testid="alert-triangle-icon" className={className} style={style} />,
 }));
 
 // Create a test theme
@@ -117,11 +124,61 @@ describe('DeleteAgentConfirmModal', () => {
         'Danger: Deleting the agent "TestAgent" cannot be undone. "Agent + Work Directory" will also move the working directory to the trash:';
 
       expect(
-        screen.getByText((_, element) => {
-          const text = element?.textContent?.replace(/\s+/g, ' ').trim();
-          return text === dangerText;
-        })
+        screen.getByText(
+          (_, element) => {
+            const text = element?.textContent?.replace(/\s+/g, ' ').trim();
+            return text === dangerText;
+          },
+          { selector: 'p' }
+        )
       ).toBeInTheDocument();
+    });
+
+    it('styles warning icon and text to match the mockup', () => {
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      const warningIcon = screen.getByTestId('alert-triangle-icon');
+      const warningIconWrapper = warningIcon.parentElement;
+      expect(warningIconWrapper).toHaveStyle({
+        backgroundColor: 'rgba(255, 165, 0, 0.2)',
+      });
+      expect(warningIcon).toHaveStyle({ color: '#ffa500' });
+
+      const dangerLabel = screen.getByText('Danger:');
+      expect(dangerLabel).toHaveStyle({ color: '#ffd700' });
+
+      const warningParagraph = screen.getByText(/Deleting the agent/);
+      expect(warningParagraph).toHaveStyle({ color: '#ffffff' });
+    });
+
+    it('applies spacing between the warning, path, and confirmation input', () => {
+      renderWithLayerStack(
+        <DeleteAgentConfirmModal
+          theme={testTheme}
+          agentName="TestAgent"
+          workingDirectory="/home/user/project"
+          onConfirm={vi.fn()}
+          onConfirmAndErase={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+
+      const pathElement = screen.getByText('/home/user/project');
+      expect(pathElement).toHaveClass('mt-4');
+
+      const confirmationInput = screen.getByPlaceholderText(
+        'Type the agent name here to confirm directory deletion.'
+      );
+      expect(confirmationInput).toHaveClass('mt-2.5');
     });
 
     it('renders header with title and close button', () => {

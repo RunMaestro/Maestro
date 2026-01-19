@@ -1,5 +1,5 @@
 import React, { useRef, useCallback, useState, useMemo } from 'react';
-import { Trash2 } from 'lucide-react';
+import { Trash2, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -102,25 +102,24 @@ export function DeleteAgentConfirmModal({
         </div>
       }
     >
-      <div className="space-y-4">
+      <div>
         <div className="flex gap-3 items-start">
           <div
-            className="flex h-6 w-6 items-center justify-center rounded-full text-sm font-bold"
-            style={{
-              backgroundColor: `${theme.colors.warning}33`,
-              color: theme.colors.warning,
-            }}
+            className="flex h-6 w-6 items-center justify-center rounded-full"
+            style={{ backgroundColor: 'rgba(255, 165, 0, 0.2)' }}
           >
-            !
+            <AlertTriangle className="h-4 w-4" style={{ color: '#ffa500' }} />
           </div>
-          <p className="leading-relaxed" style={{ color: theme.colors.warning }}>
-            <span className="font-semibold">Danger:</span> Deleting the agent "{agentName}"
-            cannot be undone. "Agent + Work Directory" will also move the working
-            directory to the trash:
+          <p className="leading-relaxed" style={{ color: '#ffffff' }}>
+            <span className="font-semibold" style={{ color: '#ffd700' }}>
+              Danger:
+            </span>{' '}
+            Deleting the agent "{agentName}" cannot be undone. "Agent + Work Directory"
+            will also move the working directory to the trash:
           </p>
         </div>
         <code
-          className="block text-xs px-3 py-2 rounded break-all"
+          className="mt-4 block text-xs px-3 py-2 rounded break-all"
           style={{
             backgroundColor: theme.colors.bgActivity,
             color: '#ffffff',
@@ -135,7 +134,7 @@ export function DeleteAgentConfirmModal({
           onChange={(e) => setConfirmationText(e.target.value)}
           placeholder="Type the agent name here to confirm directory deletion."
           aria-label="Type the agent name here to confirm directory deletion."
-          className="w-full px-3 py-2 rounded text-sm outline-none placeholder:text-[color:var(--placeholder-color)]"
+          className="mt-2.5 w-full px-3 py-2 rounded text-sm outline-none placeholder:text-[color:var(--placeholder-color)]"
           style={{
             backgroundColor: theme.colors.bgActivity,
             color: '#ffffff',
