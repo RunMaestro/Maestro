@@ -110,25 +110,26 @@ export function DeleteAgentConfirmModal({
       <div className="flex gap-4">
         <div
           className="flex-shrink-0 p-2 rounded-full h-fit"
-          style={{ backgroundColor: `${theme.colors.warning}20` }}
+          style={{ backgroundColor: 'rgba(255, 165, 0, 0.2)' }}
         >
-          <AlertTriangle className="w-5 h-5" style={{ color: theme.colors.warning }} />
+          <AlertTriangle className="w-5 h-5" style={{ color: '#ffa500' }} />
         </div>
-        <div className="space-y-3">
+        <div className="flex flex-col">
           <p
-            className="leading-relaxed font-semibold"
-            style={{ color: theme.colors.warning }}
+            className="leading-relaxed"
+            style={{ color: '#ffffff' }}
           >
-            Danger: You are about to delete the agent "{agentName}". This action cannot be undone.
+            <span className="font-semibold" style={{ color: '#ffd700' }}>Danger:</span>{' '}
+            You are about to delete the agent "{agentName}". This action cannot be undone.
           </p>
           <p
-            className="text-sm leading-relaxed"
+            className="text-sm leading-relaxed mt-4"
             style={{ color: theme.colors.textDim }}
           >
             <strong style={{ color: '#ffffff' }}>Agent + Work Directory</strong> will also move the working directory to the trash:
           </p>
           <code
-            className="block text-xs px-2 py-1 rounded break-all"
+            className="block text-xs px-2 py-1 rounded break-all mt-2"
             style={{
               backgroundColor: theme.colors.bgActivity,
               color: '#ffffff',
@@ -142,12 +143,11 @@ export function DeleteAgentConfirmModal({
             value={confirmationText}
             onChange={(e) => setConfirmationText(e.target.value)}
             placeholder="Type the agent name here to confirm directory deletion."
-            className="w-full text-sm px-2 py-2 rounded outline-none focus:ring-2 focus:ring-offset-1 placeholder:text-gray-500"
+            className="w-full text-sm px-2 py-2 rounded outline-none focus:ring-2 focus:ring-offset-1 placeholder:text-gray-500 mt-2.5"
             style={{
               backgroundColor: theme.colors.bgActivity,
               color: '#ffffff',
               border: `1px solid ${theme.colors.border}`,
-              // Using CSS custom property for placeholder color via Tailwind class above
             }}
           />
         </div>

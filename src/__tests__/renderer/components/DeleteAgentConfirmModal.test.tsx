@@ -108,8 +108,9 @@ describe('DeleteAgentConfirmModal', () => {
         />
       );
 
-      // Check the danger warning text
-      expect(screen.getByText(/Danger: You are about to delete the agent/)).toBeInTheDocument();
+      // Check the danger warning text (now split into "Danger:" label and message)
+      expect(screen.getByText('Danger:')).toBeInTheDocument();
+      expect(screen.getByText(/You are about to delete the agent/)).toBeInTheDocument();
     });
 
     it('renders explanatory text about Agent + Work Directory', () => {
