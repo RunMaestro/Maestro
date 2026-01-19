@@ -121,3 +121,11 @@ The confirmation dialog shows the full path to the worktree directory so you kno
 - **Use a dedicated worktree folder** — Keep all worktrees in one place outside the main repo
 - **Clean up when done** — Remove worktree agents after merging PRs to avoid clutter
 - **Watch for Changes** — Enable file watching to keep the file tree in sync with worktree activity
+- **Run multiple dev instances** — Use `VITE_PORT` environment variable to run Maestro in multiple worktrees simultaneously:
+  ```bash
+  # In main worktree
+  npm run dev
+
+  # In worktree 2 (different terminal/directory)
+  VITE_PORT=5174 npm run dev
+  ```

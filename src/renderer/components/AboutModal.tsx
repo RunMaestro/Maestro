@@ -155,7 +155,10 @@ export function AboutModal({ theme, autoRunStats, usageStats, handsOnTimeMs, onC
             <div>
               <div className="flex items-baseline gap-2">
                 <h1 className="text-2xl font-bold tracking-widest" style={{ color: theme.colors.textMain }}>MAESTRO</h1>
-                <span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>v{__APP_VERSION__}</span>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>v{__APP_VERSION__}</span>
+                  <span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>({__GIT_HASH__})</span>
+                </div>
               </div>
               <p className="text-xs opacity-70" style={{ color: theme.colors.textDim }}>Agent Orchestration Command Center</p>
             </div>
