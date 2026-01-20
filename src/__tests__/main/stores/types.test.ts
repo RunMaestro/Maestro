@@ -11,6 +11,7 @@ import type {
 	ClaudeSessionOriginInfo,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
+	StoredSession,
 } from '../../../main/stores/types';
 
 /**
@@ -80,21 +81,73 @@ describe('stores/types', () => {
 		});
 	});
 
+	describe('StoredSession', () => {
+		it('should have required fields', () => {
+			const session: StoredSession = {
+				id: '1',
+				name: 'Test Session',
+				toolType: 'claude-code',
+				cwd: '/path/to/project',
+				projectRoot: '/path/to/project',
+			};
+			expect(session.id).toBe('1');
+			expect(session.toolType).toBe('claude-code');
+		});
+
+		it('should allow optional groupId', () => {
+			const session: StoredSession = {
+				id: '1',
+				groupId: 'group-1',
+				name: 'Test Session',
+				toolType: 'claude-code',
+				cwd: '/path/to/project',
+				projectRoot: '/path/to/project',
+			};
+			expect(session.groupId).toBe('group-1');
+		});
+
+		it('should allow additional renderer-specific fields', () => {
+			const session: StoredSession = {
+				id: '1',
+				name: 'Test Session',
+				toolType: 'claude-code',
+				cwd: '/path/to/project',
+				projectRoot: '/path/to/project',
+				// Additional fields from renderer Session type
+				state: 'idle',
+				aiLogs: [],
+				inputMode: 'ai',
+			};
+			expect(session.state).toBe('idle');
+			expect(session.aiLogs).toEqual([]);
+		});
+	});
+
 	describe('SessionsData', () => {
-		it('should have sessions array', () => {
+		it('should have sessions array with StoredSession items', () => {
 			const data: SessionsData = {
-				sessions: [{ id: '1', name: 'Test' }],
+				sessions: [
+					{
+						id: '1',
+						name: 'Test',
+						toolType: 'claude-code',
+						cwd: '/path',
+						projectRoot: '/path',
+					},
+				],
 			};
 			expect(data.sessions).toHaveLength(1);
+			expect(data.sessions[0].id).toBe('1');
 		});
 	});
 
 	describe('GroupsData', () => {
-		it('should have groups array', () => {
+		it('should have groups array with Group items', () => {
 			const data: GroupsData = {
-				groups: [{ id: '1', name: 'Group 1' }],
+				groups: [{ id: '1', name: 'Group 1', emoji: '📁', collapsed: false }],
 			};
 			expect(data.groups).toHaveLength(1);
+			expect(data.groups[0].emoji).toBe('📁');
 		});
 	});
 

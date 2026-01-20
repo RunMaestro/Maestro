@@ -82,7 +82,7 @@ describe('stores/utils', () => {
 		});
 
 		it('should return undefined when directory creation fails', () => {
-			const customPath = '/invalid/path';
+			const customPath = '/Users/test/invalid/path';
 			const mockStore = {
 				get: vi.fn().mockReturnValue(customPath),
 			} as unknown as Store<BootstrapSettings>;
@@ -101,6 +101,64 @@ describe('stores/utils', () => {
 			expect(consoleSpy).toHaveBeenCalledWith(
 				`Failed to create custom sync path: ${customPath}, using default`
 			);
+		});
+
+		it('should reject relative paths', () => {
+			const relativePath = 'relative/path/to/data';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(relativePath),
+			} as unknown as Store<BootstrapSettings>;
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = getCustomSyncPath(mockStore);
+
+			expect(result).toBeUndefined();
+			expect(consoleSpy).toHaveBeenCalledWith(`Custom sync path must be absolute: ${relativePath}`);
+		});
+
+		it('should reject paths with traversal sequences', () => {
+			const traversalPath = '/Users/test/../../../etc/passwd';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(traversalPath),
+			} as unknown as Store<BootstrapSettings>;
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = getCustomSyncPath(mockStore);
+
+			expect(result).toBeUndefined();
+			expect(consoleSpy).toHaveBeenCalled();
+		});
+
+		it('should reject paths in sensitive system directories', () => {
+			const sensitivePath = '/etc/maestro';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(sensitivePath),
+			} as unknown as Store<BootstrapSettings>;
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = getCustomSyncPath(mockStore);
+
+			expect(result).toBeUndefined();
+			expect(consoleSpy).toHaveBeenCalledWith(
+				`Custom sync path cannot be in sensitive system directory: ${sensitivePath}`
+			);
+		});
+
+		it('should reject paths that are too short', () => {
+			const shortPath = '/a';
+			const mockStore = {
+				get: vi.fn().mockReturnValue(shortPath),
+			} as unknown as Store<BootstrapSettings>;
+
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const result = getCustomSyncPath(mockStore);
+
+			expect(result).toBeUndefined();
+			expect(consoleSpy).toHaveBeenCalledWith(`Custom sync path is too short: ${shortPath}`);
 		});
 	});
 

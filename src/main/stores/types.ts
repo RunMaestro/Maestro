@@ -5,7 +5,30 @@
  * These types are used across the main process for type-safe store access.
  */
 
-import type { SshRemoteConfig } from '../../shared/types';
+import type { SshRemoteConfig, Group } from '../../shared/types';
+
+// ============================================================================
+// Stored Session Type (minimal interface for main process storage)
+// ============================================================================
+
+/**
+ * Minimal session interface for main process storage.
+ * The full Session type is defined in renderer/types/index.ts and has 60+ fields.
+ * This interface captures the required fields that the main process needs to understand,
+ * while allowing additional properties via index signature for forward compatibility.
+ *
+ * Note: We use `any` for the index signature instead of `unknown` to maintain
+ * backward compatibility with existing code that accesses dynamic session properties.
+ */
+export interface StoredSession {
+	id: string;
+	groupId?: string;
+	name: string;
+	toolType: string;
+	cwd: string;
+	projectRoot: string;
+	[key: string]: any; // Allow additional renderer-specific fields
+}
 
 // ============================================================================
 // Bootstrap Store (local-only, determines sync path)
@@ -49,7 +72,7 @@ export interface MaestroSettings {
 // ============================================================================
 
 export interface SessionsData {
-	sessions: any[];
+	sessions: StoredSession[];
 }
 
 // ============================================================================
@@ -57,7 +80,7 @@ export interface SessionsData {
 // ============================================================================
 
 export interface GroupsData {
-	groups: any[];
+	groups: Group[];
 }
 
 // ============================================================================

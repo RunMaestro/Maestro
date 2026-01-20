@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// Use vi.hoisted to create mock state that's accessible in both mock factory and tests
+// This ensures proper scoping and avoids potential test interference
+const { mockStoreConstructorCalls } = vi.hoisted(() => ({
+	mockStoreConstructorCalls: [] as Array<Record<string, unknown>>,
+}));
+
 // Mock electron
 vi.mock('electron', () => ({
 	app: {
@@ -7,10 +13,7 @@ vi.mock('electron', () => ({
 	},
 }));
 
-// Track mock store constructor calls
-const mockStoreConstructorCalls: Array<Record<string, unknown>> = [];
-
-// Mock electron-store with a class
+// Mock electron-store with a class that tracks constructor calls
 vi.mock('electron-store', () => {
 	return {
 		default: class MockStore {
