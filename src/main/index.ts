@@ -10,7 +10,6 @@ import { AgentDetector } from './agent-detector';
 import { logger } from './utils/logger';
 import { tunnelManager } from './tunnel-manager';
 import { powerManager } from './power-manager';
-import { getThemeById } from './themes';
 import { getHistoryManager } from './history-manager';
 import {
 	initializeStores,
@@ -69,45 +68,30 @@ import {
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
 import { initializeSessionStorages } from './storage';
-import { initializeOutputParsers, getOutputParser } from './parsers';
+import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
-import { DEMO_MODE, DEMO_DATA_PATH } from './constants';
+import {
+	DEMO_MODE,
+	DEMO_DATA_PATH,
+	REGEX_MODERATOR_SESSION,
+	REGEX_MODERATOR_SESSION_TIMESTAMP,
+	REGEX_AI_SUFFIX,
+	REGEX_AI_TAB_ID,
+	debugLog,
+} from './constants';
 import { initAutoUpdater } from './auto-updater';
 import { checkWslEnvironment } from './utils/wslDetector';
-
-// ============================================================================
-// Pre-compiled Regex Patterns (Performance Optimization)
-// ============================================================================
-// These patterns are used in hot paths (process data handlers) that fire hundreds
-// of times per second. Pre-compiling them avoids repeated regex compilation overhead.
-
-// Group chat session ID patterns
-const REGEX_MODERATOR_SESSION = /^group-chat-(.+)-moderator-/;
-const REGEX_MODERATOR_SESSION_TIMESTAMP = /^group-chat-(.+)-moderator-\d+$/;
-const REGEX_PARTICIPANT_UUID =
-	/^group-chat-(.+)-participant-(.+)-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/i;
-const REGEX_PARTICIPANT_TIMESTAMP = /^group-chat-(.+)-participant-(.+)-(\d{13,})$/;
-const REGEX_PARTICIPANT_FALLBACK = /^group-chat-(.+)-participant-([^-]+)-/;
-
-// Web broadcast session ID patterns
-const REGEX_AI_SUFFIX = /-ai-[^-]+$/;
-const REGEX_AI_TAB_ID = /-ai-([^-]+)$/;
-
-// ============================================================================
-// Debug Logging (Performance Optimization)
-// ============================================================================
-// Debug logs in hot paths (data handlers) are disabled in production to avoid
-// performance overhead from string interpolation and console I/O on every data chunk.
-const DEBUG_GROUP_CHAT =
-	process.env.NODE_ENV === 'development' || process.env.DEBUG_GROUP_CHAT === '1';
-
-/** Log debug message only in development mode. Avoids overhead in production. */
-
-function debugLog(prefix: string, message: string, ...args: any[]): void {
-	if (DEBUG_GROUP_CHAT) {
-		console.log(`[${prefix}] ${message}`, ...args);
-	}
-}
+// Extracted modules (Phase 1 refactoring)
+import { parseParticipantSessionId } from './group-chat/session-parser';
+import { extractTextFromStreamJson } from './group-chat/output-parser';
+import {
+	appendToGroupChatBuffer,
+	getGroupChatBufferedOutput,
+	clearGroupChatBuffer,
+} from './group-chat/output-buffer';
+// Phase 2 refactoring - dependency injection
+import { createSafeSend } from './utils/safe-send';
+import { createWebServerFactory } from './web-server/web-server-factory';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -216,361 +200,17 @@ let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 let cliActivityWatcher: fsSync.FSWatcher | null = null;
 
-/**
- * Safely send IPC message to renderer.
- * Handles cases where the renderer has been disposed (e.g., GPU crash, window closing).
- * This prevents "Render frame was disposed before WebFrameMain could be accessed" errors.
- */
-function safeSend(channel: string, ...args: unknown[]): void {
-	try {
-		if (
-			mainWindow &&
-			!mainWindow.isDestroyed() &&
-			mainWindow.webContents &&
-			!mainWindow.webContents.isDestroyed()
-		) {
-			mainWindow.webContents.send(channel, ...args);
-		}
-	} catch (error) {
-		// Silently ignore - renderer is not available
-		// This can happen during GPU crashes, window closing, or app shutdown
-		logger.debug(`Failed to send IPC message to renderer: ${channel}`, 'IPC', {
-			error: String(error),
-		});
-	}
-}
+// Create safeSend with dependency injection (Phase 2 refactoring)
+const safeSend = createSafeSend(() => mainWindow);
 
-/**
- * Create and configure the web server with all necessary callbacks.
- * Called when user enables the web interface.
- */
-function createWebServer(): WebServer {
-	// Use custom port if enabled, otherwise 0 for random port assignment
-	const useCustomPort = store.get('webInterfaceUseCustomPort', false);
-	const customPort = store.get('webInterfaceCustomPort', 8080);
-	const port = useCustomPort ? customPort : 0;
-	const server = new WebServer(port); // Custom or random port with auto-generated security token
-
-	// Set up callback for web server to fetch sessions list
-	server.setGetSessionsCallback(() => {
-		const sessions = sessionsStore.get('sessions', []);
-		const groups = groupsStore.get('groups', []);
-		return sessions.map((s: any) => {
-			// Find the group for this session
-			const group = s.groupId ? groups.find((g: any) => g.id === s.groupId) : null;
-
-			// Extract last AI response for mobile preview (first 3 lines, max 500 chars)
-			// Use active tab's logs as the source of truth
-			let lastResponse = null;
-			const activeTab = s.aiTabs?.find((t: any) => t.id === s.activeTabId) || s.aiTabs?.[0];
-			const tabLogs = activeTab?.logs || [];
-			if (tabLogs.length > 0) {
-				// Find the last stdout/stderr entry from the AI (not user messages)
-				// Note: 'thinking' logs are already excluded since they have a distinct source type
-				const lastAiLog = [...tabLogs]
-					.reverse()
-					.find((log: any) => log.source === 'stdout' || log.source === 'stderr');
-				if (lastAiLog && lastAiLog.text) {
-					const fullText = lastAiLog.text;
-					// Get first 3 lines or 500 chars, whichever is shorter
-					const lines = fullText.split('\n').slice(0, 3);
-					let previewText = lines.join('\n');
-					if (previewText.length > 500) {
-						previewText = previewText.slice(0, 497) + '...';
-					} else if (fullText.length > previewText.length) {
-						previewText = previewText + '...';
-					}
-					lastResponse = {
-						text: previewText,
-						timestamp: lastAiLog.timestamp,
-						source: lastAiLog.source,
-						fullLength: fullText.length,
-					};
-				}
-			}
-
-			// Map aiTabs to web-safe format (strip logs to reduce payload)
-			const aiTabs =
-				s.aiTabs?.map((tab: any) => ({
-					id: tab.id,
-					agentSessionId: tab.agentSessionId || null,
-					name: tab.name || null,
-					starred: tab.starred || false,
-					inputValue: tab.inputValue || '',
-					usageStats: tab.usageStats || null,
-					createdAt: tab.createdAt,
-					state: tab.state || 'idle',
-					thinkingStartTime: tab.thinkingStartTime || null,
-				})) || [];
-
-			return {
-				id: s.id,
-				name: s.name,
-				toolType: s.toolType,
-				state: s.state,
-				inputMode: s.inputMode,
-				cwd: s.cwd,
-				groupId: s.groupId || null,
-				groupName: group?.name || null,
-				groupEmoji: group?.emoji || null,
-				usageStats: s.usageStats || null,
-				lastResponse,
-				agentSessionId: s.agentSessionId || null,
-				thinkingStartTime: s.thinkingStartTime || null,
-				aiTabs,
-				activeTabId: s.activeTabId || (aiTabs.length > 0 ? aiTabs[0].id : undefined),
-				bookmarked: s.bookmarked || false,
-				// Worktree subagent support
-				parentSessionId: s.parentSessionId || null,
-				worktreeBranch: s.worktreeBranch || null,
-			};
-		});
-	});
-
-	// Set up callback for web server to fetch single session details
-	// Optional tabId param allows fetching logs for a specific tab (avoids race conditions)
-	server.setGetSessionDetailCallback((sessionId: string, tabId?: string) => {
-		const sessions = sessionsStore.get('sessions', []);
-		const session = sessions.find((s: any) => s.id === sessionId);
-		if (!session) return null;
-
-		// Get the requested tab's logs (or active tab if no tabId provided)
-		// Tabs are the source of truth for AI conversation history
-		// Filter out thinking and tool logs - these should never be shown on the web interface
-		let aiLogs: any[] = [];
-		const targetTabId = tabId || session.activeTabId;
-		if (session.aiTabs && session.aiTabs.length > 0) {
-			const targetTab = session.aiTabs.find((t: any) => t.id === targetTabId) || session.aiTabs[0];
-			const rawLogs = targetTab?.logs || [];
-			// Web interface should never show thinking/tool logs regardless of desktop settings
-			aiLogs = rawLogs.filter((log: any) => log.source !== 'thinking' && log.source !== 'tool');
-		}
-
-		return {
-			id: session.id,
-			name: session.name,
-			toolType: session.toolType,
-			state: session.state,
-			inputMode: session.inputMode,
-			cwd: session.cwd,
-			aiLogs,
-			shellLogs: session.shellLogs || [],
-			usageStats: session.usageStats,
-			agentSessionId: session.agentSessionId,
-			isGitRepo: session.isGitRepo,
-			activeTabId: targetTabId,
-		};
-	});
-
-	// Set up callback for web server to fetch current theme
-	server.setGetThemeCallback(() => {
-		const themeId = store.get('activeThemeId', 'dracula');
-		return getThemeById(themeId);
-	});
-
-	// Set up callback for web server to fetch custom AI commands
-	server.setGetCustomCommandsCallback(() => {
-		const customCommands = store.get('customAICommands', []) as Array<{
-			id: string;
-			command: string;
-			description: string;
-			prompt: string;
-		}>;
-		return customCommands;
-	});
-
-	// Set up callback for web server to fetch history entries
-	// Uses HistoryManager for per-session storage
-	server.setGetHistoryCallback((projectPath?: string, sessionId?: string) => {
-		const historyManager = getHistoryManager();
-
-		if (sessionId) {
-			// Get entries for specific session
-			const entries = historyManager.getEntries(sessionId);
-			// Sort by timestamp descending
-			entries.sort((a, b) => b.timestamp - a.timestamp);
-			return entries;
-		}
-
-		if (projectPath) {
-			// Get all entries for sessions in this project
-			return historyManager.getEntriesByProjectPath(projectPath);
-		}
-
-		// Return all entries (for global view)
-		return historyManager.getAllEntries();
-	});
-
-	// Set up callback for web server to write commands to sessions
-	// Note: Process IDs have -ai or -terminal suffix based on session's inputMode
-	server.setWriteToSessionCallback((sessionId: string, data: string) => {
-		if (!processManager) {
-			logger.warn('processManager is null for writeToSession', 'WebServer');
-			return false;
-		}
-
-		// Get the session's current inputMode to determine which process to write to
-		const sessions = sessionsStore.get('sessions', []);
-		const session = sessions.find((s: any) => s.id === sessionId);
-		if (!session) {
-			logger.warn(`Session ${sessionId} not found for writeToSession`, 'WebServer');
-			return false;
-		}
-
-		// Append -ai or -terminal suffix based on inputMode
-		const targetSessionId =
-			session.inputMode === 'ai' ? `${sessionId}-ai` : `${sessionId}-terminal`;
-		logger.debug(`Writing to ${targetSessionId} (inputMode=${session.inputMode})`, 'WebServer');
-
-		const result = processManager.write(targetSessionId, data);
-		logger.debug(`Write result: ${result}`, 'WebServer');
-		return result;
-	});
-
-	// Set up callback for web server to execute commands through the desktop
-	// This forwards AI commands to the renderer, ensuring single source of truth
-	// The renderer handles all spawn logic, state management, and broadcasts
-	server.setExecuteCommandCallback(
-		async (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => {
-			if (!mainWindow) {
-				logger.warn('mainWindow is null for executeCommand', 'WebServer');
-				return false;
-			}
-
-			// Look up the session to get Claude session ID for logging
-			const sessions = sessionsStore.get('sessions', []);
-			const session = sessions.find((s: any) => s.id === sessionId);
-			const agentSessionId = session?.agentSessionId || 'none';
-
-			// Forward to renderer - it will handle spawn, state, and everything else
-			// This ensures web commands go through exact same code path as desktop commands
-			// Pass inputMode so renderer uses the web's intended mode (avoids sync issues)
-			logger.info(
-				`[Web → Renderer] Forwarding command | Maestro: ${sessionId} | Claude: ${agentSessionId} | Mode: ${inputMode || 'auto'} | Command: ${command.substring(0, 100)}`,
-				'WebServer'
-			);
-			mainWindow.webContents.send('remote:executeCommand', sessionId, command, inputMode);
-			return true;
-		}
-	);
-
-	// Set up callback for web server to interrupt sessions through the desktop
-	// This forwards to the renderer which handles state updates and broadcasts
-	server.setInterruptSessionCallback(async (sessionId: string) => {
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for interrupt', 'WebServer');
-			return false;
-		}
-
-		// Forward to renderer - it will handle interrupt, state update, and broadcasts
-		// This ensures web interrupts go through exact same code path as desktop interrupts
-		logger.debug(`Forwarding interrupt to renderer for session ${sessionId}`, 'WebServer');
-		mainWindow.webContents.send('remote:interrupt', sessionId);
-		return true;
-	});
-
-	// Set up callback for web server to switch session mode through the desktop
-	// This forwards to the renderer which handles state updates and broadcasts
-	server.setSwitchModeCallback(async (sessionId: string, mode: 'ai' | 'terminal') => {
-		logger.info(
-			`[Web→Desktop] Mode switch callback invoked: session=${sessionId}, mode=${mode}`,
-			'WebServer'
-		);
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for switchMode', 'WebServer');
-			return false;
-		}
-
-		// Forward to renderer - it will handle mode switch and broadcasts
-		// This ensures web mode switches go through exact same code path as desktop
-		logger.info(`[Web→Desktop] Sending IPC remote:switchMode to renderer`, 'WebServer');
-		mainWindow.webContents.send('remote:switchMode', sessionId, mode);
-		return true;
-	});
-
-	// Set up callback for web server to select/switch to a session in the desktop
-	// This forwards to the renderer which handles state updates and broadcasts
-	// If tabId is provided, also switches to that tab within the session
-	server.setSelectSessionCallback(async (sessionId: string, tabId?: string) => {
-		logger.info(
-			`[Web→Desktop] Session select callback invoked: session=${sessionId}, tab=${tabId || 'none'}`,
-			'WebServer'
-		);
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for selectSession', 'WebServer');
-			return false;
-		}
-
-		// Forward to renderer - it will handle session selection and broadcasts
-		logger.info(`[Web→Desktop] Sending IPC remote:selectSession to renderer`, 'WebServer');
-		mainWindow.webContents.send('remote:selectSession', sessionId, tabId);
-		return true;
-	});
-
-	// Tab operation callbacks
-	server.setSelectTabCallback(async (sessionId: string, tabId: string) => {
-		logger.info(
-			`[Web→Desktop] Tab select callback invoked: session=${sessionId}, tab=${tabId}`,
-			'WebServer'
-		);
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for selectTab', 'WebServer');
-			return false;
-		}
-
-		mainWindow.webContents.send('remote:selectTab', sessionId, tabId);
-		return true;
-	});
-
-	server.setNewTabCallback(async (sessionId: string) => {
-		logger.info(`[Web→Desktop] New tab callback invoked: session=${sessionId}`, 'WebServer');
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for newTab', 'WebServer');
-			return null;
-		}
-
-		// Use invoke for synchronous response with tab ID
-		return new Promise((resolve) => {
-			const responseChannel = `remote:newTab:response:${Date.now()}`;
-			ipcMain.once(responseChannel, (_event, result) => {
-				resolve(result);
-			});
-			mainWindow!.webContents.send('remote:newTab', sessionId, responseChannel);
-			// Timeout after 5 seconds
-			setTimeout(() => resolve(null), 5000);
-		});
-	});
-
-	server.setCloseTabCallback(async (sessionId: string, tabId: string) => {
-		logger.info(
-			`[Web→Desktop] Close tab callback invoked: session=${sessionId}, tab=${tabId}`,
-			'WebServer'
-		);
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for closeTab', 'WebServer');
-			return false;
-		}
-
-		mainWindow.webContents.send('remote:closeTab', sessionId, tabId);
-		return true;
-	});
-
-	server.setRenameTabCallback(async (sessionId: string, tabId: string, newName: string) => {
-		logger.info(
-			`[Web→Desktop] Rename tab callback invoked: session=${sessionId}, tab=${tabId}, newName=${newName}`,
-			'WebServer'
-		);
-		if (!mainWindow) {
-			logger.warn('mainWindow is null for renameTab', 'WebServer');
-			return false;
-		}
-
-		mainWindow.webContents.send('remote:renameTab', sessionId, tabId, newName);
-		return true;
-	});
-
-	return server;
-}
+// Create web server factory with dependency injection (Phase 2 refactoring)
+const createWebServer = createWebServerFactory({
+	settingsStore: store,
+	sessionsStore,
+	groupsStore,
+	getMainWindow: () => mainWindow,
+	getProcessManager: () => processManager,
+});
 
 function createWindow() {
 	// Restore saved window state
@@ -1168,198 +808,6 @@ function setupIpcHandlers() {
 	});
 }
 
-// Buffer for group chat output (keyed by sessionId)
-// We buffer output and only route it on process exit to avoid duplicate messages from streaming chunks
-// Uses array of chunks for O(1) append performance instead of O(n) string concatenation
-// Tracks totalLength incrementally to avoid O(n) reduce on every append
-const groupChatOutputBuffers = new Map<string, { chunks: string[]; totalLength: number }>();
-
-/** Append data to group chat output buffer. O(1) operation. */
-function appendToGroupChatBuffer(sessionId: string, data: string): number {
-	let buffer = groupChatOutputBuffers.get(sessionId);
-	if (!buffer) {
-		buffer = { chunks: [], totalLength: 0 };
-		groupChatOutputBuffers.set(sessionId, buffer);
-	}
-	buffer.chunks.push(data);
-	buffer.totalLength += data.length;
-	return buffer.totalLength;
-}
-
-/** Get buffered output as a single string. Joins chunks on read. */
-function getGroupChatBufferedOutput(sessionId: string): string | undefined {
-	const buffer = groupChatOutputBuffers.get(sessionId);
-	if (!buffer || buffer.chunks.length === 0) return undefined;
-	return buffer.chunks.join('');
-}
-
-/**
- * Extract text content from agent JSON output format.
- * Uses the registered output parser for the given agent type.
- * Different agents have different output formats:
- * - Claude: { type: 'result', result: '...' } and { type: 'assistant', message: { content: ... } }
- * - OpenCode: { type: 'text', part: { text: '...' } } and { type: 'step_finish', part: { reason: 'stop' } }
- *
- * @param rawOutput - The raw JSONL output from the agent
- * @param agentType - The agent type (e.g., 'claude-code', 'opencode')
- * @returns Extracted text content
- */
-function extractTextFromAgentOutput(rawOutput: string, agentType: string): string {
-	const parser = getOutputParser(agentType);
-
-	// If no parser found, try a generic extraction
-	if (!parser) {
-		logger.warn(
-			`No parser found for agent type '${agentType}', using generic extraction`,
-			'[GroupChat]'
-		);
-		return extractTextGeneric(rawOutput);
-	}
-
-	const lines = rawOutput.split('\n');
-
-	// Check if this looks like JSONL output (first non-empty line starts with '{')
-	// If not JSONL, return the raw output as-is (it's already parsed text from process-manager)
-	const firstNonEmptyLine = lines.find((line) => line.trim());
-	if (firstNonEmptyLine && !firstNonEmptyLine.trim().startsWith('{')) {
-		logger.debug(
-			`[GroupChat] Input is not JSONL, returning as plain text (len=${rawOutput.length})`,
-			'[GroupChat]'
-		);
-		return rawOutput;
-	}
-
-	const textParts: string[] = [];
-	let resultText: string | null = null;
-	let _resultMessageCount = 0;
-	let _textMessageCount = 0;
-
-	for (const line of lines) {
-		if (!line.trim()) continue;
-
-		const event = parser.parseJsonLine(line);
-		if (!event) continue;
-
-		// Extract text based on event type
-		if (event.type === 'result' && event.text) {
-			// Result message is the authoritative final response - save it
-			resultText = event.text;
-			_resultMessageCount++;
-		}
-
-		if (event.type === 'text' && event.text) {
-			textParts.push(event.text);
-			_textMessageCount++;
-		}
-	}
-
-	// Prefer result message if available (it contains the complete formatted response)
-	if (resultText) {
-		return resultText;
-	}
-
-	// Fallback: if no result message, concatenate streaming text parts with newlines
-	// to preserve paragraph structure from partial streaming events
-	return textParts.join('\n');
-}
-
-/**
- * Extract text content from stream-json output (JSONL).
- * Uses the agent-specific parser when the agent type is known.
- */
-function extractTextFromStreamJson(rawOutput: string, agentType?: string): string {
-	if (agentType) {
-		return extractTextFromAgentOutput(rawOutput, agentType);
-	}
-
-	return extractTextGeneric(rawOutput);
-}
-
-/**
- * Generic text extraction fallback for unknown agent types.
- * Tries common patterns for JSON output.
- */
-function extractTextGeneric(rawOutput: string): string {
-	const lines = rawOutput.split('\n');
-
-	// Check if this looks like JSONL output (first non-empty line starts with '{')
-	// If not JSONL, return the raw output as-is (it's already parsed text)
-	const firstNonEmptyLine = lines.find((line) => line.trim());
-	if (firstNonEmptyLine && !firstNonEmptyLine.trim().startsWith('{')) {
-		return rawOutput;
-	}
-
-	const textParts: string[] = [];
-
-	for (const line of lines) {
-		if (!line.trim()) continue;
-
-		try {
-			const msg = JSON.parse(line);
-
-			// Try common patterns
-			if (msg.result) return msg.result;
-			if (msg.text) textParts.push(msg.text);
-			if (msg.part?.text) textParts.push(msg.part.text);
-			if (msg.message?.content) {
-				const content = msg.message.content;
-				if (typeof content === 'string') {
-					textParts.push(content);
-				}
-			}
-		} catch {
-			// Not valid JSON - include raw text if it looks like content
-			if (!line.startsWith('{') && !line.includes('session_id') && !line.includes('sessionID')) {
-				textParts.push(line);
-			}
-		}
-	}
-
-	// Join with newlines to preserve paragraph structure
-	return textParts.join('\n');
-}
-
-/**
- * Parses a group chat participant session ID to extract groupChatId and participantName.
- * Handles hyphenated participant names by matching against UUID or timestamp suffixes.
- *
- * Session ID format: group-chat-{groupChatId}-participant-{name}-{uuid|timestamp}
- * Examples:
- * - group-chat-abc123-participant-Claude-1702934567890
- * - group-chat-abc123-participant-OpenCode-Ollama-550e8400-e29b-41d4-a716-446655440000
- *
- * @returns null if not a participant session ID, otherwise { groupChatId, participantName }
- */
-function parseParticipantSessionId(
-	sessionId: string
-): { groupChatId: string; participantName: string } | null {
-	// First check if this is a participant session ID at all
-	if (!sessionId.includes('-participant-')) {
-		return null;
-	}
-
-	// Try matching with UUID suffix first (36 chars: 8-4-4-4-12 format)
-	// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-	const uuidMatch = sessionId.match(REGEX_PARTICIPANT_UUID);
-	if (uuidMatch) {
-		return { groupChatId: uuidMatch[1], participantName: uuidMatch[2] };
-	}
-
-	// Try matching with timestamp suffix (13 digits)
-	const timestampMatch = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
-	if (timestampMatch) {
-		return { groupChatId: timestampMatch[1], participantName: timestampMatch[2] };
-	}
-
-	// Fallback: try the old pattern for backwards compatibility (non-hyphenated names)
-	const fallbackMatch = sessionId.match(REGEX_PARTICIPANT_FALLBACK);
-	if (fallbackMatch) {
-		return { groupChatId: fallbackMatch[1], participantName: fallbackMatch[2] };
-	}
-
-	return null;
-}
-
 // Handle process output streaming (set up after initialization)
 function setupProcessListeners() {
 	if (processManager) {
@@ -1547,7 +995,7 @@ function setupProcessListeners() {
 							}
 						}
 					})().finally(() => {
-						groupChatOutputBuffers.delete(sessionId);
+						clearGroupChatBuffer(sessionId);
 						debugLog('GroupChat:Debug', ` Cleared output buffer for session`);
 					});
 				} else {
@@ -1641,7 +1089,7 @@ function setupProcessListeners() {
 							});
 
 							// Clear the buffer first
-							groupChatOutputBuffers.delete(sessionId);
+							clearGroupChatBuffer(sessionId);
 
 							// Initiate recovery (clears agentSessionId)
 							await initiateSessionRecovery(groupChatId, participantName);
@@ -1746,7 +1194,7 @@ function setupProcessListeners() {
 							}
 						}
 					})().finally(() => {
-						groupChatOutputBuffers.delete(sessionId);
+						clearGroupChatBuffer(sessionId);
 						debugLog('GroupChat:Debug', ` Cleared output buffer for participant session`);
 						// Mark participant and trigger synthesis AFTER logging is complete
 						markAndMaybeSynthesize();
