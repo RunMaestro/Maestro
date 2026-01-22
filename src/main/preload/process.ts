@@ -12,6 +12,14 @@
 import { ipcRenderer } from 'electron';
 
 /**
+ * Helper to log via the main process logger.
+ * Uses 'debug' level for preload operations.
+ */
+const log = (message: string, data?: unknown) => {
+	ipcRenderer.invoke('logger:log', 'debug', message, 'Preload', data);
+};
+
+/**
  * Configuration for spawning a process
  */
 export interface ProcessConfig {
@@ -255,27 +263,28 @@ export function createProcessApi() {
 		onRemoteCommand: (
 			callback: (sessionId: string, command: string, inputMode?: 'ai' | 'terminal') => void
 		): (() => void) => {
-			console.log(
-				'[Preload] Registering onRemoteCommand listener, callback type:',
-				typeof callback
-			);
+			log('Registering onRemoteCommand listener');
 			const handler = (
 				_: unknown,
 				sessionId: string,
 				command: string,
 				inputMode?: 'ai' | 'terminal'
 			) => {
-				console.log('[Preload] Received remote:executeCommand IPC:', {
+				log('Received remote:executeCommand IPC', {
 					sessionId,
-					command: command?.substring(0, 50),
+					commandPreview: command?.substring(0, 50),
 					inputMode,
 				});
-				console.log('[Preload] About to invoke callback, callback type:', typeof callback);
 				try {
 					callback(sessionId, command, inputMode);
-					console.log('[Preload] Callback invoked successfully');
 				} catch (error) {
-					console.error('[Preload] Error invoking remote command callback:', error);
+					ipcRenderer.invoke(
+						'logger:log',
+						'error',
+						'Error invoking remote command callback',
+						'Preload',
+						{ error: String(error) }
+					);
 				}
 			};
 			ipcRenderer.on('remote:executeCommand', handler);
@@ -289,9 +298,9 @@ export function createProcessApi() {
 		onRemoteSwitchMode: (
 			callback: (sessionId: string, mode: 'ai' | 'terminal') => void
 		): (() => void) => {
-			console.log('[Preload] Registering onRemoteSwitchMode listener');
+			log('Registering onRemoteSwitchMode listener');
 			const handler = (_: unknown, sessionId: string, mode: 'ai' | 'terminal') => {
-				console.log('[Preload] Received remote:switchMode IPC:', { sessionId, mode });
+				log('Received remote:switchMode IPC', { sessionId, mode });
 				callback(sessionId, mode);
 			};
 			ipcRenderer.on('remote:switchMode', handler);
@@ -316,9 +325,9 @@ export function createProcessApi() {
 		onRemoteSelectSession: (
 			callback: (sessionId: string, tabId?: string) => void
 		): (() => void) => {
-			console.log('[Preload] Registering onRemoteSelectSession listener');
+			log('Registering onRemoteSelectSession listener');
 			const handler = (_: unknown, sessionId: string, tabId?: string) => {
-				console.log('[Preload] Received remote:selectSession IPC:', { sessionId, tabId });
+				log('Received remote:selectSession IPC', { sessionId, tabId });
 				callback(sessionId, tabId);
 			};
 			ipcRenderer.on('remote:selectSession', handler);

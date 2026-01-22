@@ -8,6 +8,15 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { Group } from '../../shared/types';
+
+/**
+ * Stored session data for persistence.
+ * This is a subset of the full renderer Session type - we use Record<string, unknown>
+ * because the preload is just a pass-through bridge and the actual type validation
+ * happens at the renderer and main process boundaries.
+ */
+type StoredSession = Record<string, unknown>;
 
 /**
  * Creates the settings API object for preload exposure
@@ -26,7 +35,7 @@ export function createSettingsApi() {
 export function createSessionsApi() {
 	return {
 		getAll: () => ipcRenderer.invoke('sessions:getAll'),
-		setAll: (sessions: any[]) => ipcRenderer.invoke('sessions:setAll', sessions),
+		setAll: (sessions: StoredSession[]) => ipcRenderer.invoke('sessions:setAll', sessions),
 	};
 }
 
@@ -36,7 +45,7 @@ export function createSessionsApi() {
 export function createGroupsApi() {
 	return {
 		getAll: () => ipcRenderer.invoke('groups:getAll'),
-		setAll: (groups: any[]) => ipcRenderer.invoke('groups:setAll', groups),
+		setAll: (groups: Group[]) => ipcRenderer.invoke('groups:setAll', groups),
 	};
 }
 
