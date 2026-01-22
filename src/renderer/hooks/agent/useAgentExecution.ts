@@ -190,6 +190,7 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let agentSessionId: string | undefined;
 					let responseText = '';
 					let taskUsageStats: UsageStats | undefined;
+					const queryStartTime = Date.now(); // Track start time for stats
 
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
@@ -230,6 +231,25 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							if (sid === targetSessionId) {
 								// Clean up listeners
 								cleanup();
+
+								// Record query stats for Auto Run queries
+								const queryDuration = Date.now() - queryStartTime;
+								const activeTab = getActiveTab(session);
+								window.maestro.stats
+									.recordQuery({
+										sessionId: sessionId, // Use the original session ID, not the batch ID
+										agentType: session.toolType,
+										source: 'auto', // Auto Run queries are always 'auto'
+										startTime: queryStartTime,
+										duration: queryDuration,
+										projectPath: effectiveCwd,
+										tabId: activeTab?.id,
+										isRemote: session.sessionSshRemoteConfig?.enabled ?? false,
+									})
+									.catch((err) => {
+										// Don't fail the batch flow if stats recording fails
+										console.warn('[spawnAgentForSession] Failed to record query stats:', err);
+									});
 
 								// Check for queued items BEFORE updating state (using sessionsRef for latest state)
 								const currentSession = sessionsRef.current.find((s) => s.id === sessionId);

@@ -10,6 +10,7 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Check } from 'lucide-react';
 import type { Theme } from '../types';
 import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
+import { stripMarkdown } from '../utils/textProcessing';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -529,9 +530,9 @@ export function GroupChatHistoryPanel({
 									</span>
 								</div>
 
-								{/* Summary - full text */}
+								{/* Summary - strip markdown for clean display */}
 								<p className="text-xs leading-relaxed" style={{ color: theme.colors.textMain }}>
-									{entry.summary}
+									{stripMarkdown(entry.summary)}
 								</p>
 
 								{/* Footer with cost */}

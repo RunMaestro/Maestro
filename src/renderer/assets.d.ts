@@ -30,7 +30,7 @@ declare module '*.webp' {
 
 // Vite-injected build-time constants
 declare const __APP_VERSION__: string;
-declare const __GIT_HASH__: string;
+declare const __COMMIT_HASH__: string;
 
 // Splash screen global functions (defined in index.html)
 interface Window {

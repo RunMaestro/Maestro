@@ -1,17 +1,15 @@
 /**
  * Auto-updater module for Maestro
  * Uses electron-updater to download and install updates from GitHub releases
+ *
+ * Note: electron-updater accesses electron.app at module load time, so we use
+ * lazy initialization to avoid "Cannot read properties of undefined" errors
+ * when the module is imported before app.whenReady().
  */
 
-import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
+import type { UpdateInfo, ProgressInfo, AppUpdater } from 'electron-updater';
 import { BrowserWindow, ipcMain } from 'electron';
 import { logger } from './utils/logger';
-
-// Don't auto-download - we want user to initiate
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-// Default to stable releases only (will be updated from settings)
-autoUpdater.allowPrerelease = false;
 
 export interface UpdateStatus {
 	status:
@@ -31,11 +29,33 @@ let mainWindow: BrowserWindow | null = null;
 let currentStatus: UpdateStatus = { status: 'idle' };
 let ipcHandlersRegistered = false;
 
+// Lazy-loaded autoUpdater instance
+let _autoUpdater: AppUpdater | null = null;
+
+/**
+ * Get the autoUpdater instance, initializing it lazily
+ * This is necessary because electron-updater accesses electron.app at import time
+ */
+function getAutoUpdater(): AppUpdater {
+	if (!_autoUpdater) {
+		// Dynamic require to defer the module load
+		const { autoUpdater } = require('electron-updater');
+		_autoUpdater = autoUpdater;
+		// Configure defaults
+		_autoUpdater!.autoDownload = false;
+		_autoUpdater!.autoInstallOnAppQuit = true;
+		_autoUpdater!.allowPrerelease = false;
+	}
+	return _autoUpdater!;
+}
+
 /**
  * Initialize the auto-updater and set up event handlers
  */
 export function initAutoUpdater(window: BrowserWindow): void {
 	mainWindow = window;
+
+	const autoUpdater = getAutoUpdater();
 
 	// Update available
 	autoUpdater.on('update-available', (info: UpdateInfo) => {
@@ -92,6 +112,8 @@ function setupIpcHandlers(): void {
 		return;
 	}
 	ipcHandlersRegistered = true;
+
+	const autoUpdater = getAutoUpdater();
 
 	// Check for updates using electron-updater (different from manual GitHub API check)
 	ipcMain.handle('updates:checkAutoUpdater', async () => {
@@ -159,6 +181,7 @@ function setupIpcHandlers(): void {
  */
 export async function checkForUpdatesManual(): Promise<UpdateInfo | null> {
 	try {
+		const autoUpdater = getAutoUpdater();
 		const result = await autoUpdater.checkForUpdates();
 		return result?.updateInfo || null;
 	} catch {
@@ -171,6 +194,7 @@ export async function checkForUpdatesManual(): Promise<UpdateInfo | null> {
  * This should be called when the user setting changes
  */
 export function setAllowPrerelease(allow: boolean): void {
+	const autoUpdater = getAutoUpdater();
 	autoUpdater.allowPrerelease = allow;
 	logger.info(`Auto-updater prerelease mode: ${allow ? 'enabled' : 'disabled'}`, 'AutoUpdater');
 }

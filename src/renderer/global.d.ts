@@ -2162,6 +2162,7 @@ interface MaestroAPI {
 			sessionsByDay: Array<{ date: string; count: number }>;
 			avgSessionDuration: number;
 			byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+			bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 		}>;
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'year' | 'all') => Promise<string>;

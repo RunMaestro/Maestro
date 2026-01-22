@@ -352,6 +352,18 @@ function PlaybookDetailView({
 								/ {playbook.subcategory}
 							</span>
 						)}
+						{playbook.source === 'local' && (
+							<span
+								className="px-2 py-0.5 rounded text-xs font-medium"
+								style={{
+									backgroundColor: '#3b82f620',
+									color: '#3b82f6',
+								}}
+								title="Custom local playbook"
+							>
+								Local
+							</span>
+						)}
 					</div>
 					<h2 className="text-lg font-semibold truncate" style={{ color: theme.colors.textMain }}>
 						{playbook.title}
@@ -508,6 +520,28 @@ function PlaybookDetailView({
 							{playbook.lastUpdated}
 						</p>
 					</div>
+
+					{/* Source badge for local playbooks */}
+					{playbook.source === 'local' && (
+						<div className="mb-4">
+							<h4
+								className="text-xs font-semibold mb-1 uppercase tracking-wide"
+								style={{ color: theme.colors.textDim }}
+							>
+								Source
+							</h4>
+							<span
+								className="px-2 py-0.5 rounded text-xs font-medium inline-block"
+								style={{
+									backgroundColor: '#3b82f620',
+									color: '#3b82f6',
+								}}
+								title="Custom local playbook"
+							>
+								Local
+							</span>
+						</div>
+					)}
 				</div>
 
 				{/* Main content area with document dropdown and markdown preview */}

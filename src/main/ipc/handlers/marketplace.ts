@@ -735,18 +735,31 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					LOG_CONTEXT
 				);
 
-				// Get the manifest to find the playbook
+				// Get the manifest to find the playbook (including local playbooks)
+				// This mirrors the logic in marketplace:getManifest to ensure local playbooks are included
 				const cache = await readCache(app);
-				let manifest: MarketplaceManifest;
+				let officialManifest: MarketplaceManifest | null = null;
 
 				if (cache && isCacheValid(cache)) {
-					manifest = cache.manifest;
+					officialManifest = cache.manifest;
 				} else {
-					manifest = await fetchManifest();
-					await writeCache(app, manifest);
+					try {
+						officialManifest = await fetchManifest();
+						await writeCache(app, officialManifest);
+					} catch (error) {
+						logger.warn(
+							'Failed to fetch official manifest during import, continuing with local only',
+							LOG_CONTEXT,
+							{ error }
+						);
+					}
 				}
 
-				// Find the playbook
+				// Read local manifest and merge with official
+				const localManifest = await readLocalManifest(app);
+				const manifest = mergeManifests(officialManifest, localManifest);
+
+				// Find the playbook in the merged manifest
 				const marketplacePlaybook = manifest.playbooks.find((p) => p.id === playbookId);
 				if (!marketplacePlaybook) {
 					throw new MarketplaceImportError(`Playbook not found: ${playbookId}`);

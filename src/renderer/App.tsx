@@ -2314,11 +2314,17 @@ function MaestroConsoleInner() {
 				// Fire side effects AFTER state update (outside the updater function)
 				// Record stats for any completed query (even if we have queued items to process next)
 				if (toastData?.startTime && toastData?.agentType) {
+					// Determine if this query was part of an Auto Run session
+					const sessionIdForStats = toastData.sessionId || actualSessionId;
+					const isAutoRunQuery = getBatchStateRef.current
+						? getBatchStateRef.current(sessionIdForStats).isRunning
+						: false;
+
 					window.maestro.stats
 						.recordQuery({
-							sessionId: toastData.sessionId || actualSessionId,
+							sessionId: sessionIdForStats,
 							agentType: toastData.agentType,
-							source: 'user', // Interactive queries are always user-initiated
+							source: isAutoRunQuery ? 'auto' : 'user',
 							startTime: toastData.startTime,
 							duration: toastData.duration,
 							projectPath: toastData.projectPath,

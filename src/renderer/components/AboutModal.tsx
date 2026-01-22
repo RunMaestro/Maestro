@@ -186,14 +186,10 @@ export function AboutModal({
 							>
 								MAESTRO
 							</h1>
-							<div className="flex items-baseline gap-1">
-								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-									v{__APP_VERSION__}
-								</span>
-								<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
-									({__GIT_HASH__})
-								</span>
-							</div>
+							<span className="text-xs font-mono" style={{ color: theme.colors.textDim }}>
+								v{__APP_VERSION__}
+								{__COMMIT_HASH__ && ` (${__COMMIT_HASH__})`}
+							</span>
 						</div>
 						<p className="text-xs opacity-70" style={{ color: theme.colors.textDim }}>
 							Agent Orchestration Command Center

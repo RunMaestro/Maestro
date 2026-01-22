@@ -107,8 +107,9 @@ vi.mock('../../../renderer/components/AchievementCard', () => ({
 	),
 }));
 
-// Add __APP_VERSION__ global
+// Add __APP_VERSION__ and __COMMIT_HASH__ globals
 (globalThis as unknown as { __APP_VERSION__: string }).__APP_VERSION__ = '1.0.0';
+(globalThis as unknown as { __COMMIT_HASH__: string }).__COMMIT_HASH__ = '';
 
 // Create test theme
 const createTheme = (): Theme => ({

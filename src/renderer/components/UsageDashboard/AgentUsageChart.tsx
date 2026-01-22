@@ -1,47 +1,52 @@
 /**
  * AgentUsageChart
  *
- * Line chart showing provider usage over time with one line per provider.
- * Displays query counts and duration for each provider (claude-code, codex, opencode).
+ * Line chart showing Maestro agent (session) usage over time with one line per agent.
+ * Displays query counts and duration for each agent that was used during the time period.
  *
  * Features:
- * - One line per provider
- * - Dual Y-axes: queries (left) and time (right)
- * - Provider-specific colors
+ * - One line per Maestro agent (named session from left panel)
+ * - Toggle between query count and time metrics
+ * - Session ID to name mapping when names are available
  * - Hover tooltips with exact values
  * - Responsive SVG rendering
  * - Theme-aware styling
+ * - Limits display to top 10 agents by query count
  */
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
-import type { Theme } from '../../types';
+import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/useStats';
-import {
-	COLORBLIND_AGENT_PALETTE,
-	COLORBLIND_LINE_COLORS,
-} from '../../constants/colorblindPalettes';
+import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 
-// Provider colors (matching AgentComparisonChart)
-const PROVIDER_COLORS: Record<string, string> = {
-	'claude-code': '#a78bfa', // violet
-	codex: '#34d399', // emerald
-	opencode: '#60a5fa', // blue
-};
+// 10 distinct colors for agents
+const AGENT_COLORS = [
+	'#a78bfa', // violet
+	'#34d399', // emerald
+	'#60a5fa', // blue
+	'#f472b6', // pink
+	'#fbbf24', // amber
+	'#fb923c', // orange
+	'#4ade80', // green
+	'#38bdf8', // sky
+	'#c084fc', // purple
+	'#f87171', // red
+];
 
-// Data point for a single provider on a single day
-interface ProviderDayData {
+// Data point for a single agent on a single day
+interface AgentDayData {
 	date: string;
 	formattedDate: string;
 	count: number;
 	duration: number;
 }
 
-// All providers' data for a single day
+// All agents' data for a single day
 interface DayData {
 	date: string;
 	formattedDate: string;
-	providers: Record<string, { count: number; duration: number }>;
+	agents: Record<string, { count: number; duration: number }>;
 }
 
 interface AgentUsageChartProps {
@@ -53,6 +58,8 @@ interface AgentUsageChartProps {
 	theme: Theme;
 	/** Enable colorblind-friendly colors */
 	colorBlindMode?: boolean;
+	/** Current sessions for mapping IDs to names */
+	sessions?: Session[];
 }
 
 /**
@@ -117,13 +124,40 @@ function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
 }
 
 /**
- * Get provider color, with colorblind mode support
+ * Get agent color based on index, with colorblind mode support
  */
-function getProviderColor(provider: string, index: number, colorBlindMode: boolean): string {
+function getAgentColor(index: number, colorBlindMode: boolean): string {
 	if (colorBlindMode) {
 		return COLORBLIND_AGENT_PALETTE[index % COLORBLIND_AGENT_PALETTE.length];
 	}
-	return PROVIDER_COLORS[provider] || COLORBLIND_LINE_COLORS.primary;
+	return AGENT_COLORS[index % AGENT_COLORS.length];
+}
+
+/**
+ * Extract a display name from a session ID
+ * Session IDs are in format: "sessionId-ai-tabId" or similar
+ * Returns the first 8 chars of the session UUID or the name if found
+ */
+function getSessionDisplayName(sessionId: string, sessions?: Session[]): string {
+	// Try to find the session by ID to get its name
+	if (sessions) {
+		// Session IDs in stats may include tab suffixes like "-ai-tabId"
+		// Try to match the base session ID
+		const session = sessions.find((s) => sessionId.startsWith(s.id));
+		if (session?.name) {
+			return session.name;
+		}
+	}
+
+	// Fallback: extract the UUID part and show first 8 chars
+	// Format is typically "uuid-ai-tabId" or just "uuid"
+	const parts = sessionId.split('-');
+	if (parts.length >= 5) {
+		// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+		// Take first segment
+		return parts[0].substring(0, 8).toUpperCase();
+	}
+	return sessionId.substring(0, 8).toUpperCase();
 }
 
 export function AgentUsageChart({
@@ -131,10 +165,9 @@ export function AgentUsageChart({
 	timeRange,
 	theme,
 	colorBlindMode = false,
+	sessions,
 }: AgentUsageChartProps) {
-	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; provider?: string } | null>(
-		null
-	);
+	const [hoveredDay, setHoveredDay] = useState<{ dayIndex: number; agent?: string } | null>(null);
 	const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
 	const [metricMode, setMetricMode] = useState<'count' | 'duration'>('count');
 
@@ -145,29 +178,46 @@ export function AgentUsageChart({
 	const innerWidth = chartWidth - padding.left - padding.right;
 	const innerHeight = chartHeight - padding.top - padding.bottom;
 
-	// Get list of providers and their data
-	const { providers, chartData, allDates } = useMemo(() => {
-		const byAgentByDay = data.byAgentByDay || {};
-		const providerList = Object.keys(byAgentByDay).sort();
+	// Get list of agents and their data (limited to top 10 by total queries)
+	const { agents, chartData, allDates, agentDisplayNames } = useMemo(() => {
+		const bySessionByDay = data.bySessionByDay || {};
 
-		// Collect all unique dates
+		// Calculate total queries per session to rank them
+		const sessionTotals: Array<{ sessionId: string; totalQueries: number }> = [];
+		for (const sessionId of Object.keys(bySessionByDay)) {
+			const totalQueries = bySessionByDay[sessionId].reduce((sum, day) => sum + day.count, 0);
+			sessionTotals.push({ sessionId, totalQueries });
+		}
+
+		// Sort by total queries descending and take top 10
+		sessionTotals.sort((a, b) => b.totalQueries - a.totalQueries);
+		const topSessions = sessionTotals.slice(0, 10);
+		const agentList = topSessions.map((s) => s.sessionId);
+
+		// Build display name map
+		const displayNames: Record<string, string> = {};
+		for (const sessionId of agentList) {
+			displayNames[sessionId] = getSessionDisplayName(sessionId, sessions);
+		}
+
+		// Collect all unique dates from selected agents
 		const dateSet = new Set<string>();
-		for (const provider of providerList) {
-			for (const day of byAgentByDay[provider]) {
+		for (const sessionId of agentList) {
+			for (const day of bySessionByDay[sessionId]) {
 				dateSet.add(day.date);
 			}
 		}
 		const sortedDates = Array.from(dateSet).sort();
 
-		// Build per-provider arrays aligned to all dates
-		const providerData: Record<string, ProviderDayData[]> = {};
-		for (const provider of providerList) {
+		// Build per-agent arrays aligned to all dates
+		const agentData: Record<string, AgentDayData[]> = {};
+		for (const sessionId of agentList) {
 			const dayMap = new Map<string, { count: number; duration: number }>();
-			for (const day of byAgentByDay[provider]) {
+			for (const day of bySessionByDay[sessionId]) {
 				dayMap.set(day.date, { count: day.count, duration: day.duration });
 			}
 
-			providerData[provider] = sortedDates.map((date) => ({
+			agentData[sessionId] = sortedDates.map((date) => ({
 				date,
 				formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
 				count: dayMap.get(date)?.count || 0,
@@ -177,26 +227,27 @@ export function AgentUsageChart({
 
 		// Build combined day data for tooltips
 		const combinedData: DayData[] = sortedDates.map((date) => {
-			const providers: Record<string, { count: number; duration: number }> = {};
-			for (const provider of providerList) {
-				const dayData = providerData[provider].find((d) => d.date === date);
+			const agents: Record<string, { count: number; duration: number }> = {};
+			for (const sessionId of agentList) {
+				const dayData = agentData[sessionId].find((d) => d.date === date);
 				if (dayData) {
-					providers[provider] = { count: dayData.count, duration: dayData.duration };
+					agents[sessionId] = { count: dayData.count, duration: dayData.duration };
 				}
 			}
 			return {
 				date,
 				formattedDate: format(parseISO(date), 'EEEE, MMM d, yyyy'),
-				providers,
+				agents,
 			};
 		});
 
 		return {
-			providers: providerList,
-			chartData: providerData,
+			agents: agentList,
+			chartData: agentData,
 			allDates: combinedData,
+			agentDisplayNames: displayNames,
 		};
-	}, [data.byAgentByDay]);
+	}, [data.bySessionByDay, sessions]);
 
 	// Calculate scales
 	const { xScale, yScale, yTicks } = useMemo(() => {
@@ -208,13 +259,13 @@ export function AgentUsageChart({
 			};
 		}
 
-		// Find max value across all providers
+		// Find max value across all agents
 		let maxValue = 1;
-		for (const provider of providers) {
-			const providerMax = Math.max(
-				...chartData[provider].map((d) => (metricMode === 'count' ? d.count : d.duration))
+		for (const agent of agents) {
+			const agentMax = Math.max(
+				...chartData[agent].map((d) => (metricMode === 'count' ? d.count : d.duration))
 			);
-			maxValue = Math.max(maxValue, providerMax);
+			maxValue = Math.max(maxValue, agentMax);
 		}
 
 		// Add 10% padding
@@ -235,16 +286,16 @@ export function AgentUsageChart({
 				: Array.from({ length: tickCount }, (_, i) => (yMax / (tickCount - 1)) * i);
 
 		return { xScale: xScaleFn, yScale: yScaleFn, yTicks: yTicksArr };
-	}, [allDates, providers, chartData, metricMode, chartHeight, innerWidth, innerHeight, padding]);
+	}, [allDates, agents, chartData, metricMode, chartHeight, innerWidth, innerHeight, padding]);
 
-	// Generate line paths for each provider
+	// Generate line paths for each agent
 	const linePaths = useMemo(() => {
 		const paths: Record<string, string> = {};
-		for (const provider of providers) {
-			const providerDays = chartData[provider];
-			if (providerDays.length === 0) continue;
+		for (const agent of agents) {
+			const agentDays = chartData[agent];
+			if (agentDays.length === 0) continue;
 
-			paths[provider] = providerDays
+			paths[agent] = agentDays
 				.map((day, idx) => {
 					const x = xScale(idx);
 					const y = yScale(metricMode === 'count' ? day.count : day.duration);
@@ -253,12 +304,12 @@ export function AgentUsageChart({
 				.join(' ');
 		}
 		return paths;
-	}, [providers, chartData, xScale, yScale, metricMode]);
+	}, [agents, chartData, xScale, yScale, metricMode]);
 
 	// Handle mouse events
 	const handleMouseEnter = useCallback(
-		(dayIndex: number, provider: string, event: React.MouseEvent<SVGCircleElement>) => {
-			setHoveredDay({ dayIndex, provider });
+		(dayIndex: number, agent: string, event: React.MouseEvent<SVGCircleElement>) => {
+			setHoveredDay({ dayIndex, agent });
 			const rect = event.currentTarget.getBoundingClientRect();
 			setTooltipPos({
 				x: rect.left + rect.width / 2,
@@ -278,7 +329,7 @@ export function AgentUsageChart({
 			className="p-4 rounded-lg"
 			style={{ backgroundColor: theme.colors.bgMain }}
 			role="figure"
-			aria-label={`Provider usage chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} over time. ${providers.length} providers displayed.`}
+			aria-label={`Agent usage chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} over time. ${agents.length} agents displayed.`}
 		>
 			{/* Header with title and metric toggle */}
 			<div className="flex items-center justify-between mb-4">
@@ -319,7 +370,7 @@ export function AgentUsageChart({
 
 			{/* Chart container */}
 			<div className="relative">
-				{allDates.length === 0 || providers.length === 0 ? (
+				{allDates.length === 0 || agents.length === 0 ? (
 					<div
 						className="flex items-center justify-center"
 						style={{ height: chartHeight, color: theme.colors.textDim }}
@@ -332,7 +383,7 @@ export function AgentUsageChart({
 						viewBox={`0 0 ${chartWidth} ${chartHeight}`}
 						preserveAspectRatio="xMidYMid meet"
 						role="img"
-						aria-label={`Line chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} per provider over time`}
+						aria-label={`Line chart showing ${metricMode === 'count' ? 'query counts' : 'duration'} per agent over time`}
 					>
 						{/* Grid lines */}
 						{yTicks.map((tick, idx) => (
@@ -386,13 +437,13 @@ export function AgentUsageChart({
 							);
 						})}
 
-						{/* Lines for each provider */}
-						{providers.map((provider, providerIdx) => {
-							const color = getProviderColor(provider, providerIdx, colorBlindMode);
+						{/* Lines for each agent */}
+						{agents.map((agent, agentIdx) => {
+							const color = getAgentColor(agentIdx, colorBlindMode);
 							return (
 								<path
-									key={`line-${provider}`}
-									d={linePaths[provider]}
+									key={`line-${agent}`}
+									d={linePaths[agent]}
 									fill="none"
 									stroke={color}
 									strokeWidth={2}
@@ -403,18 +454,17 @@ export function AgentUsageChart({
 							);
 						})}
 
-						{/* Data points for each provider */}
-						{providers.map((provider, providerIdx) => {
-							const color = getProviderColor(provider, providerIdx, colorBlindMode);
-							return chartData[provider].map((day, dayIdx) => {
+						{/* Data points for each agent */}
+						{agents.map((agent, agentIdx) => {
+							const color = getAgentColor(agentIdx, colorBlindMode);
+							return chartData[agent].map((day, dayIdx) => {
 								const x = xScale(dayIdx);
 								const y = yScale(metricMode === 'count' ? day.count : day.duration);
-								const isHovered =
-									hoveredDay?.dayIndex === dayIdx && hoveredDay?.provider === provider;
+								const isHovered = hoveredDay?.dayIndex === dayIdx && hoveredDay?.agent === agent;
 
 								return (
 									<circle
-										key={`point-${provider}-${dayIdx}`}
+										key={`point-${agent}-${dayIdx}`}
 										cx={x}
 										cy={y}
 										r={isHovered ? 6 : 4}
@@ -425,7 +475,7 @@ export function AgentUsageChart({
 											cursor: 'pointer',
 											transition: 'r 0.15s ease',
 										}}
-										onMouseEnter={(e) => handleMouseEnter(dayIdx, provider, e)}
+										onMouseEnter={(e) => handleMouseEnter(dayIdx, agent, e)}
 										onMouseLeave={handleMouseLeave}
 									/>
 								);
@@ -462,14 +512,14 @@ export function AgentUsageChart({
 					>
 						<div className="font-medium mb-1">{allDates[hoveredDay.dayIndex].formattedDate}</div>
 						<div style={{ color: theme.colors.textDim }}>
-							{providers.map((provider, idx) => {
-								const dayData = allDates[hoveredDay.dayIndex].providers[provider];
+							{agents.map((agent, idx) => {
+								const dayData = allDates[hoveredDay.dayIndex].agents[agent];
 								if (!dayData || (dayData.count === 0 && dayData.duration === 0)) return null;
-								const color = getProviderColor(provider, idx, colorBlindMode);
+								const color = getAgentColor(idx, colorBlindMode);
 								return (
-									<div key={provider} className="flex items-center gap-2">
+									<div key={agent} className="flex items-center gap-2">
 										<span className="w-2 h-2 rounded-full" style={{ backgroundColor: color }} />
-										<span>{provider}:</span>
+										<span>{agentDisplayNames[agent]}:</span>
 										<span style={{ color: theme.colors.textMain }}>
 											{metricMode === 'count'
 												? `${dayData.count} ${dayData.count === 1 ? 'query' : 'queries'}`
@@ -488,13 +538,13 @@ export function AgentUsageChart({
 				className="flex items-center justify-center gap-4 mt-3 pt-3 border-t flex-wrap"
 				style={{ borderColor: theme.colors.border }}
 			>
-				{providers.map((provider, idx) => {
-					const color = getProviderColor(provider, idx, colorBlindMode);
+				{agents.map((agent, idx) => {
+					const color = getAgentColor(idx, colorBlindMode);
 					return (
-						<div key={provider} className="flex items-center gap-1.5">
+						<div key={agent} className="flex items-center gap-1.5">
 							<div className="w-3 h-0.5 rounded" style={{ backgroundColor: color }} />
 							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								{provider}
+								{agentDisplayNames[agent]}
 							</span>
 						</div>
 					);

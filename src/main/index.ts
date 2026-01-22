@@ -2,8 +2,8 @@ import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import fsSync from 'fs';
 import crypto from 'crypto';
-import * as Sentry from '@sentry/electron/main';
-import { IPCMode } from '@sentry/electron/main';
+// Sentry is imported dynamically below to avoid module-load-time access to electron.app
+// which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
 import { ProcessManager } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agent-detector';
@@ -153,30 +153,6 @@ if (disableGpuAcceleration) {
 	console.log('[STARTUP] GPU hardware acceleration disabled by user preference');
 }
 
-// Initialize Sentry for crash reporting
-// Only enable in production - skip during development to avoid noise from hot-reload artifacts
-if (crashReportingEnabled && !isDevelopment) {
-	Sentry.init({
-		dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
-		// Set release version for better debugging
-		release: app.getVersion(),
-		// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
-		// See: https://github.com/getsentry/sentry-electron/issues/661
-		ipcMode: IPCMode.Classic,
-		// Only send errors, not performance data
-		tracesSampleRate: 0,
-		// Filter out sensitive data
-		beforeSend(event) {
-			// Remove any potential sensitive data from the event
-			if (event.user) {
-				delete event.user.ip_address;
-				delete event.user.email;
-			}
-			return event;
-		},
-	});
-}
-
 // Generate installation ID on first run (one-time generation)
 // This creates a unique identifier per Maestro installation for telemetry differentiation
 const store = getSettingsStore();
@@ -187,9 +163,38 @@ if (!installationId) {
 	logger.info('Generated new installation ID', 'Startup', { installationId });
 }
 
-// Add installation ID to Sentry for error correlation across installations
+// Initialize Sentry for crash reporting (dynamic import to avoid module-load-time errors)
+// Only enable in production - skip during development to avoid noise from hot-reload artifacts
+// The dynamic import is necessary because @sentry/electron accesses electron.app at module load time
+// which fails if the module is imported before app.whenReady() in some Node/Electron version combinations
 if (crashReportingEnabled && !isDevelopment) {
-	Sentry.setTag('installationId', installationId);
+	import('@sentry/electron/main')
+		.then(({ init, setTag, IPCMode }) => {
+			init({
+				dsn: 'https://2303c5f787f910863d83ed5d27ce8ed2@o4510554134740992.ingest.us.sentry.io/4510554135789568',
+				// Set release version for better debugging
+				release: app.getVersion(),
+				// Use Classic IPC mode to avoid "sentry-ipc:// URL scheme not supported" errors
+				// See: https://github.com/getsentry/sentry-electron/issues/661
+				ipcMode: IPCMode.Classic,
+				// Only send errors, not performance data
+				tracesSampleRate: 0,
+				// Filter out sensitive data
+				beforeSend(event) {
+					// Remove any potential sensitive data from the event
+					if (event.user) {
+						delete event.user.ip_address;
+						delete event.user.email;
+					}
+					return event;
+				},
+			});
+			// Add installation ID to Sentry for error correlation across installations
+			setTag('installationId', installationId);
+		})
+		.catch((err) => {
+			logger.warn('Failed to initialize Sentry', 'Startup', { error: String(err) });
+		});
 }
 
 // Create local references to stores for use throughout this module

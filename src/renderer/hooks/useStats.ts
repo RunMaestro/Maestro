@@ -34,8 +34,10 @@ export interface StatsAggregation {
 	sessionsByAgent: Record<string, number>;
 	sessionsByDay: Array<{ date: string; count: number }>;
 	avgSessionDuration: number;
-	// Per-agent per-day breakdown for provider usage chart
+	// Per-provider per-day breakdown for provider comparison
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	// Per-session per-day breakdown for agent usage chart
+	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 }
 
 // Return type for the useStats hook

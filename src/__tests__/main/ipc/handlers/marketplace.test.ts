@@ -651,9 +651,14 @@ describe('marketplace IPC handlers', () => {
 				manifest: sampleManifest,
 			};
 
+			// Mock file reads:
+			// 1. First read: official cache
+			// 2. Second read: local manifest (ENOENT = no local manifest)
+			// 3. Third read: existing playbooks for this session
 			vi.mocked(fs.readFile)
-				.mockResolvedValueOnce(JSON.stringify(validCache))
-				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks }));
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // Official cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }) // No local manifest
+				.mockResolvedValueOnce(JSON.stringify({ playbooks: existingPlaybooks })); // Existing playbooks
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
 
@@ -678,7 +683,12 @@ describe('marketplace IPC handlers', () => {
 				manifest: sampleManifest,
 			};
 
-			vi.mocked(fs.readFile).mockResolvedValueOnce(JSON.stringify(validCache));
+			// Mock file reads:
+			// 1. First read: official cache
+			// 2. Second read: local manifest (ENOENT = no local manifest)
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // Official cache
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // No local manifest
 
 			const handler = handlers.get('marketplace:importPlaybook');
 			const result = await handler!(
@@ -691,6 +701,240 @@ describe('marketplace IPC handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('Playbook not found');
+		});
+
+		it('should import a local playbook that only exists in the local manifest', async () => {
+			// Create a local-only playbook that doesn't exist in the official manifest
+			const localOnlyPlaybook = {
+				id: 'local-playbook-1',
+				title: 'Local Playbook',
+				description: 'A playbook from the local manifest',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-20',
+				path: 'local-playbooks/local-playbook-1',
+				documents: [{ filename: 'local-phase-1', resetOnCompletion: false }],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: 'Local custom instructions',
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [localOnlyPlaybook],
+			};
+
+			// Setup: cache with official manifest (no local-playbook-1)
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest, // Official manifest without local playbook
+			};
+
+			// Mock file reads:
+			// 1. First read: official cache
+			// 2. Second read: local manifest (with the local-only playbook)
+			// 3. Third read: existing playbooks (ENOENT = none)
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // Cache with official manifest
+				.mockResolvedValueOnce(JSON.stringify(localManifest)) // Local manifest
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // No existing playbooks
+
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			// Mock document fetch for the local playbook's document
+			mockFetch.mockResolvedValueOnce({
+				ok: true,
+				text: () => Promise.resolve('# Local Phase 1 Content'),
+			});
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'local-playbook-1', // This ID only exists in the LOCAL manifest
+				'My Local Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			// Verify the import succeeded
+			expect(result.success).toBe(true);
+			expect(result.playbook).toBeDefined();
+			expect(result.playbook.name).toBe('Local Playbook');
+			expect(result.importedDocs).toEqual(['local-phase-1']);
+
+			// Verify target folder was created
+			expect(fs.mkdir).toHaveBeenCalledWith('/autorun/folder/My Local Playbook', {
+				recursive: true,
+			});
+
+			// Verify document was written
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				'/autorun/folder/My Local Playbook/local-phase-1.md',
+				'# Local Phase 1 Content',
+				'utf-8'
+			);
+
+			// Verify the custom prompt was preserved
+			expect(result.playbook.prompt).toBe('Local custom instructions');
+		});
+
+		it('should import a local playbook with filesystem path (reads from disk, not GitHub)', async () => {
+			// Create a local playbook with a LOCAL FILESYSTEM path (absolute path)
+			// This tests the isLocalPath() detection and fs.readFile document reading
+			const localFilesystemPlaybook = {
+				id: 'filesystem-playbook-1',
+				title: 'Filesystem Playbook',
+				description: 'A playbook stored on the local filesystem',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-20',
+				path: '/Users/test/custom-playbooks/my-playbook', // ABSOLUTE PATH - triggers local file reading
+				documents: [
+					{ filename: 'phase-1', resetOnCompletion: false },
+					{ filename: 'phase-2', resetOnCompletion: true },
+				],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: 'Filesystem playbook instructions',
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [localFilesystemPlaybook],
+			};
+
+			// Setup: cache with official manifest (no filesystem-playbook-1)
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			// Mock file reads in order:
+			// 1. Official cache
+			// 2. Local manifest (with the filesystem playbook)
+			// 3. Document read: /Users/test/custom-playbooks/my-playbook/phase-1.md
+			// 4. Document read: /Users/test/custom-playbooks/my-playbook/phase-2.md
+			// 5. Existing playbooks file (ENOENT = none)
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache)) // 1. Official cache
+				.mockResolvedValueOnce(JSON.stringify(localManifest)) // 2. Local manifest
+				.mockResolvedValueOnce('# Phase 1 from filesystem\n\n- [ ] Task 1') // 3. phase-1.md
+				.mockResolvedValueOnce('# Phase 2 from filesystem\n\n- [ ] Task 2') // 4. phase-2.md
+				.mockRejectedValueOnce({ code: 'ENOENT' }); // 5. No existing playbooks
+
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'filesystem-playbook-1',
+				'Imported Filesystem Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			// Verify the import succeeded
+			expect(result.success).toBe(true);
+			expect(result.playbook).toBeDefined();
+			expect(result.playbook.name).toBe('Filesystem Playbook');
+			expect(result.importedDocs).toEqual(['phase-1', 'phase-2']);
+
+			// Verify documents were READ FROM LOCAL FILESYSTEM (not fetched from GitHub)
+			// The fs.readFile mock should have been called for the document paths
+			expect(fs.readFile).toHaveBeenCalledWith(
+				'/Users/test/custom-playbooks/my-playbook/phase-1.md',
+				'utf-8'
+			);
+			expect(fs.readFile).toHaveBeenCalledWith(
+				'/Users/test/custom-playbooks/my-playbook/phase-2.md',
+				'utf-8'
+			);
+
+			// Verify NO fetch calls were made for documents (since they're local)
+			// Note: mockFetch should NOT have been called for document retrieval
+			expect(mockFetch).not.toHaveBeenCalled();
+
+			// Verify documents were written to the target folder
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				'/autorun/folder/Imported Filesystem Playbook/phase-1.md',
+				'# Phase 1 from filesystem\n\n- [ ] Task 1',
+				'utf-8'
+			);
+			expect(fs.writeFile).toHaveBeenCalledWith(
+				'/autorun/folder/Imported Filesystem Playbook/phase-2.md',
+				'# Phase 2 from filesystem\n\n- [ ] Task 2',
+				'utf-8'
+			);
+
+			// Verify the prompt was preserved
+			expect(result.playbook.prompt).toBe('Filesystem playbook instructions');
+		});
+
+		it('should import a local playbook with tilde path (reads from disk, not GitHub)', async () => {
+			// Create a local playbook with a TILDE-PREFIXED path (home directory)
+			const tildePathPlaybook = {
+				id: 'tilde-playbook-1',
+				title: 'Tilde Path Playbook',
+				description: 'A playbook stored in home directory',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-20',
+				path: '~/playbooks/my-tilde-playbook', // TILDE PATH - triggers local file reading
+				documents: [{ filename: 'setup', resetOnCompletion: false }],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: null,
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [tildePathPlaybook],
+			};
+
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			// Mock os.homedir() to return a predictable path
+			vi.mock('os', () => ({
+				homedir: vi.fn().mockReturnValue('/Users/testuser'),
+			}));
+
+			// The tilde path ~/playbooks/my-tilde-playbook will be resolved to:
+			// /Users/testuser/playbooks/my-tilde-playbook (or similar based on os.homedir)
+			// For this test, we just verify that fs.readFile is called (not fetch)
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce(JSON.stringify(localManifest))
+				.mockResolvedValueOnce('# Setup from tilde path')
+				.mockRejectedValueOnce({ code: 'ENOENT' });
+
+			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+			const handler = handlers.get('marketplace:importPlaybook');
+			const result = await handler!(
+				{} as any,
+				'tilde-playbook-1',
+				'Tilde Playbook',
+				'/autorun/folder',
+				'session-123'
+			);
+
+			// Verify the import succeeded
+			expect(result.success).toBe(true);
+			expect(result.playbook).toBeDefined();
+			expect(result.playbook.name).toBe('Tilde Path Playbook');
+			expect(result.importedDocs).toEqual(['setup']);
+
+			// Verify NO fetch calls were made (documents read from filesystem)
+			expect(mockFetch).not.toHaveBeenCalled();
+
+			// Verify null prompt is converted to empty string (Maestro default fallback)
+			expect(result.playbook.prompt).toBe('');
 		});
 
 		it('should continue importing when individual document fetch fails', async () => {
@@ -1192,6 +1436,171 @@ describe('marketplace IPC handlers', () => {
 				} else {
 					expect(result.fromCache).toBe(false);
 					expect(mockFetch).toHaveBeenCalled();
+				}
+			}
+		});
+	});
+
+	describe('merged manifest lookup', () => {
+		it('should find playbook ID that exists only in local manifest', async () => {
+			// Create a playbook that only exists in the local manifest
+			const localOnlyPlaybook = {
+				id: 'local-only-playbook',
+				title: 'Local Only Playbook',
+				description: 'This playbook only exists locally',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-20',
+				path: 'custom/local-only-playbook',
+				documents: [{ filename: 'doc1', resetOnCompletion: false }],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: 'Local only prompt',
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [localOnlyPlaybook],
+			};
+
+			// Official manifest does NOT contain local-only-playbook
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest, // Only has test-playbook-1, test-playbook-2, test-playbook-with-assets
+			};
+
+			// Mock file reads:
+			// 1. Cache (official manifest)
+			// 2. Local manifest (with local-only-playbook)
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			// Verify the merged manifest contains the local-only playbook
+			const foundPlaybook = result.manifest.playbooks.find(
+				(p: any) => p.id === 'local-only-playbook'
+			);
+			expect(foundPlaybook).toBeDefined();
+			expect(foundPlaybook.title).toBe('Local Only Playbook');
+			expect(foundPlaybook.source).toBe('local');
+
+			// Verify it also contains the official playbooks
+			const officialPlaybook = result.manifest.playbooks.find(
+				(p: any) => p.id === 'test-playbook-1'
+			);
+			expect(officialPlaybook).toBeDefined();
+			expect(officialPlaybook.source).toBe('official');
+		});
+
+		it('should prefer local version when playbook ID exists in both manifests', async () => {
+			// Create a local playbook that has the SAME ID as an official one
+			const localOverridePlaybook = {
+				id: 'test-playbook-1', // SAME ID as official playbook
+				title: 'Local Override Version',
+				description: 'This local version overrides the official one',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-25',
+				path: '/Users/local/custom-playbooks/test-playbook-1', // Local filesystem path
+				documents: [
+					{ filename: 'custom-phase-1', resetOnCompletion: false },
+					{ filename: 'custom-phase-2', resetOnCompletion: false },
+				],
+				loopEnabled: true,
+				maxLoops: 5,
+				prompt: 'Local override custom prompt',
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-25',
+				playbooks: [localOverridePlaybook],
+			};
+
+			// Official manifest has test-playbook-1 with different properties
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest, // Contains test-playbook-1 with title "Test Playbook"
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			// Find the playbook with ID 'test-playbook-1'
+			const mergedPlaybook = result.manifest.playbooks.find((p: any) => p.id === 'test-playbook-1');
+
+			// Verify the LOCAL version took precedence
+			expect(mergedPlaybook).toBeDefined();
+			expect(mergedPlaybook.title).toBe('Local Override Version'); // NOT "Test Playbook"
+			expect(mergedPlaybook.source).toBe('local'); // Tagged as local
+			expect(mergedPlaybook.author).toBe('Local Author');
+			expect(mergedPlaybook.documents).toEqual([
+				{ filename: 'custom-phase-1', resetOnCompletion: false },
+				{ filename: 'custom-phase-2', resetOnCompletion: false },
+			]);
+			expect(mergedPlaybook.loopEnabled).toBe(true);
+			expect(mergedPlaybook.maxLoops).toBe(5);
+			expect(mergedPlaybook.prompt).toBe('Local override custom prompt');
+
+			// Verify there's only ONE playbook with ID 'test-playbook-1' (no duplicates)
+			const matchingPlaybooks = result.manifest.playbooks.filter(
+				(p: any) => p.id === 'test-playbook-1'
+			);
+			expect(matchingPlaybooks.length).toBe(1);
+
+			// Verify other official playbooks are still present
+			const otherOfficialPlaybook = result.manifest.playbooks.find(
+				(p: any) => p.id === 'test-playbook-2'
+			);
+			expect(otherOfficialPlaybook).toBeDefined();
+			expect(otherOfficialPlaybook.source).toBe('official');
+		});
+
+		it('should tag playbooks with correct source (official vs local)', async () => {
+			const localPlaybook = {
+				id: 'brand-new-local',
+				title: 'Brand New Local Playbook',
+				description: 'A completely new local playbook',
+				category: 'Custom',
+				author: 'Local Author',
+				lastUpdated: '2024-01-20',
+				path: '/local/playbooks/brand-new',
+				documents: [{ filename: 'doc', resetOnCompletion: false }],
+				loopEnabled: false,
+				maxLoops: null,
+				prompt: null,
+			};
+
+			const localManifest: MarketplaceManifest = {
+				lastUpdated: '2024-01-20',
+				playbooks: [localPlaybook],
+			};
+
+			const validCache: MarketplaceCache = {
+				fetchedAt: Date.now(),
+				manifest: sampleManifest,
+			};
+
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(validCache))
+				.mockResolvedValueOnce(JSON.stringify(localManifest));
+
+			const handler = handlers.get('marketplace:getManifest');
+			const result = await handler!({} as any);
+
+			// Verify all playbooks have the correct source tag
+			for (const playbook of result.manifest.playbooks) {
+				if (playbook.id === 'brand-new-local') {
+					expect(playbook.source).toBe('local');
+				} else {
+					// All sample manifest playbooks should be tagged as official
+					expect(playbook.source).toBe('official');
 				}
 			}
 		});

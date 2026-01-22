@@ -1565,6 +1565,40 @@ export class StatsDB {
 			sessionCount: sessionTotals.count,
 		});
 
+		// By session by day (for agent usage chart - shows each Maestro session's usage over time)
+		const bySessionByDayStart = perfMetrics.start();
+		const bySessionByDayStmt = this.db.prepare(`
+      SELECT session_id,
+             date(start_time / 1000, 'unixepoch', 'localtime') as date,
+             COUNT(*) as count,
+             SUM(duration) as duration
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY session_id, date(start_time / 1000, 'unixepoch', 'localtime')
+      ORDER BY session_id, date ASC
+    `);
+		const bySessionByDayRows = bySessionByDayStmt.all(startTime) as Array<{
+			session_id: string;
+			date: string;
+			count: number;
+			duration: number;
+		}>;
+		const bySessionByDay: Record<
+			string,
+			Array<{ date: string; count: number; duration: number }>
+		> = {};
+		for (const row of bySessionByDayRows) {
+			if (!bySessionByDay[row.session_id]) {
+				bySessionByDay[row.session_id] = [];
+			}
+			bySessionByDay[row.session_id].push({
+				date: row.date,
+				count: row.count,
+				duration: row.duration,
+			});
+		}
+		perfMetrics.end(bySessionByDayStart, 'getAggregatedStats:bySessionByDay', { range });
+
 		const totalDuration = perfMetrics.end(perfStart, 'getAggregatedStats:total', {
 			range,
 			totalQueries: totals.count,
@@ -1593,6 +1627,7 @@ export class StatsDB {
 			sessionsByDay: sessionsByDayRows,
 			avgSessionDuration: Math.round(avgSessionDurationResult.avg_duration),
 			byAgentByDay,
+			bySessionByDay,
 		};
 	}
 
