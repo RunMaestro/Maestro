@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
-import fsSync from 'fs';
 import crypto from 'crypto';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
@@ -79,7 +78,7 @@ import {
 	REGEX_AI_TAB_ID,
 	debugLog,
 } from './constants';
-import { initAutoUpdater } from './auto-updater';
+// initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
 // Extracted modules (Phase 1 refactoring)
 import { parseParticipantSessionId } from './group-chat/session-parser';
@@ -92,6 +91,13 @@ import {
 // Phase 2 refactoring - dependency injection
 import { createSafeSend } from './utils/safe-send';
 import { createWebServerFactory } from './web-server/web-server-factory';
+// Phase 4 refactoring - app lifecycle
+import {
+	setupGlobalErrorHandlers,
+	createCliWatcher,
+	createWindowManager,
+	createQuitHandler,
+} from './app-lifecycle';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -198,10 +204,24 @@ let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
-let cliActivityWatcher: fsSync.FSWatcher | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
+
+// Create CLI activity watcher with dependency injection (Phase 4 refactoring)
+const cliWatcher = createCliWatcher({
+	getMainWindow: () => mainWindow,
+	getUserDataPath: () => app.getPath('userData'),
+});
+
+// Create window manager with dependency injection (Phase 4 refactoring)
+const windowManager = createWindowManager({
+	windowStateStore,
+	isDevelopment,
+	preloadPath: path.join(__dirname, 'preload.js'),
+	rendererPath: path.join(__dirname, '../renderer/index.html'),
+	devServerUrl: 'http://localhost:5173',
+});
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
@@ -212,138 +232,21 @@ const createWebServer = createWebServerFactory({
 	getProcessManager: () => processManager,
 });
 
+// createWindow is now handled by windowManager (Phase 4 refactoring)
+// The window manager creates and configures the BrowserWindow with:
+// - Window state persistence (position, size, maximized/fullscreen)
+// - DevTools installation in development
+// - Auto-updater initialization in production
 function createWindow() {
-	// Restore saved window state
-	const savedState = windowStateStore.store;
-
-	mainWindow = new BrowserWindow({
-		x: savedState.x,
-		y: savedState.y,
-		width: savedState.width,
-		height: savedState.height,
-		minWidth: 1000,
-		minHeight: 600,
-		backgroundColor: '#0b0b0d',
-		titleBarStyle: 'hiddenInset',
-		webPreferences: {
-			preload: path.join(__dirname, 'preload.js'),
-			contextIsolation: true,
-			nodeIntegration: false,
-		},
-	});
-
-	// Restore maximized/fullscreen state after window is created
-	if (savedState.isFullScreen) {
-		mainWindow.setFullScreen(true);
-	} else if (savedState.isMaximized) {
-		mainWindow.maximize();
-	}
-
-	logger.info('Browser window created', 'Window', {
-		size: `${savedState.width}x${savedState.height}`,
-		maximized: savedState.isMaximized,
-		fullScreen: savedState.isFullScreen,
-		mode: process.env.NODE_ENV || 'production',
-	});
-
-	// Save window state before closing
-	const saveWindowState = () => {
-		if (!mainWindow) return;
-
-		const isMaximized = mainWindow.isMaximized();
-		const isFullScreen = mainWindow.isFullScreen();
-		const bounds = mainWindow.getBounds();
-
-		// Only save bounds if not maximized/fullscreen (to restore proper size later)
-		if (!isMaximized && !isFullScreen) {
-			windowStateStore.set('x', bounds.x);
-			windowStateStore.set('y', bounds.y);
-			windowStateStore.set('width', bounds.width);
-			windowStateStore.set('height', bounds.height);
-		}
-		windowStateStore.set('isMaximized', isMaximized);
-		windowStateStore.set('isFullScreen', isFullScreen);
-	};
-
-	mainWindow.on('close', saveWindowState);
-
-	// Load the app
-	if (process.env.NODE_ENV === 'development') {
-		// Install React DevTools extension in development mode
-		import('electron-devtools-installer')
-			.then(({ default: installExtension, REACT_DEVELOPER_TOOLS }) => {
-				installExtension(REACT_DEVELOPER_TOOLS)
-					.then(() => logger.info('React DevTools extension installed', 'Window'))
-					.catch((err: Error) =>
-						logger.warn(`Failed to install React DevTools: ${err.message}`, 'Window')
-					);
-			})
-			.catch((err: Error) =>
-				logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
-			);
-
-		mainWindow.loadURL('http://localhost:5173');
-		// DevTools can be opened via Command-K menu instead of automatically on startup
-		logger.info('Loading development server', 'Window');
-	} else {
-		mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
-		logger.info('Loading production build', 'Window');
-		// Open DevTools in production if DEBUG env var is set
-		if (process.env.DEBUG === 'true') {
-			mainWindow.webContents.openDevTools();
-		}
-	}
-
+	mainWindow = windowManager.createWindow();
+	// Handle closed event to clear the reference
 	mainWindow.on('closed', () => {
-		logger.info('Browser window closed', 'Window');
 		mainWindow = null;
 	});
-
-	// Initialize auto-updater (only in production)
-	if (process.env.NODE_ENV !== 'development') {
-		initAutoUpdater(mainWindow);
-		logger.info('Auto-updater initialized', 'Window');
-	} else {
-		// Register stub handlers in development mode so users get a helpful error
-		ipcMain.handle('updates:download', async () => {
-			return {
-				success: false,
-				error: 'Auto-update is disabled in development mode. Please check update first.',
-			};
-		});
-		ipcMain.handle('updates:install', async () => {
-			logger.warn('Auto-update install called in development mode', 'AutoUpdater');
-		});
-		ipcMain.handle('updates:getStatus', async () => {
-			return { status: 'idle' as const };
-		});
-		ipcMain.handle('updates:checkAutoUpdater', async () => {
-			return { success: false, error: 'Auto-update is disabled in development mode' };
-		});
-		logger.info('Auto-updater disabled in development mode (stub handlers registered)', 'Window');
-	}
 }
 
-// Set up global error handlers for uncaught exceptions
-process.on('uncaughtException', (error: Error) => {
-	logger.error(`Uncaught Exception: ${error.message}`, 'UncaughtException', {
-		stack: error.stack,
-		name: error.name,
-	});
-	// Don't exit the process - let it continue running
-});
-
-process.on('unhandledRejection', (reason: any, promise: Promise<any>) => {
-	logger.error(
-		`Unhandled Promise Rejection: ${reason?.message || String(reason)}`,
-		'UnhandledRejection',
-		{
-			reason: reason,
-			stack: reason?.stack,
-			promise: String(promise),
-		}
-	);
-});
+// Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
+setupGlobalErrorHandlers();
 
 app.whenReady().then(async () => {
 	// Load logger settings first
@@ -432,8 +335,8 @@ app.whenReady().then(async () => {
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
 
-	// Start CLI activity watcher (polls every 2 seconds for CLI playbook runs)
-	startCliActivityWatcher();
+	// Start CLI activity watcher (Phase 4 refactoring)
+	cliWatcher.start();
 
 	// Note: Web server is not auto-started - it starts when user enables web interface
 	// via live:startServer IPC call from the renderer
@@ -451,119 +354,21 @@ app.on('window-all-closed', () => {
 	}
 });
 
-// Track if quit has been confirmed by user (or no busy agents)
-let quitConfirmed = false;
-
-// Handle quit confirmation from renderer
-ipcMain.on('app:quitConfirmed', () => {
-	logger.info('Quit confirmed by renderer', 'Window');
-	quitConfirmed = true;
-	app.quit();
+// Create and setup quit handler with dependency injection (Phase 4 refactoring)
+const quitHandler = createQuitHandler({
+	getMainWindow: () => mainWindow,
+	getProcessManager: () => processManager,
+	getWebServer: () => webServer,
+	getHistoryManager,
+	tunnelManager,
+	getActiveGroomingSessionCount,
+	cleanupAllGroomingSessions,
+	closeStatsDB,
+	stopCliWatcher: () => cliWatcher.stop(),
 });
+quitHandler.setup();
 
-// Handle quit cancellation (user declined)
-ipcMain.on('app:quitCancelled', () => {
-	logger.info('Quit cancelled by renderer', 'Window');
-	// Nothing to do - app stays running
-});
-
-// IMPORTANT: This handler must be synchronous for event.preventDefault() to work!
-// Async handlers return a Promise immediately, which breaks preventDefault in Electron.
-app.on('before-quit', (event) => {
-	// If quit not yet confirmed, intercept and ask renderer
-	if (!quitConfirmed) {
-		event.preventDefault();
-
-		// Ask renderer to check for busy agents
-		if (mainWindow && !mainWindow.isDestroyed()) {
-			logger.info('Requesting quit confirmation from renderer', 'Window');
-			mainWindow.webContents.send('app:requestQuitConfirmation');
-		} else {
-			// No window, just quit
-			quitConfirmed = true;
-			app.quit();
-		}
-		return;
-	}
-
-	// Quit confirmed - proceed with cleanup (async operations are fire-and-forget)
-	logger.info('Application shutting down', 'Shutdown');
-
-	// Stop history manager watcher
-	getHistoryManager().stopWatching();
-
-	// Stop CLI activity watcher
-	if (cliActivityWatcher) {
-		cliActivityWatcher.close();
-		cliActivityWatcher = null;
-	}
-
-	// Clean up active grooming sessions (context merge/transfer operations)
-	const groomingSessionCount = getActiveGroomingSessionCount();
-	if (groomingSessionCount > 0 && processManager) {
-		logger.info(`Cleaning up ${groomingSessionCount} active grooming session(s)`, 'Shutdown');
-		// Fire and forget - don't await
-		cleanupAllGroomingSessions(processManager).catch((err) => {
-			logger.error(`Error cleaning up grooming sessions: ${err}`, 'Shutdown');
-		});
-	}
-
-	// Clean up all running processes
-	logger.info('Killing all running processes', 'Shutdown');
-	processManager?.killAll();
-
-	// Stop tunnel and web server (fire and forget)
-	logger.info('Stopping tunnel', 'Shutdown');
-	tunnelManager.stop().catch((err) => {
-		logger.error(`Error stopping tunnel: ${err}`, 'Shutdown');
-	});
-
-	logger.info('Stopping web server', 'Shutdown');
-	webServer?.stop().catch((err) => {
-		logger.error(`Error stopping web server: ${err}`, 'Shutdown');
-	});
-
-	// Close stats database
-	logger.info('Closing stats database', 'Shutdown');
-	closeStatsDB();
-
-	logger.info('Shutdown complete', 'Shutdown');
-});
-
-/**
- * Start CLI activity file watcher
- * Uses fs.watch() for event-driven detection when CLI is running playbooks
- */
-function startCliActivityWatcher() {
-	const cliActivityPath = path.join(app.getPath('userData'), 'cli-activity.json');
-	const cliActivityDir = path.dirname(cliActivityPath);
-
-	// Ensure directory exists for watching
-	if (!fsSync.existsSync(cliActivityDir)) {
-		fsSync.mkdirSync(cliActivityDir, { recursive: true });
-	}
-
-	// Watch the directory for file changes (handles file creation/deletion)
-	// Using directory watch because fs.watch on non-existent file throws
-	try {
-		cliActivityWatcher = fsSync.watch(cliActivityDir, (_eventType, filename) => {
-			if (filename === 'cli-activity.json') {
-				logger.debug('CLI activity file changed, notifying renderer', 'CliActivityWatcher');
-				if (mainWindow && !mainWindow.isDestroyed()) {
-					mainWindow.webContents.send('cli:activityChange');
-				}
-			}
-		});
-
-		cliActivityWatcher.on('error', (error) => {
-			logger.error(`CLI activity watcher error: ${error.message}`, 'CliActivityWatcher');
-		});
-
-		logger.info('CLI activity watcher started', 'Startup');
-	} catch (error) {
-		logger.error(`Failed to start CLI activity watcher: ${error}`, 'CliActivityWatcher');
-	}
-}
+// startCliActivityWatcher is now handled by cliWatcher (Phase 4 refactoring)
 
 function setupIpcHandlers() {
 	// Settings, sessions, and groups persistence - extracted to src/main/ipc/handlers/persistence.ts
