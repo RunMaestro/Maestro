@@ -33,7 +33,6 @@ scratch/
 Thumbs.db
 
 # IDE
-.vscode
 .idea/
 *.swp
 *.swo
@@ -51,5 +50,6 @@ yarn-debug.log*
 yarn-error.log*
 
 #VS Code
+.vscode/
 .VSCodeCounter
 .qodo
