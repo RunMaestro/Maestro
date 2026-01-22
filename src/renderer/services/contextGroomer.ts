@@ -110,6 +110,18 @@ export const AGENT_ARTIFACTS: Record<ToolType, string[]> = {
 		'openai codex',
 		'OpenAI Codex',
 	],
+	'factory-droid': [
+		// Brand references
+		'Factory',
+		'Droid',
+		'Factory Droid',
+		// Model references (can use multiple providers)
+		'Claude',
+		'GPT',
+		'Gemini',
+		'Opus',
+		'Sonnet',
+	],
 	claude: [
 		// This is the base Claude (not Claude Code)
 		'Claude',
@@ -151,6 +163,12 @@ export const AGENT_TARGET_NOTES: Record<ToolType, string> = {
     It can read files, edit code, and run terminal commands.
     It excels at complex reasoning and problem-solving.
   `,
+	'factory-droid': `
+    Factory Droid is an enterprise AI coding assistant by Factory.
+    It supports multiple model providers (Claude, GPT, Gemini).
+    It can read and edit files, run commands, search code, and interact with git.
+    It has tiered autonomy levels for controlling operation permissions.
+  `,
 	claude: `
     Claude is a general-purpose AI assistant by Anthropic.
     It does not have direct file system or terminal access.
@@ -171,6 +189,7 @@ export function getAgentDisplayName(agentType: ToolType): string {
 		aider: 'Aider',
 		opencode: 'OpenCode',
 		codex: 'OpenAI Codex',
+		'factory-droid': 'Factory Droid',
 		claude: 'Claude',
 		terminal: 'Terminal',
 	};

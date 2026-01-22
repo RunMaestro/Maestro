@@ -43,6 +43,9 @@ export const AGENT_ICONS: Record<string, string> = {
 	opencode: '📟',
 	aider: '🛠️',
 
+	// Enterprise
+	'factory-droid': '🏭',
+
 	// Terminal/shell (internal)
 	terminal: '💻',
 };

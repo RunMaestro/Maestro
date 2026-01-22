@@ -8,12 +8,14 @@
 export { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 export { OpenCodeSessionStorage } from './opencode-session-storage';
 export { CodexSessionStorage } from './codex-session-storage';
+export { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 
 import Store from 'electron-store';
 import { registerSessionStorage } from '../agent-session-storage';
 import { ClaudeSessionStorage, ClaudeSessionOriginsData } from './claude-session-storage';
 import { OpenCodeSessionStorage } from './opencode-session-storage';
 import { CodexSessionStorage } from './codex-session-storage';
+import { FactoryDroidSessionStorage } from './factory-droid-session-storage';
 
 /**
  * Options for initializing session storages
@@ -33,4 +35,5 @@ export function initializeSessionStorages(options?: InitializeSessionStoragesOpt
 	registerSessionStorage(new ClaudeSessionStorage(options?.claudeSessionOriginsStore));
 	registerSessionStorage(new OpenCodeSessionStorage());
 	registerSessionStorage(new CodexSessionStorage());
+	registerSessionStorage(new FactoryDroidSessionStorage());
 }

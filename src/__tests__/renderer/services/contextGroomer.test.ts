@@ -469,6 +469,7 @@ describe('AGENT_ARTIFACTS', () => {
 			'aider',
 			'opencode',
 			'codex',
+			'factory-droid',
 			'claude',
 			'terminal',
 		];
@@ -622,7 +623,7 @@ describe('buildContextTransferPrompt', () => {
 	});
 
 	it('should work for all agent type combinations', () => {
-		const agents: ToolType[] = ['claude-code', 'aider', 'opencode', 'codex', 'claude', 'terminal'];
+		const agents: ToolType[] = ['claude-code', 'aider', 'opencode', 'codex', 'factory-droid', 'claude', 'terminal'];
 
 		for (const source of agents) {
 			for (const target of agents) {

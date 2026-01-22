@@ -42,6 +42,7 @@ const VALID_TOOL_TYPES: ToolType[] = [
 	'terminal',
 	'claude',
 	'aider',
+	'factory-droid',
 ];
 
 /**

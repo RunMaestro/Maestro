@@ -327,11 +327,26 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	);
 
 	// Get all configuration for an agent
+	// Merges stored config with defaults from agent's configOptions
 	ipcMain.handle(
 		'agents:getConfig',
 		withIpcErrorLogging(handlerOpts('getConfig', CONFIG_LOG_CONTEXT), async (agentId: string) => {
 			const allConfigs = agentConfigsStore.get('configs', {});
-			return allConfigs[agentId] || {};
+			const storedConfig = allConfigs[agentId] || {};
+
+			// Get defaults from agent definition's configOptions
+			const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+			const defaults: Record<string, unknown> = {};
+			if (agentDef?.configOptions) {
+				for (const option of agentDef.configOptions) {
+					if (option.default !== undefined) {
+						defaults[option.key] = option.default;
+					}
+				}
+			}
+
+			// Merge: stored config takes precedence over defaults
+			return { ...defaults, ...storedConfig };
 		})
 	);
 
@@ -351,6 +366,7 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	);
 
 	// Get a specific configuration value for an agent
+	// Falls back to default from agent's configOptions if not stored
 	ipcMain.handle(
 		'agents:getConfigValue',
 		withIpcErrorLogging(
@@ -358,7 +374,16 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 			async (agentId: string, key: string) => {
 				const allConfigs = agentConfigsStore.get('configs', {});
 				const agentConfig = allConfigs[agentId] || {};
-				return agentConfig[key];
+
+				// Return stored value if present
+				if (agentConfig[key] !== undefined) {
+					return agentConfig[key];
+				}
+
+				// Fall back to default from agent definition
+				const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+				const option = agentDef?.configOptions?.find((o) => o.key === key);
+				return option?.default;
 			}
 		)
 	);

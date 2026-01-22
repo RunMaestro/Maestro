@@ -626,6 +626,28 @@ export function AgentConfigPanel({
 								</span>
 							</label>
 						)}
+						{option.type === 'select' && option.options && (
+							<select
+								value={agentConfig[option.key] ?? option.default ?? ''}
+								onChange={(e) => {
+									onConfigChange(option.key, e.target.value);
+									onConfigBlur();
+								}}
+								onClick={(e) => e.stopPropagation()}
+								className="w-full p-2 rounded border bg-transparent outline-none text-xs cursor-pointer"
+								style={{
+									borderColor: theme.colors.border,
+									color: theme.colors.textMain,
+									backgroundColor: theme.colors.bgMain,
+								}}
+							>
+								{option.options.map((opt) => (
+									<option key={opt} value={opt} style={{ backgroundColor: theme.colors.bgMain }}>
+										{opt}
+									</option>
+								))}
+							</select>
+						)}
 						<p className="text-xs opacity-50 mt-2">{option.description}</p>
 					</div>
 				))}

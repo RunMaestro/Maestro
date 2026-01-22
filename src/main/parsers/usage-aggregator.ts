@@ -48,6 +48,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	aider: 128000, // Aider (varies by model, 128k is conservative default)
 	terminal: 0, // Terminal has no context window
+	'factory-droid': 200000, // Factory Droid (Claude Opus 4.5 default context)
 };
 
 /**

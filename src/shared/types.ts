@@ -1,7 +1,7 @@
 // Shared type definitions for Maestro CLI and Electron app
 // These types are used by both the CLI tool and the renderer process
 
-export type ToolType = 'claude' | 'claude-code' | 'aider' | 'opencode' | 'codex' | 'terminal';
+export type ToolType = 'claude' | 'claude-code' | 'aider' | 'opencode' | 'codex' | 'terminal' | 'factory-droid';
 
 // Session group
 export interface Group {

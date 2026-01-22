@@ -63,6 +63,13 @@ export const AGENT_TILES: AgentTile[] = [
 		description: 'Open-source AI coding assistant',
 		brandColor: '#F97316', // Orange
 	},
+	{
+		id: 'factory-droid',
+		name: 'Factory Droid',
+		supported: true,
+		description: "Factory's AI coding assistant",
+		brandColor: '#8B5CF6', // Purple/violet
+	},
 	// Coming soon agents at the bottom
 	{
 		id: 'aider',
@@ -87,9 +94,9 @@ export const AGENT_TILES: AgentTile[] = [
 	},
 ];
 
-// Grid dimensions for keyboard navigation (3 cols for 5 items)
+// Grid dimensions for keyboard navigation (3 cols for 7 items)
 const GRID_COLS = 3;
-const GRID_ROWS = 2;
+const GRID_ROWS = 3;
 
 /**
  * Get SVG logo for an agent with brand colors

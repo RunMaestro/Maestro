@@ -666,14 +666,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					? `${activeSession.id}-ai-${activeTabForSpawn?.id || 'default'}`
 					: `${activeSession.id}-terminal`;
 
-			// Check if this is an AI agent in batch mode (e.g., Claude Code, OpenCode, Codex)
+			// Check if this is an AI agent in batch mode (e.g., Claude Code, OpenCode, Codex, Factory Droid)
 			// Batch mode agents spawn a new process per message rather than writing to stdin
 			const isBatchModeAgent =
 				currentMode === 'ai' &&
 				(activeSession.toolType === 'claude' ||
 					activeSession.toolType === 'claude-code' ||
 					activeSession.toolType === 'opencode' ||
-					activeSession.toolType === 'codex');
+					activeSession.toolType === 'codex' ||
+					activeSession.toolType === 'factory-droid');
 
 			if (isBatchModeAgent) {
 				// Batch mode: Spawn new agent process with prompt
