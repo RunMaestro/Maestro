@@ -211,8 +211,8 @@
     <!-- React DevTools: connects to standalone react-devtools app (npm install -g react-devtools) -->
     <!-- Only attempts connection in dev mode (Vite serves on localhost:5173) -->
     <script>
-      if (window.location.hostname === 'localhost') {
-        var script = document.createElement('script');
+			var script = document.createElement('script');
+			if (window.location.hostname === 'localhost') {
         script.src = 'http://localhost:8097';
         script.async = false;
         document.head.appendChild(script);

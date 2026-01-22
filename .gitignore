@@ -33,11 +33,6 @@ scratch/
 Thumbs.db
 
 # IDE
-# .vscode/ is tracked for shared settings (settings.json, extensions.json)
-# But ignore personal/local files
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
 .idea/
 *.swp
 *.swo
@@ -55,5 +50,6 @@ yarn-debug.log*
 yarn-error.log*
 
 #VS Code
+.vscode/
 .VSCodeCounter
 .qodo

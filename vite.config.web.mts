@@ -11,12 +11,26 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
 import { readFileSync } from 'fs';
+import { execFileSync } from 'child_process';
 
 // Read version from package.json
 const packageJson = JSON.parse(
   readFileSync(path.join(__dirname, 'package.json'), 'utf-8')
 );
 const appVersion = process.env.VITE_APP_VERSION || packageJson.version;
+
+// Get git hash
+function getGitHash() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=8', 'HEAD'], {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe']
+    }).trim();
+  } catch {
+    return 'unknown';
+  }
+}
+const gitHash = getGitHash();
 
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
@@ -33,6 +47,7 @@ export default defineConfig(({ mode }) => ({
 
   define: {
     __APP_VERSION__: JSON.stringify(appVersion),
+    __GIT_HASH__: JSON.stringify(gitHash),
   },
 
   esbuild: {
@@ -128,7 +143,7 @@ export default defineConfig(({ mode }) => ({
 
   // Development server (for testing web interface standalone)
   server: {
-    port: 5174, // Different from renderer dev server (5173)
+    port: process.env.VITE_WEB_PORT ? parseInt(process.env.VITE_WEB_PORT) : 5174, // Different from renderer dev server (5173)
     strictPort: true,
     // Proxy API calls to the running Maestro app during development
     proxy: {

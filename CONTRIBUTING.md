@@ -22,7 +22,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Project Structure](#project-structure)
 - [Development Scripts](#development-scripts)
 - [Testing](#testing)
-- [Linting](#linting)
+- [Linting & Pre-commit Hooks](#linting--pre-commit-hooks)
 - [Common Development Tasks](#common-development-tasks)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
 - [Code Style](#code-style)
@@ -149,6 +149,25 @@ You can also specify a custom demo directory via environment variable:
 ```bash
 MAESTRO_DEMO_DIR=~/Desktop/my-demo npm run dev
 ```
+
+### Running Multiple Instances (Git Worktrees)
+
+When working with multiple git worktrees, you can run Maestro instances in parallel by specifying different ports using the `VITE_PORT` environment variable:
+
+```bash
+# In the main worktree (uses default port 5173)
+npm run dev
+
+# In worktree 2 (in another directory and terminal)
+VITE_PORT=5174 npm run dev
+
+# In worktree 3
+VITE_PORT=5175 npm run dev
+```
+
+This allows you to develop and test different branches simultaneously without port conflicts.
+
+**Note:** The web interface dev server (`npm run dev:web`) uses a separate port (default 5174) and can be configured with `VITE_WEB_PORT` if needed.
 
 ## Testing
 

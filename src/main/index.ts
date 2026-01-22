@@ -642,9 +642,10 @@ function createWindow() {
 				logger.warn(`Failed to load electron-devtools-installer: ${err.message}`, 'Window')
 			);
 
-		mainWindow.loadURL('http://localhost:5173');
+		const vitePort = process.env.VITE_PORT || '5173';
+		mainWindow.loadURL(`http://localhost:${vitePort}`);
 		// DevTools can be opened via Command-K menu instead of automatically on startup
-		logger.info('Loading development server', 'Window');
+		logger.info(`Loading development server on port ${vitePort}`, 'Window');
 	} else {
 		mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 		logger.info('Loading production build', 'Window');

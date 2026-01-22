@@ -1111,5 +1111,4 @@ describe('AboutModal', () => {
 			expect(screen.getByText('$12,345,678.90')).toBeInTheDocument();
 		});
 	});
-
 });
