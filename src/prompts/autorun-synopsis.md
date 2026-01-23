@@ -5,6 +5,7 @@ Provide a brief synopsis of what you just accomplished in this task using this e
 **Details:** [A paragraph with more specifics about what was done, files changed, etc.]
 
 Rules:
+
 - Write in a scientific log style: factual, concise, and informative. Example: "Added user authentication endpoint with JWT validation" not "I helped you add authentication".
 - Be specific about what was actually accomplished, not what was attempted.
 - Focus only on meaningful work that was done. Omit filler phrases like "the task is complete", "no further action needed", "everything is working", etc.

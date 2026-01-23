@@ -112,7 +112,11 @@ export function parseSynopsis(response: string): ParsedSynopsis {
 	let details = detailsMatch?.[1]?.trim() || '';
 
 	// Check if summary is a template placeholder or conversational filler
-	if (!shortSummary || isTemplatePlaceholder(shortSummary) || isConversationalFiller(shortSummary)) {
+	if (
+		!shortSummary ||
+		isTemplatePlaceholder(shortSummary) ||
+		isConversationalFiller(shortSummary)
+	) {
 		// Try to find actual content by looking for non-placeholder, non-filler lines
 		const lines = clean.split('\n').filter((line) => {
 			const trimmed = line.trim();
