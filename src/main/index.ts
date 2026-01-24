@@ -214,13 +214,16 @@ const cliWatcher = createCliWatcher({
 	getUserDataPath: () => app.getPath('userData'),
 });
 
+const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
+const devServerUrl = `http://localhost:${devServerPort}`;
+
 // Create window manager with dependency injection (Phase 4 refactoring)
 const windowManager = createWindowManager({
 	windowStateStore,
 	isDevelopment,
 	preloadPath: path.join(__dirname, 'preload.js'),
 	rendererPath: path.join(__dirname, '../renderer/index.html'),
-	devServerUrl: 'http://localhost:5173',
+	devServerUrl: devServerUrl,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)

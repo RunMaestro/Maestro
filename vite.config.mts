@@ -51,7 +51,7 @@ export default defineConfig(({ mode }) => ({
 		emptyOutDir: true,
 	},
 	server: {
-		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT) : 5173,
+		port: process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173,
 		hmr: !disableHmr,
 		// Disable file watching entirely when HMR is disabled to prevent any reloads
 		watch: disableHmr ? null : undefined,
