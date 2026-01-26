@@ -206,6 +206,7 @@ export interface QueuedItem {
 	images?: string[]; // Attached images (base64)
 	// For commands
 	command?: string; // Slash command (e.g., '/commit')
+	commandArgs?: string; // Arguments passed after the command (e.g., 'Blah blah' from '/speckit.plan Blah blah')
 	commandDescription?: string; // Command description for display
 	// Display metadata
 	tabName?: string; // Tab name at time of queuing (for display)

@@ -184,7 +184,14 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 
 				// Check for custom AI commands (only in AI mode)
 				if (!isTerminalMode) {
-					const matchingCustomCommand = customAICommands.find((cmd) => cmd.command === commandText);
+					// Parse command and arguments: "/speckit.plan Blah blah" -> baseCommand="/speckit.plan", args="Blah blah"
+					const firstSpaceIndex = commandText.indexOf(' ');
+					const baseCommand =
+						firstSpaceIndex === -1 ? commandText : commandText.substring(0, firstSpaceIndex);
+					const commandArgs =
+						firstSpaceIndex === -1 ? '' : commandText.substring(firstSpaceIndex + 1).trim();
+
+					const matchingCustomCommand = customAICommands.find((cmd) => cmd.command === baseCommand);
 					if (matchingCustomCommand) {
 						// Execute the custom AI command by sending its prompt
 						setInputValue('');
@@ -223,6 +230,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								tabId: activeTab?.id || activeSession.activeTabId,
 								type: 'command',
 								command: matchingCustomCommand.command,
+								commandArgs, // Arguments passed after the command (for $ARGUMENTS substitution)
 								commandDescription: matchingCustomCommand.description,
 								tabName:
 									activeTab?.name ||

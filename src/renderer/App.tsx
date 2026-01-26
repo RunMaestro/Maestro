@@ -9434,7 +9434,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 							// Ignore git errors
 						}
 					}
-					const substitutedPrompt = substituteTemplateVariables(matchingCommand.prompt, {
+
+					// First substitute $ARGUMENTS with the command arguments (spec-kit/openspec style)
+					// This handles prompts like "/speckit.plan Blah blah" where "Blah blah" replaces $ARGUMENTS
+					let promptWithArgs = matchingCommand.prompt;
+					if (item.commandArgs) {
+						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
+					} else {
+						// If no arguments provided, replace $ARGUMENTS with empty string
+						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, '');
+					}
+
+					// Then substitute {{TEMPLATE_VARIABLES}}
+					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {
 						session,
 						gitBranch,
 					});

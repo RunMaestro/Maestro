@@ -536,6 +536,134 @@ describe('useInputProcessing', () => {
 		});
 	});
 
+	describe('slash commands with arguments', () => {
+		const speckitCommandsWithArgs: CustomAICommand[] = [
+			{
+				id: 'speckit-plan',
+				command: '/speckit.plan',
+				description: 'Plan a feature',
+				prompt: '## User Input\n\n```text\n$ARGUMENTS\n```\n\nYou must plan based on the above input.',
+				isBuiltIn: true,
+			},
+			{
+				id: 'speckit-specify',
+				command: '/speckit.specify',
+				description: 'Create a feature spec',
+				prompt: 'Create a spec for: $ARGUMENTS',
+				isBuiltIn: true,
+			},
+		];
+
+		it('matches command with arguments and stores args in queued item', async () => {
+			vi.useFakeTimers();
+
+			const deps = createDeps({
+				inputValue: '/speckit.plan Blah blah blah',
+				customAICommands: speckitCommandsWithArgs,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should clear input (command matched)
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
+
+			// Advance timer to trigger immediate processing
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			// Check that processQueuedItem was called with the correct arguments
+			expect(mockProcessQueuedItemRef.current).toHaveBeenCalled();
+			const callArgs = mockProcessQueuedItemRef.current.mock.calls[0];
+			const queuedItem = callArgs[1] as QueuedItem;
+
+			expect(queuedItem.type).toBe('command');
+			expect(queuedItem.command).toBe('/speckit.plan');
+			expect(queuedItem.commandArgs).toBe('Blah blah blah');
+
+			vi.useRealTimers();
+		});
+
+		it('handles command without arguments (empty args)', async () => {
+			vi.useFakeTimers();
+
+			const deps = createDeps({
+				inputValue: '/speckit.plan',
+				customAICommands: speckitCommandsWithArgs,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(mockSetInputValue).toHaveBeenCalledWith('');
+
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			const queuedItem = mockProcessQueuedItemRef.current.mock.calls[0][1] as QueuedItem;
+			expect(queuedItem.command).toBe('/speckit.plan');
+			expect(queuedItem.commandArgs).toBe('');
+
+			vi.useRealTimers();
+		});
+
+		it('preserves multi-word arguments with spaces', async () => {
+			vi.useFakeTimers();
+
+			const deps = createDeps({
+				inputValue: '/speckit.specify Add user authentication with OAuth 2.0 support',
+				customAICommands: speckitCommandsWithArgs,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			await act(async () => {
+				vi.advanceTimersByTime(100);
+			});
+
+			const queuedItem = mockProcessQueuedItemRef.current.mock.calls[0][1] as QueuedItem;
+			expect(queuedItem.command).toBe('/speckit.specify');
+			expect(queuedItem.commandArgs).toBe('Add user authentication with OAuth 2.0 support');
+
+			vi.useRealTimers();
+		});
+
+		it('queues command with arguments when session is busy', async () => {
+			const busySession = createMockSession({
+				state: 'busy',
+				aiTabs: [createMockTab({ state: 'busy' })],
+			});
+			const deps = createDeps({
+				activeSession: busySession,
+				inputValue: '/speckit.plan create a new feature',
+				customAICommands: speckitCommandsWithArgs,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should add to execution queue
+			expect(mockSetSessions).toHaveBeenCalled();
+			const setSessionsCall = mockSetSessions.mock.calls[0][0];
+			const updatedSessions = setSessionsCall([busySession]);
+			expect(updatedSessions[0].executionQueue.length).toBe(1);
+			expect(updatedSessions[0].executionQueue[0].command).toBe('/speckit.plan');
+			expect(updatedSessions[0].executionQueue[0].commandArgs).toBe('create a new feature');
+		});
+	});
+
 	describe('agent-native commands (pass-through)', () => {
 		// Agent commands like /compact, /clear should NOT be in customAICommands
 		// and should fall through to be sent to the agent as regular messages
