@@ -40,7 +40,7 @@ The **Process Monitor** displays a hierarchical tree view:
 |------|-------------|
 | AI Agent | Main Claude Code (or other agent) process |
 | Terminal | Shell process for the session |
-| Batch | Auto Run batch processing agent |
+| Batch | Auto Run document processing agent |
 | Synopsis | Context compaction synopsis generation |
 | Moderator | Group chat moderator process |
 | Participant | Group chat participant agent |

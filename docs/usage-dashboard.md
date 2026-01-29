@@ -90,7 +90,7 @@ The Activity tab shows your usage patterns over time:
 The Auto Run tab focuses specifically on automated playbook execution:
 
 **Metric Cards:**
-- **Total Sessions** — Number of Auto Run batch sessions
+- **Total Sessions** — Number of Auto Run sessions
 - **Tasks Done** — Total tasks completed (with attempted count)
 - **Avg Tasks/Session** — Average tasks completed per Auto Run session
 - **Success Rate** — Percentage of tasks that completed successfully

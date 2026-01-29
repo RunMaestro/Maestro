@@ -1,10 +1,10 @@
 ---
 title: Auto Run + Playbooks
-description: Batch-process markdown checklists with AI agents using Auto Run and reusable Playbooks.
+description: Process markdown checklists with AI agents using Auto Run documents and reusable Playbooks.
 icon: play
 ---
 
-Auto Run is a file-system-based document runner that lets you batch-process tasks using AI agents. Select a folder containing markdown documents with task checkboxes, and Maestro will work through them one by one, spawning a fresh AI session for each task.
+Auto Run is a file-system-based document runner that lets you process tasks using AI agents. Select a folder containing markdown documents with task checkboxes, and Maestro will work through them one by one, spawning a fresh AI session for each task.
 
 ![Auto Run](./screenshots/autorun-1.png)
 
@@ -34,22 +34,22 @@ Use markdown checkboxes in your documents:
 2. Click the **Run** button (or the ▶ icon)
 3. Customize the agent prompt if needed, then click **Go**
 
-## Multi-Document Batch Runs
+## Running Multiple Auto Run Documents
 
 Auto Run supports running multiple documents in sequence:
 
-1. Click **Run** to open the Batch Runner Modal
+1. Click **Run** to open the Auto Run configuration modal
 2. Click **+ Add Docs** to add more documents to the queue
 3. Drag to reorder documents as needed
 4. Configure options per document:
    - **Reset on Completion** - Creates a working copy in `Runs/` subfolder instead of modifying the original. The original document is never touched, and working copies (e.g., `TASK-1735192800000-loop-1.md`) serve as audit logs.
    - **Duplicate** - Add the same document multiple times
 5. Enable **Loop Mode** to cycle back to the first document after completing the last
-6. Click **Go** to start the batch run
+6. Click **Go** to start running documents
 
 ## Playbooks
 
-Save your batch configurations for reuse:
+Save your Auto Run configurations as Playbooks for reuse:
 
 1. Configure your documents, order, and options
 2. Click **Save as Playbook** and enter a name
@@ -140,7 +140,7 @@ For editing complex Auto Run documents, use the **Expanded Editor** — a fullsc
 The Expanded Editor provides:
 - **Edit/Preview toggle** — Switch between editing markdown and previewing rendered output
 - **Document selector** — Switch between documents without closing the modal
-- **Run controls** — Start, stop, and monitor batch runs from the expanded view
+- **Run controls** — Start, stop, and monitor Auto Run progress from the expanded view
 - **Task progress** — See "X of Y tasks completed" and token count at the bottom
 - **Full toolbar** — Create new documents, refresh, and open folder
 

@@ -124,7 +124,7 @@ Maestro can prevent your computer from sleeping while AI agents are actively wor
 
 Sleep prevention automatically activates when:
 - Any session is **busy** (agent processing a request)
-- **Auto Run** is active (batch processing tasks)
+- **Auto Run** is active (processing tasks)
 - **Group Chat** is in progress (moderator or agents responding)
 
 When all activity stops, sleep prevention deactivates automatically.

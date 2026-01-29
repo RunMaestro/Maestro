@@ -32,7 +32,7 @@ The Wizard creates a fully configured agent with an Auto Run document folder rea
 
 After completing the Wizard, you'll be offered an **Introductory Tour** that highlights key UI elements:
 - The AI Terminal and how to interact with it
-- The Auto Run panel and how batch processing works
+- The Auto Run panel and how document processing works
 - File Explorer and preview features
 - Keyboard shortcuts for power users
 

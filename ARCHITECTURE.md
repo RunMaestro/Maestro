@@ -725,7 +725,7 @@ File-based document runner for automating multi-step tasks. Users configure a fo
 | `AutoRun.tsx` | Main panel showing current document with edit/preview modes |
 | `AutoRunSetupModal.tsx` | First-time setup for selecting the Runner Docs folder |
 | `AutoRunDocumentSelector.tsx` | Dropdown for switching between markdown documents |
-| `BatchRunnerModal.tsx` | Configuration modal for multi-document batch execution |
+| `BatchRunnerModal.tsx` | Configuration modal for running multiple Auto Run documents |
 | `PlaybookNameModal.tsx` | Modal for naming saved playbook configurations |
 | `PlaybookDeleteConfirmModal.tsx` | Confirmation modal for playbook deletion |
 | `useBatchProcessor.ts` | Hook managing batch execution logic |

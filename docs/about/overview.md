@@ -45,7 +45,7 @@ This approach mirrors methodologies like [Spec-Kit](https://github.com/github/sp
 | **Command Terminal** | A PTY shell for running commands directly. Tab completion for files, git branches, and command history. |
 | **Session Explorer** | Browse all past sessions for an agent. Star, rename, search, and resume any previous conversation. |
 | **Auto Run** | Automated task runner that processes markdown checklists. Spawns a fresh session per task. |
-| **Playbook** | A saved Auto Run configuration with document order, options, and settings for repeatable batch workflows. |
+| **Playbook** | A saved collection of Auto Run documents with document order, options, and settings for repeatable workflows. |
 | **History** | Timestamped log of all actions (user commands, AI responses, Auto Run completions) with session links. |
 | **Remote Control** | Web interface for mobile access. Local network or remote via Cloudflare tunnel. |
 | **CLI** | Headless command-line tool for scripting, automation, and CI/CD integration. |

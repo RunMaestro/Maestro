@@ -101,7 +101,7 @@ The **Validated** flag helps you track which Auto Run tasks have been human-revi
 
 Validated entries show a **checkmark icon** (✓✓) in the list view, making it easy to see at a glance which tasks have been reviewed.
 
-**Workflow tip:** After an Auto Run batch completes, use the History panel to review each task:
+**Workflow tip:** After an Auto Run session completes, use the History panel to review each task:
 1. Open the first AUTO entry
 2. Click **RESUME** to jump to the session and verify the work
 3. If satisfied, toggle **VALIDATED**
