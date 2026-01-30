@@ -141,11 +141,12 @@ const { syncPath, bootstrapStore } = initializeStores({ productionDataPath });
 // Get early settings before Sentry init (for crash reporting and GPU acceleration)
 const { crashReportingEnabled, disableGpuAcceleration } = getEarlySettings(syncPath);
 
-// Disable GPU hardware acceleration if user has opted out
+// Disable GPU hardware acceleration if user has opted out or in WSL environment
 // Must be called before app.ready event
+// In WSL, GPU acceleration is auto-disabled due to EGL/GPU process crash issues
 if (disableGpuAcceleration) {
 	app.disableHardwareAcceleration();
-	console.log('[STARTUP] GPU hardware acceleration disabled by user preference');
+	console.log('[STARTUP] GPU hardware acceleration disabled');
 }
 
 // Generate installation ID on first run (one-time generation)

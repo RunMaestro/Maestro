@@ -22,9 +22,11 @@ vi.mock('fs', () => ({
 	default: {
 		existsSync: vi.fn(),
 		mkdirSync: vi.fn(),
+		readFileSync: vi.fn(),
 	},
 	existsSync: vi.fn(),
 	mkdirSync: vi.fn(),
+	readFileSync: vi.fn(),
 }));
 
 import { getCustomSyncPath, getEarlySettings, findSshRemoteById } from '../../../main/stores/utils';
@@ -195,7 +197,56 @@ describe('stores/utils', () => {
 	});
 
 	describe('getEarlySettings', () => {
-		it('should return default values when settings are not set', () => {
+		const originalPlatform = process.platform;
+
+		afterEach(() => {
+			Object.defineProperty(process, 'platform', { value: originalPlatform });
+		});
+
+		it('should return default values when settings are not set (non-WSL)', () => {
+			// Mock non-Linux platform
+			Object.defineProperty(process, 'platform', { value: 'darwin' });
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result).toEqual({
+				crashReportingEnabled: true,
+				disableGpuAcceleration: false,
+			});
+		});
+
+		it('should auto-disable GPU acceleration in WSL environment', () => {
+			// Mock Linux platform
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			// Mock /proc/version to indicate WSL
+			vi.mocked(fsSync.existsSync).mockImplementation((path) => {
+				if (path === '/proc/version') return true;
+				return false;
+			});
+			vi.mocked(fsSync.readFileSync).mockReturnValue(
+				'Linux version 5.15.0-1025-microsoft-standard-WSL2'
+			);
+
+			const result = getEarlySettings('/test/path');
+
+			expect(result).toEqual({
+				crashReportingEnabled: true,
+				disableGpuAcceleration: true,
+			});
+		});
+
+		it('should not auto-disable GPU acceleration on native Linux', () => {
+			// Mock Linux platform
+			Object.defineProperty(process, 'platform', { value: 'linux' });
+
+			// Mock /proc/version to indicate native Linux
+			vi.mocked(fsSync.existsSync).mockImplementation((path) => {
+				if (path === '/proc/version') return true;
+				return false;
+			});
+			vi.mocked(fsSync.readFileSync).mockReturnValue('Linux version 6.5.0-generic');
+
 			const result = getEarlySettings('/test/path');
 
 			expect(result).toEqual({

@@ -154,6 +154,32 @@ export function getCustomSyncPath(bootstrapStore: Store<BootstrapSettings>): str
 }
 
 // ============================================================================
+// WSL Detection (early, before app.ready)
+// ============================================================================
+
+/**
+ * Detect if the current environment is WSL (Windows Subsystem for Linux).
+ * This is a simplified version for early startup (before app.ready).
+ * The full isWsl() from wslDetector.ts can be used after app.ready.
+ */
+function isWslEnvironment(): boolean {
+	if (process.platform !== 'linux') {
+		return false;
+	}
+
+	try {
+		if (fsSync.existsSync('/proc/version')) {
+			const version = fsSync.readFileSync('/proc/version', 'utf8').toLowerCase();
+			return version.includes('microsoft') || version.includes('wsl');
+		}
+	} catch {
+		// Ignore read errors
+	}
+
+	return false;
+}
+
+// ============================================================================
 // Early Settings Access
 // ============================================================================
 
@@ -163,6 +189,10 @@ export function getCustomSyncPath(bootstrapStore: Store<BootstrapSettings>): str
  *
  * This creates a temporary store instance just for reading these values
  * before the full store initialization happens.
+ *
+ * Note: In WSL environments, GPU acceleration is disabled by default due to
+ * frequent GPU process crashes (EGL_EXT_create_context_robustness issues).
+ * Users can still manually enable it if their WSL setup supports it.
  */
 export function getEarlySettings(syncPath: string): {
 	crashReportingEnabled: boolean;
@@ -176,9 +206,17 @@ export function getEarlySettings(syncPath: string): {
 		cwd: syncPath,
 	});
 
+	// Check if user has explicitly set GPU acceleration preference
+	const explicitGpuSetting = earlyStore.get('disableGpuAcceleration');
+
+	// In WSL, default to disabling GPU acceleration due to common EGL/GPU issues
+	// unless the user has explicitly set a preference
+	const isWsl = isWslEnvironment();
+	const defaultDisableGpu = isWsl ? true : false;
+
 	return {
 		crashReportingEnabled: earlyStore.get('crashReportingEnabled', true),
-		disableGpuAcceleration: earlyStore.get('disableGpuAcceleration', false),
+		disableGpuAcceleration: explicitGpuSetting ?? defaultDisableGpu,
 	};
 }
 
