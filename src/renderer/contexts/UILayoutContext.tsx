@@ -4,6 +4,11 @@
  * This context extracts sidebar, focus, and file explorer states from App.tsx
  * to reduce its complexity and provide a single source of truth for UI layout.
  *
+ * Multi-window support (GitHub issue #133):
+ * - Panel collapse state (leftSidebarOpen, rightPanelOpen) is persisted per-window
+ * - Uses window.maestro.windows.getPanelState/setPanelState for persistence
+ * - Each window remembers its own panel configuration independently
+ *
  * Phase 2 of App.tsx decomposition - see refactor-details-2.md for full plan.
  */
 
@@ -13,6 +18,7 @@ import React, {
 	useState,
 	useCallback,
 	useMemo,
+	useEffect,
 	ReactNode,
 	useRef,
 } from 'react';
@@ -109,6 +115,11 @@ interface UILayoutProviderProps {
  * previously scattered throughout App.tsx. It reduces App.tsx complexity
  * and provides a single location for UI layout state management.
  *
+ * Multi-window support:
+ * - Panel collapse state is loaded from the multi-window store on mount
+ * - Changes to panel state are persisted immediately (debounced internally by IPC)
+ * - Each window maintains its own panel configuration
+ *
  * Usage:
  * Wrap App with this provider (after ModalProvider):
  * <UILayoutProvider>
@@ -116,9 +127,13 @@ interface UILayoutProviderProps {
  * </UILayoutProvider>
  */
 export function UILayoutProvider({ children }: UILayoutProviderProps) {
-	// Sidebar State
+	// Sidebar State - defaults are used until panel state is loaded from store
 	const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
 	const [rightPanelOpen, setRightPanelOpen] = useState(true);
+
+	// Track whether panel state has been loaded (to avoid overwriting persisted state)
+	const panelStateLoadedRef = useRef(false);
+	const isMountedRef = useRef(true);
 
 	// Focus State
 	const [activeFocus, setActiveFocus] = useState<FocusArea>('main');
@@ -184,6 +199,62 @@ export function UILayoutProvider({ children }: UILayoutProviderProps) {
 	const toggleShowUnreadOnly = useCallback(() => {
 		setShowUnreadOnly((show) => !show);
 	}, []);
+
+	// ===========================================================================
+	// Multi-window panel state persistence (GitHub issue #133)
+	// ===========================================================================
+
+	// Load panel state from multi-window store on mount
+	useEffect(() => {
+		isMountedRef.current = true;
+
+		const loadPanelState = async () => {
+			try {
+				// Get panel state from the multi-window store via IPC
+				const panelState = await window.maestro.windows.getPanelState();
+
+				if (!isMountedRef.current) return;
+
+				if (panelState) {
+					// Apply persisted panel state
+					// Note: leftPanelCollapsed=true means leftSidebarOpen=false
+					setLeftSidebarOpen(!panelState.leftPanelCollapsed);
+					setRightPanelOpen(!panelState.rightPanelCollapsed);
+				}
+
+				panelStateLoadedRef.current = true;
+			} catch (error) {
+				console.error('[UILayoutContext] Failed to load panel state:', error);
+				panelStateLoadedRef.current = true; // Mark as loaded even on error to allow persistence
+			}
+		};
+
+		void loadPanelState();
+
+		return () => {
+			isMountedRef.current = false;
+		};
+	}, []);
+
+	// Persist panel state when it changes (after initial load)
+	useEffect(() => {
+		// Don't persist until we've loaded the initial state
+		// This prevents overwriting persisted state with defaults
+		if (!panelStateLoadedRef.current) return;
+
+		const persistPanelState = async () => {
+			try {
+				await window.maestro.windows.setPanelState({
+					leftPanelCollapsed: !leftSidebarOpen,
+					rightPanelCollapsed: !rightPanelOpen,
+				});
+			} catch (error) {
+				console.error('[UILayoutContext] Failed to persist panel state:', error);
+			}
+		};
+
+		void persistPanelState();
+	}, [leftSidebarOpen, rightPanelOpen]);
 
 	// Memoize the context value to prevent unnecessary re-renders
 	const value = useMemo<UILayoutContextValue>(

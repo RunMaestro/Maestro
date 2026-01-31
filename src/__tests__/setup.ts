@@ -444,6 +444,43 @@ const mockMaestro = {
 		sync: vi.fn().mockResolvedValue({ success: true }),
 		getInstallationId: vi.fn().mockResolvedValue('test-installation-id'),
 	},
+	// Multi-window API (GitHub issue #133)
+	windows: {
+		getState: vi.fn().mockResolvedValue({
+			id: 'window-1',
+			x: 100,
+			y: 100,
+			width: 1200,
+			height: 800,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: undefined,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		}),
+		getWindowId: vi.fn().mockResolvedValue('window-1'),
+		list: vi.fn().mockResolvedValue([]),
+		getForSession: vi.fn().mockResolvedValue(null),
+		focusWindow: vi.fn().mockResolvedValue({ success: true }),
+		setSessionsForWindow: vi.fn().mockResolvedValue({ success: true }),
+		setActiveSession: vi.fn().mockResolvedValue({ success: true }),
+		create: vi.fn().mockResolvedValue({ windowId: 'window-2' }),
+		close: vi.fn().mockResolvedValue({ success: true }),
+		moveSession: vi.fn().mockResolvedValue({ success: true }),
+		onSessionsChanged: vi.fn().mockReturnValue(() => {}),
+		onSessionMoved: vi.fn().mockReturnValue(() => {}),
+		// Per-window panel state persistence (Phase 4)
+		getPanelState: vi.fn().mockResolvedValue({
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		}),
+		setPanelState: vi.fn().mockResolvedValue({ success: true }),
+		getWindowBounds: vi.fn().mockResolvedValue({ x: 100, y: 100, width: 1200, height: 800 }),
+		findWindowAtPoint: vi.fn().mockResolvedValue(null),
+		highlightDropZone: vi.fn().mockResolvedValue({ success: true }),
+		onDropZoneHighlight: vi.fn().mockReturnValue(() => {}),
+	},
 };
 
 Object.defineProperty(window, 'maestro', {
