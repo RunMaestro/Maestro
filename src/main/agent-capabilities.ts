@@ -269,7 +269,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsStreaming: true, // Streams JSONL events - Verified
 		supportsResultMessages: true, // step_finish with part.reason:"stop" - Verified
 		supportsModelSelection: true, // --model provider/model (e.g., 'ollama/qwen3:8b') - Verified
-		supportsStreamJsonInput: false, // Uses -f, --file flag instead
+		supportsStreamJsonInput: false, // Uses positional arguments for prompt
 		supportsThinkingDisplay: true, // Emits streaming text chunks
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export

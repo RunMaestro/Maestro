@@ -177,22 +177,47 @@ export class ChildProcessSpawner {
 					'ProcessManager',
 					{ command: spawnCommand }
 				);
-				// Escape arguments for cmd.exe when using shell
-				spawnArgs = finalArgs.map((arg) => {
-					const needsQuoting = /[ &|<>^%!()"\n\r#?*]/.test(arg) || arg.length > 100;
-					if (needsQuoting) {
-						const escaped = arg.replace(/"/g, '""').replace(/\^/g, '^^');
-						return `"${escaped}"`;
-					}
-					return arg;
-				});
-				logger.info('[ProcessManager] Escaped args for Windows shell', 'ProcessManager', {
-					originalArgsCount: finalArgs.length,
-					escapedArgsCount: spawnArgs.length,
-					escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
-					escapedPromptArgPreview: spawnArgs[spawnArgs.length - 1]?.substring(0, 200),
-					argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
-				});
+
+				// Check if we're using PowerShell (for SSH commands to avoid cmd.exe 8191 char limit)
+				const isPowerShell =
+					typeof config.shell === 'string' && config.shell.toLowerCase().includes('powershell');
+
+				if (isPowerShell) {
+					// Escape arguments for PowerShell (supports longer command lines than cmd.exe)
+					spawnArgs = finalArgs.map((arg) => {
+						const needsQuoting = /[ &|<>^%!()"\n\r#?*`$]/.test(arg) || arg.length > 100;
+						if (needsQuoting) {
+							// PowerShell escaping: wrap in single quotes, escape single quotes by doubling
+							const escaped = arg.replace(/'/g, "''");
+							return `'${escaped}'`;
+						}
+						return arg;
+					});
+					logger.info('[ProcessManager] Escaped args for PowerShell', 'ProcessManager', {
+						originalArgsCount: finalArgs.length,
+						escapedArgsCount: spawnArgs.length,
+						escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
+						escapedPromptArgPreview: spawnArgs[spawnArgs.length - 1]?.substring(0, 200),
+						argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
+					});
+				} else {
+					// Escape arguments for cmd.exe when using shell
+					spawnArgs = finalArgs.map((arg) => {
+						const needsQuoting = /[ &|<>^%!()"\n\r#?*]/.test(arg) || arg.length > 100;
+						if (needsQuoting) {
+							const escaped = arg.replace(/"/g, '""').replace(/\^/g, '^^');
+							return `"${escaped}"`;
+						}
+						return arg;
+					});
+					logger.info('[ProcessManager] Escaped args for Windows shell', 'ProcessManager', {
+						originalArgsCount: finalArgs.length,
+						escapedArgsCount: spawnArgs.length,
+						escapedPromptArgLength: spawnArgs[spawnArgs.length - 1]?.length,
+						escapedPromptArgPreview: spawnArgs[spawnArgs.length - 1]?.substring(0, 200),
+						argsModified: finalArgs.some((arg, i) => arg !== spawnArgs[i]),
+					});
+				}
 			}
 
 			// Determine shell option to pass to child_process.spawn.
@@ -241,7 +266,8 @@ export class ChildProcessSpawner {
 				argsContain('--json') ||
 				(argsContain('--format') && argsContain('json')) ||
 				(hasImages && !!prompt) ||
-				!!config.sendPromptViaStdin;
+				!!config.sendPromptViaStdin ||
+				!!config.sendPromptViaStdinRaw;
 
 			// Get the output parser for this agent type
 			const outputParser = getOutputParser(toolType) || undefined;
@@ -253,8 +279,10 @@ export class ChildProcessSpawner {
 				parserId: outputParser?.agentId,
 				isStreamJsonMode,
 				isBatchMode,
+				command: config.command,
+				argsCount: finalArgs.length,
 				argsPreview:
-					finalArgs.length > 0 ? finalArgs[finalArgs.length - 1]?.substring(0, 200) : undefined,
+					finalArgs.length > 0 ? finalArgs[finalArgs.length - 1]?.substring(0, 500) : undefined,
 			});
 
 			const managedProcess: ManagedProcess = {
@@ -386,16 +414,26 @@ export class ChildProcessSpawner {
 
 			// Handle stdin for batch mode and stream-json
 			if (isStreamJsonMode && prompt) {
-				// Stream-json mode: send the message via stdin
-				const streamJsonMessage = buildStreamJsonMessage(prompt, images || []);
-				logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
-					sessionId,
-					messageLength: streamJsonMessage.length,
-					imageCount: (images || []).length,
-					hasImages: !!(images && images.length > 0),
-				});
-				childProcess.stdin?.write(streamJsonMessage + '\n');
-				childProcess.stdin?.end();
+				if (config.sendPromptViaStdinRaw) {
+					// Send raw prompt via stdin
+					logger.debug('[ProcessManager] Sending raw prompt via stdin', 'ProcessManager', {
+						sessionId,
+						promptLength: prompt.length,
+					});
+					childProcess.stdin?.write(prompt);
+					childProcess.stdin?.end();
+				} else {
+					// Stream-json mode: send the message via stdin
+					const streamJsonMessage = buildStreamJsonMessage(prompt, images || []);
+					logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
+						sessionId,
+						messageLength: streamJsonMessage.length,
+						imageCount: (images || []).length,
+						hasImages: !!(images && images.length > 0),
+					});
+					childProcess.stdin?.write(streamJsonMessage + '\n');
+					childProcess.stdin?.end();
+				}
 			} else if (isBatchMode) {
 				// Regular batch mode: close stdin immediately
 				logger.debug('[ProcessManager] Closing stdin for batch mode', 'ProcessManager', {

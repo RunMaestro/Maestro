@@ -651,12 +651,7 @@ class ConversationManager {
 				// Must include these explicitly since wizard pre-builds args before IPC handler
 				const args = [];
 
-				// Add batch mode prefix: 'exec'
-				if (agent.batchModePrefix) {
-					args.push(...agent.batchModePrefix);
-				}
-
-				// Add base args (if any)
+				// Add base args (if any) - batchModePrefix will be added by buildAgentArgs
 				args.push(...(agent.args || []));
 
 				// Add batch mode args: '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'
@@ -676,12 +671,7 @@ class ConversationManager {
 				// OpenCode requires 'run' batch mode with JSON output for wizard conversations
 				const args = [];
 
-				// Add batch mode prefix: 'run'
-				if (agent.batchModePrefix) {
-					args.push(...agent.batchModePrefix);
-				}
-
-				// Add base args (if any)
+				// Add base args (if any) - batchModePrefix will be added by buildAgentArgs
 				args.push(...(agent.args || []));
 
 				// Add JSON output: '--format json'

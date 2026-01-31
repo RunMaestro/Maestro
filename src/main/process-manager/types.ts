@@ -32,6 +32,8 @@ export interface ProcessConfig {
 	runInShell?: boolean;
 	/** If true, send the prompt via stdin as JSON instead of command line */
 	sendPromptViaStdin?: boolean;
+	/** If true, send the prompt via stdin as raw text instead of command line */
+	sendPromptViaStdinRaw?: boolean;
 }
 
 /**

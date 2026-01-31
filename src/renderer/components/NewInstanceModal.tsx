@@ -241,15 +241,15 @@ export function NewInstanceModal({
 			if (sshRemoteId) {
 				const connectionErrors = detectedAgents
 					.filter((a: AgentConfig) => !a.hidden)
-					 
+
 					.filter((a: any) => a.error)
-					 
+
 					.map((a: any) => a.error);
 				const allHaveErrors =
 					connectionErrors.length > 0 &&
 					detectedAgents
 						.filter((a: AgentConfig) => !a.hidden)
-						 
+
 						.every((a: any) => a.error || !a.available);
 
 				if (allHaveErrors && connectionErrors.length > 0) {
@@ -318,7 +318,8 @@ export function NewInstanceModal({
 			// (hidden agents like 'terminal' should never be auto-selected)
 			if (source) {
 				setSelectedAgent(source.toolType);
-			} else {
+			} else if (!sshRemoteId) {
+				// Only auto-select on initial load, not on SSH remote re-detection
 				const firstAvailable = detectedAgents.find((a: AgentConfig) => a.available && !a.hidden);
 				if (firstAvailable) {
 					setSelectedAgent(firstAvailable.id);
@@ -578,34 +579,38 @@ export function NewInstanceModal({
 		}
 	}, [isOpen, sourceSession]);
 
-  // Load SSH remote configurations independently of agent detection
-  // This ensures SSH remotes are available even if agent detection fails
-  useEffect(() => {
-    if (isOpen) {
-      const loadSshConfigs = async () => {
-        try {
-          const sshConfigsResult = await window.maestro.sshRemote.getConfigs();
-          if (sshConfigsResult.success && sshConfigsResult.configs) {
-            setSshRemotes(sshConfigsResult.configs);
-          }
-        } catch (sshError) {
-          console.error('Failed to load SSH remote configs:', sshError);
-        }
-      };
-      loadSshConfigs();
-    }
-  }, [isOpen]);
+	// Load SSH remote configurations independently of agent detection
+	// This ensures SSH remotes are available even if agent detection fails
+	useEffect(() => {
+		if (isOpen) {
+			const loadSshConfigs = async () => {
+				try {
+					const sshConfigsResult = await window.maestro.sshRemote.getConfigs();
+					if (sshConfigsResult.success && sshConfigsResult.configs) {
+						setSshRemotes(sshConfigsResult.configs);
+					}
+				} catch (sshError) {
+					console.error('Failed to load SSH remote configs:', sshError);
+				}
+			};
+			loadSshConfigs();
+		}
+	}, [isOpen]);
 
-  // Transfer pending SSH config to selected agent automatically
-  // This ensures SSH config is preserved when agent is auto-selected or manually clicked
-  useEffect(() => {
-    if (selectedAgent && agentSshRemoteConfigs['_pending_'] && !agentSshRemoteConfigs[selectedAgent]) {
-      setAgentSshRemoteConfigs(prev => ({
-        ...prev,
-        [selectedAgent]: prev['_pending_'],
-      }));
-    }
-  }, [selectedAgent, agentSshRemoteConfigs]);
+	// Transfer pending SSH config to selected agent automatically
+	// This ensures SSH config is preserved when agent is auto-selected or manually clicked
+	useEffect(() => {
+		if (
+			selectedAgent &&
+			agentSshRemoteConfigs['_pending_'] &&
+			!agentSshRemoteConfigs[selectedAgent]
+		) {
+			setAgentSshRemoteConfigs((prev) => ({
+				...prev,
+				[selectedAgent]: prev['_pending_'],
+			}));
+		}
+	}, [selectedAgent, agentSshRemoteConfigs]);
 
 	// Track the current SSH remote ID for re-detection
 	// Uses _pending_ key when no agent is selected, which is the shared SSH config
@@ -644,7 +649,6 @@ export function NewInstanceModal({
 
 		// Re-run agent detection with the new SSH remote ID
 		loadAgents(undefined, currentSshRemoteId ?? undefined);
-		 
 	}, [isOpen, currentSshRemoteId]);
 
 	if (!isOpen) return null;
@@ -1131,11 +1135,13 @@ export function NewInstanceModal({
 								agentSshRemoteConfigs[selectedAgent] || agentSshRemoteConfigs['_pending_']
 							}
 							onSshRemoteConfigChange={(config) => {
-								const key = selectedAgent || '_pending_';
-								setAgentSshRemoteConfigs((prev) => ({
-									...prev,
-									[key]: config,
-								}));
+								setAgentSshRemoteConfigs((prev) => {
+									const newConfigs = { ...prev, _pending_: config };
+									if (selectedAgent) {
+										newConfigs[selectedAgent] = config;
+									}
+									return newConfigs;
+								});
 							}}
 						/>
 					)}

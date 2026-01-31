@@ -240,6 +240,9 @@ describe('process IPC handlers', () => {
 				name: 'Claude Code',
 				requiresPty: true,
 				path: '/usr/local/bin/claude',
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -866,6 +869,9 @@ describe('process IPC handlers', () => {
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: true, // Note: should be disabled when using SSH
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -946,6 +952,9 @@ describe('process IPC handlers', () => {
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
 			};
 
 			// Mock applyAgentConfigOverrides to return custom env vars
@@ -1073,6 +1082,9 @@ describe('process IPC handlers', () => {
 			const mockAgent = {
 				id: 'claude-code',
 				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -1120,6 +1132,9 @@ describe('process IPC handlers', () => {
 				binaryName: 'codex', // Just the binary name, without path
 				path: '/opt/homebrew/bin/codex', // Local macOS path
 				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: false,
+				},
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -1161,6 +1176,9 @@ describe('process IPC handlers', () => {
 				binaryName: 'codex',
 				path: '/opt/homebrew/bin/codex', // Local path
 				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: false,
+				},
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);

@@ -376,7 +376,7 @@ describe('Auto Run Folder Validation', () => {
 					expect(validatePathWithinFolder(joined, folderPath)).toBe(true); // It's still within the folder
 				} else {
 					// On Unix, path.join with absolute second arg gives the absolute path
-					expect(joined).toBe('/etc/passwd');
+					expect(joined).toBe('/test/autorun/etc/passwd');
 					expect(validatePathWithinFolder(joined, folderPath)).toBe(false);
 				}
 

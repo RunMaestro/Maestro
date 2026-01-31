@@ -392,11 +392,10 @@ describe('agent-detector', () => {
 				expect.stringContaining('Agent detection starting'),
 				'AgentDetector'
 			);
-			expect(logger.info).toHaveBeenCalledWith(
-				expect.stringContaining('Agent detection complete'),
-				'AgentDetector',
-				expect.any(Object)
-			);
+			const calls = logger.info.mock.calls;
+			const completeCall = calls.find((call) => call[0].includes('Agent detection complete'));
+			expect(completeCall).toBeDefined();
+			expect(completeCall[1]).toBe('AgentDetector');
 		});
 
 		it('should log when agents are found', async () => {

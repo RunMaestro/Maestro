@@ -388,7 +388,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 					const visibleAgents = agents.filter((a: AgentConfig) => !a.hidden);
 
 					// Check if all agents have connection errors (indicates SSH connection failure)
-					 
+
 					const connectionErrors = visibleAgents
 						.filter((a: any) => a.error)
 						.map((a: any) => a.error);
@@ -469,7 +469,6 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		// Using JSON.stringify with 'null' fallback to ensure the effect runs when switching
 		// between remote and local (JSON.stringify(undefined) returns undefined, not 'null',
 		// so we need the fallback to ensure React sees it as a real string change)
-		 
 	}, [setAvailableAgents, setSelectedAgent, JSON.stringify(sshRemoteConfig) ?? 'null']);
 
 	// Load SSH remote configurations on mount
@@ -858,9 +857,54 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 						<ArrowLeft className="w-4 h-4" />
 						Back
 					</button>
-					<h3 className="text-xl font-semibold" style={{ color: theme.colors.textMain }}>
-						Configure {configuringTile.name}
-					</h3>
+					<div className="flex flex-col items-center gap-2">
+						<h3 className="text-xl font-semibold" style={{ color: theme.colors.textMain }}>
+							Configure {configuringTile.name}
+						</h3>
+						{/* SSH Remote Location Dropdown - only shown if remotes are configured */}
+						{sshRemotes.length > 0 && (
+							<div className="flex items-center gap-2 text-sm">
+								<span style={{ color: theme.colors.textDim }}>on</span>
+								<select
+									value={sshRemoteConfig?.enabled ? sshRemoteConfig.remoteId || '' : ''}
+									onChange={(e) => {
+										const remoteId = e.target.value;
+										if (remoteId === '') {
+											// Local machine selected
+											setSshRemoteConfig(undefined);
+											// Also update wizard context immediately
+											setWizardSessionSshRemoteConfig({ enabled: false, remoteId: null });
+										} else {
+											// Remote selected
+											setSshRemoteConfig({
+												enabled: true,
+												remoteId,
+											});
+											// Also update wizard context immediately
+											setWizardSessionSshRemoteConfig({
+												enabled: true,
+												remoteId,
+											});
+										}
+									}}
+									className="px-3 py-1 rounded border outline-none transition-all cursor-pointer text-xs"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+									aria-label="Agent location"
+								>
+									<option value="">Local Machine</option>
+									{sshRemotes.map((remote) => (
+										<option key={remote.id} value={remote.id}>
+											{remote.name || remote.host}
+										</option>
+									))}
+								</select>
+							</div>
+						)}
+					</div>
 					<div className="w-20" /> {/* Spacer for centering */}
 				</div>
 

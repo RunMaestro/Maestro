@@ -13,6 +13,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src/main/**/*"],
+  "include": ["src/main/**/*", "src/shared/**/*", "src/types/**/*"],
   "exclude": ["node_modules", "dist", "release"]
 }

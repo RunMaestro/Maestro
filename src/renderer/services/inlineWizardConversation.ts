@@ -499,6 +499,11 @@ function buildArgsForAgent(agent: any): string[] {
 			// Add base args (if any)
 			args.push(...(agent.args || []));
 
+			// Add read-only mode: '--agent plan'
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
+
 			// Add JSON output: '--format json'
 			if (agent.jsonOutputArgs) {
 				args.push(...agent.jsonOutputArgs);
@@ -707,10 +712,17 @@ export async function sendWizardMessage(
 				}
 			);
 
+			// Use the agent's resolved path if available, falling back to command name
+			// This is critical for packaged Electron apps where PATH may not include agent locations
+			const commandToUse = agent.path || agent.command;
+
 			// Spawn the agent process
 			logger.info(`Spawning wizard agent process`, '[InlineWizardConversation]', {
 				sessionId: session.sessionId,
 				agentType: session.agentType,
+				command: commandToUse,
+				agentPath: agent.path,
+				agentCommand: agent.command,
 				cwd: session.directoryPath,
 				historyLength: conversationHistory.length,
 			});
@@ -720,7 +732,7 @@ export async function sendWizardMessage(
 					sessionId: session.sessionId,
 					toolType: session.agentType,
 					cwd: session.directoryPath,
-					command: agent.command,
+					command: commandToUse,
 					args: argsForSpawn,
 					prompt: fullPrompt,
 					// Pass SSH config for remote execution

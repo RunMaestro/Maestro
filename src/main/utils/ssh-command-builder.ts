@@ -101,13 +101,21 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
 	// Build the command with arguments
 	const commandWithArgs = buildShellCommand(command, args);
 
-	// If command expects JSON via stdin (stream-json), use exec to replace the
-	// shell process so stdin is delivered directly to the agent binary and no
-	// intermediate shell produces control sequences that could corrupt the stream.
-	const hasStreamJsonInput = options.useStdin
-		? true
-		: Array.isArray(args) && args.includes('--input-format') && args.includes('stream-json');
-	const finalCommandWithArgs = hasStreamJsonInput ? `exec ${commandWithArgs}` : commandWithArgs;
+	// Handle stdin input modes
+	let finalCommandWithArgs: string;
+	if (options.useStdin) {
+		const hasStreamJsonInput =
+			Array.isArray(args) && args.includes('--input-format') && args.includes('stream-json');
+		if (hasStreamJsonInput) {
+			// Stream-JSON mode: use exec to avoid shell control sequences
+			finalCommandWithArgs = `exec ${commandWithArgs}`;
+		} else {
+			// Raw prompt mode: pipe stdin directly to the command
+			finalCommandWithArgs = commandWithArgs;
+		}
+	} else {
+		finalCommandWithArgs = commandWithArgs;
+	}
 
 	// Combine env exports with command
 	let fullCommand: string;

@@ -18,6 +18,7 @@ import {
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
+import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
@@ -262,6 +263,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let useShell = false;
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
+				let useHereDocForOpenCode = false;
 
 				if (config.sessionCustomPath) {
 					logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
@@ -273,13 +275,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// On Windows (except SSH), always use shell execution for agents
 				if (isWindows && !config.sessionSshRemoteConfig?.enabled) {
 					useShell = true;
-					// Merge process.env with custom env vars, to ensure PATH is present
-					// Only keep string values (filter out undefined)
+					// Use expanded environment with custom env vars to ensure PATH includes all binary locations
+					const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
+					// Filter out undefined values to match Record<string, string> type
 					customEnvVarsToPass = Object.fromEntries(
-						Object.entries({
-							...process.env,
-							...(customEnvVarsToPass || {}),
-						}).filter(([_, v]) => typeof v === 'string')
+						Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
 					) as Record<string, string>;
 
 					// Determine an explicit shell to use when forcing shell execution on Windows.
@@ -320,6 +320,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					});
 				}
 				let shouldSendPromptViaStdin = false;
+				let shouldSendPromptViaStdinRaw = false;
 				if (config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled) {
 					// Session-level SSH config provided - resolve and use it
 					logger.info(`Using session-level SSH config`, LOG_CONTEXT, {
@@ -351,6 +352,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						const isLargePrompt = config.prompt && config.prompt.length > 4000;
 						const hasStreamJsonInput =
 							finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
+						const agentSupportsStreamJson = agent?.capabilities.supportsStreamJsonInput ?? false;
 						let sshArgs = finalArgs;
 						if (config.prompt && !isLargePrompt && !hasStreamJsonInput) {
 							// Small prompt - embed in command line as usual (only if not using stream-json input)
@@ -361,8 +363,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							} else {
 								sshArgs = [...finalArgs, '--', config.prompt];
 							}
-						} else if (config.prompt && (isLargePrompt || hasStreamJsonInput)) {
-							// Large prompt or stream-json input - ensure --input-format stream-json is present
+						} else if (
+							config.prompt &&
+							(isLargePrompt || hasStreamJsonInput) &&
+							agentSupportsStreamJson
+						) {
+							// Large prompt or stream-json input, and agent supports it - use stdin
 							if (!hasStreamJsonInput) {
 								sshArgs = [...finalArgs, '--input-format', 'stream-json'];
 							}
@@ -375,16 +381,43 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 									: 'stream-json-input-mode',
 								hasStreamJsonInput,
 							});
+						} else if (config.prompt && isLargePrompt && !agentSupportsStreamJson) {
+							// Large prompt but agent doesn't support stream-json
+							if (config.toolType === 'opencode') {
+								// OpenCode: mark for here document processing (will be handled after remoteCommand is set)
+								useHereDocForOpenCode = true;
+							} else {
+								// Other agents: send via stdin as raw text
+								shouldSendPromptViaStdinRaw = true;
+							}
 						}
-
-						// Build the SSH command that wraps the agent execution
 						//
 						// Determine the command to run on the remote host:
 						// 1. If user set a session-specific custom path, use that (they configured it for the remote)
 						// 2. Otherwise, use the agent's binaryName (e.g., 'codex', 'claude') and let
 						//    the remote shell's PATH resolve it. This avoids using local paths like
 						//    '/opt/homebrew/bin/codex' which don't exist on the remote host.
-						const remoteCommand = config.sessionCustomPath || agent?.binaryName || config.command;
+						let remoteCommand = config.sessionCustomPath || agent?.binaryName || config.command;
+
+						// Handle OpenCode here document for large prompts
+						if (useHereDocForOpenCode && config.prompt) {
+							// OpenCode: use here document to avoid command line limits
+							// Escape single quotes in the prompt for bash here document
+							const escapedPrompt = config.prompt.replace(/'/g, "'\\''");
+							// Construct: cat << 'EOF' | opencode run --format json\nlong prompt here\nEOF
+							const hereDocCommand = `cat << 'EOF' | ${remoteCommand} ${sshArgs.join(' ')}\n${escapedPrompt}\nEOF`;
+							sshArgs = []; // Clear args since they're now in the here doc command
+							remoteCommand = hereDocCommand; // Update to use here document
+							logger.info(
+								`Using here document for large OpenCode prompt to avoid command line limits`,
+								LOG_CONTEXT,
+								{
+									sessionId: config.sessionId,
+									promptLength: config.prompt?.length,
+									commandLength: hereDocCommand.length,
+								}
+							);
+						}
 						// Decide whether we'll send input via stdin to the remote command
 						const useStdin = sshArgs.includes('--input-format') && sshArgs.includes('stream-json');
 
@@ -406,6 +439,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// For SSH, env vars are passed in the remote command string, not locally
 						customEnvVarsToPass = undefined;
 
+						// On Windows, use PowerShell for SSH commands to avoid cmd.exe's 8191 character limit
+						// PowerShell supports up to 32,767 characters, which is needed for large prompts
+						if (isWindows) {
+							useShell = true;
+							shellToUse = 'powershell.exe';
+							logger.info(
+								`Using PowerShell for SSH command on Windows to support long command lines`,
+								LOG_CONTEXT,
+								{
+									sessionId: config.sessionId,
+									commandLength: sshCommand.args.join(' ').length,
+								}
+							);
+						}
+
 						// Detailed debug logging to diagnose SSH command execution issues
 						logger.debug(`SSH command details for debugging`, LOG_CONTEXT, {
 							sessionId: config.sessionId,
@@ -426,6 +474,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						});
 					}
 				}
+
+				// Debug logging for shell configuration
+				logger.info(`Shell configuration before spawn`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					useShell,
+					shellToUse,
+					isWindows,
+					isSshCommand: !!sshRemoteUsed,
+				});
 
 				const result = processManager.spawn({
 					...config,
@@ -458,6 +515,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 					// For SSH with stream-json input, send prompt via stdin instead of command line
 					sendPromptViaStdin: shouldSendPromptViaStdin ? true : undefined,
+					sendPromptViaStdinRaw: shouldSendPromptViaStdinRaw ? true : undefined,
 					// Stats tracking: use cwd as projectPath if not explicitly provided
 					projectPath: config.cwd,
 					// SSH remote context (for SSH-specific error messages)
