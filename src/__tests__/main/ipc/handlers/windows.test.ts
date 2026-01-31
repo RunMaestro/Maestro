@@ -13,6 +13,8 @@
  * - windows:setSessionsForWindow - Setting sessions for a window
  * - windows:setActiveSession - Setting active session
  * - windows:getWindowBounds - Getting window screen bounds
+ * - windows:findWindowAtPoint - Finding window at screen coordinates
+ * - windows:highlightDropZone - Highlighting drop zone on target window
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -936,6 +938,205 @@ describe('Windows IPC Handlers', () => {
 				width: 1400,
 				height: 900,
 			});
+		});
+	});
+
+	describe('windows:findWindowAtPoint', () => {
+		it('should return null when no windows exist', async () => {
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			const result = await handler({ sender: {} }, 500, 500);
+
+			expect(result).toBeNull();
+		});
+
+		it('should return null when point is outside all windows', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockWindow.getBounds.mockReturnValue({ x: 100, y: 100, width: 800, height: 600 });
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			const result = await handler({ sender: {} }, 1000, 1000); // Point outside window bounds
+
+			expect(result).toBeNull();
+		});
+
+		it('should find window when point is inside its bounds', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockWindow.getBounds.mockReturnValue({ x: 100, y: 100, width: 800, height: 600 });
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			const result = await handler({ sender: {} }, 500, 400); // Point inside window bounds
+
+			expect(result).toEqual({
+				windowId: 'test-window',
+				isMain: false,
+			});
+		});
+
+		it('should exclude the calling window from results', async () => {
+			const senderWindow = createMockBrowserWindow();
+			senderWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('sender-window', {
+				browserWindow: senderWindow,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			const otherWindow = createMockBrowserWindow();
+			otherWindow.getBounds.mockReturnValue({ x: 900, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('other-window', {
+				browserWindow: otherWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(senderWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('sender-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			// Point is inside sender-window bounds but should return null because sender is excluded
+			const result = await handler({ sender: {} }, 400, 300);
+
+			expect(result).toBeNull();
+		});
+
+		it('should find a different window when calling from another window', async () => {
+			const senderWindow = createMockBrowserWindow();
+			senderWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('sender-window', {
+				browserWindow: senderWindow,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			const targetWindow = createMockBrowserWindow();
+			targetWindow.getBounds.mockReturnValue({ x: 900, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('target-window', {
+				browserWindow: targetWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(senderWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('sender-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			// Point is inside target-window bounds
+			const result = await handler({ sender: {} }, 1000, 300);
+
+			expect(result).toEqual({
+				windowId: 'target-window',
+				isMain: false,
+			});
+		});
+
+		it('should skip destroyed windows', async () => {
+			const destroyedWindow = createMockBrowserWindow({ destroyed: true });
+			destroyedWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('destroyed-window', {
+				browserWindow: destroyedWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			const validWindow = createMockBrowserWindow();
+			validWindow.getBounds.mockReturnValue({ x: 0, y: 0, width: 800, height: 600 });
+			mockRegistryState.set('valid-window', {
+				browserWindow: validWindow,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			// Point is inside both windows, but destroyed one should be skipped
+			const result = await handler({ sender: {} }, 400, 300);
+
+			expect(result).toEqual({
+				windowId: 'valid-window',
+				isMain: true,
+			});
+		});
+
+		it('should correctly identify main window in result', async () => {
+			const mainWindow = createMockBrowserWindow();
+			mainWindow.getBounds.mockReturnValue({ x: 100, y: 100, width: 800, height: 600 });
+			mockRegistryState.set('main-window', {
+				browserWindow: mainWindow,
+				sessionIds: [],
+				isMain: true,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+			const result = await handler({ sender: {} }, 500, 400);
+
+			expect(result).toEqual({
+				windowId: 'main-window',
+				isMain: true,
+			});
+		});
+
+		it('should find window at exact boundary edge', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockWindow.getBounds.mockReturnValue({ x: 100, y: 100, width: 800, height: 600 });
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:findWindowAtPoint');
+
+			// Test at top-left corner
+			expect(await handler({ sender: {} }, 100, 100)).toEqual({
+				windowId: 'test-window',
+				isMain: false,
+			});
+
+			// Test at bottom-right corner (x=100+800=900, y=100+600=700)
+			expect(await handler({ sender: {} }, 900, 700)).toEqual({
+				windowId: 'test-window',
+				isMain: false,
+			});
+
+			// Test just outside right edge
+			expect(await handler({ sender: {} }, 901, 400)).toBeNull();
+
+			// Test just outside bottom edge
+			expect(await handler({ sender: {} }, 500, 701)).toBeNull();
+		});
+	});
+
+	// Note: windows:highlightDropZone handler tests are in a separate test file
+	// (multi-window-migration.test.ts) due to test isolation issues with module mocking.
+	// The handler implementation is tested via the main highlightDropZone tests.
+	describe('windows:highlightDropZone', () => {
+		it('should have handler registered', () => {
+			const handler = (ipcMain as any)._getHandler('windows:highlightDropZone');
+			expect(handler).toBeDefined();
+			expect(typeof handler).toBe('function');
 		});
 	});
 });

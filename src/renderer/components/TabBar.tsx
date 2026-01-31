@@ -74,6 +74,11 @@ interface TabBarProps {
 	 * Used for multi-window tab tear-off functionality.
 	 */
 	onTabDragOut?: (event: TabDragOutEvent) => void;
+	/**
+	 * Whether to show drop zone highlighting on this tab bar.
+	 * Set to true when another window is dragging a tab over this window.
+	 */
+	dropZoneHighlighted?: boolean;
 }
 
 interface TabProps {
@@ -940,6 +945,7 @@ function TabBarInner({
 	onCloseTabsLeft,
 	onCloseTabsRight,
 	onTabDragOut,
+	dropZoneHighlighted,
 }: TabBarProps) {
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
@@ -957,6 +963,8 @@ function TabBarInner({
 		null
 	);
 	const hasFiredDragOutRef = useRef(false);
+	// Ref to track currently highlighted window for unhighlighting when cursor moves away
+	const highlightedWindowRef = useRef<string | null>(null);
 
 	// Center the active tab in the scrollable area when activeTabId changes or filter is toggled
 	useEffect(() => {
@@ -987,11 +995,48 @@ function TabBarInner({
 		? tabs.filter((t) => t.hasUnread || t.id === activeTabId || hasDraft(t))
 		: tabs;
 
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
-	}, []);
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+
+			// Create a custom drag image from the tab element
+			const tabElement = tabRefs.current.get(tabId);
+			if (tabElement) {
+				// Create a clone of the tab element for the drag image
+				const clone = tabElement.cloneNode(true) as HTMLDivElement;
+
+				// Style the clone for visibility during drag
+				clone.style.position = 'absolute';
+				clone.style.top = '-1000px'; // Hide off-screen
+				clone.style.left = '-1000px';
+				clone.style.backgroundColor = theme.colors.bgSidebar;
+				clone.style.border = `2px solid ${theme.colors.accent}`;
+				clone.style.borderRadius = '6px';
+				clone.style.padding = '4px 12px';
+				clone.style.boxShadow = `0 4px 12px rgba(0, 0, 0, 0.3)`;
+				clone.style.opacity = '0.95';
+				clone.style.zIndex = '10000';
+
+				// Add to document body temporarily for the drag image
+				// The browser needs the element to be in the DOM when setDragImage is called
+				document.body.appendChild(clone);
+
+				// Set as drag image with offset to center it on the cursor
+				// Note: setDragImage may not be available in all environments (e.g., test environment)
+				const rect = tabElement.getBoundingClientRect();
+				if (typeof e.dataTransfer.setDragImage === 'function') {
+					e.dataTransfer.setDragImage(clone, rect.width / 2, rect.height / 2);
+				}
+
+				// Clean up the clone immediately - the browser captures the image synchronously
+				// during the setDragImage call, so we don't need to keep it in the DOM
+				document.body.removeChild(clone);
+			}
+		},
+		[theme.colors.bgSidebar, theme.colors.accent]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -1010,19 +1055,30 @@ function TabBarInner({
 		// Clear window bounds when drag ends
 		windowBoundsRef.current = null;
 		hasFiredDragOutRef.current = false;
+
+		// Unhighlight any previously highlighted window
+		if (highlightedWindowRef.current) {
+			try {
+				window.maestro.windows.highlightDropZone(highlightedWindowRef.current, false);
+			} catch {
+				// IPC error - ignore
+			}
+			highlightedWindowRef.current = null;
+		}
 	}, []);
 
 	/**
 	 * Handle drag event to detect when a tab drag exits the window bounds.
 	 * Fetches window bounds on first drag event, then checks if mouse is outside.
+	 * Also handles drop zone highlighting on target windows during drag.
 	 */
 	const handleDrag = useCallback(
 		async (tabId: string, e: React.DragEvent) => {
-			// Skip if no callback or already fired drag-out for this drag
-			if (!onTabDragOut || hasFiredDragOutRef.current) return;
-
 			// e.screenX/screenY are 0 at the end of drag (browser quirk), skip those
 			if (e.screenX === 0 && e.screenY === 0) return;
+
+			const screenX = e.screenX;
+			const screenY = e.screenY;
 
 			// Fetch window bounds on first drag event (only once per drag operation)
 			if (!windowBoundsRef.current) {
@@ -1044,9 +1100,6 @@ function TabBarInner({
 			if (!bounds) return;
 
 			// Check if mouse position is outside window bounds
-			const screenX = e.screenX;
-			const screenY = e.screenY;
-
 			const isOutside =
 				screenX < bounds.x ||
 				screenX > bounds.x + bounds.width ||
@@ -1055,8 +1108,46 @@ function TabBarInner({
 
 			if (isOutside) {
 				// Fire the drag-out event (only once per drag operation)
-				hasFiredDragOutRef.current = true;
-				onTabDragOut({ tabId, screenX, screenY });
+				if (onTabDragOut && !hasFiredDragOutRef.current) {
+					hasFiredDragOutRef.current = true;
+					onTabDragOut({ tabId, screenX, screenY });
+				}
+
+				// Check for target window at the current position and update highlighting
+				try {
+					const targetWindow = await window.maestro.windows.findWindowAtPoint(screenX, screenY);
+
+					if (targetWindow) {
+						// If hovering over a different window than before, update highlights
+						if (highlightedWindowRef.current !== targetWindow.windowId) {
+							// Unhighlight previous window
+							if (highlightedWindowRef.current) {
+								window.maestro.windows.highlightDropZone(highlightedWindowRef.current, false);
+							}
+							// Highlight new window
+							window.maestro.windows.highlightDropZone(targetWindow.windowId, true);
+							highlightedWindowRef.current = targetWindow.windowId;
+						}
+					} else {
+						// Not over any Maestro window - unhighlight previous if any
+						if (highlightedWindowRef.current) {
+							window.maestro.windows.highlightDropZone(highlightedWindowRef.current, false);
+							highlightedWindowRef.current = null;
+						}
+					}
+				} catch {
+					// IPC error - ignore
+				}
+			} else {
+				// Inside the source window - unhighlight any previously highlighted window
+				if (highlightedWindowRef.current) {
+					try {
+						window.maestro.windows.highlightDropZone(highlightedWindowRef.current, false);
+					} catch {
+						// IPC error - ignore
+					}
+					highlightedWindowRef.current = null;
+				}
 			}
 		},
 		[onTabDragOut]
@@ -1228,11 +1319,18 @@ function TabBarInner({
 	return (
 		<div
 			ref={tabBarRef}
-			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
-			style={{
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-			}}
+			className={`flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar transition-all duration-200 ${
+				dropZoneHighlighted ? 'ring-2 ring-inset' : ''
+			}`}
+			style={
+				{
+					backgroundColor: dropZoneHighlighted
+						? `color-mix(in srgb, ${theme.colors.accent} 15%, ${theme.colors.bgSidebar})`
+						: theme.colors.bgSidebar,
+					borderColor: dropZoneHighlighted ? theme.colors.accent : theme.colors.border,
+					'--tw-ring-color': dropZoneHighlighted ? theme.colors.accent : 'transparent',
+				} as React.CSSProperties
+			}
 		>
 			{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
 			<div

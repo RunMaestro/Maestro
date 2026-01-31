@@ -11,6 +11,7 @@
 
 import { useMemo } from 'react';
 import type { MainPanelHandle } from '../../components/MainPanel';
+import type { TabDragOutEvent } from '../../components/TabBar';
 import type {
 	Session,
 	Theme,
@@ -217,6 +218,18 @@ export interface UseMainPanelPropsDeps {
 	handleCloseOtherTabs: () => void;
 	handleCloseTabsLeft: () => void;
 	handleCloseTabsRight: () => void;
+	/**
+	 * Handler for tab drag-out events. Optional - when undefined, drag-out is disabled.
+	 * Disabled when it's the last session in the primary window.
+	 */
+	handleTabDragOut?: (event: TabDragOutEvent) => void;
+	/** Whether to show drop zone highlighting on the tab bar */
+	dropZoneHighlighted: boolean;
+	/**
+	 * Handler to move a tab to a new window. Optional - when undefined, the button is hidden.
+	 * Disabled when it's the last session in the primary window.
+	 */
+	handleMoveToNewWindow?: (tabId: string) => void;
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
 	handleMainPanelInputBlur: () => void;
@@ -397,6 +410,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onCloseOtherTabs: deps.handleCloseOtherTabs,
 			onCloseTabsLeft: deps.handleCloseTabsLeft,
 			onCloseTabsRight: deps.handleCloseTabsRight,
+			onTabDragOut: deps.handleTabDragOut,
+			dropZoneHighlighted: deps.dropZoneHighlighted,
+			onMoveToNewWindow: deps.handleMoveToNewWindow,
 			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
 			onScrollPositionChange: deps.handleScrollPositionChange,
@@ -620,6 +636,9 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleCloseOtherTabs,
 			deps.handleCloseTabsLeft,
 			deps.handleCloseTabsRight,
+			deps.handleTabDragOut,
+			deps.dropZoneHighlighted,
+			deps.handleMoveToNewWindow,
 			deps.handleScrollPositionChange,
 			deps.handleAtBottomChange,
 			deps.handleMainPanelInputBlur,

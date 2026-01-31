@@ -31,7 +31,7 @@ import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
 import { GitStatusWidget } from './GitStatusWidget';
 import { AgentSessionsBrowser } from './AgentSessionsBrowser';
-import { TabBar } from './TabBar';
+import { TabBar, type TabDragOutEvent } from './TabBar';
 import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
@@ -207,6 +207,16 @@ interface MainPanelProps {
 	onCloseOtherTabs?: () => void;
 	onCloseTabsLeft?: () => void;
 	onCloseTabsRight?: () => void;
+	/**
+	 * Handler called when a tab drag exits the window bounds.
+	 * Used for multi-window tab tear-off functionality.
+	 */
+	onTabDragOut?: (event: TabDragOutEvent) => void;
+	/**
+	 * Whether to show drop zone highlighting on the tab bar.
+	 * Set to true when another window is dragging a tab over this window.
+	 */
+	dropZoneHighlighted?: boolean;
 	// Scroll position persistence
 	onScrollPositionChange?: (scrollTop: number) => void;
 	// Scroll bottom state change handler (for hasUnread logic)
@@ -477,6 +487,7 @@ export const MainPanel = React.memo(
 			onCloseOtherTabs,
 			onCloseTabsLeft,
 			onCloseTabsRight,
+			onTabDragOut,
 		} = props;
 
 		// Get the active tab for header display
@@ -787,6 +798,22 @@ export const MainPanel = React.memo(
 					<Wand2 className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
 					<p className="text-sm" style={{ color: theme.colors.textDim }}>
 						No agents. Create one to get started.
+					</p>
+				</div>
+			);
+		}
+
+		// Show placeholder when session is not in this window's session list
+		// (Multi-window support: another window owns this session)
+		if (!isActiveSessionInThisWindow) {
+			return (
+				<div
+					className="flex-1 flex flex-col items-center justify-center min-w-0 relative opacity-30"
+					style={{ backgroundColor: theme.colors.bgMain }}
+				>
+					<Columns className="w-16 h-16 mb-4" style={{ color: theme.colors.textDim }} />
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Session open in another window
 					</p>
 				</div>
 			);
@@ -1416,6 +1443,8 @@ export const MainPanel = React.memo(
 									onCloseOtherTabs={onCloseOtherTabs}
 									onCloseTabsLeft={onCloseTabsLeft}
 									onCloseTabsRight={onCloseTabsRight}
+									onTabDragOut={onTabDragOut}
+									dropZoneHighlighted={props.dropZoneHighlighted}
 								/>
 							)}
 

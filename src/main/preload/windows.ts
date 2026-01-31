@@ -47,6 +47,15 @@ export interface SessionMovedEvent {
 }
 
 /**
+ * Drop zone highlight event data sent to a window during tab drag-out.
+ * Used to highlight the target window's tab bar.
+ */
+export interface DropZoneHighlightEvent {
+	/** Whether to highlight the drop zone */
+	highlight: boolean;
+}
+
+/**
  * Creates the windows API object for preload exposure.
  * Exposes window.maestro.windows.* methods.
  */
@@ -208,6 +217,45 @@ export function createWindowsApi() {
 		 */
 		getWindowBounds: (): Promise<{ x: number; y: number; width: number; height: number } | null> =>
 			ipcRenderer.invoke('windows:getWindowBounds'),
+
+		/**
+		 * Find a Maestro window at the given screen coordinates.
+		 * Used during tab drag-drop to detect if the drop location is over another Maestro window.
+		 * Excludes the calling window from the search results.
+		 *
+		 * @param screenX - The X coordinate in screen space
+		 * @param screenY - The Y coordinate in screen space
+		 * @returns Promise resolving to the window info at that point, or null if no window found
+		 */
+		findWindowAtPoint: (
+			screenX: number,
+			screenY: number
+		): Promise<{ windowId: string; isMain: boolean } | null> =>
+			ipcRenderer.invoke('windows:findWindowAtPoint', screenX, screenY),
+
+		/**
+		 * Send drop zone highlight signal to a specific window.
+		 * Used during tab drag-out to highlight the target window's tab bar.
+		 *
+		 * @param windowId - The ID of the window to highlight
+		 * @param highlight - Whether to highlight (true) or unhighlight (false) the drop zone
+		 * @returns Promise resolving to success status
+		 */
+		highlightDropZone: (windowId: string, highlight: boolean): Promise<{ success: boolean }> =>
+			ipcRenderer.invoke('windows:highlightDropZone', windowId, highlight),
+
+		/**
+		 * Listen for drop zone highlight events.
+		 * Fired when another window is dragging a tab over this window.
+		 *
+		 * @param callback - Function to call when drop zone highlight changes
+		 * @returns Cleanup function to remove the listener
+		 */
+		onDropZoneHighlight: (callback: (event: DropZoneHighlightEvent) => void): (() => void) => {
+			const handler = (_: unknown, event: DropZoneHighlightEvent) => callback(event);
+			ipcRenderer.on('windows:dropZoneHighlight', handler);
+			return () => ipcRenderer.removeListener('windows:dropZoneHighlight', handler);
+		},
 	};
 }
 

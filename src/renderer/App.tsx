@@ -83,6 +83,8 @@ import {
 	useAppHandlers,
 	// Auto Run
 	useAutoRunHandlers,
+	// Window state
+	useWindowState,
 } from './hooks';
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
@@ -97,6 +99,7 @@ import { GroupChatProvider, useGroupChat } from './contexts/GroupChatContext';
 import { AutoRunProvider, useAutoRun } from './contexts/AutoRunContext';
 import { SessionProvider, useSession } from './contexts/SessionContext';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
+import { WindowProvider, useWindow } from './contexts/WindowContext';
 import { ToastContainer } from './components/Toast';
 
 // Import services
@@ -377,6 +380,9 @@ function MaestroConsoleInner() {
 		setTourFromWizard,
 	} = useModalContext();
 
+	// --- WINDOW STATE (per-window UI state like panel collapse, drop zone highlighting) ---
+	const { dropZoneHighlighted } = useWindowState();
+
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
 
@@ -544,6 +550,39 @@ function MaestroConsoleInner() {
 		setRemovedWorktreePaths,
 		removedWorktreePathsRef,
 	} = useSession();
+
+	// --- WINDOW STATE (Phase 8: multi-window support - GitHub issue #133) ---
+	// Use WindowContext to access window-specific state
+	const {
+		windowId,
+		isMainWindow,
+		sessionIds: windowSessionIds,
+		activeSessionId: windowActiveSessionId,
+		isLoaded: windowIsLoaded,
+	} = useWindow();
+
+	/**
+	 * Sessions filtered for this window's tab bar.
+	 * In multi-window mode, each window shows only the sessions assigned to it.
+	 * Falls back to showing all sessions if window state is not yet loaded
+	 * or if no sessions have been explicitly assigned to this window.
+	 */
+	const windowFilteredSessions = useMemo(() => {
+		// If window state isn't loaded yet, show all sessions
+		if (!windowIsLoaded) {
+			return sessions;
+		}
+
+		// If this window has no sessions assigned (e.g., main window showing all),
+		// show all sessions for backwards compatibility
+		if (!windowSessionIds || windowSessionIds.length === 0) {
+			return sessions;
+		}
+
+		// Filter sessions to only those assigned to this window
+		const windowSessionIdSet = new Set(windowSessionIds);
+		return sessions.filter((s) => windowSessionIdSet.has(s.id));
+	}, [sessions, windowSessionIds, windowIsLoaded]);
 
 	// Spec Kit commands (loaded from bundled prompts)
 	const [speckitCommands, setSpeckitCommands] = useState<SpecKitCommand[]>([]);
@@ -3387,6 +3426,12 @@ function MaestroConsoleInner() {
 	speckitCommandsRef.current = speckitCommands;
 	openspecCommandsRef.current = openspecCommands;
 
+	// Refs for multi-window drag-out protection (Phase 8: GitHub issue #133)
+	const isMainWindowRef = useRef(isMainWindow);
+	const windowFilteredSessionsRef = useRef(windowFilteredSessions);
+	isMainWindowRef.current = isMainWindow;
+	windowFilteredSessionsRef.current = windowFilteredSessions;
+
 	// Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now provided by useAgentExecution hook
 	// Note: addHistoryEntryRef is now provided by useAgentSessionManagement hook
 	// Ref for processQueuedMessage - allows batch exit handler to process queued messages
@@ -4987,6 +5032,147 @@ You are taking over this conversation. Based on the context above, provide a bri
 				return updatedSession;
 			})
 		);
+	}, []);
+
+	/**
+	 * Handle tab drag out of window bounds.
+	 * When a tab is dragged outside the current window, check if it's over another
+	 * Maestro window and move the session to that window.
+	 *
+	 * Multi-window support: Moves the entire Maestro session (not just the AI tab)
+	 * to the target window when dropped on another Maestro window.
+	 *
+	 * Protection: Cannot drag out the last session from the primary window,
+	 * as the primary window must always have at least one session.
+	 */
+	const handleTabDragOut = useCallback(
+		async (event: { tabId: string; screenX: number; screenY: number }) => {
+			// Only proceed if there's an active session
+			const sessionId = activeSessionIdRef.current;
+			if (!sessionId) return;
+
+			// Prevent dragging the last session out of the primary window
+			// The primary window must always have at least one session
+			if (isMainWindowRef.current && windowFilteredSessionsRef.current.length <= 1) {
+				addToastRef.current({
+					type: 'warning',
+					title: 'Cannot Move Last Session',
+					message: 'The primary window must have at least one session.',
+				});
+				return;
+			}
+
+			try {
+				// Check if there's another Maestro window at the drop location
+				const targetWindow = await window.maestro.windows.findWindowAtPoint(
+					event.screenX,
+					event.screenY
+				);
+
+				// Get current window ID to pass as fromWindowId
+				const currentWindowId = await window.maestro.windows.getWindowId();
+
+				if (targetWindow) {
+					// Found another Maestro window - move the session to it
+					const result = await window.maestro.windows.moveSession({
+						sessionId,
+						fromWindowId: currentWindowId || undefined,
+						toWindowId: targetWindow.windowId,
+					});
+
+					if (result.success) {
+						// Focus the target window
+						await window.maestro.windows.focusWindow(targetWindow.windowId);
+					} else {
+						console.error('Failed to move session:', result.error);
+					}
+				} else {
+					// No Maestro window at drop location - create a new window
+					// Position the new window slightly offset from the cursor so the title bar
+					// is roughly under the cursor (100px left, 50px up from cursor position)
+					const newWindowResponse = await window.maestro.windows.create({
+						sessionIds: [sessionId],
+						activeSessionId: sessionId,
+						bounds: {
+							x: event.screenX - 100,
+							y: event.screenY - 50,
+						},
+					});
+
+					// Move the session from source window to the new window
+					// This removes it from the source and adds it to the target
+					const result = await window.maestro.windows.moveSession({
+						sessionId,
+						fromWindowId: currentWindowId || undefined,
+						toWindowId: newWindowResponse.windowId,
+					});
+
+					if (result.success) {
+						// Focus the new window
+						await window.maestro.windows.focusWindow(newWindowResponse.windowId);
+					} else {
+						console.error('Failed to move session to new window:', result.error);
+					}
+				}
+			} catch (error) {
+				console.error('Error during tab drag out:', error);
+			}
+		},
+		[]
+	);
+
+	/**
+	 * Handle moving a tab (session) to a new window.
+	 * Called when user selects "Move to New Window" from tab context menu.
+	 *
+	 * Multi-window support: Creates a new window and moves the session to it.
+	 *
+	 * Protection: Cannot move the last session out of the primary window,
+	 * as the primary window must always have at least one session.
+	 */
+	const handleMoveToNewWindow = useCallback(async (tabId: string) => {
+		// Only proceed if there's an active session
+		const sessionId = activeSessionIdRef.current;
+		if (!sessionId) return;
+
+		// Prevent moving the last session out of the primary window
+		// The primary window must always have at least one session
+		if (isMainWindowRef.current && windowFilteredSessionsRef.current.length <= 1) {
+			addToastRef.current({
+				type: 'warning',
+				title: 'Cannot Move Last Session',
+				message: 'The primary window must have at least one session.',
+			});
+			return;
+		}
+
+		try {
+			// Get current window ID to pass as fromWindowId
+			const currentWindowId = await window.maestro.windows.getWindowId();
+
+			// Create a new window at a default position
+			const newWindowResponse = await window.maestro.windows.create({
+				sessionIds: [sessionId],
+				activeSessionId: sessionId,
+			});
+
+			// Move the session from source window to the new window
+			// This removes it from the source and adds it to the target
+			const result = await window.maestro.windows.moveSession({
+				sessionId,
+				fromWindowId: currentWindowId || undefined,
+				toWindowId: newWindowResponse.windowId,
+			});
+
+			if (result.success) {
+				// Focus the new window
+				await window.maestro.windows.focusWindow(newWindowResponse.windowId);
+			} else {
+				console.error('Failed to move session to new window:', result.error);
+			}
+		} catch (error) {
+			console.error('Error moving tab to new window:', error);
+		}
 	}, []);
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
@@ -11456,6 +11642,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
 
+		// Multi-window tab drag-out handler
+		handleTabDragOut,
+
 		// Session bookmark toggle
 		toggleBookmark,
 	};
@@ -11940,6 +12129,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleCloseOtherTabs,
 		handleCloseTabsLeft,
 		handleCloseTabsRight,
+		// Conditionally disable tab drag-out when it's the last session in primary window
+		// (The handler also has a safety check, but disabling at prop level is cleaner UX)
+		handleTabDragOut:
+			isMainWindow && windowFilteredSessions.length <= 1 ? undefined : handleTabDragOut,
+		dropZoneHighlighted,
+		// Conditionally disable "Move to New Window" when it's the last session in primary window
+		handleMoveToNewWindow:
+			isMainWindow && windowFilteredSessions.length <= 1 ? undefined : handleMoveToNewWindow,
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleMainPanelInputBlur,
@@ -13154,20 +13351,23 @@ You are taking over this conversation. Based on the context above, provide a bri
  * Phase 5: AutoRunProvider - centralized Auto Run and batch processing state management
  * Phase 6: SessionProvider - centralized session and group state management
  * Phase 7: InlineWizardProvider - inline /wizard command state management
+ * Phase 8: WindowProvider - multi-window state management (GitHub issue #133)
  * See refactor-details-2.md for full plan.
  */
 export default function MaestroConsole() {
 	return (
-		<SessionProvider>
-			<AutoRunProvider>
-				<GroupChatProvider>
-					<InlineWizardProvider>
-						<InputProvider>
-							<MaestroConsoleInner />
-						</InputProvider>
-					</InlineWizardProvider>
-				</GroupChatProvider>
-			</AutoRunProvider>
-		</SessionProvider>
+		<WindowProvider>
+			<SessionProvider>
+				<AutoRunProvider>
+					<GroupChatProvider>
+						<InlineWizardProvider>
+							<InputProvider>
+								<MaestroConsoleInner />
+							</InputProvider>
+						</InlineWizardProvider>
+					</GroupChatProvider>
+				</AutoRunProvider>
+			</SessionProvider>
+		</WindowProvider>
 	);
 }

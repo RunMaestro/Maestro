@@ -540,6 +540,106 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		}
 	);
 
+	// ============ windows:findWindowAtPoint ============
+	// Find a Maestro window at the given screen coordinates (for tab drag-drop)
+	// Excludes the calling window from the search results
+	ipcMain.handle(
+		'windows:findWindowAtPoint',
+		async (
+			event,
+			screenX: number,
+			screenY: number
+		): Promise<{ windowId: string; isMain: boolean } | null> => {
+			// Find the window that sent this IPC call (to exclude it from results)
+			const senderWindow = BrowserWindow.fromWebContents(event.sender);
+			const senderWindowId = senderWindow
+				? windowRegistry.getWindowIdForBrowserWindow(senderWindow)
+				: null;
+
+			logger.debug('Finding window at point', LOG_CONTEXT, {
+				screenX,
+				screenY,
+				excludeWindowId: senderWindowId,
+			});
+
+			const allWindows = windowRegistry.getAll();
+
+			for (const [windowId, entry] of allWindows) {
+				// Skip the sender window
+				if (windowId === senderWindowId) {
+					continue;
+				}
+
+				// Skip destroyed windows
+				if (entry.browserWindow.isDestroyed()) {
+					continue;
+				}
+
+				try {
+					const bounds = entry.browserWindow.getBounds();
+
+					// Check if the point is within this window's bounds
+					if (
+						screenX >= bounds.x &&
+						screenX <= bounds.x + bounds.width &&
+						screenY >= bounds.y &&
+						screenY <= bounds.y + bounds.height
+					) {
+						logger.debug('Found window at point', LOG_CONTEXT, {
+							windowId,
+							isMain: entry.isMain,
+							bounds,
+						});
+
+						return {
+							windowId,
+							isMain: entry.isMain,
+						};
+					}
+				} catch (error) {
+					// Window might be in invalid state, skip it
+					logger.debug('Error checking window bounds', LOG_CONTEXT, {
+						windowId,
+						error: error instanceof Error ? error.message : String(error),
+					});
+				}
+			}
+
+			logger.debug('No window found at point', LOG_CONTEXT, { screenX, screenY });
+			return null;
+		}
+	);
+
+	// ============ windows:highlightDropZone ============
+	// Send drop zone highlight signal to a specific window
+	// Used during tab drag-out to highlight the target window's tab bar
+	ipcMain.handle(
+		'windows:highlightDropZone',
+		async (_event, windowId: string, highlight: boolean): Promise<{ success: boolean }> => {
+			logger.debug('Highlighting drop zone', LOG_CONTEXT, { windowId, highlight });
+
+			const entry = windowRegistry.get(windowId);
+			if (!entry) {
+				logger.debug('Window not found for drop zone highlight', LOG_CONTEXT, { windowId });
+				return { success: false };
+			}
+
+			try {
+				if (!entry.browserWindow.isDestroyed()) {
+					entry.browserWindow.webContents.send('windows:dropZoneHighlight', { highlight });
+					return { success: true };
+				}
+				return { success: false };
+			} catch (error) {
+				logger.debug('Failed to send drop zone highlight', LOG_CONTEXT, {
+					windowId,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				return { success: false };
+			}
+		}
+	);
+
 	logger.info('Windows IPC handlers registered', LOG_CONTEXT);
 }
 

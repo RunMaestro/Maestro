@@ -2287,6 +2287,12 @@ interface MaestroAPI {
 			width: number;
 			height: number;
 		} | null>;
+		findWindowAtPoint: (
+			screenX: number,
+			screenY: number
+		) => Promise<{ windowId: string; isMain: boolean } | null>;
+		highlightDropZone: (windowId: string, highlight: boolean) => Promise<{ success: boolean }>;
+		onDropZoneHighlight: (callback: (event: { highlight: boolean }) => void) => () => void;
 	};
 }
 

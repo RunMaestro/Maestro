@@ -79,6 +79,12 @@ export { useStats, useComputedStats } from './useStats';
 export type { StatsTimeRange, StatsAggregation, UseStatsReturn, ComputedStats } from './useStats';
 
 // ============================================================================
+// Window State Module - Per-window UI state persistence
+// ============================================================================
+export { useWindowState } from './useWindowState';
+export type { WindowUIState, UseWindowStateReturn } from './useWindowState';
+
+// ============================================================================
 // Re-export TransferError types from component for convenience
 // ============================================================================
 export type {
