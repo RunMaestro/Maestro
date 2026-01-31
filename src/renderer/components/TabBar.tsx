@@ -21,6 +21,18 @@ import {
 import type { AITab, Theme } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
 
+/**
+ * Data passed when a tab drag exits the window bounds.
+ */
+export interface TabDragOutEvent {
+	/** The tab ID being dragged */
+	tabId: string;
+	/** Screen X coordinate where drag exited */
+	screenX: number;
+	/** Screen Y coordinate where drag exited */
+	screenY: number;
+}
+
 interface TabBarProps {
 	tabs: AITab[];
 	activeTabId: string;
@@ -57,6 +69,11 @@ interface TabBarProps {
 	onCloseTabsLeft?: () => void;
 	/** Handler to close tabs to the right of active tab */
 	onCloseTabsRight?: () => void;
+	/**
+	 * Handler called when a tab drag exits the window bounds.
+	 * Used for multi-window tab tear-off functionality.
+	 */
+	onTabDragOut?: (event: TabDragOutEvent) => void;
 }
 
 interface TabProps {
@@ -76,6 +93,8 @@ interface TabProps {
 	onDragEnd: () => void;
 	/** Stable callback - receives tabId and event */
 	onDrop: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event, called during drag to track position */
+	onDrag?: (tabId: string, e: React.DragEvent) => void;
 	isDragging: boolean;
 	isDragOver: boolean;
 	/** Stable callback - receives tabId */
@@ -181,6 +200,7 @@ const Tab = memo(function Tab({
 	onDragOver,
 	onDragEnd,
 	onDrop,
+	onDrag,
 	isDragging,
 	isDragOver,
 	onRename,
@@ -457,6 +477,13 @@ const Tab = memo(function Tab({
 		[onDrop, tabId]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag?.(tabId, e);
+		},
+		[onDrag, tabId]
+	);
+
 	// Memoize display name to avoid recalculation on every render
 	const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
 
@@ -511,6 +538,7 @@ const Tab = memo(function Tab({
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
+			onDrag={handleTabDrag}
 		>
 			{/* Busy indicator - pulsing dot for tabs in write mode */}
 			{tab.state === 'busy' && (
@@ -911,6 +939,7 @@ function TabBarInner({
 	onCloseOtherTabs,
 	onCloseTabsLeft,
 	onCloseTabsRight,
+	onTabDragOut,
 }: TabBarProps) {
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
@@ -923,6 +952,11 @@ function TabBarInner({
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const [isOverflowing, setIsOverflowing] = useState(false);
+	// Refs for drag-out detection
+	const windowBoundsRef = useRef<{ x: number; y: number; width: number; height: number } | null>(
+		null
+	);
+	const hasFiredDragOutRef = useRef(false);
 
 	// Center the active tab in the scrollable area when activeTabId changes or filter is toggled
 	useEffect(() => {
@@ -973,7 +1007,60 @@ function TabBarInner({
 	const handleDragEnd = useCallback(() => {
 		setDraggingTabId(null);
 		setDragOverTabId(null);
+		// Clear window bounds when drag ends
+		windowBoundsRef.current = null;
+		hasFiredDragOutRef.current = false;
 	}, []);
+
+	/**
+	 * Handle drag event to detect when a tab drag exits the window bounds.
+	 * Fetches window bounds on first drag event, then checks if mouse is outside.
+	 */
+	const handleDrag = useCallback(
+		async (tabId: string, e: React.DragEvent) => {
+			// Skip if no callback or already fired drag-out for this drag
+			if (!onTabDragOut || hasFiredDragOutRef.current) return;
+
+			// e.screenX/screenY are 0 at the end of drag (browser quirk), skip those
+			if (e.screenX === 0 && e.screenY === 0) return;
+
+			// Fetch window bounds on first drag event (only once per drag operation)
+			if (!windowBoundsRef.current) {
+				try {
+					const bounds = await window.maestro.windows.getWindowBounds();
+					if (bounds) {
+						windowBoundsRef.current = bounds;
+					} else {
+						// Couldn't get bounds, skip detection
+						return;
+					}
+				} catch {
+					// API not available, skip detection
+					return;
+				}
+			}
+
+			const bounds = windowBoundsRef.current;
+			if (!bounds) return;
+
+			// Check if mouse position is outside window bounds
+			const screenX = e.screenX;
+			const screenY = e.screenY;
+
+			const isOutside =
+				screenX < bounds.x ||
+				screenX > bounds.x + bounds.width ||
+				screenY < bounds.y ||
+				screenY > bounds.y + bounds.height;
+
+			if (isOutside) {
+				// Fire the drag-out event (only once per drag operation)
+				hasFiredDragOutRef.current = true;
+				onTabDragOut({ tabId, screenX, screenY });
+			}
+		},
+		[onTabDragOut]
+	);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
@@ -1227,6 +1314,7 @@ function TabBarInner({
 							onDragOver={handleDragOver}
 							onDragEnd={handleDragEnd}
 							onDrop={handleDrop}
+							onDrag={onTabDragOut ? handleDrag : undefined}
 							isDragging={draggingTabId === tab.id}
 							isDragOver={dragOverTabId === tab.id}
 							onRename={handleRenameRequest}

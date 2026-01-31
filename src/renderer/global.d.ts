@@ -2217,6 +2217,77 @@ interface MaestroAPI {
 			}) => void
 		) => () => void;
 	};
+	// Windows API (multi-window support)
+	windows: {
+		create: (request?: {
+			sessionIds?: string[];
+			activeSessionId?: string;
+			bounds?: { x?: number; y?: number; width?: number; height?: number };
+		}) => Promise<{ windowId: string }>;
+		close: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+		list: () => Promise<
+			Array<{
+				id: string;
+				isMain: boolean;
+				sessionIds: string[];
+				activeSessionId?: string;
+			}>
+		>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (request: {
+			sessionId: string;
+			fromWindowId?: string;
+			toWindowId: string;
+		}) => Promise<{ success: boolean; error?: string }>;
+		focusWindow: (windowId: string) => Promise<{ success: boolean; error?: string }>;
+		getState: () => Promise<{
+			id: string;
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+			isMaximized: boolean;
+			isFullScreen: boolean;
+			sessionIds: string[];
+			activeSessionId?: string;
+			leftPanelCollapsed: boolean;
+			rightPanelCollapsed: boolean;
+		} | null>;
+		getWindowId: () => Promise<string | null>;
+		setSessionsForWindow: (
+			windowId: string,
+			sessionIds: string[],
+			activeSessionId?: string
+		) => Promise<{ success: boolean; error?: string }>;
+		setActiveSession: (
+			windowId: string,
+			sessionId: string
+		) => Promise<{ success: boolean; error?: string }>;
+		onSessionsChanged: (
+			callback: (event: {
+				windowId: string;
+				sessionIds: string[];
+				activeSessionId?: string;
+			}) => void
+		) => () => void;
+		onSessionMoved: (
+			callback: (event: { sessionId: string; fromWindowId: string; toWindowId: string }) => void
+		) => () => void;
+		getPanelState: () => Promise<{
+			leftPanelCollapsed: boolean;
+			rightPanelCollapsed: boolean;
+		} | null>;
+		setPanelState: (panelState: {
+			leftPanelCollapsed?: boolean;
+			rightPanelCollapsed?: boolean;
+		}) => Promise<{ success: boolean; error?: string }>;
+		getWindowBounds: () => Promise<{
+			x: number;
+			y: number;
+			width: number;
+			height: number;
+		} | null>;
+	};
 }
 
 declare global {

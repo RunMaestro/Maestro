@@ -12,6 +12,7 @@
  * - windows:getWindowId - Getting calling window's ID
  * - windows:setSessionsForWindow - Setting sessions for a window
  * - windows:setActiveSession - Setting active session
+ * - windows:getWindowBounds - Getting window screen bounds
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -47,6 +48,25 @@ vi.mock('electron', () => {
 		},
 	};
 });
+
+// Mock multi-window store for panel state tests
+const mockMultiWindowStoreData: { windows: any[]; primaryWindowId: string; version: number } = {
+	windows: [],
+	primaryWindowId: '',
+	version: 1,
+};
+
+vi.mock('../../../../main/stores/getters', () => ({
+	getMultiWindowStateStore: vi.fn(() => ({
+		get: vi.fn((key: string, defaultValue: any) => {
+			if (key === 'windows') return mockMultiWindowStoreData.windows;
+			return defaultValue;
+		}),
+		set: vi.fn((key: string, value: any) => {
+			if (key === 'windows') mockMultiWindowStoreData.windows = value;
+		}),
+	})),
+}));
 
 // Track window registry state
 let mockRegistryState: Map<
@@ -152,6 +172,10 @@ describe('Windows IPC Handlers', () => {
 		(ipcMain as any)._clearHandlers();
 		mockRegistryState = new Map();
 		mockPrimaryWindowId = null;
+		// Reset mock multi-window store data
+		mockMultiWindowStoreData.windows = [];
+		mockMultiWindowStoreData.primaryWindowId = '';
+		mockMultiWindowStoreData.version = 1;
 
 		// Create mock for createSecondaryWindow
 		mockCreateSecondaryWindow = vi.fn().mockImplementation((sessionIds?: string[]) => {
@@ -409,6 +433,86 @@ describe('Windows IPC Handlers', () => {
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Source window not found');
 		});
+
+		it('should broadcast sessionMoved event to all windows on successful move', async () => {
+			const mockWindow1 = createMockBrowserWindow();
+			const mockWindow2 = createMockBrowserWindow();
+			const mockWindow3 = createMockBrowserWindow(); // Third window to verify all get the event
+
+			mockRegistryState.set('source-window', {
+				browserWindow: mockWindow1,
+				sessionIds: ['session-1'],
+				isMain: true,
+				activeSessionId: 'session-1',
+			});
+			mockRegistryState.set('target-window', {
+				browserWindow: mockWindow2,
+				sessionIds: [],
+				isMain: false,
+			});
+			mockRegistryState.set('observer-window', {
+				browserWindow: mockWindow3,
+				sessionIds: ['session-2'],
+				isMain: false,
+			});
+
+			const handler = (ipcMain as any)._getHandler('windows:moveSession');
+			const result = await handler(
+				{},
+				{
+					sessionId: 'session-1',
+					fromWindowId: 'source-window',
+					toWindowId: 'target-window',
+				}
+			);
+
+			expect(result.success).toBe(true);
+
+			// All three windows should receive the sessionMoved event
+			expect(mockWindow1.webContents.send).toHaveBeenCalledWith('windows:sessionMoved', {
+				sessionId: 'session-1',
+				fromWindowId: 'source-window',
+				toWindowId: 'target-window',
+			});
+			expect(mockWindow2.webContents.send).toHaveBeenCalledWith('windows:sessionMoved', {
+				sessionId: 'session-1',
+				fromWindowId: 'source-window',
+				toWindowId: 'target-window',
+			});
+			expect(mockWindow3.webContents.send).toHaveBeenCalledWith('windows:sessionMoved', {
+				sessionId: 'session-1',
+				fromWindowId: 'source-window',
+				toWindowId: 'target-window',
+			});
+		});
+
+		it('should not broadcast sessionMoved event on failed move', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('observer-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			const handler = (ipcMain as any)._getHandler('windows:moveSession');
+			const result = await handler(
+				{},
+				{
+					sessionId: 'session-1',
+					fromWindowId: 'source',
+					toWindowId: 'non-existent',
+				}
+			);
+
+			expect(result.success).toBe(false);
+
+			// No sessionMoved event should be sent on failure
+			const sendCalls = mockWindow.webContents.send.mock.calls;
+			const sessionMovedCalls = sendCalls.filter(
+				(call: [string, unknown]) => call[0] === 'windows:sessionMoved'
+			);
+			expect(sessionMovedCalls.length).toBe(0);
+		});
 	});
 
 	describe('windows:focusWindow', () => {
@@ -582,6 +686,256 @@ describe('Windows IPC Handlers', () => {
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Window not found or session not in window');
+		});
+	});
+
+	describe('windows:getPanelState', () => {
+		it('should return null when sender window not found', async () => {
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:getPanelState');
+			const result = await handler({ sender: {} });
+
+			expect(result).toBeNull();
+		});
+
+		it('should return null when window not in registry', async () => {
+			const mockWindow = createMockBrowserWindow();
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue(undefined);
+
+			const handler = (ipcMain as any)._getHandler('windows:getPanelState');
+			const result = await handler({ sender: {} });
+
+			expect(result).toBeNull();
+		});
+
+		it('should return panel state from multi-window store', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			// Add window state to mock store
+			mockMultiWindowStoreData.windows = [
+				{
+					id: 'test-window',
+					x: 100,
+					y: 100,
+					width: 1200,
+					height: 800,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: [],
+					leftPanelCollapsed: true,
+					rightPanelCollapsed: false,
+				},
+			];
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('test-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:getPanelState');
+			const result = await handler({ sender: {} });
+
+			expect(result).toEqual({
+				leftPanelCollapsed: true,
+				rightPanelCollapsed: false,
+			});
+		});
+
+		it('should return defaults when window not in store', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('new-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			// Empty store - no window state saved yet
+			mockMultiWindowStoreData.windows = [];
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('new-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:getPanelState');
+			const result = await handler({ sender: {} });
+
+			expect(result).toEqual({
+				leftPanelCollapsed: false,
+				rightPanelCollapsed: false,
+			});
+		});
+	});
+
+	describe('windows:setPanelState', () => {
+		it('should return error when sender window not found', async () => {
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:setPanelState');
+			const result = await handler({ sender: {} }, { leftPanelCollapsed: true });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Could not determine sender window');
+		});
+
+		it('should return error when window not in registry', async () => {
+			const mockWindow = createMockBrowserWindow();
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue(undefined);
+
+			const handler = (ipcMain as any)._getHandler('windows:setPanelState');
+			const result = await handler({ sender: {} }, { leftPanelCollapsed: true });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toBe('Window not found in registry');
+		});
+
+		it('should update existing window panel state in store', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			// Add existing window state
+			mockMultiWindowStoreData.windows = [
+				{
+					id: 'test-window',
+					x: 100,
+					y: 100,
+					width: 1200,
+					height: 800,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: [],
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: false,
+				},
+			];
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('test-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:setPanelState');
+			const result = await handler({ sender: {} }, { leftPanelCollapsed: true });
+
+			expect(result.success).toBe(true);
+			expect(mockMultiWindowStoreData.windows[0].leftPanelCollapsed).toBe(true);
+			expect(mockMultiWindowStoreData.windows[0].rightPanelCollapsed).toBe(false);
+		});
+
+		it('should update only right panel when only right panel provided', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('test-window', {
+				browserWindow: mockWindow,
+				sessionIds: [],
+				isMain: false,
+			});
+
+			mockMultiWindowStoreData.windows = [
+				{
+					id: 'test-window',
+					x: 100,
+					y: 100,
+					width: 1200,
+					height: 800,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: [],
+					leftPanelCollapsed: true,
+					rightPanelCollapsed: false,
+				},
+			];
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('test-window');
+
+			const handler = (ipcMain as any)._getHandler('windows:setPanelState');
+			const result = await handler({ sender: {} }, { rightPanelCollapsed: true });
+
+			expect(result.success).toBe(true);
+			expect(mockMultiWindowStoreData.windows[0].leftPanelCollapsed).toBe(true); // Unchanged
+			expect(mockMultiWindowStoreData.windows[0].rightPanelCollapsed).toBe(true);
+		});
+
+		it('should create new window state entry when window not in store', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockRegistryState.set('new-window', {
+				browserWindow: mockWindow,
+				sessionIds: ['session-1'],
+				isMain: false,
+				activeSessionId: 'session-1',
+			});
+
+			// Empty store
+			mockMultiWindowStoreData.windows = [];
+
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+			const { windowRegistry } = await import('../../../../main/window-registry');
+			(windowRegistry.getWindowIdForBrowserWindow as any).mockReturnValue('new-window');
+			(windowRegistry.get as any).mockReturnValue({
+				browserWindow: mockWindow,
+				sessionIds: ['session-1'],
+				isMain: false,
+				activeSessionId: 'session-1',
+			});
+
+			const handler = (ipcMain as any)._getHandler('windows:setPanelState');
+			const result = await handler({ sender: {} }, { leftPanelCollapsed: true });
+
+			expect(result.success).toBe(true);
+			expect(mockMultiWindowStoreData.windows.length).toBe(1);
+			expect(mockMultiWindowStoreData.windows[0].id).toBe('new-window');
+			expect(mockMultiWindowStoreData.windows[0].leftPanelCollapsed).toBe(true);
+			expect(mockMultiWindowStoreData.windows[0].rightPanelCollapsed).toBe(false);
+			expect(mockMultiWindowStoreData.windows[0].sessionIds).toEqual(['session-1']);
+		});
+	});
+
+	describe('windows:getWindowBounds', () => {
+		it('should return null when sender window not found', async () => {
+			(BrowserWindow.fromWebContents as any).mockReturnValue(null);
+
+			const handler = (ipcMain as any)._getHandler('windows:getWindowBounds');
+			const result = await handler({ sender: {} });
+
+			expect(result).toBeNull();
+		});
+
+		it('should return null when window is destroyed', async () => {
+			const mockWindow = createMockBrowserWindow({ destroyed: true });
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+
+			const handler = (ipcMain as any)._getHandler('windows:getWindowBounds');
+			const result = await handler({ sender: {} });
+
+			expect(result).toBeNull();
+		});
+
+		it('should return window bounds', async () => {
+			const mockWindow = createMockBrowserWindow();
+			mockWindow.getBounds.mockReturnValue({ x: 150, y: 250, width: 1400, height: 900 });
+			(BrowserWindow.fromWebContents as any).mockReturnValue(mockWindow);
+
+			const handler = (ipcMain as any)._getHandler('windows:getWindowBounds');
+			const result = await handler({ sender: {} });
+
+			expect(result).toEqual({
+				x: 150,
+				y: 250,
+				width: 1400,
+				height: 900,
+			});
 		});
 	});
 });

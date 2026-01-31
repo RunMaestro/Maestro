@@ -90,6 +90,22 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	}),
 }));
 
+// Mock WindowContext to avoid Provider requirement
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindow: () => ({
+		windowId: 'test-window-1',
+		isMainWindow: true,
+		sessionIds: [],
+		activeSessionId: undefined,
+		isLoaded: true,
+		openSession: vi.fn().mockResolvedValue(true),
+		closeTab: vi.fn().mockResolvedValue(undefined),
+		moveSessionToNewWindow: vi.fn().mockResolvedValue('test-window-2'),
+		setActiveSession: vi.fn().mockResolvedValue(undefined),
+		refresh: vi.fn().mockResolvedValue(undefined),
+	}),
+}));
+
 // Add tunnel mock to window.maestro
 beforeEach(() => {
 	(window.maestro as Record<string, unknown>).tunnel = {

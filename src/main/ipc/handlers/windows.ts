@@ -23,6 +23,8 @@ import type {
 	WindowState,
 } from '../../../shared/types/window';
 import { logger } from '../../utils/logger';
+import { getMultiWindowStateStore } from '../../stores/getters';
+import type { MultiWindowWindowState } from '../../stores/types';
 
 const LOG_CONTEXT = 'WindowsIPC';
 
@@ -235,6 +237,9 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 						notifyWindowOfSessionChange(fromWindowId, fromEntry);
 					}
 				}
+
+				// Broadcast sessionMoved event to ALL windows
+				broadcastSessionMoved(sessionId, fromWindowId || '', toWindowId);
 			} else {
 				logger.warn('Failed to move session', LOG_CONTEXT, {
 					sessionId,
@@ -376,6 +381,165 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		}
 	);
 
+	// ============ windows:getPanelState ============
+	// Get the panel collapse state for the calling window
+	ipcMain.handle(
+		'windows:getPanelState',
+		async (
+			event
+		): Promise<{ leftPanelCollapsed: boolean; rightPanelCollapsed: boolean } | null> => {
+			// Find the window that sent this IPC call
+			const senderWindow = BrowserWindow.fromWebContents(event.sender);
+			if (!senderWindow) {
+				logger.warn('Could not determine sender window for getPanelState', LOG_CONTEXT);
+				return null;
+			}
+
+			const windowId = windowRegistry.getWindowIdForBrowserWindow(senderWindow);
+			if (!windowId) {
+				logger.warn('Window not in registry for getPanelState', LOG_CONTEXT);
+				return null;
+			}
+
+			// Look up the window state in the multi-window store
+			const multiWindowStore = getMultiWindowStateStore();
+			const windows = multiWindowStore.get('windows', []);
+			const windowState = windows.find((w: MultiWindowWindowState) => w.id === windowId);
+
+			if (windowState) {
+				logger.debug('Retrieved panel state', LOG_CONTEXT, {
+					windowId,
+					leftPanelCollapsed: windowState.leftPanelCollapsed,
+					rightPanelCollapsed: windowState.rightPanelCollapsed,
+				});
+				return {
+					leftPanelCollapsed: windowState.leftPanelCollapsed,
+					rightPanelCollapsed: windowState.rightPanelCollapsed,
+				};
+			}
+
+			// Return defaults if window not found in store
+			logger.debug('Window not found in store, returning defaults', LOG_CONTEXT, { windowId });
+			return { leftPanelCollapsed: false, rightPanelCollapsed: false };
+		}
+	);
+
+	// ============ windows:setPanelState ============
+	// Set the panel collapse state for the calling window
+	ipcMain.handle(
+		'windows:setPanelState',
+		async (
+			event,
+			panelState: { leftPanelCollapsed?: boolean; rightPanelCollapsed?: boolean }
+		): Promise<{ success: boolean; error?: string }> => {
+			// Find the window that sent this IPC call
+			const senderWindow = BrowserWindow.fromWebContents(event.sender);
+			if (!senderWindow) {
+				logger.warn('Could not determine sender window for setPanelState', LOG_CONTEXT);
+				return { success: false, error: 'Could not determine sender window' };
+			}
+
+			const windowId = windowRegistry.getWindowIdForBrowserWindow(senderWindow);
+			if (!windowId) {
+				logger.warn('Window not in registry for setPanelState', LOG_CONTEXT);
+				return { success: false, error: 'Window not found in registry' };
+			}
+
+			// Update the window state in the multi-window store
+			const multiWindowStore = getMultiWindowStateStore();
+			const windows = multiWindowStore.get('windows', []);
+			const windowIndex = windows.findIndex((w: MultiWindowWindowState) => w.id === windowId);
+
+			if (windowIndex !== -1) {
+				// Update existing window state
+				if (panelState.leftPanelCollapsed !== undefined) {
+					windows[windowIndex].leftPanelCollapsed = panelState.leftPanelCollapsed;
+				}
+				if (panelState.rightPanelCollapsed !== undefined) {
+					windows[windowIndex].rightPanelCollapsed = panelState.rightPanelCollapsed;
+				}
+				multiWindowStore.set('windows', windows);
+
+				logger.debug('Panel state updated', LOG_CONTEXT, {
+					windowId,
+					leftPanelCollapsed: windows[windowIndex].leftPanelCollapsed,
+					rightPanelCollapsed: windows[windowIndex].rightPanelCollapsed,
+				});
+				return { success: true };
+			}
+
+			// Window not in store - create a new entry with defaults
+			const entry = windowRegistry.get(windowId);
+			if (!entry) {
+				return { success: false, error: 'Window not found' };
+			}
+
+			const bounds = entry.browserWindow.getBounds();
+			const newWindowState: MultiWindowWindowState = {
+				id: windowId,
+				x: bounds.x,
+				y: bounds.y,
+				width: bounds.width,
+				height: bounds.height,
+				isMaximized: entry.browserWindow.isMaximized(),
+				isFullScreen: entry.browserWindow.isFullScreen(),
+				sessionIds: entry.sessionIds,
+				activeSessionId: entry.activeSessionId,
+				leftPanelCollapsed: panelState.leftPanelCollapsed ?? false,
+				rightPanelCollapsed: panelState.rightPanelCollapsed ?? false,
+			};
+
+			windows.push(newWindowState);
+			multiWindowStore.set('windows', windows);
+
+			logger.debug('New window state created with panel state', LOG_CONTEXT, {
+				windowId,
+				leftPanelCollapsed: newWindowState.leftPanelCollapsed,
+				rightPanelCollapsed: newWindowState.rightPanelCollapsed,
+			});
+			return { success: true };
+		}
+	);
+
+	// ============ windows:getWindowBounds ============
+	// Get the screen bounds of the calling window (for drag-out detection)
+	ipcMain.handle(
+		'windows:getWindowBounds',
+		async (event): Promise<{ x: number; y: number; width: number; height: number } | null> => {
+			// Find the window that sent this IPC call
+			const senderWindow = BrowserWindow.fromWebContents(event.sender);
+			if (!senderWindow) {
+				logger.warn('Could not determine sender window for getWindowBounds', LOG_CONTEXT);
+				return null;
+			}
+
+			try {
+				if (senderWindow.isDestroyed()) {
+					return null;
+				}
+
+				const bounds = senderWindow.getBounds();
+				logger.debug('Retrieved window bounds', LOG_CONTEXT, {
+					x: bounds.x,
+					y: bounds.y,
+					width: bounds.width,
+					height: bounds.height,
+				});
+
+				return {
+					x: bounds.x,
+					y: bounds.y,
+					width: bounds.width,
+					height: bounds.height,
+				};
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				logger.error('Failed to get window bounds', LOG_CONTEXT, { error: errorMessage });
+				return null;
+			}
+		}
+	);
+
 	logger.info('Windows IPC handlers registered', LOG_CONTEXT);
 }
 
@@ -399,5 +563,42 @@ function notifyWindowOfSessionChange(windowId: string, entry: WindowEntry): void
 			windowId,
 			error: error instanceof Error ? error.message : String(error),
 		});
+	}
+}
+
+/**
+ * Broadcasts a session moved event to ALL windows.
+ * This allows any window to update its UI (e.g., SessionList showing window badges).
+ *
+ * @param sessionId - The session that was moved
+ * @param fromWindowId - The source window ID (empty string if not specified)
+ * @param toWindowId - The target window ID
+ */
+function broadcastSessionMoved(sessionId: string, fromWindowId: string, toWindowId: string): void {
+	const allWindows = windowRegistry.getAll();
+	const event = {
+		sessionId,
+		fromWindowId,
+		toWindowId,
+	};
+
+	logger.debug('Broadcasting sessionMoved event to all windows', LOG_CONTEXT, {
+		sessionId,
+		fromWindowId: fromWindowId || '(none)',
+		toWindowId,
+		windowCount: allWindows.length,
+	});
+
+	for (const [windowId, entry] of allWindows) {
+		try {
+			if (!entry.browserWindow.isDestroyed()) {
+				entry.browserWindow.webContents.send('windows:sessionMoved', event);
+			}
+		} catch (error) {
+			logger.debug('Failed to broadcast sessionMoved to window', LOG_CONTEXT, {
+				windowId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
 	}
 }
