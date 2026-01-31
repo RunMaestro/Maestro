@@ -24,7 +24,6 @@ import { logger } from '../utils/logger';
  * Used to validate input to getErrorPatterns and log warnings for unknown agents.
  */
 const VALID_TOOL_TYPES = new Set<string>([
-	'claude',
 	'claude-code',
 	'opencode',
 	'codex',

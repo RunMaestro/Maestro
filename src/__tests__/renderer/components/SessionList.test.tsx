@@ -2097,7 +2097,7 @@ describe('SessionList', () => {
 				createMockSession({
 					id: 's1',
 					name: 'Claude Session',
-					toolType: 'claude',
+					toolType: 'claude-code',
 					agentSessionId: undefined,
 				}),
 			];
@@ -2118,7 +2118,7 @@ describe('SessionList', () => {
 				createMockSession({
 					id: 's1',
 					name: 'Claude Session',
-					toolType: 'claude',
+					toolType: 'claude-code',
 					agentSessionId: 'session-123',
 				}),
 			];
@@ -2139,7 +2139,7 @@ describe('SessionList', () => {
 				createMockSession({
 					id: 's1',
 					name: 'Claude Session',
-					toolType: 'claude',
+					toolType: 'claude-code',
 					agentSessionId: undefined,
 				}),
 			];

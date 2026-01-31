@@ -100,14 +100,6 @@ export const AGENT_ARTIFACTS: Record<ToolType, string[]> = {
 		'Opus',
 		'Sonnet',
 	],
-	claude: [
-		// This is the base Claude (not Claude Code)
-		'Claude',
-		'Anthropic',
-		'sonnet',
-		'opus',
-		'haiku',
-	],
 	terminal: [
 		// Terminal has no agent-specific artifacts
 	],
@@ -141,11 +133,6 @@ export const AGENT_TARGET_NOTES: Record<ToolType, string> = {
     It can read and edit files, run commands, search code, and interact with git.
     It has tiered autonomy levels for controlling operation permissions.
   `,
-	claude: `
-    Claude is a general-purpose AI assistant by Anthropic.
-    It does not have direct file system or terminal access.
-    Code examples should be presented as text for the user to apply.
-  `,
 	terminal: `
     Terminal is a raw shell interface.
     It executes shell commands directly without AI interpretation.
@@ -161,7 +148,6 @@ export function getAgentDisplayName(agentType: ToolType): string {
 		opencode: 'OpenCode',
 		codex: 'OpenAI Codex',
 		'factory-droid': 'Factory Droid',
-		claude: 'Claude',
 		terminal: 'Terminal',
 	};
 	return names[agentType] || agentType;

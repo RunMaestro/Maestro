@@ -498,6 +498,9 @@ const LogItemComponent = memo(
 									safeStr(toolInput.pattern) ||
 									safeStr(toolInput.file_path) ||
 									safeStr(toolInput.query) ||
+									safeStr(toolInput.description) || // Task tool
+									safeStr(toolInput.prompt) || // Task tool fallback
+									safeStr(toolInput.task_id) || // TaskOutput tool
 									null
 								: null;
 
@@ -534,7 +537,7 @@ const LogItemComponent = memo(
 										)}
 										{toolDetail && (
 											<span
-												className="opacity-70 break-all whitespace-pre-wrap"
+												className="opacity-70 break-words whitespace-pre-wrap"
 												style={{ color: theme.colors.textMain }}
 											>
 												{toolDetail}
@@ -557,13 +560,13 @@ const LogItemComponent = memo(
 						) : shouldCollapse && !isExpanded ? (
 							<div>
 								<div
-									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm' : 'whitespace-pre-wrap text-sm break-all'}`}
+									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm' : 'whitespace-pre-wrap text-sm break-words'}`}
 									style={{
 										maxHeight: `${maxOutputLines * 1.5}em`,
 										overflow: isTerminal && log.source !== 'user' ? 'hidden' : 'hidden',
 										color: theme.colors.textMain,
 										fontFamily,
-										wordBreak: isTerminal && log.source !== 'user' ? undefined : 'break-all',
+										overflowWrap: isTerminal && log.source !== 'user' ? undefined : 'break-word',
 									}}
 								>
 									{isTerminal && log.source !== 'user' ? (
@@ -604,14 +607,14 @@ const LogItemComponent = memo(
 						) : shouldCollapse && isExpanded ? (
 							<div>
 								<div
-									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm scrollbar-thin' : 'whitespace-pre-wrap text-sm break-all'}`}
+									className={`${isTerminal && log.source !== 'user' ? 'whitespace-pre text-sm scrollbar-thin' : 'whitespace-pre-wrap text-sm break-words'}`}
 									style={{
 										maxHeight: '600px',
 										overflow: 'auto',
 										overscrollBehavior: 'contain',
 										color: theme.colors.textMain,
 										fontFamily,
-										wordBreak: isTerminal && log.source !== 'user' ? undefined : 'break-all',
+										overflowWrap: isTerminal && log.source !== 'user' ? undefined : 'break-word',
 									}}
 									onWheel={(e) => {
 										// Prevent scroll from propagating to parent when this container can scroll
@@ -699,7 +702,7 @@ const LogItemComponent = memo(
 									/>
 								) : log.source === 'user' && isTerminal ? (
 									<div
-										className="whitespace-pre-wrap text-sm break-all"
+										className="whitespace-pre-wrap text-sm break-words"
 										style={{ color: theme.colors.textMain, fontFamily }}
 									>
 										<span style={{ color: theme.colors.accent }}>$ </span>
@@ -725,7 +728,7 @@ const LogItemComponent = memo(
 											</span>
 										</div>
 										<div
-											className="whitespace-pre-wrap text-sm break-all"
+											className="whitespace-pre-wrap text-sm break-words"
 											style={{ color: theme.colors.textMain }}
 										>
 											{highlightMatches(filteredText, outputSearchQuery)}
@@ -745,7 +748,7 @@ const LogItemComponent = memo(
 								) : (
 									// Plain text mode (strip markdown formatting for readability)
 									<div
-										className="whitespace-pre-wrap text-sm break-all"
+										className="whitespace-pre-wrap text-sm break-words"
 										style={{ color: theme.colors.textMain }}
 									>
 										{highlightMatches(

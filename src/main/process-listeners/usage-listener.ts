@@ -1,6 +1,10 @@
 /**
  * Usage statistics listener.
  * Handles usage stats from AI responses, including group chat participant/moderator updates.
+ *
+ * SYNC: Context calculations use usageAggregator.calculateContextTokens() which wraps
+ * the shared calculateContextTokens() function from shared/contextUsage.ts.
+ * See that file for the canonical formula and all locations that must stay in sync.
  */
 
 import type { ProcessManager } from '../process-manager';

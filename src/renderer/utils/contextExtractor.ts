@@ -3,6 +3,9 @@
  *
  * Functions for extracting, formatting, and analyzing context from sessions and tabs
  * for use in context merging and cross-agent transfer operations.
+ *
+ * SYNC: Uses calculateContextTokens() from shared/contextUsage.ts (via re-export).
+ * See that file for the canonical formula and all locations that must stay in sync.
  */
 
 import type { AITab, LogEntry, Session } from '../types';

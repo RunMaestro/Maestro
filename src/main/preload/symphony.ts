@@ -270,6 +270,17 @@ export function createSymphonyApi() {
 			error?: string;
 		}> => ipcRenderer.invoke('symphony:checkPRStatuses'),
 
+		syncContribution: (
+			contributionId: string
+		): Promise<{
+			success: boolean;
+			message?: string;
+			prCreated?: boolean;
+			prMerged?: boolean;
+			prClosed?: boolean;
+			error?: string;
+		}> => ipcRenderer.invoke('symphony:syncContribution', contributionId),
+
 		// Cache operations
 		clearCache: (): Promise<{ success: boolean; cleared?: boolean; error?: string }> =>
 			ipcRenderer.invoke('symphony:clearCache'),

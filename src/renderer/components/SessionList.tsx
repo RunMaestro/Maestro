@@ -1376,7 +1376,7 @@ function SessionListInner(props: SessionListProps) {
 							key={`${keyPrefix}-part-${s.id}`}
 							className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
 							style={{
-								...(s.toolType === 'claude' && !s.agentSessionId && !isInBatch
+								...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
 									? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
 									: {
 											backgroundColor: isInBatch
@@ -2749,7 +2749,7 @@ function SessionListInner(props: SessionListProps) {
 						// Sessions in Auto Run mode should show yellow/warning color
 						const effectiveStatusColor = isInBatch
 							? theme.colors.warning
-							: session.toolType === 'claude' && !session.agentSessionId
+							: session.toolType === 'claude-code' && !session.agentSessionId
 								? undefined // Will use border style instead
 								: getStatusColor(session.state, theme);
 						const shouldPulse = session.state === 'busy' || isInBatch;
@@ -2766,7 +2766,7 @@ function SessionListInner(props: SessionListProps) {
 									<div
 										className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
 										style={
-											session.toolType === 'claude' && !session.agentSessionId && !isInBatch
+											session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
 												? {
 														border: `1.5px solid ${theme.colors.textDim}`,
 														backgroundColor: 'transparent',
@@ -2774,7 +2774,7 @@ function SessionListInner(props: SessionListProps) {
 												: { backgroundColor: effectiveStatusColor }
 										}
 										title={
-											session.toolType === 'claude' && !session.agentSessionId
+											session.toolType === 'claude-code' && !session.agentSessionId
 												? 'No active Claude session'
 												: undefined
 										}

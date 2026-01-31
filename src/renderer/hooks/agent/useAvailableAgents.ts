@@ -64,7 +64,6 @@ export interface UseAvailableAgentsReturn {
 function getAgentIcon(agentId: string): string {
 	switch (agentId) {
 		case 'claude-code':
-		case 'claude':
 			return '🤖';
 		case 'codex':
 			return '◇';

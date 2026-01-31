@@ -701,8 +701,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			// Batch mode agents spawn a new process per message rather than writing to stdin
 			const isBatchModeAgent =
 				currentMode === 'ai' &&
-				(activeSession.toolType === 'claude' ||
-					activeSession.toolType === 'claude-code' ||
+				(activeSession.toolType === 'claude-code' ||
 					activeSession.toolType === 'opencode' ||
 					activeSession.toolType === 'codex' ||
 					activeSession.toolType === 'factory-droid');

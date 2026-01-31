@@ -1727,6 +1727,213 @@ This PR will be updated automatically when the Auto Run completes.`;
 		)
 	);
 
+	/**
+	 * Sync a single contribution's status with GitHub.
+	 * Checks for PR status, syncs metadata, and attempts recovery if needed.
+	 */
+	ipcMain.handle(
+		'symphony:syncContribution',
+		createIpcHandler(
+			handlerOpts('syncContribution'),
+			async (
+				contributionId: string
+			): Promise<{
+				success: boolean;
+				message?: string;
+				prCreated?: boolean;
+				prMerged?: boolean;
+				prClosed?: boolean;
+				error?: string;
+			}> => {
+				const state = await readState(app);
+				const contribution = state.active.find((c) => c.id === contributionId);
+
+				if (!contribution) {
+					return { success: false, error: 'Contribution not found' };
+				}
+
+				let message = '';
+				let prCreated = false;
+				let prMerged = false;
+				let prClosed = false;
+
+				try {
+					// Step 1: Check if we have PR info in metadata but not in state
+					if (!contribution.draftPrNumber) {
+						const metadataPath = path.join(
+							getSymphonyDir(app),
+							'contributions',
+							contribution.id,
+							'metadata.json'
+						);
+						try {
+							const metadataContent = await fs.readFile(metadataPath, 'utf-8');
+							const metadata = JSON.parse(metadataContent) as {
+								prCreated?: boolean;
+								draftPrNumber?: number;
+								draftPrUrl?: string;
+							};
+							if (metadata.prCreated && metadata.draftPrNumber) {
+								contribution.draftPrNumber = metadata.draftPrNumber;
+								contribution.draftPrUrl = metadata.draftPrUrl;
+								prCreated = true;
+								message = `Synced PR #${metadata.draftPrNumber} from metadata`;
+								logger.info('Synced PR info from metadata', LOG_CONTEXT, {
+									contributionId,
+									draftPrNumber: metadata.draftPrNumber,
+								});
+							}
+						} catch {
+							// Metadata file might not exist - that's okay, we'll try to create PR
+						}
+					}
+
+					// Step 2: If still no PR, log info for manual intervention
+					// Creating a PR from sync would be complex and risky - better to prompt user
+					if (!contribution.draftPrNumber && contribution.localPath) {
+						try {
+							// Check if local path exists
+							await fs.access(contribution.localPath);
+							// Local path exists but no PR - user may need to trigger PR creation
+							logger.info(
+								'Contribution has no PR - user may need to trigger PR creation manually',
+								LOG_CONTEXT,
+								{ contributionId }
+							);
+							if (!message) {
+								message = 'No PR exists yet - contribution may still be in progress';
+							}
+						} catch {
+							// Local path doesn't exist
+							logger.warn('Local path not accessible for contribution', LOG_CONTEXT, {
+								contributionId,
+								localPath: contribution.localPath,
+							});
+						}
+					}
+
+					// Step 3: If we have a PR, check its status
+					if (contribution.draftPrNumber) {
+						const prUrl = `${GITHUB_API_BASE}/repos/${contribution.repoSlug}/pulls/${contribution.draftPrNumber}`;
+						const response = await fetch(prUrl, {
+							headers: {
+								Accept: 'application/vnd.github.v3+json',
+								'User-Agent': 'Maestro-Symphony',
+							},
+						});
+
+						if (response.ok) {
+							const pr = (await response.json()) as {
+								state: string;
+								merged: boolean;
+								merged_at: string | null;
+								draft: boolean;
+							};
+
+							if (pr.merged) {
+								// PR was merged - move to history
+								prMerged = true;
+								const completed: CompletedContribution = {
+									id: contribution.id,
+									repoSlug: contribution.repoSlug,
+									repoName: contribution.repoName,
+									issueNumber: contribution.issueNumber,
+									issueTitle: contribution.issueTitle,
+									documentsProcessed: contribution.progress.completedDocuments,
+									tasksCompleted: contribution.progress.completedTasks,
+									timeSpent: contribution.timeSpent,
+									startedAt: contribution.startedAt,
+									completedAt: pr.merged_at || new Date().toISOString(),
+									prUrl: contribution.draftPrUrl || '',
+									prNumber: contribution.draftPrNumber,
+									tokenUsage: {
+										inputTokens: contribution.tokenUsage.inputTokens,
+										outputTokens: contribution.tokenUsage.outputTokens,
+										totalCost: contribution.tokenUsage.estimatedCost,
+									},
+									wasMerged: true,
+									mergedAt: pr.merged_at || new Date().toISOString(),
+								};
+
+								// Remove from active, add to history
+								const index = state.active.findIndex((c) => c.id === contributionId);
+								if (index !== -1) {
+									state.active.splice(index, 1);
+								}
+								state.history.push(completed);
+								state.stats.totalMerged += 1;
+								message = `PR #${contribution.draftPrNumber} was merged!`;
+							} else if (pr.state === 'closed') {
+								// PR was closed without merge
+								prClosed = true;
+								const completed: CompletedContribution = {
+									id: contribution.id,
+									repoSlug: contribution.repoSlug,
+									repoName: contribution.repoName,
+									issueNumber: contribution.issueNumber,
+									issueTitle: contribution.issueTitle,
+									documentsProcessed: contribution.progress.completedDocuments,
+									tasksCompleted: contribution.progress.completedTasks,
+									timeSpent: contribution.timeSpent,
+									startedAt: contribution.startedAt,
+									completedAt: new Date().toISOString(),
+									prUrl: contribution.draftPrUrl || '',
+									prNumber: contribution.draftPrNumber,
+									tokenUsage: {
+										inputTokens: contribution.tokenUsage.inputTokens,
+										outputTokens: contribution.tokenUsage.outputTokens,
+										totalCost: contribution.tokenUsage.estimatedCost,
+									},
+									wasClosed: true,
+								};
+
+								const index = state.active.findIndex((c) => c.id === contributionId);
+								if (index !== -1) {
+									state.active.splice(index, 1);
+								}
+								state.history.push(completed);
+								message = `PR #${contribution.draftPrNumber} was closed`;
+							} else if (!pr.draft && contribution.status === 'running') {
+								// PR is no longer draft but status shows running - update to ready_for_review
+								contribution.status = 'ready_for_review';
+								message = `PR #${contribution.draftPrNumber} is ready for review`;
+							} else if (!message) {
+								message = `PR #${contribution.draftPrNumber} synced (${pr.draft ? 'draft' : 'ready'})`;
+							}
+						} else {
+							logger.warn('Failed to fetch PR status', LOG_CONTEXT, {
+								contributionId,
+								prNumber: contribution.draftPrNumber,
+								status: response.status,
+							});
+							if (!message) {
+								message = `Could not check PR status (HTTP ${response.status})`;
+							}
+						}
+					}
+
+					// Save updated state
+					await writeState(app, state);
+					broadcastSymphonyUpdate(getMainWindow);
+
+					return {
+						success: true,
+						message: message || 'Synced successfully',
+						prCreated,
+						prMerged,
+						prClosed,
+					};
+				} catch (error) {
+					logger.error('Failed to sync contribution', LOG_CONTEXT, { contributionId, error });
+					return {
+						success: false,
+						error: error instanceof Error ? error.message : 'Unknown error',
+					};
+				}
+			}
+		)
+	);
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// Cache Operations
 	// ─────────────────────────────────────────────────────────────────────────

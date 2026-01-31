@@ -21,6 +21,8 @@ import { useMobileSessionManagement } from '../hooks/useMobileSessionManagement'
 import { useOfflineStatus, useMaestroMode, useDesktopTheme } from '../main';
 import { buildApiUrl } from '../utils/config';
 import { formatCost } from '../../shared/formatters';
+// SYNC: Uses estimateContextUsage() from shared/contextUsage.ts
+// See that file for the canonical formula and all locations that must stay in sync.
 import { estimateContextUsage } from '../../shared/contextUsage';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import { webLogger } from '../utils/logger';

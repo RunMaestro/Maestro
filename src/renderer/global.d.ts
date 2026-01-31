@@ -2519,6 +2519,14 @@ interface MaestroAPI {
 			errors?: string[];
 			error?: string;
 		}>;
+		syncContribution: (contributionId: string) => Promise<{
+			success: boolean;
+			message?: string;
+			prCreated?: boolean;
+			prMerged?: boolean;
+			prClosed?: boolean;
+			error?: string;
+		}>;
 		// Cache operations
 		clearCache: () => Promise<{ success: boolean; cleared?: boolean; error?: string }>;
 		// Clone and contribution start helpers

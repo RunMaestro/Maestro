@@ -12,6 +12,7 @@ import {
 	registerSymphonyHandlers,
 	SymphonyHandlerDependencies,
 } from '../../../../main/ipc/handlers/symphony';
+import type { ActiveContribution } from '../../../../shared/symphony-types';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -3453,6 +3454,236 @@ describe('Symphony IPC handlers', () => {
 				expect(result.closed).toBe(1);
 				expect(result.errors).toEqual([]);
 			});
+		});
+	});
+
+	// ============================================================================
+	// Sync Contribution Tests (symphony:syncContribution)
+	// ============================================================================
+
+	describe('symphony:syncContribution', () => {
+		const getSyncContributionHandler = () => handlers.get('symphony:syncContribution');
+
+		const createActiveContribution = (overrides?: Partial<ActiveContribution>) => ({
+			id: 'contrib_123',
+			repoSlug: 'owner/repo',
+			repoName: 'repo',
+			issueNumber: 42,
+			issueTitle: 'Test Issue',
+			localPath: '/tmp/symphony/repo-contrib_123',
+			branchName: 'symphony/issue-42-abc',
+			draftPrNumber: undefined,
+			draftPrUrl: undefined,
+			startedAt: '2024-01-01T00:00:00Z',
+			status: 'running',
+			progress: {
+				totalDocuments: 2,
+				completedDocuments: 1,
+				totalTasks: 10,
+				completedTasks: 5,
+			},
+			tokenUsage: { inputTokens: 5000, outputTokens: 2500, estimatedCost: 0.5 },
+			timeSpent: 120000,
+			sessionId: 'session-abc',
+			agentType: 'claude-code',
+			...overrides,
+		});
+
+		it('should return error when contribution not found', async () => {
+			const state = {
+				active: [],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'nonexistent');
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not found');
+		});
+
+		it('should sync PR info from metadata when missing from state', async () => {
+			const contribution = createActiveContribution({ draftPrNumber: undefined });
+			const state = {
+				active: [contribution],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile)
+				.mockResolvedValueOnce(JSON.stringify(state)) // First call: read state
+				.mockResolvedValueOnce(
+					JSON.stringify({
+						// Second call: read metadata
+						prCreated: true,
+						draftPrNumber: 789,
+						draftPrUrl: 'https://github.com/owner/repo/pull/789',
+					})
+				);
+
+			// Mock PR status check
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						state: 'open',
+						merged: false,
+						merged_at: null,
+						draft: true,
+					}),
+			});
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'contrib_123');
+
+			expect(result.success).toBe(true);
+			expect(result.prCreated).toBe(true);
+			expect(result.message).toContain('789');
+		});
+
+		it('should detect merged PR and move to history', async () => {
+			const contribution = createActiveContribution({
+				draftPrNumber: 456,
+				draftPrUrl: 'https://github.com/owner/repo/pull/456',
+			});
+			const state = {
+				active: [contribution],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						state: 'closed',
+						merged: true,
+						merged_at: '2024-02-15T10:00:00Z',
+						draft: false,
+					}),
+			});
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'contrib_123');
+
+			expect(result.success).toBe(true);
+			expect(result.prMerged).toBe(true);
+			expect(result.message).toContain('merged');
+
+			// Verify state was updated with contribution moved to history
+			const writeCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
+			expect(writeCall).toBeDefined();
+			const writtenState = JSON.parse(writeCall![1] as string);
+			expect(writtenState.active).toHaveLength(0);
+			expect(writtenState.history).toHaveLength(1);
+			expect(writtenState.history[0].wasMerged).toBe(true);
+			expect(writtenState.stats.totalMerged).toBe(1);
+		});
+
+		it('should detect closed PR and move to history', async () => {
+			const contribution = createActiveContribution({
+				draftPrNumber: 456,
+				draftPrUrl: 'https://github.com/owner/repo/pull/456',
+			});
+			const state = {
+				active: [contribution],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						state: 'closed',
+						merged: false,
+						merged_at: null,
+						draft: false,
+					}),
+			});
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'contrib_123');
+
+			expect(result.success).toBe(true);
+			expect(result.prClosed).toBe(true);
+			expect(result.message).toContain('closed');
+
+			// Verify state was updated
+			const writeCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
+			expect(writeCall).toBeDefined();
+			const writtenState = JSON.parse(writeCall![1] as string);
+			expect(writtenState.history[0].wasClosed).toBe(true);
+		});
+
+		it('should update status when PR is no longer draft', async () => {
+			const contribution = createActiveContribution({
+				draftPrNumber: 456,
+				draftPrUrl: 'https://github.com/owner/repo/pull/456',
+				status: 'running',
+			});
+			const state = {
+				active: [contribution],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
+
+			mockFetch.mockResolvedValue({
+				ok: true,
+				json: () =>
+					Promise.resolve({
+						state: 'open',
+						merged: false,
+						merged_at: null,
+						draft: false, // PR is ready for review
+					}),
+			});
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'contrib_123');
+
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('ready for review');
+
+			// Verify status was updated
+			const writeCall = vi
+				.mocked(fs.writeFile)
+				.mock.calls.find((call) => (call[0] as string).includes('state.json'));
+			expect(writeCall).toBeDefined();
+			const writtenState = JSON.parse(writeCall![1] as string);
+			expect(writtenState.active[0].status).toBe('ready_for_review');
+		});
+
+		it('should handle GitHub API errors gracefully', async () => {
+			const contribution = createActiveContribution({
+				draftPrNumber: 456,
+				draftPrUrl: 'https://github.com/owner/repo/pull/456',
+			});
+			const state = {
+				active: [contribution],
+				history: [],
+				stats: { totalMerged: 0 },
+			};
+			vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(state));
+
+			mockFetch.mockResolvedValue({
+				ok: false,
+				status: 404,
+			});
+
+			const handler = getSyncContributionHandler();
+			const result = await handler!({} as any, 'contrib_123');
+
+			expect(result.success).toBe(true);
+			expect(result.message).toContain('Could not check PR status');
 		});
 	});
 

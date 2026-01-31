@@ -31,6 +31,8 @@ import {
 	truncatePath,
 } from '../../shared/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
+// SYNC: Uses estimateContextUsage() from shared/contextUsage.ts
+// See that file for the canonical formula and all locations that must stay in sync.
 import { estimateContextUsage } from '../../shared/contextUsage';
 
 /**

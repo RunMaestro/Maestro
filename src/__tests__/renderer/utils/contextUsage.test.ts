@@ -85,12 +85,6 @@ describe('estimateContextUsage', () => {
 			expect(result).toBe(5);
 		});
 
-		it('should use claude default context window (200k)', () => {
-			const stats = createStats({ contextWindow: 0 });
-			const result = estimateContextUsage(stats, 'claude');
-			expect(result).toBe(5);
-		});
-
 		it('should use codex default context window (200k) and include output tokens', () => {
 			const stats = createStats({ contextWindow: 0 });
 			const result = estimateContextUsage(stats, 'codex');
@@ -232,13 +226,6 @@ describe('calculateContextTokens', () => {
 			expect(result).toBe(13000);
 		});
 
-		it('should include all input-related tokens for claude', () => {
-			const stats = createStats();
-			const result = calculateContextTokens(stats, 'claude');
-			// 10000 + 2000 + 1000 = 13000
-			expect(result).toBe(13000);
-		});
-
 		it('should include all input-related tokens when agent is undefined (defaults to Claude)', () => {
 			const stats = createStats();
 			const result = calculateContextTokens(stats);
@@ -298,7 +285,6 @@ describe('calculateContextTokens', () => {
 describe('DEFAULT_CONTEXT_WINDOWS', () => {
 	it('should have context windows defined for all known agent types', () => {
 		expect(DEFAULT_CONTEXT_WINDOWS['claude-code']).toBe(200000);
-		expect(DEFAULT_CONTEXT_WINDOWS['claude']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['codex']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);

@@ -315,7 +315,6 @@ describe('agent-output-parser', () => {
 			expect(isValidToolType('opencode')).toBe(true);
 			expect(isValidToolType('codex')).toBe(true);
 			expect(isValidToolType('terminal')).toBe(true);
-			expect(isValidToolType('claude')).toBe(true);
 			expect(isValidToolType('factory-droid')).toBe(true);
 		});
 

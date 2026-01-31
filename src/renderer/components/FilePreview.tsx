@@ -36,6 +36,7 @@ import {
 import { visit } from 'unist-util-visit';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MermaidRenderer } from './MermaidRenderer';
 import { getEncoder, formatTokenCount } from '../utils/tokenCounter';
@@ -259,8 +260,20 @@ interface TocEntry {
 const extractHeadings = (content: string): TocEntry[] => {
 	const headings: TocEntry[] = [];
 	const lines = content.split('\n');
+	let inCodeFence = false;
 
 	for (const line of lines) {
+		// Track code fence boundaries (``` or ~~~, optionally with language specifier)
+		if (/^(`{3,}|~{3,})/.test(line)) {
+			inCodeFence = !inCodeFence;
+			continue;
+		}
+
+		// Skip headings inside code fences
+		if (inCodeFence) {
+			continue;
+		}
+
 		// Match ATX-style headings (# H1, ## H2, etc.)
 		const match = line.match(/^(#{1,6})\s+(.+)$/);
 		if (match) {
@@ -966,6 +979,10 @@ export const FilePreview = forwardRef<FilePreviewHandle, FilePreviewProps>(funct
 			updateLayerHandler(layerIdRef.current, handleEscapeRequest);
 		}
 	}, [handleEscapeRequest, updateLayerHandler]);
+
+	// Click outside to dismiss (same behavior as Escape)
+	// Use delay to prevent the click that opened the preview from immediately closing it
+	useClickOutside(containerRef, handleEscapeRequest, !!file, { delay: true });
 
 	// Keep search input focused when search is open
 	useEffect(() => {

@@ -5,10 +5,13 @@
  * This module is separate from process-manager to avoid circular dependencies
  * and allow parsers to use it without importing node-pty dependencies.
  *
- * Context calculation utilities are imported from shared module.
+ * SYNC: Context calculation utilities are re-exported from shared/contextUsage.ts.
+ * See that file for the canonical formula and all locations that must stay in sync.
+ * This module provides the re-exports for the main process.
  */
 
 // Re-export context utilities from shared module
+// SYNC: See shared/contextUsage.ts for the canonical calculation
 export {
 	DEFAULT_CONTEXT_WINDOWS,
 	COMBINED_CONTEXT_AGENTS,

@@ -21,6 +21,8 @@ export interface HistoryEntryInput {
 	sessionName?: string;
 	/** Whether the operation succeeded (false for errors/failures) */
 	success?: boolean;
+	/** Task execution time in milliseconds */
+	elapsedTimeMs?: number;
 }
 
 /**
@@ -127,6 +129,8 @@ export function useAgentSessionManagement(
 				usageStats: entry.usageStats,
 				// Pass through success field for error/failure tracking
 				success: entry.success,
+				// Pass through task execution time
+				elapsedTimeMs: entry.elapsedTimeMs,
 			});
 
 			// Refresh history panel to show the new entry

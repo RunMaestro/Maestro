@@ -158,7 +158,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				}
 				process.exit(1);
 			}
-		} else if (agent.toolType === 'claude' || agent.toolType === 'claude-code') {
+		} else if (agent.toolType === 'claude-code') {
 			const claude = await detectClaude();
 			if (!claude.available) {
 				if (useJson) {

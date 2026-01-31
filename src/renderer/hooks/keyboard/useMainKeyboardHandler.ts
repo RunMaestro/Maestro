@@ -99,6 +99,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					(keyLower === 'f' || keyLower === 'h' || keyLower === 's');
 				// Allow jumpToBottom (Cmd+Shift+J) from anywhere - always scroll main panel to bottom
 				const isJumpToBottomShortcut = (e.metaKey || e.ctrlKey) && e.shiftKey && keyLower === 'j';
+				// Allow markdown toggle (Cmd+E) for chat history, even when overlays are open
+				// (e.g., when output search is open, user should still be able to toggle markdown mode)
+				const isMarkdownToggleShortcut =
+					(e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && keyLower === 'e';
 				// Allow system utility shortcuts (Alt+Cmd+L for logs, Alt+Cmd+P for processes) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters (e.g., Alt+P = π)
 				const codeKeyLower = e.code?.replace('Key', '').toLowerCase() || '';
@@ -135,7 +139,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isRightPanelShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
-						!isJumpToBottomShortcut
+						!isJumpToBottomShortcut &&
+						!isMarkdownToggleShortcut
 					) {
 						return;
 					}

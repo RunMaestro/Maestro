@@ -54,6 +54,9 @@ function getTabLastActivity(tab: AITab): number | undefined {
 /**
  * Get context usage percentage from usage stats
  * Uses agent-specific calculation (Codex includes output tokens, Claude doesn't)
+ *
+ * SYNC: Uses calculateContextTokens() from shared/contextUsage.ts
+ * See that file for the canonical formula and all locations that must stay in sync.
  */
 function getContextPercentage(tab: AITab, agentId?: ToolType): number {
 	if (!tab.usageStats) return 0;

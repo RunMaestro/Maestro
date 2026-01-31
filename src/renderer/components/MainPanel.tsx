@@ -548,8 +548,8 @@ export const MainPanel = React.memo(
 		}, [configuredContextWindow, activeTab?.usageStats?.contextWindow]);
 
 		// Compute context tokens using agent-specific calculation
-		// Claude: input + cacheCreation (excludes cacheRead which is cumulative)
-		// Codex: input + output (combined limit)
+		// SYNC: Uses calculateContextTokens() from shared/contextUsage.ts
+		// See that file for the canonical formula and all locations that must stay in sync.
 		const activeTabContextTokens = useMemo(() => {
 			if (!activeTab?.usageStats) return 0;
 			return calculateContextTokens(

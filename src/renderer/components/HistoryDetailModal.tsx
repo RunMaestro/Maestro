@@ -404,6 +404,8 @@ export function HistoryDetailModal({
 									{(() => {
 										// Context usage using agent-specific calculation
 										// Note: History entries don't store agent type, defaults to Claude behavior
+										// SYNC: Uses calculateContextTokens() from shared/contextUsage.ts
+										// See that file for the canonical formula and all locations that must stay in sync.
 										const contextTokens = calculateContextTokens({
 											inputTokens: entry.usageStats!.inputTokens,
 											outputTokens: entry.usageStats!.outputTokens,

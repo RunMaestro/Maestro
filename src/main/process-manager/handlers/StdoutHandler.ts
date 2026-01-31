@@ -255,7 +255,7 @@ export class StdoutHandler {
 			//
 			// Terminal has no usage reporting.
 			const normalizedUsageStats =
-				managedProcess.toolType === 'codex'
+				managedProcess.toolType === 'codex' || managedProcess.toolType === 'claude-code'
 					? normalizeUsageToDelta(managedProcess, usageStats)
 					: usageStats;
 

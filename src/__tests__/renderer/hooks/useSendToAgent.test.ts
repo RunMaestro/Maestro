@@ -885,7 +885,7 @@ describe('transfer edge cases', () => {
 	});
 
 	it('handles all supported agent types as targets', async () => {
-		const targetAgents: ToolType[] = ['opencode', 'factory-droid', 'codex', 'claude'];
+		const targetAgents: ToolType[] = ['opencode', 'factory-droid', 'codex'];
 
 		for (const targetAgent of targetAgents) {
 			vi.clearAllMocks();

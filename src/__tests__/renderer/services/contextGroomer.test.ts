@@ -469,7 +469,6 @@ describe('AGENT_ARTIFACTS', () => {
 			'opencode',
 			'codex',
 			'factory-droid',
-			'claude',
 			'terminal',
 		];
 
@@ -515,7 +514,6 @@ describe('AGENT_TARGET_NOTES', () => {
 			'opencode',
 			'codex',
 			'factory-droid',
-			'claude',
 			'terminal',
 		];
 
@@ -545,10 +543,6 @@ describe('AGENT_TARGET_NOTES', () => {
 		expect(notes).toContain('reasoning');
 	});
 
-	it('should note lack of file access for base claude', () => {
-		const notes = AGENT_TARGET_NOTES['claude'];
-		expect(notes).toContain('does not have direct file system');
-	});
 });
 
 describe('getAgentDisplayName', () => {
@@ -557,7 +551,6 @@ describe('getAgentDisplayName', () => {
 		expect(getAgentDisplayName('opencode')).toBe('OpenCode');
 		expect(getAgentDisplayName('codex')).toBe('OpenAI Codex');
 		expect(getAgentDisplayName('factory-droid')).toBe('Factory Droid');
-		expect(getAgentDisplayName('claude')).toBe('Claude');
 		expect(getAgentDisplayName('terminal')).toBe('Terminal');
 	});
 
@@ -612,7 +605,7 @@ describe('buildContextTransferPrompt', () => {
 	});
 
 	it('should work for all agent type combinations', () => {
-		const agents: ToolType[] = ['claude-code', 'opencode', 'codex', 'factory-droid', 'claude', 'terminal'];
+		const agents: ToolType[] = ['claude-code', 'opencode', 'codex', 'factory-droid', 'terminal'];
 
 		for (const source of agents) {
 			for (const target of agents) {

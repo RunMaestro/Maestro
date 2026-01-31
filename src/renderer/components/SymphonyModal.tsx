@@ -852,10 +852,14 @@ function ActiveContributionCard({
 	contribution,
 	theme,
 	onFinalize,
+	onSync,
+	isSyncing,
 }: {
 	contribution: ActiveContribution;
 	theme: Theme;
 	onFinalize: () => void;
+	onSync: () => void;
+	isSyncing: boolean;
 }) {
 	const statusInfo = getStatusInfo(contribution.status);
 	const docProgress =
@@ -891,12 +895,25 @@ function ActiveContributionCard({
 						{contribution.repoSlug}
 					</p>
 				</div>
-				<div
-					className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs shrink-0"
-					style={{ backgroundColor: statusInfo.color + '20', color: statusInfo.color }}
-				>
-					{statusInfo.icon}
-					<span>{statusInfo.label}</span>
+				<div className="flex items-center gap-2 shrink-0">
+					<button
+						onClick={onSync}
+						disabled={isSyncing}
+						className="p-1 rounded hover:bg-white/10 transition-colors disabled:opacity-50"
+						title="Sync status with GitHub"
+					>
+						<RefreshCw
+							className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`}
+							style={{ color: theme.colors.textDim }}
+						/>
+					</button>
+					<div
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs"
+						style={{ backgroundColor: statusInfo.color + '20', color: statusInfo.color }}
+					>
+						{statusInfo.icon}
+						<span>{statusInfo.label}</span>
+					</div>
 				</div>
 			</div>
 
@@ -1204,6 +1221,7 @@ export function SymphonyModal({ theme, isOpen, onClose, onStartContribution }: S
 	const [showHelp, setShowHelp] = useState(false);
 	const [isCheckingPRStatuses, setIsCheckingPRStatuses] = useState(false);
 	const [prStatusMessage, setPrStatusMessage] = useState<string | null>(null);
+	const [syncingContributionId, setSyncingContributionId] = useState<string | null>(null);
 
 	const searchInputRef = useRef<HTMLInputElement>(null);
 	const tileGridRef = useRef<HTMLDivElement>(null);
@@ -1369,6 +1387,27 @@ export function SymphonyModal({ theme, isOpen, onClose, onStartContribution }: S
 			await finalizeContribution(contributionId);
 		},
 		[finalizeContribution]
+	);
+
+	// Sync individual contribution status with GitHub
+	const handleSyncContribution = useCallback(
+		async (contributionId: string) => {
+			setSyncingContributionId(contributionId);
+			try {
+				const result = await window.maestro.symphony.syncContribution(contributionId);
+				if (result.message) {
+					setPrStatusMessage(result.message);
+					setTimeout(() => setPrStatusMessage(null), 5000);
+				}
+			} catch (err) {
+				console.error('Failed to sync contribution:', err);
+				setPrStatusMessage('Sync failed');
+				setTimeout(() => setPrStatusMessage(null), 5000);
+			} finally {
+				setSyncingContributionId(null);
+			}
+		},
+		[]
 	);
 
 	// Check PR statuses (merged/closed) and update history
@@ -1908,6 +1947,8 @@ export function SymphonyModal({ theme, isOpen, onClose, onStartContribution }: S
 														contribution={contribution}
 														theme={theme}
 														onFinalize={() => handleFinalize(contribution.id)}
+														onSync={() => handleSyncContribution(contribution.id)}
+														isSyncing={syncingContributionId === contribution.id}
 													/>
 												))}
 											</div>

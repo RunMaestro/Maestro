@@ -110,7 +110,6 @@ function normalizeDirectory(dir: string): string {
 export function getProviderDisplayName(toolType: ToolType): string {
 	const displayNames: Record<ToolType, string> = {
 		'claude-code': 'Claude Code',
-		claude: 'Claude',
 		opencode: 'OpenCode',
 		codex: 'Codex',
 		'factory-droid': 'Factory Droid',

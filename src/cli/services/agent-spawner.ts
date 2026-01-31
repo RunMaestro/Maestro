@@ -508,7 +508,7 @@ export async function spawnAgent(
 		return spawnCodexAgent(cwd, prompt, agentSessionId);
 	}
 
-	if (toolType === 'claude' || toolType === 'claude-code') {
+	if (toolType === 'claude-code') {
 		return spawnClaudeAgent(cwd, prompt, agentSessionId);
 	}
 

@@ -204,7 +204,6 @@ describe('calculateContextTokens', () => {
 describe('DEFAULT_CONTEXT_WINDOWS', () => {
 	it('should have context windows defined for all known agent types', () => {
 		expect(DEFAULT_CONTEXT_WINDOWS['claude-code']).toBe(200000);
-		expect(DEFAULT_CONTEXT_WINDOWS['claude']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['codex']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);

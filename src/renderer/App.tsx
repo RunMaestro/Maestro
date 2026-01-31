@@ -152,8 +152,8 @@ import {
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
-import { validateNewSession } from './utils/sessionValidation';
-import { estimateContextUsage } from './utils/contextUsage';
+import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
+import { estimateContextUsage, calculateContextTokens } from './utils/contextUsage';
 import { formatLogsForClipboard } from './utils/contextExtractor';
 import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from './constants/app';
 import { useUILayout } from './contexts/UILayoutContext';
@@ -2754,22 +2754,30 @@ function MaestroConsoleInner() {
 				baseSessionId = sessionId;
 			}
 
-			// Calculate context window usage percentage from CURRENT (per-turn) reported tokens.
-			// Claude Code reports per-turn context values (verified via direct CLI testing).
+			// Calculate context window usage percentage from CURRENT (per-turn) tokens.
+			// Claude Code usage is normalized to per-turn values in StdoutHandler before reaching here.
 			//
-			// Per Anthropic docs: total_context = input + cacheRead + cacheCreation
-			// For Codex: context = inputTokens + outputTokens (combined limit)
+			// SYNC: Uses calculateContextTokens() from shared/contextUsage.ts
+			// This MUST match the calculation used in:
+			//   - contextSummarizer.ts (compaction eligibility)
+			//   - MainPanel.tsx (tab context display)
+			//   - TabSwitcherModal.tsx (tab switcher)
+			//   - HistoryDetailModal.tsx (history view)
+			//   - usage-listener.ts (main process usage events)
 			//
-			// @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+			// @see src/shared/contextUsage.ts for the canonical calculation
 			// Use baseSessionId for lookup to handle synopsis/batch sessions that inherit parent's agent type
 			const sessionForUsage = sessionsRef.current.find((s) => s.id === baseSessionId);
 			const agentToolType = sessionForUsage?.toolType;
-			const isClaudeUsage = agentToolType === 'claude-code' || agentToolType === 'claude';
-			const currentContextTokens = isClaudeUsage
-				? usageStats.inputTokens +
-					usageStats.cacheReadInputTokens +
-					usageStats.cacheCreationInputTokens
-				: usageStats.inputTokens + usageStats.outputTokens;
+			const currentContextTokens = calculateContextTokens(
+				{
+					inputTokens: usageStats.inputTokens,
+					outputTokens: usageStats.outputTokens,
+					cacheReadInputTokens: usageStats.cacheReadInputTokens,
+					cacheCreationInputTokens: usageStats.cacheCreationInputTokens,
+				},
+				agentToolType
+			);
 
 			// Calculate context percentage, falling back to agent-specific defaults if contextWindow not provided
 			let contextPercentage: number;
@@ -2789,6 +2797,8 @@ function MaestroConsoleInner() {
 				});
 				// Keep existing context percentage (don't update)
 				contextPercentage = sessionForUsage?.contextUsage ?? 0;
+				// Skip usage updates to avoid polluting UI with cumulative totals
+				return;
 			} else if (usageStats.contextWindow > 0) {
 				contextPercentage = Math.min(
 					Math.round((currentContextTokens / usageStats.contextWindow) * 100),
@@ -2801,6 +2811,8 @@ function MaestroConsoleInner() {
 			}
 
 			// DEBUG: Log context calculation details
+			// Uses calculateContextTokens() from shared/contextUsage.ts for consistency
+			const isCombinedContext = agentToolType === 'codex';
 			console.log('[onUsage] Context calculation', {
 				sessionId: actualSessionId,
 				agentType: agentToolType,
@@ -2815,7 +2827,9 @@ function MaestroConsoleInner() {
 					currentContextTokens,
 					effectiveContextWindow,
 					contextPercentage,
-					formula: isClaudeUsage ? 'input + cacheRead + cacheCreation' : 'input + output',
+					formula: isCombinedContext
+						? 'input + output (combined)'
+						: 'input + cacheRead + cacheCreation',
 				},
 			});
 
@@ -6462,6 +6476,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 				const group = groups.find((g) => g.id === activeSession.groupId);
 				const groupName = group?.name || 'Ungrouped';
 
+				// Calculate elapsed time since last synopsis (or tab creation if no previous synopsis)
+				const elapsedTimeMs = activeTab.lastSynopsisTime
+					? synopsisTime - activeTab.lastSynopsisTime
+					: synopsisTime - activeTab.createdAt;
+
 				// Add to history
 				addHistoryEntry({
 					type: 'AUTO',
@@ -6472,6 +6491,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					projectPath: activeSession.cwd,
 					sessionName: activeTab.name || undefined,
 					usageStats: result.usageStats,
+					elapsedTimeMs,
 				});
 
 				// Update the pending log with success AND set lastSynopsisTime
@@ -9215,7 +9235,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			}
 
 			// Handle AI mode for batch-mode agents (Claude Code, Codex, OpenCode)
-			const supportedBatchAgents: ToolType[] = ['claude', 'claude-code', 'codex', 'opencode'];
+			const supportedBatchAgents: ToolType[] = ['claude-code', 'codex', 'opencode'];
 			if (!supportedBatchAgents.includes(session.toolType)) {
 				console.log('[Remote] Not a batch-mode agent, skipping');
 				return;
@@ -10454,11 +10474,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Image Handlers
 	const showImageAttachBlockedNotice = useCallback(() => {
-		const message =
-			'Images are only available in the initial message to Claude. Please start a new session if you want to include an image.';
+		const agentName = activeSession?.toolType
+			? getProviderDisplayName(activeSession.toolType)
+			: 'the agent';
+		const message = `Images are only available in the initial message to ${agentName}. Please start a new session if you want to include an image.`;
 		setSuccessFlashNotification(message);
 		setTimeout(() => setSuccessFlashNotification(null), 4000);
-	}, [setSuccessFlashNotification]);
+	}, [setSuccessFlashNotification, activeSession?.toolType]);
 
 	const handlePaste = (e: React.ClipboardEvent) => {
 		// Allow image pasting in group chat or direct AI mode

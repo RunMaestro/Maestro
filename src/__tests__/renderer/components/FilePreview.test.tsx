@@ -69,6 +69,19 @@ vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	},
 }));
 
+// Mock useClickOutside hook - capture the callback for testing
+const mockClickOutsideCallback = { current: null as (() => void) | null };
+vi.mock('../../../renderer/hooks/ui/useClickOutside', () => ({
+	useClickOutside: (
+		_ref: unknown,
+		callback: () => void,
+		_enabled: boolean,
+		_options?: unknown
+	) => {
+		mockClickOutsideCallback.current = callback;
+	},
+}));
+
 // Mock MermaidRenderer
 vi.mock('../../../renderer/components/MermaidRenderer', () => ({
 	MermaidRenderer: () => <div data-testid="mermaid-renderer">Mermaid</div>,
@@ -388,6 +401,59 @@ describe('FilePreview', () => {
 		});
 	});
 
+	describe('click outside to dismiss', () => {
+		it('calls onClose when clicking outside the preview', () => {
+			const onClose = vi.fn();
+			render(<FilePreview {...defaultProps} onClose={onClose} />);
+
+			// Simulate click outside via the captured callback
+			expect(mockClickOutsideCallback.current).not.toBeNull();
+			mockClickOutsideCallback.current?.();
+
+			expect(onClose).toHaveBeenCalledOnce();
+		});
+
+		it('calls onClose when clicking outside in edit mode without changes', () => {
+			const onClose = vi.fn();
+			render(
+				<FilePreview
+					{...defaultProps}
+					onClose={onClose}
+					markdownEditMode={true}
+					file={{ name: 'test.md', content: 'original', path: '/test/test.md' }}
+				/>
+			);
+
+			// Simulate click outside - should close since no changes were made
+			mockClickOutsideCallback.current?.();
+
+			expect(onClose).toHaveBeenCalledOnce();
+		});
+
+		it('registers useClickOutside hook with container ref and enabled when file exists', () => {
+			render(<FilePreview {...defaultProps} />);
+
+			// The hook should be registered with a callback
+			expect(mockClickOutsideCallback.current).not.toBeNull();
+		});
+
+		it('uses the same callback for click outside as for escape key', () => {
+			// This verifies that useClickOutside is set up with handleEscapeRequest
+			// which provides consistent behavior between Escape key and click outside
+			const onClose = vi.fn();
+			render(<FilePreview {...defaultProps} onClose={onClose} />);
+
+			// The callback should be registered
+			expect(mockClickOutsideCallback.current).toBeDefined();
+			expect(typeof mockClickOutsideCallback.current).toBe('function');
+
+			// Invoking the callback should have the same effect as pressing Escape
+			// (calling onClose when no overlays are open)
+			mockClickOutsideCallback.current?.();
+			expect(onClose).toHaveBeenCalledOnce();
+		});
+	});
+
 	describe('table of contents', () => {
 		it('shows TOC button for markdown files with headings in preview mode', () => {
 			const markdownWithHeadings = '# Heading 1\n## Heading 2\n### Heading 3\nContent here';
@@ -414,6 +480,45 @@ describe('FilePreview', () => {
 			);
 
 			expect(screen.queryByTitle('Table of Contents')).not.toBeInTheDocument();
+		});
+
+		it('does not include comments inside code fences as headings', () => {
+			// This tests that # comments in code blocks are not parsed as headings
+			const markdownWithCodeComments = `# Real Heading
+
+\`\`\`bash
+# This is a comment, not a heading
+echo "hello"
+# Another comment
+\`\`\`
+
+## Another Real Heading
+
+\`\`\`python
+# Python comment
+print("world")
+\`\`\`
+`;
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'doc.md', content: markdownWithCodeComments, path: '/test/doc.md' }}
+					markdownEditMode={false}
+				/>
+			);
+
+			// Open TOC
+			const tocButton = screen.getByTitle('Table of Contents');
+			fireEvent.click(tocButton);
+
+			// Should only show 2 headings (the real ones), not the code comments
+			expect(screen.getByText('2 headings')).toBeInTheDocument();
+			expect(screen.getByText('Real Heading')).toBeInTheDocument();
+			expect(screen.getByText('Another Real Heading')).toBeInTheDocument();
+			// Code comments should NOT appear in the TOC
+			expect(screen.queryByText('This is a comment, not a heading')).not.toBeInTheDocument();
+			expect(screen.queryByText('Another comment')).not.toBeInTheDocument();
+			expect(screen.queryByText('Python comment')).not.toBeInTheDocument();
 		});
 
 		it('does not show TOC button in edit mode', () => {

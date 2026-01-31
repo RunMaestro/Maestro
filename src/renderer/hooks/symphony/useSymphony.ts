@@ -205,6 +205,29 @@ export function useSymphony(): UseSymphonyReturn {
     };
   }, [fetchSymphonyState]);
 
+  // Periodic auto-sync for active contributions (every 2 minutes)
+  // This catches cases where status updates were missed due to connection issues
+  useEffect(() => {
+    const SYNC_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+
+    const syncActiveContributions = async () => {
+      try {
+        // Only sync if we have active contributions
+        const state = await window.maestro.symphony.getState();
+        if (state.state?.active && state.state.active.length > 0) {
+          await window.maestro.symphony.checkPRStatuses();
+          await fetchSymphonyState();
+        }
+      } catch (err) {
+        console.error('Auto-sync failed:', err);
+      }
+    };
+
+    const intervalId = setInterval(syncActiveContributions, SYNC_INTERVAL_MS);
+
+    return () => clearInterval(intervalId);
+  }, [fetchSymphonyState]);
+
   // ─────────────────────────────────────────────────────────────────────────
   // Repository Selection & GitHub Issues
   // ─────────────────────────────────────────────────────────────────────────

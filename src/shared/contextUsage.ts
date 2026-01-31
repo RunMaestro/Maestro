@@ -1,16 +1,50 @@
 /**
  * Context Usage Estimation Utilities
  *
- * Single source of truth for context window usage calculations across
- * renderer, main process, and web/mobile interfaces.
- *
- * Claude Code reports per-turn context window usage directly (no normalization needed).
- * Codex reports cumulative session totals, which are normalized in StdoutHandler.
- *
- * Per Anthropic documentation:
- *   total_context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║                    CONTEXT CALCULATION SYNCHRONIZATION                        ║
+ * ╠══════════════════════════════════════════════════════════════════════════════╣
+ * ║ This is the SINGLE SOURCE OF TRUTH for context window calculations.          ║
+ * ║                                                                               ║
+ * ║ ALL context calculations in the codebase MUST use these functions:            ║
+ * ║   - calculateContextTokens()  - Calculate total context tokens                ║
+ * ║   - estimateContextUsage()    - Estimate context usage percentage             ║
+ * ║                                                                               ║
+ * ║ LOCATIONS THAT USE THESE (keep in sync when modifying):                       ║
+ * ║   1. src/renderer/App.tsx (line ~2768) - UI context % display                 ║
+ * ║   2. src/renderer/utils/contextUsage.ts - Re-exports for renderer             ║
+ * ║   3. src/renderer/utils/contextExtractor.ts - Token estimation                ║
+ * ║   4. src/renderer/components/MainPanel.tsx - Tab context display              ║
+ * ║   5. src/renderer/components/TabSwitcherModal.tsx - Tab switcher              ║
+ * ║   6. src/renderer/components/HistoryDetailModal.tsx - History view            ║
+ * ║   7. src/renderer/services/contextSummarizer.ts - Compaction eligibility      ║
+ * ║   8. src/main/parsers/usage-aggregator.ts - Re-exports for main process       ║
+ * ║   9. src/main/process-listeners/usage-listener.ts - Usage event handling      ║
+ * ║  10. src/web/mobile/App.tsx - Mobile UI                                       ║
+ * ║  11. src/web/mobile/SessionStatusBanner.tsx - Mobile status                   ║
+ * ║                                                                               ║
+ * ║ PROVIDER-SPECIFIC FORMULAS:                                                   ║
+ * ║                                                                               ║
+ * ║   Claude-style (separate input/output limits):                                ║
+ * ║     total = inputTokens + cacheReadInputTokens + cacheCreationInputTokens     ║
+ * ║     Agents: claude-code, factory-droid, opencode                              ║
+ * ║     (OpenCode and Factory Droid can use various models, but they report       ║
+ * ║      cache tokens in Claude-style format regardless of backend)               ║
+ * ║                                                                               ║
+ * ║   OpenAI-style (combined input+output limit):                                 ║
+ * ║     total = inputTokens + outputTokens                                        ║
+ * ║     Agents: codex                                                             ║
+ * ║     (COMBINED_CONTEXT_AGENTS set determines which agents use this)            ║
+ * ║                                                                               ║
+ * ║ KNOWN ISSUES (as of 2026-01-31):                                              ║
+ * ║   - Claude Code usage can be cumulative; normalized to per-turn in StdoutHandler ║
+ * ║   - Values fluctuate based on which model (Haiku vs Sonnet) handles turn      ║
+ * ║   - This causes UI to show inconsistent context % across turns                ║
+ * ║   - Compaction check may fail when UI shows high but stored value is low      ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
  *
  * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+ * @see https://code.claude.com/docs/en/statusline#context-window-usage
  */
 
 import type { ToolType } from './types';
@@ -18,10 +52,13 @@ import type { ToolType } from './types';
 /**
  * Default context window sizes for different agents.
  * Used as fallback when the agent doesn't report its context window size.
+ *
+ * SYNC: When adding a new agent, also update:
+ *   - COMBINED_CONTEXT_AGENTS if it uses combined input+output limits
+ *   - calculateContextTokens() if it has a unique formula
  */
 export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
 	'claude-code': 200000, // Claude 3.5 Sonnet/Claude 4 default context
-	claude: 200000, // Legacy Claude
 	codex: 200000, // OpenAI o3/o4-mini context window
 	opencode: 128000, // OpenCode (depends on model, 128k is conservative default)
 	'factory-droid': 200000, // Factory Droid (varies by model, defaults to Claude Opus)
@@ -32,6 +69,9 @@ export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
  * Agents that use combined input+output context windows.
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.
+ *
+ * SYNC: When adding a new agent with combined context limits, add it here
+ * and update calculateContextTokens() to handle it.
  */
 export const COMBINED_CONTEXT_AGENTS: Set<ToolType | string> = new Set(['codex']);
 
@@ -50,6 +90,11 @@ export interface ContextUsageStats {
 /**
  * Calculate total context tokens based on agent-specific semantics.
  *
+ * ╔══════════════════════════════════════════════════════════════════════════════╗
+ * ║ THIS IS THE CANONICAL CONTEXT CALCULATION FUNCTION                            ║
+ * ║ All UI displays, compaction checks, and usage tracking MUST use this.         ║
+ * ╚══════════════════════════════════════════════════════════════════════════════╝
+ *
  * Per Anthropic documentation, the context calculation formula is:
  *   total_context = input_tokens + cache_read_input_tokens + cache_creation_input_tokens
  *
@@ -63,6 +108,8 @@ export interface ContextUsageStats {
  * @param stats - The usage statistics containing token counts
  * @param agentId - The agent identifier for agent-specific calculation
  * @returns Total context tokens used for this turn
+ *
+ * @see https://platform.claude.com/docs/en/build-with-claude/prompt-caching
  */
 export function calculateContextTokens(
 	stats: ContextUsageStats,
