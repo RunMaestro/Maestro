@@ -14,3 +14,4 @@ export * from './emojiUtils';
 export * from './treeUtils';
 export * from './stringUtils';
 export * from './pathUtils';
+export * from './types/window';
