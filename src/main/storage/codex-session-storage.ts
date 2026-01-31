@@ -25,6 +25,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../utils/logger';
+import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionStorage,
 	AgentSessionInfo,
@@ -36,7 +37,7 @@ import type {
 	SessionReadOptions,
 	SessionMessage,
 } from '../agent-session-storage';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, SshRemoteConfig } from '../../shared/types';
 
 const LOG_CONTEXT = '[CodexSessionStorage]';
 
@@ -442,6 +443,14 @@ export class CodexSessionStorage implements AgentSessionStorage {
 	}
 
 	/**
+	 * Get the Codex sessions directory path (remote via SSH)
+	 * On remote Linux hosts, ~ expands to the user's home directory
+	 */
+	private getRemoteSessionsDir(): string {
+		return '~/.codex/sessions';
+	}
+
+	/**
 	 * Find all session files, organized by date directories
 	 */
 	private async findAllSessionFiles(): Promise<Array<{ filePath: string; filename: string }>> {
@@ -510,7 +519,270 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		return sessionFiles;
 	}
 
-	async listSessions(projectPath: string): Promise<AgentSessionInfo[]> {
+	/**
+	 * Find all session files on a remote host via SSH, organized by date directories
+	 * Recursively scans the YYYY/MM/DD directory structure
+	 */
+	private async findAllSessionFilesRemote(
+		sshConfig: SshRemoteConfig
+	): Promise<Array<{ filePath: string; filename: string }>> {
+		const sessionsDir = this.getRemoteSessionsDir();
+		const sessionFiles: Array<{ filePath: string; filename: string }> = [];
+
+		// List YYYY directories
+		const yearsResult = await readDirRemote(sessionsDir, sshConfig);
+		if (!yearsResult.success || !yearsResult.data) {
+			return [];
+		}
+
+		for (const yearEntry of yearsResult.data) {
+			if (!yearEntry.isDirectory || !/^\d{4}$/.test(yearEntry.name)) continue;
+
+			const yearDir = `${sessionsDir}/${yearEntry.name}`;
+
+			// List MM directories
+			const monthsResult = await readDirRemote(yearDir, sshConfig);
+			if (!monthsResult.success || !monthsResult.data) continue;
+
+			for (const monthEntry of monthsResult.data) {
+				if (!monthEntry.isDirectory || !/^\d{2}$/.test(monthEntry.name)) continue;
+
+				const monthDir = `${yearDir}/${monthEntry.name}`;
+
+				// List DD directories
+				const daysResult = await readDirRemote(monthDir, sshConfig);
+				if (!daysResult.success || !daysResult.data) continue;
+
+				for (const dayEntry of daysResult.data) {
+					if (!dayEntry.isDirectory || !/^\d{2}$/.test(dayEntry.name)) continue;
+
+					const dayDir = `${monthDir}/${dayEntry.name}`;
+
+					// List session files
+					const filesResult = await readDirRemote(dayDir, sshConfig);
+					if (!filesResult.success || !filesResult.data) continue;
+
+					for (const fileEntry of filesResult.data) {
+						if (!fileEntry.isDirectory && fileEntry.name.endsWith('.jsonl')) {
+							sessionFiles.push({
+								filePath: `${dayDir}/${fileEntry.name}`,
+								filename: fileEntry.name,
+							});
+						}
+					}
+				}
+			}
+		}
+
+		return sessionFiles;
+	}
+
+	/**
+	 * Parse a session file and extract metadata from remote via SSH
+	 */
+	private async parseSessionFileRemote(
+		filePath: string,
+		sessionId: string,
+		stats: { size: number; mtimeMs: number },
+		sshConfig: SshRemoteConfig
+	): Promise<AgentSessionInfo | null> {
+		try {
+			const result = await readFileRemote(filePath, sshConfig);
+			if (!result.success || !result.data) {
+				logger.error(`Failed to read remote Codex session file: ${filePath} - ${result.error}`, LOG_CONTEXT);
+				return null;
+			}
+
+			const content = result.data;
+			const lines = content.split('\n').filter((l) => l.trim());
+
+			if (lines.length === 0) {
+				return null;
+			}
+
+			// Parse first line as metadata
+			let metadata: CodexSessionMetadata | null = null;
+			let timestamp = new Date(stats.mtimeMs).toISOString();
+			let sessionProjectPath: string | null = null;
+
+			try {
+				const firstLine = JSON.parse(lines[0]);
+				// New format: { type: 'session_meta', payload: { id, cwd, timestamp, ... } }
+				if (firstLine.type === 'session_meta' && firstLine.payload) {
+					metadata = firstLine as CodexSessionMetadata;
+					timestamp = firstLine.payload.timestamp || firstLine.timestamp || timestamp;
+					if (firstLine.payload.cwd) {
+						sessionProjectPath = firstLine.payload.cwd;
+					}
+				}
+				// Legacy format: { id, timestamp, ... } at top level
+				else if (firstLine.id && firstLine.timestamp) {
+					metadata = firstLine as CodexSessionMetadata;
+					timestamp = firstLine.timestamp || timestamp;
+				}
+			} catch {
+				// First line may not be metadata, continue parsing
+			}
+
+			// Count messages and find first assistant response (preferred) or user message (fallback)
+			let firstAssistantMessage = '';
+			let firstUserMessage = '';
+			let userMessageCount = 0;
+			let assistantMessageCount = 0;
+			let totalInputTokens = 0;
+			let totalOutputTokens = 0;
+			let totalCachedTokens = 0;
+			let firstTimestamp = timestamp;
+			let lastTimestamp = timestamp;
+
+			for (let i = 0; i < lines.length; i++) {
+				try {
+					const entry = JSON.parse(lines[i]);
+
+					// Handle turn.completed for usage stats
+					if (entry.type === 'turn.completed' && entry.usage) {
+						totalInputTokens += entry.usage.input_tokens || 0;
+						totalOutputTokens += entry.usage.output_tokens || 0;
+						totalOutputTokens += entry.usage.reasoning_output_tokens || 0;
+						totalCachedTokens += entry.usage.cached_input_tokens || 0;
+					}
+
+					// Handle Codex "event_msg" usage stats
+					if (entry.type === 'event_msg' && entry.payload?.type === 'token_count') {
+						const usage = entry.payload.info?.total_token_usage;
+						if (usage) {
+							totalInputTokens += usage.input_tokens || 0;
+							totalOutputTokens += usage.output_tokens || 0;
+							totalOutputTokens += usage.reasoning_output_tokens || 0;
+							totalCachedTokens += usage.cached_input_tokens || 0;
+						}
+					}
+
+					// Handle message entries (legacy format)
+					if (entry.type === 'message') {
+						if (entry.role === 'user') {
+							userMessageCount++;
+							if (entry.content) {
+								const text = extractTextFromContent(entry.content);
+								if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
+									firstUserMessage = text;
+								}
+								if (!sessionProjectPath) {
+									const cwd = extractCwdFromText(text);
+									if (cwd) {
+										sessionProjectPath = cwd;
+									}
+								}
+							}
+						} else if (entry.role === 'assistant') {
+							assistantMessageCount++;
+							if (!firstAssistantMessage && entry.content) {
+								const text = extractTextFromContent(entry.content);
+								if (text.trim()) {
+									firstAssistantMessage = text;
+								}
+							}
+						}
+					}
+
+					// Handle response_item entries (current Codex format)
+					if (entry.type === 'response_item' && entry.payload?.type === 'message') {
+						if (entry.payload.role === 'user') {
+							userMessageCount++;
+							if (entry.payload.content) {
+								const text = extractTextFromContent(entry.payload.content);
+								if (!firstUserMessage && text.trim() && !isSystemContextMessage(text)) {
+									firstUserMessage = text;
+								}
+								if (!sessionProjectPath) {
+									const cwd = extractCwdFromText(text);
+									if (cwd) {
+										sessionProjectPath = cwd;
+									}
+								}
+							}
+						} else if (entry.payload.role === 'assistant') {
+							assistantMessageCount++;
+							if (!firstAssistantMessage && entry.payload.content) {
+								const text = extractTextFromContent(entry.payload.content);
+								if (text.trim()) {
+									firstAssistantMessage = text;
+								}
+							}
+						}
+					}
+
+					// Handle item.completed for agent messages
+					if (entry.type === 'item.completed' && entry.item) {
+						if (entry.item.type === 'agent_message') {
+							assistantMessageCount++;
+							if (!firstAssistantMessage && entry.item.text) {
+								firstAssistantMessage = entry.item.text;
+							}
+						}
+					}
+
+					// Track timestamps for duration
+					if (entry.timestamp) {
+						const entryTime = new Date(entry.timestamp).getTime();
+						const firstTime = new Date(firstTimestamp).getTime();
+						const lastTime = new Date(lastTimestamp).getTime();
+
+						if (entryTime < firstTime) {
+							firstTimestamp = entry.timestamp;
+						}
+						if (entryTime > lastTime) {
+							lastTimestamp = entry.timestamp;
+						}
+					}
+				} catch {
+					// Skip malformed lines
+				}
+			}
+
+			// Use assistant response as preview if available, otherwise fall back to user message
+			const previewMessage = firstAssistantMessage || firstUserMessage;
+
+			const messageCount = userMessageCount + assistantMessageCount;
+
+			const startTime = new Date(firstTimestamp).getTime();
+			const endTime = new Date(lastTimestamp).getTime();
+			const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+
+			// Extract session ID from metadata (new format uses payload.id, legacy uses id)
+			const metadataSessionId = metadata?.payload?.id || metadata?.id || sessionId;
+
+			return {
+				sessionId: metadataSessionId,
+				projectPath: sessionProjectPath ? normalizeProjectPath(sessionProjectPath) : '',
+				timestamp: firstTimestamp,
+				modifiedAt: new Date(stats.mtimeMs).toISOString(),
+				firstMessage: previewMessage.slice(
+					0,
+					CODEX_SESSION_PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH
+				),
+				messageCount,
+				sizeBytes: stats.size,
+				inputTokens: totalInputTokens,
+				outputTokens: totalOutputTokens,
+				cacheReadTokens: totalCachedTokens,
+				cacheCreationTokens: 0,
+				durationSeconds,
+			};
+		} catch (error) {
+			logger.error(`Error reading remote Codex session file: ${filePath}`, LOG_CONTEXT, error);
+			return null;
+		}
+	}
+
+	async listSessions(
+		projectPath: string,
+		sshConfig?: SshRemoteConfig
+	): Promise<AgentSessionInfo[]> {
+		// Use SSH remote access if config provided
+		if (sshConfig) {
+			return this.listSessionsRemote(projectPath, sshConfig);
+		}
 		const allSessionFiles = await this.findAllSessionFiles();
 
 		const cache = (await loadCodexSessionCache()) || {
@@ -589,11 +861,60 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		return sessions;
 	}
 
+	/**
+	 * List sessions from remote host via SSH
+	 */
+	private async listSessionsRemote(
+		projectPath: string,
+		sshConfig: SshRemoteConfig
+	): Promise<AgentSessionInfo[]> {
+		const allSessionFiles = await this.findAllSessionFilesRemote(sshConfig);
+
+		if (allSessionFiles.length === 0) {
+			logger.info(`No Codex sessions found on remote`, LOG_CONTEXT);
+			return [];
+		}
+
+		const sessions: AgentSessionInfo[] = [];
+
+		for (const { filePath, filename } of allSessionFiles) {
+			// Get file stats via SSH
+			const statResult = await statRemote(filePath, sshConfig);
+			if (!statResult.success || !statResult.data) {
+				logger.error(`Error stating remote Codex session file: ${filename}`, LOG_CONTEXT);
+				continue;
+			}
+
+			const stats = { size: statResult.data.size, mtimeMs: statResult.data.mtime };
+			if (stats.size === 0) continue;
+
+			const sessionId = extractSessionIdFromFilename(filename) || filename;
+			const session = await this.parseSessionFileRemote(filePath, sessionId, stats, sshConfig);
+
+			if (session) {
+				if (session.projectPath && isSessionForProject(session.projectPath, projectPath)) {
+					sessions.push(session);
+				}
+			}
+		}
+
+		// Sort by modified date (newest first)
+		sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+		logger.info(
+			`Found ${sessions.length} Codex sessions for project: ${projectPath} (remote via SSH)`,
+			LOG_CONTEXT
+		);
+
+		return sessions;
+	}
+
 	async listSessionsPaginated(
 		projectPath: string,
-		options?: SessionListOptions
+		options?: SessionListOptions,
+		sshConfig?: SshRemoteConfig
 	): Promise<PaginatedSessionsResult> {
-		const allSessions = await this.listSessions(projectPath);
+		const allSessions = await this.listSessions(projectPath, sshConfig);
 		const { cursor, limit = 100 } = options || {};
 
 		let startIndex = 0;
@@ -617,18 +938,38 @@ export class CodexSessionStorage implements AgentSessionStorage {
 	async readSessionMessages(
 		_projectPath: string,
 		sessionId: string,
-		options?: SessionReadOptions
+		options?: SessionReadOptions,
+		sshConfig?: SshRemoteConfig
 	): Promise<SessionMessagesResult> {
-		// Find the session file by sessionId
-		const sessionFilePath = await this.findSessionFile(sessionId);
+		// Get session file content either locally or via SSH
+		let content: string;
 
-		if (!sessionFilePath) {
-			logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
-			return { messages: [], total: 0, hasMore: false };
+		if (sshConfig) {
+			// For SSH, find the session file remotely
+			const sessionFilePath = await this.findSessionFileRemote(sessionId, sshConfig);
+			if (!sessionFilePath) {
+				logger.warn(`Codex session file not found on remote: ${sessionId}`, LOG_CONTEXT);
+				return { messages: [], total: 0, hasMore: false };
+			}
+			const result = await readFileRemote(sessionFilePath, sshConfig);
+			if (!result.success || !result.data) {
+				logger.error(`Failed to read remote Codex session: ${sessionId} - ${result.error}`, LOG_CONTEXT);
+				return { messages: [], total: 0, hasMore: false };
+			}
+			content = result.data;
+		} else {
+			// Find the session file by sessionId locally
+			const sessionFilePath = await this.findSessionFile(sessionId);
+
+			if (!sessionFilePath) {
+				logger.warn(`Codex session file not found: ${sessionId}`, LOG_CONTEXT);
+				return { messages: [], total: 0, hasMore: false };
+			}
+
+			content = await fs.readFile(sessionFilePath, 'utf-8');
 		}
 
 		try {
-			const content = await fs.readFile(sessionFilePath, 'utf-8');
 			const lines = content.split('\n').filter((l) => l.trim());
 
 			const messages: SessionMessage[] = [];
@@ -785,22 +1126,32 @@ export class CodexSessionStorage implements AgentSessionStorage {
 	async searchSessions(
 		projectPath: string,
 		query: string,
-		searchMode: SessionSearchMode
+		searchMode: SessionSearchMode,
+		sshConfig?: SshRemoteConfig
 	): Promise<SessionSearchResult[]> {
 		if (!query.trim()) {
 			return [];
 		}
 
-		const sessions = await this.listSessions(projectPath);
+		const sessions = await this.listSessions(projectPath, sshConfig);
 		const searchLower = query.toLowerCase();
 		const results: SessionSearchResult[] = [];
 
 		for (const session of sessions) {
-			const sessionFilePath = await this.findSessionFile(session.sessionId);
-			if (!sessionFilePath) continue;
+			let content: string;
 
 			try {
-				const content = await fs.readFile(sessionFilePath, 'utf-8');
+				if (sshConfig) {
+					const sessionFilePath = await this.findSessionFileRemote(session.sessionId, sshConfig);
+					if (!sessionFilePath) continue;
+					const result = await readFileRemote(sessionFilePath, sshConfig);
+					if (!result.success || !result.data) continue;
+					content = result.data;
+				} else {
+					const sessionFilePath = await this.findSessionFile(session.sessionId);
+					if (!sessionFilePath) continue;
+					content = await fs.readFile(sessionFilePath, 'utf-8');
+				}
 				const lines = content.split('\n').filter((l) => l.trim());
 
 				let titleMatch = false;
@@ -905,9 +1256,14 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		return results;
 	}
 
-	getSessionPath(_projectPath: string, _sessionId: string): string | null {
+	getSessionPath(
+		_projectPath: string,
+		_sessionId: string,
+		_sshConfig?: SshRemoteConfig
+	): string | null {
 		// Synchronous version - returns null since we need async file search
 		// Use findSessionFile for async access
+		// Note: For SSH, would need to use findSessionFileRemote which is async
 		return null;
 	}
 
@@ -941,12 +1297,53 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		return null;
 	}
 
+	/**
+	 * Find the file path for a session by ID on a remote host via SSH
+	 */
+	private async findSessionFileRemote(
+		sessionId: string,
+		sshConfig: SshRemoteConfig
+	): Promise<string | null> {
+		const allFiles = await this.findAllSessionFilesRemote(sshConfig);
+
+		for (const { filePath, filename } of allFiles) {
+			const fileSessionId = extractSessionIdFromFilename(filename);
+			if (fileSessionId === sessionId) {
+				return filePath;
+			}
+
+			// Also check by reading first line for session ID
+			try {
+				const result = await readFileRemote(filePath, sshConfig);
+				if (result.success && result.data) {
+					const firstLine = result.data.split('\n')[0];
+					if (firstLine) {
+						const metadata = JSON.parse(firstLine) as CodexSessionMetadata;
+						if (metadata.id === sessionId) {
+							return filePath;
+						}
+					}
+				}
+			} catch {
+				// Skip files that can't be read
+			}
+		}
+
+		return null;
+	}
+
 	async deleteMessagePair(
 		_projectPath: string,
 		sessionId: string,
 		userMessageUuid: string,
-		fallbackContent?: string
+		fallbackContent?: string,
+		sshConfig?: SshRemoteConfig
 	): Promise<{ success: boolean; error?: string; linesRemoved?: number }> {
+		// Delete operations on remote sessions are not supported
+		if (sshConfig) {
+			logger.warn('Delete message pair not supported for SSH remote sessions', LOG_CONTEXT);
+			return { success: false, error: 'Delete not supported for remote sessions' };
+		}
 		const sessionFilePath = await this.findSessionFile(sessionId);
 
 		if (!sessionFilePath) {
