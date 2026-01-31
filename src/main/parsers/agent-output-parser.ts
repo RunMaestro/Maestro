@@ -41,7 +41,6 @@ const VALID_TOOL_TYPES: ToolType[] = [
 	'codex',
 	'terminal',
 	'claude',
-	'aider',
 	'factory-droid',
 ];
 

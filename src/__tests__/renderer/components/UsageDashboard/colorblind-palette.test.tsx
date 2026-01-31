@@ -36,7 +36,7 @@ const mockData: StatsAggregation = {
 	avgDuration: 72000, // 72 seconds
 	byAgent: {
 		'claude-code': { count: 30, duration: 2000000 },
-		aider: { count: 20, duration: 1600000 },
+		codex: { count: 20, duration: 1600000 },
 	},
 	bySource: { user: 35, auto: 15 },
 	byDay: [

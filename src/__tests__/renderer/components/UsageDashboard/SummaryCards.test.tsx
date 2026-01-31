@@ -27,7 +27,7 @@ const mockData: StatsAggregation = {
 	avgDuration: 48000, // 48 seconds in ms
 	byAgent: {
 		'claude-code': { count: 100, duration: 5000000 },
-		aider: { count: 50, duration: 2200000 },
+		codex: { count: 50, duration: 2200000 },
 	},
 	bySource: { user: 120, auto: 30 },
 	byLocation: { local: 120, remote: 30 },
@@ -37,7 +37,7 @@ const mockData: StatsAggregation = {
 	],
 	byHour: [],
 	totalSessions: 25,
-	sessionsByAgent: { 'claude-code': 15, aider: 10 },
+	sessionsByAgent: { 'claude-code': 15, codex: 10 },
 	sessionsByDay: [],
 	avgSessionDuration: 288000,
 	byAgentByDay: {},
@@ -240,7 +240,7 @@ describe('SummaryCards', () => {
 		it('identifies the most active agent by count', () => {
 			render(<SummaryCards data={mockData} theme={theme} />);
 
-			// claude-code has 100 queries, aider has 50
+			// claude-code has 100 queries, codex has 50
 			expect(screen.getByText('claude-code')).toBeInTheDocument();
 		});
 

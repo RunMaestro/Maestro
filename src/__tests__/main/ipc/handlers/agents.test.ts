@@ -670,7 +670,7 @@ describe('agents IPC handlers', () => {
 			mockAgentConfigsStore.get.mockReturnValue({
 				'claude-code': { customPath: '/custom/claude' },
 				opencode: { customPath: '/custom/opencode' },
-				aider: { model: 'gpt-4' }, // No customPath
+				codex: { model: 'gpt-4' }, // No customPath
 			});
 
 			const handler = handlers.get('agents:getAllCustomPaths');
@@ -757,7 +757,7 @@ describe('agents IPC handlers', () => {
 			mockAgentConfigsStore.get.mockReturnValue({
 				'claude-code': { customArgs: '--verbose' },
 				opencode: { customArgs: '--debug' },
-				aider: { model: 'gpt-4' }, // No customArgs
+				codex: { model: 'gpt-4' }, // No customArgs
 			});
 
 			const handler = handlers.get('agents:getAllCustomArgs');
@@ -846,7 +846,7 @@ describe('agents IPC handlers', () => {
 			mockAgentConfigsStore.get.mockReturnValue({
 				'claude-code': { customEnvVars: { KEY1: 'val1' } },
 				opencode: { customEnvVars: { KEY2: 'val2' } },
-				aider: { model: 'gpt-4' }, // No customEnvVars
+				codex: { model: 'gpt-4' }, // No customEnvVars
 			});
 
 			const handler = handlers.get('agents:getAllCustomEnvVars');

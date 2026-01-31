@@ -169,7 +169,7 @@ describe('sessionValidation', () => {
 						toolType: 'claude-code',
 					}),
 				];
-				// Different provider (aider) also gets a warning now
+				// Different provider (factory-droid) also gets a warning now
 				const result = validateNewSession(
 					'Factory Droid Agent',
 					'/Users/test/project',

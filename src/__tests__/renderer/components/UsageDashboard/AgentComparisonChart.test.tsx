@@ -165,7 +165,7 @@ describe('AgentComparisonChart', () => {
 			const agentLabels = container.querySelectorAll('.w-28.truncate');
 			const agentNames = Array.from(agentLabels).map((el) => el.textContent);
 
-			// In duration mode, claude-code has highest duration (2000000), then aider (1600000), then terminal (500000)
+			// In duration mode, claude-code has highest duration (2000000), then codex (1600000), then terminal (500000)
 			expect(agentNames[0]).toBe('claude-code');
 			expect(agentNames[1]).toBe('factory-droid');
 			expect(agentNames[2]).toBe('terminal');
