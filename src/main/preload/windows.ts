@@ -19,6 +19,7 @@ import type {
 	CreateWindowRequest,
 	CreateWindowResponse,
 	MoveSessionRequest,
+	SessionsTransferredEvent,
 } from '../../shared/types/window';
 
 /**
@@ -255,6 +256,20 @@ export function createWindowsApi() {
 			const handler = (_: unknown, event: DropZoneHighlightEvent) => callback(event);
 			ipcRenderer.on('windows:dropZoneHighlight', handler);
 			return () => ipcRenderer.removeListener('windows:dropZoneHighlight', handler);
+		},
+
+		/**
+		 * Listen for sessions transferred events.
+		 * Fired when a secondary window is closed and its sessions are moved to this window.
+		 * Used to display a toast notification about the moved sessions.
+		 *
+		 * @param callback - Function to call when sessions are transferred to this window
+		 * @returns Cleanup function to remove the listener
+		 */
+		onSessionsTransferred: (callback: (event: SessionsTransferredEvent) => void): (() => void) => {
+			const handler = (_: unknown, event: SessionsTransferredEvent) => callback(event);
+			ipcRenderer.on('windows:sessionsTransferred', handler);
+			return () => ipcRenderer.removeListener('windows:sessionsTransferred', handler);
 		},
 	};
 }

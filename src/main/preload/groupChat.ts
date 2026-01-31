@@ -85,6 +85,7 @@ export function createGroupChatApi() {
 				name?: string;
 				moderatorAgentId?: string;
 				moderatorConfig?: ModeratorConfig;
+				initiatorWindowId?: string;
 			}
 		) => ipcRenderer.invoke('groupChat:update', id, updates),
 

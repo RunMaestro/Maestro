@@ -898,6 +898,66 @@ describe('MainPanel', () => {
 				isLoaded: true,
 			};
 		});
+
+		it('should show placeholder content when session is not in this window', () => {
+			// Configure mock to have a different session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['other-session'],
+				isLoaded: true,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			// Should show the placeholder message
+			expect(screen.getByText('Session open in another window')).toBeInTheDocument();
+			// Should NOT show the terminal output
+			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+			// Should NOT show the input area
+			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
+
+		it('should show full content when session is in this window', () => {
+			// Configure mock to have this session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['session-1'],
+				isLoaded: true,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			// Should NOT show the placeholder message
+			expect(screen.queryByText('Session open in another window')).not.toBeInTheDocument();
+			// Should show the terminal output
+			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
+			// Should show the input area
+			expect(screen.getByTestId('input-area')).toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
 	});
 
 	describe('Session UUID pill', () => {

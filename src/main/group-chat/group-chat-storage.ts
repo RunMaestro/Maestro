@@ -81,6 +81,11 @@ export interface GroupChat {
 	participants: GroupChatParticipant[];
 	logPath: string;
 	imagesDir: string;
+	/**
+	 * ID of the window that initiated/opened this group chat.
+	 * In multi-window mode, the Group Chat panel only appears in the initiating window.
+	 */
+	initiatorWindowId?: string;
 }
 
 /**
@@ -96,6 +101,7 @@ export type GroupChatUpdate = Partial<
 		| 'moderatorConfig'
 		| 'participants'
 		| 'updatedAt'
+		| 'initiatorWindowId'
 	>
 >;
 

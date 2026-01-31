@@ -13,6 +13,7 @@ import type {
 	GroupsData,
 	AgentConfigsData,
 	WindowState,
+	MultiWindowStoreData,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
@@ -83,6 +84,23 @@ export const WINDOW_STATE_DEFAULTS: WindowState = {
 	height: 900,
 	isMaximized: false,
 	isFullScreen: false,
+};
+
+/**
+ * Current schema version for multi-window state.
+ * Increment when making breaking changes that require migration.
+ */
+export const MULTI_WINDOW_SCHEMA_VERSION = 1;
+
+/**
+ * Default state for multi-window support.
+ * Note: Primary window will be created at runtime with a generated ID.
+ * This default represents an empty state before the app creates the first window.
+ */
+export const MULTI_WINDOW_STATE_DEFAULTS: MultiWindowStoreData = {
+	windows: [],
+	primaryWindowId: '',
+	version: MULTI_WINDOW_SCHEMA_VERSION,
 };
 
 export const CLAUDE_SESSION_ORIGINS_DEFAULTS: ClaudeSessionOriginsData = {

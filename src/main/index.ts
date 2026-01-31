@@ -17,7 +17,7 @@ import {
 	getSessionsStore,
 	getGroupsStore,
 	getAgentConfigsStore,
-	getWindowStateStore,
+	getMultiWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
@@ -47,6 +47,7 @@ import {
 	registerWebHandlers,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
+	registerWindowsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -196,7 +197,7 @@ if (crashReportingEnabled && !isDevelopment) {
 const sessionsStore = getSessionsStore();
 const groupsStore = getGroupsStore();
 const agentConfigsStore = getAgentConfigsStore();
-const windowStateStore = getWindowStateStore();
+const multiWindowStateStore = getMultiWindowStateStore();
 const claudeSessionOriginsStore = getClaudeSessionOriginsStore();
 const agentSessionOriginsStore = getAgentSessionOriginsStore();
 
@@ -222,8 +223,9 @@ const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10
 const devServerUrl = `http://localhost:${devServerPort}`;
 
 // Create window manager with dependency injection (Phase 4 refactoring)
+// Now uses multi-window state store for supporting multiple windows
 const windowManager = createWindowManager({
-	windowStateStore,
+	multiWindowStateStore,
 	isDevelopment,
 	preloadPath: path.join(__dirname, 'preload.js'),
 	rendererPath: path.join(__dirname, '../renderer/index.html'),
@@ -244,11 +246,55 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
+// - WindowRegistry integration for multi-window support
+
+/**
+ * Create a single primary window (backward-compatible fallback).
+ * Used when no saved window state exists or when restoring from the dock on macOS.
+ */
 function createWindow() {
+	// Create the primary window through the WindowRegistry
+	// First window created is automatically marked as primary (isMain: true)
 	mainWindow = windowManager.createWindow();
-	// Handle closed event to clear the reference
+	setupPrimaryWindowCloseHandler();
+}
+
+/**
+ * Restore windows from saved state, validating session IDs.
+ * Falls back to creating a single primary window if no saved state exists.
+ */
+function restoreWindows() {
+	// Get existing session IDs from the sessions store to validate saved window state
+	const sessions = sessionsStore.get('sessions', []);
+	const existingSessionIds = sessions.map((s: { id: string }) => s.id);
+
+	logger.info('Restoring windows from saved state', 'Startup', {
+		existingSessionCount: existingSessionIds.length,
+	});
+
+	// Restore windows, filtering out deleted sessions
+	const result = windowManager.restoreWindows(existingSessionIds);
+	mainWindow = result.primaryWindow;
+	setupPrimaryWindowCloseHandler();
+
+	logger.info('Window restoration complete', 'Startup', {
+		wasRestored: result.wasRestored,
+		windowCount: result.restoredWindowIds.length,
+	});
+}
+
+/**
+ * Set up the close handler for the primary window.
+ * Design decision: closing the primary window quits the app on all platforms.
+ */
+function setupPrimaryWindowCloseHandler() {
+	if (!mainWindow) return;
+
 	mainWindow.on('closed', () => {
 		mainWindow = null;
+		// Primary window was closed - quit the application
+		logger.info('Primary window closed, quitting application', 'Window');
+		app.quit();
 	});
 }
 
@@ -335,9 +381,9 @@ app.whenReady().then(async () => {
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
 
-	// Create main window
-	logger.info('Creating main window', 'Startup');
-	createWindow();
+	// Restore windows from saved state (or create fresh primary window if no saved state)
+	logger.info('Restoring windows from saved state', 'Startup');
+	restoreWindows();
 
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
@@ -355,7 +401,16 @@ app.whenReady().then(async () => {
 	});
 });
 
+// Handle window-all-closed event for multi-window support
+// - On macOS: Standard behavior is to keep app running when all windows close
+//   However, if primary window closes, app.quit() is called from the closed handler
+// - On non-macOS: Quit when all windows are closed (standard behavior)
+// This handler is mainly for cases where secondary windows are closed after primary
+// has already triggered app.quit(), or on non-macOS systems
 app.on('window-all-closed', () => {
+	// On non-macOS, quit when all windows are closed
+	// On macOS, the app stays running (can reopen via dock) but note that
+	// closing the primary window triggers app.quit() directly from its 'closed' handler
 	if (process.platform !== 'darwin') {
 		app.quit();
 	}
@@ -581,6 +636,11 @@ function setupIpcHandlers() {
 	registerLeaderboardHandlers({
 		app,
 		settingsStore: store,
+	});
+
+	// Register windows handlers (multi-window support - GitHub issue #133)
+	registerWindowsHandlers({
+		createSecondaryWindow: windowManager.createSecondaryWindow,
 	});
 }
 

@@ -150,10 +150,19 @@ export interface SessionWizardState {
 	toolExecutions?: Array<{ toolName: string; state?: unknown; timestamp: number }>;
 }
 
+/**
+ * Shortcut scope indicates whether a shortcut operates at the global (app-wide)
+ * or window (current window only) level. This helps users understand which
+ * shortcuts affect all windows vs. just the current one.
+ */
+export type ShortcutScope = 'global' | 'window';
+
 export interface Shortcut {
 	id: string;
 	label: string;
 	keys: string[];
+	/** Scope of the shortcut: 'global' affects all windows, 'window' affects current window only */
+	scope?: ShortcutScope;
 }
 
 export interface FileArtifact {

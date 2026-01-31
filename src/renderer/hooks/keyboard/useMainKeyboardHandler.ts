@@ -619,6 +619,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					ctx.toggleTabUnread();
 					trackShortcut('toggleTabUnread');
 				}
+				if (ctx.isTabShortcut(e, 'moveToNewWindow')) {
+					e.preventDefault();
+					// Only allow if handler is available and not the last session in the primary window
+					if (ctx.handleMoveToNewWindow) {
+						const activeTab = ctx.activeSession.aiTabs.find(
+							(t: AITab) => t.id === ctx.activeSession.activeTabId
+						);
+						if (activeTab) {
+							ctx.handleMoveToNewWindow(activeTab.id);
+							trackShortcut('moveToNewWindow');
+						}
+					}
+				}
 				if (ctx.isTabShortcut(e, 'nextTab')) {
 					e.preventDefault();
 					const result = ctx.navigateToNextTab(ctx.activeSession, ctx.showUnreadOnly);

@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
+import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Square } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -35,6 +35,10 @@ export interface SessionItemProps {
 	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
+	/** Window number badge (1-9) for multi-window support - shows which window has this session open */
+	windowNumber?: number | null;
+	/** Whether this session is open in a different window (shows dimmed indicator) */
+	isInOtherWindow?: boolean;
 
 	// Handlers
 	onSelect: () => void;
@@ -75,6 +79,8 @@ export const SessionItem = memo(function SessionItem({
 	gitFileCount,
 	isInBatch = false,
 	jumpNumber,
+	windowNumber,
+	isInOtherWindow = false,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -264,6 +270,20 @@ export const SessionItem = memo(function SessionItem({
 					>
 						<Bot className="w-2.5 h-2.5" />
 						AUTO
+					</div>
+				)}
+
+				{/* Window Number Badge - shows when session is open in another window */}
+				{windowNumber !== null && windowNumber !== undefined && isInOtherWindow && (
+					<div
+						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold"
+						style={{
+							backgroundColor: theme.colors.accent + '30',
+							color: theme.colors.accent,
+						}}
+						title={`Open in Window ${windowNumber}`}
+					>
+						<Square className="w-2.5 h-2.5" />W{windowNumber}
 					</div>
 				)}
 

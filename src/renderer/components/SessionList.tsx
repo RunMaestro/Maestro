@@ -54,6 +54,8 @@ import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
 import { useLiveOverlay, useClickOutside } from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
+import { useWindow } from '../contexts/WindowContext';
+import type { WindowInfo } from '../../shared/types/window';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -1145,6 +1147,62 @@ function SessionListInner(props: SessionListProps) {
 	const [filterModeInitialized, setFilterModeInitialized] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
 
+	// Multi-window support - track which window each session is open in
+	const { windowId: currentWindowId } = useWindow();
+	const [windowInfoList, setWindowInfoList] = useState<WindowInfo[]>([]);
+
+	// Fetch window info on mount and periodically
+	useEffect(() => {
+		const fetchWindowInfo = async () => {
+			try {
+				const windows = await window.maestro.windows.list();
+				setWindowInfoList(windows);
+			} catch (error) {
+				console.error('[SessionList] Failed to fetch window info:', error);
+			}
+		};
+
+		// Initial fetch
+		fetchWindowInfo();
+
+		// Refresh every 2 seconds for window changes
+		const interval = setInterval(fetchWindowInfo, 2000);
+
+		return () => clearInterval(interval);
+	}, []);
+
+	// Compute which window each session is in (maps sessionId -> windowNumber)
+	// Returns null if session is not open in any window, or if it's in the current window
+	const sessionWindowMap = useMemo(() => {
+		const map = new Map<string, { windowNumber: number; windowId: string } | null>();
+
+		// Sort windows so main window is #1 and others are numbered sequentially
+		const sortedWindows = [...windowInfoList].sort((a, b) => {
+			if (a.isMain) return -1;
+			if (b.isMain) return 1;
+			return a.id.localeCompare(b.id);
+		});
+
+		// Build a window ID to number map
+		const windowIdToNumber = new Map<string, number>();
+		sortedWindows.forEach((win, idx) => {
+			windowIdToNumber.set(win.id, idx + 1);
+		});
+
+		// Map each session to its window info
+		sortedWindows.forEach((win) => {
+			const windowNumber = windowIdToNumber.get(win.id) || 1;
+			win.sessionIds.forEach((sessionId) => {
+				// Only track if it's in a different window than current
+				if (win.id !== currentWindowId) {
+					map.set(sessionId, { windowNumber, windowId: win.id });
+				}
+			});
+		});
+
+		return map;
+	}, [windowInfoList, currentWindowId]);
+
 	// Live overlay state (extracted hook)
 	const {
 		liveOverlayOpen,
@@ -1405,10 +1463,20 @@ function SessionListInner(props: SessionListProps) {
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessions.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => {
+				// Check if session is open in another window
+				const windowInfo = sessionWindowMap.get(s.id);
+				if (windowInfo) {
+					// Session is in another window - focus that window instead
+					window.maestro.windows.focusWindow(windowInfo.windowId);
+				} else {
+					// Session is in this window or not open anywhere - select it
+					setActiveSessionId(s.id);
+				}
+			});
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessions, setActiveSessionId, sessionWindowMap]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
@@ -1466,6 +1534,9 @@ function SessionListInner(props: SessionListProps) {
 		// When wrapped, use 'ungrouped' styling for flat sessions (no mx-3, consistent with grouped look)
 		const effectiveVariant = needsWorktreeWrapper && variant === 'flat' ? 'ungrouped' : variant;
 
+		// Get window info for the session (if in another window)
+		const sessionWindowInfo = sessionWindowMap.get(session.id);
+
 		const content = (
 			<>
 				{/* Parent session - no chevron, maintains alignment */}
@@ -1483,6 +1554,8 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					windowNumber={sessionWindowInfo?.windowNumber ?? null}
+					isInOtherWindow={!!sessionWindowInfo}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -1531,6 +1604,7 @@ function SessionListInner(props: SessionListProps) {
 								const childGlobalIdx = sortedSessionIndexById.get(child.id) ?? -1;
 								const isChildKeyboardSelected =
 									activeFocus === 'sidebar' && childGlobalIdx === selectedSidebarIndex;
+								const childWindowInfo = sessionWindowMap.get(child.id);
 								return (
 									<SessionItem
 										key={`worktree-${session.id}-${child.id}`}
@@ -1545,6 +1619,8 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										windowNumber={childWindowInfo?.windowNumber ?? null}
+										isInOtherWindow={!!childWindowInfo}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}

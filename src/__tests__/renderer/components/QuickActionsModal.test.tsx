@@ -1360,4 +1360,126 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Context: Send to Agent')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('Multi-window session switching', () => {
+		it('shows "(in another window)" hint for sessions not in current window', () => {
+			const session1 = createMockSession({ id: 'session-1', name: 'Session One' });
+			const session2 = createMockSession({ id: 'session-2', name: 'Session Two' });
+			const props = createDefaultProps({
+				sessions: [session1, session2],
+				windowSessionIds: ['session-1'], // Only session-1 is in this window
+				onJumpToSession: vi.fn().mockResolvedValue(true),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			// Session 1 is in this window - should show state only
+			expect(screen.getByText('IDLE')).toBeInTheDocument();
+
+			// Session 2 is in another window - should show "(in another window)"
+			expect(screen.getByText('IDLE (in another window)')).toBeInTheDocument();
+		});
+
+		it('does not show "(in another window)" when windowSessionIds is empty (fallback mode)', () => {
+			const session1 = createMockSession({ id: 'session-1', name: 'Session One' });
+			const session2 = createMockSession({ id: 'session-2', name: 'Session Two' });
+			const props = createDefaultProps({
+				sessions: [session1, session2],
+				windowSessionIds: [], // Empty - fallback to showing all sessions as "in this window"
+				onJumpToSession: vi.fn().mockResolvedValue(true),
+			});
+			render(<QuickActionsModal {...props} />);
+
+			// Both sessions should show without "(in another window)"
+			const idleTexts = screen.getAllByText('IDLE');
+			expect(idleTexts).toHaveLength(2);
+			expect(screen.queryByText(/in another window/)).not.toBeInTheDocument();
+		});
+
+		it('uses onJumpToSession when provided for session jump actions', async () => {
+			const onJumpToSession = vi.fn().mockResolvedValue(true);
+			const props = createDefaultProps({
+				onJumpToSession,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			await waitFor(() => {
+				expect(onJumpToSession).toHaveBeenCalledWith('session-1');
+				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			});
+		});
+
+		it('falls back to setActiveSessionId when onJumpToSession is not provided', () => {
+			const props = createDefaultProps({
+				// onJumpToSession not provided
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('auto-expands collapsed group when onJumpToSession returns true (session in this window)', async () => {
+			const onJumpToSession = vi.fn().mockResolvedValue(true);
+			const session = createMockSession({ groupId: 'group-1' });
+			const group = createMockGroup({ collapsed: true });
+			const props = createDefaultProps({
+				sessions: [session],
+				groups: [group],
+				onJumpToSession,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			await waitFor(() => {
+				expect(onJumpToSession).toHaveBeenCalledWith('session-1');
+				expect(props.setGroups).toHaveBeenCalled();
+				// Verify group was expanded
+				const setGroupsFn = props.setGroups.mock.calls[0][0];
+				const result = setGroupsFn([group]);
+				expect(result[0].collapsed).toBe(false);
+			});
+		});
+
+		it('does not auto-expand collapsed group when onJumpToSession returns false (session in another window)', async () => {
+			const onJumpToSession = vi.fn().mockResolvedValue(false);
+			const session = createMockSession({ groupId: 'group-1' });
+			const group = createMockGroup({ collapsed: true });
+			const props = createDefaultProps({
+				sessions: [session],
+				groups: [group],
+				onJumpToSession,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			await waitFor(() => {
+				expect(onJumpToSession).toHaveBeenCalledWith('session-1');
+			});
+
+			// setGroups should not have been called because onJumpToSession returned false
+			expect(props.setGroups).not.toHaveBeenCalled();
+		});
+
+		it('still works with setActiveSessionId fallback for grouped sessions', () => {
+			const session = createMockSession({ groupId: 'group-1' });
+			const group = createMockGroup({ collapsed: true });
+			const props = createDefaultProps({
+				sessions: [session],
+				groups: [group],
+				// onJumpToSession not provided - should use setActiveSessionId fallback
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Jump to: Test Session'));
+
+			expect(props.setActiveSessionId).toHaveBeenCalledWith('session-1');
+			expect(props.setGroups).toHaveBeenCalled();
+		});
+	});
 });

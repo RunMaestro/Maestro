@@ -14,7 +14,7 @@
  * - Session move operations are serialized via mutex to prevent race conditions
  */
 
-import { BrowserWindow } from 'electron';
+import { BrowserWindow, screen } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './utils/logger';
 import { getMultiWindowStateStore } from './stores';
@@ -293,6 +293,10 @@ export class WindowRegistry {
 		const isMaximized = browserWindow.isMaximized();
 		const isFullScreen = browserWindow.isFullScreen();
 
+		// Get the display ID for the window's current position
+		// This enables proper restoration on multi-monitor setups
+		const displayId = this.getDisplayIdForBounds(bounds);
+
 		const windowState: MultiWindowWindowState = {
 			id: windowId,
 			x: bounds.x,
@@ -307,6 +311,7 @@ export class WindowRegistry {
 			// Default to false; will be updated when renderer syncs state
 			leftPanelCollapsed: false,
 			rightPanelCollapsed: false,
+			displayId,
 		};
 
 		// Check if stores are initialized (for testing scenarios)
@@ -345,9 +350,37 @@ export class WindowRegistry {
 				isMaximized,
 				isFullScreen,
 				sessionCount: entry.sessionIds.length,
+				displayId,
 			});
 		} catch (error) {
 			logger.error(`Failed to save window state: ${windowId}`, LOG_CONTEXT, { error });
+		}
+	}
+
+	/**
+	 * Gets the display ID for a given window bounds.
+	 * Uses the display that contains the window's center point.
+	 *
+	 * @param bounds - The window bounds with x, y position
+	 * @returns The display ID, or undefined if no display found
+	 */
+	private getDisplayIdForBounds(bounds: {
+		x: number;
+		y: number;
+		width: number;
+		height: number;
+	}): number | undefined {
+		try {
+			// Calculate center point of window
+			const centerX = bounds.x + bounds.width / 2;
+			const centerY = bounds.y + bounds.height / 2;
+
+			// Get the display at the window's center point
+			const display = screen.getDisplayNearestPoint({ x: centerX, y: centerY });
+			return display?.id;
+		} catch (error) {
+			logger.warn('Failed to get display ID for window bounds', LOG_CONTEXT, { error, bounds });
+			return undefined;
 		}
 	}
 

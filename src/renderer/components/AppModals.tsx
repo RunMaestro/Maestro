@@ -806,6 +806,10 @@ export interface AppUtilityModalsProps {
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
 
+	// Multi-window support (for QuickActionsModal)
+	windowSessionIds?: string[];
+	onJumpToSession?: (sessionId: string) => Promise<boolean>;
+
 	// LightboxModal
 	lightboxImage: string | null;
 	lightboxImages: string[];
@@ -995,6 +999,9 @@ export function AppUtilityModals({
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile,
 	onOpenLastDocumentGraph,
+	// Multi-window support
+	windowSessionIds,
+	onJumpToSession,
 	// LightboxModal
 	lightboxImage,
 	lightboxImages,
@@ -1145,6 +1152,8 @@ export function AppUtilityModals({
 					onOpenPlaybookExchange={onOpenMarketplace}
 					lastGraphFocusFile={lastGraphFocusFile}
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+					windowSessionIds={windowSessionIds}
+					onJumpToSession={onJumpToSession}
 				/>
 			)}
 
@@ -1869,6 +1878,9 @@ export interface AppModalsProps {
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
+	// Multi-window support (for QuickActionsModal)
+	windowSessionIds?: string[];
+	onJumpToSession?: (sessionId: string) => Promise<boolean>;
 	lightboxImage: string | null;
 	lightboxImages: string[];
 	stagedImages: string[];
@@ -2186,6 +2198,9 @@ export function AppModals(props: AppModalsProps) {
 		// Document Graph - quick re-open last graph
 		lastGraphFocusFile,
 		onOpenLastDocumentGraph,
+		// Multi-window support
+		windowSessionIds,
+		onJumpToSession,
 		lightboxImage,
 		lightboxImages,
 		stagedImages,
@@ -2487,6 +2502,8 @@ export function AppModals(props: AppModalsProps) {
 				onPublishGist={onPublishGist}
 				lastGraphFocusFile={lastGraphFocusFile}
 				onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+				windowSessionIds={windowSessionIds}
+				onJumpToSession={onJumpToSession}
 				lightboxImage={lightboxImage}
 				lightboxImages={lightboxImages}
 				stagedImages={stagedImages}

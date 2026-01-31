@@ -92,7 +92,9 @@ export interface AgentConfigsData {
 }
 
 // ============================================================================
-// Window State Store (local-only, per-device)
+// Window State Store (local-only, per-device) - LEGACY
+// Kept for backwards compatibility with existing single-window state files.
+// New installations use MultiWindowStoreData instead.
 // ============================================================================
 
 export interface WindowState {
@@ -102,6 +104,74 @@ export interface WindowState {
 	height: number;
 	isMaximized: boolean;
 	isFullScreen: boolean;
+}
+
+// ============================================================================
+// Multi-Window State Store (local-only, per-device)
+// Supports multiple windows with session assignments.
+// ============================================================================
+
+/**
+ * Represents the serializable state of a single window for persistence.
+ * This is the store-specific version that matches the shared WindowState type
+ * but is defined separately to keep store types self-contained.
+ */
+export interface MultiWindowWindowState {
+	/** Unique identifier for the window */
+	id: string;
+
+	/** Window X position on screen */
+	x: number;
+
+	/** Window Y position on screen */
+	y: number;
+
+	/** Window width in pixels */
+	width: number;
+
+	/** Window height in pixels */
+	height: number;
+
+	/** Whether the window is maximized */
+	isMaximized: boolean;
+
+	/** Whether the window is in full-screen mode */
+	isFullScreen: boolean;
+
+	/** IDs of sessions open in this window */
+	sessionIds: string[];
+
+	/** ID of the currently active session in this window */
+	activeSessionId?: string;
+
+	/** Whether the left panel (session list) is collapsed */
+	leftPanelCollapsed: boolean;
+
+	/** Whether the right panel (files, history, auto run) is collapsed */
+	rightPanelCollapsed: boolean;
+
+	/**
+	 * Electron display ID where the window was last positioned.
+	 * Used to restore windows to their original display on restart.
+	 * If the display is no longer available, the window will be moved
+	 * to the primary display gracefully.
+	 */
+	displayId?: number;
+}
+
+/**
+ * Store schema for multi-window state persistence.
+ * Supports multiple windows with session assignments and restoration on restart.
+ */
+export interface MultiWindowStoreData {
+	/** Array of all window states */
+	windows: MultiWindowWindowState[];
+
+	/** ID of the primary (main) window that cannot be closed */
+	primaryWindowId: string;
+
+	/** Schema version for migration support */
+	version: number;
 }
 
 // ============================================================================

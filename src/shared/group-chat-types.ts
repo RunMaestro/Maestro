@@ -94,6 +94,13 @@ export interface GroupChat {
 	logPath: string;
 	imagesDir: string;
 	draftMessage?: string;
+	/**
+	 * ID of the window that initiated/opened this group chat.
+	 * In multi-window mode, the Group Chat panel only appears in the initiating window.
+	 * When sessions in other windows participate, they remain in their windows but
+	 * don't show the Group Chat panel UI.
+	 */
+	initiatorWindowId?: string;
 }
 
 /**

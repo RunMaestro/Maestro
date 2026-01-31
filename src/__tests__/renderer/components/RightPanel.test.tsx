@@ -32,6 +32,28 @@ vi.mock('lucide-react', () => ({
 			Loading
 		</span>
 	),
+	Columns: () => <span data-testid="columns-icon">Columns</span>,
+	GitBranch: () => <span data-testid="git-branch-icon">GitBranch</span>,
+}));
+
+// Mock WindowContext to avoid Provider requirement
+// Default mock returns state that allows all sessions (backwards compatibility behavior)
+let mockWindowContextState = {
+	windowId: 'window-1',
+	isMainWindow: true,
+	sessionIds: [] as string[], // Empty array means show all sessions
+	activeSessionId: null as string | null,
+	isLoaded: true,
+	openSession: vi.fn(),
+	closeTab: vi.fn(),
+	moveSessionToNewWindow: vi.fn(),
+	setActiveSession: vi.fn(),
+	refresh: vi.fn(),
+};
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindow: () => mockWindowContextState,
+	WindowProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 describe('RightPanel', () => {
@@ -184,6 +206,93 @@ describe('RightPanel', () => {
 			const { container } = render(<RightPanel {...props} />);
 			const panel = container.firstChild as HTMLElement;
 			expect(panel.style.width).toBe('400px');
+		});
+
+		it('should show placeholder when session is not in this window', () => {
+			// Configure mock to have a different session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['other-session'],
+				isLoaded: true,
+			};
+
+			const props = createDefaultProps({ activeRightTab: 'files' });
+			render(<RightPanel {...props} />);
+
+			// Should show the placeholder message
+			expect(screen.getByText('Session open in another window')).toBeInTheDocument();
+			// Should NOT show the file explorer panel
+			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
+
+		it('should show full content when session is in this window', () => {
+			// Configure mock to have this session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['session-1'],
+				isLoaded: true,
+			};
+
+			const props = createDefaultProps({ activeRightTab: 'files' });
+			render(<RightPanel {...props} />);
+
+			// Should NOT show the placeholder message
+			expect(screen.queryByText('Session open in another window')).not.toBeInTheDocument();
+			// Should show the file explorer panel
+			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
+
+		it('should show full content when window has no assigned sessions (backwards compatibility)', () => {
+			// Configure mock with empty sessionIds (no sessions assigned to window)
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+				isLoaded: true,
+			};
+
+			const props = createDefaultProps({ activeRightTab: 'files' });
+			render(<RightPanel {...props} />);
+
+			// Should NOT show the placeholder
+			expect(screen.queryByText('Session open in another window')).not.toBeInTheDocument();
+			// Should show the file explorer panel (show all behavior)
+			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
+		});
+
+		it('should show full content when window state is not loaded yet', () => {
+			// Configure mock with isLoaded=false (still loading)
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['other-session'], // Even if different sessions, should still show while loading
+				isLoaded: false,
+			};
+
+			const props = createDefaultProps({ activeRightTab: 'files' });
+			render(<RightPanel {...props} />);
+
+			// Should show file explorer panel while loading (optimistic default)
+			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
+			// Should NOT show the placeholder
+			expect(screen.queryByText('Session open in another window')).not.toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+				isLoaded: true,
+			};
 		});
 	});
 

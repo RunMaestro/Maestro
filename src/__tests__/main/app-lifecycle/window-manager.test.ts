@@ -65,9 +65,16 @@ const mockHandle = vi.fn();
 
 // Mock screen
 const mockScreen = {
-	getAllDisplays: vi.fn().mockReturnValue([{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } }]),
+	getAllDisplays: vi
+		.fn()
+		.mockReturnValue([{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 }]),
 	getPrimaryDisplay: vi.fn().mockReturnValue({
 		bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+		id: 1,
+	}),
+	getDisplayNearestPoint: vi.fn().mockReturnValue({
+		bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+		id: 1,
 	}),
 };
 
@@ -595,7 +602,7 @@ describe('app-lifecycle/window-manager', () => {
 		it('should reposition window if bounds are off-screen', async () => {
 			// Configure screen to return a display that doesn't include the saved bounds
 			mockScreen.getAllDisplays.mockReturnValue([
-				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 } },
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
 			]);
 
 			// Set up saved window state with off-screen bounds
@@ -640,6 +647,372 @@ describe('app-lifecycle/window-manager', () => {
 				'Window',
 				expect.objectContaining({
 					original: { x: 5000, y: 5000 },
+				})
+			);
+		});
+	});
+
+	describe('multi-display support', () => {
+		it('should restore window to saved display when display still exists', async () => {
+			// Configure multiple displays - primary and secondary
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+				{ bounds: { x: 1920, y: 0, width: 2560, height: 1440 }, id: 2 }, // Secondary monitor to the right
+			]);
+
+			// Set up saved window state on secondary display
+			mockMultiWindowStateStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'windows') {
+					return [
+						{
+							id: 'secondary-display-window',
+							x: 2100, // On secondary display (1920 + 180)
+							y: 100,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 2, // Saved on display 2
+						},
+					];
+				}
+				if (key === 'version') return 1;
+				return defaultValue;
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ windowId: 'secondary-display-window' });
+
+			// Should log successful restoration to saved display
+			expect(mockLogger.debug).toHaveBeenCalledWith(
+				'Window restored to saved display',
+				'Window',
+				expect.objectContaining({
+					displayId: 2,
+				})
+			);
+		});
+
+		it('should handle missing display gracefully by moving to primary display', async () => {
+			// Configure only primary display (secondary was disconnected)
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+			]);
+
+			// Set up saved window state referencing a display that no longer exists
+			mockMultiWindowStateStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'windows') {
+					return [
+						{
+							id: 'orphaned-window',
+							x: 2100, // Position that was on the now-disconnected display
+							y: 100,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 2, // This display no longer exists
+						},
+					];
+				}
+				if (key === 'version') return 1;
+				return defaultValue;
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ windowId: 'orphaned-window' });
+
+			// Should log that saved display is no longer available
+			expect(mockLogger.info).toHaveBeenCalledWith(
+				'Saved display no longer available, finding alternative',
+				'Window',
+				expect.objectContaining({
+					savedDisplayId: 2,
+					availableDisplayIds: [1],
+				})
+			);
+
+			// Should also warn about off-screen repositioning (since x: 2100 is off the only display)
+			expect(mockLogger.warn).toHaveBeenCalledWith(
+				'Window bounds off-screen, repositioning to primary display',
+				'Window',
+				expect.objectContaining({
+					original: { x: 2100, y: 100 },
+					savedDisplayId: 2,
+				})
+			);
+		});
+
+		it('should reposition window within display when position is invalid but display exists', async () => {
+			// Configure two displays
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+				{ bounds: { x: 1920, y: 0, width: 2560, height: 1440 }, id: 2 },
+			]);
+
+			// Set up saved window state where position is outside the saved display's bounds
+			// (e.g., display arrangement changed but display still exists)
+			mockMultiWindowStateStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'windows') {
+					return [
+						{
+							id: 'moved-display-window',
+							x: 100, // This position is now on display 1, not display 2
+							y: 100,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 2, // Saved as being on display 2
+						},
+					];
+				}
+				if (key === 'version') return 1;
+				return defaultValue;
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ windowId: 'moved-display-window' });
+
+			// Should log repositioning within the saved display
+			expect(mockLogger.info).toHaveBeenCalledWith(
+				'Window position invalid on saved display, repositioning within display',
+				'Window',
+				expect.objectContaining({
+					displayId: 2,
+					savedBounds: { x: 100, y: 100 },
+				})
+			);
+		});
+
+		it('should save display ID when persisting window state', async () => {
+			// Configure screen with mock display
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+			]);
+			mockScreen.getDisplayNearestPoint = vi.fn().mockReturnValue({
+				id: 1,
+				bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ sessionIds: ['session-1'] });
+
+			mockMultiWindowStateStore.set.mockClear();
+			windowManager.saveAllWindowStates();
+
+			expect(mockMultiWindowStateStore.set).toHaveBeenCalledTimes(1);
+			const setCall = mockMultiWindowStateStore.set.mock.calls[0][0];
+			expect(setCall.windows[0]).toHaveProperty('displayId', 1);
+		});
+
+		it('should handle window movement between displays on save', async () => {
+			// Configure two displays
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+				{ bounds: { x: 1920, y: 0, width: 2560, height: 1440 }, id: 2 },
+			]);
+
+			// Window is now on display 2 (moved from original position)
+			mockWindowInstance.getBounds.mockReturnValue({ x: 2000, y: 200, width: 1200, height: 800 });
+			mockScreen.getDisplayNearestPoint = vi.fn().mockReturnValue({
+				id: 2,
+				bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ sessionIds: ['session-1'] });
+
+			mockMultiWindowStateStore.set.mockClear();
+			windowManager.saveAllWindowStates();
+
+			const setCall = mockMultiWindowStateStore.set.mock.calls[0][0];
+			// Should save the current display ID (2), not the original
+			expect(setCall.windows[0].displayId).toBe(2);
+		});
+
+		it('should handle multiple windows on different displays', async () => {
+			// Configure two displays
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+				{ bounds: { x: 1920, y: 0, width: 2560, height: 1440 }, id: 2 },
+			]);
+
+			// Set up saved state with windows on different displays
+			mockMultiWindowStateStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'windows') {
+					return [
+						{
+							id: 'primary-window',
+							x: 100,
+							y: 100,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: ['session-1'],
+							activeSessionId: 'session-1',
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 1, // On primary display
+						},
+						{
+							id: 'secondary-window',
+							x: 2100,
+							y: 200,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: ['session-2'],
+							activeSessionId: 'session-2',
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 2, // On secondary display
+						},
+					];
+				}
+				if (key === 'primaryWindowId') return 'primary-window';
+				if (key === 'version') return 1;
+				return defaultValue;
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			const result = windowManager.restoreWindows(['session-1', 'session-2']);
+
+			expect(result.wasRestored).toBe(true);
+			expect(result.restoredWindowIds).toHaveLength(2);
+			expect(result.restoredWindowIds).toContain('primary-window');
+			expect(result.restoredWindowIds).toContain('secondary-window');
+
+			// Both windows should be restored successfully
+			const registry = windowManager.getRegistry();
+			expect(registry.get('primary-window')).toBeDefined();
+			expect(registry.get('secondary-window')).toBeDefined();
+		});
+
+		it('should log display ID in window creation info', async () => {
+			mockScreen.getAllDisplays.mockReturnValue([
+				{ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, id: 1 },
+			]);
+
+			mockMultiWindowStateStore.get.mockImplementation((key: string, defaultValue?: unknown) => {
+				if (key === 'windows') {
+					return [
+						{
+							id: 'test-window',
+							x: 100,
+							y: 100,
+							width: 1200,
+							height: 800,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+							displayId: 1,
+						},
+					];
+				}
+				if (key === 'version') return 1;
+				return defaultValue;
+			});
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				multiWindowStateStore: mockMultiWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['multiWindowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow({ windowId: 'test-window' });
+
+			expect(mockLogger.info).toHaveBeenCalledWith(
+				'Browser window created',
+				'Window',
+				expect.objectContaining({
+					windowId: 'test-window',
+					savedDisplayId: 1,
 				})
 			);
 		});

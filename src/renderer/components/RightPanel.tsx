@@ -5,9 +5,11 @@ import React, {
 	forwardRef,
 	useState,
 	useCallback,
+	useMemo,
 	memo,
 } from 'react';
-import { PanelRightClose, PanelRightOpen, Loader2, GitBranch } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, Loader2, GitBranch, Columns } from 'lucide-react';
+import { useWindow } from '../contexts/WindowContext';
 import type { Session, Theme, RightPanelTab, Shortcut, BatchRunState, FocusArea } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -207,6 +209,9 @@ export const RightPanel = memo(
 		const autoRunRef = useRef<AutoRunHandle>(null);
 		const panelRef = useRef<HTMLDivElement>(null);
 
+		// Multi-window support: get window session list for filtering
+		const { sessionIds: windowSessionIds, isLoaded: windowIsLoaded } = useWindow();
+
 		// Elapsed time for Auto Run display - tracks wall clock time from startTime
 		const [elapsedTime, setElapsedTime] = useState<string>('');
 
@@ -335,6 +340,15 @@ export const RightPanel = memo(
 				});
 			}
 		}, [activeRightTab, rightPanelOpen, activeFocus]);
+
+		// Multi-window support: Check if the session belongs to this window
+		// If window has assigned sessions and this session isn't in the list, show placeholder
+		const isSessionInThisWindow = useMemo(() => {
+			if (!session) return false; // No session, not in window
+			if (!windowIsLoaded) return true; // Not loaded yet, show by default
+			if (!windowSessionIds || windowSessionIds.length === 0) return true; // No assigned sessions, show all
+			return windowSessionIds.includes(session.id);
+		}, [windowIsLoaded, windowSessionIds, session?.id]);
 
 		if (!session) return null;
 
@@ -481,61 +495,77 @@ export const RightPanel = memo(
 						}
 					}}
 				>
-					{activeRightTab === 'files' && (
-						<div data-tour="files-panel" className="h-full">
-							<FileExplorerPanel
-								session={session}
-								theme={theme}
-								fileTreeFilter={fileTreeFilter}
-								setFileTreeFilter={setFileTreeFilter}
-								fileTreeFilterOpen={fileTreeFilterOpen}
-								setFileTreeFilterOpen={setFileTreeFilterOpen}
-								filteredFileTree={filteredFileTree}
-								selectedFileIndex={selectedFileIndex}
-								setSelectedFileIndex={setSelectedFileIndex}
-								activeFocus={activeFocus}
-								activeRightTab={activeRightTab}
-								previewFile={previewFile}
-								setActiveFocus={setActiveFocus}
-								fileTreeFilterInputRef={fileTreeFilterInputRef}
-								toggleFolder={toggleFolder}
-								handleFileClick={handleFileClick}
-								expandAllFolders={expandAllFolders}
-								collapseAllFolders={collapseAllFolders}
-								updateSessionWorkingDirectory={updateSessionWorkingDirectory}
-								refreshFileTree={refreshFileTree}
-								setSessions={setSessions}
-								onAutoRefreshChange={onAutoRefreshChange}
-								onShowFlash={onShowFlash}
-								showHiddenFiles={showHiddenFiles}
-								setShowHiddenFiles={setShowHiddenFiles}
-								onFocusFileInGraph={onFocusFileInGraph}
-								lastGraphFocusFile={lastGraphFocusFile}
-								onOpenLastDocumentGraph={onOpenLastDocumentGraph}
-							/>
+					{/* Multi-window: Show placeholder when session is in another window */}
+					{!isSessionInThisWindow ? (
+						<div className="h-full flex flex-col items-center justify-center opacity-30">
+							<Columns className="w-12 h-12 mb-3" style={{ color: theme.colors.textDim }} />
+							<p className="text-xs text-center" style={{ color: theme.colors.textDim }}>
+								Session open in another window
+							</p>
 						</div>
-					)}
+					) : (
+						<>
+							{activeRightTab === 'files' && (
+								<div data-tour="files-panel" className="h-full">
+									<FileExplorerPanel
+										session={session}
+										theme={theme}
+										fileTreeFilter={fileTreeFilter}
+										setFileTreeFilter={setFileTreeFilter}
+										fileTreeFilterOpen={fileTreeFilterOpen}
+										setFileTreeFilterOpen={setFileTreeFilterOpen}
+										filteredFileTree={filteredFileTree}
+										selectedFileIndex={selectedFileIndex}
+										setSelectedFileIndex={setSelectedFileIndex}
+										activeFocus={activeFocus}
+										activeRightTab={activeRightTab}
+										previewFile={previewFile}
+										setActiveFocus={setActiveFocus}
+										fileTreeFilterInputRef={fileTreeFilterInputRef}
+										toggleFolder={toggleFolder}
+										handleFileClick={handleFileClick}
+										expandAllFolders={expandAllFolders}
+										collapseAllFolders={collapseAllFolders}
+										updateSessionWorkingDirectory={updateSessionWorkingDirectory}
+										refreshFileTree={refreshFileTree}
+										setSessions={setSessions}
+										onAutoRefreshChange={onAutoRefreshChange}
+										onShowFlash={onShowFlash}
+										showHiddenFiles={showHiddenFiles}
+										setShowHiddenFiles={setShowHiddenFiles}
+										onFocusFileInGraph={onFocusFileInGraph}
+										lastGraphFocusFile={lastGraphFocusFile}
+										onOpenLastDocumentGraph={onOpenLastDocumentGraph}
+									/>
+								</div>
+							)}
 
-					{activeRightTab === 'history' && (
-						<div data-tour="history-panel" className="h-full">
-							<HistoryPanel
-								ref={historyPanelRef}
-								session={session}
-								theme={theme}
-								onJumpToAgentSession={onJumpToAgentSession}
-								onResumeSession={onResumeSession}
-								onOpenSessionAsTab={onOpenSessionAsTab}
-								onOpenAboutModal={onOpenAboutModal}
-								fileTree={filteredFileTree}
-								onFileClick={onFileClick}
-							/>
-						</div>
-					)}
+							{activeRightTab === 'history' && (
+								<div data-tour="history-panel" className="h-full">
+									<HistoryPanel
+										ref={historyPanelRef}
+										session={session}
+										theme={theme}
+										onJumpToAgentSession={onJumpToAgentSession}
+										onResumeSession={onResumeSession}
+										onOpenSessionAsTab={onOpenSessionAsTab}
+										onOpenAboutModal={onOpenAboutModal}
+										fileTree={filteredFileTree}
+										onFileClick={onFileClick}
+									/>
+								</div>
+							)}
 
-					{activeRightTab === 'autorun' && (
-						<div data-tour="autorun-panel" className="h-full">
-							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
-						</div>
+							{activeRightTab === 'autorun' && (
+								<div data-tour="autorun-panel" className="h-full">
+									<AutoRun
+										ref={autoRunRef}
+										{...autoRunSharedProps}
+										onExpand={handleExpandAutoRun}
+									/>
+								</div>
+							)}
+						</>
 					)}
 				</div>
 

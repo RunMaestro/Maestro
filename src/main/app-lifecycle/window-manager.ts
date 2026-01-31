@@ -123,8 +123,8 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			height: bounds?.height ?? savedState?.height ?? DEFAULT_WINDOW_BOUNDS.height,
 		};
 
-		// Validate bounds are on a visible display
-		const validatedBounds = validateBoundsOnDisplay(windowBounds);
+		// Validate bounds are on a visible display, passing saved display ID for multi-monitor support
+		const validatedBounds = validateBoundsOnDisplay(windowBounds, savedState?.displayId);
 
 		const browserWindow = new BrowserWindow({
 			x: validatedBounds.x,
@@ -156,6 +156,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			size: `${windowBounds.width}x${windowBounds.height}`,
 			maximized: savedState?.isMaximized ?? false,
 			fullScreen: savedState?.isFullScreen ?? false,
+			savedDisplayId: savedState?.displayId,
 			mode: isDevelopment ? 'development' : 'production',
 		});
 
@@ -238,6 +239,9 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			const isMaximized = entry.browserWindow.isMaximized();
 			const isFullScreen = entry.browserWindow.isFullScreen();
 
+			// Get the display ID for multi-monitor support
+			const displayId = getDisplayIdForBounds(bounds);
+
 			return {
 				id: windowId,
 				x: isMaximized || isFullScreen ? bounds.x : bounds.x,
@@ -250,6 +254,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				activeSessionId: entry.activeSessionId,
 				leftPanelCollapsed: false, // TODO: Get from renderer state
 				rightPanelCollapsed: false, // TODO: Get from renderer state
+				displayId,
 			};
 		});
 
@@ -465,14 +470,23 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 
 /**
  * Validates that window bounds are on a visible display.
- * If not, returns bounds positioned on the primary display.
+ * If a saved display ID is provided, attempts to restore to that display.
+ * If the saved display is no longer available or bounds are off-screen,
+ * repositions the window to the primary display gracefully.
+ *
+ * @param bounds - Window bounds to validate
+ * @param savedDisplayId - Optional display ID from saved state
+ * @returns Validated bounds positioned on a visible display
  */
-function validateBoundsOnDisplay(bounds: {
-	x?: number;
-	y?: number;
-	width: number;
-	height: number;
-}): { x?: number; y?: number; width: number; height: number } {
+function validateBoundsOnDisplay(
+	bounds: {
+		x?: number;
+		y?: number;
+		width: number;
+		height: number;
+	},
+	savedDisplayId?: number
+): { x?: number; y?: number; width: number; height: number } {
 	// If no position specified, let Electron handle it
 	if (bounds.x === undefined || bounds.y === undefined) {
 		return bounds;
@@ -480,6 +494,49 @@ function validateBoundsOnDisplay(bounds: {
 
 	// Get all displays
 	const displays = screen.getAllDisplays();
+
+	// If we have a saved display ID, check if that display still exists
+	if (savedDisplayId !== undefined) {
+		const savedDisplay = displays.find((d) => d.id === savedDisplayId);
+		if (savedDisplay) {
+			// Check if the saved position is still valid on the saved display
+			const { x, y, width, height } = savedDisplay.bounds;
+			const isOnSavedDisplay =
+				bounds.x >= x && bounds.x < x + width && bounds.y >= y && bounds.y < y + height;
+
+			if (isOnSavedDisplay) {
+				logger.debug('Window restored to saved display', 'Window', {
+					displayId: savedDisplayId,
+					bounds: { x: bounds.x, y: bounds.y },
+				});
+				return bounds;
+			}
+
+			// Position is not valid on the saved display - restore relative to display
+			// This handles cases where the display arrangement changed but display still exists
+			logger.info(
+				'Window position invalid on saved display, repositioning within display',
+				'Window',
+				{
+					displayId: savedDisplayId,
+					savedBounds: { x: bounds.x, y: bounds.y },
+					displayBounds: { x, y, width, height },
+				}
+			);
+			return {
+				x: x + 100,
+				y: y + 100,
+				width: bounds.width,
+				height: bounds.height,
+			};
+		} else {
+			// Saved display no longer exists - log and fall through to check other displays
+			logger.info('Saved display no longer available, finding alternative', 'Window', {
+				savedDisplayId,
+				availableDisplayIds: displays.map((d) => d.id),
+			});
+		}
+	}
 
 	// Check if the window's top-left corner is on any display
 	const isOnDisplay = displays.some((display) => {
@@ -494,6 +551,7 @@ function validateBoundsOnDisplay(bounds: {
 	// Window is off-screen, position on primary display
 	logger.warn('Window bounds off-screen, repositioning to primary display', 'Window', {
 		original: { x: bounds.x, y: bounds.y },
+		savedDisplayId,
 	});
 
 	const primaryDisplay = screen.getPrimaryDisplay();
@@ -503,6 +561,33 @@ function validateBoundsOnDisplay(bounds: {
 		width: bounds.width,
 		height: bounds.height,
 	};
+}
+
+/**
+ * Gets the display ID for a given window bounds.
+ * Uses the display that contains the window's center point.
+ *
+ * @param bounds - The window bounds with x, y position
+ * @returns The display ID, or undefined if no display found
+ */
+function getDisplayIdForBounds(bounds: {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}): number | undefined {
+	try {
+		// Calculate center point of window
+		const centerX = bounds.x + bounds.width / 2;
+		const centerY = bounds.y + bounds.height / 2;
+
+		// Get the display at the window's center point
+		const display = screen.getDisplayNearestPoint({ x: centerX, y: centerY });
+		return display?.id;
+	} catch (error) {
+		logger.warn('Failed to get display ID for window bounds', 'Window', { error, bounds });
+		return undefined;
+	}
 }
 
 /**

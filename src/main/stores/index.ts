@@ -44,6 +44,7 @@ export {
 	getGroupsStore,
 	getAgentConfigsStore,
 	getWindowStateStore,
+	getMultiWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
 	getSyncPath,
@@ -67,6 +68,14 @@ export {
 	GROUPS_DEFAULTS,
 	AGENT_CONFIGS_DEFAULTS,
 	WINDOW_STATE_DEFAULTS,
+	MULTI_WINDOW_STATE_DEFAULTS,
+	MULTI_WINDOW_SCHEMA_VERSION,
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
 } from './defaults';
+
+// ============================================================================
+// Migration Functions (for testing)
+// ============================================================================
+
+export { migrateFromLegacyWindowState } from './instances';

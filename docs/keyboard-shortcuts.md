@@ -89,6 +89,7 @@ Toggle states are saved per-tab. See [Input Toggles](./general-usage#input-toggl
 | Next Tab | `Cmd+Shift+]` | `Ctrl+Shift+]` |
 | Tab Switcher | `Opt+Cmd+T` | `Alt+Ctrl+T` |
 | Rename Tab | `Cmd+Shift+R` | `Ctrl+Shift+R` |
+| Move Tab to New Window | `Cmd+Shift+O` | `Ctrl+Shift+O` |
 | Go to Tab 1-9 | `Cmd+1` through `Cmd+9` | `Ctrl+1` through `Ctrl+9` |
 | Go to Last Tab | `Cmd+0` | `Ctrl+0` |
 
@@ -190,6 +191,37 @@ In AI mode, use `@` to reference files in your prompts:
 | Open URL (external link) | `Enter` |
 | Open document in File Preview | `O` |
 | Close the graph | `Esc` |
+
+## Multi-Window Support
+
+Maestro supports multiple windows for organizing your workspace. You can move tabs between windows or pop them out into their own windows.
+
+### Moving Tabs to New Windows
+
+There are several ways to move a tab to a new window:
+
+1. **Keyboard shortcut**: Press `Cmd+Shift+O` (macOS) or `Ctrl+Shift+O` (Windows/Linux) to move the current tab to a new window
+
+2. **Context menu**: Hover over a tab and click the **Move to New Window** option in the tab hover menu
+
+3. **Drag and drop**: Drag a tab out of the tab bar to create a new window with that tab
+
+When you close a secondary window, any sessions in that window are automatically moved back to the main window.
+
+### Window Identification
+
+Secondary windows display a window number badge (e.g., "W2", "W3") in the tab bar to help you identify them when using Mission Control or switching between windows. The main window is always "W1" (badge not shown).
+
+### Shortcut Scope
+
+Most keyboard shortcuts operate at the **window** level, affecting only the current window. A few shortcuts are **global** and work the same regardless of which window is focused:
+
+| Scope | Examples |
+|-------|----------|
+| **Global** | Settings (`Cmd+,`), Shortcuts Help (`Cmd+/`), System Log Viewer, Usage Dashboard, New Agent Wizard |
+| **Window** | Most navigation, tab management, panel toggles, session operations |
+
+The Shortcuts Help modal (`Cmd+/`) displays an icon next to each shortcut indicating its scope: a globe icon for global shortcuts and a window icon for window-scoped shortcuts.
 
 ## Customizing Shortcuts
 

@@ -250,7 +250,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		)
 	);
 
-	// Update a group chat (name, moderator agent, moderator config)
+	// Update a group chat (name, moderator agent, moderator config, initiator window)
 	ipcMain.handle(
 		'groupChat:update',
 		withIpcErrorLogging(
@@ -265,6 +265,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 						customArgs?: string;
 						customEnvVars?: Record<string, string>;
 					};
+					initiatorWindowId?: string;
 				}
 			): Promise<GroupChat> => {
 				logger.info(`Updating group chat ${id}`, LOG_CONTEXT, updates);
@@ -289,6 +290,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					name: updates.name,
 					moderatorAgentId: updates.moderatorAgentId,
 					moderatorConfig: updates.moderatorConfig,
+					initiatorWindowId: updates.initiatorWindowId,
 				});
 
 				// Restart moderator if agent changed

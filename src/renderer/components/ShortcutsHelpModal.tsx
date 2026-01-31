@@ -1,5 +1,5 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { X, Award, CheckCircle, Trophy } from 'lucide-react';
+import { X, Award, CheckCircle, Trophy, Globe, AppWindow } from 'lucide-react';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -7,6 +7,27 @@ import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+
+/**
+ * ScopeBadge displays whether a shortcut is global (app-wide) or window-specific.
+ * Uses icons with tooltips to indicate scope.
+ */
+function ScopeBadge({ scope, theme }: { scope: 'global' | 'window' | undefined; theme: Theme }) {
+	const isGlobal = scope === 'global';
+	const Icon = isGlobal ? Globe : AppWindow;
+	const title = isGlobal
+		? 'Global: works across all windows'
+		: 'Window: affects current window only';
+
+	return (
+		<span className="flex-shrink-0 w-4 h-4 flex items-center justify-center" title={title}>
+			<Icon
+				className="w-3 h-3"
+				style={{ color: isGlobal ? theme.colors.accent : theme.colors.textDim }}
+			/>
+		</span>
+	);
+}
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
@@ -97,9 +118,22 @@ export function ShortcutsHelpModal({
 				className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
 				style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 			/>
-			<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
-				Many shortcuts can be customized from Settings → Shortcuts.
-			</p>
+			<div className="flex items-center justify-between mt-2">
+				<p className="text-xs" style={{ color: theme.colors.textDim }}>
+					Many shortcuts can be customized from Settings → Shortcuts.
+				</p>
+				{/* Scope legend */}
+				<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
+					<span className="flex items-center gap-1" title="Global: works across all windows">
+						<Globe className="w-3 h-3" style={{ color: theme.colors.accent }} />
+						<span>Global</span>
+					</span>
+					<span className="flex items-center gap-1" title="Window: affects current window only">
+						<AppWindow className="w-3 h-3" />
+						<span>Window</span>
+					</span>
+				</div>
+			</div>
 		</div>
 	);
 
@@ -192,16 +226,19 @@ export function ShortcutsHelpModal({
 									{sc.label}
 								</span>
 							</div>
-							<kbd
-								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-							>
-								{formatShortcutKeys(sc.keys)}
-							</kbd>
+							<div className="flex items-center gap-2 flex-shrink-0">
+								<ScopeBadge scope={sc.scope} theme={theme} />
+								<kbd
+									className="px-2 py-1 rounded border font-mono text-xs font-bold"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+								>
+									{formatShortcutKeys(sc.keys)}
+								</kbd>
+							</div>
 						</div>
 					);
 				})}

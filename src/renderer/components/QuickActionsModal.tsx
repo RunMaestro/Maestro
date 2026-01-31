@@ -111,6 +111,10 @@ interface QuickActionsModalProps {
 	// Document Graph - quick re-open last graph
 	lastGraphFocusFile?: string;
 	onOpenLastDocumentGraph?: () => void;
+	// Multi-window support: session IDs in this window
+	windowSessionIds?: string[];
+	// Multi-window support: callback to jump to session (handles cross-window focus)
+	onJumpToSession?: (sessionId: string) => Promise<boolean>;
 }
 
 export function QuickActionsModal(props: QuickActionsModalProps) {
@@ -193,6 +197,8 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 		onOpenPlaybookExchange,
 		lastGraphFocusFile,
 		onOpenLastDocumentGraph,
+		windowSessionIds,
+		onJumpToSession,
 	} = props;
 
 	const [search, setSearch] = useState('');
@@ -298,19 +304,36 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 			label = `Jump to: ${s.name}`;
 		}
 
+		// Multi-window: determine if session is in this window or another
+		const isInThisWindow =
+			!windowSessionIds || windowSessionIds.length === 0 || windowSessionIds.includes(s.id);
+		const locationHint = isInThisWindow ? '' : ' (in another window)';
+
 		return {
 			id: `jump-${s.id}`,
 			label,
-			action: () => {
-				setActiveSessionId(s.id);
-				// Auto-expand group if it's collapsed
-				if (s.groupId) {
-					setGroups((prev) =>
-						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
-					);
+			action: async () => {
+				// Use multi-window jump handler if available
+				if (onJumpToSession) {
+					const openedInThisWindow = await onJumpToSession(s.id);
+					// Auto-expand group if it's collapsed and session opened in this window
+					if (openedInThisWindow && s.groupId) {
+						setGroups((prev) =>
+							prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+						);
+					}
+				} else {
+					// Fallback to direct session switch (single-window mode)
+					setActiveSessionId(s.id);
+					// Auto-expand group if it's collapsed
+					if (s.groupId) {
+						setGroups((prev) =>
+							prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
+						);
+					}
 				}
 			},
-			subtext: s.state.toUpperCase(),
+			subtext: s.state.toUpperCase() + locationHint,
 		};
 	});
 

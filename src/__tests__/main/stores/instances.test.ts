@@ -22,7 +22,11 @@ vi.mock('electron-store', () => {
 				this.options = options;
 				mockStoreConstructorCalls.push(options);
 			}
-			get() {
+			get(key?: string, defaultValue?: unknown) {
+				// Return the default value if provided (for multi-window migration)
+				if (defaultValue !== undefined) {
+					return defaultValue;
+				}
 				return undefined;
 			}
 			set() {}
@@ -60,8 +64,8 @@ describe('stores/instances', () => {
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 
-			// Should create 8 stores
-			expect(mockStoreConstructorCalls).toHaveLength(8);
+			// Should create 9 stores (including multi-window state store)
+			expect(mockStoreConstructorCalls).toHaveLength(9);
 
 			// Should return syncPath and bootstrapStore
 			expect(result.syncPath).toBe('/mock/user/data');

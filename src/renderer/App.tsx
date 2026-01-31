@@ -560,6 +560,7 @@ function MaestroConsoleInner() {
 		sessionIds: windowSessionIds,
 		activeSessionId: windowActiveSessionId,
 		isLoaded: windowIsLoaded,
+		openSession: windowOpenSession,
 	} = useWindow();
 
 	// Ref to track windowSessionIds for multi-window remote integration
@@ -8149,6 +8150,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// regular location (group or ungrouped). The same session can appear twice in
 		// the visual order. We track the current position with cyclePositionRef to
 		// allow cycling through duplicate occurrences correctly.
+		//
+		// MULTI-WINDOW: Only cycle through sessions in the current window.
+		// Use windowFilteredSessions which is filtered by WindowContext.sessionIds.
 
 		// Visual order item can be either a session or a group chat
 		type VisualOrderItem =
@@ -8157,9 +8161,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		const visualOrder: VisualOrderItem[] = [];
 
-		// Helper to get worktree children for a session
+		// Use window-filtered sessions for multi-window support
+		const windowSessions = windowFilteredSessions;
+
+		// Helper to get worktree children for a session (filtered by window)
 		const getWorktreeChildren = (parentId: string) =>
-			sessions
+			windowSessions
 				.filter((s) => s.parentSessionId === parentId)
 				.sort((a, b) =>
 					compareNamesIgnoringEmojis(a.worktreeBranch || a.name, b.worktreeBranch || b.name)
@@ -8192,7 +8199,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (leftSidebarOpen) {
 			// Bookmarks section (if expanded and has bookmarked sessions)
 			if (!bookmarksCollapsed) {
-				const bookmarkedSessions = sessions
+				const bookmarkedSessions = windowSessions
 					.filter((s) => s.bookmarked && !s.parentSessionId)
 					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 				bookmarkedSessions.forEach(addSessionWithWorktrees);
@@ -8202,7 +8209,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const sortedGroups = [...groups].sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 			for (const group of sortedGroups) {
 				if (!group.collapsed) {
-					const groupSessions = sessions
+					const groupSessions = windowSessions
 						.filter((s) => s.groupId === group.id && !s.parentSessionId)
 						.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 					groupSessions.forEach(addSessionWithWorktrees);
@@ -8211,7 +8218,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			// Ungrouped sessions (sorted alphabetically) - only if not collapsed
 			if (!settings.ungroupedCollapsed) {
-				const ungroupedSessions = sessions
+				const ungroupedSessions = windowSessions
 					.filter((s) => !s.groupId && !s.parentSessionId)
 					.sort((a, b) => compareNamesIgnoringEmojis(a.name, b.name));
 				ungroupedSessions.forEach(addSessionWithWorktrees);
@@ -8231,9 +8238,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 				);
 			}
 		} else {
-			// Sidebar collapsed: cycle through all sessions in their sorted order
+			// Sidebar collapsed: cycle through sessions in their sorted order (filtered by window)
+			const windowSortedSessions = sortedSessions.filter((s) =>
+				windowSessions.some((ws) => ws.id === s.id)
+			);
 			visualOrder.push(
-				...sortedSessions.map((s) => ({
+				...windowSortedSessions.map((s) => ({
 					type: 'session' as const,
 					id: s.id,
 					name: s.name,
@@ -8616,6 +8626,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			};
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
+			// Register session with window registry before any process spawning can occur
+			// This prevents the "flash" where a session appears in the wrong window
+			await windowOpenSession(newId);
 			// Track session creation in global stats
 			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
@@ -8782,6 +8795,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Add session and make it active
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
+			// Register session with window registry before any process spawning can occur
+			// This prevents the "flash" where a session appears in the wrong window
+			await windowOpenSession(newId);
 			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
 			window.maestro.stats.recordSessionCreated({
@@ -8876,6 +8892,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			// Add session to app state
 			setSessions((prev) => [...prev, session]);
 			setActiveSessionId(session.id);
+			// Register session with window registry before any process spawning can occur
+			// This prevents the "flash" where a session appears in the wrong window
+			await windowOpenSession(session.id);
 
 			// Track session creation in global stats
 			updateGlobalStats({ totalSessions: 1 });
@@ -9541,6 +9560,25 @@ You are taking over this conversation. Based on the context above, provide a bri
 		window.addEventListener('tour:action', handleTourAction);
 		return () => window.removeEventListener('tour:action', handleTourAction);
 	}, []);
+
+	// Listen for sessions transferred events from WindowContext
+	// When a secondary window is closed, its sessions are moved to the primary window
+	// WindowContext dispatches this custom event so we can show a toast
+	useEffect(() => {
+		const handleSessionsTransferred = (event: Event) => {
+			const customEvent = event as CustomEvent<{
+				type: 'info';
+				title: string;
+				message: string;
+				duration: number;
+			}>;
+			addToast(customEvent.detail);
+		};
+
+		window.addEventListener('maestro:sessionsTransferred', handleSessionsTransferred);
+		return () =>
+			window.removeEventListener('maestro:sessionsTransferred', handleSessionsTransferred);
+	}, [addToast]);
 
 	// Process a queued item (called from onExit when queue has items)
 	// Handles both 'message' and 'command' types
@@ -11392,6 +11430,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 	);
 
 	// QuickActionsModal stable callbacks
+
+	/**
+	 * Multi-window: Jump to session handler for Cmd+K palette.
+	 * If session is in this window, switches to it locally.
+	 * If session is in another window, focuses that window.
+	 * Returns true if session was opened in this window, false if another window was focused.
+	 */
+	const handleJumpToSession = useCallback(
+		async (sessionId: string): Promise<boolean> => {
+			// Use WindowContext's openSession which handles cross-window focus
+			const openedInThisWindow = await windowOpenSession(sessionId);
+
+			if (openedInThisWindow) {
+				// Session is in this window - update local active session state
+				setActiveSessionId(sessionId);
+			}
+			// If openedInThisWindow is false, the other window was focused by windowOpenSession
+
+			return openedInThisWindow;
+		},
+		[windowOpenSession, setActiveSessionId]
+	);
+
 	const handleQuickActionsRenameTab = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
 			const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
@@ -11697,6 +11758,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Session bookmark toggle
 		toggleBookmark,
+
+		// Move tab to new window handler
+		handleMoveToNewWindow,
 	};
 
 	// Update flat file list when active session's tree, expanded folders, filter, or hidden files setting changes
@@ -12738,6 +12802,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 							setIsGraphViewOpen(true);
 						}
 					}}
+					windowSessionIds={windowSessionIds}
+					onJumpToSession={handleJumpToSession}
 					lightboxImage={lightboxImage}
 					lightboxImages={lightboxImages}
 					stagedImages={stagedImages}
