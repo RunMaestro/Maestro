@@ -28,6 +28,8 @@ export interface ProcessConfig {
 	querySource?: 'user' | 'auto';
 	tabId?: string;
 	projectPath?: string;
+	/** If true, always spawn in a shell (for PATH resolution on Windows) */
+	runInShell?: boolean;
 }
 
 /**
