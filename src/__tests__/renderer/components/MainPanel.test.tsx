@@ -245,6 +245,26 @@ vi.mock('../../../renderer/contexts/GitStatusContext', () => ({
 	}),
 }));
 
+// Mock WindowContext to avoid Provider requirement
+// Default mock returns state that allows all sessions (backwards compatibility behavior)
+let mockWindowContextState = {
+	windowId: 'window-1',
+	isMainWindow: true,
+	sessionIds: [] as string[], // Empty array means show all sessions
+	activeSessionId: null as string | null,
+	isLoaded: true,
+	openSession: vi.fn(),
+	closeTab: vi.fn(),
+	moveSessionToNewWindow: vi.fn(),
+	setActiveSession: vi.fn(),
+	refresh: vi.fn(),
+};
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindow: () => mockWindowContextState,
+	WindowProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 // Import MainPanel after mocks
 import { MainPanel } from '../../../renderer/components/MainPanel';
 
@@ -780,6 +800,103 @@ describe('MainPanel', () => {
 			fireEvent.click(screen.getByTestId('new-tab-btn'));
 
 			expect(onNewTab).toHaveBeenCalled();
+		});
+
+		it('should render TabBar when session is in this window', () => {
+			// Configure mock to have this session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['session-1'],
+				isLoaded: true,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
+
+		it('should not render TabBar when session is not in this window', () => {
+			// Configure mock to have a different session in window's sessions
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['other-session'],
+				isLoaded: true,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+			};
+		});
+
+		it('should render TabBar when window has no assigned sessions (backwards compatibility)', () => {
+			// Configure mock with empty sessionIds (no sessions assigned to window)
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+				isLoaded: true,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			// Should show TabBar because no sessions are assigned (show all behavior)
+			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+		});
+
+		it('should render TabBar when window state is not loaded yet', () => {
+			// Configure mock with isLoaded=false (still loading)
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: ['other-session'], // Even if different sessions, should still show while loading
+				isLoaded: false,
+			};
+
+			const session = createSession({
+				id: 'session-1',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'tab-1', name: 'Tab 1', isUnread: false, createdAt: Date.now() }],
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			// Should show TabBar while loading (optimistic default)
+			expect(screen.getByTestId('tab-bar')).toBeInTheDocument();
+
+			// Reset mock state
+			mockWindowContextState = {
+				...mockWindowContextState,
+				sessionIds: [],
+				isLoaded: true,
+			};
 		});
 	});
 

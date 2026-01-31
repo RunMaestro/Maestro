@@ -36,6 +36,7 @@ import { WizardConversationView, DocumentGenerationView } from './InlineWizard';
 import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitStatusContext';
+import { useWindow } from '../contexts/WindowContext';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextTokens } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
@@ -433,6 +434,22 @@ export const MainPanel = React.memo(
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
 		const isCurrentSessionStopping = currentSessionBatchState?.isStopping || false;
+
+		// Multi-window support: check if the active session belongs to this window
+		// If window has assigned sessions, only show TabBar for sessions in this window
+		const { sessionIds: windowSessionIds, isLoaded: windowIsLoaded } = useWindow();
+
+		// Determine if active session is in this window's assigned sessions
+		// Returns true if:
+		// - Window state is not loaded yet (show tabs by default during loading)
+		// - Window has no assigned sessions (backwards compatibility, show all)
+		// - Active session is in this window's session list
+		const isActiveSessionInThisWindow = useMemo(() => {
+			if (!windowIsLoaded) return true; // Not loaded yet, show by default
+			if (!windowSessionIds || windowSessionIds.length === 0) return true; // No assigned sessions, show all
+			if (!activeSession) return false; // No active session
+			return windowSessionIds.includes(activeSession.id);
+		}, [windowIsLoaded, windowSessionIds, activeSession?.id]);
 
 		// Hover tooltip state using reusable hook
 		const gitTooltip = useHoverTooltip(150);
@@ -1364,8 +1381,10 @@ export const MainPanel = React.memo(
 							</div>
 						)}
 
-						{/* Tab Bar - only shown in AI mode when we have tabs (hidden during file preview) */}
+						{/* Tab Bar - only shown in AI mode when we have tabs (hidden during file preview)
+						    Multi-window: Only render TabBar if active session belongs to this window */}
 						{!previewFile &&
+							isActiveSessionInThisWindow &&
 							activeSession.inputMode === 'ai' &&
 							activeSession.aiTabs &&
 							activeSession.aiTabs.length > 0 &&
