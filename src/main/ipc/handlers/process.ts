@@ -319,6 +319,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						willUseSsh: config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled,
 					});
 				}
+				let shouldSendPromptViaStdin = false;
 				if (config.toolType !== 'terminal' && config.sessionSshRemoteConfig?.enabled) {
 					// Session-level SSH config provided - resolve and use it
 					logger.info(`Using session-level SSH config`, LOG_CONTEXT, {
@@ -344,10 +345,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// IMPORTANT: For large prompts (>4000 chars), don't embed in command line to avoid
 						// Windows command line length limits (~8191 chars). SSH wrapping adds significant overhead.
 						// Instead, add --input-format stream-json and let ProcessManager send via stdin.
+						//
+						// Also, when --input-format stream-json is already present, the prompt must be sent via stdin,
+						// not on the command line, to avoid shell interpretation issues.
 						const isLargePrompt = config.prompt && config.prompt.length > 4000;
+						const hasStreamJsonInput =
+							finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
 						let sshArgs = finalArgs;
-						if (config.prompt && !isLargePrompt) {
-							// Small prompt - embed in command line as usual
+						if (config.prompt && !isLargePrompt && !hasStreamJsonInput) {
+							// Small prompt - embed in command line as usual (only if not using stream-json input)
 							if (agent?.promptArgs) {
 								sshArgs = [...finalArgs, ...agent.promptArgs(config.prompt)];
 							} else if (agent?.noPromptSeparator) {
@@ -355,14 +361,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							} else {
 								sshArgs = [...finalArgs, '--', config.prompt];
 							}
-						} else if (config.prompt && isLargePrompt) {
-							// Large prompt - use stdin mode
-							// Add --input-format stream-json flag so agent reads from stdin
-							sshArgs = [...finalArgs, '--input-format', 'stream-json'];
-							logger.info(`Using stdin for large prompt in SSH remote execution`, LOG_CONTEXT, {
+						} else if (config.prompt && (isLargePrompt || hasStreamJsonInput)) {
+							// Large prompt or stream-json input - ensure --input-format stream-json is present
+							if (!hasStreamJsonInput) {
+								sshArgs = [...finalArgs, '--input-format', 'stream-json'];
+							}
+							shouldSendPromptViaStdin = true;
+							logger.info(`Using stdin for prompt in SSH remote execution`, LOG_CONTEXT, {
 								sessionId: config.sessionId,
-								promptLength: config.prompt.length,
-								reason: 'avoid-command-line-length-limit',
+								promptLength: config.prompt?.length,
+								reason: isLargePrompt
+									? 'avoid-command-line-length-limit'
+									: 'stream-json-input-mode',
+								hasStreamJsonInput,
 							});
 						}
 
@@ -425,9 +436,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					// and env vars are passed via the remote command string
 					requiresPty: sshRemoteUsed ? false : agent?.requiresPty,
 					// When using SSH with small prompts, the prompt was already added to sshArgs above
-					// For large prompts, pass it to ProcessManager so it can send via stdin
+					// For large prompts or stream-json input, pass it to ProcessManager so it can send via stdin
 					prompt:
-						sshRemoteUsed && config.prompt && config.prompt.length > 4000
+						sshRemoteUsed && config.prompt && shouldSendPromptViaStdin
 							? config.prompt
 							: sshRemoteUsed
 								? undefined
@@ -442,6 +453,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
 					promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 					noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
+					// For SSH with stream-json input, send prompt via stdin instead of command line
+					sendPromptViaStdin: shouldSendPromptViaStdin ? true : undefined,
 					// Stats tracking: use cwd as projectPath if not explicitly provided
 					projectPath: config.cwd,
 					// SSH remote context (for SSH-specific error messages)

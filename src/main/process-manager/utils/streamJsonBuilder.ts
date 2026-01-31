@@ -22,9 +22,15 @@ type MessageContent = ImageContent | TextContent;
 export function buildStreamJsonMessage(prompt: string, images: string[]): string {
 	const content: MessageContent[] = [];
 
-	// Add images first
-	for (const dataUrl of images) {
-		const parsed = parseDataUrl(dataUrl);
+	// Add text content first
+	content.push({
+		type: 'text',
+		text: prompt,
+	});
+
+	// Add image content for each image
+	for (const imageDataUrl of images) {
+		const parsed = parseDataUrl(imageDataUrl);
 		if (parsed) {
 			content.push({
 				type: 'image',
@@ -37,18 +43,9 @@ export function buildStreamJsonMessage(prompt: string, images: string[]): string
 		}
 	}
 
-	// Add text prompt
-	content.push({
-		type: 'text',
-		text: prompt,
-	});
-
 	const message = {
-		type: 'user',
-		message: {
-			role: 'user',
-			content,
-		},
+		type: 'user_message',
+		content,
 	};
 
 	return JSON.stringify(message);

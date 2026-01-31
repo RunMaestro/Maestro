@@ -30,6 +30,8 @@ export interface ProcessConfig {
 	projectPath?: string;
 	/** If true, always spawn in a shell (for PATH resolution on Windows) */
 	runInShell?: boolean;
+	/** If true, send the prompt via stdin as JSON instead of command line */
+	sendPromptViaStdin?: boolean;
 }
 
 /**

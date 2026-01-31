@@ -234,13 +234,14 @@ export class ChildProcessSpawner {
 			});
 
 			const isBatchMode = !!prompt;
-			// Detect JSON streaming mode from args
+			// Detect JSON streaming mode from args or config flag
 			const argsContain = (pattern: string) => finalArgs.some((arg) => arg.includes(pattern));
 			const isStreamJsonMode =
 				argsContain('stream-json') ||
 				argsContain('--json') ||
 				(argsContain('--format') && argsContain('json')) ||
-				(hasImages && !!prompt);
+				(hasImages && !!prompt) ||
+				!!config.sendPromptViaStdin;
 
 			// Get the output parser for this agent type
 			const outputParser = getOutputParser(toolType) || undefined;
@@ -384,27 +385,15 @@ export class ChildProcessSpawner {
 			});
 
 			// Handle stdin for batch mode and stream-json
-			if (isStreamJsonMode && prompt && images) {
-				// Stream-json mode with images: send the message via stdin
-				const streamJsonMessage = buildStreamJsonMessage(prompt, images);
-				logger.debug('[ProcessManager] Sending stream-json message with images', 'ProcessManager', {
+			if (isStreamJsonMode && prompt) {
+				// Stream-json mode: send the message via stdin
+				const streamJsonMessage = buildStreamJsonMessage(prompt, images || []);
+				logger.debug('[ProcessManager] Sending stream-json message via stdin', 'ProcessManager', {
 					sessionId,
 					messageLength: streamJsonMessage.length,
-					imageCount: images.length,
+					imageCount: (images || []).length,
+					hasImages: !!(images && images.length > 0),
 				});
-				childProcess.stdin?.write(streamJsonMessage + '\n');
-				childProcess.stdin?.end();
-			} else if (isStreamJsonMode && prompt) {
-				// Stream-json mode with prompt but no images: send JSON via stdin
-				const streamJsonMessage = buildStreamJsonMessage(prompt, []);
-				logger.debug(
-					'[ProcessManager] Sending stream-json prompt via stdin (no images)',
-					'ProcessManager',
-					{
-						sessionId,
-						promptLength: prompt.length,
-					}
-				);
 				childProcess.stdin?.write(streamJsonMessage + '\n');
 				childProcess.stdin?.end();
 			} else if (isBatchMode) {
