@@ -2085,16 +2085,22 @@ export const FilePreview = forwardRef<FilePreviewHandle, FilePreviewProps>(funct
 
 						{/* TOC Overlay */}
 						{showTocOverlay && (
-							<div
-								className="absolute bottom-16 right-4 rounded-lg shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-bottom-2 duration-200 flex flex-col"
-								style={{
-									backgroundColor: theme.colors.bgSidebar,
-									border: `1px solid ${theme.colors.border}`,
-									maxHeight: 'calc(70vh - 80px)',
-									minWidth: '200px',
-									maxWidth: '350px',
-								}}
-							>
+							<>
+								{/* Click-outside backdrop */}
+								<div
+									className="fixed inset-0 z-15"
+									onClick={() => setShowTocOverlay(false)}
+								/>
+								<div
+									className="absolute bottom-16 right-4 rounded-lg shadow-xl overflow-hidden z-20 animate-in fade-in slide-in-from-bottom-2 duration-200 flex flex-col"
+									style={{
+										backgroundColor: theme.colors.bgSidebar,
+										border: `1px solid ${theme.colors.border}`,
+										maxHeight: 'calc(70vh - 80px)',
+										minWidth: '200px',
+										maxWidth: '350px',
+									}}
+								>
 								{/* TOC Header */}
 								<div
 									className="px-3 py-2 border-b flex items-center justify-between flex-shrink-0"
@@ -2193,6 +2199,7 @@ export const FilePreview = forwardRef<FilePreviewHandle, FilePreviewProps>(funct
 									<span>Bottom</span>
 								</button>
 							</div>
+							</>
 						)}
 					</>
 				)}
