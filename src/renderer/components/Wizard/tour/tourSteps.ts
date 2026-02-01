@@ -127,9 +127,9 @@ export const tourSteps: TourStepConfig[] = [
 		id: 'input-area',
 		title: 'Input Area',
 		description:
-			'Type your messages here to communicate with the AI. During Auto Run, this area may be locked while tasks execute. You can queue messages to send after the current task completes. Press {{focusInput}} to quickly jump here.',
+			'Type your messages here to communicate with the AI. During Auto Run, this area may be locked while tasks execute. You can queue messages to send after the current task completes.\n\n**Features:** Use the ✏️ pencil icon for an expanded prompt editor, paste images or click the 🖼️ image icon to attach files, and toggle ⏱️ History, 👁️ Read-Only, and 🧠 Thinking modes per-message. You can also change the submission hotkey (Enter vs Shift+Enter). Defaults for these toggles can be changed in Settings → General.\n\nPress {{focusInput}} to quickly jump here.',
 		descriptionGeneric:
-			'Type your messages here to communicate with the AI. You can also use slash commands, @ mentions for files, and attach images. Press {{focusInput}} to quickly jump here.',
+			'Type your messages here to communicate with the AI. You can also use slash commands and @ mentions for files.\n\n**Features:** Use the ✏️ pencil icon for an expanded prompt editor, paste images or click the 🖼️ image icon to attach files, and toggle ⏱️ History, 👁️ Read-Only, and 🧠 Thinking modes per-message. You can also change the submission hotkey (Enter vs Shift+Enter). Defaults for these toggles can be changed in Settings → General.\n\nPress {{focusInput}} to quickly jump here.',
 		selector: '[data-tour="input-area"]',
 		position: 'top',
 		uiActions: [],
