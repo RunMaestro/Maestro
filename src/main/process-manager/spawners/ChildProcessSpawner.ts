@@ -68,6 +68,11 @@ export class ChildProcessSpawner {
 		const hasImages = images && images.length > 0;
 		const capabilities = getAgentCapabilities(toolType);
 
+		// Windows command line limit is ~8191 chars. Use stdin for long prompts to avoid hitting this.
+		const WINDOWS_CMD_LIMIT = 7000; // Leave margin for command and args
+		const useStdinForPrompt =
+			isWindows && prompt && prompt.length > WINDOWS_CMD_LIMIT && !hasImages;
+
 		// Build final args based on batch mode and images
 		let finalArgs: string[];
 		let tempImageFiles: string[] = [];
@@ -100,8 +105,16 @@ export class ChildProcessSpawner {
 				tempFiles: tempImageFiles,
 			});
 		} else if (prompt) {
-			// Regular batch mode - prompt as CLI arg
-			if (promptArgs) {
+			// Regular batch mode - prompt as CLI arg (unless using stdin for long prompts)
+			if (useStdinForPrompt) {
+				// On Windows with long prompt, don't add to args - will pass via stdin
+				finalArgs = args;
+				logger.info('[ProcessManager] Using stdin for long prompt on Windows', 'ProcessManager', {
+					sessionId,
+					promptLength: prompt.length,
+					limit: WINDOWS_CMD_LIMIT,
+				});
+			} else if (promptArgs) {
 				finalArgs = [...args, ...promptArgs(prompt)];
 			} else if (noPromptSeparator) {
 				finalArgs = [...args, prompt];
@@ -386,6 +399,14 @@ export class ChildProcessSpawner {
 					imageCount: images.length,
 				});
 				childProcess.stdin?.write(streamJsonMessage + '\n');
+				childProcess.stdin?.end();
+			} else if (useStdinForPrompt && prompt) {
+				// Windows long prompt mode: send prompt via stdin
+				logger.info('[ProcessManager] Writing prompt to stdin', 'ProcessManager', {
+					sessionId,
+					promptLength: prompt.length,
+				});
+				childProcess.stdin?.write(prompt);
 				childProcess.stdin?.end();
 			} else if (isBatchMode) {
 				// Regular batch mode: close stdin immediately
