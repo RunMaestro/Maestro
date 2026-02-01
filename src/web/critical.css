@@ -1,0 +1,50 @@
+/**
+ * Critical CSS for initial web load
+ * Loaded separately to prevent Vite html-inline-proxy build issues
+ */
+
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+	width: 100%;
+	overflow: hidden;
+}
+
+body {
+	font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	background-color: var(--color-background, #1a1a2e);
+	color: var(--color-text-main, #eaeaea);
+}
+
+/* Loading state */
+.loading {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	color: var(--color-text-main, #eaeaea);
+}
+
+.loading-spinner {
+	width: 40px;
+	height: 40px;
+	border: 3px solid var(--color-border, #333);
+	border-top-color: var(--color-accent, #4a9eff);
+	border-radius: 50%;
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
