@@ -1149,7 +1149,7 @@ export function MarketplaceModal({
 											</h3>
 											<p className="text-xs mb-3" style={{ color: theme.colors.textDim }}>
 												The Playbook Exchange is a curated collection of Auto Run playbooks for
-												common development workflows. Browse, preview, and import playbooks directly
+												common workflows. Browse, preview, and import playbooks directly
 												into your Auto Run folder.
 											</p>
 											<h4
