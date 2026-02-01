@@ -206,6 +206,9 @@ export const MODAL_PRIORITIES = {
 	/** Git log viewer overlay */
 	GIT_LOG: 190,
 
+	/** Save markdown modal */
+	SAVE_MARKDOWN: 160,
+
 	/** Image lightbox overlay */
 	LIGHTBOX: 150,
 
