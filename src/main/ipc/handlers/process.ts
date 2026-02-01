@@ -339,36 +339,18 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						// SSH remote is configured - wrap the command for remote execution
 						sshRemoteUsed = sshResult.config;
 
-						// For SSH execution, we need to include the prompt in the args here
-						// because ProcessManager.spawn() won't add it (we pass prompt: undefined for SSH)
-						// Use promptArgs if available (e.g., OpenCode -p), otherwise use positional arg
-						//
-						// IMPORTANT: For large prompts (>4000 chars), don't embed in command line to avoid
-						// Windows command line length limits (~8191 chars). SSH wrapping adds significant overhead.
-						// Instead, add --input-format stream-json and let ProcessManager send via stdin.
-						//
-						// Also, when --input-format stream-json is already present, the prompt must be sent via stdin,
-						// not on the command line, to avoid shell interpretation issues.
-						const isLargePrompt = config.prompt && config.prompt.length > 4000;
+						// ALWAYS use stdin for SSH remote execution when there's a prompt.
+						// Embedding prompts in the command line causes shell escaping nightmares:
+						// - Multiple layers of quote escaping (local spawn, SSH, remote zsh, bash -c)
+						// - Embedded newlines in prompts break zsh parsing (e.g., "zsh:35: parse error")
+						// - Special characters like quotes, $, !, etc. need complex escaping
+						// Using stdin with --input-format stream-json completely bypasses all these issues.
 						const hasStreamJsonInput =
 							finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
 						const agentSupportsStreamJson = agent?.capabilities.supportsStreamJsonInput ?? false;
 						let sshArgs = finalArgs;
-						if (config.prompt && !isLargePrompt && !hasStreamJsonInput) {
-							// Small prompt - embed in command line as usual (only if not using stream-json input)
-							if (agent?.promptArgs) {
-								sshArgs = [...finalArgs, ...agent.promptArgs(config.prompt)];
-							} else if (agent?.noPromptSeparator) {
-								sshArgs = [...finalArgs, config.prompt];
-							} else {
-								sshArgs = [...finalArgs, '--', config.prompt];
-							}
-						} else if (
-							config.prompt &&
-							(isLargePrompt || hasStreamJsonInput) &&
-							agentSupportsStreamJson
-						) {
-							// Large prompt or stream-json input, and agent supports it - use stdin
+						if (config.prompt && agentSupportsStreamJson) {
+							// Agent supports stream-json - always use stdin for prompts
 							if (!hasStreamJsonInput) {
 								sshArgs = [...finalArgs, '--input-format', 'stream-json'];
 							}
@@ -376,13 +358,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							logger.info(`Using stdin for prompt in SSH remote execution`, LOG_CONTEXT, {
 								sessionId: config.sessionId,
 								promptLength: config.prompt?.length,
-								reason: isLargePrompt
-									? 'avoid-command-line-length-limit'
-									: 'stream-json-input-mode',
+								reason: 'ssh-stdin-for-reliability',
 								hasStreamJsonInput,
 							});
-						} else if (config.prompt && isLargePrompt && !agentSupportsStreamJson) {
-							// Large prompt but agent doesn't support stream-json
+						} else if (config.prompt && !agentSupportsStreamJson) {
+							// Agent doesn't support stream-json - use alternative methods
 							if (config.toolType === 'opencode') {
 								// OpenCode: mark for here document processing (will be handled after remoteCommand is set)
 								useHereDocForOpenCode = true;
