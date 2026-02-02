@@ -376,7 +376,12 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)
-				ctx.logsEndRef.current?.scrollIntoView({ behavior: 'instant' });
+				// Find the scroll container (parent of logsEndRef) and scroll to bottom
+				// Using scrollTo() instead of scrollIntoView() for reliable scrolling in nested containers
+				const scrollContainer = ctx.logsEndRef.current?.parentElement;
+				if (scrollContainer) {
+					scrollContainer.scrollTo({ top: scrollContainer.scrollHeight, behavior: 'instant' });
+				}
 				trackShortcut('jumpToBottom');
 			} else if (ctx.isShortcut(e, 'toggleMarkdownMode')) {
 				// Toggle markdown raw mode for AI message history
