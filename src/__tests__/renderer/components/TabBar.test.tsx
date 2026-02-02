@@ -4792,3 +4792,294 @@ describe('File tab extension badge colorblind mode', () => {
 		expect(badge).toHaveStyle({ backgroundColor: darkTheme.colors.border });
 	});
 });
+
+describe('Performance: Many file tabs (10+)', () => {
+	const mockOnTabSelect = vi.fn();
+	const mockOnTabClose = vi.fn();
+	const mockOnNewTab = vi.fn();
+	const mockOnFileTabSelect = vi.fn();
+	const mockOnFileTabClose = vi.fn();
+	const mockOnUnifiedTabReorder = vi.fn();
+
+	beforeEach(() => {
+		vi.useFakeTimers();
+		vi.clearAllMocks();
+		Element.prototype.scrollTo = vi.fn();
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+	});
+
+	// Helper to create many file tabs
+	const createManyFileTabs = (count: number): FilePreviewTab[] =>
+		Array.from({ length: count }, (_, i) => ({
+			id: `file-tab-${i}`,
+			path: `/path/to/files/file-${i}.ts`,
+			name: `file-${i}`,
+			extension: '.ts',
+			content: `// Content for file ${i}\nconst x${i} = ${i};`,
+			scrollTop: 0,
+			searchQuery: '',
+			editMode: false,
+			editContent: undefined,
+			createdAt: Date.now() + i,
+			lastModified: Date.now() + i,
+		}));
+
+	// Helper to create unified tabs from file tabs
+	const createUnifiedTabsFromFiles = (
+		fileTabs: FilePreviewTab[],
+		aiTab: AITab
+	): Array<{ type: 'ai' | 'file'; id: string; data: AITab | FilePreviewTab }> => [
+		{ type: 'ai' as const, id: aiTab.id, data: aiTab },
+		...fileTabs.map((ft) => ({ type: 'file' as const, id: ft.id, data: ft })),
+	];
+
+	it('renders 15 file tabs without performance issues', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const fileTabs = createManyFileTabs(15);
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// All 15 file tabs should be rendered
+		expect(screen.getByText('file-0')).toBeInTheDocument();
+		expect(screen.getByText('file-7')).toBeInTheDocument();
+		expect(screen.getByText('file-14')).toBeInTheDocument();
+
+		// All extension badges should be present
+		const tsBadges = screen.getAllByText('.ts');
+		expect(tsBadges.length).toBe(15);
+	});
+
+	it('renders 30 file tabs with mixed AI tabs', () => {
+		const aiTab1 = createTab({ id: 'ai-tab-1', name: 'AI Tab 1', agentSessionId: 'sess-1' });
+		const aiTab2 = createTab({ id: 'ai-tab-2', name: 'AI Tab 2', agentSessionId: 'sess-2' });
+		const fileTabs = createManyFileTabs(30);
+
+		// Interleave AI tabs with file tabs
+		const unifiedTabs = [
+			{ type: 'ai' as const, id: aiTab1.id, data: aiTab1 },
+			...fileTabs.slice(0, 15).map((ft) => ({ type: 'file' as const, id: ft.id, data: ft })),
+			{ type: 'ai' as const, id: aiTab2.id, data: aiTab2 },
+			...fileTabs.slice(15).map((ft) => ({ type: 'file' as const, id: ft.id, data: ft })),
+		];
+
+		render(
+			<TabBar
+				tabs={[aiTab1, aiTab2]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// AI tabs should be present
+		expect(screen.getByText('AI Tab 1')).toBeInTheDocument();
+		expect(screen.getByText('AI Tab 2')).toBeInTheDocument();
+
+		// File tabs from both groups should be present
+		expect(screen.getByText('file-0')).toBeInTheDocument();
+		expect(screen.getByText('file-14')).toBeInTheDocument();
+		expect(screen.getByText('file-15')).toBeInTheDocument();
+		expect(screen.getByText('file-29')).toBeInTheDocument();
+	});
+
+	it('selects file tab correctly among many tabs', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const fileTabs = createManyFileTabs(20);
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// Click on file-10
+		const fileTab10 = screen.getByText('file-10').closest('[data-tab-id]')!;
+		fireEvent.click(fileTab10);
+
+		expect(mockOnFileTabSelect).toHaveBeenCalledWith('file-tab-10');
+	});
+
+	it('closes file tab correctly among many tabs', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const fileTabs = createManyFileTabs(20);
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId="file-tab-5" // Make file-5 active to show close button
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// The close button should be visible on the active file tab
+		const fileTab5 = screen.getByText('file-5').closest('[data-tab-id]')!;
+		const closeButton = fileTab5.querySelector('button[title="Close tab"]');
+		expect(closeButton).toBeInTheDocument();
+
+		fireEvent.click(closeButton!);
+		expect(mockOnFileTabClose).toHaveBeenCalledWith('file-tab-5');
+	});
+
+	it('supports drag and drop reorder with many file tabs', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const fileTabs = createManyFileTabs(15);
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		const fileTab2 = screen.getByText('file-2').closest('[data-tab-id]')!;
+		const fileTab10 = screen.getByText('file-10').closest('[data-tab-id]')!;
+
+		// Start dragging file-tab-2 (index 3 in unified tabs: AI tab is at 0)
+		fireEvent.dragStart(fileTab2, {
+			dataTransfer: {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('file-tab-2'),
+			},
+		});
+
+		// Drop on file-tab-10 (index 11 in unified tabs)
+		fireEvent.drop(fileTab10, {
+			dataTransfer: {
+				getData: vi.fn().mockReturnValue('file-tab-2'),
+			},
+		});
+
+		// Should call onUnifiedTabReorder with correct indices
+		expect(mockOnUnifiedTabReorder).toHaveBeenCalledWith(3, 11);
+	});
+
+	it('renders file tabs with different extensions correctly', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const extensions = ['.ts', '.tsx', '.js', '.json', '.md', '.css', '.html', '.py', '.rs', '.go', '.sh'];
+		const fileTabs: FilePreviewTab[] = extensions.map((ext, i) => ({
+			id: `file-tab-${i}`,
+			path: `/path/to/files/file-${i}${ext}`,
+			name: `file-${i}`,
+			extension: ext,
+			content: `// Content`,
+			scrollTop: 0,
+			searchQuery: '',
+			editMode: false,
+			editContent: undefined,
+			createdAt: Date.now() + i,
+			lastModified: Date.now() + i,
+		}));
+
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId={null}
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// All extension badges should be rendered
+		extensions.forEach((ext) => {
+			expect(screen.getByText(ext)).toBeInTheDocument();
+		});
+	});
+
+	it('maintains active tab styling among many tabs', () => {
+		const aiTab = createTab({ id: 'ai-tab-1', name: 'AI Tab', agentSessionId: 'sess-1' });
+		const fileTabs = createManyFileTabs(20);
+		const unifiedTabs = createUnifiedTabsFromFiles(fileTabs, aiTab);
+
+		render(
+			<TabBar
+				tabs={[aiTab]}
+				activeTabId="ai-tab-1"
+				theme={mockTheme}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				unifiedTabs={unifiedTabs}
+				activeFileTabId="file-tab-10" // file-10 is active
+				onFileTabSelect={mockOnFileTabSelect}
+				onFileTabClose={mockOnFileTabClose}
+				onUnifiedTabReorder={mockOnUnifiedTabReorder}
+			/>
+		);
+
+		// Active file tab should have main background color (non-transparent)
+		const activeFileTab = screen.getByText('file-10').closest('[data-tab-id]')!;
+		expect(activeFileTab).toHaveStyle({ backgroundColor: mockTheme.colors.bgMain });
+
+		// Active file tab should also have the bottom margin adjustment (active styling)
+		expect(activeFileTab).toHaveStyle({ marginBottom: '-1px' });
+
+		// Inactive file tab should NOT have the active margin adjustment
+		const inactiveFileTab = screen.getByText('file-5').closest('[data-tab-id]')!;
+		expect(inactiveFileTab).toHaveStyle({ marginBottom: '0' });
+	});
+});
