@@ -378,6 +378,33 @@ describe('useMainKeyboardHandler', () => {
 			expect(mockSetSessions).toHaveBeenCalled();
 			expect(mockSetActiveFocus).toHaveBeenCalledWith('main');
 		});
+
+		it('should allow tab switcher shortcut (Alt+Cmd+T) when only overlays are open', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetTabSwitcherOpen = vi.fn();
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true, // Overlay is open (e.g., file preview)
+				hasOpenModal: () => false, // But no true modal
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'tabSwitcher',
+				setTabSwitcherOpen: mockSetTabSwitcherOpen,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 't', // Alt key changes the key on macOS, but we use code
+						code: 'KeyT',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// Alt+Cmd+T should open tab switcher even when file preview overlay is open
+			expect(mockSetTabSwitcherOpen).toHaveBeenCalledWith(true);
+		});
 	});
 
 	describe('navigation handlers delegation', () => {

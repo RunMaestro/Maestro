@@ -120,6 +120,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					!e.shiftKey &&
 					!e.altKey &&
 					(keyLower === 't' || keyLower === 'w');
+				// Allow tab switcher shortcut (Alt+Cmd+T) even when file preview is open
+				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters
+				const isTabSwitcherShortcut =
+					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
@@ -139,7 +143,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
 					// (which will cycle right panel tabs when file tab is active)
 					// Also allow right panel tab shortcuts to switch tabs while overlay is open
-					// Also allow tab management shortcuts (Cmd+T/W) so user can create/close tabs from file preview
+					// Also allow tab management shortcuts (Cmd+T/W, Alt+Cmd+T tab switcher) from file preview
 					if (
 						!isCycleShortcut &&
 						!isLayoutShortcut &&
@@ -148,7 +152,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
 						!isMarkdownToggleShortcut &&
-						!isTabManagementShortcut
+						!isTabManagementShortcut &&
+						!isTabSwitcherShortcut
 					) {
 						return;
 					}
