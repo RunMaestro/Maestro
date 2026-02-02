@@ -5279,6 +5279,28 @@ You are taking over this conversation. Based on the context above, provide a bri
 	}, []);
 
 	/**
+	 * Select a file preview tab. This sets the file tab as active.
+	 * activeTabId is preserved to track the last active AI tab for when the user switches back.
+	 */
+	const handleSelectFileTab = useCallback((tabId: string) => {
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id !== activeSessionIdRef.current) return s;
+
+				// Verify the file tab exists
+				const fileTab = s.filePreviewTabs.find((tab) => tab.id === tabId);
+				if (!fileTab) return s;
+
+				return {
+					...s,
+					activeFileTabId: tabId,
+					// activeTabId stays as is - it tracks the last active AI tab for when user switches back
+				};
+			})
+		);
+	}, []);
+
+	/**
 	 * Internal tab close handler that performs the actual close.
 	 * Wizard tabs are closed without being added to history (they can't be restored).
 	 */
