@@ -8,6 +8,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { FolderOpen } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -99,7 +100,7 @@ export function SaveMarkdownModal({
 
 	const isValid = folder.trim() && filename.trim();
 
-	return (
+	return createPortal(
 		<Modal
 			theme={theme}
 			title="Save Markdown"
@@ -195,7 +196,8 @@ export function SaveMarkdownModal({
 					</p>
 				)}
 			</div>
-		</Modal>
+		</Modal>,
+		document.body
 	);
 }
 
