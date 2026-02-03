@@ -121,7 +121,9 @@ export function ToastProvider({
 
 		// Run custom notification command if enabled and configured
 		// Skip for toasts that explicitly opt out (e.g., synopsis messages)
-		if (audioEnabled && audioCommand && !toast.skipCustomNotification) {
+		// Also skip if there's no content to send
+		const hasContent = toast.message && toast.message.trim().length > 0;
+		if (audioEnabled && audioCommand && !toast.skipCustomNotification && hasContent) {
 			console.log(
 				'[ToastContext] Running custom notification with message:',
 				toast.message,
@@ -131,6 +133,8 @@ export function ToastProvider({
 			window.maestro.notification.speak(toast.message, audioCommand).catch((err) => {
 				console.error('[ToastContext] Custom notification failed:', err);
 			});
+		} else if (!hasContent) {
+			console.log('[ToastContext] Custom notification skipped - no content to send');
 		} else if (toast.skipCustomNotification) {
 			console.log('[ToastContext] Custom notification skipped - toast opted out');
 		} else {

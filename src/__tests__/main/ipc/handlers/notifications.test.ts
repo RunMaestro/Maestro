@@ -319,6 +319,38 @@ describe('Notification IPC Handlers', () => {
 		});
 	});
 
+	describe('notification:speak empty content handling', () => {
+		it('should skip notification when text is empty', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const result = await handler({}, '', 'say');
+
+			expect(result.success).toBe(true);
+			expect(getNotificationQueueLength()).toBe(0); // Should not be queued
+		});
+
+		it('should skip notification when text is only whitespace', async () => {
+			const handler = handlers.get('notification:speak')!;
+			const result = await handler({}, '   \t\n   ', 'say');
+
+			expect(result.success).toBe(true);
+			expect(getNotificationQueueLength()).toBe(0); // Should not be queued
+		});
+
+		it('should skip notification when text is null/undefined', async () => {
+			const handler = handlers.get('notification:speak')!;
+
+			// Test with undefined
+			let result = await handler({}, undefined, 'say');
+			expect(result.success).toBe(true);
+			expect(getNotificationQueueLength()).toBe(0);
+
+			// Test with null
+			result = await handler({}, null, 'say');
+			expect(result.success).toBe(true);
+			expect(getNotificationQueueLength()).toBe(0);
+		});
+	});
+
 	describe('notification queue size limit', () => {
 		it('should reject requests when queue is full', async () => {
 			const handler = handlers.get('notification:speak')!;

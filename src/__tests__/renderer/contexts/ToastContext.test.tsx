@@ -440,6 +440,68 @@ describe('ToastContext', () => {
 			expect(window.maestro.notification.speak).not.toHaveBeenCalled();
 		});
 
+		it('does not trigger custom notification when message is empty', async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			let contextValue: ReturnType<typeof useToast> | null = null;
+
+			renderWithProvider(
+				<ToastConsumer
+					onMount={(ctx) => {
+						contextValue = ctx;
+					}}
+				/>
+			);
+
+			// Enable audio feedback
+			await act(async () => {
+				contextValue!.setAudioFeedback(true, 'say -v Alex');
+			});
+
+			vi.clearAllMocks();
+
+			// Add toast with empty message - should NOT trigger speak
+			await act(async () => {
+				contextValue!.addToast({
+					type: 'info',
+					title: 'Empty Message',
+					message: '',
+				});
+			});
+
+			expect(window.maestro.notification.speak).not.toHaveBeenCalled();
+		});
+
+		it('does not trigger custom notification when message is only whitespace', async () => {
+			vi.useFakeTimers({ shouldAdvanceTime: true });
+			let contextValue: ReturnType<typeof useToast> | null = null;
+
+			renderWithProvider(
+				<ToastConsumer
+					onMount={(ctx) => {
+						contextValue = ctx;
+					}}
+				/>
+			);
+
+			// Enable audio feedback
+			await act(async () => {
+				contextValue!.setAudioFeedback(true, 'say -v Alex');
+			});
+
+			vi.clearAllMocks();
+
+			// Add toast with whitespace-only message - should NOT trigger speak
+			await act(async () => {
+				contextValue!.addToast({
+					type: 'info',
+					title: 'Whitespace Only',
+					message: '   \t\n   ',
+				});
+			});
+
+			expect(window.maestro.notification.speak).not.toHaveBeenCalled();
+		});
+
 		it('shows OS notification when enabled', async () => {
 			vi.useFakeTimers({ shouldAdvanceTime: true });
 			let contextValue: ReturnType<typeof useToast> | null = null;
