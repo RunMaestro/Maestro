@@ -1,7 +1,6 @@
 ---
 title: Release Notes
 description: Version history and changelog for Maestro releases
-icon: newspaper
 ---
 
 # Release Notes
@@ -57,8 +56,7 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 
 ### Previous Releases in this Series
 
-- **v0.14.5** (January 11, 2026 — Draft) - Desktop performance fixes
-- **v0.14.4** (January 11, 2026) - SSH/wizard bug fixes, performance improvements
+- **v0.14.4** (January 11, 2026) - Doc Graphs, SSH Agents, Inline Wizard
 - **v0.14.3** (January 9, 2026) - Doc Graphs, SSH Agents, Inline Wizard
 - **v0.14.2** (January 7, 2026) - Doc Graphs, SSH Agents, Inline Wizard
 - **v0.14.1** (January 6, 2026) - Doc Graphs, SSH Agents, Inline Wizard
@@ -108,7 +106,7 @@ The big changes in the v0.12.x line are the following three:
 🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
 
 ## Context Management Tools
-📖 Added context management options from the tab hover overlay menu. You can now compress, merge, and transfer contexts between agents. You will receive (configurable) warnings at 60% and 80% context consumption with a hint to compact.
+📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will received (configurable) warnings at 60% and 80% context consumption with a hint to compact.
 
 ## Changes Specific to v0.12.3:
 - We now have hosted documentation through Mintlify 📚
@@ -296,7 +294,7 @@ Plus the pre-release ALPHA...
 - Enhanced progress tracking with per-document metrics 📊
 - Integrated PR creation after worktree completion 🔀
 - Added undo/redo support in document editor ↩️
-- Added manual save via `Cmd+S`/`Ctrl+S` in document editor 💾
+- Implemented auto-save with 5-second debounce 💾
 
 ### Previous Releases in this Series
 
