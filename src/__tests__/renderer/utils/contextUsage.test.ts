@@ -5,6 +5,7 @@
 import {
 	estimateContextUsage,
 	calculateContextTokens,
+	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
 } from '../../../renderer/utils/contextUsage';
 import type { UsageStats } from '../../../shared/types';
@@ -270,6 +271,79 @@ describe('calculateContextTokens', () => {
 			// 50000 + 758000 + 75000 = 883000 (raw total, callers check against window)
 			expect(result).toBe(883000);
 		});
+	});
+});
+
+describe('estimateAccumulatedGrowth', () => {
+	it('should grow by 1% for typical multi-tool turn with many internal calls', () => {
+		// 31% usage, 40 internal API calls
+		// outputTokens: 10026 (accumulated), cacheRead: 2.5M, window: 200K
+		const result = estimateAccumulatedGrowth(31, 10026, 2500000, 200000);
+		// prevTokens = 62000, estCalls = 2500000/62000 ≈ 40
+		// singleTurnGrowth = 10026/40 ≈ 251, growthPercent = 251/200000*100 ≈ 0 → min 1%
+		expect(result).toBe(32);
+	});
+
+	it('should cap per-turn growth at 3%', () => {
+		// Fewer calls, more output per call
+		const result = estimateAccumulatedGrowth(40, 100000, 400000, 200000);
+		// prevTokens = 80000, estCalls = 400000/80000 = 5
+		// singleTurnGrowth = 100000/5 = 20000, growthPercent = 20000/200000*100 = 10 → cap 3%
+		expect(result).toBe(43);
+	});
+
+	it('should guarantee minimum 1% growth', () => {
+		const result = estimateAccumulatedGrowth(50, 100, 5000000, 200000);
+		// Very small output → growthPercent ≈ 0 → min 1%
+		expect(result).toBe(51);
+	});
+
+	it('should return currentUsage unchanged when currentUsage is 0', () => {
+		const result = estimateAccumulatedGrowth(0, 10000, 500000, 200000);
+		expect(result).toBe(0);
+	});
+
+	it('should return currentUsage unchanged when contextWindow is 0', () => {
+		const result = estimateAccumulatedGrowth(30, 10000, 500000, 0);
+		expect(result).toBe(30);
+	});
+
+	it('should handle zero cacheRead tokens', () => {
+		const result = estimateAccumulatedGrowth(30, 5000, 0, 200000);
+		// estCalls = max(1, 0/60000) = 1, singleTurnGrowth = 5000
+		// growthPercent = 5000/200000*100 = 3% (at cap)
+		expect(result).toBe(33);
+	});
+
+	it('should grow monotonically across consecutive accumulated turns', () => {
+		let usage = 31;
+		for (let i = 0; i < 5; i++) {
+			const prev = usage;
+			usage = estimateAccumulatedGrowth(usage, 10000, 2500000, 200000);
+			expect(usage).toBeGreaterThan(prev);
+		}
+		expect(usage).toBeGreaterThanOrEqual(36);
+	});
+
+	it('should not be capped internally (caller handles threshold cap)', () => {
+		// At 98% with substantial output, growth of 3% still applies (bounded max).
+		// The function intentionally does not cap at 100% — the caller in App.tsx
+		// applies Math.min(estimated, yellowThreshold - 5) to prevent exceeding thresholds.
+		const result = estimateAccumulatedGrowth(98, 50000, 500000, 200000);
+		// prevTokens=196000, estCalls=3, singleTurnGrowth=16667, growthPercent=8 → cap 3%
+		expect(result).toBeGreaterThan(98);
+		expect(result).toBe(101); // 98 + 3% (max bounded growth)
+	});
+
+	it('should use minimum context floor for low usage to avoid inflated call estimates', () => {
+		// At 1% usage, prevTokens would be 2000 without the floor.
+		// With MIN_PREV_CONTEXT_FRACTION (5%), floor is 10000.
+		// This prevents dividing cacheRead by a tiny number and inflating estCalls.
+		const result = estimateAccumulatedGrowth(1, 50000, 100000, 200000);
+		// minTokens = 10000, prevTokens = max(10000, 2000) = 10000
+		// estCalls = max(1, round(100000/10000)) = 10
+		// singleTurnGrowth = 50000/10 = 5000, growthPercent = round(5000/200000*100) = 3 → cap 3%
+		expect(result).toBe(4); // 1 + 3%
 	});
 });
 

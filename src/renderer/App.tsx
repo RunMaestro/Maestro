@@ -188,7 +188,11 @@ import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
-import { estimateContextUsage } from './utils/contextUsage';
+import {
+	estimateContextUsage,
+	estimateAccumulatedGrowth,
+	DEFAULT_CONTEXT_WINDOWS,
+} from './utils/contextUsage';
 import { formatLogsForClipboard } from './utils/contextExtractor';
 import {
 	parseSessionId,
@@ -2801,9 +2805,9 @@ function MaestroConsoleInner() {
 
 			// Estimate context usage percentage using agent-specific calculation.
 			// estimateContextUsage returns null when values are accumulated across multiple
-			// internal API calls within a complex turn. In that case, the UI may update less
-			// during tool-heavy turns, but it's always accurate when it does update,
-			// keeping the compact warning reliable.
+			// internal API calls within a complex turn. In that case, we use a conservative
+			// growth estimate so the gauge keeps moving, but cap it below the yellow warning
+			// threshold so estimates never trigger compact warnings — only real measurements can.
 			// Use baseSessionId for lookup to handle synopsis/batch sessions that inherit parent's agent type
 			const sessionForUsage = sessionsRef.current.find((s) => s.id === baseSessionId);
 			const agentToolType = sessionForUsage?.toolType;
@@ -2813,9 +2817,32 @@ function MaestroConsoleInner() {
 			// The batched updater handles the accumulation logic internally
 			batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
 			batchedUpdater.updateUsage(actualSessionId, null, usageStats); // Session-level accumulation
-			// Only update context percentage if we got a valid value (not accumulated)
 			if (contextPercentage !== null) {
+				// Valid measurement from a non-accumulated turn — use directly
 				batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
+			} else {
+				// Accumulated values from multi-tool turn. Estimate conservative growth
+				// so the gauge doesn't freeze, but cap below the yellow warning threshold
+				// to guarantee estimates never trigger compact warnings.
+				const currentUsage = sessionForUsage?.contextUsage ?? 0;
+				if (currentUsage > 0) {
+					const effectiveWindow =
+						usageStats.contextWindow > 0
+							? usageStats.contextWindow
+							: agentToolType && agentToolType in DEFAULT_CONTEXT_WINDOWS
+								? DEFAULT_CONTEXT_WINDOWS[agentToolType as keyof typeof DEFAULT_CONTEXT_WINDOWS]
+								: 200000;
+					const estimated = estimateAccumulatedGrowth(
+						currentUsage,
+						usageStats.outputTokens,
+						usageStats.cacheReadInputTokens || 0,
+						effectiveWindow
+					);
+					// Hard cap below yellow threshold — estimates must never trigger compact warnings
+					const yellowThreshold = contextManagementSettings.contextWarningYellowThreshold;
+					const maxEstimate = yellowThreshold - 5;
+					batchedUpdater.updateContextUsage(actualSessionId, Math.min(estimated, maxEstimate));
+				}
 			}
 			batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
 

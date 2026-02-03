@@ -26,6 +26,16 @@ export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
  */
 const COMBINED_CONTEXT_AGENTS: Set<ToolType> = new Set(['codex']);
 
+/** Minimum growth percentage per accumulated turn */
+const MIN_GROWTH_PERCENT = 1;
+/** Maximum growth percentage per accumulated turn */
+const MAX_GROWTH_PERCENT = 3;
+/**
+ * Minimum fraction of context window to use when estimating previous token count.
+ * Prevents inflated call-count estimates when currentUsage is very low (e.g., 1%).
+ */
+const MIN_PREV_CONTEXT_FRACTION = 0.05;
+
 /**
  * Calculate total context tokens based on agent-specific semantics.
  *
@@ -56,13 +66,17 @@ export function calculateContextTokens(
 ): number {
 	// OpenAI models have combined input+output context limits
 	if (agentId && COMBINED_CONTEXT_AGENTS.has(agentId as ToolType)) {
-		return (stats.inputTokens || 0) + (stats.cacheCreationInputTokens || 0) + (stats.outputTokens || 0);
+		return (
+			(stats.inputTokens || 0) + (stats.cacheCreationInputTokens || 0) + (stats.outputTokens || 0)
+		);
 	}
 
 	// Claude models: total input = uncached + cache-hit + newly-cached
 	// Output tokens don't consume the input context window
 	return (
-		(stats.inputTokens || 0) + (stats.cacheReadInputTokens || 0) + (stats.cacheCreationInputTokens || 0)
+		(stats.inputTokens || 0) +
+		(stats.cacheReadInputTokens || 0) +
+		(stats.cacheCreationInputTokens || 0)
 	);
 }
 
@@ -122,4 +136,51 @@ export function estimateContextUsage(
 	}
 
 	return Math.round((totalContextTokens / effectiveContextWindow) * 100);
+}
+
+/**
+ * Estimate context growth during accumulated (multi-tool) turns.
+ *
+ * When estimateContextUsage returns null (accumulated values), the percentage
+ * would freeze at the last valid value. This function provides a conservative
+ * growth estimate so the gauge keeps moving during tool-heavy turns.
+ *
+ * Approach: de-accumulate output tokens by dividing by the estimated number
+ * of internal API calls (derived from cacheRead / previousContext), then
+ * compute what percentage of the window that single-turn output represents.
+ * Growth is bounded to 1-3% per turn.
+ *
+ * IMPORTANT: The caller must cap the result below the compact warning threshold
+ * so that estimates never trigger compact warnings — only real measurements can.
+ *
+ * @param currentUsage - Current context usage percentage (0-100)
+ * @param outputTokens - Output tokens from this turn (accumulated across internal calls)
+ * @param cacheReadTokens - Cache read tokens (accumulated, used to estimate call count)
+ * @param contextWindow - Effective context window size
+ * @returns Estimated new context usage percentage
+ */
+export function estimateAccumulatedGrowth(
+	currentUsage: number,
+	outputTokens: number,
+	cacheReadTokens: number,
+	contextWindow: number
+): number {
+	if (currentUsage <= 0 || contextWindow <= 0) {
+		return currentUsage;
+	}
+
+	// Estimate how many internal API calls occurred in this turn.
+	// Use a minimum token floor to avoid inflated call-count estimates at low usage.
+	const minTokens = Math.round(contextWindow * MIN_PREV_CONTEXT_FRACTION);
+	const prevTokens = Math.max(minTokens, Math.round((currentUsage / 100) * contextWindow));
+	const estCalls = Math.max(1, Math.round((cacheReadTokens || 0) / prevTokens));
+
+	// De-accumulate: estimate single-call output growth
+	const singleTurnGrowth = Math.round(outputTokens / estCalls);
+	const growthPercent = Math.round((singleTurnGrowth / contextWindow) * 100);
+
+	// Bound growth per turn (conservative to avoid overshooting)
+	const boundedGrowth = Math.max(MIN_GROWTH_PERCENT, Math.min(growthPercent, MAX_GROWTH_PERCENT));
+
+	return currentUsage + boundedGrowth;
 }
