@@ -170,6 +170,7 @@ Full documentation and usage guide available at **[docs.runmaestro.ai](https://d
 
 - [@pedramamini](https://github.com/pedramamini) - Creator and Benevolent Dictator
 - [@mattjay](https://github.com/mattjay) - Contributor and tester
+- [@chr1syy](https://github.com/chr1syy) - Windows Contributor and tester
 
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture details, and contribution guidelines.
