@@ -350,6 +350,10 @@ export interface UseSettingsReturn {
 	// File tab auto-refresh settings
 	fileTabAutoRefreshEnabled: boolean;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
+
+	// Title bar settings
+	useNativeTitleBar: boolean;
+	setUseNativeTitleBar: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {
@@ -507,6 +511,9 @@ export function useSettings(): UseSettingsReturn {
 
 	// File tab auto-refresh settings
 	const [fileTabAutoRefreshEnabled, setFileTabAutoRefreshEnabledState] = useState(false); // Default: disabled
+
+	// Title bar settings
+	const [useNativeTitleBar, setUseNativeTitleBarState] = useState(false); // Default: use custom title bar
 
 	// Wrapper functions that persist to electron-store
 	// PERF: All wrapped in useCallback to prevent re-renders
@@ -1322,6 +1329,12 @@ export function useSettings(): UseSettingsReturn {
 		window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
 	}, []);
 
+	// Native title bar toggle (requires restart)
+	const setUseNativeTitleBar = useCallback((value: boolean) => {
+		setUseNativeTitleBarState(value);
+		window.maestro.settings.set('useNativeTitleBar', value);
+	}, []);
+
 	// Load settings from electron-store
 	// This function is called on mount and on system resume (after sleep/suspend)
 	// PERF: Use batch loading to reduce IPC calls from ~60 to 3
@@ -1396,6 +1409,7 @@ export function useSettings(): UseSettingsReturn {
 				const savedSshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'];
 				const savedAutomaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'];
 				const savedFileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'];
+				const savedUseNativeTitleBar = allSettings['useNativeTitleBar'];
 
 				if (savedEnterToSendAI !== undefined) setEnterToSendAIState(savedEnterToSendAI as boolean);
 				if (savedEnterToSendTerminal !== undefined)
@@ -1760,6 +1774,11 @@ export function useSettings(): UseSettingsReturn {
 				if (savedFileTabAutoRefreshEnabled !== undefined) {
 					setFileTabAutoRefreshEnabledState(savedFileTabAutoRefreshEnabled as boolean);
 				}
+
+				// Title bar settings
+				if (savedUseNativeTitleBar !== undefined) {
+					setUseNativeTitleBarState(savedUseNativeTitleBar as boolean);
+				}
 			} catch (error) {
 				console.error('[Settings] Failed to load settings:', error);
 			} finally {
@@ -1938,6 +1957,8 @@ export function useSettings(): UseSettingsReturn {
 			setAutomaticTabNamingEnabled,
 			fileTabAutoRefreshEnabled,
 			setFileTabAutoRefreshEnabled,
+			useNativeTitleBar,
+			setUseNativeTitleBar,
 		}),
 		[
 			// State values
@@ -2083,6 +2104,8 @@ export function useSettings(): UseSettingsReturn {
 			setAutomaticTabNamingEnabled,
 			fileTabAutoRefreshEnabled,
 			setFileTabAutoRefreshEnabled,
+			useNativeTitleBar,
+			setUseNativeTitleBar,
 		]
 	);
 }

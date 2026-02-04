@@ -56,6 +56,8 @@ export interface WindowManagerDependencies {
 	rendererPath: string;
 	/** Development server URL */
 	devServerUrl: string;
+	/** Whether to use the native OS title bar instead of custom title bar */
+	useNativeTitleBar: boolean;
 }
 
 /** Window manager instance */
@@ -71,7 +73,7 @@ export interface WindowManager {
  * @returns WindowManager instance
  */
 export function createWindowManager(deps: WindowManagerDependencies): WindowManager {
-	const { windowStateStore, isDevelopment, preloadPath, rendererPath, devServerUrl } = deps;
+	const { windowStateStore, isDevelopment, preloadPath, rendererPath, devServerUrl, useNativeTitleBar } = deps;
 
 	return {
 		createWindow: (): BrowserWindow => {
@@ -86,7 +88,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 				minWidth: 1000,
 				minHeight: 600,
 				backgroundColor: '#0b0b0d',
-				titleBarStyle: 'hiddenInset',
+				...(useNativeTitleBar ? {} : { titleBarStyle: 'hiddenInset' as const }),
 				webPreferences: {
 					preload: preloadPath,
 					contextIsolation: true,

@@ -143,7 +143,7 @@ if (isDevelopment && !DEMO_MODE && !process.env.USE_PROD_DATA) {
 const { syncPath, bootstrapStore } = initializeStores({ productionDataPath });
 
 // Get early settings before Sentry init (for crash reporting and GPU acceleration)
-const { crashReportingEnabled, disableGpuAcceleration } = getEarlySettings(syncPath);
+const { crashReportingEnabled, disableGpuAcceleration, useNativeTitleBar } = getEarlySettings(syncPath);
 
 // Disable GPU hardware acceleration if user has opted out or in WSL environment
 // Must be called before app.ready event
@@ -234,6 +234,7 @@ const windowManager = createWindowManager({
 	preloadPath: path.join(__dirname, 'preload.js'),
 	rendererPath: path.join(__dirname, '../renderer/index.html'),
 	devServerUrl: devServerUrl,
+	useNativeTitleBar,
 });
 
 // Create web server factory with dependency injection (Phase 2 refactoring)

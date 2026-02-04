@@ -571,6 +571,9 @@ function MaestroConsoleInner() {
 
 		// File tab refresh settings
 		fileTabAutoRefreshEnabled,
+
+		// Title bar settings
+		useNativeTitleBar,
 	} = settings;
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
@@ -13306,7 +13309,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		<GitStatusProvider sessions={sessions} activeSessionId={activeSessionId}>
 			<div
 				className={`flex h-screen w-full font-mono overflow-hidden transition-colors duration-300 ${
-					isMobileLandscape ? 'pt-0' : 'pt-10'
+					isMobileLandscape || useNativeTitleBar ? 'pt-0' : 'pt-10'
 				}`}
 				style={{
 					backgroundColor: theme.colors.bgMain,
@@ -13353,8 +13356,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 					</div>
 				)}
 
-				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape) --- */}
-				{!isMobileLandscape && (
+				{/* --- DRAGGABLE TITLE BAR (hidden in mobile landscape or when using native title bar) --- */}
+				{!isMobileLandscape && !useNativeTitleBar && (
 					<div
 						className="fixed top-0 left-0 right-0 h-10 flex items-center justify-center"
 						style={

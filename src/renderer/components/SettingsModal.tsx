@@ -311,6 +311,9 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// Automatic tab naming settings
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// Title bar settings
+		useNativeTitleBar,
+		setUseNativeTitleBar,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
@@ -1546,6 +1549,53 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											<span
 												className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
 													disableConfetti ? 'translate-x-5' : 'translate-x-0.5'
+												}`}
+											/>
+										</button>
+									</div>
+
+									{/* Native Title Bar Toggle */}
+									<div
+										className="flex items-center justify-between cursor-pointer pt-3 border-t"
+										style={{ borderColor: theme.colors.border }}
+										onClick={() => setUseNativeTitleBar(!useNativeTitleBar)}
+										role="button"
+										tabIndex={0}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												setUseNativeTitleBar(!useNativeTitleBar);
+											}
+										}}
+									>
+										<div className="flex-1 pr-3">
+											<div className="font-medium" style={{ color: theme.colors.textMain }}>
+												Use native title bar
+											</div>
+											<div
+												className="text-xs opacity-50 mt-0.5"
+												style={{ color: theme.colors.textDim }}
+											>
+												Use the OS native title bar instead of Maestro&apos;s custom title bar. Requires restart to take effect.
+											</div>
+										</div>
+										<button
+											onClick={(e) => {
+												e.stopPropagation();
+												setUseNativeTitleBar(!useNativeTitleBar);
+											}}
+											className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+											style={{
+												backgroundColor: useNativeTitleBar
+													? theme.colors.accent
+													: theme.colors.bgActivity,
+											}}
+											role="switch"
+											aria-checked={useNativeTitleBar}
+										>
+											<span
+												className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+													useNativeTitleBar ? 'translate-x-5' : 'translate-x-0.5'
 												}`}
 											/>
 										</button>
