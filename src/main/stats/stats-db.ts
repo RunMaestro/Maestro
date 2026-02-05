@@ -127,6 +127,9 @@ export class StatsDB {
 			this.initialized = true;
 			logger.info(`Stats database initialized at ${this.dbPath}`, LOG_CONTEXT);
 
+			// Create daily backup (keeps last 7 days)
+			this.createDailyBackupIfNeeded();
+
 			// Schedule VACUUM to run weekly instead of on every startup
 			this.vacuumIfNeededWeekly();
 		} catch (error) {
@@ -341,13 +344,175 @@ export class StatsDB {
 		}
 	}
 
+	// ============================================================================
+	// Daily Backup System
+	// ============================================================================
+
 	/**
-	 * Handle a corrupted database by backing it up and recreating a fresh database.
+	 * Create a daily backup if one hasn't been created today.
+	 * Automatically rotates old backups to keep only the last 7 days.
+	 */
+	private createDailyBackupIfNeeded(): void {
+		try {
+			if (!fs.existsSync(this.dbPath)) {
+				return;
+			}
+
+			const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+			const dailyBackupPath = `${this.dbPath}.daily.${today}`;
+
+			// Check if today's backup already exists
+			if (fs.existsSync(dailyBackupPath)) {
+				logger.debug(`Daily backup already exists for ${today}`, LOG_CONTEXT);
+				return;
+			}
+
+			// Create today's backup
+			fs.copyFileSync(this.dbPath, dailyBackupPath);
+			logger.info(`Created daily backup: ${dailyBackupPath}`, LOG_CONTEXT);
+
+			// Rotate old backups (keep last 7 days)
+			this.rotateOldBackups(7);
+		} catch (error) {
+			logger.warn(`Failed to create daily backup: ${error}`, LOG_CONTEXT);
+		}
+	}
+
+	/**
+	 * Remove daily backups older than the specified number of days.
+	 */
+	private rotateOldBackups(keepDays: number): void {
+		try {
+			const dir = path.dirname(this.dbPath);
+			const baseName = path.basename(this.dbPath);
+			const files = fs.readdirSync(dir);
+
+			const cutoffDate = new Date();
+			cutoffDate.setDate(cutoffDate.getDate() - keepDays);
+			const cutoffStr = cutoffDate.toISOString().split('T')[0];
+
+			let removedCount = 0;
+			for (const file of files) {
+				// Match daily backup pattern: stats.db.daily.YYYY-MM-DD
+				const dailyMatch = file.match(new RegExp(`^${baseName}\\.daily\\.(\\d{4}-\\d{2}-\\d{2})$`));
+				if (dailyMatch) {
+					const backupDate = dailyMatch[1];
+					if (backupDate < cutoffStr) {
+						const fullPath = path.join(dir, file);
+						fs.unlinkSync(fullPath);
+						removedCount++;
+						logger.debug(`Removed old daily backup: ${file}`, LOG_CONTEXT);
+					}
+				}
+			}
+
+			if (removedCount > 0) {
+				logger.info(`Rotated ${removedCount} old daily backup(s)`, LOG_CONTEXT);
+			}
+		} catch (error) {
+			logger.warn(`Failed to rotate old backups: ${error}`, LOG_CONTEXT);
+		}
+	}
+
+	/**
+	 * Get available daily backups sorted by date (newest first).
+	 */
+	getAvailableBackups(): Array<{ path: string; date: string; size: number }> {
+		try {
+			const dir = path.dirname(this.dbPath);
+			const baseName = path.basename(this.dbPath);
+			const files = fs.readdirSync(dir);
+			const backups: Array<{ path: string; date: string; size: number }> = [];
+
+			for (const file of files) {
+				// Match daily backup pattern
+				const dailyMatch = file.match(new RegExp(`^${baseName}\\.daily\\.(\\d{4}-\\d{2}-\\d{2})$`));
+				if (dailyMatch) {
+					const fullPath = path.join(dir, file);
+					const stats = fs.statSync(fullPath);
+					backups.push({
+						path: fullPath,
+						date: dailyMatch[1],
+						size: stats.size,
+					});
+				}
+
+				// Also include timestamp-based backups (legacy format)
+				const timestampMatch = file.match(new RegExp(`^${baseName}\\.backup\\.(\\d+)$`));
+				if (timestampMatch) {
+					const fullPath = path.join(dir, file);
+					const stats = fs.statSync(fullPath);
+					const timestamp = parseInt(timestampMatch[1], 10);
+					const date = new Date(timestamp).toISOString().split('T')[0];
+					backups.push({
+						path: fullPath,
+						date: date,
+						size: stats.size,
+					});
+				}
+			}
+
+			// Sort by date descending (newest first)
+			return backups.sort((a, b) => b.date.localeCompare(a.date));
+		} catch (error) {
+			logger.warn(`Failed to list backups: ${error}`, LOG_CONTEXT);
+			return [];
+		}
+	}
+
+	/**
+	 * Restore database from a backup file.
+	 * Returns true if restoration was successful.
+	 */
+	restoreFromBackup(backupPath: string): boolean {
+		try {
+			if (!fs.existsSync(backupPath)) {
+				logger.error(`Backup file does not exist: ${backupPath}`, LOG_CONTEXT);
+				return false;
+			}
+
+			// Close current database if open
+			if (this.db) {
+				try {
+					this.db.close();
+				} catch {
+					// Ignore errors closing database
+				}
+				this.db = null;
+				this.initialized = false;
+			}
+
+			// Remove WAL and SHM files if they exist
+			const walPath = `${this.dbPath}-wal`;
+			const shmPath = `${this.dbPath}-shm`;
+			if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+			if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+
+			// Remove current database if it exists
+			if (fs.existsSync(this.dbPath)) {
+				fs.unlinkSync(this.dbPath);
+			}
+
+			// Copy backup to main database path
+			fs.copyFileSync(backupPath, this.dbPath);
+			logger.info(`Restored database from backup: ${backupPath}`, LOG_CONTEXT);
+
+			return true;
+		} catch (error) {
+			logger.error(`Failed to restore from backup: ${error}`, LOG_CONTEXT);
+			return false;
+		}
+	}
+
+	/**
+	 * Handle a corrupted database by attempting to restore from the latest backup.
+	 * If no backup is available, creates a fresh database.
 	 */
 	private recoverFromCorruption(): CorruptionRecoveryResult {
 		logger.warn('Attempting to recover from database corruption...', LOG_CONTEXT);
 
 		try {
+			// Close current database if open
 			if (this.db) {
 				try {
 					this.db.close();
@@ -358,40 +523,59 @@ export class StatsDB {
 				this.initialized = false;
 			}
 
-			const backupResult = this.backupDatabase();
-			if (!backupResult.success) {
-				if (fs.existsSync(this.dbPath)) {
-					const timestamp = Date.now();
-					const emergencyBackupPath = `${this.dbPath}.corrupted.${timestamp}`;
-					try {
-						fs.renameSync(this.dbPath, emergencyBackupPath);
-						logger.warn(`Emergency backup created at ${emergencyBackupPath}`, LOG_CONTEXT);
-					} catch {
-						logger.error('Failed to backup corrupted database, data will be lost', LOG_CONTEXT);
-						fs.unlinkSync(this.dbPath);
-					}
+			// First, backup the corrupted database for forensics
+			if (fs.existsSync(this.dbPath)) {
+				const timestamp = Date.now();
+				const corruptedBackupPath = `${this.dbPath}.corrupted.${timestamp}`;
+				try {
+					fs.renameSync(this.dbPath, corruptedBackupPath);
+					logger.warn(`Corrupted database moved to: ${corruptedBackupPath}`, LOG_CONTEXT);
+				} catch {
+					logger.error('Failed to backup corrupted database', LOG_CONTEXT);
+					fs.unlinkSync(this.dbPath);
 				}
 			}
 
 			// Delete WAL and SHM files
 			const walPath = `${this.dbPath}-wal`;
 			const shmPath = `${this.dbPath}-shm`;
-			if (fs.existsSync(walPath)) {
-				fs.unlinkSync(walPath);
-			}
-			if (fs.existsSync(shmPath)) {
-				fs.unlinkSync(shmPath);
+			if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
+			if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+
+			// Try to restore from the latest backup
+			const backups = this.getAvailableBackups();
+			for (const backup of backups) {
+				logger.info(`Attempting to restore from backup: ${backup.path} (${backup.date})`, LOG_CONTEXT);
+
+				// Try to validate the backup before restoring
+				try {
+					const testDb = new Database(backup.path, { readonly: true });
+					const result = testDb.pragma('integrity_check') as Array<{ integrity_check: string }>;
+					testDb.close();
+
+					if (result.length === 1 && result[0].integrity_check === 'ok') {
+						// Backup is valid, restore it
+						if (this.restoreFromBackup(backup.path)) {
+							logger.info(`Successfully restored database from backup: ${backup.date}`, LOG_CONTEXT);
+							return {
+								recovered: true,
+								backupPath: backup.path,
+								restoredFromBackup: true,
+							};
+						}
+					} else {
+						logger.warn(`Backup ${backup.date} failed integrity check, trying next...`, LOG_CONTEXT);
+					}
+				} catch (error) {
+					logger.warn(`Backup ${backup.date} is unreadable: ${error}, trying next...`, LOG_CONTEXT);
+				}
 			}
 
-			if (fs.existsSync(this.dbPath)) {
-				fs.unlinkSync(this.dbPath);
-			}
-
-			logger.info('Corrupted database removed, will create fresh database', LOG_CONTEXT);
-
+			// No valid backup found, will create fresh database
+			logger.warn('No valid backup found, will create fresh database', LOG_CONTEXT);
 			return {
 				recovered: true,
-				backupPath: backupResult.backupPath,
+				restoredFromBackup: false,
 			};
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);

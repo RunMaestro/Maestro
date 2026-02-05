@@ -35,8 +35,10 @@ export interface BackupResult {
 export interface CorruptionRecoveryResult {
 	/** Whether recovery was performed */
 	recovered: boolean;
-	/** Path to the backup of the corrupted database */
+	/** Path to the backup used for restoration (if restored from backup) */
 	backupPath?: string;
+	/** Whether database was restored from a backup (vs creating fresh) */
+	restoredFromBackup?: boolean;
 	/** Error during recovery (if any) */
 	error?: string;
 }

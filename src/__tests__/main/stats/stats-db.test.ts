@@ -69,6 +69,7 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsReaddirSync = vi.fn(() => [] as string[]); // Default: empty directory
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -80,6 +81,7 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
 }));
 
 // Mock logger
@@ -673,6 +675,183 @@ describe('Database file creation on first launch', () => {
 			const dbAfter = getStatsDB();
 			expect(dbAfter).not.toBe(dbBefore);
 			expect(dbAfter.isReady()).toBe(false);
+		});
+	});
+});
+
+/**
+ * Daily backup system tests
+ */
+describe('Daily backup system', () => {
+	const mockFsReaddirSync = vi.fn();
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+		lastDbPath = null;
+		mockDb.pragma.mockReturnValue([{ user_version: 3 }]);
+		mockDb.prepare.mockReturnValue(mockStatement);
+		mockStatement.run.mockReturnValue({ changes: 1 });
+		mockStatement.get.mockReturnValue({ value: '0' }); // Old vacuum timestamp
+		mockStatement.all.mockReturnValue([]);
+		mockFsExistsSync.mockReturnValue(true);
+		mockFsReaddirSync.mockReturnValue([]);
+
+		// Mock readdirSync in the fs mock
+		vi.doMock('fs', () => ({
+			existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
+			mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
+			copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
+			unlinkSync: (...args: unknown[]) => mockFsUnlinkSync(...args),
+			renameSync: (...args: unknown[]) => mockFsRenameSync(...args),
+			statSync: (...args: unknown[]) => mockFsStatSync(...args),
+			readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
+			writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+			readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
+		}));
+	});
+
+	afterEach(() => {
+		vi.resetModules();
+	});
+
+	describe('getAvailableBackups', () => {
+		it('should return empty array when no backups exist', async () => {
+			mockFsReaddirSync.mockReturnValue([]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const backups = db.getAvailableBackups();
+			expect(backups).toEqual([]);
+		});
+
+		it('should detect daily backup files (stats.db.daily.YYYY-MM-DD)', async () => {
+			mockFsReaddirSync.mockReturnValue([
+				'stats.db.daily.2026-02-01',
+				'stats.db.daily.2026-02-02',
+				'stats.db.daily.2026-02-03',
+			]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const backups = db.getAvailableBackups();
+			expect(backups).toHaveLength(3);
+			expect(backups[0].date).toBe('2026-02-03'); // Newest first
+			expect(backups[1].date).toBe('2026-02-02');
+			expect(backups[2].date).toBe('2026-02-01');
+		});
+
+		it('should detect legacy timestamp backup files (stats.db.backup.TIMESTAMP)', async () => {
+			// Timestamp for 2026-02-03
+			const timestamp = new Date('2026-02-03').getTime();
+			mockFsReaddirSync.mockReturnValue([`stats.db.backup.${timestamp}`]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const backups = db.getAvailableBackups();
+			expect(backups).toHaveLength(1);
+			expect(backups[0].date).toBe('2026-02-03');
+		});
+
+		it('should sort backups by date descending (newest first)', async () => {
+			mockFsReaddirSync.mockReturnValue([
+				'stats.db.daily.2026-01-15',
+				'stats.db.daily.2026-02-01',
+				'stats.db.daily.2026-01-20',
+			]);
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const backups = db.getAvailableBackups();
+			expect(backups[0].date).toBe('2026-02-01');
+			expect(backups[1].date).toBe('2026-01-20');
+			expect(backups[2].date).toBe('2026-01-15');
+		});
+	});
+
+	describe('restoreFromBackup', () => {
+		it('should return false when backup file does not exist', async () => {
+			mockFsExistsSync.mockImplementation((p: unknown) => {
+				if (typeof p === 'string' && p.includes('nonexistent')) return false;
+				return true;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			const result = db.restoreFromBackup('/path/to/nonexistent/backup');
+			expect(result).toBe(false);
+		});
+
+		it('should close database before restoring', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.restoreFromBackup('/path/to/backup');
+
+			expect(mockDb.close).toHaveBeenCalled();
+		});
+
+		it('should copy backup file to main database path', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.restoreFromBackup('/path/to/backup.db');
+
+			expect(mockFsCopyFileSync).toHaveBeenCalledWith(
+				'/path/to/backup.db',
+				expect.stringContaining('stats.db')
+			);
+		});
+
+		it('should remove WAL and SHM files before restoring', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			db.restoreFromBackup('/path/to/backup.db');
+
+			// Should attempt to unlink WAL and SHM files
+			expect(mockFsUnlinkSync).toHaveBeenCalled();
+		});
+	});
+
+	describe('daily backup creation on initialize', () => {
+		it('should attempt to create daily backup on initialization', async () => {
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			// Should have attempted to copy the database for backup
+			expect(mockFsCopyFileSync).toHaveBeenCalled();
+		});
+
+		it('should skip backup creation if today backup already exists', async () => {
+			const today = new Date().toISOString().split('T')[0];
+			mockFsExistsSync.mockImplementation((p: unknown) => {
+				if (typeof p === 'string' && p.includes(`daily.${today}`)) return true;
+				return true;
+			});
+
+			const { StatsDB } = await import('../../../main/stats');
+			const db = new StatsDB();
+			db.initialize();
+
+			// copyFileSync should not be called for daily backup (might be called for other reasons)
+			const dailyBackupCalls = mockFsCopyFileSync.mock.calls.filter(
+				(call) => typeof call[1] === 'string' && call[1].includes('daily')
+			);
+			expect(dailyBackupCalls).toHaveLength(0);
 		});
 	});
 });
