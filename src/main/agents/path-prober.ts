@@ -87,6 +87,8 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// Node Version Manager for Windows (nvm4w) - OpenCode commonly installed here
 			'C:\\nvm4w\\nodejs',
 			path.join(home, 'nvm4w', 'nodejs'),
+			// Volta - Node version manager for Windows/macOS/Linux (installs shims to .volta/bin)
+			path.join(home, '.volta', 'bin'),
 			// Scoop package manager (OpenCode, other tools)
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
@@ -255,6 +257,9 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Scoop installation (recommended for OpenCode)
 			path.join(home, 'scoop', 'shims', 'opencode.exe'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current', 'opencode.exe'),
+			// Volta - Node version manager (OpenCode commonly installed via Volta)
+			path.join(home, '.volta', 'bin', 'opencode'),
+			path.join(home, '.volta', 'bin', 'opencode.cmd'),
 			// Chocolatey installation
 			path.join(
 				process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey',
