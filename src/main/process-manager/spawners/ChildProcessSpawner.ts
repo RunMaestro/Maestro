@@ -73,7 +73,11 @@ export class ChildProcessSpawner {
 
 		// Check if prompt will be sent via stdin instead of command line
 		// This is critical for SSH remote execution to avoid shell escaping issues
-		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw;
+		// Also critical on Windows: when using stream-json output mode, the prompt is sent
+		// via stdin (see stream-json stdin write below). Adding it as a CLI arg too would
+		// exceed cmd.exe's ~8191 character command line limit, causing immediate exit code 1.
+		const argsHaveStreamJson = args.some((arg) => arg.includes('stream-json'));
+		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveStreamJson;
 
 		// Build final args based on batch mode and images
 		let finalArgs: string[];
