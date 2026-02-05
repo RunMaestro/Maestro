@@ -84,6 +84,9 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// Node.js
 			path.join(programFiles, 'nodejs'),
 			path.join(localAppData, 'Programs', 'node'),
+			// Node Version Manager for Windows (nvm4w) - OpenCode commonly installed here
+			'C:\\nvm4w\\nodejs',
+			path.join(home, 'nvm4w', 'nodejs'),
 			// Scoop package manager (OpenCode, other tools)
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
