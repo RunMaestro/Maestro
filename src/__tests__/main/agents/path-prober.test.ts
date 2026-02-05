@@ -63,6 +63,21 @@ describe('path-prober', () => {
 			}
 		});
 
+		it('should include nvm4w and npm paths on Windows', () => {
+			const originalPlatform = process.platform;
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+
+			try {
+				const env = getExpandedEnv();
+				// Check for nvm4w paths (OpenCode commonly installed here)
+				expect(env.PATH).toContain('C:\\nvm4w\\nodejs');
+				// Check for npm global paths
+				expect(env.PATH).toMatch(/AppData[\\\/](npm|Roaming[\\\/]npm)/);
+			} finally {
+				Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+			}
+		});
+
 		it('should preserve existing PATH entries', () => {
 			const originalPath = process.env.PATH;
 			const testPath = '/test/custom/path';

@@ -292,7 +292,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					) as Record<string, string>;
 
 					// Determine an explicit shell to use when forcing shell execution on Windows.
-					// Prefer a user-configured custom shell path, otherwise fall back to COMSPEC/cmd.exe.
+					// Prefer a user-configured custom shell path, then PowerShell, then ComSpec/cmd.exe.
+					// PowerShell is preferred over cmd.exe for better script handling and to avoid cmd.exe limits.
 					const customShellPath = settingsStore.get('customShellPath', '') as string;
 					if (customShellPath && customShellPath.trim()) {
 						shellToUse = customShellPath.trim();
@@ -300,8 +301,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							customShellPath: shellToUse,
 						});
 					} else if (!shellToUse) {
-						// Use COMSPEC if available, otherwise default to cmd.exe
-						shellToUse = process.env.ComSpec || 'cmd.exe';
+						// Try PowerShell if available (common on modern Windows)
+						// If not, fall back to ComSpec/cmd.exe
+						// PowerShell handles shell scripts better and avoids cmd.exe command line length limits
+						const powerShellPath = process.env.PSHOME
+							? `${process.env.PSHOME}\\powershell.exe`
+							: 'powershell';
+						shellToUse = powerShellPath;
+						logger.debug(
+							'Using PowerShell for agent execution on Windows (shell script support)',
+							LOG_CONTEXT,
+							{
+								shellPath: shellToUse,
+							}
+						);
 					}
 
 					logger.info(`Forcing shell execution for agent on Windows for PATH access`, LOG_CONTEXT, {

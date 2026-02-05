@@ -84,6 +84,11 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			// Node.js
 			path.join(programFiles, 'nodejs'),
 			path.join(localAppData, 'Programs', 'node'),
+			// Node Version Manager for Windows (nvm4w) - OpenCode commonly installed here
+			'C:\\nvm4w\\nodejs',
+			path.join(home, 'nvm4w', 'nodejs'),
+			// Volta - Node version manager for Windows/macOS/Linux (installs shims to .volta/bin)
+			path.join(home, '.volta', 'bin'),
 			// Scoop package manager (OpenCode, other tools)
 			path.join(home, 'scoop', 'shims'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
@@ -252,6 +257,9 @@ function getWindowsKnownPaths(binaryName: string): string[] {
 			// Scoop installation (recommended for OpenCode)
 			path.join(home, 'scoop', 'shims', 'opencode.exe'),
 			path.join(home, 'scoop', 'apps', 'opencode', 'current', 'opencode.exe'),
+			// Volta - Node version manager (OpenCode commonly installed via Volta)
+			path.join(home, '.volta', 'bin', 'opencode'),
+			path.join(home, '.volta', 'bin', 'opencode.cmd'),
 			// Chocolatey installation
 			path.join(
 				process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey',
@@ -471,13 +479,16 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 				.filter((p) => p);
 
 			if (process.platform === 'win32' && matches.length > 0) {
-				// On Windows, prefer .exe over .cmd over extensionless
-				// This helps with proper execution handling
+				// On Windows, prefer .exe > extensionless (shell scripts) > .cmd
+				// This helps avoid cmd.exe limitations and supports PowerShell/bash scripts
 				const exeMatch = matches.find((p) => p.toLowerCase().endsWith('.exe'));
 				const cmdMatch = matches.find((p) => p.toLowerCase().endsWith('.cmd'));
+				const extensionlessMatch = matches.find(
+					(p) => !p.toLowerCase().endsWith('.exe') && !p.toLowerCase().endsWith('.cmd')
+				);
 
-				// Return the best match: .exe > .cmd > first result
-				let bestMatch = exeMatch || cmdMatch || matches[0];
+				// Return the best match: .exe > extensionless shell scripts > .cmd > first result
+				let bestMatch = exeMatch || extensionlessMatch || cmdMatch || matches[0];
 
 				// If the first match doesn't have an extension, check if .cmd or .exe version exists
 				// This handles cases where 'where' returns a path without extension

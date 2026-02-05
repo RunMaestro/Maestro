@@ -452,6 +452,7 @@ ${message}`;
 			});
 			const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 				agentConfigValues,
+				sessionCustomModel: chat.moderatorConfig?.customModel,
 				sessionCustomArgs: chat.moderatorConfig?.customArgs,
 				sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 			});
@@ -849,7 +850,9 @@ export async function routeModeratorResponse(
 
 				// Apply SSH wrapping if configured for this session
 				if (sshStore && matchingSession?.sshRemoteConfig) {
-					console.log(`[GroupChat:Debug] Applying SSH wrapping for participant ${participantName}...`);
+					console.log(
+						`[GroupChat:Debug] Applying SSH wrapping for participant ${participantName}...`
+					);
 					const sshWrapped = await wrapSpawnWithSsh(
 						{
 							command: spawnCommand,
@@ -1149,6 +1152,7 @@ Review the agent responses above. Either:
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 		agentConfigValues,
+		sessionCustomModel: chat.moderatorConfig?.customModel,
 		sessionCustomArgs: chat.moderatorConfig?.customArgs,
 		sessionCustomEnvVars: chat.moderatorConfig?.customEnvVars,
 	});

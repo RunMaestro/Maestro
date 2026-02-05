@@ -163,15 +163,18 @@ export function NewGroupChatModal({
 
 	// Build moderator config from state
 	const buildModeratorConfig = useCallback((): ModeratorConfig | undefined => {
-		const hasConfig = customPath || customArgs || Object.keys(customEnvVars).length > 0;
+		const customModelValue = agentConfig.model;
+		const hasConfig =
+			customPath || customArgs || Object.keys(customEnvVars).length > 0 || customModelValue;
 		if (!hasConfig) return undefined;
 
 		return {
 			customPath: customPath || undefined,
 			customArgs: customArgs || undefined,
 			customEnvVars: Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
+			customModel: customModelValue || undefined,
 		};
-	}, [customPath, customArgs, customEnvVars]);
+	}, [customPath, customArgs, customEnvVars, agentConfig]);
 
 	const handleCreate = useCallback(() => {
 		if (name.trim() && selectedAgent) {
@@ -337,23 +340,22 @@ export function NewGroupChatModal({
 					) : (
 						<div className="flex items-center gap-2">
 							{/* Dropdown */}
-							<div className="relative flex-1">
+							<div className="relative flex-1" style={{ zIndex: 10000 }}>
 								<select
 									value={selectedAgent || ''}
 									onChange={(e) => handleAgentChange(e.target.value)}
-									className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm"
+									className="w-full px-3 py-2 pr-10 rounded-lg border outline-none appearance-none cursor-pointer text-sm relative"
 									style={{
 										backgroundColor: theme.colors.bgMain,
 										borderColor: theme.colors.border,
 										color: theme.colors.textMain,
+										zIndex: 10000,
 									}}
 									aria-label="Select moderator agent"
 								>
 									{availableTiles.map((tile) => {
 										const isBeta =
-											tile.id === 'codex' ||
-											tile.id === 'opencode' ||
-											tile.id === 'factory-droid';
+											tile.id === 'codex' || tile.id === 'opencode' || tile.id === 'factory-droid';
 										return (
 											<option key={tile.id} value={tile.id}>
 												{tile.name}
@@ -364,7 +366,7 @@ export function NewGroupChatModal({
 								</select>
 								<ChevronDown
 									className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
-									style={{ color: theme.colors.textDim }}
+									style={{ color: theme.colors.textDim, zIndex: 10001 }}
 								/>
 							</div>
 

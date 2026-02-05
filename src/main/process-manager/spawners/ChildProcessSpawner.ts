@@ -3,6 +3,7 @@
 import { spawn } from 'child_process';
 import { EventEmitter } from 'events';
 import * as path from 'path';
+import * as fs from 'fs';
 import { logger } from '../../utils/logger';
 import { getOutputParser } from '../../parsers';
 import { getAgentCapabilities } from '../../agents';
@@ -186,6 +187,24 @@ export class ChildProcessSpawner {
 					'ProcessManager',
 					{ command: spawnCommand }
 				);
+			}
+
+			// Auto-enable shell for Windows when command is a shell script (extensionless with shebang)
+			// This handles tools like OpenCode installed via npm with shell scripts
+			if (isWindows && !useShell && !commandExt && commandHasPath) {
+				try {
+					const fileContent = fs.readFileSync(spawnCommand, 'utf8');
+					if (fileContent.startsWith('#!')) {
+						useShell = true;
+						logger.info(
+							'[ProcessManager] Auto-enabling shell for Windows to execute shell script',
+							'ProcessManager',
+							{ command: spawnCommand, shebang: fileContent.split('\n')[0] }
+						);
+					}
+				} catch {
+					// If we can't read the file, just continue without special handling
+				}
 			}
 
 			if (isWindows && useShell) {
