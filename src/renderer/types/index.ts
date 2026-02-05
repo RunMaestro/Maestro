@@ -901,6 +901,14 @@ export interface LeaderboardSubmitResponse {
 	};
 }
 
+// Director's Notes settings for synopsis generation
+export interface DirectorNotesSettings {
+	/** Agent type to use for synopsis generation */
+	provider: 'claude-code' | 'codex' | 'opencode';
+	/** Default lookback period in days (1-90) */
+	defaultLookbackDays: number;
+}
+
 // Context management settings for merge and transfer operations
 export interface ContextManagementSettings {
 	autoGroomContexts: boolean; // Automatically groom contexts during transfer (default: true)

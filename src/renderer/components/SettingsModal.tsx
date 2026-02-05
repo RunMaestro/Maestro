@@ -32,6 +32,7 @@ import {
 	PartyPopper,
 	Tag,
 	User,
+	Clapperboard,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -315,10 +316,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// Automatic tab naming settings
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// Director's Notes settings
+		directorNotesSettings,
+		setDirectorNotesSettings,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
-		'general' | 'display' | 'llm' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands' | 'ssh'
+		'general' | 'display' | 'llm' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands' | 'ssh' | 'director-notes'
 	>('general');
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -944,6 +948,16 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					>
 						<Server className="w-4 h-4" />
 						{activeTab === 'ssh' && <span>SSH Hosts</span>}
+					</button>
+					<button
+						onClick={() => setActiveTab('director-notes')}
+						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'director-notes' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						style={{ color: activeTab === 'director-notes' ? theme.colors.textMain : theme.colors.textDim }}
+						tabIndex={-1}
+						title="Director's Notes"
+					>
+						<Clapperboard className="w-4 h-4" />
+						{activeTab === 'director-notes' && <span>Director's Notes</span>}
 					</button>
 					<div className="flex-1 flex justify-end items-center pr-4">
 						<button onClick={onClose} tabIndex={-1}>
@@ -2645,6 +2659,76 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								honorGitignore={sshRemoteHonorGitignore}
 								onHonorGitignoreChange={setSshRemoteHonorGitignore}
 							/>
+						</div>
+					)}
+
+					{activeTab === 'director-notes' && (
+						<div className="p-6 space-y-8">
+							<div>
+								<h3 className="text-sm font-bold mb-4" style={{ color: theme.colors.textMain }}>
+									Director's Notes
+								</h3>
+								<p className="text-xs mb-6" style={{ color: theme.colors.textDim }}>
+									Director's Notes provides a unified view of your work across all Maestro sessions,
+									with AI-generated summaries of accomplishments, challenges, and next steps.
+								</p>
+							</div>
+
+							{/* Provider Selection */}
+							<div>
+								<label className="block text-xs font-bold mb-2" style={{ color: theme.colors.textMain }}>
+									Synopsis Provider
+								</label>
+								<select
+									value={directorNotesSettings.provider}
+									onChange={(e) =>
+										setDirectorNotesSettings({
+											...directorNotesSettings,
+											provider: e.target.value as 'claude-code' | 'codex' | 'opencode',
+										})
+									}
+									className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+									style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								>
+									<option value="claude-code">Claude Code</option>
+									<option value="codex">Codex</option>
+									<option value="opencode">OpenCode</option>
+								</select>
+								<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+									The AI agent used to generate synopsis summaries
+								</p>
+							</div>
+
+							{/* Default Lookback Period */}
+							<div>
+								<label className="block text-xs font-bold mb-2" style={{ color: theme.colors.textMain }}>
+									Default Lookback Period: {directorNotesSettings.defaultLookbackDays} days
+								</label>
+								<input
+									type="range"
+									min={1}
+									max={90}
+									value={directorNotesSettings.defaultLookbackDays}
+									onChange={(e) =>
+										setDirectorNotesSettings({
+											...directorNotesSettings,
+											defaultLookbackDays: parseInt(e.target.value, 10),
+										})
+									}
+									className="w-full"
+								/>
+								<div className="flex justify-between text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+									<span>1 day</span>
+									<span>7</span>
+									<span>14</span>
+									<span>30</span>
+									<span>60</span>
+									<span>90 days</span>
+								</div>
+								<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
+									How far back to look when generating notes (can be adjusted per-report)
+								</p>
+							</div>
 						</div>
 					)}
 				</div>
