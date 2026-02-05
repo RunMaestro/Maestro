@@ -25,23 +25,7 @@ import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextTokens } from '../utils/contextUsage';
-
-// Double checkmark SVG component for validated entries
-const DoubleCheck = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
-	<svg
-		className={className}
-		style={style}
-		viewBox="0 0 24 24"
-		fill="none"
-		stroke="currentColor"
-		strokeWidth="2.5"
-		strokeLinecap="round"
-		strokeLinejoin="round"
-	>
-		<polyline points="15 6 6 17 1 12" />
-		<polyline points="23 6 14 17 11 14" />
-	</svg>
-);
+import { DoubleCheck } from './History';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
