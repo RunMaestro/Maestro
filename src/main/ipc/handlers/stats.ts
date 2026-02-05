@@ -292,4 +292,32 @@ export function registerStatsHandlers(deps: StatsHandlerDependencies): void {
 			return db.getSessionLifecycleEvents(range);
 		})
 	);
+
+	// Get earliest timestamp across all stats tables
+	ipcMain.handle(
+		'stats:get-earliest-timestamp',
+		withIpcErrorLogging(handlerOpts('getEarliestTimestamp'), async () => {
+			const db = getStatsDB();
+			return db.getEarliestTimestamp();
+		})
+	);
+
+	// Get initialization result (for showing database reset notification)
+	ipcMain.handle(
+		'stats:get-initialization-result',
+		withIpcErrorLogging(handlerOpts('getInitializationResult'), async () => {
+			// This feature is not yet implemented - return null for now
+			// Future implementation would track if DB was reset due to corruption
+			return null;
+		})
+	);
+
+	// Clear initialization result (after user has acknowledged the notification)
+	ipcMain.handle(
+		'stats:clear-initialization-result',
+		withIpcErrorLogging(handlerOpts('clearInitializationResult'), async () => {
+			// This feature is not yet implemented - return true for now
+			return true;
+		})
+	);
 }

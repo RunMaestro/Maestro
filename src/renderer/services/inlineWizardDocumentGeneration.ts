@@ -134,6 +134,8 @@ export interface DocumentGenerationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Conductor profile (user's About Me from settings) */
+	conductorProfile?: string;
 	/** Optional callbacks */
 	callbacks?: DocumentGenerationCallbacks;
 }
@@ -358,6 +360,7 @@ export function generateDocumentPrompt(
 			cwd: directoryPath,
 			fullPath: directoryPath,
 		},
+		conductorProfile: config.conductorProfile,
 	};
 
 	// Substitute any remaining template variables

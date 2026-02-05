@@ -100,6 +100,12 @@ vi.mock('lucide-react', () => ({
 	Keyboard: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="keyboard-icon" className={className} style={style} />
 	),
+	Info: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="info-icon" className={className} style={style} />
+	),
+	Wand2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="wand-icon" className={className} style={style} />
+	),
 }));
 
 // Mock react-markdown
@@ -152,6 +158,12 @@ const mockMaestro = {
 	},
 	fs: {
 		readFile: vi.fn(),
+	},
+	sshRemote: {
+		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
+	},
+	sessions: {
+		getAll: vi.fn().mockResolvedValue([]),
 	},
 };
 

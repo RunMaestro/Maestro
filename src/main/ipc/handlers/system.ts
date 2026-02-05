@@ -61,20 +61,29 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	// ============ Dialog Handlers ============
 
 	// Folder selection dialog
+	// Wrapped in try-catch to ensure a reply is always sent, even if the window
+	// is closed while the dialog is open or other unexpected errors occur.
+	// Fixes MAESTRO-58: "reply was never sent"
 	ipcMain.handle('dialog:selectFolder', async () => {
-		const mainWindow = getMainWindow();
-		if (!mainWindow) return null;
+		try {
+			const mainWindow = getMainWindow();
+			if (!mainWindow || mainWindow.isDestroyed()) return null;
 
-		const result = await dialog.showOpenDialog(mainWindow, {
-			properties: ['openDirectory', 'createDirectory'],
-			title: 'Select Working Directory',
-		});
+			const result = await dialog.showOpenDialog(mainWindow, {
+				properties: ['openDirectory', 'createDirectory'],
+				title: 'Select Working Directory',
+			});
 
-		if (result.canceled || result.filePaths.length === 0) {
+			if (result.canceled || result.filePaths.length === 0) {
+				return null;
+			}
+
+			return result.filePaths[0];
+		} catch (error) {
+			// Log the error but return null to ensure IPC reply is sent
+			logger.error('dialog:selectFolder failed', 'Dialog', { error });
 			return null;
 		}
-
-		return result.filePaths[0];
 	});
 
 	// File save dialog

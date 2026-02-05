@@ -871,7 +871,7 @@ Pages are organized by topic in `docs.json` under `navigation.dropdowns`:
 | **Overview** | index, about/overview, features, screenshots | Introduction and feature highlights |
 | **Getting Started** | installation, getting-started | Onboarding new users |
 | **Usage** | general-usage, history, context-management, autorun-playbooks, git-worktrees, group-chat, remote-access, slash-commands, speckit-commands, configuration | Feature documentation |
-| **CLI & Providers** | cli, provider-nuances | Command line and agent-specific docs |
+| **Providers & CLI** | provider-notes, cli | Provider configuration and command line docs |
 | **Reference** | achievements, keyboard-shortcuts, troubleshooting | Quick reference guides |
 
 ### Adding a New Documentation Page

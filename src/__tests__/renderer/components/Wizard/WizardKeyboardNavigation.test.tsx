@@ -77,6 +77,15 @@ vi.mock('lucide-react', () => ({
 	Brain: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<svg data-testid="brain-icon" className={className} style={style} />
 	),
+	Info: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="info-icon" className={className} style={style} />
+	),
+	Wand2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="wand-icon" className={className} style={style} />
+	),
+	AlertTriangle: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+		<svg data-testid="alert-triangle-icon" className={className} style={style} />
+	),
 }));
 
 // Mock react-markdown
@@ -144,6 +153,12 @@ const mockMaestro = {
 	},
 	shell: {
 		openExternal: vi.fn(),
+	},
+	sshRemote: {
+		getConfigs: vi.fn().mockResolvedValue({ success: true, configs: [] }),
+	},
+	sessions: {
+		getAll: vi.fn().mockResolvedValue([]),
 	},
 };
 

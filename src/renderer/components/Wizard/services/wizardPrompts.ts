@@ -60,6 +60,10 @@ export interface SystemPromptConfig {
 	existingDocs?: ExistingDocument[];
 	/** Auto Run folder path (defaults to agentPath/Auto Run Docs if not provided) */
 	autoRunFolderPath?: string;
+	/** History file path for task recall (optional, enables AI to recall recent work) */
+	historyFilePath?: string;
+	/** Conductor profile (user's About Me from settings) */
+	conductorProfile?: string;
 }
 
 /**
@@ -112,7 +116,14 @@ export const READY_CONFIDENCE_THRESHOLD = 80;
  * @returns The complete system prompt for the agent
  */
 export function generateSystemPrompt(config: SystemPromptConfig): string {
-	const { agentName, agentPath, existingDocs, autoRunFolderPath } = config;
+	const {
+		agentName,
+		agentPath,
+		existingDocs,
+		autoRunFolderPath,
+		historyFilePath,
+		conductorProfile,
+	} = config;
 	const projectName = agentName || 'this project';
 
 	// Default Auto Run folder to standard location under working directory
@@ -140,6 +151,7 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 
 	// Build template context for remaining variables (date/time, etc.)
 	// Include autoRunFolderPath so {{AUTORUN_FOLDER}} is properly substituted
+	// Include historyFilePath for {{AGENT_HISTORY_PATH}} task recall
 	const templateContext: TemplateContext = {
 		session: {
 			id: 'wizard',
@@ -150,6 +162,8 @@ export function generateSystemPrompt(config: SystemPromptConfig): string {
 			autoRunFolderPath: effectiveAutoRunFolder,
 		},
 		autoRunFolder: effectiveAutoRunFolder,
+		historyFilePath: historyFilePath,
+		conductorProfile: conductorProfile,
 	};
 
 	// Substitute any remaining template variables using the central function

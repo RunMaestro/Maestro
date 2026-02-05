@@ -12,7 +12,7 @@ Settings are organized into tabs:
 
 | Tab | Contents |
 |-----|----------|
-| **General** | Shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
+| **General** | About Me (conductor profile), shell configuration, input send behavior, default toggles (history, thinking), automatic tab naming, power management, updates, privacy, usage stats, storage location |
 | **Display** | Font family and size, terminal width, log level and buffer, max output lines per response, document graph settings, context window warnings |
 | **Shortcuts** | Customize keyboard shortcuts (see [Keyboard Shortcuts](./keyboard-shortcuts)) |
 | **Themes** | Dark, light, and vibe mode themes, custom theme builder with import/export |

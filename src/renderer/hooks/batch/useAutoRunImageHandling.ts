@@ -206,15 +206,49 @@ export function useAutoRunImageHandling({
 		}
 	}, [folderPath, selectedFile, sshRemoteId]);
 
-	// Handle image paste
+	// Handle paste (images and text with whitespace trimming)
 	const handlePaste = useCallback(
 		async (e: React.ClipboardEvent) => {
-			if (isLocked || !folderPath || !selectedFile) {
+			if (isLocked) {
 				return;
 			}
 
 			const items = e.clipboardData?.items;
 			if (!items) {
+				return;
+			}
+
+			// Check if pasting an image
+			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
+
+			// Handle text paste with whitespace trimming (when no images)
+			if (!hasImage) {
+				const text = e.clipboardData.getData('text/plain');
+				if (text) {
+					const trimmedText = text.trim();
+					// Only intercept if trimming actually changed the text
+					if (trimmedText !== text) {
+						e.preventDefault();
+						const textarea = textareaRef.current;
+						if (textarea) {
+							const start = textarea.selectionStart ?? 0;
+							const end = textarea.selectionEnd ?? 0;
+							const newContent =
+								localContent.slice(0, start) + trimmedText + localContent.slice(end);
+							setLocalContent(newContent);
+							handleContentChange(newContent);
+							// Set cursor position after the pasted text
+							requestAnimationFrame(() => {
+								textarea.selectionStart = textarea.selectionEnd = start + trimmedText.length;
+							});
+						}
+					}
+				}
+				return;
+			}
+
+			// Image paste requires folder and file context
+			if (!folderPath || !selectedFile) {
 				return;
 			}
 

@@ -58,6 +58,11 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		});
 	});
 
+	it('should include conductor variables', () => {
+		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
+		expect(variables).toContain('{{CONDUCTOR_PROFILE}}');
+	});
+
 	it('should include key agent variables', () => {
 		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
 		expect(variables).toContain('{{AGENT_NAME}}');
@@ -136,6 +141,24 @@ describe('substituteTemplateVariables', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+	});
+
+	describe('Conductor Variables', () => {
+		it('should replace {{CONDUCTOR_PROFILE}} with conductorProfile', () => {
+			const context = createTestContext({
+				conductorProfile: 'Senior developer specializing in TypeScript and React',
+			});
+			const result = substituteTemplateVariables('Profile: {{CONDUCTOR_PROFILE}}', context);
+			expect(result).toBe('Profile: Senior developer specializing in TypeScript and React');
+		});
+
+		it('should replace {{CONDUCTOR_PROFILE}} with empty string when conductorProfile is undefined', () => {
+			const context = createTestContext({
+				conductorProfile: undefined,
+			});
+			const result = substituteTemplateVariables('Profile: {{CONDUCTOR_PROFILE}}', context);
+			expect(result).toBe('Profile: ');
+		});
 	});
 
 	describe('Agent Variables', () => {

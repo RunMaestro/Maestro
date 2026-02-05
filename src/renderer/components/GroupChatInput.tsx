@@ -307,6 +307,41 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[message, onDraftChange]
 	);
 
+	// Wrapped paste handler that trims text and delegates images to prop handler
+	const handlePasteWrapped = useCallback(
+		(e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+			const items = e.clipboardData.items;
+			const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
+
+			// Handle text paste with whitespace trimming (when no images)
+			if (!hasImage) {
+				const text = e.clipboardData.getData('text/plain');
+				if (text) {
+					const trimmedText = text.trim();
+					// Only intercept if trimming actually changed the text
+					if (trimmedText !== text) {
+						e.preventDefault();
+						const target = e.target as HTMLTextAreaElement;
+						const start = target.selectionStart ?? 0;
+						const end = target.selectionEnd ?? 0;
+						const newValue = message.slice(0, start) + trimmedText + message.slice(end);
+						setMessage(newValue);
+						onDraftChange?.(newValue);
+						// Set cursor position after the pasted text
+						requestAnimationFrame(() => {
+							target.selectionStart = target.selectionEnd = start + trimmedText.length;
+						});
+					}
+				}
+				return;
+			}
+
+			// Delegate image handling to prop handler
+			handlePaste?.(e);
+		},
+		[message, onDraftChange, handlePaste]
+	);
+
 	const handleImageSelect = useCallback(
 		(e: React.ChangeEvent<HTMLInputElement>) => {
 			const files = Array.from(e.target.files || []);
@@ -442,7 +477,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						value={message}
 						onChange={handleChange}
 						onKeyDown={handleKeyDown}
-						onPaste={handlePaste}
+						onPaste={handlePasteWrapped}
 						onDrop={(e) => {
 							e.stopPropagation();
 							handleDrop?.(e);

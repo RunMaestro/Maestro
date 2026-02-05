@@ -74,10 +74,10 @@
             ]
           },
           {
-            "group": "CLI & Providers",
+            "group": "Providers & CLI",
             "pages": [
-              "cli",
-              "provider-nuances"
+              "provider-notes",
+              "cli"
             ]
           },
           {

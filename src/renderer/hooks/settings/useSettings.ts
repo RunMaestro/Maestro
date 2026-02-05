@@ -126,6 +126,10 @@ export interface UseSettingsReturn {
 	// Loading state
 	settingsLoaded: boolean;
 
+	// Conductor Profile (About Me)
+	conductorProfile: string;
+	setConductorProfile: (value: string) => void;
+
 	// LLM settings
 	llmProvider: LLMProvider;
 	modelSlug: string;
@@ -350,11 +354,18 @@ export interface UseSettingsReturn {
 	// File tab auto-refresh settings
 	fileTabAutoRefreshEnabled: boolean;
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
+
+	// Windows warning suppression
+	suppressWindowsWarning: boolean;
+	setSuppressWindowsWarning: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {
 	// Loading state
 	const [settingsLoaded, setSettingsLoaded] = useState(false);
+
+	// Conductor Profile (About Me) - optional, up to 1000 characters
+	const [conductorProfile, setConductorProfileState] = useState('');
 
 	// LLM Config
 	const [llmProvider, setLlmProviderState] = useState<LLMProvider>('openrouter');
@@ -508,8 +519,20 @@ export function useSettings(): UseSettingsReturn {
 	// File tab auto-refresh settings
 	const [fileTabAutoRefreshEnabled, setFileTabAutoRefreshEnabledState] = useState(false); // Default: disabled
 
+	// Windows warning suppression
+	const [suppressWindowsWarning, setSuppressWindowsWarningState] = useState(false); // Default: show warning
+
 	// Wrapper functions that persist to electron-store
 	// PERF: All wrapped in useCallback to prevent re-renders
+
+	// Conductor Profile (About Me)
+	const setConductorProfile = useCallback((value: string) => {
+		// Enforce 1000 character limit
+		const trimmed = value.slice(0, 1000);
+		setConductorProfileState(trimmed);
+		window.maestro.settings.set('conductorProfile', trimmed);
+	}, []);
+
 	const setLlmProvider = useCallback((value: LLMProvider) => {
 		setLlmProviderState(value);
 		window.maestro.settings.set('llmProvider', value);
@@ -1322,451 +1345,472 @@ export function useSettings(): UseSettingsReturn {
 		window.maestro.settings.set('fileTabAutoRefreshEnabled', value);
 	}, []);
 
+	// Windows warning suppression toggle
+	const setSuppressWindowsWarning = useCallback((value: boolean) => {
+		setSuppressWindowsWarningState(value);
+		window.maestro.settings.set('suppressWindowsWarning', value);
+	}, []);
+
 	// Load settings from electron-store
 	// This function is called on mount and on system resume (after sleep/suspend)
 	// PERF: Use batch loading to reduce IPC calls from ~60 to 3
 	const loadSettings = useCallback(async () => {
-			try {
-				// Batch load all settings in a single IPC call
-				const allSettings = (await window.maestro.settings.getAll()) as Record<string, unknown>;
+		try {
+			// Batch load all settings in a single IPC call
+			const allSettings = (await window.maestro.settings.getAll()) as Record<string, unknown>;
 
-				// Extract settings from the batch response
-				const savedEnterToSendAI = allSettings['enterToSendAI'];
-				const savedEnterToSendTerminal = allSettings['enterToSendTerminal'];
-				const savedDefaultSaveToHistory = allSettings['defaultSaveToHistory'];
-				const savedDefaultShowThinking = allSettings['defaultShowThinking'];
+			// Extract settings from the batch response
+			const savedConductorProfile = allSettings['conductorProfile'];
+			const savedEnterToSendAI = allSettings['enterToSendAI'];
+			const savedEnterToSendTerminal = allSettings['enterToSendTerminal'];
+			const savedDefaultSaveToHistory = allSettings['defaultSaveToHistory'];
+			const savedDefaultShowThinking = allSettings['defaultShowThinking'];
 
-				const savedLlmProvider = allSettings['llmProvider'];
-				const savedModelSlug = allSettings['modelSlug'];
-				const savedApiKey = allSettings['apiKey'];
-				const savedDefaultShell = allSettings['defaultShell'];
-				const savedCustomShellPath = allSettings['customShellPath'];
-				const savedShellArgs = allSettings['shellArgs'];
-				const savedShellEnvVars = allSettings['shellEnvVars'];
-				const savedGhPath = allSettings['ghPath'];
-				const savedFontSize = allSettings['fontSize'];
-				const savedFontFamily = allSettings['fontFamily'];
-				const savedLeftSidebarWidth = allSettings['leftSidebarWidth'];
-				const savedRightPanelWidth = allSettings['rightPanelWidth'];
-				const savedMarkdownEditMode = allSettings['markdownEditMode'];
-				const savedShowHiddenFiles = allSettings['showHiddenFiles'];
-				const savedShortcuts = allSettings['shortcuts'];
-				const savedTabShortcuts = allSettings['tabShortcuts'];
-				const savedActiveThemeId = allSettings['activeThemeId'];
-				const savedCustomThemeColors = allSettings['customThemeColors'];
-				const savedCustomThemeBaseId = allSettings['customThemeBaseId'];
-				const savedTerminalWidth = allSettings['terminalWidth'];
-				// These two still need separate calls as they go through the logger API
-				const savedLogLevel = await window.maestro.logger.getLogLevel();
-				const savedMaxLogBuffer = await window.maestro.logger.getMaxLogBuffer();
-				const savedMaxOutputLines = allSettings['maxOutputLines'];
-				const savedOsNotificationsEnabled = allSettings['osNotificationsEnabled'];
-				const savedAudioFeedbackEnabled = allSettings['audioFeedbackEnabled'];
-				const savedAudioFeedbackCommand = allSettings['audioFeedbackCommand'];
-				const savedToastDuration = allSettings['toastDuration'];
-				const savedCheckForUpdatesOnStartup = allSettings['checkForUpdatesOnStartup'];
-				const savedEnableBetaUpdates = allSettings['enableBetaUpdates'];
-				const savedCrashReportingEnabled = allSettings['crashReportingEnabled'];
-				const savedLogViewerSelectedLevels = allSettings['logViewerSelectedLevels'];
-				const savedCustomAICommands = allSettings['customAICommands'];
-				const savedGlobalStats = allSettings['globalStats'];
-				const savedAutoRunStats = allSettings['autoRunStats'];
-				const savedUsageStats = allSettings['usageStats'];
-				const concurrentAutoRunTimeMigrationApplied =
-					allSettings['concurrentAutoRunTimeMigrationApplied'];
-				const savedUngroupedCollapsed = allSettings['ungroupedCollapsed'];
-				const savedTourCompleted = allSettings['tourCompleted'];
-				const savedFirstAutoRunCompleted = allSettings['firstAutoRunCompleted'];
-				const savedOnboardingStats = allSettings['onboardingStats'];
-				const savedLeaderboardRegistration = allSettings['leaderboardRegistration'];
-				const savedWebInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'];
-				const savedWebInterfaceCustomPort = allSettings['webInterfaceCustomPort'];
-				const savedContextManagementSettings = allSettings['contextManagementSettings'];
-				const savedKeyboardMasteryStats = allSettings['keyboardMasteryStats'];
-				const savedColorBlindMode = allSettings['colorBlindMode'];
-				const savedDocumentGraphShowExternalLinks = allSettings['documentGraphShowExternalLinks'];
-				const savedDocumentGraphMaxNodes = allSettings['documentGraphMaxNodes'];
-				const savedDocumentGraphPreviewCharLimit = allSettings['documentGraphPreviewCharLimit'];
-				const savedStatsCollectionEnabled = allSettings['statsCollectionEnabled'];
-				const savedDefaultStatsTimeRange = allSettings['defaultStatsTimeRange'];
-				const savedPreventSleepEnabled = allSettings['preventSleepEnabled'];
-				const savedDisableGpuAcceleration = allSettings['disableGpuAcceleration'];
-				const savedDisableConfetti = allSettings['disableConfetti'];
-				const savedSshRemoteIgnorePatterns = allSettings['sshRemoteIgnorePatterns'];
-				const savedSshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'];
-				const savedAutomaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'];
-				const savedFileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'];
+			const savedLlmProvider = allSettings['llmProvider'];
+			const savedModelSlug = allSettings['modelSlug'];
+			const savedApiKey = allSettings['apiKey'];
+			const savedDefaultShell = allSettings['defaultShell'];
+			const savedCustomShellPath = allSettings['customShellPath'];
+			const savedShellArgs = allSettings['shellArgs'];
+			const savedShellEnvVars = allSettings['shellEnvVars'];
+			const savedGhPath = allSettings['ghPath'];
+			const savedFontSize = allSettings['fontSize'];
+			const savedFontFamily = allSettings['fontFamily'];
+			const savedLeftSidebarWidth = allSettings['leftSidebarWidth'];
+			const savedRightPanelWidth = allSettings['rightPanelWidth'];
+			const savedMarkdownEditMode = allSettings['markdownEditMode'];
+			const savedShowHiddenFiles = allSettings['showHiddenFiles'];
+			const savedShortcuts = allSettings['shortcuts'];
+			const savedTabShortcuts = allSettings['tabShortcuts'];
+			const savedActiveThemeId = allSettings['activeThemeId'];
+			const savedCustomThemeColors = allSettings['customThemeColors'];
+			const savedCustomThemeBaseId = allSettings['customThemeBaseId'];
+			const savedTerminalWidth = allSettings['terminalWidth'];
+			// These two still need separate calls as they go through the logger API
+			const savedLogLevel = await window.maestro.logger.getLogLevel();
+			const savedMaxLogBuffer = await window.maestro.logger.getMaxLogBuffer();
+			const savedMaxOutputLines = allSettings['maxOutputLines'];
+			const savedOsNotificationsEnabled = allSettings['osNotificationsEnabled'];
+			const savedAudioFeedbackEnabled = allSettings['audioFeedbackEnabled'];
+			const savedAudioFeedbackCommand = allSettings['audioFeedbackCommand'];
+			const savedToastDuration = allSettings['toastDuration'];
+			const savedCheckForUpdatesOnStartup = allSettings['checkForUpdatesOnStartup'];
+			const savedEnableBetaUpdates = allSettings['enableBetaUpdates'];
+			const savedCrashReportingEnabled = allSettings['crashReportingEnabled'];
+			const savedLogViewerSelectedLevels = allSettings['logViewerSelectedLevels'];
+			const savedCustomAICommands = allSettings['customAICommands'];
+			const savedGlobalStats = allSettings['globalStats'];
+			const savedAutoRunStats = allSettings['autoRunStats'];
+			const savedUsageStats = allSettings['usageStats'];
+			const concurrentAutoRunTimeMigrationApplied =
+				allSettings['concurrentAutoRunTimeMigrationApplied'];
+			const savedUngroupedCollapsed = allSettings['ungroupedCollapsed'];
+			const savedTourCompleted = allSettings['tourCompleted'];
+			const savedFirstAutoRunCompleted = allSettings['firstAutoRunCompleted'];
+			const savedOnboardingStats = allSettings['onboardingStats'];
+			const savedLeaderboardRegistration = allSettings['leaderboardRegistration'];
+			const savedWebInterfaceUseCustomPort = allSettings['webInterfaceUseCustomPort'];
+			const savedWebInterfaceCustomPort = allSettings['webInterfaceCustomPort'];
+			const savedContextManagementSettings = allSettings['contextManagementSettings'];
+			const savedKeyboardMasteryStats = allSettings['keyboardMasteryStats'];
+			const savedColorBlindMode = allSettings['colorBlindMode'];
+			const savedDocumentGraphShowExternalLinks = allSettings['documentGraphShowExternalLinks'];
+			const savedDocumentGraphMaxNodes = allSettings['documentGraphMaxNodes'];
+			const savedDocumentGraphPreviewCharLimit = allSettings['documentGraphPreviewCharLimit'];
+			const savedStatsCollectionEnabled = allSettings['statsCollectionEnabled'];
+			const savedDefaultStatsTimeRange = allSettings['defaultStatsTimeRange'];
+			const savedPreventSleepEnabled = allSettings['preventSleepEnabled'];
+			const savedDisableGpuAcceleration = allSettings['disableGpuAcceleration'];
+			const savedDisableConfetti = allSettings['disableConfetti'];
+			const savedSshRemoteIgnorePatterns = allSettings['sshRemoteIgnorePatterns'];
+			const savedSshRemoteHonorGitignore = allSettings['sshRemoteHonorGitignore'];
+			const savedAutomaticTabNamingEnabled = allSettings['automaticTabNamingEnabled'];
+			const savedFileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'];
+			const savedSuppressWindowsWarning = allSettings['suppressWindowsWarning'];
 
-				if (savedEnterToSendAI !== undefined) setEnterToSendAIState(savedEnterToSendAI as boolean);
-				if (savedEnterToSendTerminal !== undefined)
-					setEnterToSendTerminalState(savedEnterToSendTerminal as boolean);
-				if (savedDefaultSaveToHistory !== undefined)
-					setDefaultSaveToHistoryState(savedDefaultSaveToHistory as boolean);
-				if (savedDefaultShowThinking !== undefined) {
-					// Support legacy boolean values: true -> 'on', false -> 'off'
-					const thinkingMode =
-						typeof savedDefaultShowThinking === 'boolean'
-							? savedDefaultShowThinking
-								? 'on'
-								: 'off'
-							: (savedDefaultShowThinking as ThinkingMode);
-					setDefaultShowThinkingState(thinkingMode);
-				}
+			// Conductor Profile (About Me)
+			if (savedConductorProfile !== undefined)
+				setConductorProfileState(savedConductorProfile as string);
 
-				if (savedLlmProvider !== undefined) setLlmProviderState(savedLlmProvider as LLMProvider);
-				if (savedModelSlug !== undefined) setModelSlugState(savedModelSlug as string);
-				if (savedApiKey !== undefined) setApiKeyState(savedApiKey as string);
-				if (savedDefaultShell !== undefined) setDefaultShellState(savedDefaultShell as string);
-				if (savedCustomShellPath !== undefined)
-					setCustomShellPathState(savedCustomShellPath as string);
-				if (savedShellArgs !== undefined) setShellArgsState(savedShellArgs as string);
-				if (savedShellEnvVars !== undefined)
-					setShellEnvVarsState(savedShellEnvVars as Record<string, string>);
-				if (savedGhPath !== undefined) setGhPathState(savedGhPath as string);
-				if (savedFontSize !== undefined) setFontSizeState(savedFontSize as number);
-				if (savedFontFamily !== undefined) setFontFamilyState(savedFontFamily as string);
-				if (savedLeftSidebarWidth !== undefined)
-					setLeftSidebarWidthState(Math.max(256, Math.min(600, savedLeftSidebarWidth as number)));
-				if (savedRightPanelWidth !== undefined)
-					setRightPanelWidthState(savedRightPanelWidth as number);
-				if (savedMarkdownEditMode !== undefined)
-					setMarkdownEditModeState(savedMarkdownEditMode as boolean);
-				const savedChatRawTextMode = allSettings['chatRawTextMode'];
-				if (savedChatRawTextMode !== undefined)
-					setChatRawTextModeState(savedChatRawTextMode as boolean);
-				if (savedShowHiddenFiles !== undefined)
-					setShowHiddenFilesState(savedShowHiddenFiles as boolean);
-				if (savedActiveThemeId !== undefined) setActiveThemeIdState(savedActiveThemeId as ThemeId);
-				if (savedCustomThemeColors !== undefined)
-					setCustomThemeColorsState(savedCustomThemeColors as ThemeColors);
-				if (savedCustomThemeBaseId !== undefined)
-					setCustomThemeBaseIdState(savedCustomThemeBaseId as ThemeId);
-				if (savedTerminalWidth !== undefined) setTerminalWidthState(savedTerminalWidth as number);
-				if (savedLogLevel !== undefined) setLogLevelState(savedLogLevel);
-				if (savedMaxLogBuffer !== undefined) setMaxLogBufferState(savedMaxLogBuffer);
-				// Handle maxOutputLines specially: Infinity is serialized as null in JSON
-				// So we treat null as Infinity, undefined keeps the default (25)
-				if (savedMaxOutputLines !== undefined) {
-					setMaxOutputLinesState(savedMaxOutputLines === null ? Infinity : (savedMaxOutputLines as number));
-				}
-				if (savedOsNotificationsEnabled !== undefined)
-					setOsNotificationsEnabledState(savedOsNotificationsEnabled as boolean);
-				if (savedAudioFeedbackEnabled !== undefined)
-					setAudioFeedbackEnabledState(savedAudioFeedbackEnabled as boolean);
-				if (savedAudioFeedbackCommand !== undefined)
-					setAudioFeedbackCommandState(savedAudioFeedbackCommand as string);
-				if (savedToastDuration !== undefined) setToastDurationState(savedToastDuration as number);
-				if (savedCheckForUpdatesOnStartup !== undefined)
-					setCheckForUpdatesOnStartupState(savedCheckForUpdatesOnStartup as boolean);
-				if (savedEnableBetaUpdates !== undefined)
-					setEnableBetaUpdatesState(savedEnableBetaUpdates as boolean);
-				if (savedCrashReportingEnabled !== undefined)
-					setCrashReportingEnabledState(savedCrashReportingEnabled as boolean);
-				if (savedLogViewerSelectedLevels !== undefined)
-					setLogViewerSelectedLevelsState(savedLogViewerSelectedLevels as string[]);
+			if (savedEnterToSendAI !== undefined) setEnterToSendAIState(savedEnterToSendAI as boolean);
+			if (savedEnterToSendTerminal !== undefined)
+				setEnterToSendTerminalState(savedEnterToSendTerminal as boolean);
+			if (savedDefaultSaveToHistory !== undefined)
+				setDefaultSaveToHistoryState(savedDefaultSaveToHistory as boolean);
+			if (savedDefaultShowThinking !== undefined) {
+				// Support legacy boolean values: true -> 'on', false -> 'off'
+				const thinkingMode =
+					typeof savedDefaultShowThinking === 'boolean'
+						? savedDefaultShowThinking
+							? 'on'
+							: 'off'
+						: (savedDefaultShowThinking as ThinkingMode);
+				setDefaultShowThinkingState(thinkingMode);
+			}
 
-				// Merge saved shortcuts with defaults (in case new shortcuts were added)
-				if (savedShortcuts !== undefined) {
-					// Migration: Fix shortcuts that were recorded with macOS Alt+key special characters
-					// On macOS, Alt+L produces '¬', Alt+P produces 'π', etc. These should be 'l', 'p', etc.
-					const macAltCharMap: Record<string, string> = {
-						'¬': 'l', // Alt+L
-						π: 'p', // Alt+P
-						'†': 't', // Alt+T
-						'∫': 'b', // Alt+B
-						'∂': 'd', // Alt+D
-						ƒ: 'f', // Alt+F
-						'©': 'g', // Alt+G
-						'˙': 'h', // Alt+H
-						ˆ: 'i', // Alt+I (circumflex)
-						'∆': 'j', // Alt+J
-						'˚': 'k', // Alt+K
-						'¯': 'm', // Alt+M (macron, though some keyboards differ)
-						'˜': 'n', // Alt+N
-						ø: 'o', // Alt+O
-						'®': 'r', // Alt+R
-						ß: 's', // Alt+S
-						'√': 'v', // Alt+V
-						'∑': 'w', // Alt+W
-						'≈': 'x', // Alt+X
-						'¥': 'y', // Alt+Y
-						Ω: 'z', // Alt+Z
-					};
+			if (savedLlmProvider !== undefined) setLlmProviderState(savedLlmProvider as LLMProvider);
+			if (savedModelSlug !== undefined) setModelSlugState(savedModelSlug as string);
+			if (savedApiKey !== undefined) setApiKeyState(savedApiKey as string);
+			if (savedDefaultShell !== undefined) setDefaultShellState(savedDefaultShell as string);
+			if (savedCustomShellPath !== undefined)
+				setCustomShellPathState(savedCustomShellPath as string);
+			if (savedShellArgs !== undefined) setShellArgsState(savedShellArgs as string);
+			if (savedShellEnvVars !== undefined)
+				setShellEnvVarsState(savedShellEnvVars as Record<string, string>);
+			if (savedGhPath !== undefined) setGhPathState(savedGhPath as string);
+			if (savedFontSize !== undefined) setFontSizeState(savedFontSize as number);
+			if (savedFontFamily !== undefined) setFontFamilyState(savedFontFamily as string);
+			if (savedLeftSidebarWidth !== undefined)
+				setLeftSidebarWidthState(Math.max(256, Math.min(600, savedLeftSidebarWidth as number)));
+			if (savedRightPanelWidth !== undefined)
+				setRightPanelWidthState(savedRightPanelWidth as number);
+			if (savedMarkdownEditMode !== undefined)
+				setMarkdownEditModeState(savedMarkdownEditMode as boolean);
+			const savedChatRawTextMode = allSettings['chatRawTextMode'];
+			if (savedChatRawTextMode !== undefined)
+				setChatRawTextModeState(savedChatRawTextMode as boolean);
+			if (savedShowHiddenFiles !== undefined)
+				setShowHiddenFilesState(savedShowHiddenFiles as boolean);
+			if (savedActiveThemeId !== undefined) setActiveThemeIdState(savedActiveThemeId as ThemeId);
+			if (savedCustomThemeColors !== undefined)
+				setCustomThemeColorsState(savedCustomThemeColors as ThemeColors);
+			if (savedCustomThemeBaseId !== undefined)
+				setCustomThemeBaseIdState(savedCustomThemeBaseId as ThemeId);
+			if (savedTerminalWidth !== undefined) setTerminalWidthState(savedTerminalWidth as number);
+			if (savedLogLevel !== undefined) setLogLevelState(savedLogLevel);
+			if (savedMaxLogBuffer !== undefined) setMaxLogBufferState(savedMaxLogBuffer);
+			// Handle maxOutputLines specially: Infinity is serialized as null in JSON
+			// So we treat null as Infinity, undefined keeps the default (25)
+			if (savedMaxOutputLines !== undefined) {
+				setMaxOutputLinesState(
+					savedMaxOutputLines === null ? Infinity : (savedMaxOutputLines as number)
+				);
+			}
+			if (savedOsNotificationsEnabled !== undefined)
+				setOsNotificationsEnabledState(savedOsNotificationsEnabled as boolean);
+			if (savedAudioFeedbackEnabled !== undefined)
+				setAudioFeedbackEnabledState(savedAudioFeedbackEnabled as boolean);
+			if (savedAudioFeedbackCommand !== undefined)
+				setAudioFeedbackCommandState(savedAudioFeedbackCommand as string);
+			if (savedToastDuration !== undefined) setToastDurationState(savedToastDuration as number);
+			if (savedCheckForUpdatesOnStartup !== undefined)
+				setCheckForUpdatesOnStartupState(savedCheckForUpdatesOnStartup as boolean);
+			if (savedEnableBetaUpdates !== undefined)
+				setEnableBetaUpdatesState(savedEnableBetaUpdates as boolean);
+			if (savedCrashReportingEnabled !== undefined)
+				setCrashReportingEnabledState(savedCrashReportingEnabled as boolean);
+			if (savedLogViewerSelectedLevels !== undefined)
+				setLogViewerSelectedLevelsState(savedLogViewerSelectedLevels as string[]);
 
-					const migratedShortcuts: Record<string, Shortcut> = {};
-					let needsMigration = false;
+			// Merge saved shortcuts with defaults (in case new shortcuts were added)
+			if (savedShortcuts !== undefined) {
+				// Migration: Fix shortcuts that were recorded with macOS Alt+key special characters
+				// On macOS, Alt+L produces '¬', Alt+P produces 'π', etc. These should be 'l', 'p', etc.
+				const macAltCharMap: Record<string, string> = {
+					'¬': 'l', // Alt+L
+					π: 'p', // Alt+P
+					'†': 't', // Alt+T
+					'∫': 'b', // Alt+B
+					'∂': 'd', // Alt+D
+					ƒ: 'f', // Alt+F
+					'©': 'g', // Alt+G
+					'˙': 'h', // Alt+H
+					ˆ: 'i', // Alt+I (circumflex)
+					'∆': 'j', // Alt+J
+					'˚': 'k', // Alt+K
+					'¯': 'm', // Alt+M (macron, though some keyboards differ)
+					'˜': 'n', // Alt+N
+					ø: 'o', // Alt+O
+					'®': 'r', // Alt+R
+					ß: 's', // Alt+S
+					'√': 'v', // Alt+V
+					'∑': 'w', // Alt+W
+					'≈': 'x', // Alt+X
+					'¥': 'y', // Alt+Y
+					Ω: 'z', // Alt+Z
+				};
 
-					for (const [id, shortcut] of Object.entries(savedShortcuts as Record<string, Shortcut>)) {
-						const migratedKeys = shortcut.keys.map((key) => {
-							if (macAltCharMap[key]) {
-								needsMigration = true;
-								return macAltCharMap[key];
-							}
-							return key;
-						});
-						migratedShortcuts[id] = { ...shortcut, keys: migratedKeys };
-					}
+				const migratedShortcuts: Record<string, Shortcut> = {};
+				let needsMigration = false;
 
-					// If migration was needed, save the corrected shortcuts
-					if (needsMigration) {
-						window.maestro.settings.set('shortcuts', migratedShortcuts);
-					}
-
-					// Merge: use default labels (in case they changed) but preserve user's custom keys
-					const mergedShortcuts: Record<string, Shortcut> = {};
-					for (const [id, defaultShortcut] of Object.entries(DEFAULT_SHORTCUTS)) {
-						const savedShortcut = migratedShortcuts[id];
-						mergedShortcuts[id] = {
-							...defaultShortcut,
-							// Preserve user's custom keys if they exist
-							keys: savedShortcut?.keys ?? defaultShortcut.keys,
-						};
-					}
-					setShortcutsState(mergedShortcuts);
-				}
-
-				// Merge saved tab shortcuts with defaults (in case new shortcuts were added)
-				if (savedTabShortcuts !== undefined) {
-					// Apply same macOS Alt+key migration
-					const macAltCharMap: Record<string, string> = {
-						'¬': 'l',
-						π: 'p',
-						'†': 't',
-						'∫': 'b',
-						'∂': 'd',
-						ƒ: 'f',
-						'©': 'g',
-						'˙': 'h',
-						ˆ: 'i',
-						'∆': 'j',
-						'˚': 'k',
-						'¯': 'm',
-						'˜': 'n',
-						ø: 'o',
-						'®': 'r',
-						ß: 's',
-						'√': 'v',
-						'∑': 'w',
-						'≈': 'x',
-						'¥': 'y',
-						Ω: 'z',
-					};
-
-					const migratedTabShortcuts: Record<string, Shortcut> = {};
-					let needsTabMigration = false;
-
-					for (const [id, shortcut] of Object.entries(
-						savedTabShortcuts as Record<string, Shortcut>
-					)) {
-						const migratedKeys = shortcut.keys.map((key) => {
-							if (macAltCharMap[key]) {
-								needsTabMigration = true;
-								return macAltCharMap[key];
-							}
-							return key;
-						});
-						migratedTabShortcuts[id] = { ...shortcut, keys: migratedKeys };
-					}
-
-					if (needsTabMigration) {
-						window.maestro.settings.set('tabShortcuts', migratedTabShortcuts);
-					}
-
-					// Merge: use default labels but preserve user's custom keys
-					const mergedTabShortcuts: Record<string, Shortcut> = {};
-					for (const [id, defaultShortcut] of Object.entries(TAB_SHORTCUTS)) {
-						const savedShortcut = migratedTabShortcuts[id];
-						mergedTabShortcuts[id] = {
-							...defaultShortcut,
-							keys: savedShortcut?.keys ?? defaultShortcut.keys,
-						};
-					}
-					setTabShortcutsState(mergedTabShortcuts);
-				}
-
-				// Merge saved AI commands with defaults (ensure built-in commands always exist)
-				if (savedCustomAICommands !== undefined && Array.isArray(savedCustomAICommands)) {
-					// Start with defaults, then merge saved commands (by ID to avoid duplicates)
-					const commandsById = new Map<string, CustomAICommand>();
-					DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
-					(savedCustomAICommands as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
-						// Migration: Skip old /synopsis command - it was renamed to /history which is now
-						// a built-in command handled by Maestro directly (not a custom AI command)
-						if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
-							return;
+				for (const [id, shortcut] of Object.entries(savedShortcuts as Record<string, Shortcut>)) {
+					const migratedKeys = shortcut.keys.map((key) => {
+						if (macAltCharMap[key]) {
+							needsMigration = true;
+							return macAltCharMap[key];
 						}
-						// For built-in commands, merge to allow user edits but preserve isBuiltIn flag
-						if (commandsById.has(cmd.id)) {
-							const existing = commandsById.get(cmd.id)!;
-							commandsById.set(cmd.id, { ...cmd, isBuiltIn: existing.isBuiltIn });
-						} else {
-							commandsById.set(cmd.id, cmd);
-						}
+						return key;
 					});
-					setCustomAICommandsState(Array.from(commandsById.values()));
+					migratedShortcuts[id] = { ...shortcut, keys: migratedKeys };
 				}
 
-				// Load global stats
-				if (savedGlobalStats !== undefined) {
-					setGlobalStatsState({
-						...DEFAULT_GLOBAL_STATS,
-						...(savedGlobalStats as Partial<GlobalStats>),
-					});
+				// If migration was needed, save the corrected shortcuts
+				if (needsMigration) {
+					window.maestro.settings.set('shortcuts', migratedShortcuts);
 				}
 
-				// Load auto-run stats
-				if (savedAutoRunStats !== undefined) {
-					let stats = {
-						...DEFAULT_AUTO_RUN_STATS,
-						...(savedAutoRunStats as Partial<AutoRunStats>),
+				// Merge: use default labels (in case they changed) but preserve user's custom keys
+				const mergedShortcuts: Record<string, Shortcut> = {};
+				for (const [id, defaultShortcut] of Object.entries(DEFAULT_SHORTCUTS)) {
+					const savedShortcut = migratedShortcuts[id];
+					mergedShortcuts[id] = {
+						...defaultShortcut,
+						// Preserve user's custom keys if they exist
+						keys: savedShortcut?.keys ?? defaultShortcut.keys,
 					};
+				}
+				setShortcutsState(mergedShortcuts);
+			}
 
-					// One-time migration: Add 3 hours to compensate for bug where concurrent Auto Runs
-					// weren't being tallied correctly (fixed in v0.11.3)
-					if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
-						const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
-						stats = {
-							...stats,
-							cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
-						};
-						window.maestro.settings.set('autoRunStats', stats);
-						window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
-						console.log(
-							'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
-						);
+			// Merge saved tab shortcuts with defaults (in case new shortcuts were added)
+			if (savedTabShortcuts !== undefined) {
+				// Apply same macOS Alt+key migration
+				const macAltCharMap: Record<string, string> = {
+					'¬': 'l',
+					π: 'p',
+					'†': 't',
+					'∫': 'b',
+					'∂': 'd',
+					ƒ: 'f',
+					'©': 'g',
+					'˙': 'h',
+					ˆ: 'i',
+					'∆': 'j',
+					'˚': 'k',
+					'¯': 'm',
+					'˜': 'n',
+					ø: 'o',
+					'®': 'r',
+					ß: 's',
+					'√': 'v',
+					'∑': 'w',
+					'≈': 'x',
+					'¥': 'y',
+					Ω: 'z',
+				};
+
+				const migratedTabShortcuts: Record<string, Shortcut> = {};
+				let needsTabMigration = false;
+
+				for (const [id, shortcut] of Object.entries(
+					savedTabShortcuts as Record<string, Shortcut>
+				)) {
+					const migratedKeys = shortcut.keys.map((key) => {
+						if (macAltCharMap[key]) {
+							needsTabMigration = true;
+							return macAltCharMap[key];
+						}
+						return key;
+					});
+					migratedTabShortcuts[id] = { ...shortcut, keys: migratedKeys };
+				}
+
+				if (needsTabMigration) {
+					window.maestro.settings.set('tabShortcuts', migratedTabShortcuts);
+				}
+
+				// Merge: use default labels but preserve user's custom keys
+				const mergedTabShortcuts: Record<string, Shortcut> = {};
+				for (const [id, defaultShortcut] of Object.entries(TAB_SHORTCUTS)) {
+					const savedShortcut = migratedTabShortcuts[id];
+					mergedTabShortcuts[id] = {
+						...defaultShortcut,
+						keys: savedShortcut?.keys ?? defaultShortcut.keys,
+					};
+				}
+				setTabShortcutsState(mergedTabShortcuts);
+			}
+
+			// Merge saved AI commands with defaults (ensure built-in commands always exist)
+			if (savedCustomAICommands !== undefined && Array.isArray(savedCustomAICommands)) {
+				// Start with defaults, then merge saved commands (by ID to avoid duplicates)
+				const commandsById = new Map<string, CustomAICommand>();
+				DEFAULT_AI_COMMANDS.forEach((cmd) => commandsById.set(cmd.id, cmd));
+				(savedCustomAICommands as CustomAICommand[]).forEach((cmd: CustomAICommand) => {
+					// Migration: Skip old /synopsis command - it was renamed to /history which is now
+					// a built-in command handled by Maestro directly (not a custom AI command)
+					if (cmd.command === '/synopsis' || cmd.id === 'synopsis') {
+						return;
 					}
+					// For built-in commands, merge to allow user edits but preserve isBuiltIn flag
+					if (commandsById.has(cmd.id)) {
+						const existing = commandsById.get(cmd.id)!;
+						commandsById.set(cmd.id, { ...cmd, isBuiltIn: existing.isBuiltIn });
+					} else {
+						commandsById.set(cmd.id, cmd);
+					}
+				});
+				setCustomAICommandsState(Array.from(commandsById.values()));
+			}
 
-					setAutoRunStatsState(stats);
-				}
+			// Load global stats
+			if (savedGlobalStats !== undefined) {
+				setGlobalStatsState({
+					...DEFAULT_GLOBAL_STATS,
+					...(savedGlobalStats as Partial<GlobalStats>),
+				});
+			}
 
-				// Load usage stats
-				if (savedUsageStats !== undefined) {
-					setUsageStatsState({
-						...DEFAULT_USAGE_STATS,
-						...(savedUsageStats as Partial<MaestroUsageStats>),
-					});
-				}
+			// Load auto-run stats
+			if (savedAutoRunStats !== undefined) {
+				let stats = {
+					...DEFAULT_AUTO_RUN_STATS,
+					...(savedAutoRunStats as Partial<AutoRunStats>),
+				};
 
-				// Load onboarding settings
-				// UI collapse states
-				if (savedUngroupedCollapsed !== undefined)
-					setUngroupedCollapsedState(savedUngroupedCollapsed as boolean);
-
-				if (savedTourCompleted !== undefined) setTourCompletedState(savedTourCompleted as boolean);
-				if (savedFirstAutoRunCompleted !== undefined)
-					setFirstAutoRunCompletedState(savedFirstAutoRunCompleted as boolean);
-
-				// Load onboarding stats
-				if (savedOnboardingStats !== undefined) {
-					setOnboardingStatsState({
-						...DEFAULT_ONBOARDING_STATS,
-						...(savedOnboardingStats as Partial<OnboardingStats>),
-					});
-				}
-
-				// Load leaderboard registration
-				if (savedLeaderboardRegistration !== undefined) {
-					setLeaderboardRegistrationState(
-						savedLeaderboardRegistration as LeaderboardRegistration | null
+				// One-time migration: Add 3 hours to compensate for bug where concurrent Auto Runs
+				// weren't being tallied correctly (fixed in v0.11.3)
+				if (!concurrentAutoRunTimeMigrationApplied && stats.cumulativeTimeMs > 0) {
+					const THREE_HOURS_MS = 3 * 60 * 60 * 1000;
+					stats = {
+						...stats,
+						cumulativeTimeMs: stats.cumulativeTimeMs + THREE_HOURS_MS,
+					};
+					window.maestro.settings.set('autoRunStats', stats);
+					window.maestro.settings.set('concurrentAutoRunTimeMigrationApplied', true);
+					console.log(
+						'[Settings] Applied concurrent Auto Run time migration: added 3 hours to cumulative time'
 					);
 				}
 
-				// Load web interface settings
-				if (savedWebInterfaceUseCustomPort !== undefined)
-					setWebInterfaceUseCustomPortState(savedWebInterfaceUseCustomPort as boolean);
-				if (savedWebInterfaceCustomPort !== undefined)
-					setWebInterfaceCustomPortState(savedWebInterfaceCustomPort as number);
-
-				// Load context management settings
-				if (savedContextManagementSettings !== undefined) {
-					setContextManagementSettingsState({
-						...DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
-						...(savedContextManagementSettings as Partial<ContextManagementSettings>),
-					});
-				}
-
-				// Load keyboard mastery stats
-				if (savedKeyboardMasteryStats !== undefined) {
-					setKeyboardMasteryStatsState({
-						...DEFAULT_KEYBOARD_MASTERY_STATS,
-						...(savedKeyboardMasteryStats as Partial<KeyboardMasteryStats>),
-					});
-				}
-
-				// Accessibility settings
-				if (savedColorBlindMode !== undefined)
-					setColorBlindModeState(savedColorBlindMode as boolean);
-
-				// Document Graph settings
-				if (savedDocumentGraphShowExternalLinks !== undefined) {
-					setDocumentGraphShowExternalLinksState(savedDocumentGraphShowExternalLinks as boolean);
-				}
-				if (savedDocumentGraphMaxNodes !== undefined) {
-					const maxNodes = savedDocumentGraphMaxNodes as number;
-					if (typeof maxNodes === 'number' && maxNodes >= 50 && maxNodes <= 1000) {
-						setDocumentGraphMaxNodesState(maxNodes);
-					}
-				}
-				if (savedDocumentGraphPreviewCharLimit !== undefined) {
-					const charLimit = savedDocumentGraphPreviewCharLimit as number;
-					if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
-						setDocumentGraphPreviewCharLimitState(charLimit);
-					}
-				}
-
-				// Stats settings
-				if (savedStatsCollectionEnabled !== undefined) {
-					setStatsCollectionEnabledState(savedStatsCollectionEnabled as boolean);
-				}
-				if (savedDefaultStatsTimeRange !== undefined) {
-					const validTimeRanges = ['day', 'week', 'month', 'year', 'all'];
-					if (validTimeRanges.includes(savedDefaultStatsTimeRange as string)) {
-						setDefaultStatsTimeRangeState(
-							savedDefaultStatsTimeRange as 'day' | 'week' | 'month' | 'year' | 'all'
-						);
-					}
-				}
-
-				// Power management settings
-				// Note: The main process loads this setting on its own at startup from settingsStore,
-				// so we only need to sync the renderer state here.
-				if (savedPreventSleepEnabled !== undefined) {
-					setPreventSleepEnabledState(savedPreventSleepEnabled as boolean);
-				}
-
-				// Rendering settings
-				// Note: GPU setting is read by the main process before app.ready, so changes require restart.
-				if (savedDisableGpuAcceleration !== undefined) {
-					setDisableGpuAccelerationState(savedDisableGpuAcceleration as boolean);
-				}
-				if (savedDisableConfetti !== undefined) {
-					setDisableConfettiState(savedDisableConfetti as boolean);
-				}
-
-				// SSH Remote file indexing settings
-				if (savedSshRemoteIgnorePatterns !== undefined && Array.isArray(savedSshRemoteIgnorePatterns)) {
-					setSshRemoteIgnorePatternsState(savedSshRemoteIgnorePatterns as string[]);
-				}
-				if (savedSshRemoteHonorGitignore !== undefined) {
-					setSshRemoteHonorGitignoreState(savedSshRemoteHonorGitignore as boolean);
-				}
-
-				// Automatic tab naming settings
-				if (savedAutomaticTabNamingEnabled !== undefined) {
-					setAutomaticTabNamingEnabledState(savedAutomaticTabNamingEnabled as boolean);
-				}
-
-				// File tab auto-refresh settings
-				if (savedFileTabAutoRefreshEnabled !== undefined) {
-					setFileTabAutoRefreshEnabledState(savedFileTabAutoRefreshEnabled as boolean);
-				}
-			} catch (error) {
-				console.error('[Settings] Failed to load settings:', error);
-			} finally {
-				// Mark settings as loaded even if there was an error (use defaults)
-				setSettingsLoaded(true);
+				setAutoRunStatsState(stats);
 			}
-		}, []);
+
+			// Load usage stats
+			if (savedUsageStats !== undefined) {
+				setUsageStatsState({
+					...DEFAULT_USAGE_STATS,
+					...(savedUsageStats as Partial<MaestroUsageStats>),
+				});
+			}
+
+			// Load onboarding settings
+			// UI collapse states
+			if (savedUngroupedCollapsed !== undefined)
+				setUngroupedCollapsedState(savedUngroupedCollapsed as boolean);
+
+			if (savedTourCompleted !== undefined) setTourCompletedState(savedTourCompleted as boolean);
+			if (savedFirstAutoRunCompleted !== undefined)
+				setFirstAutoRunCompletedState(savedFirstAutoRunCompleted as boolean);
+
+			// Load onboarding stats
+			if (savedOnboardingStats !== undefined) {
+				setOnboardingStatsState({
+					...DEFAULT_ONBOARDING_STATS,
+					...(savedOnboardingStats as Partial<OnboardingStats>),
+				});
+			}
+
+			// Load leaderboard registration
+			if (savedLeaderboardRegistration !== undefined) {
+				setLeaderboardRegistrationState(
+					savedLeaderboardRegistration as LeaderboardRegistration | null
+				);
+			}
+
+			// Load web interface settings
+			if (savedWebInterfaceUseCustomPort !== undefined)
+				setWebInterfaceUseCustomPortState(savedWebInterfaceUseCustomPort as boolean);
+			if (savedWebInterfaceCustomPort !== undefined)
+				setWebInterfaceCustomPortState(savedWebInterfaceCustomPort as number);
+
+			// Load context management settings
+			if (savedContextManagementSettings !== undefined) {
+				setContextManagementSettingsState({
+					...DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+					...(savedContextManagementSettings as Partial<ContextManagementSettings>),
+				});
+			}
+
+			// Load keyboard mastery stats
+			if (savedKeyboardMasteryStats !== undefined) {
+				setKeyboardMasteryStatsState({
+					...DEFAULT_KEYBOARD_MASTERY_STATS,
+					...(savedKeyboardMasteryStats as Partial<KeyboardMasteryStats>),
+				});
+			}
+
+			// Accessibility settings
+			if (savedColorBlindMode !== undefined) setColorBlindModeState(savedColorBlindMode as boolean);
+
+			// Document Graph settings
+			if (savedDocumentGraphShowExternalLinks !== undefined) {
+				setDocumentGraphShowExternalLinksState(savedDocumentGraphShowExternalLinks as boolean);
+			}
+			if (savedDocumentGraphMaxNodes !== undefined) {
+				const maxNodes = savedDocumentGraphMaxNodes as number;
+				if (typeof maxNodes === 'number' && maxNodes >= 50 && maxNodes <= 1000) {
+					setDocumentGraphMaxNodesState(maxNodes);
+				}
+			}
+			if (savedDocumentGraphPreviewCharLimit !== undefined) {
+				const charLimit = savedDocumentGraphPreviewCharLimit as number;
+				if (typeof charLimit === 'number' && charLimit >= 50 && charLimit <= 500) {
+					setDocumentGraphPreviewCharLimitState(charLimit);
+				}
+			}
+
+			// Stats settings
+			if (savedStatsCollectionEnabled !== undefined) {
+				setStatsCollectionEnabledState(savedStatsCollectionEnabled as boolean);
+			}
+			if (savedDefaultStatsTimeRange !== undefined) {
+				const validTimeRanges = ['day', 'week', 'month', 'year', 'all'];
+				if (validTimeRanges.includes(savedDefaultStatsTimeRange as string)) {
+					setDefaultStatsTimeRangeState(
+						savedDefaultStatsTimeRange as 'day' | 'week' | 'month' | 'year' | 'all'
+					);
+				}
+			}
+
+			// Power management settings
+			// Note: The main process loads this setting on its own at startup from settingsStore,
+			// so we only need to sync the renderer state here.
+			if (savedPreventSleepEnabled !== undefined) {
+				setPreventSleepEnabledState(savedPreventSleepEnabled as boolean);
+			}
+
+			// Rendering settings
+			// Note: GPU setting is read by the main process before app.ready, so changes require restart.
+			if (savedDisableGpuAcceleration !== undefined) {
+				setDisableGpuAccelerationState(savedDisableGpuAcceleration as boolean);
+			}
+			if (savedDisableConfetti !== undefined) {
+				setDisableConfettiState(savedDisableConfetti as boolean);
+			}
+
+			// SSH Remote file indexing settings
+			if (
+				savedSshRemoteIgnorePatterns !== undefined &&
+				Array.isArray(savedSshRemoteIgnorePatterns)
+			) {
+				setSshRemoteIgnorePatternsState(savedSshRemoteIgnorePatterns as string[]);
+			}
+			if (savedSshRemoteHonorGitignore !== undefined) {
+				setSshRemoteHonorGitignoreState(savedSshRemoteHonorGitignore as boolean);
+			}
+
+			// Automatic tab naming settings
+			if (savedAutomaticTabNamingEnabled !== undefined) {
+				setAutomaticTabNamingEnabledState(savedAutomaticTabNamingEnabled as boolean);
+			}
+
+			// File tab auto-refresh settings
+			if (savedFileTabAutoRefreshEnabled !== undefined) {
+				setFileTabAutoRefreshEnabledState(savedFileTabAutoRefreshEnabled as boolean);
+			}
+
+			// Windows warning suppression
+			if (savedSuppressWindowsWarning !== undefined) {
+				setSuppressWindowsWarningState(savedSuppressWindowsWarning as boolean);
+			}
+		} catch (error) {
+			console.error('[Settings] Failed to load settings:', error);
+		} finally {
+			// Mark settings as loaded even if there was an error (use defaults)
+			setSettingsLoaded(true);
+		}
+	}, []);
 
 	// Load settings on mount
 	useEffect(() => {
@@ -1795,6 +1839,8 @@ export function useSettings(): UseSettingsReturn {
 	return useMemo(
 		() => ({
 			settingsLoaded,
+			conductorProfile,
+			setConductorProfile,
 			llmProvider,
 			modelSlug,
 			apiKey,
@@ -1938,10 +1984,13 @@ export function useSettings(): UseSettingsReturn {
 			setAutomaticTabNamingEnabled,
 			fileTabAutoRefreshEnabled,
 			setFileTabAutoRefreshEnabled,
+			suppressWindowsWarning,
+			setSuppressWindowsWarning,
 		}),
 		[
 			// State values
 			settingsLoaded,
+			conductorProfile,
 			llmProvider,
 			modelSlug,
 			apiKey,
@@ -1987,6 +2036,7 @@ export function useSettings(): UseSettingsReturn {
 			firstAutoRunCompleted,
 			onboardingStats,
 			// Setter functions (stable via useCallback)
+			setConductorProfile,
 			setLlmProvider,
 			setModelSlug,
 			setApiKey,
@@ -2083,6 +2133,8 @@ export function useSettings(): UseSettingsReturn {
 			setAutomaticTabNamingEnabled,
 			fileTabAutoRefreshEnabled,
 			setFileTabAutoRefreshEnabled,
+			suppressWindowsWarning,
+			setSuppressWindowsWarning,
 		]
 	);
 }

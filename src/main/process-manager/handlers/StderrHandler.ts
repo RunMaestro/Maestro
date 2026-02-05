@@ -99,6 +99,27 @@ export class StderrHandler {
 				return;
 			}
 
+			// Filter out Codex informational prefix when reading from stdin
+			// Codex outputs "Reading prompt from stdin..." followed by the response to stderr
+			// when operating in stdin mode. Strip this prefix to avoid displaying it.
+			if (toolType === 'codex' && cleanedStderr.startsWith('Reading prompt from stdin...')) {
+				const actualContent = cleanedStderr.replace(/^Reading prompt from stdin\.\.\./, '').trim();
+				if (actualContent) {
+					// The actual response content should be emitted as regular data, not stderr
+					// since it's the agent's response, not an error
+					logger.debug(
+						'[ProcessManager] Codex stdin response extracted from stderr',
+						'ProcessManager',
+						{
+							sessionId,
+							contentPreview: actualContent.substring(0, 100),
+						}
+					);
+					this.emitter.emit('data', sessionId, actualContent);
+				}
+				return;
+			}
+
 			// Emit to separate 'stderr' event for AI processes
 			this.emitter.emit('stderr', sessionId, cleanedStderr);
 		}

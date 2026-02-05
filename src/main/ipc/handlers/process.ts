@@ -4,6 +4,7 @@ import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { logger } from '../../utils/logger';
+import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
 	buildAgentArgs,
@@ -240,6 +241,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						prompt:
 							config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
 					}),
+				});
+
+				// Add breadcrumb for crash diagnostics (MAESTRO-5A/4Y)
+				await addBreadcrumb('agent', `Spawn: ${config.toolType}`, {
+					sessionId: config.sessionId,
+					toolType: config.toolType,
+					command: config.command,
+					hasPrompt: !!config.prompt,
 				});
 
 				// Get contextWindow: session-level override takes priority over agent-level config
@@ -498,6 +507,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		withIpcErrorLogging(handlerOpts('kill'), async (sessionId: string) => {
 			const processManager = requireProcessManager(getProcessManager);
 			logger.info(`Killing process: ${sessionId}`, LOG_CONTEXT, { sessionId });
+			// Add breadcrumb for crash diagnostics (MAESTRO-5A/4Y)
+			await addBreadcrumb('agent', `Kill: ${sessionId}`, { sessionId });
 			return processManager.kill(sessionId);
 		})
 	);

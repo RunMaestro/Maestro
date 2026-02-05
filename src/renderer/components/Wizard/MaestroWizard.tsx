@@ -72,7 +72,7 @@ interface MaestroWizardProps {
 function getStepTitle(step: WizardStep): string {
 	switch (step) {
 		case 'agent-selection':
-			return 'Create a Maestro Agent';
+			return 'New Agent Wizard';
 		case 'directory-selection':
 			return 'Choose Project Directory';
 		case 'conversation':

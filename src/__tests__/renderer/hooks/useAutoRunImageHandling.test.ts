@@ -231,7 +231,7 @@ describe('useAutoRunImageHandling', () => {
 				expect(result.current.attachmentsList).toHaveLength(2);
 			});
 
-		expect(window.maestro.autorun.listImages).toHaveBeenCalledWith(
+			expect(window.maestro.autorun.listImages).toHaveBeenCalledWith(
 				'/test/autorun',
 				'Phase 1',
 				undefined
@@ -573,6 +573,7 @@ describe('useAutoRunImageHandling', () => {
 							yield textItem;
 						},
 					} as unknown as DataTransferItemList,
+					getData: () => 'some text', // Text content for whitespace trim check
 				},
 				preventDefault: vi.fn(),
 			} as unknown as React.ClipboardEvent;

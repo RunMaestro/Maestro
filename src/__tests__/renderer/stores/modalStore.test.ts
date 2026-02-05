@@ -445,6 +445,7 @@ describe('modalStore', () => {
 				'lightbox',
 				'symphony',
 				'updateCheck',
+				'windowsWarning',
 			];
 
 			// Open and close each to verify they all work

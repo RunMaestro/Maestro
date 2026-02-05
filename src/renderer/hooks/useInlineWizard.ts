@@ -12,10 +12,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { logger } from '../utils/logger';
 import { parseWizardIntent } from '../services/wizardIntentParser';
-import {
-	getAutoRunFolderPath,
-	type ExistingDocument,
-} from '../utils/existingDocsDetector';
+import { getAutoRunFolderPath, type ExistingDocument } from '../utils/existingDocsDetector';
 import {
 	startInlineWizardConversation,
 	sendWizardMessage,
@@ -149,6 +146,10 @@ export interface InlineWizardState {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Conductor profile (user's About Me from settings) */
+	conductorProfile?: string;
+	/** History file path for task recall (fetched once during startWizard) */
+	historyFilePath?: string;
 }
 
 /**
@@ -206,6 +207,7 @@ export interface UseInlineWizardReturn {
 	 * @param sessionId - The session ID for playbook creation
 	 * @param autoRunFolderPath - User-configured Auto Run folder path (if set, overrides default projectPath/Auto Run Docs)
 	 * @param sessionSshRemoteConfig - SSH remote configuration (for remote execution)
+	 * @param conductorProfile - Conductor profile (user's About Me from settings)
 	 */
 	startWizard: (
 		naturalLanguageInput?: string,
@@ -220,7 +222,8 @@ export interface UseInlineWizardReturn {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		conductorProfile?: string
 	) => Promise<void>;
 	/** End the wizard and restore previous UI state */
 	endWizard: () => Promise<PreviousUIState | null>;
@@ -467,7 +470,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				enabled: boolean;
 				remoteId: string | null;
 				workingDirOverride?: string;
-			}
+			},
+			conductorProfile?: string
 		): Promise<void> => {
 			// Tab ID is required for per-tab wizard management
 			const effectiveTabId = tabId || 'default';
@@ -524,9 +528,23 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				subfolderPath: null,
 				autoRunFolderPath: effectiveAutoRunFolderPath,
 				sessionSshRemoteConfig,
+				conductorProfile,
 			}));
 
 			try {
+				// Step 0: Fetch history file path for task recall (if session ID is available)
+				// This is done early so it's available for both conversation session and state
+				let historyFilePath: string | undefined;
+				if (sessionId) {
+					try {
+						const fetchedPath = await window.maestro.history.getFilePath(sessionId);
+						historyFilePath = fetchedPath ?? undefined; // Convert null to undefined
+					} catch {
+						// History file path not available - continue without it
+						logger.debug('Could not fetch history file path', '[InlineWizard]', { sessionId });
+					}
+				}
+
 				// Step 1: Check for existing Auto Run documents in the configured folder
 				// Use the effective Auto Run folder path (user-configured or default)
 				let hasExistingDocs = false;
@@ -591,6 +609,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					supportedWizardAgents.includes(agentType) &&
 					effectiveAutoRunFolderPath
 				) {
+					// historyFilePath was fetched in Step 0 above
 					const session = startInlineWizardConversation({
 						mode,
 						agentType,
@@ -600,6 +619,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: docsWithContent.length > 0 ? docsWithContent : undefined,
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig,
+						conductorProfile,
+						historyFilePath,
 					});
 
 					// Store conversation session per-tab
@@ -629,12 +650,14 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				}
 
 				// Update state with parsed results
+				// Store historyFilePath so it's available for setMode if user is in 'ask' mode
 				setTabState(effectiveTabId, (prev) => ({
 					...prev,
 					isInitializing: false,
 					mode,
 					goal,
 					existingDocuments: existingDocs,
+					historyFilePath,
 				}));
 			} catch (error) {
 				// Handle any errors during initialization
@@ -747,6 +770,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					effectiveAutoRunFolderPath
 				) {
 					console.log('[useInlineWizard] Auto-creating session for direct message in ask mode');
+					// Use historyFilePath from state (fetched during startWizard)
 					session = startInlineWizardConversation({
 						mode: 'new',
 						agentType: currentState.agentType,
@@ -756,6 +780,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: undefined,
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+						conductorProfile: currentState.conductorProfile,
+						historyFilePath: currentState.historyFilePath,
 					});
 					conversationSessionsMap.current.set(tabId, session);
 					// Update mode to 'new' since we're proceeding with a new plan
@@ -928,6 +954,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					(currentState.projectPath ? getAutoRunFolderPath(currentState.projectPath) : null);
 
 				if (currentState.agentType && effectiveAutoRunFolderPath) {
+					// Use historyFilePath from state (fetched during startWizard)
 					const session = startInlineWizardConversation({
 						mode: newMode,
 						agentType: currentState.agentType,
@@ -937,6 +964,8 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: undefined, // Will be loaded separately if needed
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+						conductorProfile: currentState.conductorProfile,
+						historyFilePath: currentState.historyFilePath,
 					});
 
 					conversationSessionsMap.current.set(tabId, session);
@@ -1191,6 +1220,7 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					autoRunFolderPath: effectiveAutoRunFolderPath,
 					sessionId: currentState.sessionId || undefined,
 					sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+					conductorProfile: currentState.conductorProfile,
 					callbacks: {
 						onStart: () => {
 							console.log('[useInlineWizard] Document generation started');

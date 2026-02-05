@@ -179,6 +179,9 @@ export const MODAL_PRIORITIES = {
 	/** Debug package generation modal */
 	DEBUG_PACKAGE: 605,
 
+	/** Windows warning modal - shown on startup for Windows users */
+	WINDOWS_WARNING: 615,
+
 	/** About/info modal */
 	ABOUT: 600,
 

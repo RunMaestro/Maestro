@@ -39,7 +39,15 @@ import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitSta
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextTokens } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
-import type { Session, Theme, Shortcut, FocusArea, BatchRunState, UnifiedTab, FilePreviewTab } from '../types';
+import type {
+	Session,
+	Theme,
+	Shortcut,
+	FocusArea,
+	BatchRunState,
+	UnifiedTab,
+	FilePreviewTab,
+} from '../types';
 
 interface SlashCommand {
 	command: string;
@@ -217,7 +225,11 @@ interface MainPanelProps {
 	/** Handler to update file tab editMode when toggled in FilePreview */
 	onFileTabEditModeChange?: (tabId: string, editMode: boolean) => void;
 	/** Handler to update file tab editContent when changed in FilePreview */
-	onFileTabEditContentChange?: (tabId: string, editContent: string | undefined, savedContent?: string) => void;
+	onFileTabEditContentChange?: (
+		tabId: string,
+		editContent: string | undefined,
+		savedContent?: string
+	) => void;
 	/** Handler to update file tab scrollTop when scrolling in FilePreview */
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	/** Handler to update file tab searchQuery when searching in FilePreview */
@@ -239,7 +251,9 @@ interface MainPanelProps {
 	// options.openInNewTab: true = open in new tab adjacent to current, false = replace current tab content
 	onFileClick?: (relativePath: string, options?: { openInNewTab?: boolean }) => void;
 	// File tree refresh callback (used when saving chat content to disk)
-	refreshFileTree?: (sessionId: string) => Promise<import('../utils/fileExplorer').FileTreeChanges | undefined>;
+	refreshFileTree?: (
+		sessionId: string
+	) => Promise<import('../utils/fileExplorer').FileTreeChanges | undefined>;
 	// File preview navigation
 	canGoBack?: boolean;
 	canGoForward?: boolean;
@@ -601,7 +615,12 @@ export const MainPanel = React.memo(
 			}
 
 			return raw;
-		}, [activeTab?.usageStats, activeSession?.toolType, activeTabContextWindow, activeSession?.contextUsage]);
+		}, [
+			activeTab?.usageStats,
+			activeSession?.toolType,
+			activeTabContextWindow,
+			activeSession?.contextUsage,
+		]);
 
 		// Compute context usage percentage from context tokens and window size.
 		// Since we already handle accumulated values in activeTabContextTokens,
@@ -753,7 +772,12 @@ export const MainPanel = React.memo(
 				content: activeFileTab.content,
 				path: activeFileTab.path,
 			};
-		}, [activeFileTab?.name, activeFileTab?.extension, activeFileTab?.content, activeFileTab?.path]);
+		}, [
+			activeFileTab?.name,
+			activeFileTab?.extension,
+			activeFileTab?.content,
+			activeFileTab?.path,
+		]);
 
 		// Memoized callbacks for FilePreview
 		const handleFilePreviewClose = useCallback(() => {
@@ -820,7 +844,8 @@ export const MainPanel = React.memo(
 
 		// Memoize sshRemoteId to prevent object recreation
 		const filePreviewSshRemoteId = useMemo(
-			() => activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined,
+			() =>
+				activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined,
 			[activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId]
 		);
 
@@ -977,9 +1002,7 @@ export const MainPanel = React.memo(
 															<GitBranch className="w-3 h-3 shrink-0" />
 															{/* Hide branch name text at narrow widths, show on hover via title */}
 															{!useIconOnlyGitBranch && (
-																<span className="truncate max-w-[120px]">
-																	{gitInfo?.branch || 'GIT'}
-																</span>
+																<span className="truncate">{gitInfo?.branch || 'GIT'}</span>
 															)}
 														</>
 													) : (
@@ -1608,7 +1631,10 @@ export const MainPanel = React.memo(
 									/>
 									<div className="text-center">
 										<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-											Loading {activeFileTab ? `${activeFileTab.name}${activeFileTab.extension}` : filePreviewLoading?.name}
+											Loading{' '}
+											{activeFileTab
+												? `${activeFileTab.name}${activeFileTab.extension}`
+												: filePreviewLoading?.name}
 										</div>
 										<div className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
 											Fetching from remote server...

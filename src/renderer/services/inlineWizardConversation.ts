@@ -96,6 +96,10 @@ export interface InlineWizardConversationConfig {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Conductor profile (user's About Me from settings) */
+	conductorProfile?: string;
+	/** History file path for task recall (optional, enables AI to recall recent work) */
+	historyFilePath?: string;
 }
 
 /**
@@ -213,6 +217,7 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 	}
 
 	// Build template context for remaining variables
+	// Include historyFilePath for {{AGENT_HISTORY_PATH}} task recall
 	const templateContext: TemplateContext = {
 		session: {
 			id: 'inline-wizard',
@@ -223,6 +228,8 @@ export function generateInlineWizardPrompt(config: InlineWizardConversationConfi
 			autoRunFolderPath: autoRunFolderPath,
 		},
 		autoRunFolder: autoRunFolderPath,
+		conductorProfile: config.conductorProfile,
+		historyFilePath: config.historyFilePath,
 	};
 
 	// Substitute any remaining template variables

@@ -505,7 +505,15 @@ const Tab = memo(function Tab({
 				zIndex: isActive ? 1 : 0,
 				'--tw-ring-color': isDragOver ? theme.colors.accent : 'transparent',
 			}) as React.CSSProperties,
-		[isActive, isHovered, isDragOver, theme.colors.bgMain, theme.colors.border, theme.colors.accent, hoverBgColor]
+		[
+			isActive,
+			isHovered,
+			isDragOver,
+			theme.colors.bgMain,
+			theme.colors.border,
+			theme.colors.accent,
+			hoverBgColor,
+		]
 	);
 
 	// Browser-style tab: all tabs have borders, active tab "connects" to content
@@ -516,7 +524,7 @@ const Tab = memo(function Tab({
 			data-tab-id={tab.id}
 			className={`
         relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer
-        transition-all duration-150 select-none
+        transition-all duration-150 select-none shrink-0
         ${isDragging ? 'opacity-50' : ''}
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}
@@ -1297,7 +1305,15 @@ const FileTab = memo(function FileTab({
 				zIndex: isActive ? 1 : 0,
 				'--tw-ring-color': isDragOver ? theme.colors.accent : 'transparent',
 			}) as React.CSSProperties,
-		[isActive, isHovered, isDragOver, theme.colors.bgMain, theme.colors.border, theme.colors.accent, hoverBgColor]
+		[
+			isActive,
+			isHovered,
+			isDragOver,
+			theme.colors.bgMain,
+			theme.colors.border,
+			theme.colors.accent,
+			hoverBgColor,
+		]
 	);
 
 	// Check if tab has unsaved edits
@@ -1309,7 +1325,7 @@ const FileTab = memo(function FileTab({
 			data-tab-id={tab.id}
 			className={`
         relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer
-        transition-all duration-150 select-none
+        transition-all duration-150 select-none shrink-0
         ${isDragging ? 'opacity-50' : ''}
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}
@@ -1599,23 +1615,49 @@ function TabBarInner({
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
-	// Ensure the active tab is fully visible (including close button) when activeTabId or activeFileTabId changes, or filter is toggled
+	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
+	const activeTab = tabs.find((t) => t.id === activeTabId);
+	const activeTabName = activeTab?.name ?? null;
+
+	// Ensure the active tab is fully visible (including close button) when:
+	// - activeTabId or activeFileTabId changes (new tab selected)
+	// - activeTabName changes (tab renamed, so width may have changed)
+	// - filter is toggled
 	useEffect(() => {
+		// Double requestAnimationFrame ensures the DOM has fully updated after React's state changes
+		// First rAF: React has committed changes but browser hasn't painted yet
+		// Second rAF: Browser has painted, all elements (including close button) are rendered
 		requestAnimationFrame(() => {
-			const container = tabBarRef.current;
-			// When a file tab is active, scroll to it; otherwise scroll to the active AI tab
-			const targetTabId = activeFileTabId || activeTabId;
-			const tabElement = container?.querySelector(
-				`[data-tab-id="${targetTabId}"]`
-			) as HTMLElement | null;
-			if (container && tabElement) {
-				// Use scrollIntoView with 'nearest' to ensure the full tab is visible
-				// This scrolls minimally - only if the tab is partially or fully out of view
-				// The 'end' option ensures the right edge (with close button) is visible
-				tabElement.scrollIntoView({ inline: 'nearest', behavior: 'smooth', block: 'nearest' });
-			}
+			requestAnimationFrame(() => {
+				const container = tabBarRef.current;
+				// When a file tab is active, scroll to it; otherwise scroll to the active AI tab
+				const targetTabId = activeFileTabId || activeTabId;
+				const tabElement = container?.querySelector(
+					`[data-tab-id="${targetTabId}"]`
+				) as HTMLElement | null;
+				if (container && tabElement) {
+					// Calculate scroll position manually to ensure FULL tab is visible
+					// scrollIntoView with 'nearest' doesn't always work when tab expands on activation
+					const containerRect = container.getBoundingClientRect();
+					const tabRect = tabElement.getBoundingClientRect();
+
+					// Check if right edge is clipped (most common issue with close button)
+					const rightOverflow = tabRect.right - containerRect.right;
+					if (rightOverflow > 0) {
+						// Scroll right to reveal the full tab including close button
+						container.scrollLeft += rightOverflow + 8; // +8px padding for breathing room
+					}
+
+					// Check if left edge is clipped
+					const leftOverflow = containerRect.left - tabRect.left;
+					if (leftOverflow > 0) {
+						// Scroll left to reveal the tab
+						container.scrollLeft -= leftOverflow + 8;
+					}
+				}
+			});
 		});
-	}, [activeTabId, activeFileTabId, showUnreadOnly]);
+	}, [activeTabId, activeFileTabId, activeTabName, showUnreadOnly]);
 
 	// Can always close tabs - closing the last one creates a fresh new tab
 	const canClose = true;
@@ -1989,7 +2031,9 @@ function TabBarInner({
 												? handleTabPublishGist
 												: undefined
 										}
-										onMoveToFirst={!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
 										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
@@ -2029,7 +2073,9 @@ function TabBarInner({
 										isDragging={draggingTabId === fileTab.id}
 										isDragOver={dragOverTabId === fileTab.id}
 										registerRef={(el) => registerTabRef(fileTab.id, el)}
-										onMoveToFirst={!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined}
+										onMoveToFirst={
+											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+										}
 										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
@@ -2095,9 +2141,7 @@ function TabBarInner({
 											: undefined
 									}
 									onCopyContext={
-										onCopyContext && (tab.logs?.length ?? 0) >= 1
-											? handleTabCopyContext
-											: undefined
+										onCopyContext && (tab.logs?.length ?? 0) >= 1 ? handleTabCopyContext : undefined
 									}
 									onExportHtml={onExportHtml ? handleTabExportHtml : undefined}
 									onPublishGist={

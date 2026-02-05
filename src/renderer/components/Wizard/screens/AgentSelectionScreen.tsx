@@ -13,7 +13,7 @@
  */
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { Check, X, Settings, ArrowLeft, AlertTriangle } from 'lucide-react';
+import { Check, X, Settings, ArrowLeft, AlertTriangle, Info, Wand2 } from 'lucide-react';
 import type { Theme, AgentConfig } from '../../../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../../../shared/types';
 import { useWizard } from '../WizardContext';
@@ -326,6 +326,9 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
 
+	// Track if user has existing agents (to show/hide the note about in-tab wizard)
+	const [hasExistingAgents, setHasExistingAgents] = useState(false);
+
 	// SSH Remote configuration state
 	// Initialize from wizard context if already set (e.g., when SSH was configured before opening wizard)
 	const [sshRemotes, setSshRemotes] = useState<SshRemoteConfig[]>([]);
@@ -486,6 +489,27 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			}
 		}
 		loadSshRemotes();
+
+		return () => {
+			mounted = false;
+		};
+	}, []);
+
+	// Check if user has existing agents on mount
+	useEffect(() => {
+		let mounted = true;
+
+		async function checkExistingAgents() {
+			try {
+				const sessions = await window.maestro.sessions.getAll();
+				if (mounted) {
+					setHasExistingAgents(sessions.length > 0);
+				}
+			} catch (error) {
+				console.error('Failed to check existing agents:', error);
+			}
+		}
+		checkExistingAgents();
 
 		return () => {
 			mounted = false;
@@ -1110,16 +1134,47 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 						</div>
 					)}
 				</div>
-
-				<p className="text-sm" style={{ color: theme.colors.textDim }}>
-					Select the provider that will power your agent.
-				</p>
 			</div>
 
-			{/* Section 2: Agent Grid or Connection Error */}
+			{/* Section 2: Note box - only shown if user has existing agents */}
+			{hasExistingAgents && (
+				<div className="flex justify-center">
+					<div
+						className="flex items-start gap-2.5 px-4 py-3 rounded-lg max-w-lg text-xs"
+						style={{
+							backgroundColor: theme.colors.accent + '15',
+							border: `1px solid ${theme.colors.accent}30`,
+						}}
+					>
+						<Info className="w-4 h-4 flex-shrink-0 mt-0.5" style={{ color: theme.colors.accent }} />
+						<span style={{ color: theme.colors.textDim }}>
+							<strong style={{ color: theme.colors.textMain }}>Note:</strong> The new agent wizard
+							captures application inputs until complete. For a lighter touch, create a new agent
+							then run{' '}
+							<code
+								className="px-1 py-0.5 rounded text-[11px]"
+								style={{ backgroundColor: theme.colors.border }}
+							>
+								/wizard
+							</code>{' '}
+							or click the{' '}
+							<Wand2
+								className="inline w-3.5 h-3.5 align-text-bottom"
+								style={{ color: theme.colors.accent }}
+							/>{' '}
+							button in the Auto Run panel. The in-tab wizard runs alongside your other work.
+						</span>
+					</div>
+				</div>
+			)}
+
+			{/* Section 3: Agent Grid or Connection Error */}
 			{sshConnectionError ? (
 				/* SSH Connection Error State */
-				<div className="flex justify-center">
+				<div className="flex flex-col items-center gap-4">
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Select the provider that will power your agent.
+					</p>
 					<div
 						className="flex flex-col items-center justify-center p-8 rounded-xl border-2 max-w-lg text-center"
 						style={{
@@ -1141,7 +1196,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				</div>
 			) : (
 				/* Agent Grid */
-				<div className="flex justify-center">
+				<div className="flex flex-col items-center gap-4">
+					<p className="text-sm" style={{ color: theme.colors.textDim }}>
+						Select the provider that will power your agent.
+					</p>
 					<div className="grid grid-cols-3 gap-4 max-w-3xl">
 						{AGENT_TILES.map((tile, index) => {
 							const isDetected = isAgentAvailable(tile.id);
@@ -1255,17 +1313,20 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 									)}
 
 									{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
-									{isSupported && (tile.id === 'codex' || tile.id === 'opencode' || tile.id === 'factory-droid') && (
-										<span
-											className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
-											style={{
-												backgroundColor: theme.colors.warning + '30',
-												color: theme.colors.warning,
-											}}
-										>
-											Beta
-										</span>
-									)}
+									{isSupported &&
+										(tile.id === 'codex' ||
+											tile.id === 'opencode' ||
+											tile.id === 'factory-droid') && (
+											<span
+												className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
+												style={{
+													backgroundColor: theme.colors.warning + '30',
+													color: theme.colors.warning,
+												}}
+											>
+												Beta
+											</span>
+										)}
 
 									{/* Customize button for supported agents (shown even if not detected, so user can set custom path) */}
 									{/* Note: Using div with role="button" to avoid nested button warning */}
@@ -1298,7 +1359,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 				</div>
 			)}
 
-			{/* Section 3: Continue Button + Keyboard hints */}
+			{/* Section 4: Continue Button + Keyboard hints */}
 			<div className="flex flex-col items-center gap-4">
 				<button
 					onClick={handleContinue}

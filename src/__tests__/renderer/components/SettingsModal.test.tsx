@@ -68,6 +68,10 @@ vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 // Mock useSettings hook (used for context management settings and SSH remote ignore settings)
 vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
+		// Conductor profile settings
+		conductorProfile: '',
+		setConductorProfile: vi.fn(),
+		// Context management settings
 		contextManagementSettings: {
 			autoGroomContexts: true,
 			maxContextTokens: 100000,
@@ -591,7 +595,9 @@ describe('SettingsModal', () => {
 	describe('Display tab - Terminal width buttons', () => {
 		it('should call setTerminalWidth with 80', async () => {
 			const setTerminalWidth = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -603,7 +609,9 @@ describe('SettingsModal', () => {
 
 		it('should call setTerminalWidth with 100', async () => {
 			const setTerminalWidth = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -693,7 +701,9 @@ describe('SettingsModal', () => {
 	describe('Display tab - Max output lines buttons', () => {
 		it('should call setMaxOutputLines with various values', async () => {
 			const setMaxOutputLines = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setMaxOutputLines, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setMaxOutputLines, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1546,7 +1556,10 @@ describe('SettingsModal', () => {
 	describe('Custom notification Stop button', () => {
 		it('should show Stop button when Command Chain is running and handle click', async () => {
 			// Mock speak to return a notificationId
-			vi.mocked(window.maestro.notification.speak).mockResolvedValue({ success: true, notificationId: 123 });
+			vi.mocked(window.maestro.notification.speak).mockResolvedValue({
+				success: true,
+				notificationId: 123,
+			});
 			vi.mocked(window.maestro.notification.stopSpeak).mockResolvedValue({ success: true });
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
@@ -1576,7 +1589,10 @@ describe('SettingsModal', () => {
 		});
 
 		it('should handle stopSpeak error gracefully', async () => {
-			vi.mocked(window.maestro.notification.speak).mockResolvedValue({ success: true, notificationId: 456 });
+			vi.mocked(window.maestro.notification.speak).mockResolvedValue({
+				success: true,
+				notificationId: 456,
+			});
 			vi.mocked(window.maestro.notification.stopSpeak).mockRejectedValue(new Error('Stop failed'));
 
 			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -1636,7 +1652,10 @@ describe('SettingsModal', () => {
 					capturedCallback = null;
 				};
 			});
-			vi.mocked(window.maestro.notification.speak).mockResolvedValue({ success: true, notificationId: 789 });
+			vi.mocked(window.maestro.notification.speak).mockResolvedValue({
+				success: true,
+				notificationId: 789,
+			});
 
 			render(<SettingsModal {...createDefaultProps({ initialTab: 'notifications' })} />);
 
@@ -1855,7 +1874,9 @@ describe('SettingsModal', () => {
 	describe('Terminal width 120 and 160 buttons', () => {
 		it('should call setTerminalWidth with 120', async () => {
 			const setTerminalWidth = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1867,7 +1888,9 @@ describe('SettingsModal', () => {
 
 		it('should call setTerminalWidth with 160', async () => {
 			const setTerminalWidth = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
@@ -1881,7 +1904,9 @@ describe('SettingsModal', () => {
 	describe('Max output lines 100 button', () => {
 		it('should call setMaxOutputLines with 100', async () => {
 			const setMaxOutputLines = vi.fn();
-			render(<SettingsModal {...createDefaultProps({ setMaxOutputLines, initialTab: 'display' })} />);
+			render(
+				<SettingsModal {...createDefaultProps({ setMaxOutputLines, initialTab: 'display' })} />
+			);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);

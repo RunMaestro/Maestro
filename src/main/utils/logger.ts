@@ -167,27 +167,35 @@ class Logger extends EventEmitter {
 		}
 
 		// Also output to console for development
-		switch (entry.level) {
-			case 'error':
-				console.error(message, entry.data || '');
-				break;
-			case 'warn':
-				console.warn(message, entry.data || '');
-				break;
-			case 'info':
-				console.info(message, entry.data || '');
-				break;
-			case 'debug':
-				console.log(message, entry.data || '');
-				break;
-			case 'toast':
-				// Toast notifications logged with info styling (purple in LogViewer)
-				console.info(message, entry.data || '');
-				break;
-			case 'autorun':
-				// Auto Run logs for workflow tracking (orange in LogViewer)
-				console.info(message, entry.data || '');
-				break;
+		// Wrapped in try-catch to handle EPIPE errors when stdout/stderr is disconnected
+		// (e.g., when a parent process consuming output dies unexpectedly)
+		// Fixes MAESTRO-5C
+		try {
+			switch (entry.level) {
+				case 'error':
+					console.error(message, entry.data || '');
+					break;
+				case 'warn':
+					console.warn(message, entry.data || '');
+					break;
+				case 'info':
+					console.info(message, entry.data || '');
+					break;
+				case 'debug':
+					console.log(message, entry.data || '');
+					break;
+				case 'toast':
+					// Toast notifications logged with info styling (purple in LogViewer)
+					console.info(message, entry.data || '');
+					break;
+				case 'autorun':
+					// Auto Run logs for workflow tracking (orange in LogViewer)
+					console.info(message, entry.data || '');
+					break;
+			}
+		} catch {
+			// Silently ignore EPIPE errors - console is disconnected
+			// Other errors are also ignored to prevent infinite loops
 		}
 	}
 

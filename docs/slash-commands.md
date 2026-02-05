@@ -44,6 +44,12 @@ Create your own slash commands in **Settings → AI Commands**. Each command has
 
 Commands support **template variables** that are automatically substituted at runtime:
 
+### Conductor Variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{CONDUCTOR_PROFILE}}` | Your "About Me" profile from Settings → General. Tells agents about your background, preferences, and communication style. |
+
 ### Agent Variables
 
 | Variable | Description |

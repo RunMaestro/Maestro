@@ -997,6 +997,7 @@ describe('AutoRun', () => {
 						getAsFile: () => new File(['test'], 'test.png', { type: 'image/png' }),
 					},
 				],
+				getData: () => '', // For text paste handling
 			};
 
 			fireEvent.paste(textarea, { clipboardData: mockClipboardData });

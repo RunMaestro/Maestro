@@ -157,10 +157,34 @@ export function PromptComposerModal({
 		}
 	};
 
-	// Handle paste for images
+	// Handle paste for images and text (with whitespace trimming)
 	const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 		const items = e.clipboardData.items;
 		const hasImage = Array.from(items).some((item) => item.type.startsWith('image/'));
+
+		// Handle text paste with whitespace trimming (when no images)
+		if (!hasImage) {
+			const text = e.clipboardData.getData('text/plain');
+			if (text) {
+				const trimmedText = text.trim();
+				// Only intercept if trimming actually changed the text
+				if (trimmedText !== text) {
+					e.preventDefault();
+					const target = e.target as HTMLTextAreaElement;
+					const start = target.selectionStart ?? 0;
+					const end = target.selectionEnd ?? 0;
+					const currentValue = target.value;
+					const newValue = currentValue.slice(0, start) + trimmedText + currentValue.slice(end);
+					setValue(newValue);
+					// Set cursor position after the pasted text
+					requestAnimationFrame(() => {
+						target.selectionStart = target.selectionEnd = start + trimmedText.length;
+					});
+				}
+			}
+			return;
+		}
+
 		if (!setStagedImages) {
 			if (hasImage) {
 				e.preventDefault();

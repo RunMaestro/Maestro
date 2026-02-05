@@ -72,6 +72,8 @@ export interface UseInputProcessingDeps {
 	onSkillsCommand?: () => Promise<void>;
 	/** Whether automatic tab naming is enabled */
 	automaticTabNamingEnabled?: boolean;
+	/** Conductor profile (user's About Me from settings) */
+	conductorProfile?: string;
 }
 
 /**
@@ -128,6 +130,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 		isWizardActive,
 		onSkillsCommand,
 		automaticTabNamingEnabled,
+		conductorProfile,
 	} = deps;
 
 	// Ref for the processInput function so external code can access the latest version
@@ -239,6 +242,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							substituteTemplateVariables(matchingCustomCommand.prompt, {
 								session: activeSession,
 								gitBranch,
+								conductorProfile,
 							});
 
 							// ALWAYS queue slash commands - they execute in order like write messages
@@ -903,6 +907,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 								session: freshSession,
 								gitBranch,
 								historyFilePath,
+								conductorProfile,
 							});
 
 							// Prepend system prompt to user's message
