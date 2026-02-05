@@ -37,21 +37,21 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # CRITICAL: Do NOT use setup-node's built-in npm cache for Linux builds.
       # The cache key doesn't include architecture, so x64 and arm64 share the same cache.
       # This causes ARM64 prebuilds to contaminate x64 builds (GitHub issue #116).
       - name: Setup Node.js (Linux - no cache)
         if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           # Explicitly no cache to prevent cross-architecture contamination
 
       - name: Setup Node.js (non-Linux - with cache)
         if: matrix.platform != 'linux' && matrix.platform != 'linux-arm64'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: 'npm'
@@ -59,7 +59,7 @@ jobs:
       # Use architecture-specific cache for Linux builds
       - name: Cache npm dependencies (Linux)
         if: matrix.platform == 'linux' || matrix.platform == 'linux-arm64'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.npm
           key: npm-linux-${{ matrix.arch }}-${{ hashFiles('**/package-lock.json') }}
@@ -96,14 +96,14 @@ jobs:
       # Linux x64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
       - name: Setup Python for node-gyp (Linux x64)
         if: matrix.platform == 'linux'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       # Linux ARM64: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
       - name: Setup Python for node-gyp (Linux ARM64)
         if: matrix.platform == 'linux-arm64'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -115,14 +115,14 @@ jobs:
       # Windows: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
       - name: Setup Python for node-gyp (Windows)
         if: matrix.platform == 'win'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       # macOS: Setup Python 3.11 for node-gyp (Python 3.12+ removed distutils)
       - name: Setup Python for node-gyp
         if: matrix.platform == 'mac'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -563,7 +563,7 @@ jobs:
 
       - name: Upload macOS artifacts
         if: matrix.platform == 'mac'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maestro-macos
           path: |
@@ -577,7 +577,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: matrix.platform == 'win'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maestro-windows
           path: |
@@ -588,7 +588,7 @@ jobs:
 
       - name: Upload Linux x64 artifacts
         if: matrix.platform == 'linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maestro-linux-x64
           path: |
@@ -602,7 +602,7 @@ jobs:
 
       - name: Upload Linux ARM64 artifacts
         if: matrix.platform == 'linux-arm64'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: maestro-linux-arm64
           path: |
@@ -623,28 +623,28 @@ jobs:
     steps:
       # Download each platform's artifacts separately to handle partial failures
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: maestro-macos
           path: artifacts/maestro-macos
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: maestro-windows
           path: artifacts/maestro-windows
 
       - name: Download Linux x64 artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: maestro-linux-x64
           path: artifacts/maestro-linux-x64
 
       - name: Download Linux ARM64 artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         continue-on-error: true
         with:
           name: maestro-linux-arm64
@@ -701,7 +701,7 @@ jobs:
       - name: Get release notes
         if: steps.check_artifacts.outputs.has_artifacts == 'true'
         id: release_notes
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const release = await github.rest.repos.getReleaseByTag({
@@ -745,13 +745,13 @@ jobs:
 
     steps:
       - name: Checkout main branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '22'
 
