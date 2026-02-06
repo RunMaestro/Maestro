@@ -59,6 +59,13 @@ export function UnifiedHistoryTab({
 		loadHistory();
 	}, [loadHistory]);
 
+	// Auto-focus the list after loading completes for keyboard navigation
+	useEffect(() => {
+		if (!isLoading) {
+			listRef.current?.focus();
+		}
+	}, [isLoading]);
+
 	// Filter entries
 	const filteredEntries = useMemo(() => {
 		return entries.filter(entry => {
