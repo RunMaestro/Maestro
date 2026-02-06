@@ -4,7 +4,7 @@
  * These tests verify:
  * - Unified history aggregation across all sessions
  * - Token estimation for synopsis generation
- * - AI synopsis generation (placeholder)
+ * - AI synopsis generation via groomContext
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -37,9 +37,21 @@ vi.mock('../../../../main/utils/logger', () => ({
 	},
 }));
 
+// Mock the context-groomer module
+vi.mock('../../../../main/utils/context-groomer', () => ({
+	groomContext: vi.fn(),
+}));
+
+// Mock the prompts module
+vi.mock('../../../../../prompts', () => ({
+	directorNotesPrompt: 'Mock director notes prompt',
+}));
+
 describe('director-notes IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockHistoryManager: Partial<HistoryManager>;
+	let mockProcessManager: any;
+	let mockAgentDetector: any;
 
 	// Helper to create mock history entries
 	const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -54,6 +66,21 @@ describe('director-notes IPC handlers', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+
+		// Create mock process manager and agent detector
+		mockProcessManager = {
+			spawn: vi.fn().mockReturnValue({ pid: 123 }),
+			on: vi.fn(),
+			off: vi.fn(),
+			kill: vi.fn(),
+		};
+		mockAgentDetector = {
+			getAgent: vi.fn().mockResolvedValue({
+				available: true,
+				command: 'claude',
+				args: [],
+			}),
+		};
 
 		// Create mock history manager
 		mockHistoryManager = {
@@ -71,8 +98,11 @@ describe('director-notes IPC handlers', () => {
 			handlers.set(channel, handler);
 		});
 
-		// Register handlers
-		registerDirectorNotesHandlers();
+		// Register handlers with mock dependencies
+		registerDirectorNotesHandlers({
+			getProcessManager: () => mockProcessManager,
+			getAgentDetector: () => mockAgentDetector,
+		});
 	});
 
 	afterEach(() => {
@@ -314,36 +344,114 @@ describe('director-notes IPC handlers', () => {
 	});
 
 	describe('director-notes:generateSynopsis', () => {
-		it('should return a placeholder synopsis with success', async () => {
+		it('should return error when agent is not available', async () => {
+			mockAgentDetector.getAgent.mockResolvedValue({ available: false });
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('not available');
+		});
+
+		it('should return empty-history message when no entries exist', async () => {
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
 
 			expect(result.success).toBe(true);
-			expect(result.synopsis).toContain("Director's Notes");
+			expect(result.synopsis).toContain('No history entries found');
 			expect(result.synopsis).toContain('7 days');
 		});
 
-		it('should include lookbackDays in the synopsis content', async () => {
-			const handler = handlers.get('director-notes:generateSynopsis');
-			const result = await handler!({} as any, { lookbackDays: 14, provider: 'codex' });
+		it('should call groomContext with history entries and return synopsis', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Synopsis\n\nWork was done.',
+				durationMs: 5000,
+				completionReason: 'process exited with code 0',
+			});
 
-			expect(result.synopsis).toContain('14 days');
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000, summary: 'Fixed a bug' }),
+			]);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(true);
+			expect(result.synopsis).toBe('# Synopsis\n\nWork was done.');
+			expect(groomContext).toHaveBeenCalledWith(
+				expect.objectContaining({
+					agentType: 'claude-code',
+					readOnlyMode: true,
+				}),
+				mockProcessManager,
+				mockAgentDetector,
+			);
+		});
+
+		it('should return error when groomContext fails', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockRejectedValue(new Error('Agent timed out'));
+
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000, summary: 'Some work' }),
+			]);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('Agent timed out');
+		});
+
+		it('should return error when agent returns empty response', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '  ',
+				durationMs: 3000,
+				completionReason: 'process exited with code 0',
+			});
+
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000, summary: 'Some work' }),
+			]);
+
+			const handler = handlers.get('director-notes:generateSynopsis');
+			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
+
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('empty response');
 		});
 
 		it('should return synopsis with expected structure', async () => {
+			const { groomContext } = await import('../../../../main/utils/context-groomer');
+			vi.mocked(groomContext).mockResolvedValue({
+				response: '# Director Notes\n\nSynopsis content.',
+				durationMs: 4000,
+				completionReason: 'idle timeout with content',
+			});
+
+			const now = Date.now();
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+				createMockEntry({ id: 'e1', timestamp: now - 1000, summary: 'Task done' }),
+			]);
+
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
 
 			expect(result).toHaveProperty('success');
 			expect(result).toHaveProperty('synopsis');
 			expect(typeof result.synopsis).toBe('string');
-		});
-
-		it('should not have an error field on success', async () => {
-			const handler = handlers.get('director-notes:generateSynopsis');
-			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
-
-			expect(result.success).toBe(true);
 			expect(result.error).toBeUndefined();
 		});
 	});

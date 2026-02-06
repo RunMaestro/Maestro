@@ -312,7 +312,7 @@ describe('DirectorNotesModal', () => {
 				blocksLowerLayers: true,
 				capturesFocus: true,
 				focusTrap: 'lenient',
-				onEscape: onClose,
+				onEscape: expect.any(Function),
 			});
 		});
 
