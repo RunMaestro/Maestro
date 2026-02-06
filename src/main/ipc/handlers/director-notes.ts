@@ -116,8 +116,7 @@ export function registerDirectorNotesHandlers(): void {
 		withIpcErrorLogging(
 			handlerOpts('generateSynopsis'),
 			async (options: SynopsisOptions): Promise<SynopsisResult> => {
-				// TODO: Phase 07 will implement actual agent-based generation
-				// For now, return a placeholder synopsis
+				// Placeholder synopsis - actual agent-based generation is a future enhancement
 				logger.info(
 					`Synopsis generation requested for ${options.lookbackDays} days via ${options.provider}`,
 					LOG_CONTEXT

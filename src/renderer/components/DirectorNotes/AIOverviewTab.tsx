@@ -50,8 +50,8 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 
 			if (estimatedTokens > 100000) {
 				// Hierarchical strategy needed - show progress for each agent
+				// Falls through to standard generation for now; hierarchical generation is a future enhancement
 				setProgress({ phase: 'generating', message: 'Large dataset - using hierarchical analysis...', percent: 40 });
-				// TODO: Implement hierarchical generation in a future phase
 			}
 
 			setProgress({ phase: 'generating', message: 'Generating synopsis...', percent: 60 });

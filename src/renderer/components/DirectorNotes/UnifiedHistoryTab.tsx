@@ -123,7 +123,7 @@ export function UnifiedHistoryTab({
 	const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
 		if (e.key === 'f' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
-			// TODO: Open search
+			// Search not yet implemented for unified history
 			return;
 		}
 		listNavKeyDown(e);
