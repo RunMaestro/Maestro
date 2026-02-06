@@ -683,31 +683,21 @@ describe('Database file creation on first launch', () => {
  * Daily backup system tests
  */
 describe('Daily backup system', () => {
-	const mockFsReaddirSync = vi.fn();
-
 	beforeEach(() => {
+		vi.resetModules();
 		vi.clearAllMocks();
 		lastDbPath = null;
-		mockDb.pragma.mockReturnValue([{ user_version: 3 }]);
+		// Return integrity_check: 'ok' so initialize() doesn't trigger corruption recovery
+		mockDb.pragma.mockImplementation((pragmaStr: string) => {
+			if (pragmaStr === 'integrity_check') return [{ integrity_check: 'ok' }];
+			return [{ user_version: 3 }];
+		});
 		mockDb.prepare.mockReturnValue(mockStatement);
 		mockStatement.run.mockReturnValue({ changes: 1 });
 		mockStatement.get.mockReturnValue({ value: '0' }); // Old vacuum timestamp
 		mockStatement.all.mockReturnValue([]);
 		mockFsExistsSync.mockReturnValue(true);
 		mockFsReaddirSync.mockReturnValue([]);
-
-		// Mock readdirSync in the fs mock
-		vi.doMock('fs', () => ({
-			existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
-			mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
-			copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
-			unlinkSync: (...args: unknown[]) => mockFsUnlinkSync(...args),
-			renameSync: (...args: unknown[]) => mockFsRenameSync(...args),
-			statSync: (...args: unknown[]) => mockFsStatSync(...args),
-			readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
-			writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
-			readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
-		}));
 	});
 
 	afterEach(() => {
@@ -828,6 +818,13 @@ describe('Daily backup system', () => {
 
 	describe('daily backup creation on initialize', () => {
 		it('should attempt to create daily backup on initialization', async () => {
+			const today = new Date().toISOString().split('T')[0];
+			// existsSync returns false for today's daily backup so createDailyBackupIfNeeded proceeds
+			mockFsExistsSync.mockImplementation((p: unknown) => {
+				if (typeof p === 'string' && p.includes(`daily.${today}`)) return false;
+				return true;
+			});
+
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 			db.initialize();
