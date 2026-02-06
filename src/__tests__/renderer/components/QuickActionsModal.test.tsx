@@ -1346,6 +1346,68 @@ describe('QuickActionsModal', () => {
 		});
 	});
 
+	describe("Director's Notes action", () => {
+		it("shows Director's Notes command when onOpenDirectorNotes is provided", () => {
+			const onOpenDirectorNotes = vi.fn();
+			const props = createDefaultProps({
+				onOpenDirectorNotes,
+				shortcuts: {
+					...mockShortcuts,
+					directorNotes: { id: 'directorNotes', keys: ['Cmd', 'Shift', 'D'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+			expect(
+				screen.getByText('View unified history and AI synopsis across all sessions')
+			).toBeInTheDocument();
+		});
+
+		it("handles Director's Notes action - calls onOpenDirectorNotes and closes modal", () => {
+			const onOpenDirectorNotes = vi.fn();
+			const props = createDefaultProps({ onOpenDirectorNotes });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText("Director's Notes"));
+
+			expect(onOpenDirectorNotes).toHaveBeenCalled();
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it("does not show Director's Notes when onOpenDirectorNotes is not provided", () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText("Director's Notes")).not.toBeInTheDocument();
+		});
+
+		it("Director's Notes appears when searching for 'director'", () => {
+			const onOpenDirectorNotes = vi.fn();
+			const props = createDefaultProps({ onOpenDirectorNotes });
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+			fireEvent.change(input, { target: { value: 'director' } });
+
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+		});
+
+		it("displays shortcut keys for Director's Notes when shortcut is configured", () => {
+			const onOpenDirectorNotes = vi.fn();
+			const props = createDefaultProps({
+				onOpenDirectorNotes,
+				shortcuts: {
+					...mockShortcuts,
+					directorNotes: { id: 'directorNotes', keys: ['Cmd', 'Shift', 'D'], enabled: true },
+				},
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Cmd+Shift+D')).toBeInTheDocument();
+		});
+	});
+
 	describe('Send to agent action', () => {
 		it('shows Context: Send to Agent action when capability is supported and callback provided', () => {
 			const onOpenSendToAgent = vi.fn();
