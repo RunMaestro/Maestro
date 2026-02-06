@@ -182,6 +182,8 @@ src/
 | Add power management | `src/main/power-manager.ts`, `src/main/ipc/handlers/system.ts` |
 | Spawn agent with SSH support | `src/main/utils/ssh-spawn-wrapper.ts` (required for SSH remote execution) |
 | Modify file preview tabs | `TabBar.tsx`, `FilePreview.tsx`, `MainPanel.tsx` (see ARCHITECTURE.md → File Preview Tab System) |
+| Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts` |
+| Modify history components | `src/renderer/components/History/` |
 
 ---
 
