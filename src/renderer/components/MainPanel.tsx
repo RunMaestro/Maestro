@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { LogViewer } from './LogViewer';
 import { TerminalOutput } from './TerminalOutput';
-import { TerminalView } from './TerminalView';
+import { TerminalView, type TerminalViewHandle } from './TerminalView';
 import { InputArea } from './InputArea';
 import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -173,6 +173,7 @@ interface MainPanelProps {
 	terminalOutputRef: React.RefObject<HTMLDivElement>;
 	fileTreeContainerRef: React.RefObject<HTMLDivElement>;
 	fileTreeFilterInputRef: React.RefObject<HTMLInputElement>;
+	terminalViewRef?: React.RefObject<TerminalViewHandle>;
 
 	// Functions
 	toggleInputMode: () => void;
@@ -506,6 +507,7 @@ export const MainPanel = React.memo(
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		const internalTerminalViewRef = useRef<TerminalViewHandle>(null);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 
 		// Extract tab handlers from props
@@ -1742,6 +1744,7 @@ export const MainPanel = React.memo(
 								>
 									{activeSession.inputMode === 'terminal' ? (
 										<TerminalView
+											ref={props.terminalViewRef ?? internalTerminalViewRef}
 											session={activeSession}
 											theme={theme}
 											fontFamily={props.fontFamily}

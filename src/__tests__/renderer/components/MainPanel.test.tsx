@@ -34,16 +34,19 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 }));
 
 let lastTerminalViewProps: Record<string, unknown> | null = null;
+let lastTerminalViewRef: React.ForwardedRef<unknown> | null = null;
 
 vi.mock('../../../renderer/components/TerminalView', () => ({
-	TerminalView: (props: { session: { name: string } } & Record<string, unknown>) => {
-		lastTerminalViewProps = props;
+	TerminalView: React.forwardRef<unknown, Record<string, unknown>>((props, ref) => {
+		const typedProps = props as { session?: { name?: string } } & Record<string, unknown>;
+		lastTerminalViewProps = typedProps;
+		lastTerminalViewRef = ref;
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'terminal-view' },
-			`Terminal View for ${props.session?.name}`
+			`Terminal View for ${typedProps.session?.name}`
 		);
-	},
+	}),
 }));
 
 vi.mock('../../../renderer/components/InputArea', () => ({
@@ -447,6 +450,7 @@ describe('MainPanel', () => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
 		lastTerminalViewProps = null;
+		lastTerminalViewRef = null;
 
 		// Clear capabilities cache and pre-populate with Claude Code capabilities (default test agent)
 		clearCapabilitiesCache();
@@ -593,6 +597,20 @@ describe('MainPanel', () => {
 
 			expect(onTerminalTabSelect).toHaveBeenCalledWith(session.id, 'terminal-tab-1');
 			expect(onTerminalNewTab).toHaveBeenCalledWith(session.id);
+		});
+
+		it('should pass a ref to TerminalView', () => {
+			const session = createSession({ inputMode: 'terminal' });
+			const terminalViewRef = React.createRef();
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					terminalViewRef={terminalViewRef as React.RefObject<any>}
+				/>
+			);
+
+			expect(lastTerminalViewRef).toBe(terminalViewRef);
 		});
 	});
 
