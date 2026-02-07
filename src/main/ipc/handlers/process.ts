@@ -74,6 +74,7 @@ export interface ProcessHandlerDependencies {
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
 		deps;
+	type SpawnTerminalTabConfig = Parameters<ProcessManager['spawnTerminalTab']>[0];
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -560,6 +561,20 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 			}
 		)
+	);
+
+	// Spawn a terminal PTY for a specific terminal tab
+	ipcMain.handle(
+		'process:spawnTerminalTab',
+		withIpcErrorLogging(handlerOpts('spawnTerminalTab'), async (config: SpawnTerminalTabConfig) => {
+			const processManager = requireProcessManager(getProcessManager);
+			logger.info('Spawning terminal tab', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				cwd: config.cwd,
+			});
+
+			return processManager.spawnTerminalTab(config);
+		})
 	);
 
 	// Write data to a process
