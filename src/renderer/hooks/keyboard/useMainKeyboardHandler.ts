@@ -72,6 +72,19 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
+			// In terminal mode, Ctrl+C must go to xterm/PTy as an interrupt signal.
+			// Do not intercept it with any app-level handlers.
+			if (
+				e.ctrlKey &&
+				!e.metaKey &&
+				!e.altKey &&
+				!e.shiftKey &&
+				e.key.toLowerCase() === 'c' &&
+				ctx.activeSession?.inputMode === 'terminal'
+			) {
+				return;
+			}
+
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
 			// - Tab: allowed for accessibility navigation
