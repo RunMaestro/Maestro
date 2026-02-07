@@ -1,10 +1,10 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import type { Terminal } from '@xterm/xterm';
-import type { FitAddon } from '@xterm/addon-fit';
-import type { WebglAddon } from '@xterm/addon-webgl';
-import type { WebLinksAddon } from '@xterm/addon-web-links';
-import type { SearchAddon } from '@xterm/addon-search';
-import type { Unicode11Addon } from '@xterm/addon-unicode11';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import { WebglAddon } from '@xterm/addon-webgl';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { SearchAddon } from '@xterm/addon-search';
+import { Unicode11Addon } from '@xterm/addon-unicode11';
 import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../types';
 
@@ -54,10 +54,81 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 	useEffect(() => {
+		if (!containerRef.current || terminalRef.current) {
+			return;
+		}
+
+		const terminal = new Terminal({
+			cursorBlink: true,
+			cursorStyle: 'block',
+			fontFamily: fontFamily || 'Menlo, Monaco, "Courier New", monospace',
+			fontSize: fontSize ?? 14,
+			theme: {
+				background: theme.colors.bgMain,
+				foreground: theme.colors.textMain,
+				cursor: theme.colors.textMain,
+				cursorAccent: theme.colors.bgMain,
+				selectionBackground: theme.colors.accentDim,
+				selectionInactiveBackground: theme.colors.accentDim,
+			},
+			allowProposedApi: true,
+			scrollback: 10000,
+		});
+
+		const fitAddon = new FitAddon();
+		terminal.loadAddon(fitAddon);
+
+		const webLinksAddon = new WebLinksAddon();
+		terminal.loadAddon(webLinksAddon);
+
+		const searchAddon = new SearchAddon();
+		terminal.loadAddon(searchAddon);
+
+		const unicode11Addon = new Unicode11Addon();
+		terminal.loadAddon(unicode11Addon);
+		terminal.unicode.activeVersion = '11';
+
+		let webglAddon: WebglAddon | null = null;
+		try {
+			webglAddon = new WebglAddon();
+			webglAddon.onContextLoss(() => {
+				webglAddon?.dispose();
+				webglAddon = null;
+			});
+			terminal.loadAddon(webglAddon);
+		} catch (error) {
+			console.warn('WebGL addon failed to load, using canvas renderer', error);
+		}
+
+		terminal.open(containerRef.current);
+		fitAddon.fit();
+
+		terminalRef.current = terminal;
+		addonsRef.current = {
+			fit: fitAddon,
+			search: searchAddon,
+			webgl: webglAddon,
+			webLinks: webLinksAddon,
+			unicode11: unicode11Addon,
+		};
+
 		return () => {
 			if (resizeTimeoutRef.current) {
 				clearTimeout(resizeTimeoutRef.current);
+				resizeTimeoutRef.current = null;
 			}
+
+			addonsRef.current.webgl?.dispose();
+			terminal.dispose();
+
+			terminalRef.current = null;
+			addonsRef.current = {
+				fit: null,
+				search: null,
+				webgl: null,
+				webLinks: null,
+				unicode11: null,
+			};
 		};
 	}, []);
 
