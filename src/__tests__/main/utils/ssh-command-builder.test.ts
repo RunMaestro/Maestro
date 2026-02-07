@@ -868,6 +868,97 @@ describe('ssh-command-builder', () => {
 			expect(result.stdinScript).toContain('export OPTION_VAR=');
 		});
 
+		it('decodes images into remote temp files for file-based agents', async () => {
+			const testImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==';
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'codex',
+				args: ['exec'],
+				stdinInput: 'describe this image',
+				images: [testImage],
+				imageArgs: (path: string) => ['-i', path],
+			});
+
+			// Should contain base64 decode command in the script
+			expect(result.stdinScript).toContain('base64 -d >');
+			expect(result.stdinScript).toContain('/tmp/maestro-image-');
+			expect(result.stdinScript).toContain('.png');
+			// Should contain the raw base64 data in a heredoc
+			expect(result.stdinScript).toContain('iVBORw0KGgoAAAANSUhEUg==');
+			expect(result.stdinScript).toContain('MAESTRO_IMG_0_EOF');
+			// The exec line should include the -i flag with the temp file path
+			const execLine = result.stdinScript
+				?.split('\n')
+				.find((line) => line.startsWith('exec '));
+			expect(execLine).toContain("'-i'");
+			expect(execLine).toContain('/tmp/maestro-image-');
+		});
+
+		it('handles multiple images for file-based agents', async () => {
+			const images = [
+				'data:image/png;base64,AAAA',
+				'data:image/jpeg;base64,BBBB',
+			];
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'opencode',
+				args: ['run'],
+				stdinInput: 'describe these images',
+				images,
+				imageArgs: (path: string) => ['-f', path],
+			});
+
+			// Should have two decode blocks
+			expect(result.stdinScript).toContain('MAESTRO_IMG_0_EOF');
+			expect(result.stdinScript).toContain('MAESTRO_IMG_1_EOF');
+			// Should have correct extensions
+			expect(result.stdinScript).toContain('.png');
+			expect(result.stdinScript).toContain('.jpeg');
+			// Exec line should have both -f flags
+			const execLine = result.stdinScript
+				?.split('\n')
+				.find((line) => line.startsWith('exec '));
+			expect(execLine).toContain("'-f'");
+			// Count occurrences of -f
+			const fFlagCount = (execLine?.match(/'-f'/g) || []).length;
+			expect(fFlagCount).toBe(2);
+		});
+
+		it('skips invalid image data URLs', async () => {
+			const images = [
+				'not-a-data-url',
+				'data:image/png;base64,ValidBase64==',
+			];
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'codex',
+				args: ['exec'],
+				stdinInput: 'describe',
+				images,
+				imageArgs: (path: string) => ['-i', path],
+			});
+
+			// Only one image should be decoded (the valid one)
+			expect(result.stdinScript).toContain('ValidBase64==');
+			expect(result.stdinScript).not.toContain('not-a-data-url');
+			// Only one -i flag in exec line
+			const execLine = result.stdinScript
+				?.split('\n')
+				.find((line) => line.startsWith('exec '));
+			const iFlagCount = (execLine?.match(/'-i'/g) || []).length;
+			expect(iFlagCount).toBe(1);
+		});
+
+		it('does not add image decode commands when images array is empty', async () => {
+			const result = await buildSshCommandWithStdin(baseConfig, {
+				command: 'codex',
+				args: ['exec'],
+				stdinInput: 'hello',
+				images: [],
+				imageArgs: (path: string) => ['-i', path],
+			});
+
+			expect(result.stdinScript).not.toContain('base64 -d');
+			expect(result.stdinScript).not.toContain('MAESTRO_IMG');
+		});
+
 		it('works with Claude Code stream-json format', async () => {
 			// Claude Code uses --input-format stream-json and expects JSON on stdin
 			const streamJsonPrompt =

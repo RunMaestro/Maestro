@@ -29,8 +29,9 @@ import { exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { getAgentCapabilities } from '../../main/agents';
-import { buildSshCommand, buildRemoteCommand } from '../../main/utils/ssh-command-builder';
+import { getAgentCapabilities, getAgentDefinition } from '../../main/agents';
+import { buildSshCommand, buildSshCommandWithStdin } from '../../main/utils/ssh-command-builder';
+import { buildStreamJsonMessage } from '../../main/process-manager/utils/streamJsonBuilder';
 import type { SshRemoteConfig } from '../../shared/types';
 
 const execAsync = promisify(exec);
@@ -120,12 +121,20 @@ interface ProviderConfig {
 	 * - process-manager.ts (--input-format stream-json for images)
 	 */
 	buildInitialArgs: (prompt: string, options?: { images?: string[] }) => string[];
+	/**
+	 * Build args for SSH stdin passthrough mode (no prompt in args).
+	 * In production, SSH passes the prompt via stdin passthrough, not as a CLI argument.
+	 * This returns the base args without the prompt.
+	 */
+	buildSshArgs: (options?: { images?: string[] }) => string[];
 	/** Build args for message with image (file path) - for agents that use file-based image args */
 	buildImageArgs?: (prompt: string, imagePath: string) => string[];
 	/** Build stdin content for stream-json mode (for Claude Code) */
 	buildStreamJsonInput?: (prompt: string, imageBase64: string, mediaType: string) => string;
 	/** Build args for follow-up message (with session) */
 	buildResumeArgs: (sessionId: string, prompt: string) => string[];
+	/** Build args for SSH resume (no prompt in args) */
+	buildSshResumeArgs: (sessionId: string) => string[];
 	/** Parse session ID from output */
 	parseSessionId: (output: string) => string | null;
 	/** Parse response text from output */
@@ -185,6 +194,39 @@ const PROVIDERS: ProviderConfig[] = [
 			sessionId,
 			'--',
 			prompt,
+		],
+		/**
+		 * Build args for SSH stdin passthrough (prompt sent via stdin, not CLI arg).
+		 * Mirrors production: process.ts passes prompt as stdinInput to buildSshCommandWithStdin.
+		 */
+		buildSshArgs: (options?: { images?: string[] }) => {
+			const baseArgs = [
+				'--print',
+				'--verbose',
+				'--output-format',
+				'stream-json',
+				'--dangerously-skip-permissions',
+			];
+
+			const hasImages = options?.images && options.images.length > 0;
+			const capabilities = getAgentCapabilities('claude-code');
+
+			if (hasImages && capabilities.supportsStreamJsonInput) {
+				// Images: prompt embedded in stream-json message via stdin
+				return [...baseArgs, '--input-format', 'stream-json'];
+			}
+
+			// No images: prompt sent via stdin passthrough (no -- separator needed)
+			return baseArgs;
+		},
+		buildSshResumeArgs: (sessionId: string) => [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--dangerously-skip-permissions',
+			'--resume',
+			sessionId,
 		],
 		parseSessionId: (output: string) => {
 			// Claude outputs session_id in JSON lines
@@ -373,6 +415,28 @@ const PROVIDERS: ProviderConfig[] = [
 			'--',
 			prompt,
 		],
+		/**
+		 * Build args for SSH stdin passthrough (prompt sent via stdin, not CLI arg).
+		 * Codex uses file-based image args (-i) - images decoded on remote via script.
+		 */
+		buildSshArgs: () => [
+			'exec',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--skip-git-repo-check',
+			'--json',
+			'-C',
+			TEST_CWD,
+		],
+		buildSshResumeArgs: (sessionId: string) => [
+			'exec',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--skip-git-repo-check',
+			'--json',
+			'-C',
+			TEST_CWD,
+			'resume',
+			sessionId,
+		],
 		parseSessionId: (output: string) => {
 			// Codex outputs thread_id in thread.started events
 			for (const line of output.split('\n')) {
@@ -558,6 +622,39 @@ const PROVIDERS: ProviderConfig[] = [
 
 			// --session for resume, prompt as positional arg
 			args.push('--session', sessionId, prompt);
+			return args;
+		},
+		/**
+		 * Build args for SSH stdin passthrough (prompt sent via stdin, not CLI arg).
+		 * OpenCode uses file-based image args (-f) - images decoded on remote via script.
+		 */
+		buildSshArgs: () => {
+			const args = [
+				'run', // batchModePrefix
+				'--format',
+				'json',
+			];
+
+			const model = process.env.OPENCODE_MODEL;
+			if (model) {
+				args.push('--model', model);
+			}
+
+			return args;
+		},
+		buildSshResumeArgs: (sessionId: string) => {
+			const args = [
+				'run', // batchModePrefix
+				'--format',
+				'json',
+			];
+
+			const model = process.env.OPENCODE_MODEL;
+			if (model) {
+				args.push('--model', model);
+			}
+
+			args.push('--session', sessionId);
 			return args;
 		},
 		parseSessionId: (output: string) => {
@@ -773,6 +870,97 @@ async function runProviderViaSsh(
 			proc.stdin?.write(stdinContent + '\n');
 		}
 		// Close stdin to signal EOF (prevents processes waiting for input)
+		proc.stdin?.end();
+
+		proc.stdout?.on('data', (data) => {
+			stdout += data.toString();
+		});
+
+		proc.stderr?.on('data', (data) => {
+			stderr += data.toString();
+		});
+
+		proc.on('close', (code) => {
+			resolve({
+				stdout,
+				stderr,
+				exitCode: code ?? 1,
+			});
+		});
+
+		proc.on('error', (err) => {
+			stderr += err.message;
+			resolve({
+				stdout,
+				stderr,
+				exitCode: 1,
+			});
+		});
+	});
+}
+
+/**
+ * Run a provider command via SSH using the stdin passthrough approach.
+ * This mirrors the ACTUAL production code path in process.ts IPC handler.
+ *
+ * Production flow:
+ * 1. buildSshCommandWithStdin() builds: ssh [opts] user@host /bin/bash
+ * 2. Stdin receives: script (PATH, cd, env, exec <agent>) + optional prompt passthrough
+ * 3. For stream-json agents with images: stdinInput is the stream-json message
+ * 4. For file-based agents with images: base64 decode commands in script + imageArgs
+ *
+ * The legacy runProviderViaSsh() uses buildSshCommand() which wraps everything in
+ * a single shell command argument. That approach is NOT used in production anymore.
+ */
+async function runProviderViaSshStdin(
+	provider: ProviderConfig,
+	sshConfig: SshRemoteConfig,
+	args: string[],
+	options?: {
+		cwd?: string;
+		env?: Record<string, string>;
+		/** Raw stdin content appended after the script (prompt or stream-json message) */
+		stdinInput?: string;
+		/** Base64 data URL images for file-based agents (decoded on remote via script) */
+		images?: string[];
+		/** Function to build CLI args for each image path */
+		imageArgs?: (imagePath: string) => string[];
+	}
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+	const sshCommand = await buildSshCommandWithStdin(sshConfig, {
+		command: provider.command,
+		args,
+		cwd: options?.cwd,
+		env: options?.env,
+		stdinInput: options?.stdinInput,
+		images: options?.images,
+		imageArgs: options?.imageArgs,
+	});
+
+	console.log(`🌐 SSH Stdin Command: ${sshCommand.command} ${sshCommand.args.join(' ')}`);
+	if (sshCommand.stdinScript) {
+		// Show script preview (truncate large base64 data)
+		const preview = sshCommand.stdinScript.length > 500
+			? sshCommand.stdinScript.substring(0, 500) + `... (${sshCommand.stdinScript.length} total bytes)`
+			: sshCommand.stdinScript;
+		console.log(`📜 Stdin script preview:\n${preview}`);
+	}
+
+	return new Promise((resolve) => {
+		let stdout = '';
+		let stderr = '';
+
+		const proc = spawn(sshCommand.command, sshCommand.args, {
+			cwd: os.homedir(), // Match production: use local homedir for SSH
+			env: { ...process.env },
+			shell: false,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+
+		// Send the stdin script (contains bash setup + exec + optional prompt passthrough)
+		if (sshCommand.stdinScript) {
+			proc.stdin?.write(sshCommand.stdinScript);
+		}
 		proc.stdin?.end();
 
 		proc.stdout?.on('data', (data) => {
@@ -2067,12 +2255,14 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 					}
 
 					const prompt = 'Say "hello SSH" and nothing else. Be extremely brief.';
-					const args = provider.buildInitialArgs(prompt);
+					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Running ${provider.name} via SSH`);
+					console.log(`\n🌐 Running ${provider.name} via SSH (stdin passthrough)`);
 					console.log(`📤 Args: ${args.join(' ')}`);
 
-					const result = await runProviderViaSsh(provider, sshConfig, args);
+					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
+						stdinInput: prompt,
+					});
 
 					console.log(`📤 Exit code: ${result.exitCode}`);
 					console.log(`📤 Stdout (first 1000 chars): ${result.stdout.substring(0, 1000)}`);
@@ -2138,13 +2328,16 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 					}
 
 					// Test with special characters that need proper escaping for SSH
+					// With stdin passthrough, these are safe from shell interpretation
 					const prompt =
 						"What is 2 + 2? Say just the number. Don't explain. $PATH should be ignored.";
-					const args = provider.buildInitialArgs(prompt);
+					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing special characters via SSH for ${provider.name}`);
+					console.log(`\n🌐 Testing special characters via SSH for ${provider.name} (stdin passthrough)`);
 
-					const result = await runProviderViaSsh(provider, sshConfig, args);
+					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
+						stdinInput: prompt,
+					});
 
 					console.log(`📤 Exit code: ${result.exitCode}`);
 					console.log(`📤 Stdout (first 500 chars): ${result.stdout.substring(0, 500)}`);
@@ -2198,15 +2391,18 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 					}
 
 					// Test with a multi-line prompt
+					// Stdin passthrough handles multi-line prompts natively
 					const prompt = `Answer these questions briefly:
 1. What is 1+1?
 2. What is 2+2?
 Reply with just the two numbers separated by a comma.`;
-					const args = provider.buildInitialArgs(prompt);
+					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing multi-line prompt via SSH for ${provider.name}`);
+					console.log(`\n🌐 Testing multi-line prompt via SSH for ${provider.name} (stdin passthrough)`);
 
-					const result = await runProviderViaSsh(provider, sshConfig, args);
+					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
+						stdinInput: prompt,
+					});
 
 					console.log(`📤 Exit code: ${result.exitCode}`);
 
@@ -2258,11 +2454,13 @@ Reply with just the two numbers separated by a comma.`;
 					}
 
 					const prompt = 'Say "test" briefly.';
-					const args = provider.buildInitialArgs(prompt);
+					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing session ID parsing for ${provider.name} via SSH`);
+					console.log(`\n🌐 Testing session ID parsing for ${provider.name} via SSH (stdin passthrough)`);
 
-					const result = await runProviderViaSsh(provider, sshConfig, args);
+					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
+						stdinInput: prompt,
+					});
 
 					// Check for path errors on remote first
 					if (hasRemotePathError(result.stdout, result.stderr)) {
@@ -2306,12 +2504,14 @@ Reply with just the two numbers separated by a comma.`;
 
 					// First, send initial message to get session ID
 					const initialPrompt = 'Remember the word "BANANA". Say only "Got it."';
-					const initialArgs = provider.buildInitialArgs(initialPrompt);
+					const initialArgs = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing session resume via SSH for ${provider.name}`);
+					console.log(`\n🌐 Testing session resume via SSH for ${provider.name} (stdin passthrough)`);
 					console.log(`📤 Initial message...`);
 
-					const initialResult = await runProviderViaSsh(provider, sshConfig, initialArgs);
+					const initialResult = await runProviderViaSshStdin(provider, sshConfig, initialArgs, {
+						stdinInput: initialPrompt,
+					});
 
 					// Check for path errors on remote (e.g., Codex -C flag with local path)
 					if (hasRemotePathError(initialResult.stdout, initialResult.stderr)) {
@@ -2341,13 +2541,15 @@ Reply with just the two numbers separated by a comma.`;
 					console.log(`📋 Got session ID: ${sessionId}`);
 					expect(sessionId, `${provider.name} should return session ID`).toBeTruthy();
 
-					// Now send follow-up with session resume
+					// Now send follow-up with session resume via stdin passthrough
 					const followUpPrompt = 'What word did I ask you to remember? Reply with just the word.';
-					const resumeArgs = provider.buildResumeArgs(sessionId!, followUpPrompt);
+					const resumeArgs = provider.buildSshResumeArgs(sessionId!);
 
-					console.log(`🔄 Resume message...`);
+					console.log(`🔄 Resume message (stdin passthrough)...`);
 
-					const resumeResult = await runProviderViaSsh(provider, sshConfig, resumeArgs);
+					const resumeResult = await runProviderViaSshStdin(provider, sshConfig, resumeArgs, {
+						stdinInput: followUpPrompt,
+					});
 
 					console.log(`📤 Exit code: ${resumeResult.exitCode}`);
 					console.log(`📤 Stdout (first 500 chars): ${resumeResult.stdout.substring(0, 500)}`);
@@ -2373,18 +2575,18 @@ Reply with just the two numbers separated by a comma.`;
 			it(
 				'should process image and identify text content via SSH',
 				async () => {
-					// This test verifies that images are properly passed to the provider via SSH.
-					// It uses a test image containing the word "Maestro" and asks the provider to
-					// identify the text. This validates the full image processing pipeline over SSH.
+					// This test mirrors the PRODUCTION code path in process.ts IPC handler for SSH + images:
 					//
-					// For agents that support image input (supportsImageInput: true):
-					// - Claude Code: Uses --input-format stream-json with base64 via stdin
-					// - Codex: Uses -i <file> flag (requires file on remote)
-					// - OpenCode: Uses -f <file> flag (requires file on remote)
+					// 1. Stream-json agents (Claude Code):
+					//    - buildStreamJsonMessage(prompt, images) creates JSON with embedded base64
+					//    - Sent as stdinInput to buildSshCommandWithStdin
+					//    - Args include --input-format stream-json
 					//
-					// NOTE: For file-based image args (Codex/OpenCode), the test image must exist
-					// on the remote system at the same path, OR we need to use a remote path.
-					// For simplicity, we copy the test image to /tmp on the remote first.
+					// 2. File-based agents (Codex -i, OpenCode -f):
+					//    - Base64 data URLs passed as `images` param to buildSshCommandWithStdin
+					//    - SSH script decodes them into remote temp files via heredoc + base64 -d
+					//    - imageArgs function generates CLI flags for each temp file
+					//    - No scp needed - images travel through the SSH script itself
 
 					if (!sshConfig || !sshConnectionOk) {
 						console.log('Skipping: SSH not configured or connection failed');
@@ -2408,84 +2610,50 @@ Reply with just the two numbers separated by a comma.`;
 						return;
 					}
 
+					// Read image and build data URL (mimics what the renderer sends via IPC)
+					const imageBuffer = fs.readFileSync(TEST_IMAGE_PATH);
+					const imageBase64 = imageBuffer.toString('base64');
+					const dataUrl = `data:image/png;base64,${imageBase64}`;
+
 					const prompt =
 						'What word is shown in this image? Reply with ONLY the single word shown, nothing else.';
 
-					console.log(`\n🖼️  Testing image processing via SSH for ${provider.name}`);
+					console.log(`\n🖼️  Testing image processing via SSH for ${provider.name} (production path)`);
 					console.log(`📁 Local image path: ${TEST_IMAGE_PATH}`);
+					console.log(`📥 Image size: ${imageBase64.length} base64 bytes`);
 
 					let result: { stdout: string; stderr: string; exitCode: number };
 
-					if (capabilities.supportsStreamJsonInput && provider.buildStreamJsonInput) {
-						// Claude Code: Use stream-json input with base64 image via stdin
-						// This works over SSH because we send the base64 data via stdin
-						const imageBuffer = fs.readFileSync(TEST_IMAGE_PATH);
-						const imageBase64 = imageBuffer.toString('base64');
-						const mediaType = 'image/png';
+					if (capabilities.supportsStreamJsonInput) {
+						// Stream-json agent (Claude Code): embed images in stream-json stdin message
+						// This mirrors process.ts: buildStreamJsonMessage(prompt, images)
+						const stdinInput = buildStreamJsonMessage(prompt, [dataUrl]) + '\n';
+						const args = provider.buildSshArgs({ images: [dataUrl] });
 
-						const args = provider.buildInitialArgs(prompt, { images: ['placeholder'] });
-						const stdinContent = provider.buildStreamJsonInput(prompt, imageBase64, mediaType);
+						console.log(`🚀 Running via SSH (stream-json): ${provider.command} ${args.join(' ')}`);
 
-						console.log(`🚀 Running via SSH: ${provider.command} ${args.join(' ')}`);
-						console.log(`📥 Sending ${imageBase64.length} bytes of base64 image data via stdin`);
-
-						result = await runProviderViaSsh(
-							provider,
-							sshConfig,
-							args,
-							undefined,
-							stdinContent
-						);
-					} else if (provider.buildImageArgs) {
-						// Codex/OpenCode: Use file-based image args
-						// First, copy the test image to the remote system
-						const remoteImagePath = '/tmp/maestro-test-image.png';
-
-						console.log(`📤 Copying test image to remote: ${remoteImagePath}`);
-
-						// Use scp to copy the file to the remote
-						const scpCommand = sshConfig.useSshConfig
-							? `scp "${TEST_IMAGE_PATH}" ${sshConfig.host}:${remoteImagePath}`
-							: `scp -i "${sshConfig.privateKeyPath}" -P ${sshConfig.port} "${TEST_IMAGE_PATH}" ${sshConfig.username}@${sshConfig.host}:${remoteImagePath}`;
-
-						try {
-							await execAsync(scpCommand);
-							console.log(`✅ Image copied to remote`);
-						} catch (scpError) {
-							console.log(`⚠️  Failed to copy image to remote: ${scpError}`);
-							console.log(`   Skipping image test for ${provider.name}`);
+						result = await runProviderViaSshStdin(provider, sshConfig, args, {
+							stdinInput,
+						});
+					} else {
+						// File-based agent (Codex/OpenCode): decode images on remote via SSH script
+						// This mirrors process.ts: pass images + imageArgs to buildSshCommandWithStdin
+						const agentDef = getAgentDefinition(provider.agentId);
+						if (!agentDef?.imageArgs) {
+							console.log(`⚠️  ${provider.name} has no imageArgs in agent definition, skipping`);
 							return;
 						}
 
-						// Build args using the remote path
-						// NOTE: buildImageArgs uses TEST_CWD which is local, so for SSH we need to
-						// build args manually with a remote-friendly working directory
-						let args: string[];
-						if (provider.agentId === 'codex') {
-							// Codex: use /tmp as cwd on remote (where the image is)
-							args = [
-								'exec',
-								'--dangerously-bypass-approvals-and-sandbox',
-								'--skip-git-repo-check',
-								'--json',
-								'-C',
-								'/tmp', // Use /tmp on remote instead of local TEST_CWD
-								'-i',
-								remoteImagePath,
-								'--',
-								prompt,
-							];
-						} else {
-							// OpenCode and others: buildImageArgs should work (doesn't use -C)
-							args = provider.buildImageArgs(prompt, remoteImagePath);
-						}
+						const args = provider.buildSshArgs();
 
-						console.log(`🚀 Running via SSH: ${provider.command} ${args.join(' ')}`);
+						console.log(`🚀 Running via SSH (file-based images): ${provider.command} ${args.join(' ')}`);
+						console.log(`📦 Images decoded on remote via heredoc + base64 -d in SSH script`);
 
-						result = await runProviderViaSsh(provider, sshConfig, args);
-					} else {
-						console.log(`⚠️  ${provider.name} has no image args builder, skipping`);
-						return;
+						result = await runProviderViaSshStdin(provider, sshConfig, args, {
+							stdinInput: prompt,
+							images: [dataUrl],
+							imageArgs: agentDef.imageArgs,
+						});
 					}
 
 					console.log(`📤 Exit code: ${result.exitCode}`);

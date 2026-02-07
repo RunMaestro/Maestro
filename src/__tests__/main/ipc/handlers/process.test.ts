@@ -54,6 +54,19 @@ vi.mock('node-pty', () => ({
 	spawn: vi.fn(),
 }));
 
+// Mock streamJsonBuilder for SSH image tests
+vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
+	buildStreamJsonMessage: vi.fn((prompt: string, images: string[]) => {
+		// Return a realistic stream-json message for assertion
+		const content: any[] = [];
+		for (const img of images) {
+			content.push({ type: 'image', source: { type: 'base64', data: img } });
+		}
+		content.push({ type: 'text', text: prompt });
+		return JSON.stringify({ type: 'user', message: { role: 'user', content } });
+	}),
+}));
+
 // Mock ssh-command-builder to handle async buildSshCommandWithStdin
 // This mock dynamically builds the SSH command based on input to support all test cases
 // The production code now uses buildSshCommandWithStdin (stdin-based execution) instead of buildSshCommand
@@ -1258,6 +1271,197 @@ describe('process IPC handlers', () => {
 			// Should use the custom path in the stdin script, not binaryName or local path
 			expect(spawnCall.sshStdinScript).toContain('/usr/local/bin/codex');
 			expect(spawnCall.sshStdinScript).not.toContain('/opt/homebrew/bin/codex');
+		});
+
+		it('should pass images via stream-json stdin for SSH with stream-json agents (regression: images dropped over SSH)', async () => {
+			// REGRESSION TEST: Commit ccabe752 refactored SSH to stdin passthrough but dropped image support.
+			// Images were silently ignored when spawning agents over SSH, causing the remote agent
+			// to receive text-only prompts even when images were attached.
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const testImages = ['data:image/png;base64,iVBORw0KGgo=='];
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-images',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				command: 'claude',
+				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				prompt: 'describe this image',
+				images: testImages,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			// Verify buildSshCommandWithStdin was called with stream-json stdinInput containing images
+			const { buildSshCommandWithStdin: mockBuildSsh } = await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+
+			// stdinInput should be a stream-json message (not raw prompt text)
+			expect(sshCallArgs.stdinInput).toContain('"type":"user"');
+			expect(sshCallArgs.stdinInput).toContain('"type":"image"');
+			expect(sshCallArgs.stdinInput).toContain('iVBORw0KGgo==');
+
+			// --input-format stream-json should be in the args
+			expect(sshCallArgs.args).toContain('--input-format');
+			expect(sshCallArgs.args).toContain('stream-json');
+		});
+
+		it('should pass images and imageArgs to SSH builder for file-based agents (regression: images dropped over SSH)', async () => {
+			// REGRESSION TEST: File-based agents (Codex, OpenCode) use -i/-f flags for images.
+			// Over SSH, images must be decoded into remote temp files via the SSH script.
+			const mockImageArgs = (path: string) => ['-i', path];
+			const mockAgent = {
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				requiresPty: false,
+				imageArgs: mockImageArgs,
+				capabilities: {
+					supportsStreamJsonInput: false,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const testImages = ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'];
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-codex-images',
+				toolType: 'codex',
+				cwd: '/home/devuser/project',
+				command: '/opt/homebrew/bin/codex',
+				args: ['exec', '--json'],
+				prompt: 'describe these screenshots',
+				images: testImages,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			// Verify buildSshCommandWithStdin was called with images and imageArgs
+			const { buildSshCommandWithStdin: mockBuildSsh } = await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+
+			// images should be passed through to the SSH builder
+			expect(sshCallArgs.images).toEqual(testImages);
+			// imageArgs function should be passed through
+			expect(sshCallArgs.imageArgs).toBe(mockImageArgs);
+			// stdinInput should be the raw prompt (not stream-json) since Codex doesn't use stream-json
+			expect(sshCallArgs.stdinInput).toBe('describe these screenshots');
+		});
+
+		it('should not pass images to SSH builder when agent uses stream-json (images go in stdinInput instead)', async () => {
+			// For stream-json agents, images are embedded in the stdinInput JSON.
+			// They should NOT also be passed as images/imageArgs to avoid double-handling.
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				requiresPty: false,
+				imageArgs: undefined, // Claude Code doesn't use file-based image args
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-no-double-images',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'test',
+				images: ['data:image/png;base64,TEST=='],
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const { buildSshCommandWithStdin: mockBuildSsh } = await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+
+			// images and imageArgs should NOT be passed (they're in the stream-json stdinInput)
+			expect(sshCallArgs.images).toBeUndefined();
+			expect(sshCallArgs.imageArgs).toBeUndefined();
+		});
+
+		it('should not modify stdinInput when no images are present over SSH', async () => {
+			// When there are no images, SSH should behave exactly as before (raw prompt via stdin)
+			const mockAgent = {
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				requiresPty: false,
+				capabilities: {
+					supportsStreamJsonInput: true,
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') return [mockSshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-no-images',
+				toolType: 'claude-code',
+				cwd: '/home/devuser/project',
+				command: 'claude',
+				args: ['--print'],
+				prompt: 'just a text prompt',
+				// No images
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			const { buildSshCommandWithStdin: mockBuildSsh } = await import('../../../../main/utils/ssh-command-builder');
+			const sshCallArgs = vi.mocked(mockBuildSsh).mock.calls[0][1];
+
+			// stdinInput should be the raw prompt, not stream-json
+			expect(sshCallArgs.stdinInput).toBe('just a text prompt');
+			// No --input-format should be added
+			expect(sshCallArgs.args).not.toContain('--input-format');
+			// No images or imageArgs
+			expect(sshCallArgs.images).toBeUndefined();
+			expect(sshCallArgs.imageArgs).toBeUndefined();
 		});
 
 		it('should fall back to config.command when agent.binaryName is not available', async () => {

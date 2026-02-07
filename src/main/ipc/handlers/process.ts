@@ -19,6 +19,7 @@ import {
 } from '../../utils/ipcHandler';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
+import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
@@ -376,14 +377,44 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						//
 						// How it works: bash reads the script, `exec` replaces bash with the agent,
 						// and the agent reads the remaining stdin (the prompt) directly.
-						const stdinInput = config.prompt;
+						//
+						// IMAGE SUPPORT: When images are present, the approach depends on the agent:
+						// - Stream-json agents (Claude Code): Images are embedded as base64 in the
+						//   stream-json message sent via stdin passthrough. --input-format stream-json
+						//   is added to args so the agent parses the JSON+base64 message correctly.
+						// - File-based agents (Codex, OpenCode): Images are decoded from base64 into
+						//   temp files on the remote host via the SSH script, then passed as CLI args
+						//   (e.g., -i /tmp/image.png for Codex, -f /tmp/image.png for OpenCode).
+						const hasImages = config.images && config.images.length > 0;
+						let sshArgs = finalArgs;
+						let stdinInput: string | undefined = config.prompt;
+
+						if (hasImages && config.prompt && agent?.capabilities?.supportsStreamJsonInput) {
+							// Stream-json agent (Claude Code): embed images in the stdin message
+							stdinInput = buildStreamJsonMessage(config.prompt, config.images!) + '\n';
+							if (!sshArgs.includes('--input-format')) {
+								sshArgs = [...sshArgs, '--input-format', 'stream-json'];
+							}
+							logger.info(`SSH: using stream-json stdin for images`, LOG_CONTEXT, {
+								sessionId: config.sessionId,
+								imageCount: config.images!.length,
+							});
+						}
+
 						const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 							command: remoteCommand,
-							args: finalArgs,
+							args: sshArgs,
 							cwd: config.cwd,
 							env: effectiveCustomEnvVars,
 							// prompt is not passed as CLI arg - it goes via stdinInput
 							stdinInput,
+							// File-based image agents (Codex, OpenCode): pass images for remote temp file creation
+							images: hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
+								? config.images
+								: undefined,
+							imageArgs: hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
+								? agent.imageArgs
+								: undefined,
 						});
 
 						commandToSpawn = sshCommand.command;
@@ -408,6 +439,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteCwd: config.cwd,
 							promptLength: config.prompt?.length,
 							stdinScriptLength: sshCommand.stdinScript?.length,
+							hasImages,
+							imageCount: config.images?.length,
 						});
 					}
 				}

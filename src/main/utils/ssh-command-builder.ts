@@ -12,6 +12,7 @@ import { shellEscape, buildShellCommand } from './shell-escape';
 import { expandTilde } from '../../shared/pathUtils';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
+import { parseDataUrl } from '../process-manager/utils/imageUtils';
 
 /**
  * Result of building an SSH command.
@@ -173,7 +174,14 @@ export function buildRemoteCommand(options: RemoteCommandOptions): string {
  */
 export async function buildSshCommandWithStdin(
 	config: SshRemoteConfig,
-	remoteOptions: RemoteCommandOptions & { prompt?: string; stdinInput?: string }
+	remoteOptions: RemoteCommandOptions & {
+		prompt?: string;
+		stdinInput?: string;
+		/** Base64 data URL images to decode into remote temp files (for file-based agents like Codex/OpenCode) */
+		images?: string[];
+		/** Function to build CLI args for each image path (e.g., (path) => ['-i', path]) */
+		imageArgs?: (imagePath: string) => string[];
+	}
 ): Promise<SshCommandResult> {
 	const args: string[] = [];
 
@@ -235,9 +243,39 @@ export async function buildSshCommandWithStdin(
 		}
 	}
 
+	// Decode images into remote temp files for file-based agents (Codex, OpenCode)
+	// This creates temp files on the remote host from base64 data, then adds
+	// the appropriate CLI args (e.g., -i /tmp/image.png for Codex)
+	const imageArgParts: string[] = [];
+	if (remoteOptions.images && remoteOptions.images.length > 0 && remoteOptions.imageArgs) {
+		const timestamp = Date.now();
+		for (let i = 0; i < remoteOptions.images.length; i++) {
+			const parsed = parseDataUrl(remoteOptions.images[i]);
+			if (!parsed) continue;
+			const ext = parsed.mediaType.split('/')[1] || 'png';
+			const remoteTempPath = `/tmp/maestro-image-${timestamp}-${i}.${ext}`;
+			// Use heredoc + base64 decode to create the file on the remote host
+			// Heredoc avoids shell argument length limits for large images
+			// Base64 alphabet (A-Za-z0-9+/=) is safe in heredocs
+			scriptLines.push(`base64 -d > ${shellEscape(remoteTempPath)} <<'MAESTRO_IMG_${i}_EOF'`);
+			scriptLines.push(parsed.base64);
+			scriptLines.push(`MAESTRO_IMG_${i}_EOF`);
+			imageArgParts.push(...remoteOptions.imageArgs(remoteTempPath).map((arg) => shellEscape(arg)));
+		}
+		logger.info('SSH: embedded remote image decode commands', '[ssh-command-builder]', {
+			imageCount: remoteOptions.images.length,
+			decodedCount: imageArgParts.length / 2,
+		});
+	}
+
 	// Build the command line
 	// For the script, we use simple quoting since we're not going through shell parsing layers
 	const cmdParts = [remoteOptions.command, ...remoteOptions.args.map((arg) => shellEscape(arg))];
+
+	// Add image args for file-based agents (decoded temp files on remote)
+	if (imageArgParts.length > 0) {
+		cmdParts.push(...imageArgParts);
+	}
 
 	// Add prompt as final argument if provided and not sending via stdin passthrough
 	const hasStdinInput = remoteOptions.stdinInput !== undefined;
