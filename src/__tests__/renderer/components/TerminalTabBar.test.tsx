@@ -64,6 +64,7 @@ describe('TerminalTabBar', () => {
 	const onTabSelect = vi.fn();
 	const onTabClose = vi.fn();
 	const onNewTab = vi.fn();
+	const onTabReorder = vi.fn();
 
 	beforeEach(() => {
 		(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -199,6 +200,72 @@ describe('TerminalTabBar', () => {
 		});
 
 		expect(onNewTab).toHaveBeenCalledTimes(1);
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('calls onTabReorder when dropping a tab on another tab', () => {
+		const tabs = [
+			createTerminalTab({ id: 'terminal-1', name: 'One' }),
+			createTerminalTab({ id: 'terminal-2', name: 'Two' }),
+		];
+
+		const { container, root } = mount(
+			<TerminalTabBar
+				tabs={tabs}
+				activeTabId="terminal-1"
+				theme={mockTheme}
+				onTabSelect={onTabSelect}
+				onTabClose={onTabClose}
+				onNewTab={onNewTab}
+				onTabReorder={onTabReorder}
+			/>
+		);
+
+		const firstTab = Array.from(container.querySelectorAll('span')).find(
+			(el) => el.textContent === 'One'
+		)?.parentElement;
+		const secondTab = Array.from(container.querySelectorAll('span')).find(
+			(el) => el.textContent === 'Two'
+		)?.parentElement;
+
+		expect(firstTab).toBeTruthy();
+		expect(secondTab).toBeTruthy();
+
+		const dragState = new Map<string, string>();
+		const dataTransfer = {
+			effectAllowed: 'none',
+			dropEffect: 'none',
+			setData: vi.fn((type: string, value: string) => {
+				dragState.set(type, value);
+			}),
+			getData: vi.fn((type: string) => dragState.get(type) ?? ''),
+		};
+
+		const dragStartEvent = new Event('dragstart', { bubbles: true, cancelable: true });
+		Object.defineProperty(dragStartEvent, 'dataTransfer', {
+			value: dataTransfer,
+		});
+
+		const dragOverEvent = new Event('dragover', { bubbles: true, cancelable: true });
+		Object.defineProperty(dragOverEvent, 'dataTransfer', {
+			value: dataTransfer,
+		});
+
+		const dropEvent = new Event('drop', { bubbles: true, cancelable: true });
+		Object.defineProperty(dropEvent, 'dataTransfer', {
+			value: dataTransfer,
+		});
+
+		act(() => {
+			firstTab?.dispatchEvent(dragStartEvent);
+			secondTab?.dispatchEvent(dragOverEvent);
+			secondTab?.dispatchEvent(dropEvent);
+		});
+
+		expect(onTabReorder).toHaveBeenCalledWith(0, 1);
 
 		act(() => {
 			root.unmount();
