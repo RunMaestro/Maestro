@@ -46,6 +46,27 @@ export function createTerminalTab(
 	};
 }
 
+export interface AddTerminalTabResult {
+	tab: TerminalTab;
+	session: Session;
+}
+
+/**
+ * Add a new terminal tab to a session and activate it.
+ */
+export function addTerminalTab(session: Session, shellType: string = 'zsh'): AddTerminalTabResult {
+	const newTab = createTerminalTab(shellType, session.cwd, null);
+
+	return {
+		tab: newTab,
+		session: {
+			...session,
+			terminalTabs: [...session.terminalTabs, newTab],
+			activeTerminalTabId: newTab.id,
+		},
+	};
+}
+
 /**
  * Create default terminal tab state for a session.
  */
