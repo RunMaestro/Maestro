@@ -6,6 +6,8 @@ import {
 	escapePowerShellArgs,
 	isPowerShellShell,
 	escapeArgsForShell,
+	getWindowsShellForAgentExecution,
+	escapePowerShellPromptContent,
 } from '../../../../main/process-manager/utils/shellEscape';
 
 describe('shellEscape', () => {
@@ -98,9 +100,9 @@ describe('shellEscape', () => {
 	describe('isPowerShellShell', () => {
 		it('should detect Windows PowerShell', () => {
 			expect(isPowerShellShell('powershell.exe')).toBe(true);
-			expect(isPowerShellShell('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')).toBe(
-				true
-			);
+			expect(
+				isPowerShellShell('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe')
+			).toBe(true);
 			expect(isPowerShellShell('PowerShell.exe')).toBe(true);
 		});
 
@@ -135,6 +137,277 @@ describe('shellEscape', () => {
 		it('should default to cmd.exe escaping when no shell specified', () => {
 			const result = escapeArgsForShell(['with space', 'say "hi"']);
 			expect(result).toEqual(['"with space"', '"say ""hi"""']);
+		});
+	});
+
+	describe('getWindowsShellForAgentExecution', () => {
+		it('should prefer custom shell path when provided', () => {
+			const result = getWindowsShellForAgentExecution({
+				customShellPath: 'C:\\Custom\\MyShell.exe',
+			});
+			expect(result.shell).toBe('C:\\Custom\\MyShell.exe');
+			expect(result.useShell).toBe(true);
+			expect(result.source).toBe('custom');
+		});
+
+		it('should trim custom shell path', () => {
+			const result = getWindowsShellForAgentExecution({
+				customShellPath: '  C:\\Custom\\MyShell.exe  ',
+			});
+			expect(result.shell).toBe('C:\\Custom\\MyShell.exe');
+			expect(result.source).toBe('custom');
+		});
+
+		it('should use current shell when provided and not cmd.exe', () => {
+			const result = getWindowsShellForAgentExecution({
+				currentShell: 'pwsh.exe',
+			});
+			expect(result.shell).toBe('pwsh.exe');
+			expect(result.useShell).toBe(true);
+			expect(result.source).toBe('current');
+		});
+
+		it('should skip cmd.exe as current shell and fall back to PowerShell', () => {
+			const result = getWindowsShellForAgentExecution({
+				currentShell: 'cmd.exe',
+			});
+			expect(result.shell).toContain('powershell');
+			expect(result.useShell).toBe(true);
+			expect(result.source).toBe('powershell-default');
+		});
+
+		it('should skip CMD.EXE (case insensitive) and fall back to PowerShell', () => {
+			const result = getWindowsShellForAgentExecution({
+				currentShell: 'C:\\Windows\\System32\\CMD.EXE',
+			});
+			expect(result.shell).toContain('powershell');
+			expect(result.source).toBe('powershell-default');
+		});
+
+		it('should default to PowerShell when no options provided', () => {
+			const result = getWindowsShellForAgentExecution();
+			expect(result.shell).toContain('powershell');
+			expect(result.useShell).toBe(true);
+			expect(result.source).toBe('powershell-default');
+		});
+
+		it('should default to PowerShell when empty options provided', () => {
+			const result = getWindowsShellForAgentExecution({});
+			expect(result.shell).toContain('powershell');
+			expect(result.source).toBe('powershell-default');
+		});
+
+		it('should ignore empty custom shell path', () => {
+			const result = getWindowsShellForAgentExecution({
+				customShellPath: '',
+				currentShell: 'bash.exe',
+			});
+			expect(result.shell).toBe('bash.exe');
+			expect(result.source).toBe('current');
+		});
+
+		it('should ignore whitespace-only custom shell path', () => {
+			const result = getWindowsShellForAgentExecution({
+				customShellPath: '   ',
+				currentShell: 'bash.exe',
+			});
+			expect(result.shell).toBe('bash.exe');
+			expect(result.source).toBe('current');
+		});
+
+		it('should prefer custom shell path over current shell', () => {
+			const result = getWindowsShellForAgentExecution({
+				customShellPath: 'C:\\Custom\\Shell.exe',
+				currentShell: 'bash.exe',
+			});
+			expect(result.shell).toBe('C:\\Custom\\Shell.exe');
+			expect(result.source).toBe('custom');
+		});
+
+		it('should use PSHOME environment variable when available', () => {
+			// Save original PSHOME
+			const originalPshome = process.env.PSHOME;
+
+			try {
+				process.env.PSHOME = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0';
+				const result = getWindowsShellForAgentExecution({});
+				expect(result.shell).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
+				expect(result.source).toBe('powershell-default');
+			} finally {
+				// Restore original PSHOME
+				if (originalPshome === undefined) {
+					delete process.env.PSHOME;
+				} else {
+					process.env.PSHOME = originalPshome;
+				}
+			}
+		});
+	});
+
+	describe('escapePowerShellPromptContent', () => {
+		it('should not escape normal text', () => {
+			expect(escapePowerShellPromptContent('Hello world')).toBe('Hello world');
+			expect(escapePowerShellPromptContent('This is a regular sentence.')).toBe(
+				'This is a regular sentence.'
+			);
+		});
+
+		it('should escape lines starting with hyphen (dash)', () => {
+			const input = 'Please do:\n- Run tests\n- Check logs';
+			const expected = 'Please do:\n# - Run tests\n# - Check logs';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with @ (array/splatting)', () => {
+			const input = 'Array:\n@items\n@(1,2,3)';
+			const expected = 'Array:\n# @items\n# @(1,2,3)';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with $ (variable)', () => {
+			const input = 'Variable:\n$var = "value"\n$x = 5';
+			const expected = 'Variable:\n# $var = "value"\n# $x = 5';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with + (plus operator)', () => {
+			const input = 'Calculation:\n+ 2 + 2';
+			const expected = 'Calculation:\n# + 2 + 2';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with & (call operator)', () => {
+			const input = 'Commands:\n& command.exe';
+			const expected = 'Commands:\n# & command.exe';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with | (pipe)', () => {
+			const input = 'Pipeline:\n| Where-Object';
+			const expected = 'Pipeline:\n# | Where-Object';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with < > (redirection)', () => {
+			const input = 'Redirect:\n< input.txt\n> output.txt';
+			const expected = 'Redirect:\n# < input.txt\n# > output.txt';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with brackets', () => {
+			const input = 'Arrays:\n(1, 2, 3)\n[array]';
+			const expected = 'Arrays:\n# (1, 2, 3)\n# [array]';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should handle leading whitespace before operator', () => {
+			const input = 'Items:\n  - First item\n\t- Second item';
+			const expected = 'Items:\n  # - First item\n\t# - Second item';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape markdown-style bullet lists', () => {
+			const input = `Please follow these steps:
+- Clone the repository
+- Install dependencies
+- Run the tests
+
+Do not:
+- Delete files
+- Change config`;
+			const expected = `Please follow these steps:
+# - Clone the repository
+# - Install dependencies
+# - Run the tests
+
+Do not:
+# - Delete files
+# - Change config`;
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should handle mixed content with operators and normal text', () => {
+			const input = 'Normal text\n- List item\nMore normal text\n$variable\nEnd';
+			const expected = 'Normal text\n# - List item\nMore normal text\n# $variable\nEnd';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with ! (history expansion)', () => {
+			const input = 'History:\n! command';
+			const expected = 'History:\n# ! command';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with % (modulo/percent)', () => {
+			const input = 'Percent:\n% 50';
+			const expected = 'Percent:\n# % 50';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with ^ (caret)', () => {
+			const input = 'Caret:\n^ symbol';
+			const expected = 'Caret:\n# ^ symbol';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with backtick', () => {
+			const input = 'Backtick:\n` escaping';
+			const expected = 'Backtick:\n# ` escaping';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with ; (statement separator)', () => {
+			const input = 'Statements:\n; statement';
+			const expected = 'Statements:\n# ; statement';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should escape lines starting with space followed by operator', () => {
+			const input = 'Items:\n - Item one';
+			const expected = 'Items:\n # - Item one';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should preserve empty lines', () => {
+			const input = 'Line one\n\nLine two';
+			const expected = 'Line one\n\nLine two';
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
+		});
+
+		it('should handle single-line input with special character', () => {
+			expect(escapePowerShellPromptContent('- Single dash line')).toBe('# - Single dash line');
+		});
+
+		it('should handle complex group chat moderator response', () => {
+			const input = `Here's what I need from you:
+- Run the test suite
+- Check the logs
+- Report any errors
+
+Please prioritize:
+1. First, run tests
+2. Then check logs
+3. Finally report
+
+Use these options:
+- --verbose
+- --debug
+- --force`;
+			const expected = `Here's what I need from you:
+# - Run the test suite
+# - Check the logs
+# - Report any errors
+
+Please prioritize:
+1. First, run tests
+2. Then check logs
+3. Finally report
+
+Use these options:
+# - --verbose
+# - --debug
+# - --force`;
+			expect(escapePowerShellPromptContent(input)).toBe(expected);
 		});
 	});
 });
