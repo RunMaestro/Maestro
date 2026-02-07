@@ -283,7 +283,7 @@ describe('WakaTimeManager', () => {
 				return defaultVal;
 			});
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
@@ -296,7 +296,7 @@ describe('WakaTimeManager', () => {
 			});
 			vi.mocked(fs.existsSync).mockReturnValue(false);
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
@@ -321,11 +321,11 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
-			await manager.sendHeartbeat('session-1', '/project/path', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli', [
 				'--key', 'cfg-api-key-456',
-				'--entity', '/project/path',
+				'--entity', 'Maestro',
 				'--entity-type', 'app',
 				'--project', 'My Project',
 				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
@@ -346,7 +346,7 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
-			await manager.sendHeartbeat('session-1', '/project/path', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// Should use the settings key, not read from cfg
 			expect(fs.readFileSync).not.toHaveBeenCalled();
@@ -367,7 +367,7 @@ describe('WakaTimeManager', () => {
 			});
 			vi.mocked(fs.readFileSync).mockReturnValue('garbage content without api_key');
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// No API key found in cfg either — should skip
 			expect(execFileNoThrow).not.toHaveBeenCalled();
@@ -387,7 +387,7 @@ describe('WakaTimeManager', () => {
 				throw new Error('Permission denied');
 			});
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// Read error — should skip gracefully
 			expect(execFileNoThrow).not.toHaveBeenCalled();
@@ -410,7 +410,7 @@ describe('WakaTimeManager', () => {
 				return req as any;
 			});
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				'WakaTime CLI not available — skipping heartbeat',
@@ -432,11 +432,11 @@ describe('WakaTimeManager', () => {
 				stderr: '',
 			});
 
-			await manager.sendHeartbeat('session-1', '/project/path', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli', [
 				'--key', 'test-api-key-123',
-				'--entity', '/project/path',
+				'--entity', 'Maestro',
 				'--entity-type', 'app',
 				'--project', 'My Project',
 				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
@@ -453,7 +453,7 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
 				.mockResolvedValueOnce({ exitCode: 102, stdout: '', stderr: 'API key invalid' });
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			expect(logger.warn).toHaveBeenCalledWith(
 				expect.stringContaining('Heartbeat failed for session-1'),
@@ -466,8 +466,8 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// detectCli (1 call) + heartbeat (1 call) = 2 total, second heartbeat was debounced
 			expect(execFileNoThrow).toHaveBeenCalledTimes(2);
@@ -479,8 +479,8 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' })
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
-			await manager.sendHeartbeat('session-1', '/project1', 'Project 1');
-			await manager.sendHeartbeat('session-2', '/project2', 'Project 2');
+			await manager.sendHeartbeat('session-1', 'Project 1');
+			await manager.sendHeartbeat('session-2', 'Project 2');
 
 			// detectCli (1 call, cached) + heartbeat session-1 (1 call) + heartbeat session-2 (1 call) = 3
 			expect(execFileNoThrow).toHaveBeenCalledTimes(3);
@@ -647,11 +647,11 @@ describe('WakaTimeManager', () => {
 				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
 
 			// Send first heartbeat
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 			// Remove session (resets debounce)
 			manager.removeSession('session-1');
 			// Send again — should NOT be debounced since session was removed
-			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+			await manager.sendHeartbeat('session-1', 'My Project');
 
 			// detectCli (1, cached) + first heartbeat (1) + second heartbeat (1) = 3
 			expect(execFileNoThrow).toHaveBeenCalledTimes(3);

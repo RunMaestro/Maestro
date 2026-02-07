@@ -318,7 +318,7 @@ export class WakaTimeManager {
 	}
 
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectPath: string, projectName: string): Promise<void> {
+	async sendHeartbeat(sessionId: string, projectName: string): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -344,7 +344,7 @@ export class WakaTimeManager {
 
 		const args = [
 			'--key', apiKey,
-			'--entity', projectPath,
+			'--entity', 'Maestro',
 			'--entity-type', 'app',
 			'--project', projectName,
 			'--plugin', `maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,

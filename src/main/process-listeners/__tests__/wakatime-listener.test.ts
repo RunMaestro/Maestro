@@ -1,6 +1,8 @@
 /**
  * Tests for WakaTime heartbeat listener.
- * Verifies that query-complete events trigger heartbeats and exit events clean up sessions.
+ * Verifies that data events trigger heartbeats for interactive sessions,
+ * query-complete events trigger heartbeats for batch/auto-run,
+ * and exit events clean up sessions.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -18,12 +20,13 @@ describe('WakaTime Listener', () => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
+		let eventCounter = 0;
 		mockProcessManager = {
 			on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
-				// Allow multiple handlers per event by appending index
-				const key = eventHandlers.has(event) ? `${event}:2` : event;
+				const key = eventHandlers.has(event) ? `${event}:${++eventCounter}` : event;
 				eventHandlers.set(key, handler);
 			}),
+			get: vi.fn(),
 		} as unknown as ProcessManager;
 
 		mockWakaTimeManager = {
@@ -32,14 +35,87 @@ describe('WakaTime Listener', () => {
 		} as unknown as WakaTimeManager;
 	});
 
-	it('should register query-complete and exit event listeners', () => {
+	it('should register data, query-complete, and exit event listeners', () => {
 		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
 
+		expect(mockProcessManager.on).toHaveBeenCalledWith('data', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('query-complete', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('exit', expect.any(Function));
 	});
 
-	it('should send heartbeat on query-complete with projectPath and tabId', () => {
+	it('should send heartbeat on data event for AI sessions', () => {
+		vi.mocked(mockProcessManager.get).mockReturnValue({
+			sessionId: 'session-abc',
+			toolType: 'claude-code',
+			cwd: '/home/user/project',
+			pid: 1234,
+			isTerminal: false,
+			startTime: Date.now(),
+			projectPath: '/home/user/project',
+		} as any);
+
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
+
+		const handler = eventHandlers.get('data');
+		handler?.('session-abc', 'some output data');
+
+		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
+			'session-abc',
+			'/home/user/project'
+		);
+	});
+
+	it('should skip heartbeat on data event for terminal sessions', () => {
+		vi.mocked(mockProcessManager.get).mockReturnValue({
+			sessionId: 'session-terminal',
+			toolType: 'terminal',
+			cwd: '/home/user',
+			pid: 1234,
+			isTerminal: true,
+			startTime: Date.now(),
+		} as any);
+
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
+
+		const handler = eventHandlers.get('data');
+		handler?.('session-terminal', 'terminal output');
+
+		expect(mockWakaTimeManager.sendHeartbeat).not.toHaveBeenCalled();
+	});
+
+	it('should skip heartbeat on data event when process not found', () => {
+		vi.mocked(mockProcessManager.get).mockReturnValue(undefined);
+
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
+
+		const handler = eventHandlers.get('data');
+		handler?.('session-unknown', 'data');
+
+		expect(mockWakaTimeManager.sendHeartbeat).not.toHaveBeenCalled();
+	});
+
+	it('should fall back to cwd when projectPath is missing on data event', () => {
+		vi.mocked(mockProcessManager.get).mockReturnValue({
+			sessionId: 'session-no-path',
+			toolType: 'claude-code',
+			cwd: '/home/user/fallback',
+			pid: 1234,
+			isTerminal: false,
+			startTime: Date.now(),
+		} as any);
+
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
+
+		const handler = eventHandlers.get('data');
+		handler?.('session-no-path', 'output');
+
+		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
+			'session-no-path',
+			'/home/user/fallback'
+		);
+	});
+
+	it('should send heartbeat on query-complete with projectPath', () => {
 		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
 
 		const handler = eventHandlers.get('query-complete');
@@ -57,12 +133,11 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-abc',
-			'/home/user/project',
-			'My Project Tab'
+			'/home/user/project'
 		);
 	});
 
-	it('should fallback to sessionId when projectPath is missing', () => {
+	it('should fallback to sessionId when projectPath is missing on query-complete', () => {
 		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager);
 
 		const handler = eventHandlers.get('query-complete');
@@ -78,8 +153,7 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-fallback',
-			'session-fallback', // projectPath fallback
-			'session-fallback'  // projectName fallback
+			'session-fallback'
 		);
 	});
 
