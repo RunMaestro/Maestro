@@ -53,6 +53,7 @@ import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerWakatimeHandlers } from './wakatime';
+import type { WakaTimeManager } from '../../wakatime-manager';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -155,6 +156,8 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// WakaTime-specific dependencies
+	wakatimeManager: WakaTimeManager;
 }
 
 /**
@@ -281,7 +284,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 	});
 	// Register WakaTime handlers (CLI check, API key validation)
-	registerWakatimeHandlers();
+	registerWakatimeHandlers(deps.wakatimeManager);
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

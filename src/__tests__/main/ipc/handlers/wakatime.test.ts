@@ -27,6 +27,19 @@ vi.mock('../../../../main/utils/logger', () => ({
 
 import { registerWakatimeHandlers } from '../../../../main/ipc/handlers/wakatime';
 
+/** Create a mock WakaTimeManager with configurable behavior */
+function createMockWakaTimeManager(overrides: {
+	ensureCliInstalled?: () => Promise<boolean>;
+	getCliPath?: () => string | null;
+} = {}) {
+	return {
+		ensureCliInstalled: overrides.ensureCliInstalled ?? vi.fn().mockResolvedValue(true),
+		getCliPath: overrides.getCliPath ?? vi.fn().mockReturnValue('/usr/local/bin/wakatime-cli'),
+		sendHeartbeat: vi.fn(),
+		removeSession: vi.fn(),
+	} as any;
+}
+
 describe('WakaTime IPC Handlers', () => {
 	const handlers: Map<string, Function> = new Map();
 
@@ -37,16 +50,18 @@ describe('WakaTime IPC Handlers', () => {
 		vi.mocked(ipcMain.handle).mockImplementation((channel: string, handler: Function) => {
 			handlers.set(channel, handler);
 		});
-
-		registerWakatimeHandlers();
 	});
 
 	describe('wakatime:checkCli', () => {
 		it('should register the handler', () => {
+			registerWakatimeHandlers(createMockWakaTimeManager());
 			expect(handlers.has('wakatime:checkCli')).toBe(true);
 		});
 
-		it('should return available: true with version when wakatime-cli is found', async () => {
+		it('should return available: true with version when CLI is installed', async () => {
+			const mockManager = createMockWakaTimeManager();
+			registerWakatimeHandlers(mockManager);
+
 			mockExecFileNoThrow.mockResolvedValueOnce({
 				exitCode: 0,
 				stdout: 'wakatime-cli 1.73.0\n',
@@ -57,67 +72,81 @@ describe('WakaTime IPC Handlers', () => {
 			const result = await handler({});
 
 			expect(result).toEqual({ available: true, version: 'wakatime-cli 1.73.0' });
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('wakatime-cli', ['--version']);
+			expect(mockManager.ensureCliInstalled).toHaveBeenCalled();
+			expect(mockManager.getCliPath).toHaveBeenCalled();
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith('/usr/local/bin/wakatime-cli', ['--version']);
 		});
 
-		it('should try wakatime if wakatime-cli is not found', async () => {
-			// wakatime-cli not found
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 'ENOENT',
-				stdout: '',
-				stderr: '',
+		it('should return available: false when ensureCliInstalled fails', async () => {
+			const mockManager = createMockWakaTimeManager({
+				ensureCliInstalled: vi.fn().mockResolvedValue(false),
 			});
-			// wakatime found
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 0,
-				stdout: 'wakatime 1.73.0\n',
-				stderr: '',
-			});
-
-			const handler = handlers.get('wakatime:checkCli')!;
-			const result = await handler({});
-
-			expect(result).toEqual({ available: true, version: 'wakatime 1.73.0' });
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('wakatime-cli', ['--version']);
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('wakatime', ['--version']);
-		});
-
-		it('should return available: false when no CLI is found', async () => {
-			mockExecFileNoThrow.mockResolvedValue({
-				exitCode: 'ENOENT',
-				stdout: '',
-				stderr: '',
-			});
+			registerWakatimeHandlers(mockManager);
 
 			const handler = handlers.get('wakatime:checkCli')!;
 			const result = await handler({});
 
 			expect(result).toEqual({ available: false });
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should return available: false when getCliPath returns null', async () => {
+			const mockManager = createMockWakaTimeManager({
+				getCliPath: vi.fn().mockReturnValue(null),
+			});
+			registerWakatimeHandlers(mockManager);
+
+			const handler = handlers.get('wakatime:checkCli')!;
+			const result = await handler({});
+
+			expect(result).toEqual({ available: false });
+			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should trigger auto-install via ensureCliInstalled', async () => {
+			const cliPath = '/home/user/.wakatime/wakatime-cli-linux-amd64';
+			const mockManager = createMockWakaTimeManager({
+				ensureCliInstalled: vi.fn().mockResolvedValue(true),
+				getCliPath: vi.fn().mockReturnValue(cliPath),
+			});
+			registerWakatimeHandlers(mockManager);
+
+			mockExecFileNoThrow.mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.90.0\n',
+				stderr: '',
+			});
+
+			const handler = handlers.get('wakatime:checkCli')!;
+			const result = await handler({});
+
+			expect(result).toEqual({ available: true, version: 'wakatime-cli 1.90.0' });
+			expect(mockManager.ensureCliInstalled).toHaveBeenCalled();
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith(cliPath, ['--version']);
 		});
 	});
 
 	describe('wakatime:validateApiKey', () => {
 		it('should register the handler', () => {
+			registerWakatimeHandlers(createMockWakaTimeManager());
 			expect(handlers.has('wakatime:validateApiKey')).toBe(true);
 		});
 
 		it('should return valid: false for empty key', async () => {
+			const mockManager = createMockWakaTimeManager();
+			registerWakatimeHandlers(mockManager);
+
 			const handler = handlers.get('wakatime:validateApiKey')!;
 			const result = await handler({}, '');
 
 			expect(result).toEqual({ valid: false });
-			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+			expect(mockManager.ensureCliInstalled).not.toHaveBeenCalled();
 		});
 
 		it('should return valid: true when CLI validates the key', async () => {
-			// CLI detection succeeds
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 0,
-				stdout: 'wakatime-cli 1.73.0\n',
-				stderr: '',
-			});
+			const mockManager = createMockWakaTimeManager();
+			registerWakatimeHandlers(mockManager);
+
 			// Key validation succeeds
 			mockExecFileNoThrow.mockResolvedValueOnce({
 				exitCode: 0,
@@ -129,16 +158,17 @@ describe('WakaTime IPC Handlers', () => {
 			const result = await handler({}, 'waka_test_key_123');
 
 			expect(result).toEqual({ valid: true });
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('wakatime-cli', ['--key', 'waka_test_key_123', '--today']);
+			expect(mockManager.ensureCliInstalled).toHaveBeenCalled();
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
+				'/usr/local/bin/wakatime-cli',
+				['--key', 'waka_test_key_123', '--today']
+			);
 		});
 
 		it('should return valid: false when CLI rejects the key', async () => {
-			// CLI detection succeeds
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 0,
-				stdout: 'wakatime-cli 1.73.0\n',
-				stderr: '',
-			});
+			const mockManager = createMockWakaTimeManager();
+			registerWakatimeHandlers(mockManager);
+
 			// Key validation fails
 			mockExecFileNoThrow.mockResolvedValueOnce({
 				exitCode: 1,
@@ -153,35 +183,38 @@ describe('WakaTime IPC Handlers', () => {
 		});
 
 		it('should return valid: false when CLI is not available', async () => {
-			// Neither CLI binary found
-			mockExecFileNoThrow.mockResolvedValue({
-				exitCode: 'ENOENT',
-				stdout: '',
-				stderr: '',
+			const mockManager = createMockWakaTimeManager({
+				ensureCliInstalled: vi.fn().mockResolvedValue(false),
 			});
+			registerWakatimeHandlers(mockManager);
 
 			const handler = handlers.get('wakatime:validateApiKey')!;
 			const result = await handler({}, 'waka_test_key_123');
 
 			expect(result).toEqual({ valid: false });
-			// Called twice for detection attempts (wakatime-cli, wakatime), never for validation
-			expect(mockExecFileNoThrow).toHaveBeenCalledTimes(2);
+			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
 		});
 
-		it('should try wakatime binary if wakatime-cli detection fails', async () => {
-			// wakatime-cli not found
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 'ENOENT',
-				stdout: '',
-				stderr: '',
+		it('should return valid: false when getCliPath returns null', async () => {
+			const mockManager = createMockWakaTimeManager({
+				getCliPath: vi.fn().mockReturnValue(null),
 			});
-			// wakatime found
-			mockExecFileNoThrow.mockResolvedValueOnce({
-				exitCode: 0,
-				stdout: 'wakatime 1.73.0\n',
-				stderr: '',
+			registerWakatimeHandlers(mockManager);
+
+			const handler = handlers.get('wakatime:validateApiKey')!;
+			const result = await handler({}, 'waka_test_key_123');
+
+			expect(result).toEqual({ valid: false });
+			expect(mockExecFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should use the manager CLI path for validation', async () => {
+			const cliPath = '/home/user/.wakatime/wakatime-cli-linux-amd64';
+			const mockManager = createMockWakaTimeManager({
+				getCliPath: vi.fn().mockReturnValue(cliPath),
 			});
-			// Key validation succeeds
+			registerWakatimeHandlers(mockManager);
+
 			mockExecFileNoThrow.mockResolvedValueOnce({
 				exitCode: 0,
 				stdout: '{}',
@@ -192,7 +225,10 @@ describe('WakaTime IPC Handlers', () => {
 			const result = await handler({}, 'waka_test_key_123');
 
 			expect(result).toEqual({ valid: true });
-			expect(mockExecFileNoThrow).toHaveBeenCalledWith('wakatime', ['--key', 'waka_test_key_123', '--today']);
+			expect(mockExecFileNoThrow).toHaveBeenCalledWith(
+				cliPath,
+				['--key', 'waka_test_key_123', '--today']
+			);
 		});
 	});
 });

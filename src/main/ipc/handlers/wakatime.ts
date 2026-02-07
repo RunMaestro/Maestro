@@ -3,11 +3,15 @@
  *
  * Provides IPC handlers for WakaTime CLI availability checks
  * and API key validation from the renderer process.
+ *
+ * Uses the WakaTimeManager instance to leverage auto-install
+ * and version checking capabilities.
  */
 
 import { ipcMain } from 'electron';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { execFileNoThrow } from '../../utils/execFile';
+import type { WakaTimeManager } from '../../wakatime-manager';
 
 const LOG_CONTEXT = '[WakaTime]';
 
@@ -21,21 +25,25 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * Register all WakaTime-related IPC handlers.
  *
  * Handlers:
- * - wakatime:checkCli — Check if wakatime-cli is installed and return version
+ * - wakatime:checkCli — Check if wakatime-cli is installed (auto-installs if needed) and return version
  * - wakatime:validateApiKey — Validate an API key against the WakaTime API
  */
-export function registerWakatimeHandlers(): void {
-	// Check if wakatime-cli is available on PATH
+export function registerWakatimeHandlers(wakatimeManager: WakaTimeManager): void {
+	// Check if wakatime-cli is available (auto-installs if needed)
 	ipcMain.handle(
 		'wakatime:checkCli',
 		withIpcErrorLogging(
 			handlerOpts('checkCli'),
 			async (): Promise<{ available: boolean; version?: string }> => {
-				for (const cmd of ['wakatime-cli', 'wakatime']) {
-					const result = await execFileNoThrow(cmd, ['--version']);
-					if (result.exitCode === 0) {
-						return { available: true, version: result.stdout.trim() };
-					}
+				const installed = await wakatimeManager.ensureCliInstalled();
+				if (!installed) return { available: false };
+
+				const cliPath = wakatimeManager.getCliPath();
+				if (!cliPath) return { available: false };
+
+				const result = await execFileNoThrow(cliPath, ['--version']);
+				if (result.exitCode === 0) {
+					return { available: true, version: result.stdout.trim() };
 				}
 				return { available: false };
 			}
@@ -50,20 +58,15 @@ export function registerWakatimeHandlers(): void {
 			async (key: string): Promise<{ valid: boolean }> => {
 				if (!key) return { valid: false };
 
-				// Find available CLI binary first
-				let cliCmd: string | null = null;
-				for (const cmd of ['wakatime-cli', 'wakatime']) {
-					const detect = await execFileNoThrow(cmd, ['--version']);
-					if (detect.exitCode === 0) {
-						cliCmd = cmd;
-						break;
-					}
-				}
+				// Ensure CLI is available (auto-installs if needed)
+				const installed = await wakatimeManager.ensureCliInstalled();
+				if (!installed) return { valid: false };
 
-				if (!cliCmd) return { valid: false };
+				const cliPath = wakatimeManager.getCliPath();
+				if (!cliPath) return { valid: false };
 
 				// Use --today with the key to verify it works
-				const result = await execFileNoThrow(cliCmd, ['--key', key, '--today']);
+				const result = await execFileNoThrow(cliPath, ['--key', key, '--today']);
 				return { valid: result.exitCode === 0 };
 			}
 		)

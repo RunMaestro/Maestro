@@ -659,7 +659,7 @@ function setupIpcHandlers() {
 	});
 
 	// Register WakaTime handlers (CLI check, API key validation)
-	registerWakatimeHandlers();
+	registerWakatimeHandlers(wakatimeManager);
 }
 
 // Handle process output streaming (set up after initialization)

@@ -359,6 +359,11 @@ export class WakaTimeManager {
 		}
 	}
 
+	/** Get the resolved CLI path (null if not yet detected/installed) */
+	getCliPath(): string | null {
+		return this.cliPath;
+	}
+
 	/** Clean up stale session entries */
 	removeSession(sessionId: string): void {
 		this.lastHeartbeatPerSession.delete(sessionId);
