@@ -116,6 +116,7 @@ function fetchJson(url: string, maxRedirects = 5): Promise<unknown> {
 export class WakaTimeManager {
 	private settingsStore: Store<MaestroSettings>;
 	private lastHeartbeatPerSession: Map<string, number> = new Map();
+	private branchCache: Map<string, string> = new Map();
 	private cliPath: string | null = null;
 	private cliDetected = false;
 	private installing: Promise<boolean> | null = null;
@@ -317,8 +318,22 @@ export class WakaTimeManager {
 		}
 	}
 
+	/**
+	 * Detect the current git branch for a project directory.
+	 * Result is cached per session to avoid running git on every heartbeat.
+	 */
+	private async detectBranch(sessionId: string, cwd: string): Promise<string | null> {
+		const cached = this.branchCache.get(sessionId);
+		if (cached !== undefined) return cached || null;
+
+		const result = await execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
+		const branch = result.exitCode === 0 ? result.stdout.trim() : '';
+		this.branchCache.set(sessionId, branch);
+		return branch || null;
+	}
+
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectName: string): Promise<void> {
+	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -351,6 +366,14 @@ export class WakaTimeManager {
 			'--category', 'ai coding',
 		];
 
+		// Add branch info if we can detect it from the project directory
+		if (projectCwd) {
+			const branch = await this.detectBranch(sessionId, projectCwd);
+			if (branch) {
+				args.push('--alternate-branch', branch);
+			}
+		}
+
 		const result = await execFileNoThrow(this.cliPath!, args);
 		if (result.exitCode === 0) {
 			logger.debug(`Heartbeat sent for session ${sessionId} (${projectName})`, LOG_CONTEXT);
@@ -367,5 +390,6 @@ export class WakaTimeManager {
 	/** Clean up stale session entries */
 	removeSession(sessionId: string): void {
 		this.lastHeartbeatPerSession.delete(sessionId);
+		this.branchCache.delete(sessionId);
 	}
 }
