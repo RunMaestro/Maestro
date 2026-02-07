@@ -9,7 +9,7 @@ import type { AgentDetector } from '../agents';
 import type { SafeSendFn } from '../utils/safe-send';
 import type { StatsDB } from '../stats';
 import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-storage';
-import type { GroupChatState } from '../../shared/group-chat-types';
+import type { GroupChatMessage, GroupChatState } from '../../shared/group-chat-types';
 import type { ParticipantState } from '../ipc/handlers/groupChat';
 
 // ==========================================================================
@@ -75,6 +75,7 @@ export interface ProcessListenerDependencies {
 			groupChatId: string,
 			usage: { contextUsage: number; totalCost: number; tokenCount: number }
 		) => void;
+		emitMessage?: (groupChatId: string, message: GroupChatMessage) => void;
 	};
 	/** Group chat router functions */
 	groupChatRouter: {

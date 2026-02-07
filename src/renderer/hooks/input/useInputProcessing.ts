@@ -885,13 +885,17 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							}
 
 							// Get history file path for task recall
-							let historyFilePath: string | undefined;
+						// Skip for SSH sessions — the local path is unreachable from the remote host
+						let historyFilePath: string | undefined;
+						const isSSH = freshSession.sshRemote || freshSession.sessionSshRemoteConfig?.enabled;
+						if (!isSSH) {
 							try {
 								historyFilePath =
 									(await window.maestro.history.getFilePath(freshSession.id)) || undefined;
 							} catch {
 								// Ignore history errors
 							}
+						}
 
 							// Substitute template variables in the system prompt
 							console.log('[useInputProcessing] Template substitution context:', {

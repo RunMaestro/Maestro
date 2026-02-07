@@ -291,6 +291,11 @@ export function HistoryHelpModal({ theme, onClose }: HistoryHelpModalProps) {
 							Each session's history is stored as a JSON file that agents can read to understand
 							completed tasks, decisions made, and work patterns—even from other tabs.
 						</p>
+						<p>
+							<strong style={{ color: theme.colors.warning }}>Note:</strong> Cross-session memory is
+							not available for SSH remote sessions, as the history file is stored locally and cannot
+							be accessed by agents running on remote hosts.
+						</p>
 					</div>
 				</section>
 			</div>

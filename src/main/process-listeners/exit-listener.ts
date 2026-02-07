@@ -259,10 +259,12 @@ export function setupExitListener(
 				// Handle session recovery and normal processing in an async IIFE
 				void (async () => {
 					// Check if this is a session_not_found error - if so, recover and retry
+					// But don't attempt recovery if this IS already a recovery session (prevent infinite loops)
+					const isRecoverySession = sessionId.includes('-recovery-');
 					const chat = await groupChatStorage.loadGroupChat(groupChatId);
 					const agentType = chat?.participants.find((p) => p.name === participantName)?.agentId;
 
-					if (sessionRecovery.needsSessionRecovery(bufferedOutput, agentType)) {
+					if (!isRecoverySession && sessionRecovery.needsSessionRecovery(bufferedOutput, agentType)) {
 						debugLog(
 							'GroupChat:Debug',
 							` Session not found error detected for ${participantName} - initiating recovery`
@@ -286,6 +288,12 @@ export function setupExitListener(
 								'GroupChat:Debug',
 								` Re-spawning ${participantName} with recovery context...`
 							);
+							// Notify UI that recovery is in progress
+							groupChatEmitters.emitMessage?.(groupChatId, {
+								timestamp: new Date().toISOString(),
+								from: 'system',
+								content: `Session expired for ${participantName}. Creating a new session...`,
+							});
 							try {
 								await groupChatRouter.respawnParticipantWithRecovery(
 									groupChatId,
@@ -308,6 +316,12 @@ export function setupExitListener(
 										participant: participantName,
 									}
 								);
+								// Notify UI that recovery failed
+								groupChatEmitters.emitMessage?.(groupChatId, {
+									timestamp: new Date().toISOString(),
+									from: 'system',
+									content: `⚠️ Failed to create new session for ${participantName}: ${String(respawnErr)}`,
+								});
 								// Mark as responded since recovery failed
 								markAndMaybeSynthesize();
 							}

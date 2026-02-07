@@ -533,9 +533,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 
 			try {
 				// Step 0: Fetch history file path for task recall (if session ID is available)
-				// This is done early so it's available for both conversation session and state
+				// Skip for SSH sessions — the local path is unreachable from the remote host
 				let historyFilePath: string | undefined;
-				if (sessionId) {
+				const isSSH = sessionSshRemoteConfig?.enabled;
+				if (sessionId && !isSSH) {
 					try {
 						const fetchedPath = await window.maestro.history.getFilePath(sessionId);
 						historyFilePath = fetchedPath ?? undefined; // Convert null to undefined

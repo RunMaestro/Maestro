@@ -14,9 +14,11 @@ import {
  * Handles hyphenated participant names by matching against UUID or timestamp suffixes.
  *
  * Session ID format: group-chat-{groupChatId}-participant-{name}-{uuid|timestamp}
+ * Recovery format: group-chat-{groupChatId}-participant-{name}-recovery-{timestamp}
  * Examples:
  * - group-chat-abc123-participant-Claude-1702934567890
  * - group-chat-abc123-participant-OpenCode-Ollama-550e8400-e29b-41d4-a716-446655440000
+ * - group-chat-abc123-participant-Claude-recovery-1702934567890
  *
  * @returns null if not a participant session ID, otherwise { groupChatId, participantName }
  */
@@ -38,7 +40,10 @@ export function parseParticipantSessionId(
 	// Try matching with timestamp suffix (13 digits)
 	const timestampMatch = sessionId.match(REGEX_PARTICIPANT_TIMESTAMP);
 	if (timestampMatch) {
-		return { groupChatId: timestampMatch[1], participantName: timestampMatch[2] };
+		// Strip "-recovery" suffix from participant name if present
+		// Recovery sessions use format: {name}-recovery-{timestamp}
+		const participantName = timestampMatch[2].replace(/-recovery$/, '');
+		return { groupChatId: timestampMatch[1], participantName };
 	}
 
 	// Fallback: try the old pattern for backwards compatibility (non-hyphenated names)

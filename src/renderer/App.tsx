@@ -2948,6 +2948,17 @@ function MaestroConsoleInner() {
 						recoverable: error.recoverable,
 					});
 
+					// For session_not_found errors, the exit-listener handles recovery
+					// by respawning the participant with context. Don't show error or
+					// reset state - let the recovery flow handle it silently.
+					if (agentError.type === 'session_not_found') {
+						console.log('[onAgentError] Suppressing session_not_found for group chat - exit-listener will handle recovery:', {
+							groupChatId,
+							participantName: isModeratorError ? 'Moderator' : participantOrModerator,
+						});
+						return;
+					}
+
 					// Set the group chat error state - this will show in the group chat UI
 					setGroupChatError({
 						groupChatId,
@@ -14535,7 +14546,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						theme={theme}
 						isOpen={tourOpen}
 						fromWizard={tourFromWizard}
-						shortcuts={shortcuts}
+						shortcuts={{ ...shortcuts, ...tabShortcuts }}
 						onClose={() => {
 							setTourOpen(false);
 							setTourCompleted(true);
