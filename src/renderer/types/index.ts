@@ -547,6 +547,8 @@ export interface Session {
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
 	aiLogs: LogEntry[];
+	// DEPRECATED: Legacy shell output logs - will be removed after terminal tabs migration
+	// Terminal tabs use xterm.js with direct PTY streaming, not log entries
 	shellLogs: LogEntry[];
 	workLog: WorkLogItem[];
 	contextUsage: number;
