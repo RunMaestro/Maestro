@@ -599,6 +599,26 @@ describe('MainPanel', () => {
 			expect(onTerminalNewTab).toHaveBeenCalledWith(session.id);
 		});
 
+		it('should pass terminal search state and close callback to TerminalView', () => {
+			const onTerminalSearchClose = vi.fn();
+			const session = createSession({ inputMode: 'terminal' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					terminalSearchOpen={true}
+					onTerminalSearchClose={onTerminalSearchClose}
+				/>
+			);
+
+			expect(lastTerminalViewProps).not.toBeNull();
+			expect(lastTerminalViewProps?.searchOpen).toBe(true);
+
+			(lastTerminalViewProps?.onSearchClose as (() => void) | undefined)?.();
+			expect(onTerminalSearchClose).toHaveBeenCalledTimes(1);
+		});
+
 		it('should pass a ref to TerminalView', () => {
 			const session = createSession({ inputMode: 'terminal' });
 			const terminalViewRef = React.createRef();
