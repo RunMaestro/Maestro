@@ -154,6 +154,49 @@ export function createClosedTerminalTab(tab: TerminalTab, index: number): Closed
 	};
 }
 
+export interface CloseTerminalTabResult {
+	closedTab: ClosedTerminalTab;
+	session: Session;
+}
+
+/**
+ * Close a terminal tab and update closed-tab history.
+ * Terminal sessions always keep at least one open tab.
+ */
+export function closeTerminalTab(session: Session, tabId: string): CloseTerminalTabResult | null {
+	const tabIndex = session.terminalTabs.findIndex((tab) => tab.id === tabId);
+	if (tabIndex === -1) {
+		return null;
+	}
+
+	if (session.terminalTabs.length <= 1) {
+		return null;
+	}
+
+	const closedTab = createClosedTerminalTab(session.terminalTabs[tabIndex], tabIndex);
+	const updatedHistory = [closedTab, ...session.closedTerminalTabHistory].slice(
+		0,
+		MAX_CLOSED_TERMINAL_TABS
+	);
+	const updatedTabs = session.terminalTabs.filter((tab) => tab.id !== tabId);
+
+	let updatedActiveTabId = session.activeTerminalTabId;
+	if (session.activeTerminalTabId === tabId) {
+		const updatedIndex = Math.min(tabIndex, updatedTabs.length - 1);
+		updatedActiveTabId = updatedTabs[updatedIndex]?.id || updatedTabs[0]?.id || '';
+	}
+
+	return {
+		closedTab,
+		session: {
+			...session,
+			terminalTabs: updatedTabs,
+			activeTerminalTabId: updatedActiveTabId,
+			closedTerminalTabHistory: updatedHistory,
+		},
+	};
+}
+
 /**
  * Maximum closed terminal tabs to keep in history
  */

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	MAX_CLOSED_TERMINAL_TABS,
+	closeTerminalTab,
 	createClosedTerminalTab,
 	createInitialTerminalTabState,
 	createTerminalTab,
@@ -285,6 +286,96 @@ describe('terminalTabHelpers', () => {
 				},
 				index: 4,
 				closedAt: 54321,
+			});
+		});
+	});
+
+	describe('closeTerminalTab', () => {
+		it('closes a non-active tab and preserves active selection', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(60001);
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const tab2 = createMockTerminalTab({ id: 'tab-2' });
+			const tab3 = createMockTerminalTab({ id: 'tab-3' });
+			const session = createMockSession({
+				terminalTabs: [tab1, tab2, tab3],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [],
+			});
+
+			const result = closeTerminalTab(session, 'tab-2');
+
+			expect(result).not.toBeNull();
+			expect(result?.session.terminalTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-3']);
+			expect(result?.session.activeTerminalTabId).toBe('tab-1');
+			expect(result?.session.closedTerminalTabHistory).toEqual([
+				{
+					tab: { ...tab2, pid: 0, state: 'idle' },
+					index: 1,
+					closedAt: 60001,
+				},
+			]);
+		});
+
+		it('selects adjacent tab when closing the active tab', () => {
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const tab2 = createMockTerminalTab({ id: 'tab-2' });
+			const tab3 = createMockTerminalTab({ id: 'tab-3' });
+			const session = createMockSession({
+				terminalTabs: [tab1, tab2, tab3],
+				activeTerminalTabId: 'tab-2',
+				closedTerminalTabHistory: [],
+			});
+
+			const result = closeTerminalTab(session, 'tab-2');
+
+			expect(result?.session.terminalTabs.map((tab) => tab.id)).toEqual(['tab-1', 'tab-3']);
+			expect(result?.session.activeTerminalTabId).toBe('tab-3');
+		});
+
+		it('returns null when trying to close the only tab', () => {
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const session = createMockSession({
+				terminalTabs: [tab1],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [],
+			});
+
+			expect(closeTerminalTab(session, 'tab-1')).toBeNull();
+		});
+
+		it('returns null when tab does not exist', () => {
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const tab2 = createMockTerminalTab({ id: 'tab-2' });
+			const session = createMockSession({
+				terminalTabs: [tab1, tab2],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [],
+			});
+
+			expect(closeTerminalTab(session, 'missing-tab')).toBeNull();
+		});
+
+		it('caps closed terminal tab history at MAX_CLOSED_TERMINAL_TABS', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(70001);
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const tab2 = createMockTerminalTab({ id: 'tab-2' });
+			const history = Array.from({ length: MAX_CLOSED_TERMINAL_TABS }, (_, index) => ({
+				tab: createMockTerminalTab({ id: `closed-${index}` }),
+				index,
+				closedAt: index,
+			}));
+			const session = createMockSession({
+				terminalTabs: [tab1, tab2],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: history,
+			});
+
+			const result = closeTerminalTab(session, 'tab-2');
+
+			expect(result?.session.closedTerminalTabHistory).toHaveLength(MAX_CLOSED_TERMINAL_TABS);
+			expect(result?.session.closedTerminalTabHistory[0]).toMatchObject({
+				index: 1,
+				closedAt: 70001,
 			});
 		});
 	});
