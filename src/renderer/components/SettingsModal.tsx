@@ -392,6 +392,25 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const [dnRefreshingAgent, setDnRefreshingAgent] = useState(false);
 	const dnAgentConfigRef = useRef<Record<string, any>>({});
 
+	// WakaTime CLI check and API key validation state
+	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{ available: boolean; version?: string } | null>(null);
+	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
+	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+
+	// Check WakaTime CLI availability when section renders or toggle is enabled
+	useEffect(() => {
+		if (isOpen && wakatimeEnabled) {
+			window.maestro.wakatime.checkCli().then(setWakatimeCliStatus).catch(() => {
+				setWakatimeCliStatus({ available: false });
+			});
+		}
+	}, [isOpen, wakatimeEnabled]);
+
+	// Reset validation state when API key changes
+	useEffect(() => {
+		setWakatimeKeyValid(null);
+	}, [wakatimeApiKey]);
+
 	// Layer stack integration
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const layerIdRef = useRef<string>();
@@ -2170,6 +2189,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										</button>
 									</div>
 
+									{/* CLI not found warning */}
+									{wakatimeEnabled && wakatimeCliStatus && !wakatimeCliStatus.available && (
+										<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
+											WakaTime CLI not found. Install it via your IDE's WakaTime plugin or run: pip install wakatime
+										</p>
+									)}
+
 									{/* API Key Input (only shown when enabled) */}
 									{wakatimeEnabled && (
 										<div>
@@ -2186,10 +2212,29 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 													type="password"
 													value={wakatimeApiKey}
 													onChange={(e) => setWakatimeApiKey(e.target.value)}
+													onBlur={() => {
+														if (wakatimeApiKey) {
+															setWakatimeKeyValidating(true);
+															setWakatimeKeyValid(null);
+															window.maestro.wakatime.validateApiKey(wakatimeApiKey)
+																.then((result) => setWakatimeKeyValid(result.valid))
+																.catch(() => setWakatimeKeyValid(false))
+																.finally(() => setWakatimeKeyValidating(false));
+														}
+													}}
 													className="bg-transparent flex-1 text-sm outline-none"
 													style={{ color: theme.colors.textMain }}
 													placeholder="waka_..."
 												/>
+												{wakatimeKeyValidating && (
+													<span className="ml-2 text-xs opacity-50">...</span>
+												)}
+												{!wakatimeKeyValidating && wakatimeKeyValid === true && (
+													<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
+												)}
+												{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
+													<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
+												)}
 												{wakatimeApiKey && (
 													<button
 														onClick={() => setWakatimeApiKey('')}

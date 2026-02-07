@@ -2697,6 +2697,12 @@ interface MaestroAPI {
 			error?: string;
 		}>;
 	};
+
+	// WakaTime API (CLI check, API key validation)
+	wakatime: {
+		checkCli: () => Promise<{ available: boolean; version?: string }>;
+		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
+	};
 }
 
 declare global {
