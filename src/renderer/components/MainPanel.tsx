@@ -389,7 +389,6 @@ export const MainPanel = React.memo(
 			outputSearchQuery,
 			inputValue,
 			enterToSendAI,
-			enterToSendTerminal,
 			stagedImages,
 			commandHistoryOpen,
 			commandHistoryFilter,
@@ -433,7 +432,6 @@ export const MainPanel = React.memo(
 			setOutputSearchQuery,
 			setInputValue,
 			setEnterToSendAI,
-			setEnterToSendTerminal,
 			setStagedImages,
 			setLightboxImage,
 			setCommandHistoryOpen,
@@ -1863,108 +1861,104 @@ export const MainPanel = React.memo(
 									)}
 								</div>
 
-								{/* Input Area (hidden in mobile landscape for focused reading, and during wizard doc generation) */}
-								{!isMobileLandscape && !activeTab?.wizardState?.isGeneratingDocs && (
-									<div data-tour="input-area">
-										<InputArea
-											session={activeSession}
-											theme={theme}
-											inputValue={inputValue}
-											setInputValue={setInputValue}
-											enterToSend={
-												activeSession.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI
-											}
-											setEnterToSend={
-												activeSession.inputMode === 'terminal'
-													? setEnterToSendTerminal
-													: setEnterToSendAI
-											}
-											stagedImages={stagedImages}
-											setStagedImages={setStagedImages}
-											setLightboxImage={setLightboxImage}
-											commandHistoryOpen={commandHistoryOpen}
-											setCommandHistoryOpen={setCommandHistoryOpen}
-											commandHistoryFilter={commandHistoryFilter}
-											setCommandHistoryFilter={setCommandHistoryFilter}
-											commandHistorySelectedIndex={commandHistorySelectedIndex}
-											setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
-											slashCommandOpen={slashCommandOpen}
-											setSlashCommandOpen={setSlashCommandOpen}
-											slashCommands={slashCommands}
-											selectedSlashCommandIndex={selectedSlashCommandIndex}
-											setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
-											tabCompletionOpen={tabCompletionOpen}
-											setTabCompletionOpen={setTabCompletionOpen}
-											tabCompletionSuggestions={tabCompletionSuggestions}
-											selectedTabCompletionIndex={selectedTabCompletionIndex}
-											setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
-											tabCompletionFilter={tabCompletionFilter}
-											setTabCompletionFilter={setTabCompletionFilter}
-											atMentionOpen={atMentionOpen}
-											setAtMentionOpen={setAtMentionOpen}
-											atMentionFilter={atMentionFilter}
-											setAtMentionFilter={setAtMentionFilter}
-											atMentionStartIndex={atMentionStartIndex}
-											setAtMentionStartIndex={setAtMentionStartIndex}
-											atMentionSuggestions={atMentionSuggestions}
-											selectedAtMentionIndex={selectedAtMentionIndex}
-											setSelectedAtMentionIndex={setSelectedAtMentionIndex}
-											inputRef={inputRef}
-											handleInputKeyDown={handleInputKeyDown}
-											handlePaste={handlePaste}
-											handleDrop={handleDrop}
-											toggleInputMode={toggleInputMode}
-											processInput={processInput}
-											handleInterrupt={handleInterrupt}
-											onInputFocus={handleInputFocus}
-											onInputBlur={props.onInputBlur}
-											isAutoModeActive={isCurrentSessionAutoMode}
-											thinkingItems={thinkingItems}
-											onSessionClick={handleSessionClick}
-											autoRunState={currentSessionBatchState || undefined}
-											onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
-											onOpenQueueBrowser={onOpenQueueBrowser}
-											tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
-											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
-											tabSaveToHistory={activeTab?.saveToHistory ?? false}
-											onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
-											tabShowThinking={activeTab?.showThinking ?? 'off'}
-											onToggleTabShowThinking={props.onToggleTabShowThinking}
-											supportsThinking={hasCapability('supportsThinkingDisplay')}
-											onOpenPromptComposer={props.onOpenPromptComposer}
-											shortcuts={shortcuts}
-											showFlashNotification={showFlashNotification}
-											// Context warning sash props (Phase 6) - use tab-level context usage
-											contextUsage={activeTabContextUsage}
-											contextWarningsEnabled={contextWarningsEnabled}
-											contextWarningYellowThreshold={contextWarningYellowThreshold}
-											contextWarningRedThreshold={contextWarningRedThreshold}
-											onSummarizeAndContinue={
-												onSummarizeAndContinue
-													? () => onSummarizeAndContinue(activeSession.activeTabId)
-													: undefined
-											}
-											// Summarization progress props
-											summarizeProgress={summarizeProgress}
-											summarizeResult={summarizeResult}
-											summarizeStartTime={summarizeStartTime}
-											isSummarizing={isSummarizing}
-											onCancelSummarize={onCancelSummarize}
-											// Merge progress props
-											mergeProgress={mergeProgress}
-											mergeResult={mergeResult}
-											mergeStartTime={mergeStartTime}
-											isMerging={isMerging}
-											mergeSourceName={mergeSourceName}
-											mergeTargetName={mergeTargetName}
-											onCancelMerge={onCancelMerge}
-											// Inline wizard mode
-											onExitWizard={onExitWizard}
-											wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
-											onToggleWizardShowThinking={props.onToggleWizardShowThinking}
-										/>
-									</div>
-								)}
+								{/* Input Area (hidden in terminal mode, mobile landscape for focused reading, and during wizard doc generation) */}
+								{activeSession.inputMode !== 'terminal' &&
+									!isMobileLandscape &&
+									!activeTab?.wizardState?.isGeneratingDocs && (
+										<div data-tour="input-area">
+											<InputArea
+												session={activeSession}
+												theme={theme}
+												inputValue={inputValue}
+												setInputValue={setInputValue}
+												enterToSend={enterToSendAI}
+												setEnterToSend={setEnterToSendAI}
+												stagedImages={stagedImages}
+												setStagedImages={setStagedImages}
+												setLightboxImage={setLightboxImage}
+												commandHistoryOpen={commandHistoryOpen}
+												setCommandHistoryOpen={setCommandHistoryOpen}
+												commandHistoryFilter={commandHistoryFilter}
+												setCommandHistoryFilter={setCommandHistoryFilter}
+												commandHistorySelectedIndex={commandHistorySelectedIndex}
+												setCommandHistorySelectedIndex={setCommandHistorySelectedIndex}
+												slashCommandOpen={slashCommandOpen}
+												setSlashCommandOpen={setSlashCommandOpen}
+												slashCommands={slashCommands}
+												selectedSlashCommandIndex={selectedSlashCommandIndex}
+												setSelectedSlashCommandIndex={setSelectedSlashCommandIndex}
+												tabCompletionOpen={tabCompletionOpen}
+												setTabCompletionOpen={setTabCompletionOpen}
+												tabCompletionSuggestions={tabCompletionSuggestions}
+												selectedTabCompletionIndex={selectedTabCompletionIndex}
+												setSelectedTabCompletionIndex={setSelectedTabCompletionIndex}
+												tabCompletionFilter={tabCompletionFilter}
+												setTabCompletionFilter={setTabCompletionFilter}
+												atMentionOpen={atMentionOpen}
+												setAtMentionOpen={setAtMentionOpen}
+												atMentionFilter={atMentionFilter}
+												setAtMentionFilter={setAtMentionFilter}
+												atMentionStartIndex={atMentionStartIndex}
+												setAtMentionStartIndex={setAtMentionStartIndex}
+												atMentionSuggestions={atMentionSuggestions}
+												selectedAtMentionIndex={selectedAtMentionIndex}
+												setSelectedAtMentionIndex={setSelectedAtMentionIndex}
+												inputRef={inputRef}
+												handleInputKeyDown={handleInputKeyDown}
+												handlePaste={handlePaste}
+												handleDrop={handleDrop}
+												toggleInputMode={toggleInputMode}
+												processInput={processInput}
+												handleInterrupt={handleInterrupt}
+												onInputFocus={handleInputFocus}
+												onInputBlur={props.onInputBlur}
+												isAutoModeActive={isCurrentSessionAutoMode}
+												thinkingItems={thinkingItems}
+												onSessionClick={handleSessionClick}
+												autoRunState={currentSessionBatchState || undefined}
+												onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
+												onOpenQueueBrowser={onOpenQueueBrowser}
+												tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
+												onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}
+												tabSaveToHistory={activeTab?.saveToHistory ?? false}
+												onToggleTabSaveToHistory={props.onToggleTabSaveToHistory}
+												tabShowThinking={activeTab?.showThinking ?? 'off'}
+												onToggleTabShowThinking={props.onToggleTabShowThinking}
+												supportsThinking={hasCapability('supportsThinkingDisplay')}
+												onOpenPromptComposer={props.onOpenPromptComposer}
+												shortcuts={shortcuts}
+												showFlashNotification={showFlashNotification}
+												// Context warning sash props (Phase 6) - use tab-level context usage
+												contextUsage={activeTabContextUsage}
+												contextWarningsEnabled={contextWarningsEnabled}
+												contextWarningYellowThreshold={contextWarningYellowThreshold}
+												contextWarningRedThreshold={contextWarningRedThreshold}
+												onSummarizeAndContinue={
+													onSummarizeAndContinue
+														? () => onSummarizeAndContinue(activeSession.activeTabId)
+														: undefined
+												}
+												// Summarization progress props
+												summarizeProgress={summarizeProgress}
+												summarizeResult={summarizeResult}
+												summarizeStartTime={summarizeStartTime}
+												isSummarizing={isSummarizing}
+												onCancelSummarize={onCancelSummarize}
+												// Merge progress props
+												mergeProgress={mergeProgress}
+												mergeResult={mergeResult}
+												mergeStartTime={mergeStartTime}
+												isMerging={isMerging}
+												mergeSourceName={mergeSourceName}
+												mergeTargetName={mergeTargetName}
+												onCancelMerge={onCancelMerge}
+												// Inline wizard mode
+												onExitWizard={onExitWizard}
+												wizardShowThinking={activeTab?.wizardState?.showWizardThinking ?? false}
+												onToggleWizardShowThinking={props.onToggleWizardShowThinking}
+											/>
+										</div>
+									)}
 							</>
 						)}
 					</div>
