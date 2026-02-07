@@ -575,6 +575,7 @@ describe('MainPanel', () => {
 		it('should pass terminal tab callbacks and shell settings to TerminalView', () => {
 			const onTerminalTabSelect = vi.fn();
 			const onTerminalNewTab = vi.fn();
+			const onRequestTerminalTabRename = vi.fn();
 			const session = createSession({ inputMode: 'terminal' });
 
 			render(
@@ -584,6 +585,7 @@ describe('MainPanel', () => {
 					defaultShell="bash"
 					onTerminalTabSelect={onTerminalTabSelect}
 					onTerminalNewTab={onTerminalNewTab}
+					onRequestTerminalTabRename={onRequestTerminalTabRename}
 				/>
 			);
 
@@ -594,9 +596,13 @@ describe('MainPanel', () => {
 				'terminal-tab-1'
 			);
 			(lastTerminalViewProps?.onNewTab as (() => void) | undefined)?.();
+			(lastTerminalViewProps?.onRequestRename as ((tabId: string) => void) | undefined)?.(
+				'terminal-tab-1'
+			);
 
 			expect(onTerminalTabSelect).toHaveBeenCalledWith(session.id, 'terminal-tab-1');
 			expect(onTerminalNewTab).toHaveBeenCalledWith(session.id);
+			expect(onRequestTerminalTabRename).toHaveBeenCalledWith('terminal-tab-1');
 		});
 
 		it('should pass terminal search state and close callback to TerminalView', () => {

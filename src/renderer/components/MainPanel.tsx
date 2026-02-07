@@ -227,6 +227,7 @@ interface MainPanelProps {
 	onTerminalTabSelect?: (sessionId: string, tabId: string) => void;
 	onTerminalTabClose?: (sessionId: string, tabId: string) => void;
 	onTerminalNewTab?: (sessionId: string) => void;
+	onRequestTerminalTabRename?: (tabId: string) => void;
 	onTerminalTabRename?: (sessionId: string, tabId: string, name: string) => void;
 	onTerminalTabReorder?: (sessionId: string, fromIndex: number, toIndex: number) => void;
 	onTerminalTabStateChange?: (
@@ -1762,6 +1763,7 @@ export const MainPanel = React.memo(
 											onTabRename={(tabId, name) =>
 												props.onTerminalTabRename?.(activeSession.id, tabId, name)
 											}
+											onRequestRename={props.onRequestTerminalTabRename}
 											onTabReorder={(from, to) =>
 												props.onTerminalTabReorder?.(activeSession.id, from, to)
 											}
