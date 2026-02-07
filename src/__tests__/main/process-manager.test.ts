@@ -429,6 +429,40 @@ describe('process-manager.ts', () => {
 				expect(event).toBeNull();
 			});
 		});
+
+		describe('spawn routing', () => {
+			it('routes terminal-tab session IDs to the PTY spawner when toolType is terminal', () => {
+				const ptySpawn = vi.fn().mockReturnValue({ pid: 321, success: true });
+				const childSpawn = vi.fn();
+
+				(
+					processManager as unknown as { ptySpawner: { spawn: (config: unknown) => unknown } }
+				).ptySpawner = {
+					spawn: ptySpawn,
+				};
+				(
+					processManager as unknown as {
+						childProcessSpawner: { spawn: (config: unknown) => unknown };
+					}
+				).childProcessSpawner = {
+					spawn: childSpawn,
+				};
+
+				const config = {
+					sessionId: 'abc123-terminal-def456',
+					toolType: 'terminal',
+					cwd: '/tmp',
+					command: 'bash',
+					args: [],
+				};
+
+				const result = processManager.spawn(config);
+
+				expect(result).toEqual({ pid: 321, success: true });
+				expect(ptySpawn).toHaveBeenCalledWith(config);
+				expect(childSpawn).not.toHaveBeenCalled();
+			});
+		});
 	});
 
 	describe('data buffering', () => {
