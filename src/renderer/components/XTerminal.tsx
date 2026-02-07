@@ -101,6 +101,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		unicode11: null,
 	});
 	const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const searchQueryRef = useRef('');
 
 	const handleResize = useCallback(() => {
 		if (resizeTimeoutRef.current) {
@@ -243,9 +244,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			focus: () => terminalRef.current?.focus(),
 			clear: () => terminalRef.current?.clear(),
 			scrollToBottom: () => terminalRef.current?.scrollToBottom(),
-			search: (query: string) => addonsRef.current.search?.findNext(query) ?? false,
-			searchNext: () => addonsRef.current.search?.findNext('') ?? false,
-			searchPrevious: () => addonsRef.current.search?.findPrevious('') ?? false,
+			search: (query: string) => {
+				searchQueryRef.current = query;
+				return addonsRef.current.search?.findNext(query) ?? false;
+			},
+			searchNext: () => addonsRef.current.search?.findNext(searchQueryRef.current) ?? false,
+			searchPrevious: () => addonsRef.current.search?.findPrevious(searchQueryRef.current) ?? false,
 			getSelection: () => terminalRef.current?.getSelection() ?? '',
 			resize: () => addonsRef.current.fit?.fit(),
 		}),

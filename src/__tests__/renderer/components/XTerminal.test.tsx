@@ -248,8 +248,8 @@ describe('XTerminal', () => {
 		expect(ref.current?.searchNext()).toBe(false);
 		expect(ref.current?.searchPrevious()).toBe(false);
 		expect(searchAddon.findNext).toHaveBeenNthCalledWith(1, 'needle');
-		expect(searchAddon.findNext).toHaveBeenNthCalledWith(2, '');
-		expect(searchAddon.findPrevious).toHaveBeenCalledWith('');
+		expect(searchAddon.findNext).toHaveBeenNthCalledWith(2, 'needle');
+		expect(searchAddon.findPrevious).toHaveBeenCalledWith('needle');
 		expect(ref.current?.getSelection()).toBe('selected-text');
 		expect(() => {
 			ref.current?.write('echo test');
