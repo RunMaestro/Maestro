@@ -276,6 +276,14 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			return;
 		}
 
+		terminalRef.current.options.theme = mapMaestroThemeToXterm(theme);
+	}, [theme]);
+
+	useEffect(() => {
+		if (!terminalRef.current) {
+			return;
+		}
+
 		const disposable = terminalRef.current.onData((data: string) => {
 			void window.maestro.process.write(sessionId, data);
 			onData?.(data);

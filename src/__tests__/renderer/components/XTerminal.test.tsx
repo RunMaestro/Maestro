@@ -424,6 +424,30 @@ describe('XTerminal', () => {
 		expect(xtermTheme.selectionInactiveBackground).toBe('rgba(20, 40, 60, 0.4)');
 	});
 
+	it('updates terminal theme when the Maestro theme prop changes', () => {
+		act(() => {
+			root.render(<XTerminal sessionId="session-theme" theme={theme} fontFamily="Monaco" />);
+		});
+
+		expect(mocks.terminalInstances).toHaveLength(1);
+
+		const terminal = mocks.terminalInstances[0];
+		let xtermTheme = terminal.options.theme as Record<string, string | undefined>;
+		expect(xtermTheme.background).toBe('#1a1b26');
+		expect(xtermTheme.selectionBackground).toBe('rgba(255, 255, 255, 0.2)');
+
+		act(() => {
+			root.render(<XTerminal sessionId="session-theme" theme={lightTheme} fontFamily="Monaco" />);
+		});
+
+		expect(mocks.terminalInstances).toHaveLength(1);
+		xtermTheme = terminal.options.theme as Record<string, string | undefined>;
+		expect(xtermTheme.background).toBe('#ffffff');
+		expect(xtermTheme.foreground).toBe('#24292f');
+		expect(xtermTheme.selectionBackground).toBe('rgba(0, 0, 0, 0.2)');
+		expect(xtermTheme.red).toBe('#dc322f');
+	});
+
 	it('bridges PTY data to terminal and terminal input back to PTY', () => {
 		const onInputData = vi.fn();
 		const processWrite = (globalThis as any).window.maestro.process.write as ReturnType<
