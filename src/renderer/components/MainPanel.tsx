@@ -220,6 +220,24 @@ interface MainPanelProps {
 	onCloseTabsLeft?: () => void;
 	onCloseTabsRight?: () => void;
 
+	// Terminal tab callbacks
+	onTerminalTabSelect?: (sessionId: string, tabId: string) => void;
+	onTerminalTabClose?: (sessionId: string, tabId: string) => void;
+	onTerminalNewTab?: (sessionId: string) => void;
+	onTerminalTabRename?: (sessionId: string, tabId: string, name: string) => void;
+	onTerminalTabReorder?: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	onTerminalTabStateChange?: (
+		sessionId: string,
+		tabId: string,
+		state: 'idle' | 'busy' | 'exited',
+		exitCode?: number
+	) => void;
+	onTerminalTabCwdChange?: (sessionId: string, tabId: string, cwd: string) => void;
+	onTerminalTabPidChange?: (sessionId: string, tabId: string, pid: number) => void;
+	defaultShell?: string;
+	shellArgs?: string;
+	shellEnvVars?: Record<string, string>;
+
 	// Unified tab system (Phase 4) - file preview tabs integrated with AI tabs
 	unifiedTabs?: UnifiedTab[];
 	activeFileTabId?: string | null;
@@ -355,25 +373,6 @@ interface MainPanelProps {
 	onWizardCancelGeneration?: () => void;
 }
 
-type MainPanelTerminalCallbacks = {
-	onTerminalTabSelect?: (sessionId: string, tabId: string) => void;
-	onTerminalTabClose?: (sessionId: string, tabId: string) => void;
-	onTerminalNewTab?: (sessionId: string) => void;
-	onTerminalTabRename?: (sessionId: string, tabId: string, name: string) => void;
-	onTerminalTabReorder?: (sessionId: string, fromIndex: number, toIndex: number) => void;
-	onTerminalTabStateChange?: (
-		sessionId: string,
-		tabId: string,
-		state: 'idle' | 'busy' | 'exited',
-		exitCode?: number
-	) => void;
-	onTerminalTabCwdChange?: (sessionId: string, tabId: string, cwd: string) => void;
-	onTerminalTabPidChange?: (sessionId: string, tabId: string, pid: number) => void;
-	defaultShell?: string;
-	shellArgs?: string;
-	shellEnvVars?: Record<string, string>;
-};
-
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
@@ -497,8 +496,6 @@ export const MainPanel = React.memo(
 			// Inline wizard exit handler
 			onExitWizard,
 		} = props;
-		const terminalCallbacks = props as MainPanelProps & MainPanelTerminalCallbacks;
-
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
 		const isCurrentSessionStopping = currentSessionBatchState?.isStopping || false;
@@ -1748,37 +1745,26 @@ export const MainPanel = React.memo(
 											theme={theme}
 											fontFamily={props.fontFamily}
 											fontSize={14}
-											defaultShell={
-												terminalCallbacks.defaultShell || activeTerminalTab?.shellType || 'zsh'
-											}
-											shellArgs={terminalCallbacks.shellArgs}
-											shellEnvVars={terminalCallbacks.shellEnvVars}
-											onTabSelect={(tabId) =>
-												terminalCallbacks.onTerminalTabSelect?.(activeSession.id, tabId)
-											}
-											onTabClose={(tabId) =>
-												terminalCallbacks.onTerminalTabClose?.(activeSession.id, tabId)
-											}
-											onNewTab={() => terminalCallbacks.onTerminalNewTab?.(activeSession.id)}
+											defaultShell={props.defaultShell || activeTerminalTab?.shellType || 'zsh'}
+											shellArgs={props.shellArgs}
+											shellEnvVars={props.shellEnvVars}
+											onTabSelect={(tabId) => props.onTerminalTabSelect?.(activeSession.id, tabId)}
+											onTabClose={(tabId) => props.onTerminalTabClose?.(activeSession.id, tabId)}
+											onNewTab={() => props.onTerminalNewTab?.(activeSession.id)}
 											onTabRename={(tabId, name) =>
-												terminalCallbacks.onTerminalTabRename?.(activeSession.id, tabId, name)
+												props.onTerminalTabRename?.(activeSession.id, tabId, name)
 											}
 											onTabReorder={(from, to) =>
-												terminalCallbacks.onTerminalTabReorder?.(activeSession.id, from, to)
+												props.onTerminalTabReorder?.(activeSession.id, from, to)
 											}
 											onTabStateChange={(tabId, state, exitCode) =>
-												terminalCallbacks.onTerminalTabStateChange?.(
-													activeSession.id,
-													tabId,
-													state,
-													exitCode
-												)
+												props.onTerminalTabStateChange?.(activeSession.id, tabId, state, exitCode)
 											}
 											onTabCwdChange={(tabId, cwd) =>
-												terminalCallbacks.onTerminalTabCwdChange?.(activeSession.id, tabId, cwd)
+												props.onTerminalTabCwdChange?.(activeSession.id, tabId, cwd)
 											}
 											onTabPidChange={(tabId, pid) =>
-												terminalCallbacks.onTerminalTabPidChange?.(activeSession.id, tabId, pid)
+												props.onTerminalTabPidChange?.(activeSession.id, tabId, pid)
 											}
 										/>
 									) : activeSession.inputMode === 'ai' &&
