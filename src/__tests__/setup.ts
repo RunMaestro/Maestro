@@ -519,6 +519,10 @@ const mockMaestro = {
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
 	},
+	wakatime: {
+		checkCli: vi.fn().mockResolvedValue({ available: false }),
+		validateApiKey: vi.fn().mockResolvedValue({ valid: false }),
+	},
 };
 
 // Only mock window.maestro if window exists (jsdom environment)

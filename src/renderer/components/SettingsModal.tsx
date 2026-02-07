@@ -402,19 +402,37 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	useEffect(() => {
 		if (!isOpen || !wakatimeEnabled) return;
 		let cancelled = false;
-		const check = () =>
-			window.maestro.wakatime.checkCli()
-				.then((status) => { if (!cancelled) setWakatimeCliStatus(status); })
-				.catch(() => { if (!cancelled) setWakatimeCliStatus({ available: false }); });
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
-		check();
+		window.maestro.wakatime.checkCli()
+			.then((status) => {
+				if (cancelled) return;
+				setWakatimeCliStatus(status);
+				// Retry after 3 seconds if CLI wasn't found (auto-install may be in progress)
+				if (!status.available) {
+					retryTimer = setTimeout(() => {
+						if (!cancelled) {
+							window.maestro.wakatime.checkCli()
+								.then((retryStatus) => { if (!cancelled) setWakatimeCliStatus(retryStatus); })
+								.catch(() => { if (!cancelled) setWakatimeCliStatus({ available: false }); });
+						}
+					}, 3000);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setWakatimeCliStatus({ available: false });
+				// Also retry on error, in case CLI is being installed
+				retryTimer = setTimeout(() => {
+					if (!cancelled) {
+						window.maestro.wakatime.checkCli()
+							.then((retryStatus) => { if (!cancelled) setWakatimeCliStatus(retryStatus); })
+							.catch(() => { if (!cancelled) setWakatimeCliStatus({ available: false }); });
+					}
+				}, 3000);
+			});
 
-		// Retry after 3 seconds if CLI wasn't found (auto-install may be in progress)
-		const retryTimer = setTimeout(() => {
-			if (!cancelled) check();
-		}, 3000);
-
-		return () => { cancelled = true; clearTimeout(retryTimer); };
+		return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
 	}, [isOpen, wakatimeEnabled]);
 
 	// Reset validation state when API key changes
