@@ -47,6 +47,9 @@ export const MODAL_PRIORITIES = {
 	/** Rename tab modal */
 	RENAME_TAB: 875,
 
+	/** Rename terminal tab modal */
+	TERMINAL_TAB_RENAME: 874,
+
 	/** Director's Notes modal - unified history and AI overview */
 	DIRECTOR_NOTES: 848,
 
