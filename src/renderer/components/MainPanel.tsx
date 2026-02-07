@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { LogViewer } from './LogViewer';
 import { TerminalOutput } from './TerminalOutput';
+import { TerminalView } from './TerminalView';
 import { InputArea } from './InputArea';
 import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -354,6 +355,25 @@ interface MainPanelProps {
 	onWizardCancelGeneration?: () => void;
 }
 
+type MainPanelTerminalCallbacks = {
+	onTerminalTabSelect?: (sessionId: string, tabId: string) => void;
+	onTerminalTabClose?: (sessionId: string, tabId: string) => void;
+	onTerminalNewTab?: (sessionId: string) => void;
+	onTerminalTabRename?: (sessionId: string, tabId: string, name: string) => void;
+	onTerminalTabReorder?: (sessionId: string, fromIndex: number, toIndex: number) => void;
+	onTerminalTabStateChange?: (
+		sessionId: string,
+		tabId: string,
+		state: 'idle' | 'busy' | 'exited',
+		exitCode?: number
+	) => void;
+	onTerminalTabCwdChange?: (sessionId: string, tabId: string, cwd: string) => void;
+	onTerminalTabPidChange?: (sessionId: string, tabId: string, pid: number) => void;
+	defaultShell?: string;
+	shellArgs?: string;
+	shellEnvVars?: Record<string, string>;
+};
+
 // PERFORMANCE: Wrap with React.memo to prevent re-renders when parent (App.tsx) re-renders
 // due to input value changes. The component will only re-render when its props actually change.
 export const MainPanel = React.memo(
@@ -477,6 +497,7 @@ export const MainPanel = React.memo(
 			// Inline wizard exit handler
 			onExitWizard,
 		} = props;
+		const terminalCallbacks = props as MainPanelProps & MainPanelTerminalCallbacks;
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -532,6 +553,11 @@ export const MainPanel = React.memo(
 				activeSession?.aiTabs?.[0] ??
 				null,
 			[activeSession?.aiTabs, activeSession?.activeTabId]
+		);
+		const activeTerminalTab = useMemo(
+			() =>
+				activeSession?.terminalTabs?.find((tab) => tab.id === activeSession.activeTerminalTabId),
+			[activeSession?.terminalTabs, activeSession?.activeTerminalTabId]
 		);
 		const activeTabError = activeTab?.agentError;
 
@@ -1716,9 +1742,48 @@ export const MainPanel = React.memo(
 								{/* Note: wizardState is per-tab (stored on activeTab), not per-session */}
 								{/* User clicks "Exit Wizard" button in DocumentGenerationView which calls onWizardComplete to convert tab to normal session */}
 								<div className="flex-1 overflow-hidden flex flex-col" data-tour="main-terminal">
-									{activeSession.inputMode === 'ai' &&
-									(activeTab?.wizardState?.isGeneratingDocs ||
-										(activeTab?.wizardState?.generatedDocuments?.length ?? 0) > 0) ? (
+									{activeSession.inputMode === 'terminal' ? (
+										<TerminalView
+											session={activeSession}
+											theme={theme}
+											fontFamily={props.fontFamily}
+											fontSize={14}
+											defaultShell={
+												terminalCallbacks.defaultShell || activeTerminalTab?.shellType || 'zsh'
+											}
+											shellArgs={terminalCallbacks.shellArgs}
+											shellEnvVars={terminalCallbacks.shellEnvVars}
+											onTabSelect={(tabId) =>
+												terminalCallbacks.onTerminalTabSelect?.(activeSession.id, tabId)
+											}
+											onTabClose={(tabId) =>
+												terminalCallbacks.onTerminalTabClose?.(activeSession.id, tabId)
+											}
+											onNewTab={() => terminalCallbacks.onTerminalNewTab?.(activeSession.id)}
+											onTabRename={(tabId, name) =>
+												terminalCallbacks.onTerminalTabRename?.(activeSession.id, tabId, name)
+											}
+											onTabReorder={(from, to) =>
+												terminalCallbacks.onTerminalTabReorder?.(activeSession.id, from, to)
+											}
+											onTabStateChange={(tabId, state, exitCode) =>
+												terminalCallbacks.onTerminalTabStateChange?.(
+													activeSession.id,
+													tabId,
+													state,
+													exitCode
+												)
+											}
+											onTabCwdChange={(tabId, cwd) =>
+												terminalCallbacks.onTerminalTabCwdChange?.(activeSession.id, tabId, cwd)
+											}
+											onTabPidChange={(tabId, pid) =>
+												terminalCallbacks.onTerminalTabPidChange?.(activeSession.id, tabId, pid)
+											}
+										/>
+									) : activeSession.inputMode === 'ai' &&
+									  (activeTab?.wizardState?.isGeneratingDocs ||
+											(activeTab?.wizardState?.generatedDocuments?.length ?? 0) > 0) ? (
 										<DocumentGenerationView
 											key={`wizard-gen-${activeSession.id}-${activeSession.activeTabId}`}
 											theme={theme}

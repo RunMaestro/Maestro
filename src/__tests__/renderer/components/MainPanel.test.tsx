@@ -33,6 +33,16 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 	}),
 }));
 
+vi.mock('../../../renderer/components/TerminalView', () => ({
+	TerminalView: (props: { session: { name: string } }) => {
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'terminal-view' },
+			`Terminal View for ${props.session?.name}`
+		);
+	},
+}));
+
 vi.mock('../../../renderer/components/InputArea', () => ({
 	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
 		return React.createElement(
@@ -321,6 +331,19 @@ describe('MainPanel', () => {
 			},
 		],
 		activeTabId: 'tab-1',
+		terminalTabs: [
+			{
+				id: 'terminal-tab-1',
+				name: null,
+				shellType: 'zsh',
+				pid: 0,
+				cwd: '/test/project',
+				createdAt: Date.now(),
+				state: 'idle',
+			},
+		],
+		activeTerminalTabId: 'terminal-tab-1',
+		closedTerminalTabHistory: [],
 		...overrides,
 	});
 
@@ -514,6 +537,14 @@ describe('MainPanel', () => {
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
+		});
+
+		it('should render TerminalView in terminal mode', () => {
+			const session = createSession({ inputMode: 'terminal' });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
 		});
 	});
 
