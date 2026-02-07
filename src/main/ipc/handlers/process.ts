@@ -645,8 +645,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
-	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
-	// Supports SSH remote execution when sessionSshRemoteConfig is provided
+	// DEPRECATED: process:runCommand was used for discrete command execution.
+	// Terminal mode now uses persistent PTY tabs via process:spawnTerminalTab.
+	// Keeping this handler for backwards compatibility with existing callers.
+	// Supports SSH remote execution when sessionSshRemoteConfig is provided.
 	ipcMain.handle(
 		'process:runCommand',
 		withIpcErrorLogging(
@@ -664,6 +666,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
+				logger.warn(
+					'process:runCommand is deprecated, use process:spawnTerminalTab for terminal workflows',
+					LOG_CONTEXT,
+					{ sessionId: config.sessionId }
+				);
 
 				// Get the shell from settings if not provided
 				// Custom shell path takes precedence over the selected shell ID

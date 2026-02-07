@@ -17,6 +17,7 @@ import {
 	registerProcessHandlers,
 	ProcessHandlerDependencies,
 } from '../../../../main/ipc/handlers/process';
+import { logger } from '../../../../main/utils/logger';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -813,6 +814,11 @@ describe('process IPC handlers', () => {
 				'zsh', // default shell
 				{}, // shell env vars
 				null // sshRemoteConfig (not set in this test)
+			);
+			expect(logger.warn).toHaveBeenCalledWith(
+				'process:runCommand is deprecated, use process:spawnTerminalTab for terminal workflows',
+				'[ProcessManager]',
+				{ sessionId: 'session-1' }
 			);
 			expect(result).toEqual({ exitCode: 0 });
 		});
