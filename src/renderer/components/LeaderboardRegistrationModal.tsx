@@ -27,13 +27,19 @@ import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
-import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
+import {
+	DEFAULT_SHORTCUTS,
+	TAB_SHORTCUTS,
+	FIXED_SHORTCUTS,
+	TERMINAL_TAB_SHORTCUTS,
+} from '../constants/shortcuts';
 import { generateId } from '../utils/ids';
 
 // Total shortcuts for calculating mastery percentage
 const TOTAL_SHORTCUTS_COUNT =
 	Object.keys(DEFAULT_SHORTCUTS).length +
 	Object.keys(TAB_SHORTCUTS).length +
+	Object.keys(TERMINAL_TAB_SHORTCUTS).length +
 	Object.keys(FIXED_SHORTCUTS).length;
 
 // Social media icons as SVG components

@@ -3019,14 +3019,14 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											</div>
 										)}
 
-										{/* AI Tab Shortcuts Section */}
+										{/* Shared Tab Shortcuts Section (AI + Terminal) */}
 										{tabShortcutsFiltered.length > 0 && (
 											<div>
 												<h3
 													className="text-xs font-bold uppercase mb-2 px-1"
 													style={{ color: theme.colors.textDim }}
 												>
-													AI Tab
+													Tab (AI + Terminal)
 												</h3>
 												<div className="space-y-2">
 													{tabShortcutsFiltered.map(renderShortcutItem)}

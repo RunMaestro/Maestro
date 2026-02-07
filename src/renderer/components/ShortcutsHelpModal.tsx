@@ -3,7 +3,7 @@ import { X, Award, CheckCircle, Trophy } from 'lucide-react';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { FIXED_SHORTCUTS } from '../constants/shortcuts';
+import { FIXED_SHORTCUTS, TERMINAL_TAB_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
@@ -33,6 +33,7 @@ export function ShortcutsHelpModal({
 		() => ({
 			...shortcuts,
 			...tabShortcuts,
+			...TERMINAL_TAB_SHORTCUTS,
 			...FIXED_SHORTCUTS,
 		}),
 		[shortcuts, tabShortcuts]
