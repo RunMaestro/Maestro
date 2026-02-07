@@ -448,6 +448,33 @@ describe('XTerminal', () => {
 		expect(xtermTheme.red).toBe('#dc322f');
 	});
 
+	it('uses a sensible cursor default and applies cursor option updates', () => {
+		act(() => {
+			root.render(<XTerminal sessionId="session-cursor" theme={theme} fontFamily="Monaco" />);
+		});
+
+		expect(mocks.terminalInstances).toHaveLength(1);
+		const terminal = mocks.terminalInstances[0];
+		expect(terminal.options.cursorBlink).toBe(true);
+		expect(terminal.options.cursorStyle).toBe('block');
+
+		act(() => {
+			root.render(
+				<XTerminal
+					sessionId="session-cursor"
+					theme={theme}
+					fontFamily="Monaco"
+					cursorBlink={false}
+					cursorStyle="underline"
+				/>
+			);
+		});
+
+		expect(mocks.terminalInstances).toHaveLength(1);
+		expect(terminal.options.cursorBlink).toBe(false);
+		expect(terminal.options.cursorStyle).toBe('underline');
+	});
+
 	it('bridges PTY data to terminal and terminal input back to PTY', () => {
 		const onInputData = vi.fn();
 		const processWrite = (globalThis as any).window.maestro.process.write as ReturnType<

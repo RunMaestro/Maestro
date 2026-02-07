@@ -13,6 +13,8 @@ interface XTerminalProps {
 	theme: Theme;
 	fontFamily: string;
 	fontSize?: number;
+	cursorBlink?: boolean;
+	cursorStyle?: 'block' | 'underline' | 'bar';
 	onData?: (data: string) => void;
 	onResize?: (cols: number, rows: number) => void;
 	onTitleChange?: (title: string) => void;
@@ -156,7 +158,16 @@ function mapMaestroThemeToXterm(theme: Theme): ITheme {
 }
 
 export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XTerminal(
-	{ sessionId, theme, fontFamily, fontSize, onData, onResize },
+	{
+		sessionId,
+		theme,
+		fontFamily,
+		fontSize,
+		cursorBlink = true,
+		cursorStyle = 'block',
+		onData,
+		onResize,
+	},
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -195,8 +206,8 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		}
 
 		const terminal = new Terminal({
-			cursorBlink: true,
-			cursorStyle: 'block',
+			cursorBlink,
+			cursorStyle,
 			fontFamily: fontFamily || 'Menlo, Monaco, "Courier New", monospace',
 			fontSize: fontSize ?? 14,
 			theme: mapMaestroThemeToXterm(theme),
@@ -278,6 +289,15 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 
 		terminalRef.current.options.theme = mapMaestroThemeToXterm(theme);
 	}, [theme]);
+
+	useEffect(() => {
+		if (!terminalRef.current) {
+			return;
+		}
+
+		terminalRef.current.options.cursorBlink = cursorBlink;
+		terminalRef.current.options.cursorStyle = cursorStyle;
+	}, [cursorBlink, cursorStyle]);
 
 	useEffect(() => {
 		if (!terminalRef.current) {
