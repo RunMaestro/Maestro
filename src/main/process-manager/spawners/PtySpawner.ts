@@ -125,6 +125,16 @@ export class PtySpawner {
 
 			// Handle output
 			ptyProcess.onData((data) => {
+				if (isTerminal) {
+					logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
+						sessionId,
+						pid: ptyProcess.pid,
+						dataPreview: data.substring(0, 100),
+					});
+					this.emitter.emit('data', sessionId, data);
+					return;
+				}
+
 				const managedProc = this.processes.get(sessionId);
 				const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
 				logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
