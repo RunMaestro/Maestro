@@ -10,7 +10,7 @@
  */
 
 import React, { useState, useRef, useCallback, memo } from 'react';
-import { X, Plus, Terminal as TerminalIcon, AlertCircle } from 'lucide-react';
+import { X, Plus, Terminal as TerminalIcon } from 'lucide-react';
 import type { TerminalTab, Theme } from '../types';
 import { getTerminalTabDisplayName } from '../utils/terminalTabHelpers';
 
@@ -63,7 +63,6 @@ const TerminalTabComponent = memo(function TerminalTabComponent({
 	const displayName = getTerminalTabDisplayName(tab, index);
 	const isExited = tab.state === 'exited';
 	const isBusy = tab.state === 'busy';
-	const hasErrorExit = isExited && tab.exitCode !== undefined && tab.exitCode !== 0;
 
 	return (
 		<div
@@ -110,9 +109,9 @@ const TerminalTabComponent = memo(function TerminalTabComponent({
 
 			<span className="text-[10px] uppercase opacity-70">{tab.shellType}</span>
 
-			{hasErrorExit && (
-				<span className="inline-flex items-center" title={`Exit code: ${tab.exitCode}`}>
-					<AlertCircle className="w-3 h-3" style={{ color: theme.colors.error }} />
+			{isExited && tab.exitCode !== undefined && tab.exitCode !== 0 && (
+				<span className="text-xs opacity-70" title={`Exit code: ${tab.exitCode}`}>
+					({tab.exitCode})
 				</span>
 			)}
 

@@ -12,9 +12,6 @@ vi.mock('lucide-react', () => ({
 	Terminal: ({ className }: { className?: string }) => (
 		<span data-testid="terminal-icon" className={className} />
 	),
-	AlertCircle: ({ className }: { className?: string }) => (
-		<span data-testid="alert-circle-icon" className={className} />
-	),
 }));
 
 const mockTheme = {
@@ -148,6 +145,34 @@ describe('TerminalTabBar', () => {
 		);
 
 		expect(container.querySelector('button[title="Close terminal"]')).toBeNull();
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('shows non-zero exit code for exited terminal tabs', () => {
+		const tabs = [
+			createTerminalTab({
+				id: 'terminal-1',
+				name: 'Exited Shell',
+				state: 'exited',
+				exitCode: 127,
+			}),
+		];
+
+		const { container, root } = mount(
+			<TerminalTabBar
+				tabs={tabs}
+				activeTabId="terminal-1"
+				theme={mockTheme}
+				onTabSelect={onTabSelect}
+				onTabClose={onTabClose}
+				onNewTab={onNewTab}
+			/>
+		);
+
+		expect(container.textContent).toContain('(127)');
 
 		act(() => {
 			root.unmount();
