@@ -9,6 +9,7 @@ import {
 	getActiveTerminalTab,
 	getActiveTerminalTabCount,
 	reorderTerminalTabs,
+	reopenTerminalTab,
 	setActiveTerminalTab,
 	renameTerminalTab,
 	getTerminalSessionId,
@@ -538,6 +539,89 @@ describe('terminalTabHelpers', () => {
 				index: 1,
 				closedAt: 70001,
 			});
+		});
+	});
+
+	describe('reopenTerminalTab', () => {
+		it('returns null when there is no closed terminal tab history', () => {
+			const session = createMockSession({
+				terminalTabs: [createMockTerminalTab({ id: 'tab-1' })],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [],
+			});
+
+			expect(reopenTerminalTab(session)).toBeNull();
+		});
+
+		it('reopens the most recently closed tab at its original position', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(80001);
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const tab3 = createMockTerminalTab({ id: 'tab-3' });
+			const closedTab = createMockTerminalTab({
+				id: 'closed-tab',
+				name: 'Infra',
+				shellType: 'bash',
+				cwd: '/tmp/work',
+				pid: 999,
+				state: 'exited',
+				exitCode: 137,
+				createdAt: 123,
+			});
+
+			const session = createMockSession({
+				terminalTabs: [tab1, tab3],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [
+					{
+						tab: closedTab,
+						index: 1,
+						closedAt: 70000,
+					},
+				],
+			});
+
+			const result = reopenTerminalTab(session);
+
+			expect(result).not.toBeNull();
+			expect(result?.session.terminalTabs.map((tab) => tab.id)).toEqual([
+				'tab-1',
+				'mock-terminal-tab-id',
+				'tab-3',
+			]);
+			expect(result?.session.activeTerminalTabId).toBe('mock-terminal-tab-id');
+			expect(result?.session.closedTerminalTabHistory).toEqual([]);
+			expect(result?.reopenedTab).toEqual({
+				...closedTab,
+				id: 'mock-terminal-tab-id',
+				pid: 0,
+				state: 'idle',
+				exitCode: undefined,
+				createdAt: 80001,
+			});
+		});
+
+		it('appends reopened tab when the original index is out of bounds', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(80002);
+			const tab1 = createMockTerminalTab({ id: 'tab-1' });
+			const closedTab = createMockTerminalTab({ id: 'closed-tab' });
+			const session = createMockSession({
+				terminalTabs: [tab1],
+				activeTerminalTabId: 'tab-1',
+				closedTerminalTabHistory: [
+					{
+						tab: closedTab,
+						index: 99,
+						closedAt: 70000,
+					},
+				],
+			});
+
+			const result = reopenTerminalTab(session);
+
+			expect(result?.session.terminalTabs.map((tab) => tab.id)).toEqual([
+				'tab-1',
+				'mock-terminal-tab-id',
+			]);
 		});
 	});
 

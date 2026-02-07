@@ -346,6 +346,11 @@ export interface CloseTerminalTabResult {
 	session: Session;
 }
 
+export interface ReopenTerminalTabResult {
+	reopenedTab: TerminalTab;
+	session: Session;
+}
+
 /**
  * Close a terminal tab and update closed-tab history.
  * Terminal sessions always keep at least one open tab.
@@ -380,6 +385,40 @@ export function closeTerminalTab(session: Session, tabId: string): CloseTerminal
 			terminalTabs: updatedTabs,
 			activeTerminalTabId: updatedActiveTabId,
 			closedTerminalTabHistory: updatedHistory,
+		},
+	};
+}
+
+/**
+ * Reopen the most recently closed terminal tab.
+ * Restores shell/cwd/name metadata while creating a fresh runtime tab state.
+ */
+export function reopenTerminalTab(session: Session): ReopenTerminalTabResult | null {
+	if (session.closedTerminalTabHistory.length === 0) {
+		return null;
+	}
+
+	const [closedEntry, ...remainingHistory] = session.closedTerminalTabHistory;
+	const reopenedTab: TerminalTab = {
+		...closedEntry.tab,
+		id: generateId(),
+		pid: 0,
+		state: 'idle',
+		exitCode: undefined,
+		createdAt: Date.now(),
+	};
+
+	const insertIndex = Math.max(0, Math.min(closedEntry.index, session.terminalTabs.length));
+	const updatedTabs = [...session.terminalTabs];
+	updatedTabs.splice(insertIndex, 0, reopenedTab);
+
+	return {
+		reopenedTab,
+		session: {
+			...session,
+			terminalTabs: updatedTabs,
+			activeTerminalTabId: reopenedTab.id,
+			closedTerminalTabHistory: remainingHistory,
 		},
 	};
 }
