@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session, TerminalTab } from '../../types';
-import { addTerminalTab } from '../terminalTabHelpers';
+import { addTerminalTab, updateTerminalTabPid } from '../terminalTabHelpers';
 
 function createMockTerminalTab(): TerminalTab {
 	return {
@@ -48,5 +48,36 @@ describe('terminalTabHelpers addTerminalTab', () => {
 
 		expect(result.tab.shellType).toBe('zsh');
 		expect(result.tab.cwd).toBe('/workspace/project');
+	});
+});
+
+describe('terminalTabHelpers updateTerminalTabPid', () => {
+	it('updates pid for the matching tab', () => {
+		const firstTab = createMockTerminalTab();
+		const secondTab = { ...createMockTerminalTab(), id: 'tab-2', pid: 456 };
+		const session = createMockSession({ terminalTabs: [firstTab, secondTab] });
+
+		const updated = updateTerminalTabPid(session, 'tab-2', 999);
+
+		expect(updated).not.toBe(session);
+		expect(updated.terminalTabs[0].pid).toBe(123);
+		expect(updated.terminalTabs[1].pid).toBe(999);
+		expect(session.terminalTabs[1].pid).toBe(456);
+	});
+
+	it('returns original session when pid is unchanged', () => {
+		const session = createMockSession();
+
+		const updated = updateTerminalTabPid(session, 'tab-1', 123);
+
+		expect(updated).toBe(session);
+	});
+
+	it('returns original session when tab does not exist', () => {
+		const session = createMockSession();
+
+		const updated = updateTerminalTabPid(session, 'missing-tab', 777);
+
+		expect(updated).toBe(session);
 	});
 });

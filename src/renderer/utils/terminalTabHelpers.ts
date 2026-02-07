@@ -134,6 +134,38 @@ export function updateTerminalTabCwd(session: Session, tabId: string, cwd: strin
 }
 
 /**
+ * Update terminal tab process ID.
+ */
+export function updateTerminalTabPid(session: Session, tabId: string, pid: number): Session {
+	let didUpdate = false;
+
+	const updatedTabs = session.terminalTabs.map((tab) => {
+		if (tab.id !== tabId) {
+			return tab;
+		}
+
+		if (tab.pid === pid) {
+			return tab;
+		}
+
+		didUpdate = true;
+		return {
+			...tab,
+			pid,
+		};
+	});
+
+	if (!didUpdate) {
+		return session;
+	}
+
+	return {
+		...session,
+		terminalTabs: updatedTabs,
+	};
+}
+
+/**
  * Reorder terminal tabs in a session.
  */
 export function reorderTerminalTabs(session: Session, fromIndex: number, toIndex: number): Session {
