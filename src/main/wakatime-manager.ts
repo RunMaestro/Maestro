@@ -333,7 +333,7 @@ export class WakaTimeManager {
 	}
 
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string): Promise<void> {
+	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string, agentType?: string): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -365,6 +365,18 @@ export class WakaTimeManager {
 			'--plugin', `maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
 			'--category', 'ai coding',
 		];
+
+		// Add agent type as language so WakaTime shows it instead of "Other"
+		if (agentType) {
+			const agentDisplayNames: Record<string, string> = {
+				'claude-code': 'Claude Code',
+				'codex': 'Codex',
+				'opencode': 'OpenCode',
+				'factory-droid': 'Factory Droid',
+			};
+			const language = agentDisplayNames[agentType] || agentType;
+			args.push('--language', language);
+		}
 
 		// Add branch info if we can detect it from the project directory
 		if (projectCwd) {
