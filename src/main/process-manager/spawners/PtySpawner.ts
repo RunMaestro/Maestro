@@ -136,7 +136,8 @@ export class PtySpawner {
 				}
 
 				const managedProc = this.processes.get(sessionId);
-				const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
+				// Terminal mode bypasses filtering and streams raw PTY bytes to xterm.
+				const cleanedData = stripControlSequences(data, managedProc?.lastCommand, false);
 				logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
 					sessionId,
 					pid: ptyProcess.pid,
