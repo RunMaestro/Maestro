@@ -199,6 +199,89 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			};
 
+			// Terminal tab shortcuts (terminal mode only, disabled in group chat)
+			if (
+				ctx.activeSessionId &&
+				ctx.activeSession?.inputMode === 'terminal' &&
+				ctx.activeSession?.terminalTabs &&
+				!ctx.activeGroupChatId
+			) {
+				const terminalTabs = ctx.activeSession.terminalTabs;
+				const activeTerminalTabId = ctx.activeSession.activeTerminalTabId;
+
+				// Ctrl+Shift+` - New terminal tab
+				if (
+					e.ctrlKey &&
+					e.shiftKey &&
+					!e.metaKey &&
+					!e.altKey &&
+					(e.code === 'Backquote' || e.key === '`' || e.key === '~')
+				) {
+					e.preventDefault();
+					ctx.handleTerminalNewTab?.(ctx.activeSession.id);
+					return;
+				}
+
+				// Cmd/Ctrl+K - Clear active terminal
+				if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+					e.preventDefault();
+					ctx.handleClearActiveTerminal?.(ctx.activeSession.id);
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					const currentIndex = terminalTabs.findIndex(
+						(tab: { id: string }) => tab.id === activeTerminalTabId
+					);
+					if (currentIndex > 0) {
+						ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex - 1].id);
+						trackShortcut('prevTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'nextTab')) {
+					e.preventDefault();
+					const currentIndex = terminalTabs.findIndex(
+						(tab: { id: string }) => tab.id === activeTerminalTabId
+					);
+					if (currentIndex >= 0 && currentIndex < terminalTabs.length - 1) {
+						ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex + 1].id);
+						trackShortcut('nextTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'closeTab')) {
+					e.preventDefault();
+					if (terminalTabs.length > 1 && activeTerminalTabId) {
+						ctx.handleTerminalTabClose?.(ctx.activeSession.id, activeTerminalTabId);
+						trackShortcut('closeTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
+					e.preventDefault();
+					ctx.handleReopenTerminalTab?.(ctx.activeSession.id);
+					trackShortcut('reopenClosedTab');
+					return;
+				}
+
+				for (let i = 1; i <= 9; i++) {
+					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
+						e.preventDefault();
+						const targetIndex = i - 1;
+						if (targetIndex < terminalTabs.length) {
+							ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[targetIndex].id);
+							trackShortcut(`goToTab${i}`);
+						}
+						return;
+					}
+				}
+			}
+
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)
 			if (ctx.isShortcut(e, 'toggleSidebar')) {
