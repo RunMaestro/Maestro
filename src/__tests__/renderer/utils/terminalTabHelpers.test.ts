@@ -264,6 +264,43 @@ describe('terminalTabHelpers', () => {
 			expect(result.session.closedTerminalTabHistory).toEqual([]);
 		});
 
+		it('migrates legacy shellLogs-only sessions to include terminal tabs', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(54321);
+			const legacySession = createMockSession({
+				id: 'session-shelllogs-legacy',
+				cwd: '/legacy/project',
+				shellLogs: [
+					{
+						id: 'legacy-shell-log-1',
+						timestamp: 123,
+						source: 'stdout',
+						text: 'npm test',
+					},
+				],
+				terminalTabs: undefined as unknown as TerminalTab[],
+				activeTerminalTabId: '',
+				closedTerminalTabHistory: undefined as unknown as Session['closedTerminalTabHistory'],
+			});
+
+			const result = ensureTerminalTabStructure(legacySession, 'bash');
+
+			expect(result.didMigrateTerminalTabs).toBe(true);
+			expect(result.session.terminalTabs).toEqual([
+				{
+					id: 'mock-terminal-tab-id',
+					name: null,
+					shellType: 'bash',
+					pid: 0,
+					cwd: '/legacy/project',
+					createdAt: 54321,
+					state: 'idle',
+				},
+			]);
+			expect(result.session.activeTerminalTabId).toBe('mock-terminal-tab-id');
+			expect(result.session.closedTerminalTabHistory).toEqual([]);
+			expect(result.session.shellLogs).toEqual(legacySession.shellLogs);
+		});
+
 		it('initializes closed terminal tab history when missing', () => {
 			const tab = createMockTerminalTab({ id: 'tab-1' });
 			const session = createMockSession({
