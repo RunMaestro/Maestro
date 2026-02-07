@@ -156,5 +156,25 @@ describe('THEMES constant', () => {
 				expect(isValidCssColor(LIGHT_ANSI_COLORS[colorKey] as string)).toBe(true);
 			}
 		});
+
+		it('should use distinctive ANSI palettes for selected dark themes', () => {
+			expect(THEMES.dracula.colors.ansiBlue).toBe('#bd93f9');
+			expect(THEMES.dracula.colors.ansiMagenta).toBe('#ff79c6');
+			expect(THEMES.dracula.colors.selection).toBe('rgba(189, 147, 249, 0.3)');
+
+			expect(THEMES.nord.colors.ansiBlue).toBe('#81a1c1');
+			expect(THEMES.nord.colors.ansiBrightCyan).toBe('#8fbcbb');
+			expect(THEMES.nord.colors.selection).toBe('rgba(136, 192, 208, 0.3)');
+
+			expect(THEMES['gruvbox-dark'].colors.ansiBlue).toBe('#458588');
+			expect(THEMES['gruvbox-dark'].colors.ansiBrightGreen).toBe('#b8bb26');
+			expect(THEMES['gruvbox-dark'].colors.selection).toBe('rgba(69, 133, 136, 0.3)');
+		});
+
+		it('should keep distinctive ANSI palettes separate from generic dark defaults', () => {
+			expect(THEMES.dracula.colors.ansiBlue).not.toBe(DARK_ANSI_COLORS.ansiBlue);
+			expect(THEMES.nord.colors.ansiBlue).not.toBe(DARK_ANSI_COLORS.ansiBlue);
+			expect(THEMES['gruvbox-dark'].colors.ansiBlue).not.toBe(DARK_ANSI_COLORS.ansiBlue);
+		});
 	});
 });

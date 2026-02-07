@@ -73,6 +73,66 @@ export const LIGHT_ANSI_COLORS: ThemeAnsiColors = {
 	selection: 'rgba(38, 139, 210, 0.3)',
 };
 
+const DRACULA_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#21222c',
+	ansiRed: '#ff5555',
+	ansiGreen: '#50fa7b',
+	ansiYellow: '#f1fa8c',
+	ansiBlue: '#bd93f9',
+	ansiMagenta: '#ff79c6',
+	ansiCyan: '#8be9fd',
+	ansiWhite: '#f8f8f2',
+	ansiBrightBlack: '#6272a4',
+	ansiBrightRed: '#ff6e6e',
+	ansiBrightGreen: '#69ff94',
+	ansiBrightYellow: '#ffffa5',
+	ansiBrightBlue: '#d6acff',
+	ansiBrightMagenta: '#ff92df',
+	ansiBrightCyan: '#a4ffff',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(189, 147, 249, 0.3)',
+};
+
+const NORD_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#3b4252',
+	ansiRed: '#bf616a',
+	ansiGreen: '#a3be8c',
+	ansiYellow: '#ebcb8b',
+	ansiBlue: '#81a1c1',
+	ansiMagenta: '#b48ead',
+	ansiCyan: '#88c0d0',
+	ansiWhite: '#e5e9f0',
+	ansiBrightBlack: '#4c566a',
+	ansiBrightRed: '#bf616a',
+	ansiBrightGreen: '#a3be8c',
+	ansiBrightYellow: '#ebcb8b',
+	ansiBrightBlue: '#81a1c1',
+	ansiBrightMagenta: '#b48ead',
+	ansiBrightCyan: '#8fbcbb',
+	ansiBrightWhite: '#eceff4',
+	selection: 'rgba(136, 192, 208, 0.3)',
+};
+
+const GRUVBOX_DARK_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#282828',
+	ansiRed: '#cc241d',
+	ansiGreen: '#98971a',
+	ansiYellow: '#d79921',
+	ansiBlue: '#458588',
+	ansiMagenta: '#b16286',
+	ansiCyan: '#689d6a',
+	ansiWhite: '#a89984',
+	ansiBrightBlack: '#928374',
+	ansiBrightRed: '#fb4934',
+	ansiBrightGreen: '#b8bb26',
+	ansiBrightYellow: '#fabd2f',
+	ansiBrightBlue: '#83a598',
+	ansiBrightMagenta: '#d3869b',
+	ansiBrightCyan: '#8ec07c',
+	ansiBrightWhite: '#ebdbb2',
+	selection: 'rgba(69, 133, 136, 0.3)',
+};
+
 export const THEMES: Record<ThemeId, Theme> = {
 	// Dark themes
 	dracula: {
@@ -93,7 +153,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
-			...DARK_ANSI_COLORS,
+			...DRACULA_ANSI_COLORS,
 		},
 	},
 	monokai: {
@@ -135,7 +195,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a3be8c',
 			warning: '#ebcb8b',
 			error: '#bf616a',
-			...DARK_ANSI_COLORS,
+			...NORD_ANSI_COLORS,
 		},
 	},
 	'tokyo-night': {
@@ -198,7 +258,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#b8bb26',
 			warning: '#fabd2f',
 			error: '#fb4934',
-			...DARK_ANSI_COLORS,
+			...GRUVBOX_DARK_ANSI_COLORS,
 		},
 	},
 	// Light themes
