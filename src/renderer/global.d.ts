@@ -2603,6 +2603,33 @@ interface MaestroAPI {
 			};
 		}) => Promise<string | null>;
 	};
+
+	// Granola meeting transcript API
+	granola: {
+		getDocuments: (limit?: number) => Promise<{
+			success: true;
+			data: Array<{
+				id: string;
+				title: string;
+				createdAt: number;
+				participants: string[];
+			}>;
+		} | {
+			success: false;
+			error: 'not_installed' | 'auth_expired' | 'api_error' | 'network_error';
+		}>;
+		getTranscript: (documentId: string) => Promise<{
+			success: true;
+			data: {
+				documentId: string;
+				title: string;
+				plainText: string;
+			};
+		} | {
+			success: false;
+			error: 'not_installed' | 'auth_expired' | 'api_error' | 'network_error';
+		}>;
+	};
 }
 
 declare global {

@@ -51,6 +51,7 @@ import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
+import { registerGranolaHandlers } from './granola';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -91,6 +92,7 @@ export { registerNotificationsHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
+export { registerGranolaHandlers };
 export type { TabNamingHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
@@ -263,6 +265,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register agent error handlers (error state management)
 	registerAgentErrorHandlers();
+	// Register Granola meeting transcript handlers (no dependencies needed)
+	registerGranolaHandlers();
 	// Register tab naming handlers for automatic tab naming
 	registerTabNamingHandlers({
 		getProcessManager: deps.getProcessManager,

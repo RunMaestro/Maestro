@@ -136,6 +136,9 @@ export interface UseRightPanelPropsDeps {
 	// Document Graph handlers
 	handleFocusFileInGraph: (relativePath: string) => void;
 	handleOpenLastDocumentGraph: () => void;
+
+	// Granola handlers
+	handleInjectTranscript?: (title: string, plainText: string) => void;
 }
 
 /**
@@ -229,6 +232,9 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			onFocusFileInGraph: deps.handleFocusFileInGraph,
 			lastGraphFocusFile: deps.lastGraphFocusFilePath,
 			onOpenLastDocumentGraph: deps.handleOpenLastDocumentGraph,
+
+			// Granola
+			onInjectTranscript: deps.handleInjectTranscript,
 		}),
 		[
 			// Primitive dependencies for minimal re-computation
@@ -291,6 +297,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			deps.handleMainPanelFileClick,
 			deps.handleFocusFileInGraph,
 			deps.handleOpenLastDocumentGraph,
+			deps.handleInjectTranscript,
 			// Refs (stable, but included for completeness)
 			deps.fileTreeContainerRef,
 			deps.fileTreeFilterInputRef,

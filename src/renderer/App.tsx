@@ -13354,6 +13354,38 @@ You are taking over this conversation. Based on the context above, provide a bri
 		sidebarContainerRef,
 	});
 
+	// Granola transcript injection handler
+	const handleInjectTranscript = useCallback(
+		(title: string, plainText: string) => {
+			if (!activeSession) return;
+			const contextText = `[Meeting transcript from "${title}"]\n\n${plainText}`;
+
+			if (activeSession.isInteractiveAI) {
+				// Write directly to the interactive PTY with bracketed paste
+				const activeTabId = activeSession.activeTabId || activeSession.aiTabs?.[0]?.id;
+				if (activeTabId) {
+					const targetSessionId = `${activeSession.id}-ai-${activeTabId}`;
+					const wrapped = `\x1b[200~${contextText}\x1b[201~\n`;
+					window.maestro.process.write(targetSessionId, wrapped);
+				}
+			} else {
+				// For batch mode sessions, update the input field with the context
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== activeSession.id) return s;
+						const tabs = (s.aiTabs || []).map((tab) =>
+							tab.id === (s.activeTabId || s.aiTabs?.[0]?.id)
+								? { ...tab, inputValue: contextText + '\n\n' + (tab.inputValue || '') }
+								: tab
+						);
+						return { ...s, aiTabs: tabs };
+					})
+				);
+			}
+		},
+		[activeSession, setSessions]
+	);
+
 	const rightPanelProps = useRightPanelProps({
 		// Session & Theme
 		activeSession,
@@ -13444,6 +13476,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Document Graph handlers
 		handleFocusFileInGraph,
 		handleOpenLastDocumentGraph,
+
+		// Granola handlers
+		handleInjectTranscript,
 	});
 
 	return (

@@ -16,6 +16,7 @@ import { AutoRun, AutoRunHandle } from './AutoRun';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { GranolaPanel } from './GranolaPanel';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -133,6 +134,8 @@ interface RightPanelProps {
 	lastGraphFocusFile?: string;
 	/** Callback to open the last document graph */
 	onOpenLastDocumentGraph?: () => void;
+	/** Callback to inject a Granola meeting transcript into the active AI session */
+	onInjectTranscript?: (title: string, plainText: string) => void;
 }
 
 export const RightPanel = memo(
@@ -199,6 +202,7 @@ export const RightPanel = memo(
 			onFocusFileInGraph,
 			lastGraphFocusFile,
 			onOpenLastDocumentGraph,
+			onInjectTranscript,
 		} = props;
 
 		const historyPanelRef = useRef<HistoryPanelHandle>(null);
@@ -428,7 +432,7 @@ export const RightPanel = memo(
 
 				{/* Tab Header */}
 				<div className="flex border-b h-16" style={{ borderColor: theme.colors.border }}>
-					{['files', 'history', 'autorun'].map((tab) => (
+					{['files', 'history', 'autorun', 'granola'].map((tab) => (
 						<button
 							key={tab}
 							onClick={() => setActiveRightTab(tab as RightPanelTab)}
@@ -439,7 +443,11 @@ export const RightPanel = memo(
 							}}
 							data-tour={`${tab}-tab`}
 						>
-							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
+							{tab === 'autorun'
+									? 'Auto Run'
+									: tab === 'granola'
+										? 'Meetings'
+										: tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
 
@@ -533,6 +541,15 @@ export const RightPanel = memo(
 					{activeRightTab === 'autorun' && (
 						<div data-tour="autorun-panel" className="h-full">
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
+						</div>
+					)}
+
+					{activeRightTab === 'granola' && onInjectTranscript && (
+						<div className="h-full">
+							<GranolaPanel
+								theme={theme}
+								onInjectTranscript={onInjectTranscript}
+							/>
 						</div>
 					)}
 				</div>
