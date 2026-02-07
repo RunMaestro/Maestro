@@ -191,6 +191,7 @@ import {
 	navigateToPrevUnifiedTab,
 	hasActiveWizard,
 } from './utils/tabHelpers';
+import { createTerminalTab } from './utils/terminalTabHelpers';
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
@@ -4622,6 +4623,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				showThinking: defaultShowThinking,
 			};
 
+			// Initialize with a single terminal tab
+			const defaultTerminalTab = createTerminalTab(defaultShell || 'zsh', workingDir, null);
+
 			const newSession: Session = {
 				id: newId,
 				name,
@@ -4649,6 +4653,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// AI process PID (terminal uses runCommand which spawns fresh shells)
 				// For agents that requiresPromptToStart, this starts as 0 and gets set on first message
 				aiPid,
+				terminalTabs: [defaultTerminalTab],
+				activeTerminalTabId: defaultTerminalTab.id,
+				closedTerminalTabHistory: [],
 				terminalPid: 0,
 				port: 3000 + Math.floor(Math.random() * 100),
 				isLive: false,

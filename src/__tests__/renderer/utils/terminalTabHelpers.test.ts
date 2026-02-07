@@ -90,6 +90,20 @@ describe('terminalTabHelpers', () => {
 				state: 'idle',
 			});
 		});
+
+		it('creates a numbered terminal tab when name is null', () => {
+			vi.spyOn(Date, 'now').mockReturnValue(98765);
+
+			expect(createTerminalTab('fish', '/workspace', null)).toEqual({
+				id: 'mock-terminal-tab-id',
+				name: null,
+				shellType: 'fish',
+				pid: 0,
+				cwd: '/workspace',
+				createdAt: 98765,
+				state: 'idle',
+			});
+		});
 	});
 
 	describe('getTerminalTabDisplayName', () => {
