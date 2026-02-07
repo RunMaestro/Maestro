@@ -1020,6 +1020,17 @@ interface TerminalOutputProps {
 	}) => void; // Callback to open saved file in a tab
 }
 
+/**
+ * TerminalOutput - Log-based output display for AI mode
+ *
+ * This component renders conversation history as styled log entries.
+ * Used for AI agent output (Claude Code, Codex, etc.), NOT for terminal mode.
+ *
+ * Terminal mode uses XTerminal component for full terminal emulation.
+ *
+ * @see XTerminal.tsx for terminal mode rendering
+ * @see TerminalView.tsx for terminal tab management
+ */
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
 // but TerminalOutput's props haven't changed. This is critical because TerminalOutput
 // can render many log entries and is expensive to re-render.
@@ -1400,7 +1411,13 @@ export const TerminalOutput = memo(
 					scrollSaveTimerRef.current = null;
 				}, 200);
 			}
-		}, [activeTabId, filteredLogs.length, onScrollPositionChange, onAtBottomChange, autoScrollAiMode]);
+		}, [
+			activeTabId,
+			filteredLogs.length,
+			onScrollPositionChange,
+			onAtBottomChange,
+			autoScrollAiMode,
+		]);
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
 		const handleScroll = useThrottledCallback(handleScrollInner, 16);
@@ -1531,8 +1548,8 @@ export const TerminalOutput = memo(
 			});
 
 			observer.observe(container, {
-				childList: true,   // New/removed DOM nodes (new log entries, tool events)
-				subtree: true,     // Watch all descendants, not just direct children
+				childList: true, // New/removed DOM nodes (new log entries, tool events)
+				subtree: true, // Watch all descendants, not just direct children
 				characterData: true, // Text node mutations (thinking stream text growth)
 			});
 
@@ -1793,43 +1810,62 @@ export const TerminalOutput = memo(
 
 				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
 				{/* Visible when: not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin) */}
-				{session.inputMode === 'ai' && setAutoScrollAiMode && (!isAtBottom || isAutoScrollActive) && (
-					<button
-						onClick={() => {
-							if (isAutoScrollActive && isAtBottom) {
-								// Currently pinned at bottom — unpin
-								setAutoScrollAiMode(false);
-							} else {
-								// Not pinned — jump to bottom and pin
-								setAutoScrollPaused(false);
-								setAutoScrollAiMode(true);
-								setHasNewMessages(false);
-								setNewMessageCount(0);
-								if (scrollContainerRef.current) {
-									scrollContainerRef.current.scrollTo({
-										top: scrollContainerRef.current.scrollHeight,
-										behavior: 'smooth',
-									});
+				{session.inputMode === 'ai' &&
+					setAutoScrollAiMode &&
+					(!isAtBottom || isAutoScrollActive) && (
+						<button
+							onClick={() => {
+								if (isAutoScrollActive && isAtBottom) {
+									// Currently pinned at bottom — unpin
+									setAutoScrollAiMode(false);
+								} else {
+									// Not pinned — jump to bottom and pin
+									setAutoScrollPaused(false);
+									setAutoScrollAiMode(true);
+									setHasNewMessages(false);
+									setNewMessageCount(0);
+									if (scrollContainerRef.current) {
+										scrollContainerRef.current.scrollTo({
+											top: scrollContainerRef.current.scrollHeight,
+											behavior: 'smooth',
+										});
+									}
 								}
+							}}
+							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
+							style={{
+								backgroundColor: isAutoScrollActive
+									? theme.colors.accent
+									: hasNewMessages
+										? theme.colors.accent
+										: theme.colors.bgSidebar,
+								color: isAutoScrollActive
+									? theme.colors.accentForeground
+									: hasNewMessages
+										? theme.colors.accentForeground
+										: theme.colors.textDim,
+								border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
+								animation:
+									hasNewMessages && !isAutoScrollActive
+										? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+										: undefined,
+							}}
+							title={
+								isAutoScrollActive
+									? 'Auto-scroll ON (click to unpin)'
+									: hasNewMessages
+										? 'New messages (click to pin to bottom)'
+										: 'Scroll to bottom (click to pin)'
 							}
-						}}
-						className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
-						style={{
-							backgroundColor: isAutoScrollActive ? theme.colors.accent : hasNewMessages ? theme.colors.accent : theme.colors.bgSidebar,
-							color: isAutoScrollActive ? theme.colors.accentForeground : hasNewMessages ? theme.colors.accentForeground : theme.colors.textDim,
-							border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
-							animation: hasNewMessages && !isAutoScrollActive ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined,
-						}}
-						title={isAutoScrollActive ? 'Auto-scroll ON (click to unpin)' : hasNewMessages ? 'New messages (click to pin to bottom)' : 'Scroll to bottom (click to pin)'}
-					>
-						<ArrowDown className="w-4 h-4" />
-						{newMessageCount > 0 && !isAutoScrollActive && (
-							<span className="text-xs font-bold">
-								{newMessageCount > 99 ? '99+' : newMessageCount}
-							</span>
-						)}
-					</button>
-				)}
+						>
+							<ArrowDown className="w-4 h-4" />
+							{newMessageCount > 0 && !isAutoScrollActive && (
+								<span className="text-xs font-bold">
+									{newMessageCount > 99 ? '99+' : newMessageCount}
+								</span>
+							)}
+						</button>
+					)}
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (
