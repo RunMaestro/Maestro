@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { THEMES } from '../../../renderer/constants/themes';
+import { DARK_ANSI_COLORS, LIGHT_ANSI_COLORS, THEMES } from '../../../renderer/constants/themes';
 import type { ThemeColors } from '../../../shared/theme-types';
 import { isValidThemeId } from '../../../shared/theme-types';
 
@@ -25,6 +25,26 @@ const REQUIRED_COLORS: (keyof ThemeColors)[] = [
 	'success',
 	'warning',
 	'error',
+];
+
+const REQUIRED_ANSI_COLORS: (keyof ThemeColors)[] = [
+	'ansiBlack',
+	'ansiRed',
+	'ansiGreen',
+	'ansiYellow',
+	'ansiBlue',
+	'ansiMagenta',
+	'ansiCyan',
+	'ansiWhite',
+	'ansiBrightBlack',
+	'ansiBrightRed',
+	'ansiBrightGreen',
+	'ansiBrightYellow',
+	'ansiBrightBlue',
+	'ansiBrightMagenta',
+	'ansiBrightCyan',
+	'ansiBrightWhite',
+	'selection',
 ];
 
 // Hex color regex
@@ -111,6 +131,22 @@ describe('THEMES constant', () => {
 
 		it('should have at least one light theme', () => {
 			expect(themes.some((t) => t.mode === 'light')).toBe(true);
+		});
+	});
+
+	describe('ANSI palette defaults', () => {
+		it('should define all required dark ANSI colors', () => {
+			for (const colorKey of REQUIRED_ANSI_COLORS) {
+				expect(DARK_ANSI_COLORS[colorKey]).toBeDefined();
+				expect(isValidCssColor(DARK_ANSI_COLORS[colorKey] as string)).toBe(true);
+			}
+		});
+
+		it('should define all required light ANSI colors', () => {
+			for (const colorKey of REQUIRED_ANSI_COLORS) {
+				expect(LIGHT_ANSI_COLORS[colorKey]).toBeDefined();
+				expect(isValidCssColor(LIGHT_ANSI_COLORS[colorKey] as string)).toBe(true);
+			}
 		});
 	});
 });

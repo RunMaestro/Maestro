@@ -10,7 +10,68 @@
  * Do NOT duplicate theme definitions elsewhere.
  */
 
-import type { Theme, ThemeId } from './theme-types';
+import type { Theme, ThemeColors, ThemeId } from './theme-types';
+
+type ThemeAnsiColors = Pick<
+	ThemeColors,
+	| 'ansiBlack'
+	| 'ansiRed'
+	| 'ansiGreen'
+	| 'ansiYellow'
+	| 'ansiBlue'
+	| 'ansiMagenta'
+	| 'ansiCyan'
+	| 'ansiWhite'
+	| 'ansiBrightBlack'
+	| 'ansiBrightRed'
+	| 'ansiBrightGreen'
+	| 'ansiBrightYellow'
+	| 'ansiBrightBlue'
+	| 'ansiBrightMagenta'
+	| 'ansiBrightCyan'
+	| 'ansiBrightWhite'
+	| 'selection'
+>;
+
+export const DARK_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#282c34',
+	ansiRed: '#e06c75',
+	ansiGreen: '#98c379',
+	ansiYellow: '#e5c07b',
+	ansiBlue: '#61afef',
+	ansiMagenta: '#c678dd',
+	ansiCyan: '#56b6c2',
+	ansiWhite: '#abb2bf',
+	ansiBrightBlack: '#5c6370',
+	ansiBrightRed: '#e06c75',
+	ansiBrightGreen: '#98c379',
+	ansiBrightYellow: '#e5c07b',
+	ansiBrightBlue: '#61afef',
+	ansiBrightMagenta: '#c678dd',
+	ansiBrightCyan: '#56b6c2',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(97, 175, 239, 0.3)',
+};
+
+export const LIGHT_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#073642',
+	ansiRed: '#dc322f',
+	ansiGreen: '#859900',
+	ansiYellow: '#b58900',
+	ansiBlue: '#268bd2',
+	ansiMagenta: '#d33682',
+	ansiCyan: '#2aa198',
+	ansiWhite: '#eee8d5',
+	ansiBrightBlack: '#586e75',
+	ansiBrightRed: '#cb4b16',
+	ansiBrightGreen: '#859900',
+	ansiBrightYellow: '#b58900',
+	ansiBrightBlue: '#268bd2',
+	ansiBrightMagenta: '#6c71c4',
+	ansiBrightCyan: '#2aa198',
+	ansiBrightWhite: '#fdf6e3',
+	selection: 'rgba(38, 139, 210, 0.3)',
+};
 
 export const THEMES: Record<ThemeId, Theme> = {
 	// Dark themes
