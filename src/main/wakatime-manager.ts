@@ -301,13 +301,32 @@ export class WakaTimeManager {
 		}
 	}
 
+	/**
+	 * Read the WakaTime API key from ~/.wakatime.cfg (INI format).
+	 * Falls back to empty string if the file doesn't exist or can't be parsed.
+	 */
+	private readApiKeyFromConfig(): string {
+		try {
+			const cfgPath = path.join(os.homedir(), '.wakatime.cfg');
+			if (!fs.existsSync(cfgPath)) return '';
+			const content = fs.readFileSync(cfgPath, 'utf-8');
+			const match = content.match(/^api_key\s*=\s*(.+)$/m);
+			return match ? match[1].trim() : '';
+		} catch {
+			return '';
+		}
+	}
+
 	/** Send a heartbeat for a session's activity */
 	async sendHeartbeat(sessionId: string, projectPath: string, projectName: string): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
 
-		const apiKey = this.settingsStore.get('wakatimeApiKey', '') as string;
+		let apiKey = this.settingsStore.get('wakatimeApiKey', '') as string;
+		if (!apiKey) {
+			apiKey = this.readApiKeyFromConfig();
+		}
 		if (!apiKey) return;
 
 		// Debounce per session

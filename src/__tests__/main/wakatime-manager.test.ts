@@ -33,6 +33,7 @@ vi.mock('../../main/utils/logger', () => ({
 vi.mock('fs', () => ({
 	default: {
 		existsSync: vi.fn(() => false),
+		readFileSync: vi.fn(() => ''),
 		mkdirSync: vi.fn(),
 		chmodSync: vi.fn(),
 		createWriteStream: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('fs', () => ({
 		unlink: vi.fn(),
 	},
 	existsSync: vi.fn(() => false),
+	readFileSync: vi.fn(() => ''),
 	mkdirSync: vi.fn(),
 	chmodSync: vi.fn(),
 	createWriteStream: vi.fn(),
@@ -286,15 +288,108 @@ describe('WakaTimeManager', () => {
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
-		it('should skip when API key is empty', async () => {
+		it('should skip when API key is empty and no cfg file exists', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				return defaultVal;
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should fall back to ~/.wakatime.cfg when settings API key is empty', async () => {
 			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
 				if (key === 'wakatimeEnabled') return true;
 				if (key === 'wakatimeApiKey') return '';
 				return defaultVal;
 			});
 
+			// ~/.wakatime.cfg exists and contains an api_key
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => {
+				return String(p).endsWith('.wakatime.cfg');
+			});
+			vi.mocked(fs.readFileSync).mockReturnValue(
+				'[settings]\napi_key = cfg-api-key-456\n'
+			);
+
+			// CLI detection + heartbeat
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', '/project/path', 'My Project');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli', [
+				'--key', 'cfg-api-key-456',
+				'--entity', '/project/path',
+				'--entity-type', 'app',
+				'--project', 'My Project',
+				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
+				'--category', 'ai coding',
+			]);
+		});
+
+		it('should prefer settings API key over ~/.wakatime.cfg', async () => {
+			// Settings has an API key
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return 'settings-key-789';
+				return defaultVal;
+			});
+
+			// CLI detection + heartbeat
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', '/project/path', 'My Project');
+
+			// Should use the settings key, not read from cfg
+			expect(fs.readFileSync).not.toHaveBeenCalled();
+			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli', expect.arrayContaining([
+				'--key', 'settings-key-789',
+			]));
+		});
+
+		it('should handle malformed ~/.wakatime.cfg gracefully', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				return defaultVal;
+			});
+
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => {
+				return String(p).endsWith('.wakatime.cfg');
+			});
+			vi.mocked(fs.readFileSync).mockReturnValue('garbage content without api_key');
+
 			await manager.sendHeartbeat('session-1', '/project', 'My Project');
 
+			// No API key found in cfg either — should skip
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should handle read error on ~/.wakatime.cfg gracefully', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				return defaultVal;
+			});
+
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => {
+				return String(p).endsWith('.wakatime.cfg');
+			});
+			vi.mocked(fs.readFileSync).mockImplementation(() => {
+				throw new Error('Permission denied');
+			});
+
+			await manager.sendHeartbeat('session-1', '/project', 'My Project');
+
+			// Read error — should skip gracefully
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
