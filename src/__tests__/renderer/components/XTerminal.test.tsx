@@ -143,6 +143,7 @@ describe('XTerminal', () => {
 				root.unmount();
 			});
 		}
+		vi.useRealTimers();
 		container.remove();
 	});
 
@@ -254,5 +255,67 @@ describe('XTerminal', () => {
 
 		const terminalContainer = container.firstElementChild as HTMLElement;
 		expect(terminalContainer.dataset.fontSize).toBe('14');
+	});
+
+	it('handles debounced resize and notifies PTY + callbacks', () => {
+		vi.useFakeTimers();
+		const onResize = vi.fn();
+		const processResize = (globalThis as any).window.maestro.process.resize as ReturnType<
+			typeof vi.fn
+		>;
+
+		act(() => {
+			root.render(
+				<XTerminal
+					sessionId="session-resize"
+					theme={theme}
+					fontFamily="Monaco"
+					onResize={onResize}
+				/>
+			);
+		});
+
+		const fitAddon = mocks.fitAddonInstances[0];
+		expect(fitAddon.fit).toHaveBeenCalledTimes(1);
+
+		act(() => {
+			vi.advanceTimersByTime(99);
+		});
+
+		expect(onResize).not.toHaveBeenCalled();
+		expect(processResize).not.toHaveBeenCalled();
+
+		act(() => {
+			vi.advanceTimersByTime(1);
+		});
+
+		expect(fitAddon.fit).toHaveBeenCalledTimes(2);
+		expect(onResize).toHaveBeenCalledWith(80, 24);
+		expect(processResize).toHaveBeenCalledWith('session-resize', 80, 24);
+	});
+
+	it('clears pending resize debounce on unmount', () => {
+		vi.useFakeTimers();
+		const processResize = (globalThis as any).window.maestro.process.resize as ReturnType<
+			typeof vi.fn
+		>;
+
+		act(() => {
+			root.render(<XTerminal sessionId="session-cleanup" theme={theme} fontFamily="Monaco" />);
+		});
+
+		act(() => {
+			vi.advanceTimersByTime(0);
+		});
+
+		act(() => {
+			root.unmount();
+		});
+
+		act(() => {
+			vi.advanceTimersByTime(100);
+		});
+
+		expect(processResize).not.toHaveBeenCalled();
 	});
 });

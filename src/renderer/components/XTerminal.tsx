@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { Terminal, type ITheme } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
@@ -88,7 +88,7 @@ function mapMaestroThemeToXterm(theme: Theme): ITheme {
 }
 
 export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XTerminal(
-	{ sessionId, theme, fontFamily, fontSize },
+	{ sessionId, theme, fontFamily, fontSize, onResize },
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -101,6 +101,23 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		unicode11: null,
 	});
 	const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	const handleResize = useCallback(() => {
+		if (resizeTimeoutRef.current) {
+			clearTimeout(resizeTimeoutRef.current);
+		}
+
+		resizeTimeoutRef.current = setTimeout(() => {
+			if (!addonsRef.current.fit || !terminalRef.current) {
+				return;
+			}
+
+			addonsRef.current.fit.fit();
+			const { cols, rows } = terminalRef.current;
+			onResize?.(cols, rows);
+			window.maestro.process.resize(sessionId, cols, rows).catch(() => {});
+		}, 100);
+	}, [onResize, sessionId]);
 
 	useEffect(() => {
 		if (!containerRef.current || terminalRef.current) {
@@ -173,6 +190,26 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			};
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!containerRef.current) {
+			return;
+		}
+
+		const resizeObserver = new ResizeObserver(() => {
+			handleResize();
+		});
+
+		resizeObserver.observe(containerRef.current);
+
+		return () => {
+			resizeObserver.disconnect();
+			if (resizeTimeoutRef.current) {
+				clearTimeout(resizeTimeoutRef.current);
+				resizeTimeoutRef.current = null;
+			}
+		};
+	}, [handleResize]);
 
 	useImperativeHandle(
 		ref,
