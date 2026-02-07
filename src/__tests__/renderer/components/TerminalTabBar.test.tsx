@@ -92,6 +92,11 @@ describe('TerminalTabBar', () => {
 			/>
 		);
 
+		const tabBar = container.firstElementChild as HTMLDivElement | null;
+		expect(tabBar).toBeTruthy();
+		expect(tabBar?.className).toContain('overflow-x-auto');
+		expect(tabBar?.className).toContain('scrollbar-thin');
+
 		expect(container.textContent).toContain('Terminal 1');
 		expect(container.textContent).toContain('Build Shell');
 

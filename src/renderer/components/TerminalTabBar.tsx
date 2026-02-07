@@ -188,10 +188,11 @@ export const TerminalTabBar = memo(function TerminalTabBar({
 	return (
 		<div
 			ref={containerRef}
-			className="flex items-center border-b overflow-x-auto"
+			className="flex items-center border-b overflow-x-auto scrollbar-thin"
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
+				scrollbarWidth: 'thin',
 			}}
 		>
 			{tabs.map((tab, index) => (
