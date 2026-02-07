@@ -17,7 +17,17 @@ vi.mock('@xterm/xterm', () => {
 		cols = 80;
 		rows = 24;
 		unicode = { activeVersion: '' };
+		dataHandler: ((data: string) => void) | null = null;
+		dataDisposable = {
+			dispose: vi.fn(() => {
+				this.dataHandler = null;
+			}),
+		};
 		loadAddon = vi.fn();
+		onData = vi.fn((handler: (data: string) => void) => {
+			this.dataHandler = handler;
+			return this.dataDisposable;
+		});
 		open = vi.fn();
 		dispose = vi.fn();
 		write = vi.fn();
@@ -25,6 +35,9 @@ vi.mock('@xterm/xterm', () => {
 		clear = vi.fn();
 		scrollToBottom = vi.fn();
 		getSelection = vi.fn(() => 'selected-text');
+		emitData = (data: string) => {
+			this.dataHandler?.(data);
+		};
 
 		constructor(options: Record<string, unknown>) {
 			this.options = options;
@@ -122,6 +135,9 @@ const theme: Theme = {
 describe('XTerminal', () => {
 	let container: HTMLDivElement;
 	let root: Root;
+	let processDataHandler: ((sessionId: string, data: string) => void) | null;
+	let processDataUnsubscribe: ReturnType<typeof vi.fn>;
+	let processOnDataMock: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -135,6 +151,15 @@ describe('XTerminal', () => {
 		container = document.createElement('div');
 		document.body.appendChild(container);
 		root = createRoot(container);
+		processDataHandler = null;
+		processDataUnsubscribe = vi.fn();
+		processOnDataMock = vi.fn((handler: (sessionId: string, data: string) => void) => {
+			processDataHandler = handler;
+			return processDataUnsubscribe;
+		});
+		(
+			(globalThis as any).window.maestro.process as unknown as { onData: typeof processOnDataMock }
+		).onData = processOnDataMock;
 	});
 
 	afterEach(() => {
@@ -317,5 +342,48 @@ describe('XTerminal', () => {
 		});
 
 		expect(processResize).not.toHaveBeenCalled();
+	});
+
+	it('bridges PTY data to terminal and terminal input back to PTY', () => {
+		const onInputData = vi.fn();
+		const processWrite = (globalThis as any).window.maestro.process.write as ReturnType<
+			typeof vi.fn
+		>;
+
+		act(() => {
+			root.render(
+				<XTerminal sessionId="session-pty" theme={theme} fontFamily="Monaco" onData={onInputData} />
+			);
+		});
+
+		expect(processOnDataMock).toHaveBeenCalledTimes(1);
+		expect(processDataHandler).toBeTypeOf('function');
+
+		act(() => {
+			processDataHandler?.('session-other', 'ignore-me');
+			processDataHandler?.('session-pty', 'server-output');
+		});
+
+		const terminal = mocks.terminalInstances[0];
+		expect(terminal.write).toHaveBeenCalledTimes(1);
+		expect(terminal.write).toHaveBeenCalledWith('server-output');
+
+		act(() => {
+			terminal.emitData('user-input');
+		});
+
+		expect(processWrite).toHaveBeenCalledWith('session-pty', 'user-input');
+		expect(onInputData).toHaveBeenCalledWith('user-input');
+
+		const inputDisposable = terminal.onData.mock.results[0].value as {
+			dispose: ReturnType<typeof vi.fn>;
+		};
+
+		act(() => {
+			root.unmount();
+		});
+
+		expect(processDataUnsubscribe).toHaveBeenCalledTimes(1);
+		expect(inputDisposable.dispose).toHaveBeenCalledTimes(1);
 	});
 });

@@ -88,7 +88,7 @@ function mapMaestroThemeToXterm(theme: Theme): ITheme {
 }
 
 export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XTerminal(
-	{ sessionId, theme, fontFamily, fontSize, onResize },
+	{ sessionId, theme, fontFamily, fontSize, onData, onResize },
 	ref
 ) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -190,6 +190,31 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			};
 		};
 	}, []);
+
+	useEffect(() => {
+		const unsubscribe = window.maestro.process.onData((sid: string, data: string) => {
+			if (sid === sessionId && terminalRef.current) {
+				terminalRef.current.write(data);
+			}
+		});
+
+		return unsubscribe;
+	}, [sessionId]);
+
+	useEffect(() => {
+		if (!terminalRef.current) {
+			return;
+		}
+
+		const disposable = terminalRef.current.onData((data: string) => {
+			void window.maestro.process.write(sessionId, data);
+			onData?.(data);
+		});
+
+		return () => {
+			disposable.dispose();
+		};
+	}, [sessionId, onData]);
 
 	useEffect(() => {
 		if (!containerRef.current) {
