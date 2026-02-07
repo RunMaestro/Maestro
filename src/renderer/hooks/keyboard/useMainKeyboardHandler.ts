@@ -242,6 +242,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					return;
 				}
 
+				// Cmd/Ctrl+F - Open terminal search
+				if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+					if (ctx.handleOpenTerminalSearch) {
+						e.preventDefault();
+						ctx.handleOpenTerminalSearch(ctx.activeSession.id);
+						return;
+					}
+				}
+
 				if (ctx.isTabShortcut(e, 'prevTab')) {
 					e.preventDefault();
 					const currentIndex = terminalTabs.findIndex(
