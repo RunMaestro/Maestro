@@ -7,6 +7,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { WakaTimeManager } from '../../main/wakatime-manager';
 
+// Mock electron
+vi.mock('electron', () => ({
+	app: {
+		getVersion: vi.fn(() => '1.0.0'),
+	},
+}));
+
 // Mock execFileNoThrow
 vi.mock('../../main/utils/execFile', () => ({
 	execFileNoThrow: vi.fn(),
@@ -337,7 +344,7 @@ describe('WakaTimeManager', () => {
 				'--entity', '/project/path',
 				'--entity-type', 'app',
 				'--project', 'My Project',
-				'--plugin', 'maestro-wakatime',
+				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
 				'--category', 'coding',
 			]);
 			expect(logger.debug).toHaveBeenCalledWith(

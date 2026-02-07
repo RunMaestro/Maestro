@@ -10,6 +10,7 @@
  * from GitHub releases to ~/.wakatime/.
  */
 
+import { app } from 'electron';
 import { execFileNoThrow } from './utils/execFile';
 import { logger } from './utils/logger';
 import os from 'os';
@@ -240,7 +241,7 @@ export class WakaTimeManager {
 			'--entity', projectPath,
 			'--entity-type', 'app',
 			'--project', projectName,
-			'--plugin', 'maestro-wakatime',
+			'--plugin', `maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
 			'--category', 'coding',
 		];
 
