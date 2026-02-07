@@ -4,7 +4,14 @@ import {
 	useDebouncedPersistence,
 	DEFAULT_DEBOUNCE_DELAY,
 } from '../../../../renderer/hooks/utils/useDebouncedPersistence';
-import type { Session, AITab, LogEntry, FilePreviewTab, UnifiedTabRef } from '../../../../renderer/types';
+import type {
+	Session,
+	AITab,
+	LogEntry,
+	FilePreviewTab,
+	UnifiedTabRef,
+	TerminalTab,
+} from '../../../../renderer/types';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,9 +56,22 @@ const makeTab = (overrides: Partial<AITab> = {}): AITab => ({
 	...overrides,
 });
 
+/** Create a minimal TerminalTab with sensible defaults */
+const makeTerminalTab = (overrides: Partial<TerminalTab> = {}): TerminalTab => ({
+	id: overrides.id ?? `terminal-${Math.random().toString(36).slice(2, 8)}`,
+	name: null,
+	shellType: 'zsh',
+	pid: 0,
+	cwd: '/test',
+	createdAt: Date.now(),
+	state: 'idle',
+	...overrides,
+});
+
 /** Create a minimal Session with sensible defaults */
 const makeSession = (overrides: Partial<Session> = {}): Session => {
 	const defaultTab = makeTab({ id: 'default-tab' });
+	const defaultTerminalTab = makeTerminalTab({ id: 'default-terminal-tab' });
 	return {
 		id: overrides.id ?? `session-${Math.random().toString(36).slice(2, 8)}`,
 		name: 'Test Session',
@@ -79,6 +99,9 @@ const makeSession = (overrides: Partial<Session> = {}): Session => {
 		aiTabs: [defaultTab],
 		activeTabId: defaultTab.id,
 		closedTabHistory: [],
+		terminalTabs: [defaultTerminalTab],
+		activeTerminalTabId: defaultTerminalTab.id,
+		closedTerminalTabHistory: [],
 		...overrides,
 	} as Session;
 };
@@ -136,9 +159,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				// Force flush
 				act(() => {
@@ -173,9 +194,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -194,9 +213,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -242,9 +259,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -272,9 +287,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -293,9 +306,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -317,9 +328,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -339,9 +348,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -361,9 +368,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -381,9 +386,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -409,9 +412,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -443,9 +444,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -453,6 +452,34 @@ describe('useDebouncedPersistence', () => {
 
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].aiTabs[0].wizardState).toBeUndefined();
+			});
+		});
+
+		describe('terminal tab runtime state reset', () => {
+			it('should reset terminal tab pid, state, and exitCode', () => {
+				const terminalTab = makeTerminalTab({
+					id: 'terminal-1',
+					pid: 4321,
+					state: 'exited',
+					exitCode: 1,
+				});
+				const session = makeSession({
+					terminalTabs: [terminalTab],
+					activeTerminalTabId: 'terminal-1',
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].terminalTabs).toHaveLength(1);
+				expect(persisted[0].terminalTabs[0].pid).toBe(0);
+				expect(persisted[0].terminalTabs[0].state).toBe('idle');
+				expect(persisted[0].terminalTabs[0].exitCode).toBeUndefined();
 			});
 		});
 
@@ -464,9 +491,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -487,9 +512,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -505,9 +528,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -523,9 +544,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -541,9 +560,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -552,6 +569,29 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].sshConnectionFailed).toBeUndefined();
 			});
+
+			it('should clear closedTerminalTabHistory', () => {
+				const closedTab = makeTerminalTab({ id: 'closed-terminal', pid: 5678, state: 'busy' });
+				const session = makeSession({
+					closedTerminalTabHistory: [
+						{
+							tab: closedTab,
+							index: 0,
+							closedAt: Date.now(),
+						},
+					],
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].closedTerminalTabHistory).toEqual([]);
+			});
 		});
 
 		describe('session runtime state reset', () => {
@@ -559,9 +599,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ state: 'busy' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -575,9 +613,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ busySource: 'ai' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -591,9 +627,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ thinkingStartTime: Date.now() });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -607,9 +641,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ currentCycleTokens: 5000 });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -623,9 +655,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ currentCycleBytes: 128000 });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -639,9 +669,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ statusMessage: 'Agent is thinking...' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -659,9 +687,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -675,9 +701,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ sshRemoteId: 'remote-1' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -691,9 +715,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession({ remoteCwd: '/remote/home/user/project' });
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -727,9 +749,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -749,9 +769,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -782,9 +800,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -807,9 +823,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -835,9 +849,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -866,9 +878,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1053,9 +1063,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				// The hook sets isPending in a useEffect, need to flush effects
 				// isPending won't be true until after the effect runs
@@ -1079,10 +1087,9 @@ describe('useDebouncedPersistence', () => {
 				// Use a stable sessions reference via initialProps to avoid
 				// creating a new array on each render (which would re-trigger
 				// the debounce effect)
-				const { result } = renderHook(
-					({ s }) => useDebouncedPersistence(s, initialLoadRef),
-					{ initialProps: { s: sessions } }
-				);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
 
 				// Allow effect to set isPending
 				act(() => {
@@ -1114,9 +1121,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				expect(result.current.isPending).toBe(false);
 			});
@@ -1125,9 +1130,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				// The useEffect sets isPending to true
 				// It runs asynchronously after render
@@ -1139,10 +1142,9 @@ describe('useDebouncedPersistence', () => {
 				const initialLoadRef = makeInitialLoadRef(true);
 
 				// Use stable sessions reference via initialProps
-				const { result } = renderHook(
-					({ s }) => useDebouncedPersistence(s, initialLoadRef),
-					{ initialProps: { s: sessions } }
-				);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
 
 				expect(result.current.isPending).toBe(true);
 
@@ -1158,10 +1160,9 @@ describe('useDebouncedPersistence', () => {
 				const initialLoadRef = makeInitialLoadRef(true);
 
 				// Use stable sessions reference via initialProps
-				const { result } = renderHook(
-					({ s }) => useDebouncedPersistence(s, initialLoadRef),
-					{ initialProps: { s: sessions } }
-				);
+				const { result } = renderHook(({ s }) => useDebouncedPersistence(s, initialLoadRef), {
+					initialProps: { s: sessions },
+				});
 
 				expect(result.current.isPending).toBe(true);
 
@@ -1178,9 +1179,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(true);
 
-				const { unmount } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { unmount } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				unmount();
 
@@ -1192,9 +1191,7 @@ describe('useDebouncedPersistence', () => {
 				const session = makeSession();
 				const initialLoadRef = makeInitialLoadRef(false);
 
-				const { unmount } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { unmount } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				unmount();
 
@@ -1226,9 +1223,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1255,9 +1250,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1278,9 +1271,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1303,9 +1294,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1327,9 +1316,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1353,9 +1340,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1412,9 +1397,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1436,9 +1419,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1455,9 +1436,7 @@ describe('useDebouncedPersistence', () => {
 				delete (session as Partial<Session>).filePreviewTabs;
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1481,9 +1460,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();
@@ -1504,9 +1481,7 @@ describe('useDebouncedPersistence', () => {
 				});
 
 				const initialLoadRef = makeInitialLoadRef(true);
-				const { result } = renderHook(() =>
-					useDebouncedPersistence([session], initialLoadRef)
-				);
+				const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
 
 				act(() => {
 					result.current.flushNow();

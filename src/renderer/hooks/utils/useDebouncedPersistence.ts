@@ -79,8 +79,16 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		wizardState: undefined,
 	}));
 
+	// Reset terminal tab runtime state - PTY processes don't survive app restart
+	const terminalTabsForPersistence = session.terminalTabs.map((tab) => ({
+		...tab,
+		pid: 0,
+		state: 'idle' as const,
+		exitCode: undefined,
+	}));
+
 	// Return session without runtime-only fields
-	 
+
 	const {
 		closedTabHistory: _closedTabHistory,
 		unifiedClosedTabHistory: _unifiedClosedTabHistory,
@@ -98,6 +106,8 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	return {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
+		terminalTabs: terminalTabsForPersistence,
+		closedTerminalTabHistory: [],
 		activeTabId: newActiveTabId,
 		// Reset runtime-only session state - processes don't survive app restart
 		state: 'idle',
@@ -113,7 +123,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		sshRemote: undefined,
 		sshRemoteId: undefined,
 		remoteCwd: undefined,
-	} as Session;
+	} as unknown as Session;
 };
 
 export interface UseDebouncedPersistenceReturn {
