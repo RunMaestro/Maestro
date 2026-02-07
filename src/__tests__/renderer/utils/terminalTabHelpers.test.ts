@@ -15,6 +15,7 @@ import {
 	getTerminalTabDisplayName,
 	hasRunningTerminalProcess,
 	parseTerminalSessionId,
+	updateTerminalTabCwd,
 	updateTerminalTabState,
 } from '../../../renderer/utils/terminalTabHelpers';
 import type { Session, TerminalTab } from '../../../renderer/types';
@@ -322,6 +323,37 @@ describe('terminalTabHelpers', () => {
 	});
 
 	describe('terminal tab state helpers', () => {
+		describe('updateTerminalTabCwd', () => {
+			it('updates cwd for the matching tab only', () => {
+				const tab1 = createMockTerminalTab({ id: 'tab-1', cwd: '/project' });
+				const tab2 = createMockTerminalTab({ id: 'tab-2', cwd: '/tmp' });
+				const session = createMockSession({
+					terminalTabs: [tab1, tab2],
+					activeTerminalTabId: 'tab-1',
+				});
+
+				const updated = updateTerminalTabCwd(session, 'tab-2', '/workspace');
+
+				expect(updated).not.toBe(session);
+				expect(updated.terminalTabs[0]).toBe(tab1);
+				expect(updated.terminalTabs[1]).toMatchObject({
+					id: 'tab-2',
+					cwd: '/workspace',
+				});
+			});
+
+			it('returns original session when no cwd changes occur', () => {
+				const tab = createMockTerminalTab({ id: 'tab-1', cwd: '/project' });
+				const session = createMockSession({
+					terminalTabs: [tab],
+					activeTerminalTabId: 'tab-1',
+				});
+
+				expect(updateTerminalTabCwd(session, 'tab-1', '/project')).toBe(session);
+				expect(updateTerminalTabCwd(session, 'missing-tab', '/elsewhere')).toBe(session);
+			});
+		});
+
 		describe('updateTerminalTabState', () => {
 			it('updates tab state and preserves exit code for exited tabs', () => {
 				const tab1 = createMockTerminalTab({ id: 'tab-1', state: 'busy' });

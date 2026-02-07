@@ -102,6 +102,38 @@ export function updateTerminalTabState(
 }
 
 /**
+ * Update terminal tab current working directory.
+ */
+export function updateTerminalTabCwd(session: Session, tabId: string, cwd: string): Session {
+	let didUpdate = false;
+
+	const updatedTabs = session.terminalTabs.map((tab) => {
+		if (tab.id !== tabId) {
+			return tab;
+		}
+
+		if (tab.cwd === cwd) {
+			return tab;
+		}
+
+		didUpdate = true;
+		return {
+			...tab,
+			cwd,
+		};
+	});
+
+	if (!didUpdate) {
+		return session;
+	}
+
+	return {
+		...session,
+		terminalTabs: updatedTabs,
+	};
+}
+
+/**
  * Reorder terminal tabs in a session.
  */
 export function reorderTerminalTabs(session: Session, fromIndex: number, toIndex: number): Session {
