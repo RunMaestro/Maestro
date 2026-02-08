@@ -875,6 +875,51 @@ describe('process IPC handlers', () => {
 			);
 		});
 
+		it('should resolve session SSH remote config for terminal runCommand execution', async () => {
+			const sshRemote = {
+				id: 'remote-1',
+				name: 'Dev Server',
+				host: 'dev.example.com',
+				port: 22,
+				username: 'devuser',
+				privateKeyPath: '~/.ssh/id_ed25519',
+				enabled: true,
+			};
+
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'defaultShell') return 'zsh';
+				if (key === 'customShellPath') return '';
+				if (key === 'shellEnvVars') return { TERM_PROGRAM: 'maestro' };
+				if (key === 'sshRemotes') return [sshRemote];
+				return defaultValue;
+			});
+			mockProcessManager.runCommand.mockResolvedValue({ exitCode: 0 });
+
+			const handler = handlers.get('process:runCommand');
+			await handler!({} as any, {
+				sessionId: 'session-ssh-terminal',
+				command: 'pwd',
+				cwd: '/home/devuser/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			expect(mockProcessManager.runCommand).toHaveBeenCalledWith(
+				'session-ssh-terminal',
+				'pwd',
+				'/home/devuser/project',
+				'zsh',
+				{ TERM_PROGRAM: 'maestro' },
+				expect.objectContaining({
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
+				})
+			);
+		});
+
 		it('should return non-zero exit code on command failure', async () => {
 			mockProcessManager.runCommand.mockResolvedValue({ exitCode: 1 });
 
