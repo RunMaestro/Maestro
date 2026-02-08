@@ -918,6 +918,16 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 						}
 
+						// On Windows, use stdin to bypass cmd.exe ~8KB command line length limit
+						// and avoid shell escaping issues with special characters like "-"
+						const isWindows = navigator.platform.toLowerCase().includes('win');
+						// Agents that support --input-format stream-json use sendPromptViaStdin (JSON format)
+						// Agents that don't support stream-json use sendPromptViaStdinRaw (raw text)
+						const supportsStreamJson =
+							freshSession.toolType === 'claude-code' || freshSession.toolType === 'codex';
+						const sendPromptViaStdin = isWindows && supportsStreamJson;
+						const sendPromptViaStdinRaw = isWindows && !supportsStreamJson;
+
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args
 						await window.maestro.process.spawn({
@@ -939,6 +949,11 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomContextWindow: freshSession.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
+							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues
+							// For stream-json agents (Claude Code, Codex): use JSON format via stdin
+							// For other agents (OpenCode, etc.): use raw text via stdin
+							sendPromptViaStdin,
+							sendPromptViaStdinRaw,
 						});
 					} catch (error) {
 						console.error('Failed to spawn agent batch process:', error);
