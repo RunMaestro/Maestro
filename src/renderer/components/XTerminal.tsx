@@ -15,6 +15,7 @@ interface XTerminalProps {
 	fontSize?: number;
 	cursorBlink?: boolean;
 	cursorStyle?: 'block' | 'underline' | 'bar';
+	processInputEnabled?: boolean;
 	onData?: (data: string) => void;
 	onResize?: (cols: number, rows: number) => void;
 	onTitleChange?: (title: string) => void;
@@ -165,6 +166,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		fontSize,
 		cursorBlink = true,
 		cursorStyle = 'block',
+		processInputEnabled = true,
 		onData,
 		onResize,
 	},
@@ -305,14 +307,16 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		}
 
 		const disposable = terminalRef.current.onData((data: string) => {
-			void window.maestro.process.write(sessionId, data);
+			if (processInputEnabled) {
+				void window.maestro.process.write(sessionId, data);
+			}
 			onData?.(data);
 		});
 
 		return () => {
 			disposable.dispose();
 		};
-	}, [sessionId, onData]);
+	}, [sessionId, processInputEnabled, onData]);
 
 	useEffect(() => {
 		if (!containerRef.current) {

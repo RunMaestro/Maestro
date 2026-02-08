@@ -619,4 +619,32 @@ describe('XTerminal', () => {
 		expect(processDataUnsubscribe).toHaveBeenCalledTimes(1);
 		expect(inputDisposable.dispose).toHaveBeenCalledTimes(1);
 	});
+
+	it('captures terminal input locally when process input is disabled', () => {
+		const onInputData = vi.fn();
+		const processWrite = (globalThis as any).window.maestro.process.write as ReturnType<
+			typeof vi.fn
+		>;
+
+		act(() => {
+			root.render(
+				<XTerminal
+					sessionId="session-local-input"
+					theme={theme}
+					fontFamily="Monaco"
+					processInputEnabled={false}
+					onData={onInputData}
+				/>
+			);
+		});
+
+		const terminal = mocks.terminalInstances[0];
+
+		act(() => {
+			terminal.emitData('close-me');
+		});
+
+		expect(processWrite).not.toHaveBeenCalled();
+		expect(onInputData).toHaveBeenCalledWith('close-me');
+	});
 });

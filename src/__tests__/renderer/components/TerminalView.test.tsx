@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Session, TerminalTab, Theme } from '../../../renderer/types';
 
 type MockXTerminalHandle = {
+	write: ReturnType<typeof vi.fn>;
 	focus: ReturnType<typeof vi.fn>;
 	clear: ReturnType<typeof vi.fn>;
 	search: ReturnType<typeof vi.fn>;
@@ -11,7 +12,13 @@ type MockXTerminalHandle = {
 	searchPrevious: ReturnType<typeof vi.fn>;
 };
 
+const SHELL_EXIT_MESSAGE =
+	'\r\n\x1b[33mShell exited.\x1b[0m Press any key to close, or Ctrl+Shift+` for new terminal.\r\n';
+
 const mockXTerminalHandlesBySessionId = vi.hoisted(() => new Map<string, MockXTerminalHandle>());
+const mockTerminalInputCallbacksBySessionId = vi.hoisted(
+	() => new Map<string, (data: string) => void>()
+);
 const mockTerminalTabBarProps = vi.hoisted(() => ({
 	current: null as {
 		tabs: TerminalTab[];
@@ -33,8 +40,9 @@ vi.mock('../../../renderer/components/XTerminal', async () => {
 
 	return {
 		XTerminal: ReactModule.forwardRef(function MockXTerminal(
-			props: { sessionId: string },
+			props: { sessionId: string; onData?: (data: string) => void },
 			ref: React.ForwardedRef<{
+				write: (data: string) => void;
 				focus: () => void;
 				clear: () => void;
 				search: (query: string) => boolean;
@@ -42,13 +50,21 @@ vi.mock('../../../renderer/components/XTerminal', async () => {
 				searchPrevious: () => boolean;
 			}>
 		) {
+			const write = vi.fn();
 			const focus = vi.fn();
 			const clear = vi.fn();
 			const search = vi.fn(() => true);
 			const searchNext = vi.fn(() => true);
 			const searchPrevious = vi.fn(() => false);
 
+			if (props.onData) {
+				mockTerminalInputCallbacksBySessionId.set(props.sessionId, props.onData);
+			} else {
+				mockTerminalInputCallbacksBySessionId.delete(props.sessionId);
+			}
+
 			mockXTerminalHandlesBySessionId.set(props.sessionId, {
+				write,
 				focus,
 				clear,
 				search,
@@ -59,14 +75,21 @@ vi.mock('../../../renderer/components/XTerminal', async () => {
 			ReactModule.useImperativeHandle(
 				ref,
 				() => ({
+					write,
 					focus,
 					clear,
 					search,
 					searchNext,
 					searchPrevious,
 				}),
-				[focus, clear, search, searchNext, searchPrevious]
+				[write, focus, clear, search, searchNext, searchPrevious]
 			);
+
+			ReactModule.useEffect(() => {
+				return () => {
+					mockTerminalInputCallbacksBySessionId.delete(props.sessionId);
+				};
+			}, [props.sessionId]);
 
 			return ReactModule.createElement('div', {
 				'data-testid': `xterminal-${props.sessionId}`,
@@ -200,6 +223,7 @@ describe('TerminalView', () => {
 	beforeEach(() => {
 		(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 		mockXTerminalHandlesBySessionId.clear();
+		mockTerminalInputCallbacksBySessionId.clear();
 		mockTerminalTabBarProps.current = null;
 		mockTerminalSearchBarProps.current = null;
 		vi.clearAllMocks();
@@ -760,6 +784,8 @@ describe('TerminalView', () => {
 
 		expect(onExit).toHaveBeenCalledTimes(1);
 		expect(exitHandler).toBeTypeOf('function');
+		const tabTwoHandle = mockXTerminalHandlesBySessionId.get('session-1-terminal-tab-2');
+		expect(tabTwoHandle).toBeTruthy();
 
 		act(() => {
 			exitHandler?.('session-1-terminal-tab-2', 9);
@@ -768,6 +794,86 @@ describe('TerminalView', () => {
 
 		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-2', 'exited', 9);
 		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-2', 0);
+		expect(tabTwoHandle?.write).toHaveBeenCalledWith(SHELL_EXIT_MESSAGE);
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('shows shell exit terminal message and closes tab on next key press', () => {
+		const callbacks = createCallbacks();
+		const runningSession = createSession({
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 345,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'busy',
+				},
+			],
+		});
+
+		const { container, root } = mount(
+			<TerminalView
+				session={runningSession}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		act(() => {
+			exitHandler?.('session-1-terminal-tab-1', 1);
+		});
+
+		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-1', 'exited', 1);
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-1', 0);
+
+		const exitedSession = createSession({
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'exited',
+					exitCode: 1,
+				},
+			],
+		});
+
+		act(() => {
+			root.render(
+				<TerminalView
+					session={exitedSession}
+					theme={theme}
+					fontFamily="Monaco"
+					defaultShell="zsh"
+					{...callbacks}
+				/>
+			);
+		});
+
+		expect(container.textContent).not.toContain('Failed to start terminal');
+
+		const terminalInputCallback = mockTerminalInputCallbacksBySessionId.get(
+			'session-1-terminal-tab-1'
+		);
+		expect(terminalInputCallback).toBeTypeOf('function');
+
+		act(() => {
+			terminalInputCallback?.('x');
+		});
+
+		expect(callbacks.onTabClose).toHaveBeenCalledWith('tab-1');
+		expect(killProcess).not.toHaveBeenCalled();
 
 		act(() => {
 			root.unmount();

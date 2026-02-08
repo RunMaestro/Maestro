@@ -6,6 +6,9 @@ import { TerminalSearchBar } from './TerminalSearchBar';
 import type { Session, TerminalTab, Theme } from '../types';
 import { getActiveTerminalTab, getTerminalSessionId } from '../utils/terminalTabHelpers';
 
+const SHELL_EXIT_MESSAGE =
+	'\r\n\x1b[33mShell exited.\x1b[0m Press any key to close, or Ctrl+Shift+` for new terminal.\r\n';
+
 interface TerminalViewProps {
 	session: Session;
 	theme: Theme;
@@ -58,10 +61,21 @@ export const TerminalView = memo(
 
 		const terminalRefs = useRef<Map<string, XTerminalHandle>>(new Map());
 		const latestTabsRef = useRef<TerminalTab[]>(session.terminalTabs);
+		const shellExitedTabsRef = useRef<Set<string>>(new Set());
 		const activeTab = getActiveTerminalTab(session);
 
 		useEffect(() => {
 			latestTabsRef.current = session.terminalTabs;
+		}, [session.terminalTabs]);
+
+		useEffect(() => {
+			const tabsById = new Map(session.terminalTabs.map((tab) => [tab.id, tab]));
+			for (const tabId of shellExitedTabsRef.current) {
+				const tab = tabsById.get(tabId);
+				if (!tab || tab.state !== 'exited' || tab.pid > 0) {
+					shellExitedTabsRef.current.delete(tabId);
+				}
+			}
 		}, [session.terminalTabs]);
 
 		const getLatestTab = useCallback((tabId: string) => {
@@ -114,6 +128,7 @@ export const TerminalView = memo(
 							return;
 						}
 
+						shellExitedTabsRef.current.delete(tab.id);
 						onTabPidChange(tab.id, result.pid);
 						onTabStateChange(tab.id, 'idle');
 						return;
@@ -170,6 +185,13 @@ export const TerminalView = memo(
 					return;
 				}
 
+				if (matchingTab.pid > 0) {
+					shellExitedTabsRef.current.add(matchingTab.id);
+					terminalRefs.current.get(matchingTab.id)?.write(SHELL_EXIT_MESSAGE);
+				} else {
+					shellExitedTabsRef.current.delete(matchingTab.id);
+				}
+
 				onTabStateChange(matchingTab.id, 'exited', code);
 				onTabPidChange(matchingTab.id, 0);
 			});
@@ -178,6 +200,7 @@ export const TerminalView = memo(
 		const handleTabClose = useCallback(
 			async (tabId: string) => {
 				const tab = session.terminalTabs.find((candidate) => candidate.id === tabId);
+				shellExitedTabsRef.current.delete(tabId);
 				try {
 					if (tab && tab.pid > 0) {
 						await window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
@@ -187,6 +210,18 @@ export const TerminalView = memo(
 				}
 			},
 			[session.id, session.terminalTabs, onTabClose]
+		);
+
+		const handleTerminalInput = useCallback(
+			(tabId: string, data: string) => {
+				if (!data || !shellExitedTabsRef.current.has(tabId)) {
+					return;
+				}
+
+				shellExitedTabsRef.current.delete(tabId);
+				void handleTabClose(tabId);
+			},
+			[handleTabClose]
 		);
 
 		const setTerminalRef = useCallback((tabId: string, handle: XTerminalHandle | null) => {
@@ -218,6 +253,10 @@ export const TerminalView = memo(
 		}, [onSearchClose]);
 
 		const isSpawnFailureTab = useCallback((tab: TerminalTab) => {
+			if (shellExitedTabsRef.current.has(tab.id)) {
+				return false;
+			}
+
 			return (
 				tab.state === 'exited' && tab.pid === 0 && tab.exitCode !== undefined && tab.exitCode !== 0
 			);
@@ -284,6 +323,10 @@ export const TerminalView = memo(
 										theme={theme}
 										fontFamily={fontFamily}
 										fontSize={fontSize}
+										processInputEnabled={tab.pid > 0}
+										onData={(data) => {
+											handleTerminalInput(tab.id, data);
+										}}
 									/>
 								)}
 							</div>
