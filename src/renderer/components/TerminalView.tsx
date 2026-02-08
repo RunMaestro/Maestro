@@ -1,4 +1,5 @@
 import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { XTerminal, type XTerminalHandle } from './XTerminal';
 import { TerminalTabBar } from './TerminalTabBar';
 import { TerminalSearchBar } from './TerminalSearchBar';
@@ -92,8 +93,8 @@ export const TerminalView = memo(
 		);
 
 		const spawnPtyForTab = useCallback(
-			async (tab: TerminalTab) => {
-				if (tab.pid > 0 || tab.state === 'exited') {
+			async (tab: TerminalTab, allowExited = false) => {
+				if (tab.pid > 0 || (!allowExited && tab.state === 'exited')) {
 					return;
 				}
 
@@ -109,7 +110,7 @@ export const TerminalView = memo(
 
 					if (result.success && result.pid > 0) {
 						const latestTab = getLatestTab(tab.id);
-						if (!latestTab || latestTab.state === 'exited') {
+						if (!latestTab || (!allowExited && latestTab.state === 'exited')) {
 							return;
 						}
 
@@ -216,6 +217,12 @@ export const TerminalView = memo(
 			onSearchClose?.();
 		}, [onSearchClose]);
 
+		const isSpawnFailureTab = useCallback((tab: TerminalTab) => {
+			return (
+				tab.state === 'exited' && tab.pid === 0 && tab.exitCode !== undefined && tab.exitCode !== 0
+			);
+		}, []);
+
 		return (
 			<div className="flex h-full flex-col">
 				<TerminalTabBar
@@ -241,18 +248,44 @@ export const TerminalView = memo(
 
 					{session.terminalTabs.map((tab) => {
 						const isActive = tab.id === session.activeTerminalTabId;
+						const showSpawnFailure = isSpawnFailureTab(tab);
 						return (
 							<div
 								key={tab.id}
 								className={`absolute inset-0 ${isActive ? '' : 'invisible pointer-events-none'}`}
 							>
-								<XTerminal
-									ref={(handle) => setTerminalRef(tab.id, handle)}
-									sessionId={getTerminalSessionId(session.id, tab.id)}
-									theme={theme}
-									fontFamily={fontFamily}
-									fontSize={fontSize}
-								/>
+								{showSpawnFailure ? (
+									<div className="flex h-full items-center justify-center">
+										<div className="flex flex-col items-center gap-3 text-center">
+											<AlertCircle className="h-8 w-8" style={{ color: theme.colors.error }} />
+											<p className="text-sm" style={{ color: theme.colors.textMain }}>
+												Failed to start terminal
+											</p>
+											<button
+												type="button"
+												onClick={() => {
+													void spawnPtyForTab(tab, true);
+												}}
+												className="rounded-md border px-3 py-1.5 text-sm"
+												style={{
+													borderColor: theme.colors.border,
+													color: theme.colors.textMain,
+													backgroundColor: theme.colors.bgSidebar,
+												}}
+											>
+												Retry
+											</button>
+										</div>
+									</div>
+								) : (
+									<XTerminal
+										ref={(handle) => setTerminalRef(tab.id, handle)}
+										sessionId={getTerminalSessionId(session.id, tab.id)}
+										theme={theme}
+										fontFamily={fontFamily}
+										fontSize={fontSize}
+									/>
+								)}
 							</div>
 						);
 					})}

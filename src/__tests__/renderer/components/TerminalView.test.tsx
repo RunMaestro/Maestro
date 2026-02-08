@@ -265,6 +265,91 @@ describe('TerminalView', () => {
 		});
 	});
 
+	it('marks tab exited when PTY spawn fails', async () => {
+		const callbacks = createCallbacks();
+		spawnTerminalTab.mockResolvedValue({ success: false, pid: 0 });
+
+		const session = createSession();
+		const { root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-1', 'exited', 1);
+		});
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-1', 0);
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('shows spawn error state and retries exited tab spawn', async () => {
+		const callbacks = createCallbacks();
+		const session = createSession({
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'exited',
+					exitCode: 1,
+				},
+			],
+		});
+
+		const { container, root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		expect(container.textContent).toContain('Failed to start terminal');
+		expect(
+			container.querySelector('[data-testid="xterminal-session-1-terminal-tab-1"]')
+		).toBeNull();
+		expect(spawnTerminalTab).not.toHaveBeenCalled();
+
+		const retryButton = Array.from(container.querySelectorAll('button')).find(
+			(button) => button.textContent === 'Retry'
+		);
+		expect(retryButton).toBeTruthy();
+
+		act(() => {
+			retryButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+		});
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledWith({
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/workspace',
+				shell: 'zsh',
+				shellArgs: undefined,
+				shellEnvVars: undefined,
+			});
+		});
+
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-1', 4242);
+		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-1', 'idle');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
 	it('spawns reopened tab PTY using the restored tab cwd', async () => {
 		const callbacks = createCallbacks();
 		const session = createSession({
