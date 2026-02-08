@@ -286,6 +286,39 @@ describe('TerminalTabBar', () => {
 		});
 	});
 
+	it('truncates very long tab names to avoid tab overflow', () => {
+		const longTabName =
+			'This is a very long terminal tab name that should truncate before it can overflow the tab bar';
+		const tabs = [
+			createTerminalTab({
+				id: 'terminal-1',
+				name: longTabName,
+			}),
+		];
+
+		const { container, root } = mount(
+			<TerminalTabBar
+				tabs={tabs}
+				activeTabId="terminal-1"
+				theme={mockTheme}
+				onTabSelect={onTabSelect}
+				onTabClose={onTabClose}
+				onNewTab={onNewTab}
+			/>
+		);
+
+		const tabLabel = Array.from(container.querySelectorAll('span')).find(
+			(el) => el.textContent === longTabName
+		);
+		expect(tabLabel).toBeTruthy();
+		expect(tabLabel?.className).toContain('truncate');
+		expect(tabLabel?.className).toContain('max-w-[150px]');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
 	it('calls onNewTab from new terminal button', () => {
 		const expectedTitle = `New terminal (${process.platform === 'darwin' ? 'Ctrl+Shift+`' : 'Ctrl+Shift+`'})`;
 

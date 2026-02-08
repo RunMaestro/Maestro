@@ -113,7 +113,7 @@ const TerminalTabComponent = memo(function TerminalTabComponent({
 				}}
 			/>
 
-			<span className="truncate max-w-[120px]">{displayName}</span>
+			<span className="truncate max-w-[150px]">{displayName}</span>
 
 			<span className="text-[10px] uppercase opacity-70">{tab.shellType}</span>
 
