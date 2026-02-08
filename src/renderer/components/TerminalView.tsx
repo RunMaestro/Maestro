@@ -56,7 +56,16 @@ export const TerminalView = memo(
 		} = props;
 
 		const terminalRefs = useRef<Map<string, XTerminalHandle>>(new Map());
+		const latestTabsRef = useRef<TerminalTab[]>(session.terminalTabs);
 		const activeTab = getActiveTerminalTab(session);
+
+		useEffect(() => {
+			latestTabsRef.current = session.terminalTabs;
+		}, [session.terminalTabs]);
+
+		const getLatestTab = useCallback((tabId: string) => {
+			return latestTabsRef.current.find((tab) => tab.id === tabId);
+		}, []);
 
 		const getActiveTerminalHandle = useCallback(() => {
 			if (!session.activeTerminalTabId) {
@@ -99,19 +108,33 @@ export const TerminalView = memo(
 					});
 
 					if (result.success && result.pid > 0) {
+						const latestTab = getLatestTab(tab.id);
+						if (!latestTab || latestTab.state === 'exited') {
+							return;
+						}
+
 						onTabPidChange(tab.id, result.pid);
 						onTabStateChange(tab.id, 'idle');
+						return;
+					}
+
+					if (!getLatestTab(tab.id)) {
 						return;
 					}
 
 					onTabStateChange(tab.id, 'exited', 1);
 					onTabPidChange(tab.id, 0);
 				} catch {
+					if (!getLatestTab(tab.id)) {
+						return;
+					}
+
 					onTabStateChange(tab.id, 'exited', 1);
 					onTabPidChange(tab.id, 0);
 				}
 			},
 			[
+				getLatestTab,
 				session.id,
 				session.cwd,
 				defaultShell,

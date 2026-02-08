@@ -182,6 +182,15 @@ function mount(component: React.ReactElement): { container: HTMLDivElement; root
 	return { container, root };
 }
 
+function createDeferred<T>() {
+	let resolve!: (value: T) => void;
+	const promise = new Promise<T>((res) => {
+		resolve = res;
+	});
+
+	return { promise, resolve };
+}
+
 describe('TerminalView', () => {
 	let spawnTerminalTab: ReturnType<typeof vi.fn>;
 	let killProcess: ReturnType<typeof vi.fn>;
@@ -299,6 +308,199 @@ describe('TerminalView', () => {
 		act(() => {
 			root.unmount();
 		});
+	});
+
+	it('ignores late spawn success when a rapidly closed tab no longer exists', async () => {
+		const callbacks = createCallbacks();
+		const pendingSpawn = createDeferred<{ success: boolean; pid: number }>();
+		spawnTerminalTab.mockReturnValue(pendingSpawn.promise);
+
+		const initialSession = createSession({
+			activeTerminalTabId: 'tab-1',
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'idle',
+				},
+				{
+					id: 'tab-2',
+					name: 'Other',
+					shellType: 'zsh',
+					pid: 9001,
+					cwd: '/workspace/other',
+					createdAt: Date.now(),
+					state: 'busy',
+				},
+			],
+		});
+
+		const { container, root } = mount(
+			<TerminalView
+				session={initialSession}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledTimes(1);
+		});
+
+		const closeButton = container.querySelector(
+			'[data-testid="close-first-tab"]'
+		) as HTMLButtonElement | null;
+		expect(closeButton).toBeTruthy();
+
+		act(() => {
+			closeButton?.click();
+		});
+
+		const closedSession = createSession({
+			activeTerminalTabId: 'tab-2',
+			terminalTabs: [
+				{
+					id: 'tab-2',
+					name: 'Other',
+					shellType: 'zsh',
+					pid: 9001,
+					cwd: '/workspace/other',
+					createdAt: Date.now(),
+					state: 'busy',
+				},
+			],
+		});
+
+		act(() => {
+			root.render(
+				<TerminalView
+					session={closedSession}
+					theme={theme}
+					fontFamily="Monaco"
+					defaultShell="zsh"
+					{...callbacks}
+				/>
+			);
+		});
+
+		await act(async () => {
+			pendingSpawn.resolve({ success: true, pid: 5050 });
+			await pendingSpawn.promise;
+		});
+
+		expect(callbacks.onTabClose).toHaveBeenCalledWith('tab-1');
+		expect(callbacks.onTabPidChange).not.toHaveBeenCalledWith('tab-1', 5050);
+		expect(callbacks.onTabStateChange).not.toHaveBeenCalledWith('tab-1', 'idle');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('keeps terminal tab exited when the process exits before spawn resolves', async () => {
+		const callbacks = createCallbacks();
+		const pendingSpawn = createDeferred<{ success: boolean; pid: number }>();
+		spawnTerminalTab.mockReturnValue(pendingSpawn.promise);
+
+		const session = createSession();
+		const { root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledTimes(1);
+		});
+
+		act(() => {
+			exitHandler?.('session-1-terminal-tab-1', 137);
+		});
+
+		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-1', 'exited', 137);
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-1', 0);
+
+		const exitedSession = createSession({
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'exited',
+					exitCode: 137,
+				},
+			],
+		});
+
+		act(() => {
+			root.render(
+				<TerminalView
+					session={exitedSession}
+					theme={theme}
+					fontFamily="Monaco"
+					defaultShell="zsh"
+					{...callbacks}
+				/>
+			);
+		});
+
+		await act(async () => {
+			pendingSpawn.resolve({ success: true, pid: 4242 });
+			await pendingSpawn.promise;
+		});
+
+		expect(callbacks.onTabPidChange).not.toHaveBeenCalledWith('tab-1', 4242);
+		expect(callbacks.onTabStateChange).not.toHaveBeenCalledWith('tab-1', 'idle');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('resolves pending PTY spawn after unmount without throwing', async () => {
+		const callbacks = createCallbacks();
+		const pendingSpawn = createDeferred<{ success: boolean; pid: number }>();
+		spawnTerminalTab.mockReturnValue(pendingSpawn.promise);
+
+		const session = createSession();
+		const { root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledTimes(1);
+		});
+
+		act(() => {
+			root.unmount();
+		});
+
+		await act(async () => {
+			pendingSpawn.resolve({ success: true, pid: 6006 });
+			await pendingSpawn.promise;
+		});
+
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('tab-1', 6006);
+		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('tab-1', 'idle');
 	});
 
 	it('exposes clear and search methods for the active terminal tab via ref', () => {

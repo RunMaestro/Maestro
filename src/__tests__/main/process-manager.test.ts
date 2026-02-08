@@ -669,6 +669,52 @@ describe('process-manager.ts', () => {
 				expect(processManager.get(terminalSessionId)).toBeDefined();
 			});
 		});
+
+		describe('killAll', () => {
+			it('kills all terminal and non-terminal processes during shutdown', () => {
+				const terminalKill = vi.fn();
+				const childKill = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set('terminal-tab-session', {
+					sessionId: 'terminal-tab-session',
+					toolType: 'terminal',
+					cwd: '/tmp/terminal',
+					pid: 101,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						kill: terminalKill,
+					},
+				});
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set('ai-session', {
+					sessionId: 'ai-session',
+					toolType: 'claude-code',
+					cwd: '/tmp/ai',
+					pid: 202,
+					isTerminal: false,
+					startTime: Date.now(),
+					childProcess: {
+						kill: childKill,
+					},
+				});
+
+				processManager.killAll();
+
+				expect(terminalKill).toHaveBeenCalledOnce();
+				expect(childKill).toHaveBeenCalledWith('SIGTERM');
+				expect(processManager.get('terminal-tab-session')).toBeUndefined();
+				expect(processManager.get('ai-session')).toBeUndefined();
+			});
+		});
 	});
 
 	describe('data buffering', () => {
