@@ -9,6 +9,9 @@ vi.mock('lucide-react', () => ({
 	Plus: ({ className }: { className?: string }) => (
 		<span data-testid="plus-icon" className={className} />
 	),
+	Loader2: ({ className }: { className?: string }) => (
+		<span data-testid="loader-icon" className={className} />
+	),
 	Terminal: ({ className }: { className?: string }) => (
 		<span data-testid="terminal-icon" className={className} />
 	),
@@ -214,6 +217,34 @@ describe('TerminalTabBar', () => {
 		);
 
 		expect(container.textContent).toContain('(127)');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
+	it('shows a loading indicator while terminal PTY is spawning', () => {
+		const tabs = [
+			createTerminalTab({
+				id: 'terminal-1',
+				name: 'Spawning',
+				pid: 0,
+				state: 'idle',
+			}),
+		];
+
+		const { container, root } = mount(
+			<TerminalTabBar
+				tabs={tabs}
+				activeTabId="terminal-1"
+				theme={mockTheme}
+				onTabSelect={onTabSelect}
+				onTabClose={onTabClose}
+				onNewTab={onNewTab}
+			/>
+		);
+
+		expect(container.querySelector('[data-testid="loader-icon"]')).toBeTruthy();
 
 		act(() => {
 			root.unmount();
