@@ -256,6 +256,51 @@ describe('TerminalView', () => {
 		});
 	});
 
+	it('spawns reopened tab PTY using the restored tab cwd', async () => {
+		const callbacks = createCallbacks();
+		const session = createSession({
+			cwd: '/workspace/root',
+			activeTerminalTabId: 'reopened-tab',
+			terminalTabs: [
+				{
+					id: 'reopened-tab',
+					name: 'Reopened',
+					shellType: 'zsh',
+					pid: 0,
+					cwd: '/workspace/reopened',
+					createdAt: Date.now(),
+					state: 'idle',
+				},
+			],
+		});
+		const { root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledWith({
+				sessionId: 'session-1-terminal-reopened-tab',
+				cwd: '/workspace/reopened',
+				shell: 'zsh',
+				shellArgs: undefined,
+				shellEnvVars: undefined,
+			});
+		});
+
+		expect(callbacks.onTabPidChange).toHaveBeenCalledWith('reopened-tab', 4242);
+		expect(callbacks.onTabStateChange).toHaveBeenCalledWith('reopened-tab', 'idle');
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
 	it('exposes clear and search methods for the active terminal tab via ref', () => {
 		const callbacks = createCallbacks();
 		const session = createSession();
