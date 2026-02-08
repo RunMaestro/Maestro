@@ -28,12 +28,25 @@ import {
 import { groupChatParticipantPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { getWindowsShellForAgentExecution } from '../process-manager/utils/shellEscape';
 
 /**
  * In-memory store for active participant sessions.
  * Maps `${groupChatId}:${participantName}` -> sessionId
  */
 const activeParticipantSessions = new Map<string, string>();
+
+// Module-level callback for getting custom shell path from settings
+let getCustomShellPathCallback: (() => string | undefined) | null = null;
+
+/**
+ * Sets the callback for getting the custom shell path from settings.
+ * This is used on Windows to prefer PowerShell over cmd.exe to avoid command line length limits.
+ * Called from index.ts during initialization.
+ */
+export function setGetCustomShellPathCallback(callback: () => string | undefined): void {
+	getCustomShellPathCallback = callback;
+}
 
 /**
  * Generate a key for the participant sessions map.
@@ -180,6 +193,8 @@ export async function addParticipant(
 	let spawnCwd = cwd;
 	let spawnPrompt: string | undefined = prompt;
 	let spawnEnvVars = configResolution.effectiveCustomEnvVars ?? effectiveEnvVars;
+	let spawnShell: string | undefined;
+	let spawnRunInShell = false;
 
 	// Apply SSH wrapping if SSH is configured and store is available
 	if (sshStore && sessionOverrides?.sshRemoteConfig) {
@@ -206,7 +221,19 @@ export async function addParticipant(
 		if (sshWrapped.sshRemoteUsed) {
 			console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
 		}
+	} else if (process.platform === 'win32') {
+		// On Windows (when not using SSH), use shell execution with PowerShell
+		// to avoid cmd.exe command line length limits (~8191 characters)
+		const shellConfig = getWindowsShellForAgentExecution({
+			customShellPath: getCustomShellPathCallback?.(),
+		});
+		spawnShell = shellConfig.shell;
+		spawnRunInShell = shellConfig.useShell;
+		console.log(`[GroupChat:Debug] Windows shell config for participant: ${shellConfig.shell} (source: ${shellConfig.source})`);
 	}
+
+	// On Windows, send prompt via stdin to avoid PowerShell parsing issues
+	const sendPromptViaStdinRaw = process.platform === 'win32' && !sessionOverrides?.sshRemoteConfig;
 
 	// Spawn the participant agent
 	console.log(`[GroupChat:Debug] Spawning participant agent...`);
@@ -222,6 +249,9 @@ export async function addParticipant(
 		customEnvVars: spawnEnvVars,
 		promptArgs: agentConfig?.promptArgs,
 		noPromptSeparator: agentConfig?.noPromptSeparator,
+		shell: spawnShell,
+		runInShell: spawnRunInShell,
+		sendPromptViaStdinRaw,
 	});
 
 	console.log(`[GroupChat:Debug] Spawn result: ${JSON.stringify(result)}`);

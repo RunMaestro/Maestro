@@ -20,6 +20,7 @@ import {
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
+import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
@@ -283,8 +284,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				}
 
 				// On Windows (except SSH), always use shell execution for agents
+				// This avoids cmd.exe command line length limits (~8191 chars) which can cause
+				// "Die Befehlszeile ist zu lang" errors with long prompts
 				if (isWindows && !config.sessionSshRemoteConfig?.enabled) {
-					useShell = true;
 					// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 					const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
 					// Filter out undefined values to match Record<string, string> type
@@ -292,37 +294,22 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						Object.entries(expandedEnv).filter(([_, value]) => value !== undefined)
 					) as Record<string, string>;
 
-					// Determine an explicit shell to use when forcing shell execution on Windows.
-					// Prefer a user-configured custom shell path, then PowerShell, then ComSpec/cmd.exe.
-					// PowerShell is preferred over cmd.exe for better script handling and to avoid cmd.exe limits.
+					// Get the preferred shell for Windows (custom -> current -> PowerShell)
+					// PowerShell is preferred over cmd.exe to avoid command line length limits
 					const customShellPath = settingsStore.get('customShellPath', '') as string;
-					if (customShellPath && customShellPath.trim()) {
-						shellToUse = customShellPath.trim();
-						logger.debug('Using custom shell path for forced agent shell on Windows', LOG_CONTEXT, {
-							customShellPath: shellToUse,
-						});
-					} else if (!shellToUse) {
-						// Try PowerShell if available (common on modern Windows)
-						// If not, fall back to ComSpec/cmd.exe
-						// PowerShell handles shell scripts better and avoids cmd.exe command line length limits
-						const powerShellPath = process.env.PSHOME
-							? `${process.env.PSHOME}\\powershell.exe`
-							: 'powershell';
-						shellToUse = powerShellPath;
-						logger.debug(
-							'Using PowerShell for agent execution on Windows (shell script support)',
-							LOG_CONTEXT,
-							{
-								shellPath: shellToUse,
-							}
-						);
-					}
+					const shellConfig = getWindowsShellForAgentExecution({
+						customShellPath,
+						currentShell: shellToUse,
+					});
+					shellToUse = shellConfig.shell;
+					useShell = shellConfig.useShell;
 
 					logger.info(`Forcing shell execution for agent on Windows for PATH access`, LOG_CONTEXT, {
 						agentId: agent?.id,
 						command: commandToSpawn,
 						args: argsToSpawn,
 						shell: shellToUse,
+						shellSource: shellConfig.source,
 					});
 				}
 

@@ -1425,6 +1425,9 @@ function MaestroConsoleInner() {
 			});
 	}, []);
 
+	// Track if Windows warning has been shown this session to prevent re-showing
+	const windowsWarningShownRef = useRef(false);
+
 	// Show Windows warning modal on startup for Windows users (if not suppressed)
 	// Also expose a debug function to trigger the modal from console for testing
 	useEffect(() => {
@@ -1437,11 +1440,16 @@ function MaestroConsoleInner() {
 		// Skip if user has suppressed the warning
 		if (suppressWindowsWarning) return;
 
+		// Skip if already shown this session (prevents re-showing when suppressWindowsWarning
+		// is set to false by the close handler without checking "don't show again")
+		if (windowsWarningShownRef.current) return;
+
 		// Check if running on Windows using the power API (has platform info)
 		window.maestro.power
 			.getStatus()
 			.then((status) => {
 				if (status.platform === 'win32') {
+					windowsWarningShownRef.current = true;
 					setWindowsWarningModalOpen(true);
 				}
 			})

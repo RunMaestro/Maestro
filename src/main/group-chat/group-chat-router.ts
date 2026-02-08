@@ -41,6 +41,7 @@ import {
 import { groupChatParticipantRequestPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
+import { getWindowsShellForAgentExecution } from '../process-manager/utils/shellEscape';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
@@ -86,6 +87,9 @@ let getAgentConfigCallback: GetAgentConfigCallback | null = null;
 
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
+
+// Module-level callback for getting custom shell path from settings
+let getCustomShellPathCallback: (() => string | undefined) | null = null;
 
 /**
  * Tracks pending participant responses for each group chat.
@@ -172,6 +176,15 @@ export function setGetAgentConfigCallback(callback: GetAgentConfigCallback): voi
  */
 export function setSshStore(store: SshRemoteSettingsStore): void {
 	sshStore = store;
+}
+
+/**
+ * Sets the callback for getting the custom shell path from settings.
+ * This is used on Windows to prefer PowerShell over cmd.exe to avoid command line length limits.
+ * Called from index.ts during initialization.
+ */
+export function setGetCustomShellPathCallback(callback: () => string | undefined): void {
+	getCustomShellPathCallback = callback;
 }
 
 /**
@@ -484,6 +497,8 @@ ${message}`;
 				let spawnEnvVars =
 					configResolution.effectiveCustomEnvVars ??
 					getCustomEnvVarsCallback?.(chat.moderatorAgentId);
+				let spawnShell: string | undefined;
+				let spawnRunInShell = false;
 
 				// Apply SSH wrapping if configured
 				if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
@@ -512,7 +527,23 @@ ${message}`;
 					if (sshWrapped.sshRemoteUsed) {
 						console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
 					}
+				} else if (process.platform === 'win32') {
+					// On Windows (when not using SSH), use shell execution with PowerShell
+					// to avoid cmd.exe command line length limits (~8191 characters).
+					// Long prompts with system instructions can easily exceed this limit,
+					// causing: "Die Befehlszeile ist zu lang" (command line too long) errors.
+					// ALSO: Send prompt via stdin to avoid PowerShell parsing issues with
+					// markdown content (e.g., bullet points like "- If you..." get parsed as operators).
+					const shellConfig = getWindowsShellForAgentExecution({
+						customShellPath: getCustomShellPathCallback?.(),
+					});
+					spawnShell = shellConfig.shell;
+					spawnRunInShell = shellConfig.useShell;
+					console.log(`[GroupChat:Debug] Windows shell config: ${shellConfig.shell} (source: ${shellConfig.source})`);
 				}
+
+				// On Windows, send prompt via stdin to avoid PowerShell parsing issues
+				const sendPromptViaStdinRaw = process.platform === 'win32' && !chat.moderatorConfig?.sshRemoteConfig;
 
 				const spawnResult = processManager.spawn({
 					sessionId,
@@ -526,6 +557,9 @@ ${message}`;
 					customEnvVars: spawnEnvVars,
 					promptArgs: agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
+					shell: spawnShell,
+					runInShell: spawnRunInShell,
+					sendPromptViaStdinRaw,
 				});
 
 				console.log(`[GroupChat:Debug] Spawn result: ${JSON.stringify(spawnResult)}`);
@@ -847,6 +881,8 @@ export async function routeModeratorResponse(
 				let finalSpawnEnvVars =
 					configResolution.effectiveCustomEnvVars ??
 					getCustomEnvVarsCallback?.(participant.agentId);
+				let finalSpawnShell: string | undefined;
+				let finalSpawnRunInShell = false;
 
 				// Apply SSH wrapping if configured for this session
 				if (sshStore && matchingSession?.sshRemoteConfig) {
@@ -877,7 +913,19 @@ export async function routeModeratorResponse(
 					if (sshWrapped.sshRemoteUsed) {
 						console.log(`[GroupChat:Debug] SSH remote used: ${sshWrapped.sshRemoteUsed.name}`);
 					}
+				} else if (process.platform === 'win32') {
+					// On Windows (when not using SSH), use shell execution with PowerShell
+					// to avoid cmd.exe command line length limits
+					const shellConfig = getWindowsShellForAgentExecution({
+						customShellPath: getCustomShellPathCallback?.(),
+					});
+					finalSpawnShell = shellConfig.shell;
+					finalSpawnRunInShell = shellConfig.useShell;
+					console.log(`[GroupChat:Debug] Windows shell config for ${participantName}: ${shellConfig.shell} (source: ${shellConfig.source})`);
 				}
+
+				// On Windows, send prompt via stdin to avoid PowerShell parsing issues
+				const sendPromptViaStdinRaw = process.platform === 'win32' && !matchingSession?.sshRemoteConfig;
 
 				const spawnResult = processManager.spawn({
 					sessionId,
@@ -891,6 +939,9 @@ export async function routeModeratorResponse(
 					customEnvVars: finalSpawnEnvVars,
 					promptArgs: agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
+					shell: finalSpawnShell,
+					runInShell: finalSpawnRunInShell,
+					sendPromptViaStdinRaw,
 				});
 
 				console.log(
@@ -1168,6 +1219,21 @@ Review the agent responses above. Either:
 		groupChatEmitters.emitStateChange?.(groupChatId, 'moderator-thinking');
 		console.log(`[GroupChat:Debug] Emitted state change: moderator-thinking`);
 
+		// On Windows, use shell execution with PowerShell to avoid cmd.exe command line length limits
+		let spawnShell: string | undefined;
+		let spawnRunInShell = false;
+		if (process.platform === 'win32') {
+			const shellConfig = getWindowsShellForAgentExecution({
+				customShellPath: getCustomShellPathCallback?.(),
+			});
+			spawnShell = shellConfig.shell;
+			spawnRunInShell = shellConfig.useShell;
+			console.log(`[GroupChat:Debug] Windows shell config for synthesis: ${shellConfig.shell} (source: ${shellConfig.source})`);
+		}
+
+		// On Windows, send prompt via stdin to avoid PowerShell parsing issues
+		const sendPromptViaStdinRaw = process.platform === 'win32';
+
 		const spawnResult = processManager.spawn({
 			sessionId,
 			toolType: chat.moderatorAgentId,
@@ -1182,6 +1248,9 @@ Review the agent responses above. Either:
 				getCustomEnvVarsCallback?.(chat.moderatorAgentId),
 			promptArgs: agent.promptArgs,
 			noPromptSeparator: agent.noPromptSeparator,
+			shell: spawnShell,
+			runInShell: spawnRunInShell,
+			sendPromptViaStdinRaw,
 		});
 
 		console.log(`[GroupChat:Debug] Synthesis spawn result: ${JSON.stringify(spawnResult)}`);
@@ -1322,6 +1391,21 @@ export async function respawnParticipantWithRecovery(
 	console.log(`[GroupChat:Debug] Recovery spawn command: ${spawnCommand}`);
 	console.log(`[GroupChat:Debug] Recovery spawn args count: ${configResolution.args.length}`);
 
+	// On Windows, use shell execution with PowerShell to avoid cmd.exe command line length limits
+	let spawnShell: string | undefined;
+	let spawnRunInShell = false;
+	if (process.platform === 'win32') {
+		const shellConfig = getWindowsShellForAgentExecution({
+			customShellPath: getCustomShellPathCallback?.(),
+		});
+		spawnShell = shellConfig.shell;
+		spawnRunInShell = shellConfig.useShell;
+		console.log(`[GroupChat:Debug] Windows shell config for recovery: ${shellConfig.shell} (source: ${shellConfig.source})`);
+	}
+
+	// On Windows, send prompt via stdin to avoid PowerShell parsing issues
+	const sendPromptViaStdinRaw = process.platform === 'win32';
+
 	const spawnResult = processManager.spawn({
 		sessionId,
 		toolType: participant.agentId,
@@ -1335,6 +1419,9 @@ export async function respawnParticipantWithRecovery(
 			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(participant.agentId),
 		promptArgs: agent.promptArgs,
 		noPromptSeparator: agent.noPromptSeparator,
+		shell: spawnShell,
+		runInShell: spawnRunInShell,
+		sendPromptViaStdinRaw,
 	});
 
 	console.log(`[GroupChat:Debug] Recovery spawn result: ${JSON.stringify(spawnResult)}`);
