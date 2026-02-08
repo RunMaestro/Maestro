@@ -281,4 +281,206 @@ describe('inlineWizardConversation', () => {
 			await messagePromise;
 		});
 	});
+
+	describe('Windows stdin handling', () => {
+		// Save original platform
+		const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');
+
+		afterEach(() => {
+			// Restore original platform
+			if (originalPlatform) {
+				Object.defineProperty(navigator, 'platform', originalPlatform);
+			}
+		});
+
+		it('should use sendPromptViaStdin for claude-code on Windows', async () => {
+			// Mock Windows platform
+			Object.defineProperty(navigator, 'platform', {
+				value: 'Win32',
+				configurable: true,
+			});
+
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// Claude Code supports stream-json, so should use sendPromptViaStdin
+			expect(spawnCall.sendPromptViaStdin).toBe(true);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+
+			// Clean up
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
+
+		it('should use sendPromptViaStdinRaw for opencode on Windows', async () => {
+			// Mock Windows platform
+			Object.defineProperty(navigator, 'platform', {
+				value: 'Win32',
+				configurable: true,
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				command: 'opencode',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'opencode',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, '- test with dash', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// OpenCode doesn't support stream-json, so should use sendPromptViaStdinRaw
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(true);
+
+			// Clean up
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
+
+		it('should not use stdin flags on non-Windows platforms', async () => {
+			// Mock macOS platform
+			Object.defineProperty(navigator, 'platform', {
+				value: 'MacIntel',
+				configurable: true,
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				command: 'opencode',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'opencode',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, '- test with dash', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// On non-Windows, both flags should be false
+			expect(spawnCall.sendPromptViaStdin).toBe(false);
+			expect(spawnCall.sendPromptViaStdinRaw).toBe(false);
+
+			// Clean up
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
+
+		it('should add --input-format stream-json for claude-code on Windows', async () => {
+			// Mock Windows platform
+			Object.defineProperty(navigator, 'platform', {
+				value: 'Win32',
+				configurable: true,
+			});
+
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: ['--print'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// Should have --input-format stream-json in args
+			expect(spawnCall.args).toContain('--input-format');
+			const inputFormatIndex = spawnCall.args.indexOf('--input-format');
+			expect(spawnCall.args[inputFormatIndex + 1]).toBe('stream-json');
+
+			// Clean up
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
+
+		it('should NOT add --input-format stream-json for opencode on Windows', async () => {
+			// Mock Windows platform
+			Object.defineProperty(navigator, 'platform', {
+				value: 'Win32',
+				configurable: true,
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				available: true,
+				command: 'opencode',
+				args: ['run'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const session = await startInlineWizardConversation({
+				agentType: 'opencode',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Hello', []);
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// Should NOT have --input-format in args (OpenCode doesn't support it)
+			expect(spawnCall.args).not.toContain('--input-format');
+
+			// Clean up
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+			await messagePromise;
+		});
+	});
 });
