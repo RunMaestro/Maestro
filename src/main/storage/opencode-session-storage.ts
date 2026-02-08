@@ -23,6 +23,7 @@ import os from 'os';
 import fs from 'fs/promises';
 import { createHash } from 'crypto';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionStorage,
@@ -1245,6 +1246,7 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 				sessionId,
 				error,
 			});
+			captureException(error, { operation: 'opencodeStorage:deleteMessagePair', sessionId });
 			return { success: false, error: String(error) };
 		}
 	}

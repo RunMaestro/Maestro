@@ -16,6 +16,7 @@ import os from 'os';
 import fs from 'fs/promises';
 import Store from 'electron-store';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { CLAUDE_SESSION_PARSE_LIMITS } from '../constants';
 import { calculateClaudeCost } from '../utils/pricing';
 import { encodeClaudeProjectPath } from '../utils/statsCache';
@@ -194,6 +195,7 @@ function parseSessionContent(
 		};
 	} catch (error) {
 		logger.error(`Error parsing session content for session: ${sessionId}`, LOG_CONTEXT, error);
+		captureException(error, { operation: 'claudeStorage:parseSession', sessionId });
 		return null;
 	}
 }
@@ -212,6 +214,7 @@ async function parseSessionFile(
 		return parseSessionContent(content, sessionId, projectPath, stats);
 	} catch (error) {
 		logger.error(`Error reading session file: ${filePath}`, LOG_CONTEXT, error);
+		captureException(error, { operation: 'claudeStorage:readSessionFile', filePath });
 		return null;
 	}
 }
@@ -238,6 +241,7 @@ async function parseSessionFileRemote(
 		return parseSessionContent(result.data, sessionId, projectPath, stats);
 	} catch (error) {
 		logger.error(`Error reading remote session file: ${filePath}`, LOG_CONTEXT, error);
+		captureException(error, { operation: 'claudeStorage:readRemoteSessionFile', filePath });
 		return null;
 	}
 }
@@ -359,6 +363,7 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
 					});
 				} catch (error) {
 					logger.error(`Error processing session file: ${filename}`, LOG_CONTEXT, error);
+					captureException(error, { operation: 'claudeStorage:processSessionFile', filename });
 					return null;
 				}
 			})
@@ -434,6 +439,7 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
 					);
 				} catch (error) {
 					logger.error(`Error processing remote session file: ${entry.name}`, LOG_CONTEXT, error);
+					captureException(error, { operation: 'claudeStorage:processRemoteSessionFile', filename: entry.name });
 					return null;
 				}
 			})
@@ -1094,6 +1100,7 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
 			return { success: true, linesRemoved: endIndex - userMessageIndex };
 		} catch (error) {
 			logger.error(`Error deleting message pair: ${sessionId}`, LOG_CONTEXT, error);
+			captureException(error, { operation: 'claudeStorage:deleteMessagePair', sessionId });
 			return { success: false, error: String(error) };
 		}
 	}

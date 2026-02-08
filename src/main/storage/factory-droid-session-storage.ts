@@ -29,6 +29,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { readDirRemote, readFileRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionStorage,
@@ -779,6 +780,7 @@ export class FactoryDroidSessionStorage implements AgentSessionStorage {
 				sessionId,
 				error,
 			});
+			captureException(error, { operation: 'factoryDroidStorage:deleteMessagePair', sessionId });
 			return { success: false, error: String(error) };
 		}
 	}

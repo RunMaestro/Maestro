@@ -15,6 +15,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import { logger } from './utils/logger';
+import { captureException } from './utils/sentry';
 import { HistoryEntry } from '../shared/types';
 import {
 	HISTORY_VERSION,
@@ -183,6 +184,7 @@ export class HistoryManager {
 			return data.entries || [];
 		} catch (error) {
 			logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+			captureException(error, { operation: 'history:read', sessionId });
 			return [];
 		}
 	}
@@ -220,6 +222,7 @@ export class HistoryManager {
 			logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
 		} catch (error) {
 			logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+			captureException(error, { operation: 'history:write', sessionId });
 		}
 	}
 
@@ -249,6 +252,7 @@ export class HistoryManager {
 					`Failed to write history after delete for session ${sessionId}: ${writeError}`,
 					LOG_CONTEXT
 				);
+				captureException(writeError, { operation: 'history:deleteWrite', sessionId, entryId });
 				return false;
 			}
 		} catch {
@@ -282,6 +286,7 @@ export class HistoryManager {
 					`Failed to write history after update for session ${sessionId}: ${writeError}`,
 					LOG_CONTEXT
 				);
+				captureException(writeError, { operation: 'history:updateWrite', sessionId, entryId });
 				return false;
 			}
 		} catch {
@@ -300,6 +305,7 @@ export class HistoryManager {
 				logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
 			} catch (error) {
 				logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+				captureException(error, { operation: 'history:clear', sessionId });
 			}
 		}
 	}
@@ -443,6 +449,7 @@ export class HistoryManager {
 				}
 			} catch (error) {
 				logger.warn(`Failed to update sessionName in session ${sessionId}: ${error}`, LOG_CONTEXT);
+				captureException(error, { operation: 'history:updateSessionName', sessionId });
 			}
 		}
 

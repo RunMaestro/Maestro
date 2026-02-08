@@ -25,6 +25,7 @@ import path from 'path';
 import os from 'os';
 import fs from 'fs/promises';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { readFileRemote, readDirRemote, statRemote } from '../utils/remote-fs';
 import type {
 	AgentSessionStorage,
@@ -423,6 +424,7 @@ async function parseSessionFile(
 		};
 	} catch (error) {
 		logger.error(`Error reading Codex session file: ${filePath}`, LOG_CONTEXT, error);
+		captureException(error, { operation: 'codexStorage:readSessionFile', filePath });
 		return null;
 	}
 }
@@ -771,6 +773,7 @@ export class CodexSessionStorage implements AgentSessionStorage {
 			};
 		} catch (error) {
 			logger.error(`Error reading remote Codex session file: ${filePath}`, LOG_CONTEXT, error);
+			captureException(error, { operation: 'codexStorage:readRemoteSessionFile', filePath });
 			return null;
 		}
 	}
@@ -805,6 +808,7 @@ export class CodexSessionStorage implements AgentSessionStorage {
 				stats = { size: fileStat.size, mtimeMs: fileStat.mtimeMs };
 			} catch (error) {
 				logger.error(`Error stating Codex session file: ${filename}`, LOG_CONTEXT, error);
+				captureException(error, { operation: 'codexStorage:statSessionFile', filename });
 				continue;
 			}
 
@@ -1119,6 +1123,7 @@ export class CodexSessionStorage implements AgentSessionStorage {
 			};
 		} catch (error) {
 			logger.error(`Error reading Codex session: ${sessionId}`, LOG_CONTEXT, error);
+			captureException(error, { operation: 'codexStorage:readSessionMessages', sessionId });
 			return { messages: [], total: 0, hasMore: false };
 		}
 	}
@@ -1486,6 +1491,7 @@ export class CodexSessionStorage implements AgentSessionStorage {
 				sessionId,
 				error,
 			});
+			captureException(error, { operation: 'codexStorage:deleteMessagePair', sessionId });
 			return { success: false, error: String(error) };
 		}
 	}

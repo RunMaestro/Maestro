@@ -33,6 +33,8 @@ import {
 import { addParticipant } from './group-chat-agent';
 import { AgentDetector } from '../agents';
 import { powerManager } from '../power-manager';
+import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
@@ -44,6 +46,8 @@ import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 
 // Import emitters from IPC handlers (will be populated after handlers are registered)
 import { groupChatEmitters } from '../ipc/handlers/groupChat';
+
+const LOG_CONTEXT = '[GroupChatRouter]';
 
 /**
  * Session info for matching @mentions to available Maestro sessions.
@@ -335,10 +339,8 @@ export async function routeUserMessage(
 						);
 					}
 				} catch (error) {
-					console.error(
-						`[GroupChatRouter] Failed to auto-add participant ${mentionedName} from user mention:`,
-						error
-					);
+					logger.error(`Failed to auto-add participant ${mentionedName} from user mention`, LOG_CONTEXT, { error, groupChatId });
+					captureException(error, { operation: 'groupChat:autoAddParticipant', participantName: mentionedName, groupChatId });
 					// Continue with other participants even if one fails
 				}
 			}
@@ -534,8 +536,8 @@ ${message}`;
 				console.log(`[GroupChat:Debug] noPromptSeparator: ${agent.noPromptSeparator ?? false}`);
 				console.log(`[GroupChat:Debug] =================================================`);
 			} catch (error) {
-				console.error(`[GroupChat:Debug] SPAWN ERROR:`, error);
-				console.error(`[GroupChatRouter] Failed to spawn moderator for ${groupChatId}:`, error);
+				logger.error(`Failed to spawn moderator for ${groupChatId}`, LOG_CONTEXT, { error });
+				captureException(error, { operation: 'groupChat:spawnModerator', groupChatId });
 				groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 				// Remove power block reason on error since we're going idle
 				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
@@ -622,7 +624,8 @@ export async function routeModeratorResponse(
 			`[GroupChatRouter] Added history entry for Moderator: ${summary.substring(0, 50)}...`
 		);
 	} catch (error) {
-		console.error(`[GroupChatRouter] Failed to add history entry for Moderator:`, error);
+		logger.error('Failed to add history entry for Moderator', LOG_CONTEXT, { error, groupChatId });
+		captureException(error, { operation: 'groupChat:addModeratorHistory', groupChatId });
 		// Don't throw - history logging failure shouldn't break the message flow
 	}
 
@@ -697,10 +700,8 @@ export async function routeModeratorResponse(
 						);
 					}
 				} catch (error) {
-					console.error(
-						`[GroupChatRouter] Failed to auto-add participant ${mentionedName}:`,
-						error
-					);
+					logger.error(`Failed to auto-add participant ${mentionedName}`, LOG_CONTEXT, { error, groupChatId });
+					captureException(error, { operation: 'groupChat:autoAddParticipant', participantName: mentionedName, groupChatId });
 					// Continue with other participants even if one fails
 				}
 			}
@@ -905,7 +906,8 @@ export async function routeModeratorResponse(
 					`[GroupChat:Debug] Spawned batch process for participant @${participantName} (session ${sessionId}, readOnly=${readOnly ?? false})`
 				);
 			} catch (error) {
-				console.error(`[GroupChat:Debug] SPAWN ERROR for ${participantName}:`, error);
+				logger.error(`Failed to spawn participant ${participantName}`, LOG_CONTEXT, { error, groupChatId });
+				captureException(error, { operation: 'groupChat:spawnParticipant', participantName, groupChatId });
 				// Continue with other participants even if one fails
 			}
 		}
@@ -1006,10 +1008,8 @@ export async function routeAgentResponse(
 			groupChatEmitters.emitParticipantsChanged?.(groupChatId, updatedChat.participants);
 		}
 	} catch (error) {
-		console.error(
-			`[GroupChatRouter] Failed to update participant stats for ${participantName}:`,
-			error
-		);
+		logger.error(`Failed to update participant stats for ${participantName}`, LOG_CONTEXT, { error, groupChatId });
+		captureException(error, { operation: 'groupChat:updateParticipantStats', participantName, groupChatId });
 		// Don't throw - stats update failure shouldn't break the message flow
 	}
 
@@ -1030,7 +1030,8 @@ export async function routeAgentResponse(
 			`[GroupChatRouter] Added history entry for ${participantName}: ${summary.substring(0, 50)}...`
 		);
 	} catch (error) {
-		console.error(`[GroupChatRouter] Failed to add history entry for ${participantName}:`, error);
+		logger.error(`Failed to add history entry for ${participantName}`, LOG_CONTEXT, { error, groupChatId });
+		captureException(error, { operation: 'groupChat:addParticipantHistory', participantName, groupChatId });
 		// Don't throw - history logging failure shouldn't break the message flow
 	}
 
@@ -1058,18 +1059,14 @@ export async function spawnModeratorSynthesis(
 
 	const chat = await loadGroupChat(groupChatId);
 	if (!chat) {
-		console.error(`[GroupChat:Debug] ERROR: Chat not found for synthesis!`);
-		console.error(`[GroupChatRouter] Cannot spawn synthesis - chat not found: ${groupChatId}`);
+		logger.error(`Cannot spawn synthesis - chat not found: ${groupChatId}`, LOG_CONTEXT);
 		return;
 	}
 
 	console.log(`[GroupChat:Debug] Chat loaded: "${chat.name}"`);
 
 	if (!isModeratorActive(groupChatId)) {
-		console.error(`[GroupChat:Debug] ERROR: Moderator not active for synthesis!`);
-		console.error(
-			`[GroupChatRouter] Cannot spawn synthesis - moderator not active for: ${groupChatId}`
-		);
+		logger.error(`Cannot spawn synthesis - moderator not active for: ${groupChatId}`, LOG_CONTEXT);
 		return;
 	}
 
@@ -1077,10 +1074,7 @@ export async function spawnModeratorSynthesis(
 	console.log(`[GroupChat:Debug] Session ID prefix: ${sessionIdPrefix}`);
 
 	if (!sessionIdPrefix) {
-		console.error(`[GroupChat:Debug] ERROR: No session ID prefix for synthesis!`);
-		console.error(
-			`[GroupChatRouter] Cannot spawn synthesis - no moderator session ID for: ${groupChatId}`
-		);
+		logger.error(`Cannot spawn synthesis - no moderator session ID for: ${groupChatId}`, LOG_CONTEXT);
 		return;
 	}
 
@@ -1098,10 +1092,7 @@ export async function spawnModeratorSynthesis(
 	);
 
 	if (!agent || !agent.available) {
-		console.error(`[GroupChat:Debug] ERROR: Agent not available for synthesis!`);
-		console.error(
-			`[GroupChatRouter] Agent '${chat.moderatorAgentId}' is not available for synthesis`
-		);
+		logger.error(`Agent '${chat.moderatorAgentId}' is not available for synthesis`, LOG_CONTEXT);
 		return;
 	}
 
@@ -1190,11 +1181,8 @@ Review the agent responses above. Either:
 		console.log(`[GroupChat:Debug] noPromptSeparator: ${agent.noPromptSeparator ?? false}`);
 		console.log(`[GroupChat:Debug] ================================================`);
 	} catch (error) {
-		console.error(`[GroupChat:Debug] SYNTHESIS SPAWN ERROR:`, error);
-		console.error(
-			`[GroupChatRouter] Failed to spawn moderator synthesis for ${groupChatId}:`,
-			error
-		);
+		logger.error(`Failed to spawn moderator synthesis for ${groupChatId}`, LOG_CONTEXT, { error });
+		captureException(error, { operation: 'groupChat:spawnSynthesis', groupChatId });
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		// Remove power block reason on synthesis error since we're going idle
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);

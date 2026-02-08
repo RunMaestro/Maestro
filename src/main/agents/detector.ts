@@ -16,6 +16,7 @@
 import * as path from 'path';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
+import { captureException } from '../utils/sentry';
 import { getAgentCapabilities } from './capabilities';
 import { checkBinaryExists, checkCustomPath, getExpandedEnv } from './path-prober';
 import { AGENT_DEFINITIONS, type AgentConfig } from './definitions';
@@ -282,6 +283,7 @@ export class AgentDetector {
 			}
 		} catch (error) {
 			logger.error(`Model discovery threw exception for ${agentId}`, LOG_CONTEXT, { error });
+			captureException(error, { operation: 'agent:modelDiscovery', agentId });
 			return [];
 		}
 	}
