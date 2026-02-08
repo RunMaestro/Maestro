@@ -5,6 +5,7 @@ import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
+import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
@@ -285,43 +286,13 @@ async function spawnClaudeAgent(
 						sessionId = msg.session_id;
 					}
 
-					// Extract usage statistics
+					// Extract usage statistics using shared aggregator
 					if (msg.modelUsage || msg.usage || msg.total_cost_usd !== undefined) {
-						const usage = msg.usage || {};
-
-						let aggregatedInputTokens = 0;
-						let aggregatedOutputTokens = 0;
-						let aggregatedCacheReadTokens = 0;
-						let aggregatedCacheCreationTokens = 0;
-						let contextWindow = 200000;
-
-						if (msg.modelUsage) {
-							for (const modelStats of Object.values(msg.modelUsage) as Record<string, number>[]) {
-								aggregatedInputTokens += modelStats.inputTokens || 0;
-								aggregatedOutputTokens += modelStats.outputTokens || 0;
-								aggregatedCacheReadTokens += modelStats.cacheReadInputTokens || 0;
-								aggregatedCacheCreationTokens += modelStats.cacheCreationInputTokens || 0;
-								if (modelStats.contextWindow && modelStats.contextWindow > contextWindow) {
-									contextWindow = modelStats.contextWindow;
-								}
-							}
-						}
-
-						if (aggregatedInputTokens === 0 && aggregatedOutputTokens === 0) {
-							aggregatedInputTokens = usage.input_tokens || 0;
-							aggregatedOutputTokens = usage.output_tokens || 0;
-							aggregatedCacheReadTokens = usage.cache_read_input_tokens || 0;
-							aggregatedCacheCreationTokens = usage.cache_creation_input_tokens || 0;
-						}
-
-						usageStats = {
-							inputTokens: aggregatedInputTokens,
-							outputTokens: aggregatedOutputTokens,
-							cacheReadInputTokens: aggregatedCacheReadTokens,
-							cacheCreationInputTokens: aggregatedCacheCreationTokens,
-							totalCostUsd: msg.total_cost_usd || 0,
-							contextWindow,
-						};
+						usageStats = aggregateModelUsage(
+							msg.modelUsage,
+							msg.usage || {},
+							msg.total_cost_usd || 0
+						);
 					}
 				} catch {
 					// Ignore non-JSON lines

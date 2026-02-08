@@ -556,6 +556,76 @@ export function formatAgentDetail(agent: AgentDetailDisplay): string {
 	return lines.join('\n');
 }
 
+// Session formatting
+export interface SessionDisplay {
+	sessionId: string;
+	sessionName?: string;
+	modifiedAt: string;
+	firstMessage: string;
+	messageCount: number;
+	costUsd: number;
+	durationSeconds: number;
+	starred?: boolean;
+}
+
+export function formatSessions(
+	sessions: SessionDisplay[],
+	agentName: string,
+	totalCount: number,
+	filteredCount: number,
+	searchQuery?: string
+): string {
+	if (sessions.length === 0) {
+		if (searchQuery) {
+			return dim(`No sessions matching "${searchQuery}" found.`);
+		}
+		return dim('No sessions found.');
+	}
+
+	const lines: string[] = [];
+	const countInfo = searchQuery
+		? `${filteredCount} matching of ${totalCount} total`
+		: `showing ${sessions.length} of ${totalCount}`;
+	lines.push(
+		bold(c('cyan', 'SESSIONS')) + dim(` for ${agentName} (${countInfo})`)
+	);
+	lines.push('');
+
+	for (const session of sessions) {
+		const date = new Date(session.modifiedAt);
+		const dateStr = date.toLocaleDateString();
+		const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		const star = session.starred ? c('yellow', '★ ') : '  ';
+		const name = session.sessionName
+			? c('white', session.sessionName)
+			: dim('(unnamed)');
+		const cost = session.costUsd > 0 ? c('yellow', `$${session.costUsd.toFixed(4)}`) : dim('$0');
+		const msgs = dim(`${session.messageCount} msgs`);
+		const dur = session.durationSeconds > 0
+			? dim(formatDurationSeconds(session.durationSeconds))
+			: '';
+		const preview = session.firstMessage
+			? dim(truncate(session.firstMessage.replace(/\n/g, ' '), 70))
+			: '';
+		const id = dim(session.sessionId);
+
+		lines.push(`${star}${name} ${msgs} ${cost}${dur ? ` ${dur}` : ''}`);
+		lines.push(`      ${dim(`${dateStr} ${timeStr}`)} ${id}`);
+		if (preview) {
+			lines.push(`      ${preview}`);
+		}
+		lines.push('');
+	}
+
+	return lines.join('\n').trimEnd();
+}
+
+function formatDurationSeconds(seconds: number): string {
+	if (seconds < 60) return `${seconds}s`;
+	if (seconds < 3600) return `${(seconds / 60).toFixed(1)}m`;
+	return `${(seconds / 3600).toFixed(1)}h`;
+}
+
 // Error formatting
 export function formatError(message: string): string {
 	return `${c('red', '✗')} ${c('red', 'Error:')} ${message}`;

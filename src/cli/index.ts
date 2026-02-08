@@ -10,8 +10,9 @@ import { listAgents } from './commands/list-agents';
 import { listPlaybooks } from './commands/list-playbooks';
 import { showPlaybook } from './commands/show-playbook';
 import { showAgent } from './commands/show-agent';
-import { runPlaybook } from './commands/run-playbook';
 import { cleanPlaybooks } from './commands/clean-playbooks';
+import { query } from './commands/send';
+import { listSessions } from './commands/list-sessions';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -52,6 +53,15 @@ list
 	.option('--json', 'Output as JSON lines (for scripting)')
 	.action(listPlaybooks);
 
+list
+	.command('sessions <agent-id>')
+	.description('List agent sessions (most recent first)')
+	.option('-l, --limit <count>', 'Maximum number of sessions to show (default: 25)')
+	.option('-k, --skip <count>', 'Number of sessions to skip for pagination (default: 0)')
+	.option('-s, --search <keyword>', 'Filter sessions by keyword in name or first message')
+	.option('--json', 'Output as JSON (for scripting)')
+	.action(listSessions);
+
 // Show command
 const show = program.command('show').description('Show details of a resource');
 
@@ -67,7 +77,7 @@ show
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(showPlaybook);
 
-// Playbook command
+// Playbook command (lazy-loaded to avoid eager resolution of generated/prompts)
 program
 	.command('playbook <playbook-id>')
 	.description('Run a playbook')
@@ -77,7 +87,10 @@ program
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--wait', 'Wait for agent to become available if busy')
-	.action(runPlaybook);
+	.action(async (playbookId: string, options: Record<string, unknown>) => {
+		const { runPlaybook } = await import('./commands/run-playbook');
+		return runPlaybook(playbookId, options);
+	});
 
 // Clean command
 const clean = program.command('clean').description('Clean up orphaned resources');
@@ -88,5 +101,12 @@ clean
 	.option('--dry-run', 'Show what would be removed without actually removing')
 	.option('--json', 'Output as JSON (for scripting)')
 	.action(cleanPlaybooks);
+
+// Query command - send a message to an agent and get a JSON response
+program
+	.command('query <agent-id> <message>')
+	.description('Send a message to an agent and get a JSON response')
+	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
+	.action(query);
 
 program.parse();

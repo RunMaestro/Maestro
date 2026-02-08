@@ -24,6 +24,7 @@ import {
 	formatSuccess,
 	formatInfo,
 	formatWarning,
+	formatSessions,
 	type GroupDisplay,
 	type AgentDisplay,
 	type PlaybookDisplay,
@@ -31,6 +32,7 @@ import {
 	type PlaybooksByAgent,
 	type RunEvent,
 	type AgentDetailDisplay,
+	type SessionDisplay,
 } from '../../../cli/output/formatter';
 
 // Store original process.stdout.isTTY
@@ -1245,6 +1247,96 @@ describe('formatter', () => {
 
 			expect(result).toContain(shortPath);
 			expect(result).not.toContain('…');
+		});
+	});
+
+	describe('formatSessions', () => {
+		const mockSessions: SessionDisplay[] = [
+			{
+				sessionId: 'abc12345-6789-0000-0000-000000000001',
+				sessionName: 'Auth Refactor',
+				modifiedAt: '2026-02-08T10:00:00.000Z',
+				firstMessage: 'Help me refactor the authentication module',
+				messageCount: 12,
+				costUsd: 0.0542,
+				durationSeconds: 300,
+				starred: true,
+			},
+			{
+				sessionId: 'def12345-6789-0000-0000-000000000002',
+				modifiedAt: '2026-02-07T09:00:00.000Z',
+				firstMessage: 'Fix the bug in login',
+				messageCount: 4,
+				costUsd: 0.012,
+				durationSeconds: 60,
+			},
+		];
+
+		it('should format sessions with agent name and count info', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 10, 10);
+			expect(result).toContain('SESSIONS');
+			expect(result).toContain('Test Agent');
+			expect(result).toContain('showing 2 of 10');
+		});
+
+		it('should display session names for named sessions', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('Auth Refactor');
+		});
+
+		it('should display (unnamed) for sessions without names', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('(unnamed)');
+		});
+
+		it('should show starred indicator for starred sessions', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			// Starred sessions should have a star character
+			expect(result).toContain('★');
+		});
+
+		it('should show message count', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('12 msgs');
+			expect(result).toContain('4 msgs');
+		});
+
+		it('should show cost', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('$0.0542');
+		});
+
+		it('should show full session ID', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('abc12345-6789-0000-0000-000000000001');
+			expect(result).toContain('def12345-6789-0000-0000-000000000002');
+		});
+
+		it('should show first message preview', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('Help me refactor the authentication module');
+			expect(result).toContain('Fix the bug in login');
+		});
+
+		it('should show search count info when search is provided', () => {
+			const result = formatSessions([mockSessions[0]], 'Test Agent', 10, 1, 'auth');
+			expect(result).toContain('1 matching of 10 total');
+		});
+
+		it('should return no sessions message when empty', () => {
+			const result = formatSessions([], 'Test Agent', 0, 0);
+			expect(result).toContain('No sessions found');
+		});
+
+		it('should return search-specific message when search yields no results', () => {
+			const result = formatSessions([], 'Test Agent', 10, 0, 'nonexistent');
+			expect(result).toContain('No sessions matching "nonexistent" found');
+		});
+
+		it('should show duration for sessions with duration', () => {
+			const result = formatSessions(mockSessions, 'Test Agent', 2, 2);
+			expect(result).toContain('5.0m'); // 300 seconds = 5.0m
+			expect(result).toContain('1.0m'); // 60 seconds = 1.0m
 		});
 	});
 });

@@ -876,8 +876,8 @@ Some text with [x] in it that's not a checkbox
 
 			const result = await resultPromise;
 
-			expect(result.usageStats?.inputTokens).toBe(300); // 100 + 200
-			expect(result.usageStats?.outputTokens).toBe(150); // 50 + 100
+			expect(result.usageStats?.inputTokens).toBe(200); // MAX(100, 200)
+			expect(result.usageStats?.outputTokens).toBe(100); // MAX(50, 100)
 			expect(result.usageStats?.contextWindow).toBe(300000); // Larger window
 		});
 
