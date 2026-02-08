@@ -12,9 +12,9 @@
  * - update-checker.ts (version comparison)
  */
 
-import * as os from 'os';
-import * as path from 'path';
-import * as fs from 'fs';
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
 
 /**
  * Expand tilde (~) to home directory in paths.
@@ -41,11 +41,11 @@ export function expandTilde(filePath: string, homeDir?: string): string {
 
 	const home = homeDir ?? os.homedir();
 
-	if (filePath === '~') {
+	if (filePath === "~") {
 		return home;
 	}
 
-	if (filePath.startsWith('~/')) {
+	if (filePath.startsWith("~/")) {
 		// Use POSIX path separator for consistency, especially for SSH remote paths
 		return `${home}/${filePath.slice(2)}`;
 	}
@@ -66,7 +66,7 @@ export function expandTilde(filePath: string, homeDir?: string): string {
  * ```
  */
 function splitVersionParts(version: string): [string, string | undefined] {
-	const dashIndex = version.indexOf('-');
+	const dashIndex = version.indexOf("-");
 	if (dashIndex === -1) return [version, undefined];
 	return [version.substring(0, dashIndex), version.substring(dashIndex + 1)];
 }
@@ -86,9 +86,9 @@ function splitVersionParts(version: string): [string, string | undefined] {
  * ```
  */
 export function parseVersion(version: string): number[] {
-	const cleaned = version.replace(/^v/, '');
+	const cleaned = version.replace(/^v/, "");
 	const [numericPart] = splitVersionParts(cleaned);
-	return numericPart.split('.').map((n) => parseInt(n, 10) || 0);
+	return numericPart.split(".").map((n) => parseInt(n, 10) || 0);
 }
 
 /**
@@ -123,14 +123,14 @@ export function parseVersion(version: string): number[] {
  * ```
  */
 export function compareVersions(a: string, b: string): number {
-	const cleanA = a.replace(/^v/, '');
-	const cleanB = b.replace(/^v/, '');
+	const cleanA = a.replace(/^v/, "");
+	const cleanB = b.replace(/^v/, "");
 
 	const [numA, preA] = splitVersionParts(cleanA);
 	const [numB, preB] = splitVersionParts(cleanB);
 
-	const partsA = numA.split('.').map((n) => parseInt(n, 10) || 0);
-	const partsB = numB.split('.').map((n) => parseInt(n, 10) || 0);
+	const partsA = numA.split(".").map((n) => parseInt(n, 10) || 0);
+	const partsB = numB.split(".").map((n) => parseInt(n, 10) || 0);
 
 	const maxLength = Math.max(partsA.length, partsB.length);
 
@@ -170,7 +170,7 @@ export function compareVersions(a: string, b: string): number {
  * ```
  */
 export function detectNodeVersionManagerBinPaths(): string[] {
-	if (process.platform === 'win32') {
+	if (process.platform === "win32") {
 		return []; // Windows has different version manager paths handled elsewhere
 	}
 
@@ -178,24 +178,29 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 	const detectedPaths: string[] = [];
 
 	// nvm: Check for ~/.nvm and find installed node versions
-	const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
+	const nvmDir = process.env.NVM_DIR || path.join(home, ".nvm");
 	if (fs.existsSync(nvmDir)) {
 		// Check nvm/current symlink first (preferred)
-		const nvmCurrentBin = path.join(nvmDir, 'current', 'bin');
+		const nvmCurrentBin = path.join(nvmDir, "current", "bin");
 		if (fs.existsSync(nvmCurrentBin)) {
 			detectedPaths.push(nvmCurrentBin);
 		}
 
 		// Also check all installed versions
-		const versionsDir = path.join(nvmDir, 'versions', 'node');
+		const versionsDir = path.join(nvmDir, "versions", "node");
 		if (fs.existsSync(versionsDir)) {
 			try {
-				const versions = fs.readdirSync(versionsDir).filter((v) => v.startsWith('v'));
+				const versions = fs
+					.readdirSync(versionsDir)
+					.filter((v) => v.startsWith("v"));
 				// Sort versions descending to check newest first
 				versions.sort((a, b) => compareVersions(b, a));
 				for (const version of versions) {
-					const versionBin = path.join(versionsDir, version, 'bin');
-					if (fs.existsSync(versionBin) && !detectedPaths.includes(versionBin)) {
+					const versionBin = path.join(versionsDir, version, "bin");
+					if (
+						fs.existsSync(versionBin) &&
+						!detectedPaths.includes(versionBin)
+					) {
 						detectedPaths.push(versionBin);
 					}
 				}
@@ -209,25 +214,32 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 	// - macOS: ~/Library/Application Support/fnm (default) or ~/.fnm
 	// - Linux: ~/.local/share/fnm (default) or ~/.fnm
 	const fnmPaths = [
-		path.join(home, 'Library', 'Application Support', 'fnm'), // macOS default
-		path.join(home, '.local', 'share', 'fnm'), // Linux default
-		path.join(home, '.fnm'), // Legacy/custom location
+		path.join(home, "Library", "Application Support", "fnm"), // macOS default
+		path.join(home, ".local", "share", "fnm"), // Linux default
+		path.join(home, ".fnm"), // Legacy/custom location
 	];
 	for (const fnmDir of fnmPaths) {
 		if (fs.existsSync(fnmDir)) {
 			// fnm uses aliases/current or node-versions/<version>
-			const fnmCurrentBin = path.join(fnmDir, 'aliases', 'default', 'bin');
+			const fnmCurrentBin = path.join(fnmDir, "aliases", "default", "bin");
 			if (fs.existsSync(fnmCurrentBin)) {
 				detectedPaths.push(fnmCurrentBin);
 			}
 
-			const fnmNodeVersions = path.join(fnmDir, 'node-versions');
+			const fnmNodeVersions = path.join(fnmDir, "node-versions");
 			if (fs.existsSync(fnmNodeVersions)) {
 				try {
-					const versions = fs.readdirSync(fnmNodeVersions).filter((v) => v.startsWith('v'));
+					const versions = fs
+						.readdirSync(fnmNodeVersions)
+						.filter((v) => v.startsWith("v"));
 					versions.sort((a, b) => compareVersions(b, a));
 					for (const version of versions) {
-						const versionBin = path.join(fnmNodeVersions, version, 'installation', 'bin');
+						const versionBin = path.join(
+							fnmNodeVersions,
+							version,
+							"installation",
+							"bin",
+						);
 						if (fs.existsSync(versionBin)) {
 							detectedPaths.push(versionBin);
 						}
@@ -241,28 +253,28 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 	}
 
 	// volta: Uses ~/.volta/bin for shims
-	const voltaBin = path.join(home, '.volta', 'bin');
+	const voltaBin = path.join(home, ".volta", "bin");
 	if (fs.existsSync(voltaBin)) {
 		detectedPaths.push(voltaBin);
 	}
 
 	// mise (formerly rtx): Uses ~/.local/share/mise/shims
-	const miseShims = path.join(home, '.local', 'share', 'mise', 'shims');
+	const miseShims = path.join(home, ".local", "share", "mise", "shims");
 	if (fs.existsSync(miseShims)) {
 		detectedPaths.push(miseShims);
 	}
 
 	// asdf: Uses ~/.asdf/shims
-	const asdfShims = path.join(home, '.asdf', 'shims');
+	const asdfShims = path.join(home, ".asdf", "shims");
 	if (fs.existsSync(asdfShims)) {
 		detectedPaths.push(asdfShims);
 	}
 
 	// n: Node version manager - uses /usr/local/n/versions or N_PREFIX
-	const nPrefix = process.env.N_PREFIX || '/usr/local';
-	const nBin = path.join(nPrefix, 'bin');
+	const nPrefix = process.env.N_PREFIX || "/usr/local";
+	const nBin = path.join(nPrefix, "bin");
 	// Only add if n is actually managing node (check for n binary)
-	if (fs.existsSync(path.join(nPrefix, 'n', 'versions'))) {
+	if (fs.existsSync(path.join(nPrefix, "n", "versions"))) {
 		if (fs.existsSync(nBin)) {
 			detectedPaths.push(nBin);
 		}
@@ -290,90 +302,104 @@ export function detectNodeVersionManagerBinPaths(): string[] {
  * ```
  */
 export function buildExpandedPath(customPaths?: string[]): string {
-	const isWindows = process.platform === 'win32';
+	const isWindows = process.platform === "win32";
 	const delimiter = path.delimiter;
 	const home = os.homedir();
 
 	// Start with current PATH
-	const currentPath = process.env.PATH || '';
+	const currentPath = process.env.PATH || "";
 	const pathParts = currentPath.split(delimiter);
 
 	// Platform-specific additional paths
 	let additionalPaths: string[];
 
 	if (isWindows) {
-		const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
-		const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-		const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
-		const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-		const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+		const appData =
+			process.env.APPDATA || path.join(home, "AppData", "Roaming");
+		const localAppData =
+			process.env.LOCALAPPDATA || path.join(home, "AppData", "Local");
+		const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+		const programFilesX86 =
+			process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+		const systemRoot = process.env.SystemRoot || "C:\\Windows";
 
 		additionalPaths = [
 			// .NET SDK installations
-			path.join(programFiles, 'dotnet'),
-			path.join(programFilesX86, 'dotnet'),
+			path.join(programFiles, "dotnet"),
+			path.join(programFilesX86, "dotnet"),
 			// Claude Code PowerShell installer
-			path.join(home, '.local', 'bin'),
+			path.join(home, ".local", "bin"),
 			// Claude Code winget install
-			path.join(localAppData, 'Microsoft', 'WinGet', 'Links'),
-			path.join(programFiles, 'WinGet', 'Links'),
-			path.join(localAppData, 'Microsoft', 'WinGet', 'Packages'),
-			path.join(programFiles, 'WinGet', 'Packages'),
+			path.join(localAppData, "Microsoft", "WinGet", "Links"),
+			path.join(programFiles, "WinGet", "Links"),
+			path.join(localAppData, "Microsoft", "WinGet", "Packages"),
+			path.join(programFiles, "WinGet", "Packages"),
 			// npm global installs
-			path.join(appData, 'npm'),
-			path.join(localAppData, 'npm'),
+			path.join(appData, "npm"),
+			path.join(localAppData, "npm"),
 			// Claude Code CLI install location (npm global)
-			path.join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli'),
+			path.join(
+				appData,
+				"npm",
+				"node_modules",
+				"@anthropic-ai",
+				"claude-code",
+				"cli",
+			),
 			// Codex CLI install location (npm global)
-			path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin'),
+			path.join(appData, "npm", "node_modules", "@openai", "codex", "bin"),
 			// User local programs
-			path.join(localAppData, 'Programs'),
-			path.join(localAppData, 'Microsoft', 'WindowsApps'),
+			path.join(localAppData, "Programs"),
+			path.join(localAppData, "Microsoft", "WindowsApps"),
 			// Python/pip user installs
-			path.join(appData, 'Python', 'Scripts'),
-			path.join(localAppData, 'Programs', 'Python', 'Python312', 'Scripts'),
-			path.join(localAppData, 'Programs', 'Python', 'Python311', 'Scripts'),
-			path.join(localAppData, 'Programs', 'Python', 'Python310', 'Scripts'),
+			path.join(appData, "Python", "Scripts"),
+			path.join(localAppData, "Programs", "Python", "Python312", "Scripts"),
+			path.join(localAppData, "Programs", "Python", "Python311", "Scripts"),
+			path.join(localAppData, "Programs", "Python", "Python310", "Scripts"),
 			// Git for Windows
-			path.join(programFiles, 'Git', 'cmd'),
-			path.join(programFiles, 'Git', 'bin'),
-			path.join(programFiles, 'Git', 'usr', 'bin'),
-			path.join(programFilesX86, 'Git', 'cmd'),
-			path.join(programFilesX86, 'Git', 'bin'),
+			path.join(programFiles, "Git", "cmd"),
+			path.join(programFiles, "Git", "bin"),
+			path.join(programFiles, "Git", "usr", "bin"),
+			path.join(programFilesX86, "Git", "cmd"),
+			path.join(programFilesX86, "Git", "bin"),
 			// Node.js
-			path.join(programFiles, 'nodejs'),
-			path.join(localAppData, 'Programs', 'node'),
+			path.join(programFiles, "nodejs"),
+			path.join(localAppData, "Programs", "node"),
 			// Cloudflared
-			path.join(programFiles, 'cloudflared'),
+			path.join(programFiles, "cloudflared"),
 			// Scoop package manager
-			path.join(home, 'scoop', 'shims'),
-			path.join(home, 'scoop', 'apps', 'opencode', 'current'),
+			path.join(home, "scoop", "shims"),
+			path.join(home, "scoop", "apps", "opencode", "current"),
 			// Chocolatey
-			path.join(process.env.ChocolateyInstall || 'C:\\ProgramData\\chocolatey', 'bin'),
+			path.join(
+				process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey",
+				"bin",
+			),
 			// Go binaries
-			path.join(home, 'go', 'bin'),
+			path.join(home, "go", "bin"),
 			// Windows system paths
-			path.join(systemRoot, 'System32'),
+			path.join(systemRoot, "System32"),
 			path.join(systemRoot),
 			// Windows OpenSSH
-			path.join(systemRoot, 'System32', 'OpenSSH'),
+			path.join(systemRoot, "System32", "OpenSSH"),
 		];
 	} else {
 		// Unix-like paths (macOS/Linux)
 		additionalPaths = [
-			'/opt/homebrew/bin', // Homebrew on Apple Silicon
-			'/opt/homebrew/sbin',
-			'/usr/local/bin', // Homebrew on Intel, common install location
-			'/usr/local/sbin',
+			"/opt/homebrew/bin", // Homebrew on Apple Silicon
+			"/opt/homebrew/sbin",
+			"/usr/local/bin", // Homebrew on Intel, common install location
+			"/usr/local/sbin",
 			`${home}/.local/bin`, // User local installs (pip, etc.)
 			`${home}/.npm-global/bin`, // npm global with custom prefix
+			`${home}/.bun/bin`, // Bun runtime and package manager
 			`${home}/bin`, // User bin directory
 			`${home}/.claude/local`, // Claude local install location
 			`${home}/.opencode/bin`, // OpenCode installer default location
-			'/usr/bin',
-			'/bin',
-			'/usr/sbin',
-			'/sbin',
+			"/usr/bin",
+			"/bin",
+			"/usr/sbin",
+			"/sbin",
 		];
 	}
 
@@ -412,7 +438,9 @@ export function buildExpandedPath(customPaths?: string[]): string {
  * // Returns process.env copy with expanded PATH + custom vars
  * ```
  */
-export function buildExpandedEnv(customEnvVars?: Record<string, string>): NodeJS.ProcessEnv {
+export function buildExpandedEnv(
+	customEnvVars?: Record<string, string>,
+): NodeJS.ProcessEnv {
 	const env = { ...process.env };
 	env.PATH = buildExpandedPath();
 
@@ -420,7 +448,9 @@ export function buildExpandedEnv(customEnvVars?: Record<string, string>): NodeJS
 	if (customEnvVars && Object.keys(customEnvVars).length > 0) {
 		const home = os.homedir();
 		for (const [key, value] of Object.entries(customEnvVars)) {
-			env[key] = value.startsWith('~/') ? path.join(home, value.slice(2)) : value;
+			env[key] = value.startsWith("~/")
+				? path.join(home, value.slice(2))
+				: value;
 		}
 	}
 
