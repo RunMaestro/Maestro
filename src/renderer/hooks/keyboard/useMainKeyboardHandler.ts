@@ -72,14 +72,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
-			// In terminal mode, Ctrl+C must go to xterm/PTy as an interrupt signal.
-			// Do not intercept it with any app-level handlers.
+			// In terminal mode, Ctrl+C/Ctrl+D must go to xterm/PTy.
+			// - Ctrl+C sends SIGINT
+			// - Ctrl+D sends EOF
+			// Do not intercept either with app-level handlers.
 			if (
 				e.ctrlKey &&
 				!e.metaKey &&
 				!e.altKey &&
 				!e.shiftKey &&
-				e.key.toLowerCase() === 'c' &&
+				(e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'd') &&
 				ctx.activeSession?.inputMode === 'terminal'
 			) {
 				return;

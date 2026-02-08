@@ -598,6 +598,16 @@ describe('XTerminal', () => {
 		expect(processWrite).toHaveBeenCalledWith('session-pty', 'user-input');
 		expect(onInputData).toHaveBeenCalledWith('user-input');
 
+		act(() => {
+			terminal.emitData('\x03');
+			terminal.emitData('\x04');
+		});
+
+		expect(processWrite).toHaveBeenCalledWith('session-pty', '\x03');
+		expect(processWrite).toHaveBeenCalledWith('session-pty', '\x04');
+		expect(onInputData).toHaveBeenCalledWith('\x03');
+		expect(onInputData).toHaveBeenCalledWith('\x04');
+
 		const inputDisposable = terminal.onData.mock.results[0].value as {
 			dispose: ReturnType<typeof vi.fn>;
 		};
