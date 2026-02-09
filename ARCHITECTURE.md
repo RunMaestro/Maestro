@@ -13,7 +13,7 @@ Deep technical documentation for Maestro's architecture and design patterns. For
 - [Custom AI Commands](#custom-ai-commands)
 - [Theme System](#theme-system)
 - [Settings Persistence](#settings-persistence)
-- [Claude Sessions API](#claude-sessions-api)
+- [Claude Provider Sessions API](#claude-provider-sessions-api)
 - [Auto Run System](#auto-run-system)
 - [Achievement System](#achievement-system)
 - [AI Tab System](#ai-tab-system)
@@ -31,7 +31,7 @@ Deep technical documentation for Maestro's architecture and design patterns. For
 
 ## Architecture
 
-Maestro organizes work into **Projects** (workspaces), each with a **CLI Terminal** and multiple **Agent Tabs**. Each tab can be connected to an **Agent Session** - either newly created or resumed from the session pool.
+Maestro organizes work into **Agents** (workspaces), each with a **CLI Terminal** and multiple **AI Tabs**. Each tab can be connected to a **Provider Session** - either newly created or resumed from the session pool.
 
 ```mermaid
 graph LR
@@ -52,7 +52,7 @@ graph LR
         end
     end
 
-    subgraph SessionPool["Agent Session Pool"]
+    subgraph SessionPool["Provider Session Pool"]
         direction TB
         S1["Session α"]
         S2["Session β"]
@@ -114,9 +114,9 @@ React frontend with no direct Node.js access:
 | `types/` | TypeScript definitions |
 | `utils/` | Frontend utilities |
 
-### Session Model
+### Agent Model (Session Interface)
 
-Each session runs **two processes simultaneously**:
+Each agent runs **two processes simultaneously**:
 
 ```typescript
 interface Session {
@@ -404,11 +404,11 @@ Manages all application settings with automatic persistence.
 
 #### useSessionManager (`src/renderer/hooks/useSessionManager.ts`)
 
-Manages sessions and groups with CRUD operations.
+Manages agents and groups with CRUD operations.
 
 **Key methods:**
-- `createNewSession(agentId, workingDir, name)` - Creates new session with dual processes
-- `deleteSession(id, showConfirmation)` - Delete with confirmation
+- `createNewSession(agentId, workingDir, name)` - Creates new agent with dual processes
+- `deleteSession(id, showConfirmation)` - Delete agent with confirmation
 - `toggleInputMode()` - Switch between AI and terminal mode
 - `updateScratchPad(content)` - Update session scratchpad
 - `createNewGroup(name, emoji, moveSession, activeSessionId)`
@@ -469,7 +469,7 @@ Achievement/badge system for Auto Run usage. See [Achievement System](#achieveme
 
 #### useActivityTracker (`src/renderer/hooks/useActivityTracker.ts`)
 
-User activity tracking for session idle detection and status.
+User activity tracking for agent idle detection and status.
 
 #### useMobileLandscape (`src/renderer/hooks/useMobileLandscape.ts`)
 
@@ -635,8 +635,8 @@ Settings stored via `electron-store`:
 
 **Files:**
 - `maestro-settings.json` - User preferences
-- `maestro-sessions.json` - Session persistence
-- `maestro-groups.json` - Session groups
+- `maestro-sessions.json` - Agent persistence
+- `maestro-groups.json` - Agent groups
 - `maestro-agent-configs.json` - Per-agent configuration
 
 ### Adding New Settings
@@ -664,9 +664,9 @@ if (saved !== undefined) setMySettingState(saved);
 
 ---
 
-## Claude Sessions API
+## Claude Provider Sessions API
 
-Browse and resume Claude Code sessions from `~/.claude/projects/`.
+Browse and resume Claude Code provider sessions from `~/.claude/projects/`.
 
 ### Path Encoding
 
@@ -794,7 +794,7 @@ interface Playbook {
 
 ### Session Fields
 
-Auto Run state is stored per-session:
+Auto Run state is stored per-agent:
 
 ```typescript
 // In Session interface
@@ -943,11 +943,11 @@ When a new badge is unlocked:
 
 ## AI Tab System
 
-Multi-tab support within each session, allowing parallel conversations with separate Claude sessions.
+Multi-tab support within each agent, allowing parallel conversations with separate provider sessions.
 
 ### Features
 
-- **Multiple tabs per session**: Each tab maintains its own Claude session ID
+- **Multiple tabs per agent**: Each tab maintains its own provider session ID
 - **Tab management**: Create, close, rename, star tabs
 - **Read-only mode**: Per-tab toggle to prevent accidental input
 - **Save-to-history toggle**: Per-tab control over history persistence
@@ -960,7 +960,7 @@ Multi-tab support within each session, allowing parallel conversations with sepa
 interface AITab {
   id: string;
   name: string;
-  agentSessionId?: string;    // Separate Claude session per tab
+  agentSessionId?: string;    // Separate provider session per tab
   aiLogs: LogEntry[];          // Tab-specific conversation history
   isStarred: boolean;
   readOnlyMode: boolean;
@@ -1086,7 +1086,7 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 
 ## Execution Queue
 
-Sequential message processing system that prevents race conditions when multiple operations target the same session.
+Sequential message processing system that prevents race conditions when multiple operations target the same agent.
 
 ### Components
 
@@ -1129,7 +1129,7 @@ isProcessingQueue: boolean;    // Currently processing
 
 ## Navigation History
 
-Back/forward navigation through sessions and tabs, similar to browser history.
+Back/forward navigation through agents and tabs, similar to browser history.
 
 ### Implementation
 
@@ -1146,7 +1146,7 @@ interface NavigationEntry {
 ### Behavior
 
 - Maximum 50 entries in history
-- Automatic cleanup of invalid entries (deleted sessions/tabs)
+- Automatic cleanup of invalid entries (deleted agents/tabs)
 - Skips duplicate consecutive entries
 
 ### Shortcuts

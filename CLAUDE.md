@@ -14,7 +14,7 @@ This guide has been split into focused sub-documents for progressive disclosure:
 | [[CLAUDE-WIZARD.md]] | Onboarding Wizard, Inline Wizard, and Tour System |
 | [[CLAUDE-FEATURES.md]] | Usage Dashboard and Document Graph features |
 | [[CLAUDE-AGENTS.md]] | Supported agents and capabilities |
-| [[CLAUDE-SESSION.md]] | Session interface and code conventions |
+| [[CLAUDE-SESSION.md]] | Session interface (agent data model) and code conventions |
 | [[CLAUDE-PLATFORM.md]] | Cross-platform concerns (Windows, Linux, macOS, SSH remote) |
 | [AGENT_SUPPORT.md](AGENT_SUPPORT.md) | Detailed agent integration guide |
 
@@ -48,15 +48,24 @@ After refactoring: identify now-unreachable code, list it explicitly, ask "Shoul
 
 Use these terms consistently in code, comments, and documentation:
 
+### Terminology: Agent vs Session
+
+In Maestro, the terms "agent" and "session" have distinct meanings:
+
+- **Agent** - An entity in the Left Bar backed by a provider (Claude Code, Codex, etc.). This is what users see, create, and interact with. Each agent has its own workspace, tabs, and configuration.
+- **Session** (or **provider session**) - An individual conversation context within a provider (e.g., Claude's `session_id`). Each AI tab within an agent can have its own provider session. In code, the `Session` interface represents an agent (historical naming).
+
+Use "agent" in user-facing language. Reserve "session" for provider-level conversation contexts or when documenting the code interface.
+
 ### UI Components
-- **Left Bar** - Left sidebar with session list and groups (`SessionList.tsx`)
+- **Left Bar** - Left sidebar with agent list and groups (`SessionList.tsx`)
 - **Right Bar** - Right sidebar with Files, History, Auto Run tabs (`RightPanel.tsx`)
 - **Main Window** - Center workspace (`MainPanel.tsx`)
   - **AI Terminal** - Main window in AI mode (interacting with AI agents)
   - **Command Terminal** - Main window in terminal/shell mode
   - **System Log Viewer** - Special view for system logs (`LogViewer.tsx`)
 
-### Session States (color-coded)
+### Agent States (color-coded)
 - **Green** - Ready/idle
 - **Yellow** - Agent thinking/busy
 - **Red** - No connection/error
@@ -239,7 +248,7 @@ await captureMessage('Unusual state detected', 'warning', { state });
 
 **IMPORTANT:** When implementing any feature that spawns agent processes (e.g., context grooming, group chat, batch operations), you MUST support SSH remote execution.
 
-Sessions can be configured to run on remote hosts via SSH. Without proper SSH wrapping, agents will always execute locally, breaking the user's expected behavior.
+Agents can be configured to run on remote hosts via SSH. Without proper SSH wrapping, agents will always execute locally, breaking the user's expected behavior.
 
 **Required pattern:**
 1. Check if the session has `sshRemoteConfig` with `enabled: true`

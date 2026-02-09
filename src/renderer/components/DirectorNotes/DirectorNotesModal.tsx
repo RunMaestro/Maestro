@@ -34,7 +34,7 @@ export function DirectorNotesModal({
 	fileTree,
 	onFileClick,
 }: DirectorNotesModalProps) {
-	const { directorNotesSettings } = useSettings();
+	const { directorNotesSettings, shortcuts } = useSettings();
 	const cached = hasCachedSynopsis(directorNotesSettings.defaultLookbackDays);
 	const [activeTab, setActiveTab] = useState<TabId>('history');
 	const [overviewReady, setOverviewReady] = useState(cached);
@@ -312,7 +312,7 @@ export function DirectorNotesModal({
 						</div>
 					}>
 						<div className={`h-full ${activeTab === 'overview' ? '' : 'hidden'}`}>
-							<OverviewTab ref={overviewTabRef} theme={theme} />
+							<OverviewTab ref={overviewTabRef} theme={theme} shortcuts={shortcuts} />
 						</div>
 						<div className={`h-full ${activeTab === 'history' ? '' : 'hidden'}`}>
 							<UnifiedHistoryTab

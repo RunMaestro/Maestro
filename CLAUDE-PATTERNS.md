@@ -4,12 +4,12 @@ Core implementation patterns for the Maestro codebase. For the main guide, see [
 
 ## 1. Process Management
 
-Each session runs **two processes** simultaneously:
+Each agent runs **two processes** simultaneously:
 - AI agent process (Claude Code, etc.) - spawned with `-ai` suffix
 - Terminal process (PTY shell) - spawned with `-terminal` suffix
 
 ```typescript
-// Session stores both PIDs
+// Agent stores both PIDs (code interface: Session object)
 session.aiPid       // AI agent process
 session.terminalPid // Terminal process
 ```
@@ -79,9 +79,9 @@ style={{ color: theme.colors.textMain }}  // Correct
 className="text-gray-500"                  // Wrong for themed text
 ```
 
-## 6. Multi-Tab Sessions
+## 6. Multi-Tab Agents
 
-Sessions support multiple AI conversation tabs:
+Agents support multiple AI conversation tabs:
 ```typescript
 // Each session has an array of tabs
 session.aiTabs: AITab[]
@@ -92,7 +92,7 @@ interface AITab {
   id: string;
   name: string;
   logs: LogEntry[];           // Tab-specific history
-  agentSessionId?: string;    // Agent session continuity
+  agentSessionId?: string;    // Provider session continuity
 }
 
 // Tab operations
@@ -155,20 +155,20 @@ Documents can reference assets using `{{AUTORUN_FOLDER}}/assets/filename`. The m
 
 ## 9. Tab Hover Overlay Menu
 
-AI conversation tabs display a hover overlay menu after a 400ms delay when hovering over tabs with an established session. The overlay includes tab management and context operations:
+AI conversation tabs display a hover overlay menu after a 400ms delay when hovering over tabs with an established provider session. The overlay includes tab management and context operations:
 
 **Menu Structure:**
 ```typescript
 // Tab operations (always shown)
-- Copy Session ID (if session exists)
-- Star/Unstar Session (if session exists)
+- Copy Session ID (if provider session exists)
+- Star/Unstar Session (if provider session exists)
 - Rename Tab
 - Mark as Unread
 
 // Context management (shown when applicable)
 - Context: Compact (if tab has 5+ messages)
-- Context: Merge Into (if session exists)
-- Context: Send to Agent (if session exists)
+- Context: Merge Into (if provider session exists)
+- Context: Send to Agent (if provider session exists)
 
 // Tab close actions (always shown)
 - Close (disabled if only one tab)
@@ -183,7 +183,7 @@ const [overlayOpen, setOverlayOpen] = useState(false);
 const [overlayPosition, setOverlayPosition] = useState<{ top: number; left: number } | null>(null);
 
 const handleMouseEnter = () => {
-  if (!tab.agentSessionId) return; // Only for established sessions
+  if (!tab.agentSessionId) return; // Only for tabs with provider sessions
 
   hoverTimeoutRef.current = setTimeout(() => {
     if (tabRef.current) {
@@ -213,9 +213,9 @@ const handleMouseEnter = () => {
 
 See `src/renderer/components/TabBar.tsx` (Tab component) for implementation details.
 
-## 10. SSH Remote Sessions
+## 10. SSH Remote Agents
 
-Sessions can execute commands on remote hosts via SSH. **Critical:** There are two different SSH identifiers with different lifecycles:
+Agents can execute commands on remote hosts via SSH. **Critical:** There are two different SSH identifiers with different lifecycles:
 
 ```typescript
 // Set AFTER AI agent spawns (via onSshRemote callback)
@@ -229,13 +229,13 @@ session.sessionSshRemoteConfig: {
 }
 ```
 
-**Common pitfall:** `sshRemoteId` is only populated after the AI agent spawns. For terminal-only SSH sessions (no AI agent), it remains `undefined`. Always use both as fallback:
+**Common pitfall:** `sshRemoteId` is only populated after the AI agent spawns. For terminal-only SSH agents (no AI process), it remains `undefined`. Always use both as fallback:
 
 ```typescript
-// WRONG - fails for terminal-only SSH sessions
+// WRONG - fails for terminal-only SSH agents
 const sshId = session.sshRemoteId;
 
-// CORRECT - works for all SSH sessions
+// CORRECT - works for all SSH agents
 const sshId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
 ```
 
@@ -244,7 +244,7 @@ This applies to any operation that needs to run on the remote:
 - `gitService.isRepo(path, sshId)`
 - Directory existence checks for `cd` command tracking
 
-Similarly for checking if a session is remote:
+Similarly for checking if an agent is remote:
 ```typescript
 // WRONG
 const isRemote = !!session.sshRemoteId;

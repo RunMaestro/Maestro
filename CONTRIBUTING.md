@@ -278,8 +278,8 @@ ESLint is configured with TypeScript and React plugins (`eslint.config.mjs`):
 
 ### Adding a New UI Feature
 
-1. **Plan the state** - Determine if it's per-session or global
-2. **Add state management** - In `useSettings.ts` (global) or session state
+1. **Plan the state** - Determine if it's per-agent or global
+2. **Add state management** - In `useSettings.ts` (global) or agent state
 3. **Create persistence** - Use wrapper function pattern for global settings
 4. **Implement UI** - Follow Tailwind + theme color pattern
 5. **Add keyboard shortcuts** - In `shortcuts.ts` and `App.tsx`
@@ -432,13 +432,13 @@ Before implementing, investigate the agent's CLI to determine which capabilities
 
 | Capability | Question to Answer | Example |
 |------------|-------------------|---------|
-| **Session Resume** | Can you continue a previous conversation? | `--resume <id>`, `--session <id>` |
+| **Session Resume** | Can the provider resume a previous conversation? | `--resume <id>`, `--session <id>` |
 | **Read-Only Mode** | Is there a plan/analysis-only mode? | `--permission-mode plan`, `--agent plan` |
 | **JSON Output** | Does it emit structured JSON? | `--output-format json`, `--format json` |
 | **Session ID** | Does output include a session identifier? | `session_id`, `sessionID` in JSON |
 | **Image Input** | Can you send images to the agent? | `--input-format stream-json`, `-f image.png` |
 | **Slash Commands** | Are there discoverable commands? | Emitted in init message |
-| **Session Storage** | Does it persist sessions to disk? | `~/.agent/sessions/` |
+| **Session Storage** | Does the provider persist sessions to disk? | `~/.agent/sessions/` |
 | **Cost Tracking** | Is it API-based with costs? | Cloud API vs local model |
 | **Usage Stats** | Does it report token counts? | `tokens`, `usage` in output |
 | **Batch Mode** | Does it run per-message or persistently? | `--print` vs interactive |
@@ -609,15 +609,15 @@ Maestro prioritizes a snappy interface and minimal battery consumption. Follow t
 
 ```typescript
 // Bad: O(n) lookup in every iteration
-sessions.filter(s => {
-  const group = groups.find(g => g.id === s.groupId); // O(n) per session
+agents.filter(a => {
+  const group = groups.find(g => g.id === a.groupId); // O(n) per agent
   return group && !group.collapsed;
 });
 
 // Good: O(1) lookup with memoized Map
 const groupsById = useMemo(() => new Map(groups.map(g => [g.id, g])), [groups]);
-sessions.filter(s => {
-  const group = groupsById.get(s.groupId); // O(1)
+agents.filter(a => {
+  const group = groupsById.get(a.groupId); // O(1)
   return group && !group.collapsed;
 });
 ```
@@ -712,7 +712,7 @@ Then run `npm run dev` — the app auto-connects (connection script in `src/rend
 
 ### Process Output Not Showing
 
-1. Check session ID matches (with `-ai` or `-terminal` suffix)
+1. Check agent ID matches (with `-ai` or `-terminal` suffix)
 2. Verify `onData` listener is registered
 3. Check process spawned successfully (check pid > 0)
 4. Look for errors in DevTools console

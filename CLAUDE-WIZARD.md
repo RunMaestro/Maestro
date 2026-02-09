@@ -4,7 +4,7 @@ Wizard documentation for the Maestro codebase. For the main guide, see [[CLAUDE.
 
 ## Onboarding Wizard
 
-The wizard (`src/renderer/components/Wizard/`) guides new users through first-run setup, creating AI sessions with Auto Run documents.
+The wizard (`src/renderer/components/Wizard/`) guides new users through first-run setup, creating AI agents with Auto Run documents.
 
 ### Wizard Architecture
 
@@ -157,11 +157,11 @@ firstAutoRunCompleted: boolean  // Triggers celebration modal
 
 ## Inline Wizard (`/wizard`)
 
-The Inline Wizard creates Auto Run Playbook documents from within an existing agent session. Unlike the full-screen Onboarding Wizard above, it runs inside a single tab.
+The Inline Wizard creates Auto Run Playbook documents from within an existing agent. Unlike the full-screen Onboarding Wizard above, it runs inside a single tab.
 
 ### Prerequisites
 
-- Auto Run document folder must be configured for the session
+- Auto Run document folder must be configured for the agent
 - If not set, `/wizard` errors with instructions to configure it
 
 ### User Flow
@@ -174,7 +174,7 @@ The Inline Wizard creates Auto Run Playbook documents from within an existing ag
 ### Key Behaviors
 
 - Multiple wizards can run in different tabs simultaneously
-- Wizard state is **per-tab** (`AITab.wizardState`), not per-session
+- Wizard state is **per-tab** (`AITab.wizardState`), not per-agent
 - Documents written to unique subfolder under Auto Run folder (e.g., `Auto Run Docs/Project-Name/`)
 - On completion, tab renamed to "Project: {SubfolderName}"
 - Final AI message summarizes generated docs and next steps

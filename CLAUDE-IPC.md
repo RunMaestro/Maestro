@@ -9,19 +9,19 @@ The `window.maestro` API exposes the following namespaces:
 ## Core APIs
 
 - `settings` - Get/set app settings
-- `sessions` / `groups` - Persistence
+- `sessions` / `groups` - Agent and group persistence
 - `process` - Spawn, write, kill, resize
 - `fs` - readDir, readFile
 - `dialog` - Folder selection
 - `shells` - Detect available shells
 - `logger` - System logging
 
-## Agent & Agent Sessions
+## Agent & Provider Sessions
 
 - `agents` - Detect, get, config, refresh, custom paths, getCapabilities
-- `agentSessions` - Generic agent session storage API (list, read, search, delete)
+- `agentSessions` - Generic provider session storage API (list, read, search, delete)
 - `agentError` - Agent error handling (clearError, retryAfterError)
-- `claude` - (Deprecated) Claude Code sessions - use `agentSessions` instead
+- `claude` - (Deprecated) Claude Code provider sessions - use `agentSessions` instead
 
 ## Git Integration
 
@@ -40,7 +40,7 @@ The `window.maestro` API exposes the following namespaces:
 
 - `autorun` - Document and image management for Auto Run
 - `playbooks` - Batch run configuration management
-- `history` - Per-session execution history (see History API below)
+- `history` - Per-agent execution history (see History API below)
 - `cli` - CLI activity detection for playbook runs
 - `tempfile` - Temporary file management for batch processing
 
@@ -54,7 +54,7 @@ The `window.maestro` API exposes the following namespaces:
 
 ## History API
 
-Per-session history storage with 5,000 entries per session (up from 1,000 global). Each session's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.
+Per-agent history storage with 5,000 entries per agent (up from 1,000 global). Each agent's history is stored as a JSON file in `~/Library/Application Support/Maestro/history/{sessionId}.json`.
 
 ```typescript
 window.maestro.history = {
@@ -72,7 +72,7 @@ window.maestro.history = {
 };
 ```
 
-**AI Context Integration**: Use `getFilePath(sessionId)` to get the path to a session's history file. This file can be passed directly to AI agents as context, giving them visibility into past completed tasks, decisions, and work patterns.
+**AI Context Integration**: Use `getFilePath(sessionId)` to get the path to an agent's history file. This file can be passed directly to AI agents as context, giving them visibility into past completed tasks, decisions, and work patterns.
 
 ## Power Management
 

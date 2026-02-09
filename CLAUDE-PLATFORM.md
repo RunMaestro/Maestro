@@ -93,10 +93,10 @@ const useShell = isWindows && needsWindowsShell(command);
 // sshRemoteId: Set AFTER AI agent spawns (via onSshRemote callback)
 // sessionSshRemoteConfig.remoteId: Set BEFORE spawn (user configuration)
 
-// WRONG - fails for terminal-only SSH sessions
+// WRONG - fails for terminal-only SSH agents
 const sshId = session.sshRemoteId;
 
-// CORRECT - works for all SSH sessions
+// CORRECT - works for all SSH agents
 const sshId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
 ```
 
@@ -128,7 +128,7 @@ if (isRemote) {
 
 ### 4. Agent-Specific Differences
 
-**Session ID terminology:**
+**Provider session ID terminology:**
 ```typescript
 // Claude Code: session_id
 // Codex: thread_id
@@ -198,7 +198,7 @@ When making changes that involve any of the above areas, verify:
 - [ ] Works on macOS (primary development platform)
 - [ ] Works on Windows (PowerShell default, path separators)
 - [ ] Works on Linux (standard Unix behavior)
-- [ ] Works with SSH remote sessions (no file watching, stdin passthrough)
+- [ ] Works with SSH remote agents (no file watching, stdin passthrough)
 - [ ] Path handling uses `path.join` or `path.posix` as appropriate
 - [ ] No hardcoded path separators (`/` or `\`)
 - [ ] Shell commands use platform-appropriate lookup (`which`/`where`)

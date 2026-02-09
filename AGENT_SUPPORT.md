@@ -108,7 +108,7 @@ Each agent declares capabilities that determine which UI features are available.
 
 interface AgentCapabilities {
   // Core features
-  supportsResume: boolean;           // Can resume previous sessions
+  supportsResume: boolean;           // Can resume previous conversations
   supportsReadOnlyMode: boolean;     // Has a plan/read-only mode
   supportsJsonOutput: boolean;       // Emits structured JSON for parsing
   supportsSessionId: boolean;        // Emits session ID for tracking
@@ -116,7 +116,7 @@ interface AgentCapabilities {
   // Advanced features
   supportsImageInput: boolean;       // Can receive images in prompts
   supportsSlashCommands: boolean;    // Has discoverable slash commands
-  supportsSessionStorage: boolean;   // Persists sessions we can browse
+  supportsSessionStorage: boolean;   // Persists provider sessions we can browse
   supportsCostTracking: boolean;     // Reports token costs
   supportsUsageStats: boolean;       // Reports token counts
 

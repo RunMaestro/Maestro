@@ -6,7 +6,7 @@ Performance best practices for the Maestro codebase. For the main guide, see [[C
 
 **Use `React.memo` for list item components:**
 ```typescript
-// Components rendered in arrays (tabs, sessions, list items) should be memoized
+// Components rendered in arrays (tabs, agents, list items) should be memoized
 const Tab = memo(function Tab({ tab, isActive, ... }: TabProps) {
   // Memoize computed values that depend on props
   const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
@@ -24,17 +24,17 @@ const Tab = memo(function Tab({ tab, isActive, ... }: TabProps) {
 **Consolidate chained `useMemo` calls:**
 ```typescript
 // BAD: Multiple dependent useMemo calls create cascade re-computations
-const filtered = useMemo(() => sessions.filter(...), [sessions]);
+const filtered = useMemo(() => agents.filter(...), [agents]);
 const sorted = useMemo(() => filtered.sort(...), [filtered]);
 const grouped = useMemo(() => groupBy(sorted, ...), [sorted]);
 
 // GOOD: Single useMemo with all transformations
 const { filtered, sorted, grouped } = useMemo(() => {
-  const filtered = sessions.filter(...);
+  const filtered = agents.filter(...);
   const sorted = filtered.sort(...);
   const grouped = groupBy(sorted, ...);
   return { filtered, sorted, grouped };
-}, [sessions]);
+}, [agents]);
 ```
 
 **Pre-compile regex patterns at module level:**
@@ -106,7 +106,7 @@ fsPromises.unlink(tempFile).catch(() => {});
 
 **Use debouncing for user input and persistence:**
 ```typescript
-// Session persistence uses 2-second debounce to prevent excessive disk I/O
+// Agent persistence uses 2-second debounce to prevent excessive disk I/O
 // See: src/renderer/hooks/utils/useDebouncedPersistence.ts
 const { persist, isPending } = useDebouncedPersistence(session, 2000);
 
@@ -210,13 +210,13 @@ document.addEventListener('visibilitychange', handleVisibilityChange);
 **Always memoize context values:**
 ```typescript
 // BAD: New object on every render triggers all consumers to re-render
-return <Context.Provider value={{ sessions, updateSession }}>{children}</Context.Provider>;
+return <Context.Provider value={{ agents, updateAgent }}>{children}</Context.Provider>;
 
 // GOOD: Memoized value only changes when dependencies change
 const contextValue = useMemo(() => ({
-  sessions,
-  updateSession,
-}), [sessions, updateSession]);
+  agents,
+  updateAgent,
+}), [agents, updateAgent]);
 return <Context.Provider value={contextValue}>{children}</Context.Provider>;
 ```
 

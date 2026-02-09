@@ -1,8 +1,10 @@
 # CLAUDE-SESSION.md
 
-Session interface and code conventions for the Maestro codebase. For the main guide, see [[CLAUDE.md]].
+Session interface (agent data model) and code conventions for the Maestro codebase. For the main guide, see [[CLAUDE.md]].
 
-## Session Interface
+> **Terminology:** In code, the `Session` interface represents what users see as an **agent** in the Left Bar. The name is historical. Within each agent, "provider sessions" refer to individual conversation contexts (tabs). See [[CLAUDE.md#terminology-agent-vs-session]] for the full distinction.
+
+## Session Interface (Agent Data Model)
 
 Key fields on the Session object (abbreviated - see `src/renderer/types/index.ts` for full definition):
 
@@ -11,7 +13,7 @@ interface Session {
   // Identity
   id: string;
   name: string;
-  groupId?: string;             // Session grouping
+  groupId?: string;             // Agent grouping
   toolType: ToolType;           // 'claude-code' | 'codex' | 'opencode' | 'terminal'
   state: SessionState;          // 'idle' | 'busy' | 'error' | 'connecting'
   inputMode: 'ai' | 'terminal'; // Which process receives input
@@ -81,7 +83,7 @@ interface AITab {
   id: string;
   name: string;
   logs: LogEntry[];             // Tab-specific conversation history
-  agentSessionId?: string;      // Agent session for this tab
+  agentSessionId?: string;      // Provider session ID for this tab
   scrollTop?: number;
   draftInput?: string;
 }
