@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
 	escapeCmdArg,
 	escapePowerShellArg,
@@ -242,16 +242,20 @@ describe('shellEscape', () => {
 		});
 
 		it('should use PSHOME environment variable when available', () => {
-			// Save original PSHOME
+			const fs = require('fs');
+			const originalExistsSync = fs.existsSync;
 			const originalPshome = process.env.PSHOME;
 
 			try {
 				process.env.PSHOME = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0';
+				fs.existsSync = vi.fn((p: string) =>
+					p === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' ? true : originalExistsSync(p)
+				);
 				const result = getWindowsShellForAgentExecution({});
 				expect(result.shell).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
 				expect(result.source).toBe('powershell-default');
 			} finally {
-				// Restore original PSHOME
+				fs.existsSync = originalExistsSync;
 				if (originalPshome === undefined) {
 					delete process.env.PSHOME;
 				} else {
