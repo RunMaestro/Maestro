@@ -138,6 +138,8 @@ interface TabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/** Stable callback - moves session to a dedicated window */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -270,6 +272,7 @@ const Tab = memo(function Tab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -442,6 +445,15 @@ const Tab = memo(function Tab({
 			setOverlayOpen(false);
 		},
 		[onMoveToLast, tabId]
+	);
+
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId]
 	);
 
 	const handleCopyContextClick = useCallback(
@@ -878,8 +890,20 @@ const Tab = memo(function Tab({
 								)}
 
 								{/* Tab Move Actions Section - divider and move options */}
-								{(onMoveToFirst || onMoveToLast) && (
+								{(onMoveToNewWindow || onMoveToFirst || onMoveToLast) && (
 									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{/* Move to New Window - always available when handler provided */}
+								{onMoveToNewWindow && (
+									<button
+										onClick={handleMoveToNewWindowClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to New Window
+									</button>
 								)}
 
 								{/* Move to First Position - suppressed if already first tab or no handler */}
@@ -1679,7 +1703,7 @@ function TabBarInner({
 	colorBlindMode,
 	sessionId,
 }: TabBarProps) {
-	const { sessionIds: windowSessionIds, windowId } = useWindowContext();
+	const { sessionIds: windowSessionIds, windowId, moveSessionToNewWindow } = useWindowContext();
 	const sessionAllowed =
 		!sessionId || windowSessionIds.length === 0 || windowSessionIds.includes(sessionId);
 
@@ -2143,6 +2167,13 @@ function TabBarInner({
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
 	);
 
+	const handleTabMoveToNewWindow = useCallback(
+		(tabId: string) => {
+			void moveSessionToNewWindow(tabId);
+		},
+		[moveSessionToNewWindow]
+	);
+
 	// Stable callback wrappers that receive tabId from the Tab component
 	// These avoid creating new function references on each render
 	const handleTabStar = useCallback(
@@ -2399,6 +2430,7 @@ function TabBarInner({
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
 										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										onMoveToNewWindow={handleTabMoveToNewWindow}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
 										shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}
@@ -2515,6 +2547,7 @@ function TabBarInner({
 									}
 									onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
 									onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
+									onMoveToNewWindow={handleTabMoveToNewWindow}
 									isFirstTab={isFirstTab}
 									isLastTab={isLastTab}
 									shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}

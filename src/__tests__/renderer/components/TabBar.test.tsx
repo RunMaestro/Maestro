@@ -2201,6 +2201,66 @@ describe('TabBar', () => {
 	});
 
 	describe('tab hover overlay menu (tab move operations)', () => {
+		it('shows "Move to New Window" option for session tabs', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(screen.getByText('Move to New Window')).toBeInTheDocument();
+		});
+
+		it('calls moveSessionToNewWindow when clicking "Move to New Window"', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
+			];
+
+			mockWindowContextValue.moveSessionToNewWindow.mockResolvedValue('window-new');
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			fireEvent.click(screen.getByText('Move to New Window'));
+
+			expect(mockWindowContextValue.moveSessionToNewWindow).toHaveBeenCalledWith('tab-2');
+		});
+
 		it('shows "Move to First Position" for non-first tabs', () => {
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
