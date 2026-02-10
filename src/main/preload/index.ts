@@ -49,6 +49,7 @@ import { createAgentsApi } from './agents';
 import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
+import { createWindowsApi } from './windows';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -184,6 +185,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Director's Notes API (unified history + synopsis)
 	directorNotes: createDirectorNotesApi(),
+
+	// Multi-window management API
+	windows: createWindowsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -255,6 +259,8 @@ export {
 	createTabNamingApi,
 	// Director's Notes
 	createDirectorNotesApi,
+	// Windows
+	createWindowsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -459,3 +465,7 @@ export type {
 	SynopsisResult,
 	SynopsisStats,
 } from './directorNotes';
+export type {
+	// From windows
+	WindowsApi,
+} from './windows';
