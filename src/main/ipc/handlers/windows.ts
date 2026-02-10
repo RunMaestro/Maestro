@@ -173,6 +173,19 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 		})
 	);
 
+	ipcMain.handle(
+		'windows:getWindowBounds',
+		withIpcErrorLogging(handlerOpts('getWindowBounds'), async (event) => {
+			const browserWindow = BrowserWindow.fromWebContents(event.sender);
+
+			if (!browserWindow) {
+				throw new Error('Unable to resolve BrowserWindow for getWindowBounds request');
+			}
+
+			return browserWindow.getBounds();
+		})
+	);
+
 	ipcMain.handle('windows:getState', async (event) => {
 		try {
 			const windowRegistry = getWindowRegistry();

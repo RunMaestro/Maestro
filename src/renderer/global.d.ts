@@ -2751,6 +2751,7 @@ interface MaestroAPI {
 		getForSession: (sessionId: string) => Promise<string | null>;
 		moveSession: (options: MaestroMoveSessionOptions) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
+		getWindowBounds: () => Promise<MaestroWindowBounds>;
 		getState: () => Promise<MaestroWindowState | null>;
 		onSessionMoved: (callback: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
 		updateState: (
