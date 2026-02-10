@@ -147,6 +147,43 @@ interface TabProps {
 	tabIndex?: number;
 }
 
+interface MoveSessionToWindowOptions {
+	tabId: string;
+	targetWindowId: string;
+	windowId: string | null;
+	tabs: AITab[];
+}
+
+export async function moveSessionToWindowHelper({
+	tabId,
+	targetWindowId,
+	windowId,
+	tabs,
+}: MoveSessionToWindowOptions): Promise<void> {
+	if (!windowId || targetWindowId === windowId) {
+		return;
+	}
+
+	const isAiTab = tabs.some((tab) => tab.id === tabId);
+	if (!isAiTab) {
+		return;
+	}
+
+	if (!window.maestro?.windows?.moveSession) {
+		return;
+	}
+
+	try {
+		await window.maestro.windows.moveSession({
+			sessionId: tabId,
+			toWindowId: targetWindowId,
+			fromWindowId: windowId,
+		});
+	} catch (error) {
+		console.error('Failed to move session to another window', error);
+	}
+}
+
 /**
  * Get the display name for a tab.
  * Priority: name > truncated session ID > "New"
@@ -1630,7 +1667,7 @@ function TabBarInner({
 	colorBlindMode,
 	sessionId,
 }: TabBarProps) {
-	const { sessionIds: windowSessionIds } = useWindowContext();
+	const { sessionIds: windowSessionIds, windowId } = useWindowContext();
 	const sessionAllowed =
 		!sessionId || windowSessionIds.length === 0 || windowSessionIds.includes(sessionId);
 
@@ -1736,6 +1773,18 @@ function TabBarInner({
 		setIsDraggingOutsideWindow(false);
 	}, []);
 
+	const moveSessionToWindow = useCallback(
+		(tabId: string, targetWindowId: string) => {
+			void moveSessionToWindowHelper({
+				tabId,
+				targetWindowId,
+				windowId,
+				tabs,
+			});
+		},
+		[windowId, tabs]
+	);
+
 	const resolveWindowAtDragPoint = useCallback(async (screenX: number, screenY: number) => {
 		if (!window.maestro?.windows?.findWindowAtPoint) {
 			dragHoveredWindowIdRef.current = null;
@@ -1835,10 +1884,15 @@ function TabBarInner({
 	);
 
 	const handleDragEnd = useCallback(() => {
+		const hoveredWindowId = dragHoveredWindowIdRef.current;
+		const tabId = draggingTabId;
+		if (tabId && hoveredWindowId) {
+			void moveSessionToWindow(tabId, hoveredWindowId);
+		}
 		setDraggingTabId(null);
 		setDragOverTabId(null);
 		resetDragWindowTracking();
-	}, [resetDragWindowTracking]);
+	}, [draggingTabId, moveSessionToWindow, resetDragWindowTracking]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {

@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TabBar } from '../../../renderer/components/TabBar';
+import { TabBar, moveSessionToWindowHelper } from '../../../renderer/components/TabBar';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
 const mockWindowContextValue = {
@@ -952,6 +952,48 @@ describe('TabBar', () => {
 
 			// Tab should no longer have opacity-50 class (dragging state)
 			expect(tab).not.toHaveClass('opacity-50');
+		});
+	});
+
+	describe('moveSessionToWindowHelper', () => {
+		it('moves session when valid target window is provided', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'tab-1',
+				targetWindowId: 'secondary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).toHaveBeenCalledWith({
+				sessionId: 'tab-1',
+				toWindowId: 'secondary',
+				fromWindowId: 'primary',
+			});
+		});
+
+		it('skips when target window matches current window', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'tab-1',
+				targetWindowId: 'primary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
+		});
+
+		it('skips when tab is not part of the AI tab list', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'file-tab-1',
+				targetWindowId: 'secondary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
 		});
 	});
 
