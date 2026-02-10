@@ -23,6 +23,12 @@ import {
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
 } from './stores';
+import type { StoredSession } from './stores/types';
+import { WINDOW_STATE_DEFAULTS } from './stores/defaults';
+import type {
+	MultiWindowState as PersistedMultiWindowState,
+	WindowState as PersistedWindowState,
+} from '../shared/types/window';
 import {
 	registerGitHandlers,
 	registerAutorunHandlers,
@@ -228,6 +234,8 @@ let agentDetector: AgentDetector | null = null;
 let windowManager: WindowManager | null = null;
 let windowRegistry: WindowRegistry | null = null;
 
+type WindowManagerCreateOptions = Parameters<WindowManager['createWindow']>[0];
+
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
 
@@ -254,19 +262,164 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
+function createWindow(options?: WindowManagerCreateOptions) {
 	if (!windowManager) {
 		throw new Error('Window manager is not initialized');
 	}
 
-	const browserWindow = windowManager.createWindow();
-	mainWindow = browserWindow;
+	const browserWindow = windowManager.createWindow(options);
+	const primaryWindowEntry = windowRegistry?.getPrimary();
+	if (primaryWindowEntry) {
+		mainWindow = primaryWindowEntry.browserWindow;
+	} else if (!mainWindow) {
+		mainWindow = browserWindow;
+	}
 	// Handle closed event to clear the reference
 	browserWindow.on('closed', () => {
 		if (mainWindow === browserWindow) {
 			mainWindow = null;
 		}
 	});
+}
+
+function restoreWindowsFromSavedState(): void {
+	if (!windowManager) {
+		throw new Error('Window manager is not initialized');
+	}
+	if (!windowRegistry) {
+		throw new Error('Window registry is not initialized');
+	}
+
+	try {
+		const sessions = (sessionsStore.get('sessions', []) ?? []) as StoredSession[];
+		const validSessionIds = new Set(sessions.map((session) => session.id));
+		const persistedState = readPersistedMultiWindowState();
+		const sanitizedState = sanitizeMultiWindowState(persistedState, validSessionIds);
+		const windowsToRestore = orderWindowsForRestore(sanitizedState);
+
+		if (!windowsToRestore.length) {
+			logger.info('No saved windows found, creating default window', 'Startup');
+			createWindow();
+			return;
+		}
+
+		windowStateStore.set('multiWindowState', sanitizedState);
+
+		for (const windowState of windowsToRestore) {
+			createWindow({
+				windowId: windowState.id,
+				sessionIds: windowState.sessionIds,
+			});
+		}
+	} catch (error) {
+		logger.error('Failed to restore window state, creating default window', 'Startup', {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		createWindow();
+	}
+}
+
+function readPersistedMultiWindowState(): PersistedMultiWindowState {
+	const fallback = getDefaultMultiWindowState();
+	const stored =
+		windowStateStore.get('multiWindowState') ??
+		windowStateStore.store.multiWindowState ??
+		fallback;
+
+	const windows = Array.isArray(stored.windows) && stored.windows.length > 0
+		? stored.windows.map(cloneWindowState)
+		: fallback.windows.map(cloneWindowState);
+
+	return {
+		primaryWindowId: stored.primaryWindowId || fallback.primaryWindowId,
+		windows,
+	};
+}
+
+function sanitizeMultiWindowState(
+	state: PersistedMultiWindowState,
+	validSessionIds: Set<string>
+): PersistedMultiWindowState {
+	const sanitizedWindows = state.windows.map((windowState) =>
+		sanitizeWindowState(windowState, validSessionIds)
+	);
+
+	if (!sanitizedWindows.length) {
+		return getDefaultMultiWindowState();
+	}
+
+	const hasValidPrimary = sanitizedWindows.some(
+		(windowState) => windowState.id === state.primaryWindowId
+	);
+
+	return {
+		primaryWindowId: hasValidPrimary ? state.primaryWindowId : sanitizedWindows[0].id,
+		windows: sanitizedWindows,
+	};
+}
+
+function sanitizeWindowState(
+	windowState: PersistedWindowState,
+	validSessionIds: Set<string>
+): PersistedWindowState {
+	const filteredSessionIds = windowState.sessionIds.filter((sessionId) =>
+		validSessionIds.has(sessionId)
+	);
+	const uniqueSessionIds = Array.from(new Set(filteredSessionIds));
+	const activeSessionId = uniqueSessionIds.includes(windowState.activeSessionId ?? '')
+		? windowState.activeSessionId
+		: uniqueSessionIds[0] ?? null;
+
+	return {
+		...windowState,
+		sessionIds: uniqueSessionIds,
+		activeSessionId,
+	};
+}
+
+function orderWindowsForRestore(state: PersistedMultiWindowState): PersistedWindowState[] {
+	const windows = [...state.windows];
+	const primaryIndex = windows.findIndex((window) => window.id === state.primaryWindowId);
+	if (primaryIndex <= 0) {
+		return windows;
+	}
+	const [primaryWindow] = windows.splice(primaryIndex, 1);
+	return [primaryWindow, ...windows];
+}
+
+function getDefaultMultiWindowState(): PersistedMultiWindowState {
+	const fallbackState = WINDOW_STATE_DEFAULTS.multiWindowState ?? {
+		primaryWindowId: 'primary',
+		windows: [],
+	};
+	const hasTemplateWindows = Array.isArray(fallbackState.windows) && fallbackState.windows.length > 0;
+	const windows = hasTemplateWindows
+		? fallbackState.windows
+		: [
+			{
+				id: fallbackState.primaryWindowId ?? 'primary',
+				width: WINDOW_STATE_DEFAULTS.width,
+				height: WINDOW_STATE_DEFAULTS.height,
+				isMaximized: WINDOW_STATE_DEFAULTS.isMaximized,
+				isFullScreen: WINDOW_STATE_DEFAULTS.isFullScreen,
+				sessionIds: [],
+				activeSessionId: null,
+				leftPanelCollapsed: false,
+				rightPanelCollapsed: false,
+			},
+		];
+
+	return {
+		primaryWindowId: fallbackState.primaryWindowId ?? windows[0].id ?? 'primary',
+		windows: windows.map(cloneWindowState),
+	};
+}
+
+function cloneWindowState(windowState: PersistedWindowState): PersistedWindowState {
+	return {
+		...windowState,
+		sessionIds: [...windowState.sessionIds],
+	};
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
@@ -362,9 +515,9 @@ app.whenReady().then(async () => {
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
 
-	// Create main window
-	logger.info('Creating main window', 'Startup');
-	createWindow();
+	// Restore windows from previous session
+	logger.info('Restoring windows from saved state', 'Startup');
+	restoreWindowsFromSavedState();
 
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
