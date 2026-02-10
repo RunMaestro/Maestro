@@ -85,6 +85,8 @@ export interface WindowManager {
 	createWindow: (options?: CreateWindowOptions) => BrowserWindow;
 	/** Create a new secondary BrowserWindow */
 	createSecondaryWindow: (sessionIds?: string[], bounds?: WindowBounds) => BrowserWindow;
+	/** Access the shared WindowRegistry */
+	getWindowRegistry: () => WindowRegistry;
 }
 
 const DEFAULT_WINDOW_TEMPLATE: PersistedWindowState = {
@@ -135,7 +137,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 		windowRegistry: providedWindowRegistry,
 	} = deps;
 
-	const windowRegistry = providedWindowRegistry ?? new WindowRegistry();
+	const windowRegistry = providedWindowRegistry ?? new WindowRegistry({ windowStateStore });
 
 	const createWindow = (options: CreateWindowOptions = {}): BrowserWindow => {
 		const { windowId, sessionIds, bounds } = options;
@@ -182,33 +184,6 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			fullScreen: savedWindowState.isFullScreen,
 			mode: isDevelopment ? 'development' : 'production',
 		});
-
-		// Save window state before closing
-		const saveWindowState = () => {
-			try {
-				const isMaximized = browserWindow.isMaximized();
-				const isFullScreen = browserWindow.isFullScreen();
-				const bounds = browserWindow.getBounds();
-
-				const stateUpdates: Partial<PersistedWindowState> = {
-					isMaximized,
-					isFullScreen,
-				};
-
-				if (!isMaximized && !isFullScreen) {
-					stateUpdates.x = bounds.x;
-					stateUpdates.y = bounds.y;
-					stateUpdates.width = bounds.width;
-					stateUpdates.height = bounds.height;
-				}
-
-				persistWindowStatePartial(windowStateStore, resolvedWindowId, stateUpdates);
-			} catch {
-				// Ignore ENFILE/ENOSPC errors during window close — non-critical
-			}
-		};
-
-		browserWindow.on('close', saveWindowState);
 
 		// Load the app
 		if (isDevelopment) {
@@ -406,6 +381,7 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 	return {
 		createWindow,
 		createSecondaryWindow,
+		getWindowRegistry: () => windowRegistry,
 	};
 }
 
