@@ -333,19 +333,35 @@ export const MarkdownRenderer = memo(
 								</a>
 							);
 						},
-						code: ({ node: _node, inline, className, children, ...props }: any) => {
-							const match = (className || '').match(/language-(\w+)/);
-							const language = match ? match[1] : 'text';
-							const codeContent = String(children).replace(/\n$/, '');
+						pre: ({ children }: any) => {
+							// In react-markdown v10, block code is <pre><code>...</code></pre>
+							// Extract the code element and render with SyntaxHighlighter
+							const codeElement = React.Children.toArray(children).find(
+								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
+							) as React.ReactElement<any> | undefined;
 
-							return !inline && match ? (
-								<CodeBlockWithCopy
-									language={language}
-									codeContent={codeContent}
-									theme={theme}
-									onCopy={onCopy}
-								/>
-							) : (
+							if (codeElement?.props) {
+								const { className, children: codeChildren } = codeElement.props;
+								const match = (className || '').match(/language-(\w+)/);
+								const language = match ? match[1] : 'text';
+								const codeContent = String(codeChildren).replace(/\n$/, '');
+
+								return (
+									<CodeBlockWithCopy
+										language={language}
+										codeContent={codeContent}
+										theme={theme}
+										onCopy={onCopy}
+									/>
+								);
+							}
+
+							// Fallback: render as-is
+							return <pre>{children}</pre>;
+						},
+						code: ({ node: _node, className, children, ...props }: any) => {
+							// Inline code only — block code is handled by the pre component above
+							return (
 								<code className={className} {...props}>
 									{children}
 								</code>

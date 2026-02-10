@@ -353,20 +353,25 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		// Override strong/em to apply search highlighting
 		strong: ({ children }: any) => React.createElement('strong', null, withHighlight(children)),
 		em: ({ children }: any) => React.createElement('em', null, withHighlight(children)),
-		// Code block with syntax highlighting and custom language support
-		code: ({ node: _node, inline, className, children, ...props }: any) => {
-			const match = (className || '').match(/language-(\w+)/);
-			const language = match ? match[1] : 'text';
-			const codeContent = String(children).replace(/\n$/, '');
+		// Block code: extract code element from <pre><code>...</code></pre> and render with SyntaxHighlighter
+		pre: ({ children }: any) => {
+			const codeElement = React.Children.toArray(children).find(
+				(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
+			) as React.ReactElement<any> | undefined;
 
-			// Check for custom language renderer (e.g., mermaid)
-			if (!inline && customLanguageRenderers[language]) {
-				const CustomRenderer = customLanguageRenderers[language];
-				return React.createElement(CustomRenderer, { code: codeContent, theme });
-			}
+			if (codeElement?.props) {
+				const { className, children: codeChildren } = codeElement.props;
+				const match = (className || '').match(/language-(\w+)/);
+				const language = match ? match[1] : 'text';
+				const codeContent = String(codeChildren).replace(/\n$/, '');
 
-			// Standard syntax-highlighted code block
-			if (!inline && match) {
+				// Check for custom language renderer (e.g., mermaid)
+				if (customLanguageRenderers[language]) {
+					const CustomRenderer = customLanguageRenderers[language];
+					return React.createElement(CustomRenderer, { code: codeContent, theme });
+				}
+
+				// Standard syntax-highlighted code block
 				return React.createElement(SyntaxHighlighter, {
 					language,
 					style: vscDarkPlus,
@@ -382,7 +387,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 				});
 			}
 
-			// Inline code
+			// Fallback: render as-is
+			return React.createElement('pre', null, children);
+		},
+		// Inline code only — block code is handled by the pre component above
+		code: ({ node: _node, className, children, ...props }: any) => {
 			return React.createElement('code', { className, ...props }, children);
 		},
 	};

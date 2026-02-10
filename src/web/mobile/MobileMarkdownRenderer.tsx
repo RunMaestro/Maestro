@@ -218,13 +218,18 @@ export const MobileMarkdownRenderer = memo(
 							</a>
 						),
 
-						// Code blocks with syntax highlighting
-						code: ({ inline, className, children, ...props }: any) => {
-							const match = (className || '').match(/language-(\w+)/);
-							const language = match ? match[1] : 'text';
-							const codeContent = String(children).replace(/\n$/, '');
+						// Block code: extract code element from <pre><code>...</code></pre>
+						pre: ({ children }: any) => {
+							const codeElement = React.Children.toArray(children).find(
+								(child: any) => child?.type === 'code' || child?.props?.node?.tagName === 'code'
+							) as React.ReactElement<any> | undefined;
 
-							if (!inline && match) {
+							if (codeElement?.props) {
+								const { className, children: codeChildren } = codeElement.props;
+								const match = (className || '').match(/language-(\w+)/);
+								const language = match ? match[1] : 'text';
+								const codeContent = String(codeChildren).replace(/\n$/, '');
+
 								return (
 									<CodeBlockWithCopy
 										language={language}
@@ -238,7 +243,11 @@ export const MobileMarkdownRenderer = memo(
 								);
 							}
 
-							// Inline code
+							return <pre>{children}</pre>;
+						},
+
+						// Inline code only — block code is handled by pre above
+						code: ({ className: _className, children, ...props }: any) => {
 							return (
 								<code
 									{...props}
