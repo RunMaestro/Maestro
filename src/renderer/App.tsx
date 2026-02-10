@@ -117,6 +117,7 @@ import {
 	// UI
 	useThemeStyles,
 	useAppHandlers,
+	useWindowState,
 	// Auto Run
 	useAutoRunHandlers,
 } from './hooks';
@@ -754,6 +755,8 @@ function MaestroConsoleInner() {
 
 	const { setSelectedFileIndex, setFileTreeFilter, setFileTreeFilterOpen, setFlatFileList } =
 		useFileExplorerStore.getState();
+
+	useWindowState();
 
 	// --- GROUP CHAT STATE (now in groupChatStore) ---
 

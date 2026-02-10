@@ -13,6 +13,7 @@ import type { Rectangle } from 'electron';
 import type { WindowInfo, WindowSessionMovedEvent, WindowState } from '../../shared/types/window';
 
 type WindowBounds = Partial<Pick<Rectangle, 'x' | 'y' | 'width' | 'height'>>;
+type WindowStateUpdate = Partial<Pick<WindowState, 'leftPanelCollapsed' | 'rightPanelCollapsed'>>;
 
 /**
  * Options for creating a new window via IPC
@@ -85,6 +86,12 @@ export function createWindowsApi() {
 			ipcRenderer.on('windows:sessionMoved', handler);
 			return () => ipcRenderer.removeListener('windows:sessionMoved', handler);
 		},
+
+		/**
+		 * Persist partial window state updates (e.g., panel collapse state)
+		 */
+		updateState: (updates: WindowStateUpdate): Promise<boolean> =>
+			ipcRenderer.invoke('windows:updateState', updates),
 	};
 }
 

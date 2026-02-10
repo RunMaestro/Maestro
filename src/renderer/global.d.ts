@@ -2753,6 +2753,9 @@ interface MaestroAPI {
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getState: () => Promise<MaestroWindowState | null>;
 		onSessionMoved: (callback: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
+		updateState: (
+			updates: Partial<Pick<MaestroWindowState, 'leftPanelCollapsed' | 'rightPanelCollapsed'>>
+		) => Promise<boolean>;
 	};
 }
 
