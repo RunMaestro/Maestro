@@ -47,6 +47,45 @@ interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
 }
 
+interface MaestroWindowBounds {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+}
+
+interface MaestroWindowState {
+	id: string;
+	x?: number;
+	y?: number;
+	width: number;
+	height: number;
+	isMaximized: boolean;
+	isFullScreen: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
+}
+
+interface MaestroWindowInfo {
+	id: string;
+	isMain: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+}
+
+interface MaestroCreateWindowOptions {
+	sessionIds?: string[];
+	bounds?: MaestroWindowBounds;
+}
+
+interface MaestroMoveSessionOptions {
+	sessionId: string;
+	toWindowId: string;
+	fromWindowId?: string;
+}
+
 interface AgentConfigOption {
 	key: string;
 	type: 'checkbox' | 'text' | 'number' | 'select';
@@ -2696,6 +2735,17 @@ interface MaestroAPI {
 			};
 			error?: string;
 		}>;
+	};
+
+	// Multi-window management API
+	windows: {
+		create: (options?: MaestroCreateWindowOptions) => Promise<{ windowId: string }>;
+		close: (windowId: string) => Promise<boolean>;
+		list: () => Promise<MaestroWindowInfo[]>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (options: MaestroMoveSessionOptions) => Promise<boolean>;
+		focusWindow: (windowId: string) => Promise<boolean>;
+		getState: () => Promise<MaestroWindowState | null>;
 	};
 }
 
