@@ -4,6 +4,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TabBar } from '../../../renderer/components/TabBar';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 
+const mockWindowContextValue = {
+	windowId: 'primary',
+	isMainWindow: true,
+	sessionIds: [] as string[],
+	activeSessionId: null as string | null,
+	openSession: vi.fn(),
+	closeTab: vi.fn(),
+	moveSessionToNewWindow: vi.fn(),
+};
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContext: () => mockWindowContextValue,
+}));
+
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
 	X: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
@@ -164,6 +178,7 @@ describe('TabBar', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		mockWindowContextValue.sessionIds = [];
 		// Mock scrollTo and scrollIntoView
 		Element.prototype.scrollTo = vi.fn();
 		Element.prototype.scrollIntoView = vi.fn();
@@ -175,7 +190,7 @@ describe('TabBar', () => {
 		});
 	});
 
-	afterEach(() => {
+		afterEach(() => {
 		vi.useRealTimers();
 	});
 
@@ -191,10 +206,30 @@ describe('TabBar', () => {
 					onTabSelect={mockOnTabSelect}
 					onTabClose={mockOnTabClose}
 					onNewTab={mockOnNewTab}
+					sessionId="session-1"
 				/>
 			);
 
 			expect(screen.getByText('Tab 1')).toBeInTheDocument();
+		});
+
+		it('hides tabs when session not assigned to window', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			mockWindowContextValue.sessionIds = ['session-allowed'];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					sessionId="session-blocked"
+				/>
+			);
+
+			expect(screen.queryByText('Tab 1')).not.toBeInTheDocument();
 		});
 
 		it('renders new tab button', () => {
