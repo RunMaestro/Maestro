@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'crypto';
 
-import { ipcMain } from 'electron';
+import { ipcMain, screen } from 'electron';
 import type { BrowserWindow, BrowserWindowConstructorOptions, Rectangle } from 'electron';
 import type Store from 'electron-store';
 
@@ -161,7 +161,11 @@ export function createWindowManager(deps: WindowManagerDependencies): WindowMana
 			}
 		}
 
-		const browserWindowOptions = buildBrowserWindowOptions(savedWindowState, bounds, preloadPath);
+		const browserWindowOptions = buildBrowserWindowOptions(
+			savedWindowState,
+			bounds,
+			preloadPath
+		);
 
 		const browserWindow = windowRegistry.create({
 			windowId: resolvedWindowId,
@@ -419,18 +423,28 @@ function buildBrowserWindowOptions(
 	bounds: WindowBounds | undefined,
 	preloadPath: string
 ): BrowserWindowConstructorOptions {
-	const resolvedBounds = {
+	const resolvedBounds: WindowBounds = {
 		x: bounds?.x ?? savedWindowState.x,
 		y: bounds?.y ?? savedWindowState.y,
 		width: bounds?.width ?? savedWindowState.width,
 		height: bounds?.height ?? savedWindowState.height,
 	};
 
+	const { bounds: adjustedBounds, wasAdjusted } = ensureWindowVisibleBounds(resolvedBounds);
+
+	if (wasAdjusted) {
+		logger.info('Saved window bounds were off-screen, repositioning to primary display', 'Window', {
+			windowId: savedWindowState.id,
+			originalBounds: resolvedBounds,
+			adjustedBounds,
+		});
+	}
+
 	return {
-		x: resolvedBounds.x,
-		y: resolvedBounds.y,
-		width: resolvedBounds.width,
-		height: resolvedBounds.height,
+		x: adjustedBounds.x,
+		y: adjustedBounds.y,
+		width: adjustedBounds.width,
+		height: adjustedBounds.height,
 		minWidth: 1000,
 		minHeight: 600,
 		backgroundColor: '#0b0b0d',
@@ -467,6 +481,68 @@ function buildBoundsUpdates(bounds?: WindowBounds): Partial<PersistedWindowState
 	}
 
 	return updates;
+}
+
+function ensureWindowVisibleBounds(
+	bounds: WindowBounds
+): { bounds: WindowBounds; wasAdjusted: boolean } {
+	if (!hasCompleteBounds(bounds)) {
+		return { bounds, wasAdjusted: false };
+	}
+
+	const candidateRect: Rectangle = {
+		x: bounds.x,
+		y: bounds.y,
+		width: bounds.width,
+		height: bounds.height,
+	};
+
+	const matchingDisplay = screen.getDisplayMatching(candidateRect);
+	const matchingBounds = matchingDisplay?.bounds;
+	if (matchingBounds && rectanglesOverlap(candidateRect, matchingBounds)) {
+		return { bounds: candidateRect, wasAdjusted: false };
+	}
+
+	const primaryDisplay = screen.getPrimaryDisplay();
+	const primaryBounds = primaryDisplay?.workArea ?? primaryDisplay?.bounds;
+	if (!primaryBounds) {
+		return { bounds: candidateRect, wasAdjusted: false };
+	}
+
+	const centeredBounds = centerRectWithinBounds(candidateRect, primaryBounds);
+	return { bounds: centeredBounds, wasAdjusted: true };
+}
+
+function hasCompleteBounds(bounds: WindowBounds): bounds is Rectangle {
+	return (
+		typeof bounds.x === 'number' &&
+		typeof bounds.y === 'number' &&
+		typeof bounds.width === 'number' &&
+		typeof bounds.height === 'number'
+	);
+}
+
+function rectanglesOverlap(rectA: Rectangle, rectB: Rectangle): boolean {
+	return (
+		rectA.x < rectB.x + rectB.width &&
+		rectA.x + rectA.width > rectB.x &&
+		rectA.y < rectB.y + rectB.height &&
+		rectA.y + rectA.height > rectB.y
+	);
+}
+
+function centerRectWithinBounds(rect: Rectangle, container: Rectangle): Rectangle {
+	const width = Math.min(rect.width, container.width);
+	const height = Math.min(rect.height, container.height);
+	const x = container.x + Math.round((container.width - width) / 2);
+	const y = container.y + Math.round((container.height - height) / 2);
+
+	return {
+		x,
+		y,
+		width,
+		height,
+	};
 }
 
 
