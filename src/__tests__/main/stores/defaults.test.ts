@@ -190,6 +190,22 @@ describe('stores/defaults', () => {
 			expect(WINDOW_STATE_DEFAULTS.x).toBeUndefined();
 			expect(WINDOW_STATE_DEFAULTS.y).toBeUndefined();
 		});
+
+		it('should include default multiWindowState metadata', () => {
+			expect(WINDOW_STATE_DEFAULTS.multiWindowState).toEqual(
+				expect.objectContaining({
+					primaryWindowId: 'primary',
+					windows: [
+						expect.objectContaining({
+							id: 'primary',
+							sessionIds: [],
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+						}),
+					],
+				})
+			);
+		});
 	});
 
 	describe('CLAUDE_SESSION_ORIGINS_DEFAULTS', () => {

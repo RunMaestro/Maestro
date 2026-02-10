@@ -23,6 +23,7 @@ import type {
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
+import type { MultiWindowState } from '../../shared/types/window';
 
 import {
 	SETTINGS_DEFAULTS,
@@ -35,6 +36,58 @@ import {
 } from './defaults';
 
 import { getCustomSyncPath } from './utils';
+
+const DEFAULT_WINDOW_ID =
+	WINDOW_STATE_DEFAULTS.multiWindowState?.primaryWindowId ?? 'primary';
+
+function isValidMultiWindowState(state?: MultiWindowState | null): state is MultiWindowState {
+	if (!state) {
+		return false;
+	}
+	if (!Array.isArray(state.windows) || state.windows.length === 0) {
+		return false;
+	}
+	if (typeof state.primaryWindowId !== 'string') {
+		return false;
+	}
+	return state.windows.some((window) => window.id === state.primaryWindowId);
+}
+
+function buildMultiWindowStateFromLegacy(store: Store<WindowState>): MultiWindowState {
+	const fallbackWindowTemplate = WINDOW_STATE_DEFAULTS.multiWindowState?.windows?.[0];
+	const width = store.get('width', WINDOW_STATE_DEFAULTS.width);
+	const height = store.get('height', WINDOW_STATE_DEFAULTS.height);
+	const isMaximized = store.get('isMaximized', WINDOW_STATE_DEFAULTS.isMaximized);
+	const isFullScreen = store.get('isFullScreen', WINDOW_STATE_DEFAULTS.isFullScreen);
+
+	return {
+		primaryWindowId: DEFAULT_WINDOW_ID,
+		windows: [
+			{
+				id: DEFAULT_WINDOW_ID,
+				x: store.get('x'),
+				y: store.get('y'),
+				width,
+				height,
+				isMaximized,
+				isFullScreen,
+				sessionIds: fallbackWindowTemplate?.sessionIds ?? [],
+				activeSessionId: fallbackWindowTemplate?.activeSessionId ?? null,
+				leftPanelCollapsed: fallbackWindowTemplate?.leftPanelCollapsed ?? false,
+				rightPanelCollapsed: fallbackWindowTemplate?.rightPanelCollapsed ?? false,
+			},
+		],
+	};
+}
+
+function ensureMultiWindowState(store: Store<WindowState>): void {
+	const currentState = store.get('multiWindowState');
+	if (isValidMultiWindowState(currentState)) {
+		return;
+	}
+	const migratedState = buildMultiWindowStateFromLegacy(store);
+	store.set('multiWindowState', migratedState);
+}
 
 // ============================================================================
 // Store Instance Variables
@@ -122,6 +175,7 @@ export function initializeStores(options: StoreInitOptions): {
 		name: 'maestro-window-state',
 		defaults: WINDOW_STATE_DEFAULTS,
 	});
+	ensureMultiWindowState(_windowStateStore);
 
 	// Claude session origins - tracks which sessions were created by Maestro
 	_claudeSessionOriginsStore = new Store<ClaudeSessionOriginsData>({

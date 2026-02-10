@@ -126,6 +126,17 @@ describe('stores/instances', () => {
 					height: 900,
 					isMaximized: false,
 					isFullScreen: false,
+					multiWindowState: {
+						primaryWindowId: 'primary',
+						windows: [
+							{
+								id: 'primary',
+								sessionIds: [],
+								leftPanelCollapsed: false,
+								rightPanelCollapsed: false,
+							},
+						],
+					},
 				},
 			});
 			// Window state should NOT have cwd

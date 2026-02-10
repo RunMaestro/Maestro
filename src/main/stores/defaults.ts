@@ -16,6 +16,7 @@ import type {
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
 } from './types';
+import type { MultiWindowState } from '../../shared/types/window';
 
 // ============================================================================
 // Utility Functions for Defaults
@@ -45,6 +46,25 @@ export function getDefaultShell(): string {
 // ============================================================================
 // Store Defaults
 // ============================================================================
+
+const PRIMARY_WINDOW_ID = 'primary';
+
+const MULTI_WINDOW_DEFAULT_STATE: MultiWindowState = {
+	primaryWindowId: PRIMARY_WINDOW_ID,
+	windows: [
+		{
+			id: PRIMARY_WINDOW_ID,
+			width: 1400,
+			height: 900,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: null,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+		},
+	],
+};
 
 export const SETTINGS_DEFAULTS: MaestroSettings = {
 	activeThemeId: 'dracula',
@@ -85,6 +105,7 @@ export const WINDOW_STATE_DEFAULTS: WindowState = {
 	height: 900,
 	isMaximized: false,
 	isFullScreen: false,
+	multiWindowState: MULTI_WINDOW_DEFAULT_STATE,
 };
 
 export const CLAUDE_SESSION_ORIGINS_DEFAULTS: ClaudeSessionOriginsData = {
