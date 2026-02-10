@@ -6,8 +6,10 @@ import type { WindowState as WindowStateStoreShape } from './stores/types';
 import type {
 	MultiWindowState as PersistedMultiWindowState,
 	WindowState as PersistedWindowState,
+	WindowSessionMovedEvent,
 } from '../shared/types/window';
 import { logger } from './utils/logger';
+import { isWebContentsAvailable } from './utils/safe-send';
 
 export interface RegisteredWindow {
 	browserWindow: BrowserWindow;
@@ -89,6 +91,7 @@ export class WindowRegistry {
 		browserWindow.on('leave-full-screen', scheduleWindowStateSave);
 		browserWindow.on('close', () => {
 			this.saveWindowState(resolvedWindowId, { immediate: true });
+			this.reassignSessionsToPrimary(resolvedWindowId);
 		});
 
 		browserWindow.on('closed', () => {
@@ -203,6 +206,122 @@ export class WindowRegistry {
 
 		if (!toWindow.sessionIds.includes(sessionId)) {
 			toWindow.sessionIds = [...toWindow.sessionIds, sessionId];
+		}
+	}
+
+	private reassignSessionsToPrimary(windowId: string): void {
+		const closingEntry = this.windows.get(windowId);
+
+		if (!closingEntry || closingEntry.isMain) {
+			return;
+		}
+
+		const primaryEntry = this.getPrimary();
+		if (!primaryEntry || primaryEntry.windowId === windowId) {
+			return;
+		}
+
+		const sessionsToMove = [...closingEntry.sessionIds];
+
+		if (sessionsToMove.length > 0) {
+			const existingSessions = new Set(primaryEntry.sessionIds);
+			for (const sessionId of sessionsToMove) {
+				if (existingSessions.has(sessionId)) {
+					continue;
+				}
+				primaryEntry.sessionIds.push(sessionId);
+				existingSessions.add(sessionId);
+			}
+		}
+
+		this.persistSessionsFromClosedWindow(
+			windowId,
+			primaryEntry.windowId,
+			sessionsToMove
+		);
+
+		if (!sessionsToMove.length) {
+			return;
+		}
+
+		for (const sessionId of sessionsToMove) {
+			this.broadcastSessionMoved({
+				sessionId,
+				fromWindowId: windowId,
+				toWindowId: primaryEntry.windowId,
+			});
+		}
+	}
+
+	private persistSessionsFromClosedWindow(
+		closedWindowId: string,
+		targetWindowId: string,
+		movedSessionIds: string[]
+	): void {
+		try {
+			const multiWindowState = getMultiWindowStateSnapshot(this.windowStateStore);
+			const remainingWindows: PersistedWindowState[] = [];
+			let targetState: PersistedWindowState | null = null;
+
+			for (const windowState of multiWindowState.windows) {
+				if (windowState.id === closedWindowId) {
+					continue;
+				}
+
+				if (windowState.id === targetWindowId) {
+					targetState = cloneWindowState(windowState);
+					remainingWindows.push(targetState);
+					continue;
+				}
+
+				remainingWindows.push(cloneWindowState(windowState));
+			}
+
+			if (!targetState) {
+				targetState = createDefaultWindowStateSnapshot(targetWindowId);
+				remainingWindows.push(targetState);
+			}
+
+			if (movedSessionIds.length > 0) {
+				const uniqueSessions = new Set(targetState.sessionIds);
+				for (const sessionId of movedSessionIds) {
+					if (uniqueSessions.has(sessionId)) {
+						continue;
+					}
+					targetState.sessionIds.push(sessionId);
+					uniqueSessions.add(sessionId);
+				}
+
+				if (!targetState.activeSessionId) {
+					targetState.activeSessionId = targetState.sessionIds[0] ?? null;
+				}
+			}
+
+			const nextState: PersistedMultiWindowState = {
+				primaryWindowId:
+					multiWindowState.primaryWindowId === closedWindowId
+						? targetWindowId
+						: multiWindowState.primaryWindowId ?? targetWindowId,
+				windows: remainingWindows.map(cloneWindowState),
+			};
+
+			this.windowStateStore.set('multiWindowState', nextState);
+		} catch (error) {
+			logger.warn('Failed to persist window close reassignment', 'WindowRegistry', {
+				closedWindowId,
+				targetWindowId,
+				movedCount: movedSessionIds.length,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	private broadcastSessionMoved(event: WindowSessionMovedEvent): void {
+		for (const { browserWindow } of this.getAll()) {
+			if (!isWebContentsAvailable(browserWindow)) {
+				continue;
+			}
+			browserWindow.webContents.send('windows:sessionMoved', event);
 		}
 	}
 

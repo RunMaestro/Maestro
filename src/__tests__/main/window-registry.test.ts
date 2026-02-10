@@ -16,12 +16,17 @@ interface MockStore {
 
 function createMockBrowserWindow(overrides: Partial<BrowserWindow> = {}) {
 	const defaultBounds = { x: 10, y: 20, width: 1280, height: 800 };
+	const webContents = {
+		isDestroyed: vi.fn().mockReturnValue(false),
+		send: vi.fn(),
+	};
 	return {
 		isDestroyed: vi.fn().mockReturnValue(false),
 		isMaximized: vi.fn().mockReturnValue(false),
 		isFullScreen: vi.fn().mockReturnValue(false),
 		getBounds: vi.fn().mockReturnValue(defaultBounds),
 		on: vi.fn(),
+		webContents,
 		...overrides,
 	} as unknown as BrowserWindow;
 }
@@ -50,6 +55,22 @@ function createMockStore(): MockStore {
 	};
 
 	return store;
+}
+
+function createPersistedWindowState(id: string, sessionIds: string[] = []) {
+	return {
+		id,
+		x: 0,
+		y: 0,
+		width: 1280,
+		height: 800,
+		isMaximized: false,
+		isFullScreen: false,
+		sessionIds: [...sessionIds],
+		activeSessionId: sessionIds[0] ?? null,
+		leftPanelCollapsed: false,
+		rightPanelCollapsed: false,
+	};
 }
 
 describe('WindowRegistry.saveWindowState', () => {
@@ -112,5 +133,97 @@ describe('WindowRegistry.saveWindowState', () => {
 
 		const multiWindowStateCalls = mockStore.set.mock.calls.filter(([key]) => key === 'multiWindowState');
 		expect(multiWindowStateCalls).toHaveLength(1);
+	});
+});
+
+describe('WindowRegistry session reassignment', () => {
+	let mockStore: MockStore;
+	let registry: WindowRegistry;
+
+	beforeEach(() => {
+		mockStore = createMockStore();
+		registry = new WindowRegistry({ windowStateStore: mockStore as any, saveDebounceMs: 25 });
+	});
+
+	function seedWindows(options: {
+		primarySessions?: string[];
+		secondarySessions?: string[];
+		secondaryIsMain?: boolean;
+	}) {
+		const primarySessions = options.primarySessions ?? [];
+		const secondarySessions = options.secondarySessions ?? [];
+		const primaryWindow = createMockBrowserWindow();
+		const secondaryWindow = createMockBrowserWindow();
+
+		(registry as any).windows.set('primary', {
+			browserWindow: primaryWindow,
+			sessionIds: [...primarySessions],
+			isMain: true,
+		});
+		(registry as any).windows.set('secondary', {
+			browserWindow: secondaryWindow,
+			sessionIds: [...secondarySessions],
+			isMain: options.secondaryIsMain ?? false,
+		});
+		(registry as any).primaryWindowId = 'primary';
+
+		mockStore.store.multiWindowState = {
+			primaryWindowId: 'primary',
+			windows: [
+				createPersistedWindowState('primary', primarySessions),
+				createPersistedWindowState('secondary', secondarySessions),
+			],
+		};
+
+		return { primaryWindow, secondaryWindow };
+	}
+
+	it('moves sessions back to the primary window and broadcasts updates', () => {
+		const { primaryWindow, secondaryWindow } = seedWindows({
+			primarySessions: ['main-1'],
+			secondarySessions: ['child-1', 'child-2'],
+		});
+
+		(registry as any).reassignSessionsToPrimary('secondary');
+
+		const updatedPrimary = (registry as any).windows.get('primary');
+		expect(updatedPrimary.sessionIds).toEqual(['main-1', 'child-1', 'child-2']);
+
+		const savedStateCall = mockStore.set.mock.calls.find(([key]) => key === 'multiWindowState');
+		const savedState = savedStateCall?.[1];
+		expect(savedState.windows).toHaveLength(1);
+		expect(savedState.windows[0]).toMatchObject({
+			id: 'primary',
+			sessionIds: ['main-1', 'child-1', 'child-2'],
+		});
+
+		expect(primaryWindow.webContents.send).toHaveBeenCalledWith(
+			'windows:sessionMoved',
+			expect.objectContaining({ sessionId: 'child-1', fromWindowId: 'secondary', toWindowId: 'primary' })
+		);
+		expect(secondaryWindow.webContents.send).toHaveBeenCalledWith(
+			'windows:sessionMoved',
+			expect.objectContaining({ sessionId: 'child-2', fromWindowId: 'secondary', toWindowId: 'primary' })
+		);
+	});
+
+	it('ignores primary window closures', () => {
+		const { primaryWindow } = seedWindows({ secondaryIsMain: true });
+
+		(registry as any).reassignSessionsToPrimary('primary');
+
+		expect(mockStore.set).not.toHaveBeenCalled();
+		expect(primaryWindow.webContents.send).not.toHaveBeenCalled();
+	});
+
+	it('removes closed window state even with no sessions', () => {
+		seedWindows({ primarySessions: [], secondarySessions: [] });
+
+		(registry as any).reassignSessionsToPrimary('secondary');
+
+		const savedStateCall = mockStore.set.mock.calls.find(([key]) => key === 'multiWindowState');
+		const savedState = savedStateCall?.[1];
+		expect(savedState.windows).toHaveLength(1);
+		expect(savedState.windows[0].id).toBe('primary');
 	});
 });
