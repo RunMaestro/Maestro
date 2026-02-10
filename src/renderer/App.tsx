@@ -115,6 +115,7 @@ import {
 	// UI
 	useThemeStyles,
 	useAppHandlers,
+	useWindowState,
 	// Auto Run
 	useAutoRunHandlers,
 } from './hooks';
@@ -795,6 +796,8 @@ function MaestroConsoleInner() {
 		setSuccessFlashNotification,
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
+
+	useWindowState();
 
 	// --- GROUP CHAT STATE (Phase 4: extracted to GroupChatContext) ---
 

@@ -46,6 +46,11 @@ interface MoveSessionArgs {
 	fromWindowId?: string;
 }
 
+interface UpdateWindowStateArgs {
+	leftPanelCollapsed?: boolean;
+	rightPanelCollapsed?: boolean;
+}
+
 export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void {
 	const { windowStateStore } = deps;
 	const getWindowManager = () => requireDependency(deps.getWindowManager, 'Window manager');
@@ -190,6 +195,32 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 			throw error;
 		}
 	});
+
+	ipcMain.handle('windows:updateState', async (event, args?: UpdateWindowStateArgs) => {
+		try {
+			if (!args) {
+				return false;
+			}
+
+			const browserWindow = BrowserWindow.fromWebContents(event.sender);
+			if (!browserWindow) {
+				throw new Error('Unable to resolve BrowserWindow for updateState request');
+			}
+
+			const windowRegistry = getWindowRegistry();
+			const windowId = findWindowIdByBrowserWindow(windowRegistry, browserWindow);
+			if (!windowId) {
+				throw new Error('Window not registered in window registry');
+			}
+
+			return updateWindowState(windowStateStore, windowId, args);
+		} catch (error) {
+			logger.error('windows:updateState error', LOG_CONTEXT, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
+	});
 }
 
 function buildWindowInfoList(
@@ -314,6 +345,45 @@ function createDefaultWindowStateSnapshot(windowId: string): PersistedWindowStat
 		leftPanelCollapsed: template?.leftPanelCollapsed ?? false,
 		rightPanelCollapsed: template?.rightPanelCollapsed ?? false,
 	};
+}
+
+function updateWindowState(
+	windowStateStore: Store<WindowStateStoreShape>,
+	windowId: string,
+	updates: UpdateWindowStateArgs
+): boolean {
+	const hasLeftUpdate = typeof updates.leftPanelCollapsed === 'boolean';
+	const hasRightUpdate = typeof updates.rightPanelCollapsed === 'boolean';
+	if (!hasLeftUpdate && !hasRightUpdate) {
+		return false;
+	}
+
+	const multiWindowState = getMultiWindowStateSnapshot(windowStateStore);
+	let windowState = multiWindowState.windows.find((window) => window.id === windowId);
+	if (!windowState) {
+		windowState = createDefaultWindowStateSnapshot(windowId);
+		multiWindowState.windows.push(windowState);
+	}
+
+	let changed = false;
+	if (hasLeftUpdate && windowState.leftPanelCollapsed !== updates.leftPanelCollapsed) {
+		windowState.leftPanelCollapsed = updates.leftPanelCollapsed ?? windowState.leftPanelCollapsed;
+		changed = true;
+	}
+	if (hasRightUpdate && windowState.rightPanelCollapsed !== updates.rightPanelCollapsed) {
+		windowState.rightPanelCollapsed = updates.rightPanelCollapsed ?? windowState.rightPanelCollapsed;
+		changed = true;
+	}
+
+	if (!changed) {
+		return false;
+	}
+
+	windowStateStore.set('multiWindowState', {
+		primaryWindowId: multiWindowState.primaryWindowId,
+		windows: multiWindowState.windows.map(cloneWindowState),
+	});
+	return true;
 }
 
 function findWindowEntryByBrowserWindow(
