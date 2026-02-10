@@ -27,6 +27,17 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getColorBlindExtensionColor } from '../constants/colorblindPalettes';
 import { useWindowContext } from '../contexts/WindowContext';
 
+// Offset newly spawned windows so the cursor isn't pinned to the top-left corner
+const DRAG_WINDOW_OFFSET_X = 100;
+const DRAG_WINDOW_OFFSET_Y = 50;
+
+type BrowserWindowBounds = {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+};
+
 interface TabBarProps {
 	tabs: AITab[];
 	activeTabId: string;
@@ -1687,7 +1698,7 @@ function TabBarInner({
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const dragCursorPositionRef = useRef<{ screenX: number; screenY: number } | null>(null);
-	const windowBoundsRef = useRef<MaestroWindowBounds | null>(null);
+	const windowBoundsRef = useRef<BrowserWindowBounds | null>(null);
 	const dragHoveredWindowIdRef = useRef<string | null>(null);
 	const dragWindowLookupTicketRef = useRef(0);
 	const wasDraggingOutsideWindowRef = useRef(false);
@@ -1779,6 +1790,50 @@ function TabBarInner({
 				windowId,
 				tabs,
 			});
+		},
+		[windowId, tabs]
+	);
+
+	const moveSessionToNewWindowFromDrag = useCallback(
+		async (
+			tabId: string,
+			position: { screenX: number; screenY: number } | null
+		) => {
+			if (!windowId) {
+				return;
+			}
+
+			const isAiTab = tabs.some((tab) => tab.id === tabId);
+			if (!isAiTab || !window.maestro?.windows?.create) {
+				return;
+			}
+
+			const bounds = position
+				? {
+						x: Math.round(position.screenX - DRAG_WINDOW_OFFSET_X),
+						y: Math.round(position.screenY - DRAG_WINDOW_OFFSET_Y),
+				  }
+				: undefined;
+
+			try {
+				const result = await window.maestro.windows.create({
+					sessionIds: [tabId],
+					bounds,
+				});
+
+				if (!result?.windowId) {
+					return;
+				}
+
+				await moveSessionToWindowHelper({
+					tabId,
+					targetWindowId: result.windowId,
+					windowId,
+					tabs,
+				});
+			} catch (error) {
+				console.error('Failed to move session to new window from drag', error);
+			}
 		},
 		[windowId, tabs]
 	);
@@ -1884,13 +1939,24 @@ function TabBarInner({
 	const handleDragEnd = useCallback(() => {
 		const hoveredWindowId = dragHoveredWindowIdRef.current;
 		const tabId = draggingTabId;
-		if (tabId && hoveredWindowId) {
-			void moveSessionToWindow(tabId, hoveredWindowId);
+		const dropPosition = dragCursorPositionRef.current;
+		const wasOutsideWindow = wasDraggingOutsideWindowRef.current;
+		if (tabId) {
+			if (hoveredWindowId) {
+				void moveSessionToWindow(tabId, hoveredWindowId);
+			} else if (wasOutsideWindow) {
+				void moveSessionToNewWindowFromDrag(tabId, dropPosition);
+			}
 		}
 		setDraggingTabId(null);
 		setDragOverTabId(null);
 		resetDragWindowTracking();
-	}, [draggingTabId, moveSessionToWindow, resetDragWindowTracking]);
+	}, [
+		draggingTabId,
+		moveSessionToNewWindowFromDrag,
+		moveSessionToWindow,
+		resetDragWindowTracking,
+	]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
