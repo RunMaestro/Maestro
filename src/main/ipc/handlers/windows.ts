@@ -46,6 +46,11 @@ interface MoveSessionArgs {
 	fromWindowId?: string;
 }
 
+interface FindWindowAtPointArgs {
+	screenX: number;
+	screenY: number;
+}
+
 interface UpdateWindowStateArgs {
 	leftPanelCollapsed?: boolean;
 	rightPanelCollapsed?: boolean;
@@ -184,6 +189,46 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 
 			return browserWindow.getBounds();
 		})
+	);
+
+	ipcMain.handle(
+		'windows:findWindowAtPoint',
+		withIpcErrorLogging(
+			handlerOpts('findWindowAtPoint'),
+			async (event, args?: FindWindowAtPointArgs) => {
+				const { screenX, screenY } = args ?? {};
+
+				if (typeof screenX !== 'number' || typeof screenY !== 'number') {
+					throw new Error('screenX and screenY are required');
+				}
+
+				const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+
+				if (!sourceWindow) {
+					throw new Error('Unable to resolve BrowserWindow for findWindowAtPoint request');
+				}
+
+				const windowRegistry = getWindowRegistry();
+
+				for (const { browserWindow, windowId } of windowRegistry.getAll()) {
+					if (browserWindow === sourceWindow || browserWindow.isDestroyed()) {
+						continue;
+					}
+
+					const bounds = browserWindow.getBounds();
+					const withinHorizontal =
+						screenX >= bounds.x && screenX <= bounds.x + bounds.width;
+					const withinVertical =
+						screenY >= bounds.y && screenY <= bounds.y + bounds.height;
+
+					if (withinHorizontal && withinVertical) {
+						return windowId;
+					}
+				}
+
+				return null;
+			}
+		)
 	);
 
 	ipcMain.handle('windows:getState', async (event) => {

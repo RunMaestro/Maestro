@@ -1651,6 +1651,9 @@ function TabBarInner({
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 	const dragCursorPositionRef = useRef<{ screenX: number; screenY: number } | null>(null);
 	const windowBoundsRef = useRef<MaestroWindowBounds | null>(null);
+	const dragHoveredWindowIdRef = useRef<string | null>(null);
+	const dragWindowLookupTicketRef = useRef(0);
+	const wasDraggingOutsideWindowRef = useRef(false);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
 	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
@@ -1725,10 +1728,35 @@ function TabBarInner({
 	const resetDragWindowTracking = useCallback(() => {
 		windowBoundsRef.current = null;
 		dragCursorPositionRef.current = null;
+		dragHoveredWindowIdRef.current = null;
+		dragWindowLookupTicketRef.current += 1;
+		wasDraggingOutsideWindowRef.current = false;
 		setIsDraggingOutsideWindow(false);
 	}, []);
 
-	const applyDragPosition = useCallback((screenX: number, screenY: number) => {
+	const resolveWindowAtDragPoint = useCallback(async (screenX: number, screenY: number) => {
+		if (!window.maestro?.windows?.findWindowAtPoint) {
+			dragHoveredWindowIdRef.current = null;
+			return;
+		}
+
+		const lookupTicket = ++dragWindowLookupTicketRef.current;
+
+		try {
+			const windowId = await window.maestro.windows.findWindowAtPoint(screenX, screenY);
+			if (dragWindowLookupTicketRef.current === lookupTicket) {
+				dragHoveredWindowIdRef.current = windowId ?? null;
+			}
+		} catch (error) {
+			if (dragWindowLookupTicketRef.current === lookupTicket) {
+				dragHoveredWindowIdRef.current = null;
+			}
+			console.error('Failed to resolve window at drag point', error);
+		}
+	}, []);
+
+	const applyDragPosition = useCallback(
+		(screenX: number, screenY: number) => {
 		dragCursorPositionRef.current = { screenX, screenY };
 		const bounds = windowBoundsRef.current;
 		if (
@@ -1744,8 +1772,18 @@ function TabBarInner({
 		const withinHorizontal = screenX >= bounds.x && screenX <= bounds.x + bounds.width;
 		const withinVertical = screenY >= bounds.y && screenY <= bounds.y + bounds.height;
 		const isOutside = !(withinHorizontal && withinVertical);
+		const wasOutside = wasDraggingOutsideWindowRef.current;
+		wasDraggingOutsideWindowRef.current = isOutside;
 		setIsDraggingOutsideWindow((prev) => (prev === isOutside ? prev : isOutside));
-	}, []);
+		if (isOutside) {
+			void resolveWindowAtDragPoint(screenX, screenY);
+		} else {
+			if (wasOutside) {
+				dragWindowLookupTicketRef.current += 1;
+			}
+			dragHoveredWindowIdRef.current = null;
+		}
+	}, [resolveWindowAtDragPoint]);
 
 	const captureWindowBounds = useCallback(async () => {
 		if (!window.maestro?.windows?.getWindowBounds) {

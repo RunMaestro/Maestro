@@ -79,6 +79,12 @@ export function createWindowsApi() {
 			ipcRenderer.invoke('windows:getWindowBounds'),
 
 		/**
+		 * Find the window occupying the provided screen coordinates
+		 */
+		findWindowAtPoint: (screenX: number, screenY: number): Promise<string | null> =>
+			ipcRenderer.invoke('windows:findWindowAtPoint', { screenX, screenY }),
+
+		/**
 		 * Get persisted state for the current BrowserWindow
 		 */
 		getState: (): Promise<WindowState | null> => ipcRenderer.invoke('windows:getState'),

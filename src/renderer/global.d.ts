@@ -2752,6 +2752,7 @@ interface MaestroAPI {
 		moveSession: (options: MaestroMoveSessionOptions) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getWindowBounds: () => Promise<MaestroWindowBounds>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;
 		getState: () => Promise<MaestroWindowState | null>;
 		onSessionMoved: (callback: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
 		updateState: (
