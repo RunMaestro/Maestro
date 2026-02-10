@@ -73,6 +73,12 @@ export function createWindowsApi() {
 			ipcRenderer.invoke('windows:focusWindow', windowId),
 
 		/**
+		 * Get the current BrowserWindow bounds (screen coordinates)
+		 */
+		getWindowBounds: (): Promise<Rectangle> =>
+			ipcRenderer.invoke('windows:getWindowBounds'),
+
+		/**
 		 * Get persisted state for the current BrowserWindow
 		 */
 		getState: (): Promise<WindowState | null> => ipcRenderer.invoke('windows:getState'),
