@@ -163,6 +163,7 @@ import type {
 	AgentError,
 	BatchRunState,
 	GroupChatMessage,
+	GroupChat,
 	SpecKitCommand,
 	OpenSpecCommand,
 	LeaderboardRegistration,
@@ -607,7 +608,12 @@ function MaestroConsoleInner() {
 	let activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
 
-	const { sessionIds: windowSessionIds, activeSessionId: windowActiveSessionId } = useWindowContext();
+	const {
+		sessionIds: windowSessionIds,
+		activeSessionId: windowActiveSessionId,
+		windowId: currentWindowId,
+		isMainWindow,
+	} = useWindowContext();
 	const windowSessionIdSet = useMemo(() => {
 		return windowSessionIds.length ? new Set(windowSessionIds) : null;
 	}, [windowSessionIds]);
@@ -806,7 +812,7 @@ function MaestroConsoleInner() {
 
 	// Use GroupChatContext for all group chat states
 	const {
-		groupChats,
+		groupChats: scopedGroupChats,
 		setGroupChats,
 		activeGroupChatId,
 		setActiveGroupChatId,
@@ -838,6 +844,28 @@ function MaestroConsoleInner() {
 		groupChatMessagesRef,
 		clearGroupChatError: handleClearGroupChatErrorBase,
 	} = useGroupChat();
+
+	const isWindowScopeReady = isMainWindow || currentWindowId !== null;
+	const isGroupChatVisibleInWindow = useCallback(
+		(chat: GroupChat) => {
+			if (!isWindowScopeReady) {
+				return true;
+			}
+			const initiatorId = chat.initiatorWindowId ?? 'primary';
+			if (initiatorId === 'primary') {
+				return isMainWindow;
+			}
+			return initiatorId === currentWindowId;
+		},
+		[isWindowScopeReady, isMainWindow, currentWindowId]
+	);
+
+	const scopedGroupChats = useMemo(() => {
+		if (!isWindowScopeReady) {
+			return groupChats;
+		}
+		return groupChats.filter(isGroupChatVisibleInWindow);
+	}, [groupChats, isWindowScopeReady, isGroupChatVisibleInWindow]);
 
 	// SSH Remote configs for looking up SSH remote names (used for participant cards in group chat)
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
@@ -8519,6 +8547,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 		async (id: string) => {
 			const chat = await window.maestro.groupChat.load(id);
 			if (chat) {
+				if (!isGroupChatVisibleInWindow(chat)) {
+					addToast({
+						type: 'info',
+						title: 'Open in original window',
+						message: 'This group chat is being managed in another window.',
+						duration: 5000,
+					});
+					return;
+				}
 				setActiveGroupChatId(id);
 				const messages = await window.maestro.groupChat.getMessages(id);
 				setGroupChatMessages(messages);
@@ -8563,7 +8600,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				}, 100);
 			}
 		},
-		[groupChatStates, allGroupChatParticipantStates]
+		[groupChatStates, allGroupChatParticipantStates, isGroupChatVisibleInWindow, addToast]
 	);
 
 	const handleCloseGroupChat = useCallback(() => {
@@ -8573,6 +8610,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setParticipantStates(new Map());
 		setGroupChatError(null);
 	}, []);
+
+	useEffect(() => {
+		if (!isWindowScopeReady || !activeGroupChatId) {
+			return;
+		}
+		const activeChat = groupChats.find((chat) => chat.id === activeGroupChatId);
+		if (activeChat && !isGroupChatVisibleInWindow(activeChat)) {
+			handleCloseGroupChat();
+			addToast({
+				type: 'info',
+				title: 'Group chat moved',
+				message: 'This group chat is now associated with a different window.',
+				duration: 5000,
+			});
+		}
+	}, [
+		isWindowScopeReady,
+		activeGroupChatId,
+		groupChats,
+		isGroupChatVisibleInWindow,
+		handleCloseGroupChat,
+		addToast,
+	]);
 
 	// Handle right panel tab change with persistence
 	const handleGroupChatRightTabChange = useCallback(
@@ -8632,12 +8692,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customModel?: string;
 			}
 		) => {
-			const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
-			setGroupChats((prev) => [chat, ...prev]);
+			if (!isMainWindow && !currentWindowId) {
+				addToast({
+					type: 'warning',
+					title: 'Window still initializing',
+					message: 'Please wait for this window to finish loading before creating a group chat.',
+					duration: 5000,
+				});
+				return;
+			}
+			const initiatorId = currentWindowId ?? 'primary';
+			const chat = await window.maestro.groupChat.create(
+				name,
+				moderatorAgentId,
+				moderatorConfig,
+				initiatorId
+			);
+			setGroupChats((prev) =>
+				isGroupChatVisibleInWindow(chat) ? [chat, ...prev] : prev
+			);
 			setShowNewGroupChatModal(false);
 			handleOpenGroupChat(chat.id);
 		},
-		[handleOpenGroupChat]
+		[handleOpenGroupChat, addToast, currentWindowId, isMainWindow, isGroupChatVisibleInWindow]
 	);
 
 	const handleDeleteGroupChat = useCallback(
@@ -9188,8 +9265,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 			}
 
 			// Group Chats section (if expanded and has group chats)
-			if (groupChatsExpanded && groupChats.length > 0) {
-				const sortedGroupChats = [...groupChats].sort((a, b) =>
+			if (groupChatsExpanded && scopedGroupChats.length > 0) {
+				const sortedGroupChats = [...scopedGroupChats].sort((a, b) =>
 					a.name.toLowerCase().localeCompare(b.name.toLowerCase())
 				);
 				visualOrder.push(
@@ -13714,7 +13791,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					activeSession={activeSession}
 					groups={groups}
 					setGroups={setGroups}
-					groupChats={groupChats}
+					groupChats={scopedGroupChats}
 					shortcuts={shortcuts}
 					tabShortcuts={tabShortcuts}
 					// AppInfoModals props

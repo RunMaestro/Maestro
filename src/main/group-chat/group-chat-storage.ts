@@ -71,6 +71,8 @@ export interface GroupChat {
 	name: string;
 	createdAt: number;
 	updatedAt: number;
+	/** Window ID that initiated this chat (used for multi-window scoping) */
+	initiatorWindowId?: string | null;
 	moderatorAgentId: string;
 	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
 	moderatorSessionId: string;
@@ -96,6 +98,7 @@ export type GroupChatUpdate = Partial<
 		| 'moderatorConfig'
 		| 'participants'
 		| 'updatedAt'
+		| 'initiatorWindowId'
 	>
 >;
 
@@ -165,13 +168,15 @@ function sanitizeChatName(name: string): string {
  * @param name - Display name for the group chat
  * @param moderatorAgentId - ID of the agent to use as moderator (e.g., 'claude-code')
  * @param moderatorConfig - Optional custom configuration for the moderator agent
+ * @param initiatorWindowId - Optional window ID that initiated the chat (defaults to 'primary')
  * @returns The created GroupChat object
  * @throws Error if moderatorAgentId is not a valid agent ID
  */
 export async function createGroupChat(
 	name: string,
 	moderatorAgentId: string,
-	moderatorConfig?: ModeratorConfig
+	moderatorConfig?: ModeratorConfig,
+	initiatorWindowId?: string | null
 ): Promise<GroupChat> {
 	// Validate agent ID against whitelist
 	if (!VALID_MODERATOR_AGENT_IDS.includes(moderatorAgentId as ToolType)) {
@@ -196,12 +201,15 @@ export async function createGroupChat(
 	// Create empty log file
 	await fs.writeFile(logPath, '', 'utf-8');
 
+	const normalizedInitiatorWindowId = initiatorWindowId ?? 'primary';
+
 	// Create metadata
 	const groupChat: GroupChat = {
 		id,
 		name: sanitizedName,
 		createdAt: now,
 		updatedAt: now,
+		initiatorWindowId: normalizedInitiatorWindowId,
 		moderatorAgentId,
 		moderatorSessionId: '', // Will be set when moderator is spawned
 		moderatorConfig,

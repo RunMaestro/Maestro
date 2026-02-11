@@ -68,8 +68,19 @@ export interface ModeratorUsage {
 export function createGroupChatApi() {
 	return {
 		// Storage
-		create: (name: string, moderatorAgentId: string, moderatorConfig?: ModeratorConfig) =>
-			ipcRenderer.invoke('groupChat:create', name, moderatorAgentId, moderatorConfig),
+		create: (
+			name: string,
+			moderatorAgentId: string,
+			moderatorConfig?: ModeratorConfig,
+			initiatorWindowId?: string | null
+		) =>
+			ipcRenderer.invoke(
+				'groupChat:create',
+				name,
+				moderatorAgentId,
+				moderatorConfig,
+				initiatorWindowId
+			),
 
 		list: () => ipcRenderer.invoke('groupChat:list'),
 
