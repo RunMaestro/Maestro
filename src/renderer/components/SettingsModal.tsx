@@ -27,6 +27,7 @@ import {
 	FlaskConical,
 	Database,
 	Server,
+	Fingerprint,
 	Battery,
 	Monitor,
 	PartyPopper,
@@ -56,6 +57,7 @@ import { FontConfigurationPanel } from './FontConfigurationPanel';
 import { NotificationsPanel } from './NotificationsPanel';
 import { SshRemotesSection } from './Settings/SshRemotesSection';
 import { SshRemoteIgnoreSection } from './Settings/SshRemoteIgnoreSection';
+import { VibesSettings } from './Settings/VibesSettings';
 
 // Feature flags - set to true to enable dormant features
 const FEATURE_FLAGS = {
@@ -281,7 +283,8 @@ interface SettingsModalProps {
 		| 'theme'
 		| 'notifications'
 		| 'aicommands'
-		| 'ssh';
+		| 'ssh'
+		| 'vibes';
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
@@ -323,10 +326,31 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// Automatic tab naming settings
 		automaticTabNamingEnabled,
 		setAutomaticTabNamingEnabled,
+		// VIBES Metadata settings
+		vibesEnabled,
+		setVibesEnabled,
+		vibesAssuranceLevel,
+		setVibesAssuranceLevel,
+		vibesTrackedExtensions,
+		setVibesTrackedExtensions,
+		vibesExcludePatterns,
+		setVibesExcludePatterns,
+		vibesPerAgentConfig,
+		setVibesPerAgentConfig,
+		vibesMaestroOrchestrationEnabled,
+		setVibesMaestroOrchestrationEnabled,
+		vibesAutoInit,
+		setVibesAutoInit,
+		vibesCheckBinaryPath,
+		setVibesCheckBinaryPath,
+		vibesCompressReasoningThreshold,
+		setVibesCompressReasoningThreshold,
+		vibesExternalBlobThreshold,
+		setVibesExternalBlobThreshold,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
-		'general' | 'display' | 'llm' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands' | 'ssh'
+		'general' | 'display' | 'llm' | 'shortcuts' | 'theme' | 'notifications' | 'aicommands' | 'ssh' | 'vibes'
 	>('general');
 	const [systemFonts, setSystemFonts] = useState<string[]>([]);
 	const [customFonts, setCustomFonts] = useState<string[]>([]);
@@ -488,9 +512,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				| 'notifications'
 				| 'aicommands'
 				| 'ssh'
+				| 'vibes'
 			> = FEATURE_FLAGS.LLM_SETTINGS
-				? ['general', 'display', 'llm', 'shortcuts', 'theme', 'notifications', 'aicommands', 'ssh']
-				: ['general', 'display', 'shortcuts', 'theme', 'notifications', 'aicommands', 'ssh'];
+				? ['general', 'display', 'llm', 'shortcuts', 'theme', 'notifications', 'aicommands', 'ssh', 'vibes']
+				: ['general', 'display', 'shortcuts', 'theme', 'notifications', 'aicommands', 'ssh', 'vibes'];
 			const currentIndex = tabs.indexOf(activeTab);
 
 			if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === '[') {
@@ -959,6 +984,15 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					>
 						<Server className="w-4 h-4" />
 						{activeTab === 'ssh' && <span>SSH Hosts</span>}
+					</button>
+					<button
+						onClick={() => setActiveTab('vibes')}
+						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'vibes' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						tabIndex={-1}
+						title="VIBES Metadata"
+					>
+						<Fingerprint className="w-4 h-4" />
+						{activeTab === 'vibes' && <span>VIBES</span>}
 					</button>
 					<div className="flex-1 flex justify-end items-center pr-4">
 						<button onClick={onClose} tabIndex={-1}>
@@ -2667,6 +2701,34 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								onIgnorePatternsChange={setSshRemoteIgnorePatterns}
 								honorGitignore={sshRemoteHonorGitignore}
 								onHonorGitignoreChange={setSshRemoteHonorGitignore}
+							/>
+						</div>
+					)}
+
+					{activeTab === 'vibes' && (
+						<div className="space-y-5">
+							<VibesSettings
+								theme={theme}
+								vibesEnabled={vibesEnabled}
+								setVibesEnabled={setVibesEnabled}
+								vibesAssuranceLevel={vibesAssuranceLevel}
+								setVibesAssuranceLevel={setVibesAssuranceLevel}
+								vibesTrackedExtensions={vibesTrackedExtensions}
+								setVibesTrackedExtensions={setVibesTrackedExtensions}
+								vibesExcludePatterns={vibesExcludePatterns}
+								setVibesExcludePatterns={setVibesExcludePatterns}
+								vibesPerAgentConfig={vibesPerAgentConfig}
+								setVibesPerAgentConfig={setVibesPerAgentConfig}
+								vibesMaestroOrchestrationEnabled={vibesMaestroOrchestrationEnabled}
+								setVibesMaestroOrchestrationEnabled={setVibesMaestroOrchestrationEnabled}
+								vibesAutoInit={vibesAutoInit}
+								setVibesAutoInit={setVibesAutoInit}
+								vibesCheckBinaryPath={vibesCheckBinaryPath}
+								setVibesCheckBinaryPath={setVibesCheckBinaryPath}
+								vibesCompressReasoningThreshold={vibesCompressReasoningThreshold}
+								setVibesCompressReasoningThreshold={setVibesCompressReasoningThreshold}
+								vibesExternalBlobThreshold={vibesExternalBlobThreshold}
+								setVibesExternalBlobThreshold={setVibesExternalBlobThreshold}
 							/>
 						</div>
 					)}

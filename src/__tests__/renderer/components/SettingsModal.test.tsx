@@ -55,6 +55,17 @@ vi.mock('../../../renderer/components/SpecKitCommandsPanel', () => ({
 	),
 }));
 
+// Mock VibesSettings component
+vi.mock('../../../renderer/components/Settings/VibesSettings', () => ({
+	VibesSettings: (props: any) => (
+		<div data-testid="vibes-settings-panel">
+			<span>VIBES Metadata Settings</span>
+			<span data-testid="vibes-enabled">{String(props.vibesEnabled)}</span>
+			<span data-testid="vibes-assurance-level">{props.vibesAssuranceLevel}</span>
+		</div>
+	),
+}));
+
 // Mock CustomThemeBuilder
 vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 	CustomThemeBuilder: ({ isSelected, onSelect }: { isSelected: boolean; onSelect: () => void }) => (
@@ -66,7 +77,7 @@ vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 	),
 }));
 
-// Mock useSettings hook (used for context management settings and SSH remote ignore settings)
+// Mock useSettings hook (used for context management settings, SSH remote ignore settings, and VIBES settings)
 vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
 		// Conductor profile settings
@@ -89,6 +100,27 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setSshRemoteIgnorePatterns: vi.fn(),
 		sshRemoteHonorGitignore: false,
 		setSshRemoteHonorGitignore: vi.fn(),
+		// VIBES Metadata settings
+		vibesEnabled: false,
+		setVibesEnabled: vi.fn(),
+		vibesAssuranceLevel: 'medium',
+		setVibesAssuranceLevel: vi.fn(),
+		vibesTrackedExtensions: ['.ts', '.tsx', '.js', '.jsx', '.py'],
+		setVibesTrackedExtensions: vi.fn(),
+		vibesExcludePatterns: ['**/node_modules/**', '**/.git/**'],
+		setVibesExcludePatterns: vi.fn(),
+		vibesPerAgentConfig: { 'claude-code': { enabled: true }, 'codex': { enabled: true } },
+		setVibesPerAgentConfig: vi.fn(),
+		vibesMaestroOrchestrationEnabled: true,
+		setVibesMaestroOrchestrationEnabled: vi.fn(),
+		vibesAutoInit: true,
+		setVibesAutoInit: vi.fn(),
+		vibesCheckBinaryPath: '',
+		setVibesCheckBinaryPath: vi.fn(),
+		vibesCompressReasoningThreshold: 10240,
+		setVibesCompressReasoningThreshold: vi.fn(),
+		vibesExternalBlobThreshold: 102400,
+		setVibesExternalBlobThreshold: vi.fn(),
 	}),
 }));
 
@@ -307,6 +339,8 @@ describe('SettingsModal', () => {
 			expect(screen.getByTitle('Themes')).toBeInTheDocument();
 			expect(screen.getByTitle('Notifications')).toBeInTheDocument();
 			expect(screen.getByTitle('AI Commands')).toBeInTheDocument();
+			expect(screen.getByTitle('SSH Hosts')).toBeInTheDocument();
+			expect(screen.getByTitle('VIBES Metadata')).toBeInTheDocument();
 		});
 
 		it('should default to general tab', async () => {
@@ -424,14 +458,14 @@ describe('SettingsModal', () => {
 		});
 
 		it('should wrap around when navigating past last tab', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'ssh' })} />);
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'vibes' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on SSH tab (last tab)
-			expect(screen.getByText('No SSH remotes configured')).toBeInTheDocument();
+			// Start on VIBES tab (last tab)
+			expect(screen.getByTestId('vibes-settings-panel')).toBeInTheDocument();
 
 			// Press Cmd+Shift+] to wrap to general
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
@@ -454,14 +488,14 @@ describe('SettingsModal', () => {
 			// Start on general tab (first tab)
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to wrap to SSH (last tab)
+			// Press Cmd+Shift+[ to wrap to VIBES (last tab)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText('No SSH remotes configured')).toBeInTheDocument();
+			expect(screen.getByTestId('vibes-settings-panel')).toBeInTheDocument();
 		});
 	});
 
@@ -1945,6 +1979,60 @@ describe('SettingsModal', () => {
 			// JetBrains Mono is in the list, so it should be available
 			const options = fontSelect.querySelectorAll('option');
 			expect(options.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('VIBES tab', () => {
+		it('should switch to VIBES tab when clicked', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('VIBES Metadata'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTestId('vibes-settings-panel')).toBeInTheDocument();
+			expect(screen.getByText('VIBES Metadata Settings')).toBeInTheDocument();
+		});
+
+		it('should render VIBES tab via initialTab prop', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'vibes' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByTestId('vibes-settings-panel')).toBeInTheDocument();
+		});
+
+		it('should pass correct props to VibesSettings component', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'vibes' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// Verify props are passed through from useSettings hook mock
+			expect(screen.getByTestId('vibes-enabled')).toHaveTextContent('false');
+			expect(screen.getByTestId('vibes-assurance-level')).toHaveTextContent('medium');
+		});
+
+		it('should show VIBES label when tab is active', async () => {
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'vibes' })} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			// The VIBES tab button should show the "VIBES" label when active
+			const vibesTab = screen.getByTitle('VIBES Metadata');
+			expect(vibesTab).toBeInTheDocument();
+			expect(screen.getByText('VIBES')).toBeInTheDocument();
 		});
 	});
 
