@@ -1,12 +1,22 @@
 import React, { useState, useRef, useMemo } from 'react';
 import { X, Award, CheckCircle, Trophy } from 'lucide-react';
-import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
+import type { Theme, Shortcut, KeyboardMasteryStats, ShortcutScope } from '../types';
 import { fuzzyMatch } from '../utils/search';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { FIXED_SHORTCUTS } from '../constants/shortcuts';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { Modal } from './ui/Modal';
 import { KEYBOARD_MASTERY_LEVELS, getLevelForPercentage } from '../constants/keyboardMastery';
+
+const SCOPE_LABELS: Record<ShortcutScope, string> = {
+	window: 'This window',
+	global: 'All windows',
+};
+
+const SCOPE_DESCRIPTIONS: Record<ShortcutScope, string> = {
+	window: 'Only impacts the window where you trigger it (panels, focus, tab layout).',
+	global: 'Syncs across every Maestro window (sessions, bookmarks, shared dashboards).',
+};
 
 interface ShortcutsHelpModalProps {
 	theme: Theme;
@@ -100,6 +110,30 @@ export function ShortcutsHelpModal({
 			<p className="text-xs mt-2" style={{ color: theme.colors.textDim }}>
 				Many shortcuts can be customized from Settings → Shortcuts.
 			</p>
+			<div className="flex flex-wrap gap-2 mt-2 text-[11px]">
+				<span
+					className="px-2 py-1 rounded border"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				>
+					This window — per-window layout + focus tweaks
+				</span>
+				<span
+					className="px-2 py-1 rounded border"
+					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+				>
+					All windows — shared sessions, bookmarks, dashboards
+				</span>
+			</div>
+			<div
+				className="mt-2 text-xs p-2 rounded"
+				style={{
+					backgroundColor: theme.colors.bgActivity,
+					color: theme.colors.textMain,
+					border: `1px solid ${theme.colors.border}`,
+				}}
+			>
+				<strong>Move to New Window:</strong> Right-click any session tab and choose "Move to New Window" to pop it out. The window registry keeps that session assigned until you drag it elsewhere.
+			</div>
 		</div>
 	);
 
@@ -169,6 +203,9 @@ export function ShortcutsHelpModal({
 		>
 			<div className="space-y-2 max-h-[400px] overflow-y-auto scrollbar-thin -my-2">
 				{filteredShortcuts.map((sc, i) => {
+					const scope: ShortcutScope = sc.scope ?? 'window';
+					const scopeLabel = SCOPE_LABELS[scope];
+					const scopeDescription = SCOPE_DESCRIPTIONS[scope];
 					const isUsed = usedShortcutIds.has(sc.id);
 					return (
 						<div key={i} className="flex justify-between items-center text-sm gap-2">
@@ -185,12 +222,21 @@ export function ShortcutsHelpModal({
 										)}
 									</span>
 								)}
-								<span
-									className="truncate"
-									style={{ color: isUsed ? theme.colors.textMain : theme.colors.textDim }}
-								>
-									{sc.label}
-								</span>
+								<div className="min-w-0 flex items-center gap-2">
+									<span
+										className="truncate"
+										style={{ color: isUsed ? theme.colors.textMain : theme.colors.textDim }}
+									>
+										{sc.label}
+									</span>
+									<span
+										className="flex-shrink-0 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
+										title={scopeDescription}
+									>
+										{scopeLabel}
+									</span>
+								</div>
 							</div>
 							<kbd
 								className="px-2 py-1 rounded border font-mono text-xs font-bold flex-shrink-0"

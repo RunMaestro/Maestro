@@ -158,10 +158,13 @@ export interface SessionWizardState {
 	toolExecutions?: Array<{ toolName: string; state?: unknown; timestamp: number }>;
 }
 
+export type ShortcutScope = 'window' | 'global';
+
 export interface Shortcut {
 	id: string;
 	label: string;
 	keys: string[];
+	scope?: ShortcutScope;
 }
 
 export interface FileArtifact {
