@@ -83,6 +83,21 @@ describe('vibes-hash', () => {
 			expect(computeVibesHash(context)).toBe(expected);
 		});
 
+		it('should match a known test vector from the VIBES spec', () => {
+			// Known test vector: the canonical JSON string for this environment entry
+			// Sorted keys: model_name, tool_name, tool_version, type
+			// → {"model_name":"claude-opus-4-5","tool_name":"Claude Code","tool_version":"1.0","type":"environment"}
+			const context = {
+				model_name: 'claude-opus-4-5',
+				tool_name: 'Claude Code',
+				tool_version: '1.0',
+				type: 'environment',
+			};
+
+			const hash = computeVibesHash(context);
+			expect(hash).toBe('a8b293149a7c71409a38f036ebeeea25942bb92531fb8d74bbf3e48098c537ed');
+		});
+
 		it('should handle nested objects', () => {
 			const context = {
 				type: 'environment',
