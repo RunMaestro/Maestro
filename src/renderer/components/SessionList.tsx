@@ -54,8 +54,9 @@ import { getStatusColor, getContextColor, formatActiveTime } from '../utils/them
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
-import { useLiveOverlay, useClickOutside } from '../hooks';
+import { useLiveOverlay, useClickOutside, useSessionWindowAssignments } from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
+import { useWindowContext } from '../contexts/WindowContext';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -1222,6 +1223,9 @@ function SessionListInner(props: SessionListProps) {
 		contextWarningRedThreshold = 80,
 	} = props;
 
+	const { windowId: currentWindowId, sessionIds: windowSessionIds } = useWindowContext();
+	const sessionWindowAssignments = useSessionWindowAssignments(sessions, windowSessionIds);
+
 	const [sessionFilter, setSessionFilter] = useState('');
 	const [sessionFilterOpen, setSessionFilterOpen] = useState(false);
 	const [preFilterGroupStates, setPreFilterGroupStates] = useState<Map<string, boolean>>(new Map());
@@ -1457,7 +1461,7 @@ function SessionListInner(props: SessionListProps) {
 							onMouseLeave={() => setTooltipPosition(null)}
 							onClick={(e) => {
 								e.stopPropagation();
-								setActiveSessionId(s.id);
+								handleSessionSelection(s.id);
 							}}
 						>
 							{/* Unread indicator - only on last segment */}
@@ -1497,13 +1501,43 @@ function SessionListInner(props: SessionListProps) {
 	// PERF: Cached callback maps to prevent SessionItem re-renders
 	// These Maps store stable function references keyed by session/editing ID
 	// The callbacks themselves are memoized, so the Map values remain stable
+	const handleSessionSelection = useCallback(
+		(sessionId: string) => {
+			if (currentWindowId) {
+				const assignment = sessionWindowAssignments.get(sessionId);
+				if (assignment && assignment.windowId !== currentWindowId) {
+					window.maestro.windows
+						.focusWindow(assignment.windowId)
+						.catch((error) => console.error('Failed to focus window for session', error));
+					return;
+				}
+			}
+			setActiveSessionId(sessionId);
+		},
+		[sessionWindowAssignments, currentWindowId, setActiveSessionId]
+	);
+
+	const getRemoteWindowNumber = useCallback(
+		(sessionId: string): number | null => {
+			if (!currentWindowId) {
+				return null;
+			}
+			const assignment = sessionWindowAssignments.get(sessionId);
+			if (!assignment) {
+				return null;
+			}
+			return assignment.windowId !== currentWindowId ? assignment.windowNumber : null;
+		},
+		[sessionWindowAssignments, currentWindowId]
+	);
+
 	const selectHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
 		sessions.forEach((s) => {
-			map.set(s.id, () => setActiveSessionId(s.id));
+			map.set(s.id, () => handleSessionSelection(s.id));
 		});
 		return map;
-	}, [sessions, setActiveSessionId]);
+	}, [sessions, handleSessionSelection]);
 
 	const dragStartHandlers = useMemo(() => {
 		const map = new Map<string, () => void>();
@@ -1578,6 +1612,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					remoteWindowNumber={getRemoteWindowNumber(session.id) ?? undefined}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -1640,6 +1675,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										remoteWindowNumber={getRemoteWindowNumber(child.id) ?? undefined}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
@@ -2875,7 +2911,7 @@ function SessionListInner(props: SessionListProps) {
 						return (
 							<div
 								key={session.id}
-								onClick={() => setActiveSessionId(session.id)}
+								onClick={() => handleSessionSelection(session.id)}
 								onContextMenu={(e) => handleContextMenu(e, session.id)}
 								className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? 'ring-2' : 'hover:bg-white/10'}`}
 								style={{ '--tw-ring-color': theme.colors.accent } as React.CSSProperties}

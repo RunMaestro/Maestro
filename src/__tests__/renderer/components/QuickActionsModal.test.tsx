@@ -67,6 +67,20 @@ vi.mock('lucide-react', () => ({
 	Search: () => <svg data-testid="search-icon" />,
 }));
 
+const mockWindowContextValue = {
+	windowId: 'window-main',
+	isMainWindow: true,
+	sessionIds: ['session-1'],
+	activeSessionId: 'session-1',
+	openSession: vi.fn(),
+	closeTab: vi.fn(),
+	moveSessionToNewWindow: vi.fn(),
+};
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContext: () => mockWindowContextValue,
+}));
+
 // Create mock theme
 const mockTheme: Theme = {
 	id: 'dark',
@@ -181,6 +195,10 @@ const createDefaultProps = (
 describe('QuickActionsModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockWindowContextValue.windowId = 'window-main';
+		mockWindowContextValue.sessionIds = ['session-1'];
+		mockWindowContextValue.activeSessionId = 'session-1';
+		window.maestro.windows.list.mockResolvedValue([]);
 	});
 
 	afterEach(() => {
@@ -634,7 +652,61 @@ describe('QuickActionsModal', () => {
 			// Selected index should be reset to 0 - first button is selected
 			const buttons = screen.getAllByRole('button');
 			// First button should have accent background (selected)
-			expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		expect(buttons[0]).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		});
+	});
+
+	describe('Session switching respects window context', () => {
+		it('switches locally when the session belongs to this window', async () => {
+			const sessions = [
+				createMockSession({ id: 'session-local', name: 'Local Session' }),
+				createMockSession({ id: 'session-remote', name: 'Remote Session' }),
+			];
+			const setActiveSessionId = vi.fn();
+			const props = createDefaultProps({
+				sessions,
+				activeSessionId: 'session-local',
+				setActiveSessionId,
+			});
+			mockWindowContextValue.windowId = 'window-current';
+			mockWindowContextValue.sessionIds = ['session-local'];
+			window.maestro.windows.list.mockResolvedValue([
+				{ id: 'window-current', isMain: true, sessionIds: ['session-local'], activeSessionId: 'session-local' },
+				{ id: 'window-other', isMain: false, sessionIds: ['session-remote'], activeSessionId: 'session-remote' },
+			]);
+			render(<QuickActionsModal {...props} />);
+
+			await waitFor(() => expect(window.maestro.windows.list).toHaveBeenCalled());
+			fireEvent.click(screen.getByText('Jump to: Local Session'));
+
+			expect(setActiveSessionId).toHaveBeenCalledWith('session-local');
+			expect(window.maestro.windows.focusWindow).not.toHaveBeenCalled();
+		});
+
+		it('focuses the owning window when selecting a remote session', async () => {
+			const sessions = [
+				createMockSession({ id: 'session-local', name: 'Local Session' }),
+				createMockSession({ id: 'session-remote', name: 'Remote Session' }),
+			];
+			const setActiveSessionId = vi.fn();
+			const props = createDefaultProps({
+				sessions,
+				activeSessionId: 'session-local',
+				setActiveSessionId,
+			});
+			mockWindowContextValue.windowId = 'window-current';
+			mockWindowContextValue.sessionIds = ['session-local'];
+			window.maestro.windows.list.mockResolvedValue([
+				{ id: 'window-current', isMain: true, sessionIds: ['session-local'], activeSessionId: 'session-local' },
+				{ id: 'window-other', isMain: false, sessionIds: ['session-remote'], activeSessionId: 'session-remote' },
+			]);
+			render(<QuickActionsModal {...props} />);
+
+			await waitFor(() => expect(window.maestro.windows.list).toHaveBeenCalled());
+			fireEvent.click(screen.getByText('Jump to: Remote Session'));
+
+			expect(window.maestro.windows.focusWindow).toHaveBeenCalledWith('window-other');
+			expect(setActiveSessionId).not.toHaveBeenCalled();
 		});
 	});
 
