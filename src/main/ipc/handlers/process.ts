@@ -1,11 +1,10 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { logger } from '../../utils/logger';
 import { addBreadcrumb } from '../../utils/sentry';
-import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
 	buildAgentArgs,
 	applyAgentConfigOverrides,
@@ -55,7 +54,7 @@ export interface ProcessHandlerDependencies {
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
 	settingsStore: Store<MaestroSettings>;
-	getMainWindow: () => BrowserWindow | null;
+	broadcastToAllWindows: (channel: string, ...args: unknown[]) => void;
 	sessionsStore: Store<{ sessions: any[] }>;
 }
 
@@ -72,8 +71,13 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
-		deps;
+	const {
+		getProcessManager,
+		getAgentDetector,
+		agentConfigsStore,
+		settingsStore,
+		broadcastToAllWindows,
+	} = deps;
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -495,17 +499,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 				// Emit SSH remote status event for renderer to update session state
 				// This is emitted for all spawns (sshRemote will be null for local execution)
-				const mainWindow = getMainWindow();
-				if (isWebContentsAvailable(mainWindow)) {
-					const sshRemoteInfo = sshRemoteUsed
-						? {
-								id: sshRemoteUsed.id,
-								name: sshRemoteUsed.name,
-								host: sshRemoteUsed.host,
-							}
-						: null;
-					mainWindow.webContents.send('process:ssh-remote', config.sessionId, sshRemoteInfo);
-				}
+				const sshRemoteInfo = sshRemoteUsed
+					? {
+							id: sshRemoteUsed.id,
+							name: sshRemoteUsed.name,
+							host: sshRemoteUsed.host,
+						}
+					: null;
+				broadcastToAllWindows('process:ssh-remote', config.sessionId, sshRemoteInfo);
 
 				// Return spawn result with SSH remote info if used
 				return {

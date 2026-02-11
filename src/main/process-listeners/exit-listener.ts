@@ -20,7 +20,7 @@ export function setupExitListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		| 'safeSend'
+		| 'broadcastToAllWindows'
 		| 'getProcessManager'
 		| 'getAgentDetector'
 		| 'getWebServer'
@@ -37,7 +37,7 @@ export function setupExitListener(
 	>
 ): void {
 	const {
-		safeSend,
+		broadcastToAllWindows,
 		getProcessManager,
 		getAgentDetector,
 		getWebServer,
@@ -427,7 +427,7 @@ export function setupExitListener(
 			return;
 		}
 
-		safeSend('process:exit', sessionId, code);
+		broadcastToAllWindows('process:exit', sessionId, code);
 
 		// Broadcast exit to web clients
 		const webServer = getWebServer();

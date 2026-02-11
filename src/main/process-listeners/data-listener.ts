@@ -29,10 +29,22 @@ export function setupDataListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		'safeSend' | 'getWebServer' | 'outputBuffer' | 'outputParser' | 'debugLog' | 'patterns'
+		| 'broadcastToAllWindows'
+		| 'getWebServer'
+		| 'outputBuffer'
+		| 'outputParser'
+		| 'debugLog'
+		| 'patterns'
 	>
 ): void {
-	const { safeSend, getWebServer, outputBuffer, outputParser, debugLog, patterns } = deps;
+	const {
+		broadcastToAllWindows,
+		getWebServer,
+		outputBuffer,
+		outputParser,
+		debugLog,
+		patterns,
+	} = deps;
 	const {
 		REGEX_MODERATOR_SESSION,
 		REGEX_AI_SUFFIX,
@@ -94,7 +106,7 @@ export function setupDataListener(
 			return; // Don't send to regular process:data handler
 		}
 
-		safeSend('process:data', sessionId, data);
+		broadcastToAllWindows('process:data', sessionId, data);
 
 		// Broadcast to web clients - extract base session ID (remove -ai or -terminal suffix)
 		// IMPORTANT: Skip PTY terminal output (-terminal suffix) as it contains raw ANSI codes.

@@ -239,6 +239,24 @@ type WindowManagerCreateOptions = Parameters<WindowManager['createWindow']>[0];
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
 
+function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
+	const registry = windowRegistry;
+	let sent = false;
+	if (registry) {
+		for (const { browserWindow } of registry.getAll()) {
+			if (!isWebContentsAvailable(browserWindow)) {
+				continue;
+			}
+			browserWindow.webContents.send(channel, ...args);
+			sent = true;
+		}
+	}
+
+	if (!sent) {
+		safeSend(channel, ...args);
+	}
+}
+
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
 	getMainWindow: () => mainWindow,
@@ -618,7 +636,7 @@ function setupIpcHandlers() {
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
 		settingsStore: store,
-		getMainWindow: () => mainWindow,
+		broadcastToAllWindows,
 		sessionsStore,
 	});
 
@@ -822,6 +840,7 @@ function setupProcessListeners() {
 			getWebServer: () => webServer,
 			getAgentDetector: () => agentDetector,
 			safeSend,
+			broadcastToAllWindows,
 			powerManager,
 			groupChatEmitters,
 			groupChatRouter: {

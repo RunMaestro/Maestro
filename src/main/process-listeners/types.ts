@@ -56,6 +56,8 @@ export interface ProcessListenerDependencies {
 	getAgentDetector: () => AgentDetector | null;
 	/** Safe send function for IPC messages */
 	safeSend: SafeSendFn;
+	/** Broadcast helper that delivers IPC events to all renderer windows */
+	broadcastToAllWindows: (channel: string, ...args: unknown[]) => void;
 	/** Power manager instance */
 	powerManager: {
 		addBlockReason: (reason: string) => void;

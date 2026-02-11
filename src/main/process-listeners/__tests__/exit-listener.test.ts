@@ -44,7 +44,7 @@ describe('Exit Listener', () => {
 		} as unknown as ProcessManager;
 
 		mockDeps = {
-			safeSend: vi.fn(),
+			broadcastToAllWindows: vi.fn(),
 			powerManager: {
 				addBlockReason: vi.fn(),
 				removeBlockReason: vi.fn(),
@@ -124,7 +124,11 @@ describe('Exit Listener', () => {
 
 			handler?.('regular-session-123', 0);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'regular-session-123', 0);
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
+				'process:exit',
+				'regular-session-123',
+				0
+			);
 		});
 
 		it('should remove power block for non-group-chat sessions', () => {
