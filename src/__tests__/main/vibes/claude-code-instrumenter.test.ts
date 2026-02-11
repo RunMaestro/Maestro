@@ -490,6 +490,123 @@ describe('claude-code-instrumenter', () => {
 	});
 
 	// ========================================================================
+	// Reasoning Hash Linking (DIVERGENCE 5 continued)
+	// ========================================================================
+	describe('reasoning_hash linking', () => {
+		it('includes reasoning_hash in line annotations at high assurance', async () => {
+			await setupSession('sess-1', 'high');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'high',
+			});
+
+			// Buffer reasoning and trigger a tool execution (which flushes reasoning first)
+			instrumenter.handleThinkingChunk('sess-1', 'Analyzing the code structure...');
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/refactored.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(1);
+			expect(lineAnnotations[0].reasoning_hash).toBeDefined();
+			expect(typeof lineAnnotations[0].reasoning_hash).toBe('string');
+			expect(lineAnnotations[0].reasoning_hash!.length).toBe(64);
+		});
+
+		it('does not include reasoning_hash at medium assurance', async () => {
+			await setupSession('sess-1', 'medium');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			// At medium assurance, thinking chunks are ignored
+			instrumenter.handleThinkingChunk('sess-1', 'This is ignored at medium.');
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/medium.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(1);
+			expect(lineAnnotations[0].reasoning_hash).toBeUndefined();
+		});
+
+		it('does not include reasoning_hash at low assurance', async () => {
+			await setupSession('sess-1', 'low');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'low',
+			});
+
+			instrumenter.handleThinkingChunk('sess-1', 'This is ignored at low.');
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/low.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(1);
+			expect(lineAnnotations[0].reasoning_hash).toBeUndefined();
+		});
+
+		it('updates reasoning_hash after each flush', async () => {
+			await setupSession('sess-1', 'high');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'high',
+			});
+
+			// First reasoning + tool execution
+			instrumenter.handleThinkingChunk('sess-1', 'First reasoning block.');
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/first.ts' } },
+				timestamp: Date.now(),
+			});
+
+			// Second reasoning + tool execution (different reasoning text = different hash)
+			instrumenter.handleThinkingChunk('sess-1', 'Second reasoning block with different content.');
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Edit',
+				state: { status: 'running', input: { file_path: 'src/second.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(2);
+
+			// Both should have reasoning_hash
+			expect(lineAnnotations[0].reasoning_hash).toBeDefined();
+			expect(lineAnnotations[1].reasoning_hash).toBeDefined();
+
+			// The hashes should differ because the reasoning text differs
+			expect(lineAnnotations[0].reasoning_hash).not.toBe(lineAnnotations[1].reasoning_hash);
+		});
+	});
+
+	// ========================================================================
 	// handleThinkingChunk
 	// ========================================================================
 	describe('handleThinkingChunk', () => {

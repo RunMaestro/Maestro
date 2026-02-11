@@ -212,6 +212,9 @@ export class ClaudeCodeInstrumenter {
 	/** Most recent prompt hash per session, for linking to line annotations. */
 	private lastPromptHashes: Map<string, string> = new Map();
 
+	/** Most recent reasoning hash per session, for linking to line annotations. */
+	private lastReasoningHashes: Map<string, string> = new Map();
+
 	constructor(params: {
 		sessionManager: VibesSessionManager;
 		assuranceLevel: VibesAssuranceLevel;
@@ -289,6 +292,7 @@ export class ClaudeCodeInstrumenter {
 
 					const lineRange = extractLineRange(toolInput);
 					const promptHash = this.assuranceLevel !== 'low' ? this.lastPromptHashes.get(sessionId) : undefined;
+					const reasoningHash = this.assuranceLevel === 'high' ? this.lastReasoningHashes.get(sessionId) : undefined;
 					const annotation = createLineAnnotation({
 						filePath: normalizedPath,
 						lineStart: lineRange?.lineStart ?? 1,
@@ -296,6 +300,7 @@ export class ClaudeCodeInstrumenter {
 						environmentHash: session.environmentHash,
 						commandHash: cmdHash,
 						promptHash,
+						reasoningHash,
 						action,
 						sessionId: session.vibesSessionId,
 						assuranceLevel: session.assuranceLevel,
@@ -461,6 +466,7 @@ export class ClaudeCodeInstrumenter {
 			model,
 		});
 		await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+		this.lastReasoningHashes.set(sessionId, hash);
 
 		// Clear the buffer after flushing
 		this.reasoningBuffers.delete(sessionId);
@@ -508,5 +514,6 @@ export class ClaudeCodeInstrumenter {
 		this.reasoningTokenCounts.delete(sessionId);
 		this.modelNames.delete(sessionId);
 		this.lastPromptHashes.delete(sessionId);
+		this.lastReasoningHashes.delete(sessionId);
 	}
 }
