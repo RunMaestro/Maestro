@@ -14,6 +14,8 @@ import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import type { NotificationMetadata } from '../../shared/types/notification';
+import type { WindowRegistry } from '../../window-registry';
 
 // ==========================================================================
 // Constants
@@ -79,6 +81,10 @@ interface NotificationQueueItem {
 interface ActiveNotificationProcess {
 	process: ChildProcess;
 	command: string;
+}
+
+interface NotificationHandlerDependencies {
+	getWindowRegistry?: () => WindowRegistry | null;
 }
 
 // ==========================================================================
@@ -325,6 +331,68 @@ async function processNextNotification(): Promise<void> {
 	processNextNotification();
 }
 
+function focusBrowserWindow(target: BrowserWindow | null | undefined): boolean {
+	if (!target || target.isDestroyed?.()) {
+		return false;
+	}
+
+	try {
+		if (target.isMinimized?.()) {
+			target.restore?.();
+		}
+		target.show?.();
+		target.focus?.();
+		target.moveTop?.();
+		return true;
+	} catch (error) {
+		logger.warn('Notification failed to focus window', 'Notification', {
+			error: String(error),
+		});
+		return false;
+	}
+}
+
+function focusWindowForMetadata(
+	metadata: NotificationMetadata | undefined,
+	deps: NotificationHandlerDependencies
+): boolean {
+	if (!metadata) {
+		return false;
+	}
+
+	const registry = deps.getWindowRegistry?.();
+	if (!registry) {
+		return false;
+	}
+
+	const resolvedWindowId = metadata.windowId ?? (metadata.sessionId ? registry.getWindowForSession(metadata.sessionId) : undefined);
+	if (!resolvedWindowId) {
+		return false;
+	}
+
+	const entry = registry.get(resolvedWindowId);
+	if (!entry) {
+		logger.debug('Notification target window not found', 'Notification', { windowId: resolvedWindowId });
+		return false;
+	}
+
+	return focusBrowserWindow(entry.browserWindow);
+}
+
+function focusSourceWindow(sender: Electron.WebContents | null | undefined): boolean {
+	if (!sender) {
+		return false;
+	}
+
+	const ownerWindow = BrowserWindow.fromWebContents?.(sender);
+	if (focusBrowserWindow(ownerWindow)) {
+		return true;
+	}
+
+	const [fallback] = BrowserWindow.getAllWindows();
+	return focusBrowserWindow(fallback);
+}
+
 // ==========================================================================
 // Handler Registration
 // ==========================================================================
@@ -332,11 +400,18 @@ async function processNextNotification(): Promise<void> {
 /**
  * Register all notification-related IPC handlers
  */
-export function registerNotificationsHandlers(): void {
+export function registerNotificationsHandlers(
+	deps: NotificationHandlerDependencies = {}
+): void {
 	// Show OS notification
 	ipcMain.handle(
 		'notification:show',
-		async (_event, title: string, body: string): Promise<NotificationShowResponse> => {
+		async (
+			event,
+			title: string,
+			body: string,
+			metadata?: NotificationMetadata
+		): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
 					const notification = new Notification({
@@ -344,8 +419,21 @@ export function registerNotificationsHandlers(): void {
 						body,
 						silent: true, // Don't play system sound - we have our own audio feedback option
 					});
+
+					notification.once('click', () => {
+						const focused = focusWindowForMetadata(metadata, deps);
+						if (!focused) {
+							focusSourceWindow(event.sender);
+						}
+					});
+
 					notification.show();
-					logger.debug('Showed OS notification', 'Notification', { title, body });
+					logger.debug('Showed OS notification', 'Notification', {
+						title,
+						body,
+						windowId: metadata?.windowId,
+						sessionId: metadata?.sessionId,
+					});
 					return { success: true };
 				} else {
 					logger.warn('OS notifications not supported on this platform', 'Notification');

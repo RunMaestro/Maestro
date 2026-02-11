@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
+import type { NotificationMetadata } from '../../shared/types/notification';
 
 export interface Toast {
 	id: string;
@@ -20,6 +21,8 @@ export interface Toast {
 	actionLabel?: string; // Label for the action link (defaults to URL)
 	// Skip custom notification command for this toast (used for synopsis messages)
 	skipCustomNotification?: boolean;
+	// Window hint for OS notifications (defaults to current window)
+	windowId?: string | null;
 }
 
 interface ToastContextType {
@@ -49,6 +52,15 @@ export function ToastProvider({
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const [defaultDuration, setDefaultDuration] = useState(initialDuration);
 	const toastIdCounter = useRef(0);
+	const windowIdRef = useRef<string | null>(null);
+	if (windowIdRef.current === null && typeof window !== 'undefined') {
+		try {
+			const params = new URLSearchParams(window.location.search);
+			windowIdRef.current = params.get('windowId');
+		} catch {
+			windowIdRef.current = null;
+		}
+	}
 
 	// Audio feedback state (configured from App.tsx via setAudioFeedback)
 	const audioFeedbackRef = useRef({ enabled: false, command: '' });
@@ -191,7 +203,23 @@ export function ToastProvider({
 			const prefix = bodyParts.length > 0 ? `${bodyParts.join(' > ')}: ` : '';
 			const notifBody = prefix + firstSentence;
 
-			window.maestro.notification.show(notifTitle, notifBody).catch((err) => {
+			const notificationMetadata: NotificationMetadata | undefined = (() => {
+				const metadata: NotificationMetadata = {
+					sessionId: toast.sessionId,
+					tabId: toast.tabId,
+					windowId: toast.windowId ?? windowIdRef.current ?? undefined,
+				};
+				if (!metadata.sessionId && !metadata.tabId && !metadata.windowId) {
+					return undefined;
+				}
+				return metadata;
+			})();
+
+			const showNotification = notificationMetadata
+				? window.maestro.notification.show(notifTitle, notifBody, notificationMetadata)
+				: window.maestro.notification.show(notifTitle, notifBody);
+
+			showNotification.catch((err) => {
 				console.error('[ToastContext] Failed to show OS notification:', err);
 			});
 		}

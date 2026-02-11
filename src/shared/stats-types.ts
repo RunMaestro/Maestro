@@ -67,6 +67,17 @@ export interface SessionLifecycleEvent {
 }
 
 /**
+ * Snapshot of window usage for multi-window analytics
+ */
+export interface WindowUsageSnapshot {
+	id: string;
+	recordedAt: number;
+	windowCount: number;
+	sessionCount: number;
+	isMultiWindow: boolean;
+}
+
+/**
  * Time range for querying stats
  */
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -112,4 +123,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 3;
+export const STATS_DB_VERSION = 4;

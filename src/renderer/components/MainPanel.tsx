@@ -184,6 +184,7 @@ interface MainPanelProps {
 
 	// Auto mode props
 	batchRunState?: BatchRunState; // For display (may be from any session with active batch)
+	batchRunSessionId?: string | null;
 	currentSessionBatchState?: BatchRunState | null; // For current session only (input highlighting)
 	onStopBatchRun?: (sessionId?: string) => void;
 	showConfirmation?: (message: string, onConfirm: () => void) => void;
@@ -427,7 +428,8 @@ export const MainPanel = React.memo(
 			handleDrop,
 			getContextColor,
 			setActiveSessionId,
-			batchRunState: _batchRunState,
+			batchRunState,
+			batchRunSessionId,
 			currentSessionBatchState,
 			onStopBatchRun,
 			showConfirmation: _showConfirmation,
@@ -468,6 +470,10 @@ export const MainPanel = React.memo(
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
 		const isCurrentSessionStopping = currentSessionBatchState?.isStopping || false;
+		const windowAutoRunState = batchRunState;
+		const windowAutoRunSessionId = batchRunSessionId ?? null;
+		const isWindowAutoModeActive = windowAutoRunState?.isRunning || false;
+		const isWindowAutoModeStopping = windowAutoRunState?.isStopping || false;
 
 		// Hover tooltip state using reusable hook
 		const gitTooltip = useHoverTooltip(150);
@@ -690,7 +696,7 @@ export const MainPanel = React.memo(
 		// Below 400px: hide UUID pill
 		// Below 350px: hide cost widget
 		// Below 300px: hide session name (shown in menu bar anyway)
-		const autoModeOffset = isCurrentSessionAutoMode ? 150 : 0; // Extra space needed when AUTO button is visible
+		const autoModeOffset = isWindowAutoModeActive ? 150 : 0; // Extra space needed when AUTO button is visible
 		const showSessionName = panelWidth > 300 + autoModeOffset;
 		const showCostWidget = panelWidth > 350 + autoModeOffset;
 		const showUuidPill = panelWidth > 400 + autoModeOffset;
@@ -762,6 +768,21 @@ export const MainPanel = React.memo(
 			},
 			[setActiveSessionId, onTabSelect]
 		);
+
+		const handleStopWindowAutoRun = useCallback(() => {
+			if (!onStopBatchRun) {
+				return;
+			}
+			if (windowAutoRunSessionId) {
+				onStopBatchRun(windowAutoRunSessionId);
+				return;
+			}
+			if (activeSession?.id) {
+				onStopBatchRun(activeSession.id);
+			} else {
+				onStopBatchRun();
+			}
+		}, [onStopBatchRun, windowAutoRunSessionId, activeSession?.id]);
 
 		// Memoized props for FilePreview to prevent re-renders that cause image flickering
 		// The file object must be stable - recreating it on each render causes the <img> to remount
@@ -1206,47 +1227,47 @@ export const MainPanel = React.memo(
 									/>
 								</div>
 
-								{/* Center: AUTO Mode Indicator - only show for current session */}
-								{isCurrentSessionAutoMode && (
+								{/* Center: AUTO Mode Indicator - show when this window hosts an active Auto Run */}
+								{isWindowAutoModeActive && (
 									<button
 										onClick={() => {
-											if (isCurrentSessionStopping) return;
-											// Call onStopBatchRun with the active session's ID to stop THIS session's batch
-											onStopBatchRun?.(activeSession.id);
+											if (isWindowAutoModeStopping) return;
+											const targetSessionId = windowAutoRunSessionId ?? activeSession.id;
+											onStopBatchRun?.(targetSessionId);
 										}}
-										disabled={isCurrentSessionStopping}
-										className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition-all ${isCurrentSessionStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
+										disabled={isWindowAutoModeStopping}
+										className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition-all ${isWindowAutoModeStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
 										style={{
-											backgroundColor: isCurrentSessionStopping
+											backgroundColor: isWindowAutoModeStopping
 												? theme.colors.warning
 												: theme.colors.error,
-											color: isCurrentSessionStopping ? theme.colors.bgMain : 'white',
-											pointerEvents: isCurrentSessionStopping ? 'none' : 'auto',
+											color: isWindowAutoModeStopping ? theme.colors.bgMain : 'white',
+											pointerEvents: isWindowAutoModeStopping ? 'none' : 'auto',
 										}}
 										title={
-											isCurrentSessionStopping
+											isWindowAutoModeStopping
 												? 'Stopping after current task...'
 												: 'Click to stop auto-run'
 										}
 									>
-										{isCurrentSessionStopping ? (
+										{isWindowAutoModeStopping ? (
 											<Loader2 className="w-4 h-4 animate-spin" />
 										) : (
 											<Wand2 className="w-4 h-4" />
 										)}
 										<span className="uppercase tracking-wider">
-											{isCurrentSessionStopping ? 'Stopping' : 'Auto'}
+											{isWindowAutoModeStopping ? 'Stopping' : 'Auto'}
 										</span>
 										{/* Hide progress count when stopping - spinner is sufficient */}
-										{currentSessionBatchState && !isCurrentSessionStopping && (
+										{windowAutoRunState && !isWindowAutoModeStopping && (
 											<span className="text-[10px] opacity-80">
-												{currentSessionBatchState.completedTasks}/
-												{currentSessionBatchState.totalTasks}
+												{windowAutoRunState.completedTasks}/
+												{windowAutoRunState.totalTasks}
 											</span>
 										)}
-										{currentSessionBatchState?.worktreeActive && (
+										{windowAutoRunState?.worktreeActive && (
 											<span
-												title={`Worktree: ${currentSessionBatchState.worktreeBranch || 'active'}`}
+												title={`Worktree: ${windowAutoRunState.worktreeBranch || 'active'}`}
 											>
 												<GitBranch className="w-3.5 h-3.5 ml-0.5" />
 											</span>
@@ -1847,8 +1868,8 @@ export const MainPanel = React.memo(
 											isAutoModeActive={isCurrentSessionAutoMode}
 											thinkingSessions={thinkingSessions}
 											onSessionClick={handleSessionClick}
-											autoRunState={currentSessionBatchState || undefined}
-											onStopAutoRun={onStopBatchRun}
+											autoRunState={windowAutoRunState || undefined}
+											onStopAutoRun={windowAutoRunState ? handleStopWindowAutoRun : undefined}
 											onOpenQueueBrowser={onOpenQueueBrowser}
 											tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
 											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}

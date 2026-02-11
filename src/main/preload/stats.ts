@@ -172,6 +172,8 @@ export function createStatsApi() {
 			deletedQueryEvents: number;
 			deletedAutoRunSessions: number;
 			deletedAutoRunTasks: number;
+			deletedSessionLifecycle: number;
+			deletedWindowUsageEvents: number;
 			error?: string;
 		}> => ipcRenderer.invoke('stats:clear-old-data', olderThanDays),
 

@@ -38,6 +38,11 @@ export interface MoveSessionOptions {
 	fromWindowId?: string;
 }
 
+export interface AssignSessionsOptions {
+	sessionIds: string[];
+	windowId?: string;
+}
+
 /**
  * Creates the windows API object for preload exposure
  */
@@ -71,6 +76,12 @@ export function createWindowsApi() {
 		 */
 		moveSession: (options: MoveSessionOptions): Promise<boolean> =>
 			ipcRenderer.invoke('windows:moveSession', options),
+
+		/**
+		 * Assign one or more sessions to a specific window
+		 */
+		assignSessions: (options: AssignSessionsOptions): Promise<boolean> =>
+			ipcRenderer.invoke('windows:assignSessions', options),
 
 		/**
 		 * Focus and show the specified window

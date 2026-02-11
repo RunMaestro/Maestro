@@ -429,8 +429,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			className="relative p-4 border-t"
 			style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 		>
-			{/* ThinkingStatusPill - only show in AI mode when there are thinking sessions or AutoRun */}
-			{session.inputMode === 'ai' && (thinkingSessions.length > 0 || autoRunState?.isRunning) && (
+			{/* ThinkingStatusPill - show for AI thinking sessions or when AutoRun is active in this window */}
+			{((session.inputMode === 'ai' && thinkingSessions.length > 0) || autoRunState?.isRunning) && (
 				<ThinkingStatusPill
 					thinkingSessions={thinkingSessions}
 					theme={theme}

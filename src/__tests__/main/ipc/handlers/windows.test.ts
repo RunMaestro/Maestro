@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ipcMain } from 'electron';
+import { ipcMain, BrowserWindow } from 'electron';
 
 import { registerWindowsHandlers } from '../../../../main/ipc/handlers/windows';
 import type { PersistedWindowState } from '../../../../shared/types/window';
@@ -95,6 +95,8 @@ function createMockWindowRegistry(initialSessions: Record<string, string[]>) {
 		}
 	});
 
+	const saveWindowState = vi.fn();
+
 	return {
 		registry: {
 			get: vi.fn((windowId: string) => windows.get(windowId)),
@@ -108,9 +110,11 @@ function createMockWindowRegistry(initialSessions: Record<string, string[]>) {
 				return undefined;
 			}),
 			moveSession,
+			saveWindowState,
 		} as any,
 		moveSession,
 		windows,
+		saveWindowState,
 	};
 }
 
@@ -168,5 +172,79 @@ describe('windows IPC handlers', () => {
 		expect(persistedWindows.find((window) => window.id === 'window-c')?.sessionIds).toEqual([
 			'session-1',
 		]);
+	});
+
+	it('assigns new sessions to the window derived from sender', async () => {
+		const registry = createMockWindowRegistry({
+			'window-primary': [],
+			'window-b': [],
+		});
+		const stateStore = createMockWindowStateStore([
+			createPersistedWindowState('window-primary'),
+			createPersistedWindowState('window-b'),
+		]);
+
+		registerWindowsHandlers({
+			getWindowManager: () => ({}) as any,
+			getWindowRegistry: () => registry.registry,
+			windowStateStore: stateStore as any,
+		});
+
+		const handler = handlers.get('windows:assignSessions');
+		if (!handler) {
+			throw new Error('assignSessions handler not registered');
+		}
+
+		const targetWindow = registry.windows.get('window-b');
+		if (!targetWindow) {
+			throw new Error('target window not found');
+		}
+		vi.mocked(BrowserWindow.fromWebContents).mockReturnValue(targetWindow.browserWindow as any);
+
+		await handler({ sender: {} } as any, { sessionIds: ['session-new'] });
+
+		expect(registry.windows.get('window-b')?.sessionIds).toEqual(['session-new']);
+		expect(registry.registry.saveWindowState).toHaveBeenCalledWith('window-b', { immediate: true });
+		expect(targetWindow.browserWindow.webContents.send).toHaveBeenCalledWith(
+			'windows:sessionMoved',
+			expect.objectContaining({
+				sessionId: 'session-new',
+				toWindowId: 'window-b',
+			})
+		);
+	});
+
+	it('reassigns sessions from another window when explicit windowId provided', async () => {
+		const registry = createMockWindowRegistry({
+			'window-primary': ['session-1'],
+			'window-b': [],
+		});
+		const stateStore = createMockWindowStateStore([
+			createPersistedWindowState('window-primary', ['session-1']),
+			createPersistedWindowState('window-b'),
+		]);
+
+		registerWindowsHandlers({
+			getWindowManager: () => ({}) as any,
+			getWindowRegistry: () => registry.registry,
+			windowStateStore: stateStore as any,
+		});
+
+		const handler = handlers.get('windows:assignSessions');
+		if (!handler) {
+			throw new Error('assignSessions handler not registered');
+		}
+
+		await handler({ sender: {} } as any, {
+			sessionIds: ['session-1'],
+			windowId: 'window-b',
+		});
+
+		expect(registry.windows.get('window-primary')?.sessionIds).toEqual([]);
+		expect(registry.windows.get('window-b')?.sessionIds).toEqual(['session-1']);
+		expect(registry.registry.saveWindowState).toHaveBeenCalledWith('window-primary', {
+			immediate: true,
+		});
+		expect(registry.registry.saveWindowState).toHaveBeenCalledWith('window-b', { immediate: true });
 	});
 });

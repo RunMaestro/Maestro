@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
-import type { BrowserWindow } from 'electron';
+import type { BrowserWindow as BrowserWindowType } from 'electron';
+import { BrowserWindow as ElectronBrowserWindow } from 'electron';
 import { WindowRegistry } from '../../main/window-registry';
 import type { WindowState as PersistedWindowState } from '../../shared/types/window';
 
@@ -11,12 +12,53 @@ const defaultDisplay = {
 
 const mockGetDisplayMatching = vi.fn().mockReturnValue(defaultDisplay);
 
-vi.mock('electron', () => ({
-	screen: {
-		getDisplayMatching: (...args: unknown[]) => mockGetDisplayMatching(...args),
-	},
-	BrowserWindow: class MockBrowserWindow {},
-}));
+let nextBrowserWindowId = 1;
+
+vi.mock('electron', () => {
+	class MockBrowserWindow {
+		id: number;
+		webContents: { isDestroyed: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+		private listeners: Map<string, Array<(...args: any[]) => void>> = new Map();
+		isDestroyed = vi.fn().mockReturnValue(false);
+		isMaximized = vi.fn().mockReturnValue(false);
+		isFullScreen = vi.fn().mockReturnValue(false);
+		getBounds = vi.fn(() => ({ x: 10, y: 20, width: 1280, height: 800 }));
+		setFullScreen = vi.fn();
+		maximize = vi.fn();
+		on = vi.fn((event: string, handler: (...args: any[]) => void) => {
+			const existing = this.listeners.get(event) ?? [];
+			existing.push(handler);
+			this.listeners.set(event, existing);
+			return this;
+		});
+
+		constructor() {
+			this.id = nextBrowserWindowId++;
+			this.webContents = {
+				isDestroyed: vi.fn().mockReturnValue(false),
+				send: vi.fn(),
+			};
+		}
+
+		emit(event: string, ...args: any[]): void {
+			const handlers = this.listeners.get(event) ?? [];
+			for (const handler of handlers) {
+				handler(...args);
+			}
+		}
+	}
+
+	return {
+		screen: {
+			getDisplayMatching: (...args: unknown[]) => mockGetDisplayMatching(...args),
+		},
+		BrowserWindow: MockBrowserWindow,
+	};
+});
+
+beforeEach(() => {
+	nextBrowserWindowId = 1;
+});
 
 interface MockStore {
 	store: Record<string, any> & {
@@ -29,21 +71,12 @@ interface MockStore {
 	get: ReturnType<typeof vi.fn>;
 }
 
-function createMockBrowserWindow(overrides: Partial<BrowserWindow> = {}) {
-	const defaultBounds = { x: 10, y: 20, width: 1280, height: 800 };
-	const webContents = {
-		isDestroyed: vi.fn().mockReturnValue(false),
-		send: vi.fn(),
-	};
-	return {
-		isDestroyed: vi.fn().mockReturnValue(false),
-		isMaximized: vi.fn().mockReturnValue(false),
-		isFullScreen: vi.fn().mockReturnValue(false),
-		getBounds: vi.fn().mockReturnValue(defaultBounds),
-		on: vi.fn(),
-		webContents,
-		...overrides,
-	} as unknown as BrowserWindow;
+function createMockBrowserWindow(overrides: Partial<BrowserWindowType> = {}) {
+	const instance = new (ElectronBrowserWindow as unknown as {
+		new (): BrowserWindowType & { emit?: (...args: any[]) => void };
+	})();
+	Object.assign(instance, overrides);
+	return instance as BrowserWindowType & { emit?: (...args: any[]) => void };
 }
 
 function createMockStore(): MockStore {
@@ -111,7 +144,11 @@ describe('WindowRegistry.saveWindowState', () => {
 		return new WindowRegistry({ windowStateStore: mockStore as any, saveDebounceMs: 25 });
 	}
 
-	function registerWindow(registry: WindowRegistry, windowId: string, overrides: Partial<BrowserWindow> = {}) {
+	function registerWindow(
+		registry: WindowRegistry,
+		windowId: string,
+		overrides: Partial<BrowserWindowType> = {}
+	) {
 		const browserWindow = createMockBrowserWindow(overrides);
 		(registry as any).windows.set(windowId, {
 			browserWindow,
@@ -291,5 +328,52 @@ describe('WindowRegistry session reassignment', () => {
 			'windows:sessionsReassigned',
 			expect.anything()
 		);
+	});
+});
+
+describe('WindowRegistry window count analytics', () => {
+	let mockStore: MockStore;
+
+	beforeEach(() => {
+		mockStore = createMockStore();
+	});
+
+	it('invokes callback when windows are added or removed', () => {
+		const callback = vi.fn();
+		const registry = new WindowRegistry({
+			windowStateStore: mockStore as any,
+			saveDebounceMs: 25,
+			onWindowCountChanged: callback,
+		});
+
+		const primaryWindow = registry.create({ windowId: 'primary', sessionIds: ['session-1'] });
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 1, sessionCount: 1 });
+
+		callback.mockClear();
+		const secondaryWindow = registry.create({
+			windowId: 'secondary',
+			sessionIds: ['session-1', 'session-2'],
+		});
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 2, sessionCount: 2 });
+
+		callback.mockClear();
+		(secondaryWindow as any).emit('closed');
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 1, sessionCount: 1 });
+
+		// Ensure duplicate sessions across windows are not double counted
+		callback.mockClear();
+		const tertiaryWindow = registry.create({
+			windowId: 'tertiary',
+			sessionIds: ['session-2'],
+		});
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 2, sessionCount: 2 });
+
+		callback.mockClear();
+		(tertiaryWindow as any).emit('closed');
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 1, sessionCount: 1 });
+
+		callback.mockClear();
+		(primaryWindow as any).emit('closed');
+		expect(callback).toHaveBeenLastCalledWith({ windowCount: 0, sessionCount: 0 });
 	});
 });

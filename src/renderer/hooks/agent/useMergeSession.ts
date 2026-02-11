@@ -617,6 +617,8 @@ export interface UseMergeSessionWithSessionsDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Active tab ID for per-tab state tracking */
 	activeTabId?: string;
+	/** Assign newly created sessions to the active window */
+	assignSessionsToWindow?: (sessionIds: string[]) => Promise<void> | void;
 	/** Callback after merge creates a new session. Receives session info for notification purposes. */
 	onSessionCreated?: (info: MergeSessionCreatedInfo) => void;
 	/** Callback after merge completes successfully (for any merge type). Receives source tab ID and target info for state cleanup and toast display. */
@@ -663,7 +665,14 @@ export interface UseMergeSessionWithSessionsResult extends UseMergeSessionResult
 export function useMergeSessionWithSessions(
 	deps: UseMergeSessionWithSessionsDeps
 ): UseMergeSessionWithSessionsResult {
-	const { sessions, setSessions, activeTabId, onSessionCreated, onMergeComplete } = deps;
+	const {
+		sessions,
+		setSessions,
+		activeTabId,
+		assignSessionsToWindow,
+		onSessionCreated,
+		onMergeComplete,
+	} = deps;
 	const baseHook = useMergeSession(activeTabId);
 
 	/**
@@ -741,6 +750,13 @@ export function useMergeSessionWithSessions(
 
 						// Add new session to state
 						setSessions((prev) => [...prev, newSession]);
+						if (assignSessionsToWindow) {
+							try {
+								await assignSessionsToWindow([newSession.id]);
+							} catch (error) {
+								console.error('Failed to assign merged session to window', error);
+							}
+						}
 
 						// Log merge operation to history
 						const sourceNames = [
@@ -870,7 +886,14 @@ export function useMergeSessionWithSessions(
 
 			return result;
 		},
-		[sessions, setSessions, onSessionCreated, onMergeComplete, baseHook]
+		[
+			sessions,
+			setSessions,
+			onSessionCreated,
+			onMergeComplete,
+			assignSessionsToWindow,
+			baseHook,
+		]
 	);
 
 	return {

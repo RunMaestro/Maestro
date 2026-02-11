@@ -51,10 +51,14 @@ import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
+import { registerWindowsHandlers, WindowsHandlerDependencies } from './windows';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
+import type { WindowRegistry } from '../../window-registry';
+import type { WindowState } from '../../stores/types';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -91,6 +95,7 @@ export { registerNotificationsHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
 export { registerTabNamingHandlers };
+export { registerWindowsHandlers };
 export type { TabNamingHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
@@ -106,6 +111,7 @@ export type { DocumentGraphHandlerDependencies };
 export type { SshRemoteHandlerDependencies };
 export type { GitHandlerDependencies };
 export type { SymphonyHandlerDependencies };
+export type { WindowsHandlerDependencies };
 export type { MaestroSettings, SessionsData, GroupsData };
 
 /**
@@ -150,6 +156,10 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Windows handler dependencies (optional for backwards compatibility)
+	windowStateStore?: Store<WindowState>;
+	getWindowRegistry?: () => WindowRegistry | null;
+	getWindowManager?: () => WindowManager | null;
 }
 
 /**
@@ -254,7 +264,9 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({
+		getWindowRegistry: deps.getWindowRegistry,
+	});
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,
@@ -270,6 +282,14 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
 	});
+
+	if (deps.windowStateStore && deps.getWindowRegistry && deps.getWindowManager) {
+		registerWindowsHandlers({
+			windowStateStore: deps.windowStateStore,
+			getWindowRegistry: deps.getWindowRegistry,
+			getWindowManager: deps.getWindowManager,
+		});
+	}
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

@@ -69,12 +69,14 @@ vi.mock('lucide-react', () => ({
 
 const mockWindowContextValue = {
 	windowId: 'window-main',
+	windowNumber: 1,
 	isMainWindow: true,
 	sessionIds: ['session-1'],
 	activeSessionId: 'session-1',
 	openSession: vi.fn(),
 	closeTab: vi.fn(),
 	moveSessionToNewWindow: vi.fn(),
+	assignSessionsToWindow: vi.fn(),
 };
 
 vi.mock('../../../renderer/contexts/WindowContext', () => ({

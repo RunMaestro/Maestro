@@ -7,12 +7,14 @@ import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
 const addToastMock = vi.fn();
 const mockWindowContextValue = {
 	windowId: 'primary',
+	windowNumber: 1,
 	isMainWindow: true,
 	sessionIds: [] as string[],
 	activeSessionId: null as string | null,
 	openSession: vi.fn(),
 	closeTab: vi.fn(),
 	moveSessionToNewWindow: vi.fn(),
+	assignSessionsToWindow: vi.fn(),
 };
 
 vi.mock('../../../renderer/contexts/WindowContext', () => ({

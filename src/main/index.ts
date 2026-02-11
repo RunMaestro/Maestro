@@ -239,6 +239,38 @@ type WindowManagerCreateOptions = Parameters<WindowManager['createWindow']>[0];
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
 
+function isStatsCollectionEnabledSetting(): boolean {
+	try {
+		const enabled = store.get('statsCollectionEnabled');
+		return enabled !== false;
+	} catch {
+		return true;
+	}
+}
+
+function recordWindowUsageMetrics(metrics: { windowCount: number; sessionCount: number }): void {
+	if (!isStatsCollectionEnabledSetting()) {
+		return;
+	}
+
+	try {
+		const statsDb = getStatsDB();
+		if (!statsDb.isReady()) {
+			return;
+		}
+		statsDb.recordWindowUsageSnapshot({
+			recordedAt: Date.now(),
+			windowCount: metrics.windowCount,
+			sessionCount: metrics.sessionCount,
+			isMultiWindow: metrics.windowCount > 1,
+		});
+	} catch (error) {
+		logger.debug('Failed to record window usage snapshot', 'Window', {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
 function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
 	const registry = windowRegistry;
 	let sent = false;
@@ -444,7 +476,10 @@ function cloneWindowState(windowState: PersistedWindowState): PersistedWindowSta
 setupGlobalErrorHandlers();
 
 app.whenReady().then(async () => {
-	windowRegistry = new WindowRegistry({ windowStateStore });
+	windowRegistry = new WindowRegistry({
+		windowStateStore,
+		onWindowCountChanged: recordWindowUsageMetrics,
+	});
 	windowManager = createWindowManager({
 		windowStateStore,
 		isDevelopment,

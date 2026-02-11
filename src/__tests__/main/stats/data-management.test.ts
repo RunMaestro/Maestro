@@ -472,6 +472,8 @@ describe('Database VACUUM functionality', () => {
 			expect(result.deletedQueryEvents).toBe(0);
 			expect(result.deletedAutoRunSessions).toBe(0);
 			expect(result.deletedAutoRunTasks).toBe(0);
+			expect(result.deletedSessionLifecycle).toBe(0);
+			expect(result.deletedWindowUsageEvents).toBe(0);
 			expect(result.error).toBe('Database not initialized');
 		});
 
@@ -504,6 +506,8 @@ describe('Database VACUUM functionality', () => {
 			expect(result.deletedQueryEvents).toBe(5);
 			expect(result.deletedAutoRunSessions).toBe(5);
 			expect(result.deletedAutoRunTasks).toBe(5);
+			expect(result.deletedSessionLifecycle).toBe(5);
+			expect(result.deletedWindowUsageEvents).toBe(5);
 			expect(result.error).toBeUndefined();
 		});
 
@@ -521,6 +525,8 @@ describe('Database VACUUM functionality', () => {
 			expect(result.deletedQueryEvents).toBe(0);
 			expect(result.deletedAutoRunSessions).toBe(0);
 			expect(result.deletedAutoRunTasks).toBe(0);
+			expect(result.deletedSessionLifecycle).toBe(0);
+			expect(result.deletedWindowUsageEvents).toBe(0);
 			expect(result.error).toBeUndefined();
 		});
 
@@ -578,6 +584,8 @@ describe('Database VACUUM functionality', () => {
 			expect(result.deletedQueryEvents).toBe(0);
 			expect(result.deletedAutoRunSessions).toBe(0);
 			expect(result.deletedAutoRunTasks).toBe(0);
+			expect(result.deletedSessionLifecycle).toBe(0);
+			expect(result.deletedWindowUsageEvents).toBe(0);
 		});
 
 		it('should support various time periods', async () => {

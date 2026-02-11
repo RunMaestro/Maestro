@@ -16,6 +16,7 @@ import { WindowRegistry } from '../../window-registry';
 import {
 	CreateHandlerOptions,
 	requireDependency,
+	withErrorLogging,
 	withIpcErrorLogging,
 } from '../../utils/ipcHandler';
 import { logger } from '../../utils/logger';
@@ -45,6 +46,11 @@ interface MoveSessionArgs {
 	sessionId: string;
 	toWindowId: string;
 	fromWindowId?: string;
+}
+
+interface AssignSessionsArgs {
+	sessionIds?: string[];
+	windowId?: string;
 }
 
 interface FindWindowAtPointArgs {
@@ -161,6 +167,93 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 				return true;
 			});
 		})
+	);
+
+	ipcMain.handle(
+		'windows:assignSessions',
+		withErrorLogging(
+			handlerOpts('assignSessions'),
+			async (event, args?: AssignSessionsArgs) => {
+				const { sessionIds: rawSessionIds, windowId: overrideWindowId } = args ?? {};
+				const sessionIds = Array.from(
+					new Set(
+						(rawSessionIds ?? []).filter(
+							(sessionId): sessionId is string => typeof sessionId === 'string' && sessionId.trim().length > 0
+						)
+					)
+				);
+
+				if (!sessionIds.length) {
+					throw new Error('sessionIds are required');
+				}
+
+				return enqueueSessionMove(async () => {
+					const windowRegistry = getWindowRegistry();
+					let targetWindowId = overrideWindowId;
+					if (!targetWindowId) {
+						const browserWindow = BrowserWindow.fromWebContents(event.sender);
+						if (!browserWindow) {
+							throw new Error('Unable to resolve BrowserWindow for assignSessions request');
+						}
+						targetWindowId = findWindowIdByBrowserWindow(windowRegistry, browserWindow);
+						if (!targetWindowId) {
+							throw new Error('Window not registered in window registry');
+						}
+					}
+
+					const targetEntry = windowRegistry.get(targetWindowId);
+					if (!targetEntry) {
+						throw new Error(`Window ${targetWindowId} not found`);
+					}
+
+					const assignments: Array<{ sessionId: string; fromWindowId: string | null }> = [];
+					for (const sessionId of sessionIds) {
+						const currentWindowId = windowRegistry.getWindowForSession(sessionId) ?? null;
+						if (currentWindowId === targetWindowId) {
+							continue;
+						}
+
+						if (currentWindowId) {
+							const currentEntry = windowRegistry.get(currentWindowId);
+							if (currentEntry) {
+								currentEntry.sessionIds = currentEntry.sessionIds.filter((id) => id !== sessionId);
+							}
+						}
+
+						if (!targetEntry.sessionIds.includes(sessionId)) {
+							targetEntry.sessionIds = [...targetEntry.sessionIds, sessionId];
+						}
+
+						assignments.push({ sessionId, fromWindowId: currentWindowId });
+					}
+
+					if (!assignments.length) {
+						return true;
+					}
+
+					const windowsToPersist = new Set<string>([targetWindowId]);
+					for (const { fromWindowId } of assignments) {
+						if (fromWindowId) {
+							windowsToPersist.add(fromWindowId);
+						}
+					}
+
+					for (const windowId of windowsToPersist) {
+						windowRegistry.saveWindowState(windowId, { immediate: true });
+					}
+
+					for (const { sessionId, fromWindowId } of assignments) {
+						broadcastSessionMoved(windowRegistry, {
+							sessionId,
+							fromWindowId: fromWindowId ?? targetWindowId,
+							toWindowId: targetWindowId,
+						});
+					}
+
+					return true;
+				});
+			}
+		)
 	);
 
 	ipcMain.handle(
