@@ -329,8 +329,9 @@ export class ClaudeCodeInstrumenter {
 	/**
 	 * Capture model info and token counts from a usage event.
 	 * Stores reasoning token count for later inclusion in reasoning entries.
+	 * Stores model name when provided for environment entry updates.
 	 */
-	handleUsage(sessionId: string, usage: ParsedEvent['usage']): void {
+	handleUsage(sessionId: string, usage: ParsedEvent['usage'] & { modelName?: string }): void {
 		try {
 			if (!usage) {
 				return;
@@ -345,9 +346,21 @@ export class ClaudeCodeInstrumenter {
 				const existing = this.reasoningTokenCounts.get(sessionId) ?? 0;
 				this.reasoningTokenCounts.set(sessionId, existing + usage.reasoningTokens);
 			}
+
+			if (usage.modelName && !this.modelNames.has(sessionId)) {
+				this.modelNames.set(sessionId, usage.modelName);
+			}
 		} catch (err) {
 			logWarn('Error handling usage event', { sessionId, error: String(err) });
 		}
+	}
+
+	/**
+	 * Get the cached model name for a session, if available.
+	 * Returns the model name from the first usage event that included one.
+	 */
+	getModelName(sessionId: string): string | undefined {
+		return this.modelNames.get(sessionId);
 	}
 
 	/**

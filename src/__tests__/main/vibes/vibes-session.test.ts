@@ -379,6 +379,46 @@ describe('vibes-session', () => {
 	});
 
 	// ========================================================================
+	// updateEnvironmentHash
+	// ========================================================================
+	describe('updateEnvironmentHash', () => {
+		it('should update the environment hash on an active session', async () => {
+			const state = await manager.startSession('sess-1', tmpDir, 'claude-code', 'medium');
+			expect(state.environmentHash).toBeNull();
+
+			manager.updateEnvironmentHash('sess-1', 'a'.repeat(64));
+
+			const updated = manager.getSession('sess-1');
+			expect(updated!.environmentHash).toBe('a'.repeat(64));
+		});
+
+		it('should allow replacing an existing environment hash', async () => {
+			const state = await manager.startSession('sess-1', tmpDir, 'claude-code', 'medium');
+			state.environmentHash = 'b'.repeat(64);
+
+			manager.updateEnvironmentHash('sess-1', 'c'.repeat(64));
+
+			expect(state.environmentHash).toBe('c'.repeat(64));
+		});
+
+		it('should be a no-op for inactive sessions', async () => {
+			const state = await manager.startSession('sess-1', tmpDir, 'claude-code', 'medium');
+			state.environmentHash = 'b'.repeat(64);
+			await manager.endSession('sess-1');
+
+			manager.updateEnvironmentHash('sess-1', 'd'.repeat(64));
+
+			// Should not have changed because session is inactive
+			expect(state.environmentHash).toBe('b'.repeat(64));
+		});
+
+		it('should be a no-op for unknown sessions', () => {
+			// Should not throw
+			manager.updateEnvironmentHash('nonexistent', 'a'.repeat(64));
+		});
+	});
+
+	// ========================================================================
 	// getActiveSessionCount
 	// ========================================================================
 	describe('getActiveSessionCount', () => {

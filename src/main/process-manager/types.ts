@@ -92,6 +92,8 @@ export interface UsageStats {
 	totalCostUsd: number;
 	contextWindow: number;
 	reasoningTokens?: number;
+	/** Model name extracted from modelUsage keys (e.g. "claude-sonnet-4-5-20250929"). */
+	modelName?: string;
 }
 
 export interface SpawnResult {

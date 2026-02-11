@@ -184,6 +184,19 @@ export class VibesSessionManager {
 	}
 
 	/**
+	 * Update the environment hash for an active session.
+	 * Used when real model info arrives via usage events to replace the
+	 * placeholder environment entry created at session start.
+	 */
+	updateEnvironmentHash(sessionId: string, newHash: string): void {
+		const state = this.sessions.get(sessionId);
+		if (!state || !state.isActive) {
+			return;
+		}
+		state.environmentHash = newHash;
+	}
+
+	/**
 	 * Get the count of currently active sessions.
 	 */
 	getActiveSessionCount(): number {

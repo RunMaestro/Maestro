@@ -548,6 +548,170 @@ describe('vibes-coordinator', () => {
 	});
 
 	// ========================================================================
+	// handleUsage: Environment Update with Model Info
+	// ========================================================================
+	describe('handleUsage environment update', () => {
+		it('should update environment hash when usage event provides model info', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Initial environment entry has 'unknown' model info
+			await flushAll();
+			let manifest = await readVibesManifest(tmpDir);
+			let entries = Object.values(manifest.entries);
+			let envEntries = entries.filter((e) => e.type === 'environment') as VibesEnvironmentEntry[];
+			expect(envEntries).toHaveLength(1);
+			expect(envEntries[0].model_name).toBe('unknown');
+
+			// Send a usage event with model name
+			coordinator.handleUsage('sess-1', {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+				modelName: 'claude-sonnet-4-5-20250929',
+			});
+
+			// Allow the async environment update to complete
+			await vi.advanceTimersByTimeAsync(10);
+			await flushAll();
+
+			manifest = await readVibesManifest(tmpDir);
+			entries = Object.values(manifest.entries);
+			envEntries = entries.filter((e) => e.type === 'environment') as VibesEnvironmentEntry[];
+			// Should now have two environment entries: original 'unknown' + updated with model name
+			expect(envEntries).toHaveLength(2);
+			const updatedEnv = envEntries.find((e) => e.model_name !== 'unknown');
+			expect(updatedEnv).toBeDefined();
+			expect(updatedEnv!.model_name).toBe('claude-sonnet-4-5-20250929');
+			expect(updatedEnv!.tool_name).toBe('Claude Code');
+		});
+
+		it('should only update environment hash once per session', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// First usage event with model name
+			coordinator.handleUsage('sess-1', {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+				modelName: 'claude-sonnet-4-5-20250929',
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+
+			// Second usage event with different model name — should be ignored
+			coordinator.handleUsage('sess-1', {
+				inputTokens: 200,
+				outputTokens: 100,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.02,
+				contextWindow: 200000,
+				modelName: 'claude-opus-4-6-20260101',
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			await flushAll();
+
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const envEntries = entries.filter((e) => e.type === 'environment') as VibesEnvironmentEntry[];
+			// Should have 2 entries: original placeholder + one update (not two)
+			expect(envEntries).toHaveLength(2);
+			const updatedEnvs = envEntries.filter((e) => e.model_name !== 'unknown');
+			expect(updatedEnvs).toHaveLength(1);
+			expect(updatedEnvs[0].model_name).toBe('claude-sonnet-4-5-20250929');
+		});
+
+		it('should record updated environment entry in manifest', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'codex',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			coordinator.handleUsage('sess-1', {
+				inputTokens: 50,
+				outputTokens: 25,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.005,
+				contextWindow: 200000,
+				modelName: 'o4-mini',
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			await flushAll();
+
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const envEntries = entries.filter((e) => e.type === 'environment') as VibesEnvironmentEntry[];
+
+			const updatedEnv = envEntries.find((e) => e.model_name === 'o4-mini');
+			expect(updatedEnv).toBeDefined();
+			expect(updatedEnv!.tool_name).toBe('Codex');
+			expect(updatedEnv!.model_version).toBe('o4-mini');
+		});
+
+		it('should not update environment when usage has no model name', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Usage event without modelName
+			coordinator.handleUsage('sess-1', {
+				inputTokens: 100,
+				outputTokens: 50,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				totalCostUsd: 0.01,
+				contextWindow: 200000,
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			await flushAll();
+
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const envEntries = entries.filter((e) => e.type === 'environment') as VibesEnvironmentEntry[];
+			// Should only have the original placeholder
+			expect(envEntries).toHaveLength(1);
+			expect(envEntries[0].model_name).toBe('unknown');
+		});
+	});
+
+	// ========================================================================
 	// getSessionStats
 	// ========================================================================
 	describe('getSessionStats', () => {

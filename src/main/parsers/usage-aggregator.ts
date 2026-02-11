@@ -35,6 +35,11 @@ export interface UsageStats {
 	 * These are already included in outputTokens but tracked separately for UI display.
 	 */
 	reasoningTokens?: number;
+	/**
+	 * Model name extracted from modelUsage keys (e.g. "claude-sonnet-4-5-20250929").
+	 * Used by VIBES to populate the environment entry's model_name field.
+	 */
+	modelName?: string;
 }
 
 /**
@@ -183,9 +188,12 @@ export function aggregateModelUsage(
 	let maxCacheReadTokens = 0;
 	let maxCacheCreationTokens = 0;
 	let contextWindow = 200000; // Default for Claude
+	let modelName: string | undefined;
 
 	if (modelUsage) {
-		for (const modelStats of Object.values(modelUsage)) {
+		// Track the model with the most output tokens as the "primary" model
+		let maxModelOutputTokens = 0;
+		for (const [name, modelStats] of Object.entries(modelUsage)) {
 			maxInputTokens = Math.max(maxInputTokens, modelStats.inputTokens || 0);
 			maxOutputTokens = Math.max(maxOutputTokens, modelStats.outputTokens || 0);
 			maxCacheReadTokens = Math.max(maxCacheReadTokens, modelStats.cacheReadInputTokens || 0);
@@ -196,6 +204,12 @@ export function aggregateModelUsage(
 			// Use the highest context window from any model
 			if (modelStats.contextWindow && modelStats.contextWindow > contextWindow) {
 				contextWindow = modelStats.contextWindow;
+			}
+			// Pick the model with the most output tokens as the primary model name
+			const outTokens = modelStats.outputTokens || 0;
+			if (outTokens > maxModelOutputTokens || !modelName) {
+				maxModelOutputTokens = outTokens;
+				modelName = name;
 			}
 		}
 	}
@@ -216,5 +230,6 @@ export function aggregateModelUsage(
 		cacheCreationInputTokens: maxCacheCreationTokens,
 		totalCostUsd,
 		contextWindow,
+		modelName,
 	};
 }

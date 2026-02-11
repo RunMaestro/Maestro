@@ -97,6 +97,9 @@ export class VibesCoordinator {
 	/** Whether the vibescheck binary missing warning has been logged this session. */
 	private vibesBinaryMissingLogged = false;
 
+	/** Sessions whose environment entry has already been updated with real model info. */
+	private environmentUpdatedSessions: Set<string> = new Set();
+
 	/** Optional safeSend function for emitting IPC events to the renderer. */
 	private safeSend: SafeSendFn | null = null;
 
@@ -350,6 +353,7 @@ export class VibesCoordinator {
 
 			await this.sessionManager.endSession(sessionId);
 			this.sessionAgentTypes.delete(sessionId);
+			this.environmentUpdatedSessions.delete(sessionId);
 
 			logger.info(
 				'[VibesCoordinator] VIBES session ended',
@@ -564,6 +568,11 @@ export class VibesCoordinator {
 	/**
 	 * Route a usage event to the appropriate instrumenter.
 	 * Called internally by the ProcessManager event listener, or directly.
+	 *
+	 * When a usage event carries model identification (via `stats.modelName`)
+	 * and the session's environment entry still has placeholder 'unknown' values,
+	 * creates a new environment entry with real model info and updates the session.
+	 * This only happens once per session.
 	 */
 	handleUsage(sessionId: string, stats: UsageStats): void {
 		if (!this.sessionManager.isSessionActive(sessionId)) {
@@ -578,7 +587,7 @@ export class VibesCoordinator {
 		try {
 			const instrumenter = this.getInstrumenter(agentType);
 			if (instrumenter) {
-				// Convert UsageStats to ParsedEvent usage format
+				// Convert UsageStats to ParsedEvent usage format, including modelName
 				instrumenter.handleUsage(sessionId, {
 					inputTokens: stats.inputTokens,
 					outputTokens: stats.outputTokens,
@@ -587,7 +596,21 @@ export class VibesCoordinator {
 					costUsd: stats.totalCostUsd,
 					contextWindow: stats.contextWindow,
 					reasoningTokens: stats.reasoningTokens,
+					modelName: stats.modelName,
 				});
+			}
+
+			// Update the environment entry with real model info (once per session)
+			if (stats.modelName && !this.environmentUpdatedSessions.has(sessionId)) {
+				this.environmentUpdatedSessions.add(sessionId);
+				this.updateEnvironmentWithModelInfo(sessionId, agentType, stats.modelName)
+					.catch((err) => {
+						logger.warn(
+							'[VibesCoordinator] Failed to update environment with model info',
+							'VibesCoordinator',
+							{ sessionId, error: String(err) },
+						);
+					});
 			}
 		} catch (err) {
 			logger.warn(
@@ -596,6 +619,31 @@ export class VibesCoordinator {
 				{ sessionId, error: String(err) },
 			);
 		}
+	}
+
+	/**
+	 * Create an updated environment entry with real model info and update
+	 * the session's environment hash.
+	 */
+	private async updateEnvironmentWithModelInfo(
+		sessionId: string,
+		agentType: string,
+		modelName: string,
+	): Promise<void> {
+		const { entry, hash } = createEnvironmentEntry({
+			toolName: this.getToolName(agentType),
+			toolVersion: 'unknown',
+			modelName,
+			modelVersion: modelName,
+		});
+		await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+		this.sessionManager.updateEnvironmentHash(sessionId, hash);
+
+		logger.info(
+			'[VibesCoordinator] Updated environment entry with model info',
+			'VibesCoordinator',
+			{ sessionId, modelName },
+		);
 	}
 
 	// ========================================================================
