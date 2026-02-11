@@ -196,6 +196,7 @@ import { formatLogsForClipboard } from './utils/contextExtractor';
 import { getSlashCommandDescription } from './constants/app';
 import { useUIStore } from './stores/uiStore';
 import { useTabStore } from './stores/tabStore';
+import { useFileExplorerStore } from './stores/fileExplorerStore';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -676,9 +677,9 @@ function MaestroConsoleInner() {
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
 	const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
-	const selectedFileIndex = useUIStore((s) => s.selectedFileIndex);
-	const fileTreeFilter = useUIStore((s) => s.fileTreeFilter);
-	const fileTreeFilterOpen = useUIStore((s) => s.fileTreeFilterOpen);
+	const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
+	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
+	const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
@@ -697,9 +698,6 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		setGroupChatsExpanded,
 		setShowUnreadOnly,
-		setSelectedFileIndex,
-		setFileTreeFilter,
-		setFileTreeFilterOpen,
 		setEditingGroupId,
 		setEditingSessionId,
 		setDraggingSessionId,
@@ -709,6 +707,9 @@ function MaestroConsoleInner() {
 		setSuccessFlashNotification,
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
+
+	const { setSelectedFileIndex, setFileTreeFilter, setFileTreeFilterOpen, setFlatFileList } =
+		useFileExplorerStore.getState();
 
 	// --- GROUP CHAT STATE (Phase 4: extracted to GroupChatContext) ---
 
@@ -854,21 +855,12 @@ function MaestroConsoleInner() {
 		setCommandHistorySelectedIndex,
 	} = useInputContext();
 
-	// File Explorer State
-	const [filePreviewLoading, setFilePreviewLoading] = useState<{
-		name: string;
-		path: string;
-	} | null>(null);
-	const [flatFileList, setFlatFileList] = useState<any[]>([]);
-	const [isGraphViewOpen, setIsGraphViewOpen] = useState(false);
-	// File path to focus on when opening the Document Graph (relative to session.cwd)
-	const [graphFocusFilePath, setGraphFocusFilePath] = useState<string | undefined>(undefined);
-	// Track the last opened document graph for quick re-open from command palette
-	const [lastGraphFocusFilePath, setLastGraphFocusFilePath] = useState<string | undefined>(
-		undefined
-	);
-	// PERF: Ref to access lastGraphFocusFilePath in memoized callbacks without causing re-renders
-	const lastGraphFocusFilePathRef = useRef(lastGraphFocusFilePath);
+	// File Explorer State (reads from fileExplorerStore)
+	const filePreviewLoading = useFileExplorerStore((s) => s.filePreviewLoading);
+	const flatFileList = useFileExplorerStore((s) => s.flatFileList);
+	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
+	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
+	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
 	// GitHub CLI availability (for gist publishing)
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -2459,7 +2451,6 @@ function MaestroConsoleInner() {
 		activeSessionId,
 		setSessions,
 		setActiveFocus,
-		setFilePreviewLoading,
 		setConfirmModalMessage,
 		setConfirmModalOnConfirm,
 		setConfirmModalOpen,
@@ -4569,25 +4560,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setAboutModalOpen(true);
 	}, []);
 
-	const handleFocusFileInGraph = useCallback((relativePath: string) => {
-		setGraphFocusFilePath(relativePath);
-		setLastGraphFocusFilePath(relativePath);
-		setIsGraphViewOpen(true);
-	}, []);
-
-	const handleOpenLastDocumentGraph = useCallback(() => {
-		// Use ref pattern to access current value without dependency
-		const path = lastGraphFocusFilePathRef.current;
-		if (path) {
-			setGraphFocusFilePath(path);
-			setIsGraphViewOpen(true);
-		}
-	}, []);
-
-	// Sync lastGraphFocusFilePath ref for use in memoized callbacks
-	useEffect(() => {
-		lastGraphFocusFilePathRef.current = lastGraphFocusFilePath;
-	}, [lastGraphFocusFilePath]);
+	const handleFocusFileInGraph = useFileExplorerStore.getState().focusFileInGraph;
+	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
 
 	// PERF: Memoized callbacks for SessionList props - these were inline arrow functions
 	const handleEditAgent = useCallback((session: Session) => {
@@ -9486,7 +9460,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSessions,
 		activeSessionId,
 		activeSession,
-		fileTreeFilter,
 		rightPanelRef,
 		sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
@@ -11214,10 +11187,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Gist publishing
 		setGistPublishModalOpen,
 
-		// Document Graph
-		setGraphFocusFilePath,
-		setLastGraphFocusFilePath,
-		setIsGraphViewOpen,
+		// Document Graph (from fileExplorerStore)
+		setGraphFocusFilePath: useFileExplorerStore.getState().focusFileInGraph,
+		setLastGraphFocusFilePath: () => {}, // no-op: focusFileInGraph sets both atomically
+		setIsGraphViewOpen: useFileExplorerStore.getState().setIsGraphViewOpen,
 
 		// Wizard callbacks
 		generateInlineWizardDocuments,
@@ -11727,12 +11700,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={() => setGistPublishModalOpen(true)}
 					lastGraphFocusFile={lastGraphFocusFilePath}
-					onOpenLastDocumentGraph={() => {
-						if (lastGraphFocusFilePath) {
-							setGraphFocusFilePath(lastGraphFocusFilePath);
-							setIsGraphViewOpen(true);
-						}
-					}}
+					onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
 					lightboxImage={lightboxImage}
 					lightboxImages={lightboxImages}
 					stagedImages={stagedImages}
@@ -12163,8 +12131,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						<DocumentGraphView
 							isOpen={isGraphViewOpen}
 							onClose={() => {
-								setIsGraphViewOpen(false);
-								setGraphFocusFilePath(undefined);
+								useFileExplorerStore.getState().closeGraphView();
 								// Return focus to file preview if it was open
 								requestAnimationFrame(() => {
 									mainPanelRef.current?.focusFilePreview();
@@ -12204,7 +12171,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								} catch (error) {
 									console.error('[DocumentGraph] Failed to open file:', error);
 								}
-								setIsGraphViewOpen(false);
+								useFileExplorerStore.getState().setIsGraphViewOpen(false);
 							}}
 							onExternalLinkOpen={(url) => {
 								// Open external URL in default browser

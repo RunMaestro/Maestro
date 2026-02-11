@@ -461,10 +461,11 @@ export const RightPanel = memo(
 					ref={fileTreeContainerRef}
 					className="flex-1 px-4 pb-4 overflow-y-auto overflow-x-hidden min-w-[24rem] outline-none scrollbar-thin"
 					tabIndex={-1}
-					onClick={() => {
+					onClick={(e) => {
 						setActiveFocus('right');
 						// Only focus the container for file explorer, not for autorun (which has its own focus management)
-						if (activeRightTab === 'files') {
+						// Skip when the filter input is focused — otherwise the container steals focus from it
+						if (activeRightTab === 'files' && e.target !== fileTreeFilterInputRef.current) {
 							fileTreeContainerRef.current?.focus();
 						}
 					}}

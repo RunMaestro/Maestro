@@ -12,6 +12,7 @@ import {
 import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
 import { logger } from '../../utils/logger';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
 /**
  * Retry delay for file tree errors (20 seconds).
@@ -93,8 +94,6 @@ export interface UseFileTreeManagementDeps {
 	activeSessionId: string | null;
 	/** Currently active session (derived from sessions) */
 	activeSession: Session | null;
-	/** File tree filter string */
-	fileTreeFilter: string;
 	/** Ref to RightPanel for refreshing history */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
 	/** SSH remote ignore patterns (glob patterns) */
@@ -136,11 +135,12 @@ export function useFileTreeManagement(
 		setSessions,
 		activeSessionId,
 		activeSession,
-		fileTreeFilter,
 		rightPanelRef,
 		sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 	} = deps;
+
+	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 
 	// Build SSH context options from settings
 	const sshContextOptions: SshContextOptions = useMemo(
