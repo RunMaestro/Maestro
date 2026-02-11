@@ -9,9 +9,9 @@ import type { ProcessManager } from '../../process-manager';
 import type { SafeSendFn } from '../../utils/safe-send';
 import type { ProcessListenerDependencies } from '../types';
 
-describe('Data Listener', () => {
+	describe('Data Listener', () => {
 	let mockProcessManager: ProcessManager;
-	let mockSafeSend: SafeSendFn;
+	let mockBroadcast: SafeSendFn;
 	let mockGetWebServer: ProcessListenerDependencies['getWebServer'];
 	let mockWebServer: { broadcastToSessionClients: ReturnType<typeof vi.fn> };
 	let mockOutputBuffer: ProcessListenerDependencies['outputBuffer'];
@@ -24,7 +24,7 @@ describe('Data Listener', () => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
-		mockSafeSend = vi.fn();
+		mockBroadcast = vi.fn();
 		mockWebServer = {
 			broadcastToSessionClients: vi.fn(),
 		};
@@ -57,7 +57,7 @@ describe('Data Listener', () => {
 
 	const setupListener = () => {
 		setupDataListener(mockProcessManager, {
-			safeSend: mockSafeSend,
+			broadcastToAllWindows: mockBroadcast,
 			getWebServer: mockGetWebServer,
 			outputBuffer: mockOutputBuffer,
 			outputParser: mockOutputParser,
@@ -80,7 +80,7 @@ describe('Data Listener', () => {
 
 			handler?.('regular-session-123', 'test output');
 
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcast).toHaveBeenCalledWith(
 				'process:data',
 				'regular-session-123',
 				'test output'
@@ -133,7 +133,7 @@ describe('Data Listener', () => {
 				sessionId,
 				'moderator output'
 			);
-			expect(mockSafeSend).not.toHaveBeenCalled();
+			expect(mockBroadcast).not.toHaveBeenCalled();
 		});
 
 		it('should extract group chat ID from moderator session', () => {
@@ -183,7 +183,7 @@ describe('Data Listener', () => {
 				sessionId,
 				'participant output'
 			);
-			expect(mockSafeSend).not.toHaveBeenCalled();
+			expect(mockBroadcast).not.toHaveBeenCalled();
 		});
 
 		it('should warn when participant buffer size exceeds limit', () => {
@@ -210,7 +210,7 @@ describe('Data Listener', () => {
 
 			expect(mockWebServer.broadcastToSessionClients).not.toHaveBeenCalled();
 			// But should still forward to renderer
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcast).toHaveBeenCalledWith(
 				'process:data',
 				'session-123-terminal',
 				'terminal output'
@@ -254,7 +254,7 @@ describe('Data Listener', () => {
 			handler?.('session-123-ai-tab1', 'test output');
 
 			// Should still forward to renderer
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcast).toHaveBeenCalledWith(
 				'process:data',
 				'session-123-ai-tab1',
 				'test output'

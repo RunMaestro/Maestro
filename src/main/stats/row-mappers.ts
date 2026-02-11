@@ -10,6 +10,7 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	WindowUsageSnapshot,
 } from '../../shared/stats-types';
 import type { MigrationRecord } from './types';
 
@@ -62,6 +63,14 @@ export interface SessionLifecycleRow {
 	closed_at: number | null;
 	duration: number | null;
 	is_remote: number | null;
+}
+
+export interface WindowUsageRow {
+	id: string;
+	recorded_at: number;
+	window_count: number;
+	session_count: number;
+	is_multi_window: number;
 }
 
 export interface MigrationRecordRow {
@@ -128,6 +137,16 @@ export function mapSessionLifecycleRow(row: SessionLifecycleRow): SessionLifecyc
 		closedAt: row.closed_at ?? undefined,
 		duration: row.duration ?? undefined,
 		isRemote: row.is_remote !== null ? row.is_remote === 1 : undefined,
+	};
+}
+
+export function mapWindowUsageRow(row: WindowUsageRow): WindowUsageSnapshot {
+	return {
+		id: row.id,
+		recordedAt: row.recorded_at,
+		windowCount: row.window_count,
+		sessionCount: row.session_count,
+		isMultiWindow: row.is_multi_window === 1,
 	};
 }
 

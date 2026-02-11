@@ -6,6 +6,7 @@
  */
 
 import type { SshRemoteConfig, Group } from '../../shared/types';
+import type { MultiWindowState } from '../../shared/types/window';
 
 // ============================================================================
 // Stored Session Type (minimal interface for main process storage)
@@ -106,6 +107,8 @@ export interface WindowState {
 	height: number;
 	isMaximized: boolean;
 	isFullScreen: boolean;
+	multiWindowState?: MultiWindowState;
+	displayId?: number | null;
 }
 
 // ============================================================================

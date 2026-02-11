@@ -511,6 +511,8 @@ export interface UseSendToAgentWithSessionsDeps {
 	onSessionCreated?: (sessionId: string, sessionName: string) => void;
 	/** Callback to switch to the new session after transfer */
 	onNavigateToSession?: (sessionId: string) => void;
+	/** Assign newly created sessions to the active window */
+	assignSessionsToWindow?: (sessionIds: string[]) => Promise<void> | void;
 }
 
 /**
@@ -553,7 +555,13 @@ export interface UseSendToAgentWithSessionsResult extends UseSendToAgentResult {
 export function useSendToAgentWithSessions(
 	deps: UseSendToAgentWithSessionsDeps
 ): UseSendToAgentWithSessionsResult {
-	const { sessions, setSessions, onSessionCreated, onNavigateToSession } = deps;
+	const {
+		sessions,
+		setSessions,
+		onSessionCreated,
+		onNavigateToSession,
+		assignSessionsToWindow,
+	} = deps;
 	const baseHook = useSendToAgent();
 
 	/**
@@ -658,6 +666,13 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 
 				// Add new session to state
 				setSessions((prev) => [...prev, newSession]);
+				if (assignSessionsToWindow) {
+					try {
+						await assignSessionsToWindow([newSession.id]);
+					} catch (error) {
+						console.error('Failed to assign transferred session to window', error);
+					}
+				}
 
 				// Log transfer operation to history
 				const targetAgentName = getAgentDisplayName(targetAgent);
@@ -697,7 +712,14 @@ Please confirm you've reviewed this context and let me know you're ready to cont
 
 			return result;
 		},
-		[sessions, setSessions, onSessionCreated, onNavigateToSession, baseHook]
+		[
+			sessions,
+			setSessions,
+			onSessionCreated,
+			onNavigateToSession,
+			assignSessionsToWindow,
+			baseHook,
+		]
 	);
 
 	return {

@@ -409,12 +409,14 @@ describe('useSendToAgent', () => {
 });
 
 describe('useSendToAgentWithSessions', () => {
-	const mockSetSessions = vi.fn();
-	const mockOnSessionCreated = vi.fn();
-	const mockOnNavigateToSession = vi.fn();
+const mockSetSessions = vi.fn();
+const mockOnSessionCreated = vi.fn();
+const mockOnNavigateToSession = vi.fn();
+const mockAssignSessionsToWindow = vi.fn();
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockAssignSessionsToWindow.mockReset();
 
 		vi.mocked(contextGroomer.contextGroomingService.groomContexts).mockResolvedValue({
 			groomedLogs: [
@@ -432,6 +434,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
 			})
@@ -456,6 +459,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
 			})
@@ -492,6 +496,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
 			})
@@ -520,6 +525,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 				onSessionCreated: mockOnSessionCreated,
 				onNavigateToSession: mockOnNavigateToSession,
 			})
@@ -544,6 +550,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 			})
 		);
 
@@ -571,6 +578,7 @@ describe('useSendToAgentWithSessions', () => {
 			useSendToAgentWithSessions({
 				sessions,
 				setSessions: mockSetSessions,
+				assignSessionsToWindow: mockAssignSessionsToWindow,
 				onSessionCreated: mockOnSessionCreated,
 			})
 		);

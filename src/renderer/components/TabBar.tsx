@@ -24,6 +24,19 @@ import {
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
 import { getColorBlindExtensionColor } from '../constants/colorblindPalettes';
+import { useWindowContext } from '../contexts/WindowContext';
+import { useToast } from '../contexts/ToastContext';
+
+// Offset newly spawned windows so the cursor isn't pinned to the top-left corner
+const DRAG_WINDOW_OFFSET_X = 100;
+const DRAG_WINDOW_OFFSET_Y = 50;
+
+type BrowserWindowBounds = {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+};
 
 interface TabBarProps {
 	tabs: AITab[];
@@ -77,6 +90,9 @@ interface TabBarProps {
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
+
+	/** Parent session ID for window scoping */
+	sessionId?: string | null;
 }
 
 interface TabProps {
@@ -91,6 +107,8 @@ interface TabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -120,6 +138,8 @@ interface TabProps {
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToLast?: (tabId: string) => void;
+	/** Stable callback - moves session to a dedicated window */
+	onMoveToNewWindow?: (tabId: string) => void;
 	/** Is this the first tab? */
 	isFirstTab?: boolean;
 	/** Is this the last tab? */
@@ -139,6 +159,43 @@ interface TabProps {
 	totalTabs?: number;
 	/** Tab index in the full list (0-based) */
 	tabIndex?: number;
+}
+
+interface MoveSessionToWindowOptions {
+	tabId: string;
+	targetWindowId: string;
+	windowId: string | null;
+	tabs: AITab[];
+}
+
+export async function moveSessionToWindowHelper({
+	tabId,
+	targetWindowId,
+	windowId,
+	tabs,
+}: MoveSessionToWindowOptions): Promise<void> {
+	if (!windowId || targetWindowId === windowId) {
+		return;
+	}
+
+	const isAiTab = tabs.some((tab) => tab.id === tabId);
+	if (!isAiTab) {
+		return;
+	}
+
+	if (!window.maestro?.windows?.moveSession) {
+		return;
+	}
+
+	try {
+		await window.maestro.windows.moveSession({
+			sessionId: tabId,
+			toWindowId: targetWindowId,
+			fromWindowId: windowId,
+		});
+	} catch (error) {
+		console.error('Failed to move session to another window', error);
+	}
 }
 
 /**
@@ -198,6 +255,7 @@ const Tab = memo(function Tab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -214,6 +272,7 @@ const Tab = memo(function Tab({
 	onPublishGist,
 	onMoveToFirst,
 	onMoveToLast,
+	onMoveToNewWindow,
 	isFirstTab,
 	isLastTab,
 	shortcutHint,
@@ -388,6 +447,15 @@ const Tab = memo(function Tab({
 		[onMoveToLast, tabId]
 	);
 
+	const handleMoveToNewWindowClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToNewWindow?.(tabId);
+			setOverlayOpen(false);
+		},
+		[onMoveToNewWindow, tabId]
+	);
+
 	const handleCopyContextClick = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
@@ -463,6 +531,13 @@ const Tab = memo(function Tab({
 		[onDragStart, tabId]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tabId, e);
+		},
+		[onDrag, tabId]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tabId, e);
@@ -535,6 +610,7 @@ const Tab = memo(function Tab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -814,8 +890,20 @@ const Tab = memo(function Tab({
 								)}
 
 								{/* Tab Move Actions Section - divider and move options */}
-								{(onMoveToFirst || onMoveToLast) && (
+								{(onMoveToNewWindow || onMoveToFirst || onMoveToLast) && (
 									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+
+								{/* Move to New Window - always available when handler provided */}
+								{onMoveToNewWindow && (
+									<button
+										onClick={handleMoveToNewWindowClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors hover:bg-white/10"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ExternalLink className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to New Window
+									</button>
 								)}
 
 								{/* Move to First Position - suppressed if already first tab or no handler */}
@@ -933,6 +1021,8 @@ interface FileTabProps {
 	onClose: (tabId: string) => void;
 	/** Stable callback - receives tabId and event */
 	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	/** Stable callback - receives tabId and event */
+	onDrag: (tabId: string, e: React.DragEvent) => void;
 	/** Stable callback - receives tabId and event */
 	onDragOver: (tabId: string, e: React.DragEvent) => void;
 	onDragEnd: () => void;
@@ -1064,6 +1154,7 @@ const FileTab = memo(function FileTab({
 	onSelect,
 	onClose,
 	onDragStart,
+	onDrag,
 	onDragOver,
 	onDragEnd,
 	onDrop,
@@ -1260,6 +1351,13 @@ const FileTab = memo(function FileTab({
 		[onDragStart, tab.id]
 	);
 
+	const handleTabDrag = useCallback(
+		(e: React.DragEvent) => {
+			onDrag(tab.id, e);
+		},
+		[onDrag, tab.id]
+	);
+
 	const handleTabDragOver = useCallback(
 		(e: React.DragEvent) => {
 			onDragOver(tab.id, e);
@@ -1336,6 +1434,7 @@ const FileTab = memo(function FileTab({
 			onMouseLeave={handleMouseLeave}
 			draggable
 			onDragStart={handleTabDragStart}
+			onDrag={handleTabDrag}
 			onDragOver={handleTabDragOver}
 			onDragEnd={onDragEnd}
 			onDrop={handleTabDrop}
@@ -1602,17 +1701,68 @@ function TabBarInner({
 	onUnifiedTabReorder,
 	// Accessibility
 	colorBlindMode,
+	sessionId,
 }: TabBarProps) {
+	const {
+		sessionIds: windowSessionIds,
+		windowId,
+		moveSessionToNewWindow,
+		isMainWindow,
+	} = useWindowContext();
+	const { addToast } = useToast();
+	const sessionAllowed =
+		!sessionId || windowSessionIds.length === 0 || windowSessionIds.includes(sessionId);
+
+	if (!sessionAllowed) {
+		return null;
+	}
 	const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
 	const [dragOverTabId, setDragOverTabId] = useState<string | null>(null);
+	const [isDraggingOutsideWindow, setIsDraggingOutsideWindow] = useState(false);
+	const [isDropZoneHighlightActive, setIsDropZoneHighlightActive] = useState(false);
 	// Use prop if provided (controlled), otherwise use local state (uncontrolled)
 	const [showUnreadOnlyLocal, setShowUnreadOnlyLocal] = useState(false);
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
 	const toggleUnreadFilter =
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
 
+	const showPrimaryWindowGuardToast = useCallback(() => {
+		addToast({
+			type: 'warning',
+			title: 'Keep a tab in the primary window',
+			message:
+				'The main Maestro window must keep at least one session open. Move another tab first or create a new window before removing this one.',
+		});
+	}, [addToast]);
+
+	const shouldPreventPrimaryTabMove = useCallback(
+		(tabId: string) =>
+			isMainWindow &&
+			windowSessionIds.length <= 1 &&
+			windowSessionIds.includes(tabId),
+		[isMainWindow, windowSessionIds]
+	);
+
+	const guardPrimaryWindowTabMove = useCallback(
+		(tabId: string) => {
+			if (!shouldPreventPrimaryTabMove(tabId)) {
+				return false;
+			}
+			showPrimaryWindowGuardToast();
+			return true;
+		},
+		[shouldPreventPrimaryTabMove, showPrimaryWindowGuardToast]
+	);
+
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+	const dragCursorPositionRef = useRef<{ screenX: number; screenY: number } | null>(null);
+	const windowBoundsRef = useRef<BrowserWindowBounds | null>(null);
+	const dragHoveredWindowIdRef = useRef<string | null>(null);
+	const dragWindowLookupTicketRef = useRef(0);
+	const wasDraggingOutsideWindowRef = useRef(false);
+	const dragPreviewElementRef = useRef<HTMLElement | null>(null);
+	const highlightedWindowIdRef = useRef<string | null>(null);
 	const [isOverflowing, setIsOverflowing] = useState(false);
 
 	// Get active tab's name to trigger scroll when it changes (e.g., after auto-generated name)
@@ -1687,11 +1837,250 @@ function TabBarInner({
 		});
 	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId]);
 
-	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
-		e.dataTransfer.effectAllowed = 'move';
-		e.dataTransfer.setData('text/plain', tabId);
-		setDraggingTabId(tabId);
+	const cleanupDragPreview = useCallback(() => {
+		const preview = dragPreviewElementRef.current;
+		if (preview?.parentNode) {
+			preview.parentNode.removeChild(preview);
+		}
+		dragPreviewElementRef.current = null;
 	}, []);
+
+	const sendDropZoneHighlight = useCallback(async (windowId: string, highlight: boolean) => {
+		if (!window.maestro?.windows?.highlightDropZone) {
+			return;
+		}
+
+		try {
+			await window.maestro.windows.highlightDropZone(windowId, highlight);
+		} catch (error) {
+			console.error('Failed to update drop zone highlight state', error);
+		}
+	}, []);
+
+	const syncDropZoneHighlight = useCallback(
+		(nextWindowId: string | null) => {
+			const previousWindowId = highlightedWindowIdRef.current;
+			if (previousWindowId && previousWindowId !== nextWindowId) {
+				highlightedWindowIdRef.current = null;
+				void sendDropZoneHighlight(previousWindowId, false);
+			}
+
+			if (nextWindowId && nextWindowId !== previousWindowId) {
+				highlightedWindowIdRef.current = nextWindowId;
+				void sendDropZoneHighlight(nextWindowId, true);
+			} else if (!nextWindowId) {
+				highlightedWindowIdRef.current = null;
+			}
+		},
+		[sendDropZoneHighlight]
+	);
+
+	const setHoveredWindow = useCallback(
+		(windowId: string | null) => {
+			if (dragHoveredWindowIdRef.current === windowId) {
+				return;
+			}
+			dragHoveredWindowIdRef.current = windowId;
+			syncDropZoneHighlight(windowId);
+		},
+		[syncDropZoneHighlight]
+	);
+
+	const resetDragWindowTracking = useCallback(() => {
+		windowBoundsRef.current = null;
+		dragCursorPositionRef.current = null;
+		setHoveredWindow(null);
+		dragWindowLookupTicketRef.current += 1;
+		wasDraggingOutsideWindowRef.current = false;
+		setIsDraggingOutsideWindow(false);
+		cleanupDragPreview();
+	}, [cleanupDragPreview, setHoveredWindow]);
+
+	const attachDragPreviewImage = useCallback(
+		(tabId: string, event: React.DragEvent) => {
+			const tabElement = tabRefs.current.get(tabId);
+			const dataTransfer = event.dataTransfer;
+			if (!tabElement || !dataTransfer || typeof dataTransfer.setDragImage !== 'function') {
+				return;
+			}
+
+			const clone = tabElement.cloneNode(true) as HTMLElement;
+			clone.style.position = 'absolute';
+			clone.style.top = '-10000px';
+			clone.style.left = '-10000px';
+			clone.style.pointerEvents = 'none';
+			clone.style.opacity = '1';
+			clone.style.filter = 'drop-shadow(0 8px 20px rgba(0, 0, 0, 0.35))';
+			clone.style.width = `${tabElement.offsetWidth}px`;
+			clone.style.height = `${tabElement.offsetHeight}px`;
+			document.body.appendChild(clone);
+			dragPreviewElementRef.current = clone;
+
+			const rect = tabElement.getBoundingClientRect();
+			const offsetX = Math.max(0, Math.min(event.clientX - rect.left, rect.width));
+			const offsetY = Math.max(0, Math.min(event.clientY - rect.top, rect.height));
+			dataTransfer.setDragImage(clone, offsetX, offsetY);
+		},
+		[]
+	);
+
+	const moveSessionToWindow = useCallback(
+		(tabId: string, targetWindowId: string) => {
+			void moveSessionToWindowHelper({
+				tabId,
+				targetWindowId,
+				windowId,
+				tabs,
+			});
+		},
+		[windowId, tabs]
+	);
+
+	const moveSessionToNewWindowFromDrag = useCallback(
+		async (
+			tabId: string,
+			position: { screenX: number; screenY: number } | null
+		) => {
+			if (!windowId) {
+				return;
+			}
+
+			const isAiTab = tabs.some((tab) => tab.id === tabId);
+			if (!isAiTab || !window.maestro?.windows?.create) {
+				return;
+			}
+
+			const bounds = position
+				? {
+						x: Math.round(position.screenX - DRAG_WINDOW_OFFSET_X),
+						y: Math.round(position.screenY - DRAG_WINDOW_OFFSET_Y),
+				  }
+				: undefined;
+
+			try {
+				const result = await window.maestro.windows.create({
+					sessionIds: [tabId],
+					bounds,
+				});
+
+				if (!result?.windowId) {
+					return;
+				}
+
+				await moveSessionToWindowHelper({
+					tabId,
+					targetWindowId: result.windowId,
+					windowId,
+					tabs,
+				});
+			} catch (error) {
+				console.error('Failed to move session to new window from drag', error);
+			}
+		},
+		[windowId, tabs]
+	);
+
+	const resolveWindowAtDragPoint = useCallback(
+		async (screenX: number, screenY: number) => {
+			if (!window.maestro?.windows?.findWindowAtPoint) {
+				setHoveredWindow(null);
+				return;
+			}
+
+			const lookupTicket = ++dragWindowLookupTicketRef.current;
+
+			try {
+				const windowId = await window.maestro.windows.findWindowAtPoint(screenX, screenY);
+				if (dragWindowLookupTicketRef.current === lookupTicket) {
+					setHoveredWindow(windowId ?? null);
+				}
+			} catch (error) {
+				if (dragWindowLookupTicketRef.current === lookupTicket) {
+					setHoveredWindow(null);
+				}
+				console.error('Failed to resolve window at drag point', error);
+			}
+		},
+		[setHoveredWindow]
+	);
+
+	const applyDragPosition = useCallback(
+		(screenX: number, screenY: number) => {
+		dragCursorPositionRef.current = { screenX, screenY };
+		const bounds = windowBoundsRef.current;
+		if (
+			!bounds ||
+			typeof bounds.x !== 'number' ||
+			typeof bounds.y !== 'number' ||
+			typeof bounds.width !== 'number' ||
+			typeof bounds.height !== 'number'
+		) {
+			return;
+		}
+
+		const withinHorizontal = screenX >= bounds.x && screenX <= bounds.x + bounds.width;
+		const withinVertical = screenY >= bounds.y && screenY <= bounds.y + bounds.height;
+		const isOutside = !(withinHorizontal && withinVertical);
+		const wasOutside = wasDraggingOutsideWindowRef.current;
+		wasDraggingOutsideWindowRef.current = isOutside;
+		setIsDraggingOutsideWindow((prev) => (prev === isOutside ? prev : isOutside));
+		if (isOutside) {
+			void resolveWindowAtDragPoint(screenX, screenY);
+		} else {
+			if (wasOutside) {
+				dragWindowLookupTicketRef.current += 1;
+			}
+			setHoveredWindow(null);
+		}
+	}, [resolveWindowAtDragPoint, setHoveredWindow]);
+
+	const captureWindowBounds = useCallback(async () => {
+		if (!window.maestro?.windows?.getWindowBounds) {
+			return;
+		}
+
+		try {
+			const bounds = await window.maestro.windows.getWindowBounds();
+			windowBoundsRef.current = bounds;
+			const latestPosition = dragCursorPositionRef.current;
+			if (latestPosition) {
+				applyDragPosition(latestPosition.screenX, latestPosition.screenY);
+			}
+		} catch (error) {
+			console.error('Failed to fetch window bounds', error);
+		}
+	}, [applyDragPosition]);
+
+	const handleDragStart = useCallback(
+		(tabId: string, e: React.DragEvent) => {
+			if (guardPrimaryWindowTabMove(tabId)) {
+				e.preventDefault();
+				e.stopPropagation();
+				return;
+			}
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', tabId);
+			setDraggingTabId(tabId);
+			resetDragWindowTracking();
+			attachDragPreviewImage(tabId, e);
+			applyDragPosition(e.screenX, e.screenY);
+			void captureWindowBounds();
+		},
+		[
+			attachDragPreviewImage,
+			applyDragPosition,
+			captureWindowBounds,
+			guardPrimaryWindowTabMove,
+			resetDragWindowTracking,
+		]
+	);
+
+	const handleDrag = useCallback(
+		(_tabId: string, e: React.DragEvent) => {
+			applyDragPosition(e.screenX, e.screenY);
+		},
+		[applyDragPosition]
+	);
 
 	const handleDragOver = useCallback(
 		(tabId: string, e: React.DragEvent) => {
@@ -1705,9 +2094,26 @@ function TabBarInner({
 	);
 
 	const handleDragEnd = useCallback(() => {
+		const hoveredWindowId = dragHoveredWindowIdRef.current;
+		const tabId = draggingTabId;
+		const dropPosition = dragCursorPositionRef.current;
+		const wasOutsideWindow = wasDraggingOutsideWindowRef.current;
+		if (tabId) {
+			if (hoveredWindowId) {
+				void moveSessionToWindow(tabId, hoveredWindowId);
+			} else if (wasOutsideWindow) {
+				void moveSessionToNewWindowFromDrag(tabId, dropPosition);
+			}
+		}
 		setDraggingTabId(null);
 		setDragOverTabId(null);
-	}, []);
+		resetDragWindowTracking();
+	}, [
+		draggingTabId,
+		moveSessionToNewWindowFromDrag,
+		moveSessionToWindow,
+		resetDragWindowTracking,
+	]);
 
 	const handleDrop = useCallback(
 		(targetTabId: string, e: React.DragEvent) => {
@@ -1736,8 +2142,9 @@ function TabBarInner({
 
 			setDraggingTabId(null);
 			setDragOverTabId(null);
+			resetDragWindowTracking();
 		},
-		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder, resetDragWindowTracking]
 	);
 
 	const handleRenameRequest = useCallback(
@@ -1806,6 +2213,16 @@ function TabBarInner({
 			}
 		},
 		[tabs, onTabReorder, unifiedTabs, onUnifiedTabReorder]
+	);
+
+	const handleTabMoveToNewWindow = useCallback(
+		(tabId: string) => {
+			if (guardPrimaryWindowTabMove(tabId)) {
+				return;
+			}
+			void moveSessionToNewWindow(tabId);
+		},
+		[guardPrimaryWindowTabMove, moveSessionToNewWindow]
 	);
 
 	// Stable callback wrappers that receive tabId from the Tab component
@@ -1899,14 +2316,43 @@ function TabBarInner({
 		}
 	}, []);
 
+	useEffect(() => {
+		if (!window.maestro?.windows?.onDropZoneHighlight) {
+			return undefined;
+		}
+
+		const unsubscribe = window.maestro.windows.onDropZoneHighlight((event) => {
+			setIsDropZoneHighlightActive(Boolean(event?.highlight));
+		});
+		return () => {
+			unsubscribe?.();
+		};
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			const highlightedId = highlightedWindowIdRef.current;
+			if (highlightedId && window.maestro?.windows?.highlightDropZone) {
+				void window.maestro.windows.highlightDropZone(highlightedId, false);
+			}
+			cleanupDragPreview();
+		};
+	}, [cleanupDragPreview]);
+
 	return (
 		<div
 			ref={tabBarRef}
 			className="flex items-end gap-0.5 pt-2 border-b overflow-x-auto overflow-y-hidden no-scrollbar"
 			data-tour="tab-bar"
+			data-dragging-outside={isDraggingOutsideWindow ? 'true' : 'false'}
+			data-drop-target-highlight={isDropZoneHighlightActive ? 'true' : 'false'}
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
+				borderColor: isDropZoneHighlightActive ? theme.colors.accent : theme.colors.border,
+				boxShadow: isDropZoneHighlightActive
+					? `inset 0 -2px 0 ${theme.colors.accent}, 0 8px 24px ${theme.colors.accent}33`
+					: 'none',
+				transition: 'box-shadow 120ms ease, border-color 120ms ease',
 			}}
 		>
 			{/* Tab search and unread filter - sticky at the beginning with full-height opaque background */}
@@ -2004,6 +2450,7 @@ function TabBarInner({
 										onSelect={onTabSelect}
 										onClose={onTabClose}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}
@@ -2034,6 +2481,7 @@ function TabBarInner({
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
 										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+										onMoveToNewWindow={handleTabMoveToNewWindow}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
 										shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}
@@ -2066,6 +2514,7 @@ function TabBarInner({
 										onSelect={onFileTabSelect || (() => {})}
 										onClose={onFileTabClose || (() => {})}
 										onDragStart={handleDragStart}
+										onDrag={handleDrag}
 										onDragOver={handleDragOver}
 										onDragEnd={handleDragEnd}
 										onDrop={handleDrop}
@@ -2122,6 +2571,7 @@ function TabBarInner({
 									onSelect={onTabSelect}
 									onClose={onTabClose}
 									onDragStart={handleDragStart}
+									onDrag={handleDrag}
 									onDragOver={handleDragOver}
 									onDragEnd={handleDragEnd}
 									onDrop={handleDrop}
@@ -2148,6 +2598,7 @@ function TabBarInner({
 									}
 									onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
 									onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
+									onMoveToNewWindow={handleTabMoveToNewWindow}
 									isFirstTab={isFirstTab}
 									isLastTab={isLastTab}
 									shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}

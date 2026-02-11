@@ -43,6 +43,7 @@ describe('GroupChat Preload API', () => {
 					'groupChat:create',
 					'My Group Chat',
 					'claude-code',
+					undefined,
 					undefined
 				);
 				expect(result).toEqual({ id: 'gc-123' });
@@ -58,7 +59,22 @@ describe('GroupChat Preload API', () => {
 					'groupChat:create',
 					'My Group Chat',
 					'claude-code',
-					moderatorConfig
+					moderatorConfig,
+					undefined
+				);
+			});
+
+			it('should pass initiator window id when provided', async () => {
+				mockInvoke.mockResolvedValue({ id: 'gc-456' });
+
+				await api.create('Window Chat', 'claude-code', undefined, 'window-2');
+
+				expect(mockInvoke).toHaveBeenCalledWith(
+					'groupChat:create',
+					'Window Chat',
+					'claude-code',
+					undefined,
+					'window-2'
 				);
 			});
 		});

@@ -18,6 +18,7 @@ import type {
 	AutoRunSession,
 	AutoRunTask,
 	SessionLifecycleEvent,
+	WindowUsageSnapshot,
 	StatsTimeRange,
 	StatsFilters,
 	StatsAggregation,
@@ -54,6 +55,11 @@ import {
 } from './session-lifecycle';
 import { getAggregatedStats } from './aggregations';
 import { clearOldData, exportToCsv } from './data-management';
+import {
+	insertWindowUsageSnapshot,
+	getWindowUsageSnapshots,
+	clearWindowUsageCache,
+} from './window-usage';
 
 /**
  * StatsDB manages the SQLite database for usage statistics.
@@ -151,6 +157,7 @@ export class StatsDB {
 			clearQueryEventCache();
 			clearAutoRunCache();
 			clearSessionLifecycleCache();
+			clearWindowUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -758,6 +765,18 @@ export class StatsDB {
 	}
 
 	// ============================================================================
+	// Window Usage Snapshots (delegated)
+	// ============================================================================
+
+	recordWindowUsageSnapshot(snapshot: Omit<WindowUsageSnapshot, 'id'>): string {
+		return insertWindowUsageSnapshot(this.database, snapshot);
+	}
+
+	getWindowUsageSnapshots(range: StatsTimeRange): WindowUsageSnapshot[] {
+		return getWindowUsageSnapshots(this.database, range);
+	}
+
+	// ============================================================================
 	// Aggregations (delegated)
 	// ============================================================================
 
@@ -777,6 +796,7 @@ export class StatsDB {
 				deletedAutoRunSessions: 0,
 				deletedAutoRunTasks: 0,
 				deletedSessionLifecycle: 0,
+				deletedWindowUsageEvents: 0,
 				error: 'Database not initialized',
 			};
 		}
@@ -797,19 +817,24 @@ export class StatsDB {
 	 */
 	getEarliestTimestamp(): number | null {
 		try {
-			// Query the minimum startTime from query_events table
+			// Query the minimum start_time from query_events table
 			const queryResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM query_events')
+				.prepare('SELECT MIN(start_time) as earliest FROM query_events')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum startTime from auto_run_sessions table
+			// Query the minimum start_time from auto_run_sessions table
 			const autoRunResult = this.database
-				.prepare('SELECT MIN(startTime) as earliest FROM auto_run_sessions')
+				.prepare('SELECT MIN(start_time) as earliest FROM auto_run_sessions')
 				.get() as { earliest: number | null } | undefined;
 
-			// Query the minimum createdAt from session_lifecycle table
+			// Query the minimum created_at from session_lifecycle table
 			const lifecycleResult = this.database
-				.prepare('SELECT MIN(createdAt) as earliest FROM session_lifecycle')
+				.prepare('SELECT MIN(created_at) as earliest FROM session_lifecycle')
+				.get() as { earliest: number | null } | undefined;
+
+			// Query the minimum recorded_at from window_usage_events table
+			const windowUsageResult = this.database
+				.prepare('SELECT MIN(recorded_at) as earliest FROM window_usage_events')
 				.get() as { earliest: number | null } | undefined;
 
 			// Find the minimum across all tables
@@ -817,6 +842,7 @@ export class StatsDB {
 				queryResult?.earliest,
 				autoRunResult?.earliest,
 				lifecycleResult?.earliest,
+				windowUsageResult?.earliest,
 			].filter((t): t is number => t !== null && t !== undefined);
 
 			if (timestamps.length === 0) {

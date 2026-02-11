@@ -73,6 +73,11 @@ export * from './utils';
 export * from './props';
 
 // ============================================================================
+// Window state synchronization hooks
+// ============================================================================
+export { useWindowState } from './useWindowState';
+
+// ============================================================================
 // Stats Module - Usage statistics and dashboard data
 // ============================================================================
 export { useStats, useComputedStats } from './useStats';

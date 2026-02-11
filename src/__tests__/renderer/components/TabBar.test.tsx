@@ -1,8 +1,38 @@
 import React from 'react';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TabBar } from '../../../renderer/components/TabBar';
+import { TabBar, moveSessionToWindowHelper } from '../../../renderer/components/TabBar';
 import type { AITab, Theme, FilePreviewTab } from '../../../renderer/types';
+
+const addToastMock = vi.fn();
+const mockWindowContextValue = {
+	windowId: 'primary',
+	windowNumber: 1,
+	isMainWindow: true,
+	sessionIds: [] as string[],
+	activeSessionId: null as string | null,
+	openSession: vi.fn(),
+	closeTab: vi.fn(),
+	moveSessionToNewWindow: vi.fn(),
+	assignSessionsToWindow: vi.fn(),
+};
+
+vi.mock('../../../renderer/contexts/WindowContext', () => ({
+	useWindowContext: () => mockWindowContextValue,
+}));
+
+vi.mock('../../../renderer/contexts/ToastContext', () => ({
+	useToast: () => ({
+		addToast: addToastMock,
+		removeToast: vi.fn(),
+		clearToasts: vi.fn(),
+		toasts: [],
+		defaultDuration: 0,
+		setDefaultDuration: vi.fn(),
+		setAudioFeedback: vi.fn(),
+		setOsNotifications: vi.fn(),
+	}),
+}));
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
@@ -164,6 +194,9 @@ describe('TabBar', () => {
 	beforeEach(() => {
 		vi.useFakeTimers();
 		vi.clearAllMocks();
+		addToastMock.mockReset();
+		mockWindowContextValue.sessionIds = [];
+		mockWindowContextValue.isMainWindow = true;
 		// Mock scrollTo and scrollIntoView
 		Element.prototype.scrollTo = vi.fn();
 		Element.prototype.scrollIntoView = vi.fn();
@@ -175,7 +208,7 @@ describe('TabBar', () => {
 		});
 	});
 
-	afterEach(() => {
+		afterEach(() => {
 		vi.useRealTimers();
 	});
 
@@ -191,10 +224,30 @@ describe('TabBar', () => {
 					onTabSelect={mockOnTabSelect}
 					onTabClose={mockOnTabClose}
 					onNewTab={mockOnNewTab}
+					sessionId="session-1"
 				/>
 			);
 
 			expect(screen.getByText('Tab 1')).toBeInTheDocument();
+		});
+
+		it('hides tabs when session not assigned to window', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			mockWindowContextValue.sessionIds = ['session-allowed'];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					sessionId="session-blocked"
+				/>
+			);
+
+			expect(screen.queryByText('Tab 1')).not.toBeInTheDocument();
 		});
 
 		it('renders new tab button', () => {
@@ -765,34 +818,80 @@ describe('TabBar', () => {
 		});
 	});
 
-	describe('drag and drop', () => {
-		it('handles drag start', () => {
-			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+		describe('drag and drop', () => {
+			it('handles drag start', async () => {
+				const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+				const originalGetWindowBounds = window.maestro.windows.getWindowBounds;
+				(window.maestro.windows as any).getWindowBounds = undefined;
 
-			render(
-				<TabBar
-					tabs={tabs}
-					activeTabId="tab-1"
-					theme={mockTheme}
-					onTabSelect={mockOnTabSelect}
-					onTabClose={mockOnTabClose}
-					onNewTab={mockOnNewTab}
-					onTabReorder={mockOnTabReorder}
-				/>
-			);
+				render(
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onTabReorder={mockOnTabReorder}
+					/>
+				);
 
-			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
-			const dataTransfer = {
-				effectAllowed: '',
-				setData: vi.fn(),
-				getData: vi.fn().mockReturnValue('tab-1'),
-			};
+				const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+				const dataTransfer = {
+					effectAllowed: '',
+					setData: vi.fn(),
+					getData: vi.fn().mockReturnValue('tab-1'),
+				};
 
-			fireEvent.dragStart(tab, { dataTransfer });
+				try {
+					await act(async () => {
+						fireEvent.dragStart(tab, { dataTransfer });
+						await Promise.resolve();
+					});
+				} finally {
+					(window.maestro.windows as any).getWindowBounds = originalGetWindowBounds;
+				}
 
-			expect(dataTransfer.effectAllowed).toBe('move');
-			expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'tab-1');
-		});
+				expect(dataTransfer.effectAllowed).toBe('move');
+				expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'tab-1');
+			});
+
+			it('prevents dragging the last tab out of the primary window and shows a toast', async () => {
+				const tabs = [createTab({ id: 'tab-1', name: 'Solo Tab' })];
+				mockWindowContextValue.sessionIds = ['tab-1'];
+				mockWindowContextValue.isMainWindow = true;
+
+				render(
+					<TabBar
+						tabs={tabs}
+						activeTabId="tab-1"
+						theme={mockTheme}
+						onTabSelect={mockOnTabSelect}
+						onTabClose={mockOnTabClose}
+						onNewTab={mockOnNewTab}
+						onTabReorder={mockOnTabReorder}
+					/>
+				);
+
+				const tab = screen.getByText('Solo Tab').closest('[data-tab-id]')!;
+				const dataTransfer = {
+					effectAllowed: '',
+					setData: vi.fn(),
+					getData: vi.fn(),
+				};
+
+				await act(async () => {
+					fireEvent.dragStart(tab, { dataTransfer });
+					await Promise.resolve();
+				});
+
+				expect(addToastMock).toHaveBeenCalledTimes(1);
+				expect(addToastMock.mock.calls[0][0]).toMatchObject({
+					title: 'Keep a tab in the primary window',
+					type: 'warning',
+				});
+				expect(dataTransfer.setData).not.toHaveBeenCalled();
+			});
 
 		it('handles drag over', () => {
 			const tabs = [
@@ -917,6 +1016,217 @@ describe('TabBar', () => {
 
 			// Tab should no longer have opacity-50 class (dragging state)
 			expect(tab).not.toHaveClass('opacity-50');
+		});
+
+		it('creates a drag preview image when dragging starts', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]') as HTMLElement;
+			tab.getBoundingClientRect = () => ({
+				left: 0,
+				top: 0,
+				right: 120,
+				bottom: 32,
+				width: 120,
+				height: 32,
+				x: 0,
+				y: 0,
+				toJSON: () => ({}),
+			});
+
+			const dataTransfer = {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('tab-1'),
+				setDragImage: vi.fn(),
+			};
+
+			fireEvent.dragStart(tab, {
+				dataTransfer,
+				clientX: 10,
+				clientY: 10,
+				screenX: 10,
+				screenY: 10,
+			});
+
+			expect(dataTransfer.setDragImage).toHaveBeenCalledTimes(1);
+
+			fireEvent.dragEnd(tab, { dataTransfer });
+		});
+
+		it('notifies other windows about drop targets when dragging outside bounds', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const getWindowBoundsMock = vi.mocked(window.maestro.windows.getWindowBounds);
+			const findWindowAtPointMock = vi.mocked(window.maestro.windows.findWindowAtPoint);
+			getWindowBoundsMock.mockResolvedValue({
+				x: 0,
+				y: 0,
+				width: 50,
+				height: 50,
+			});
+			findWindowAtPointMock.mockResolvedValue('secondary-window');
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]') as HTMLElement;
+			tab.getBoundingClientRect = () => ({
+				left: 0,
+				top: 0,
+				right: 120,
+				bottom: 32,
+				width: 120,
+				height: 32,
+				x: 0,
+				y: 0,
+				toJSON: () => ({}),
+			});
+
+			const dataTransfer = {
+				effectAllowed: '',
+				setData: vi.fn(),
+				getData: vi.fn().mockReturnValue('tab-1'),
+				setDragImage: vi.fn(),
+			};
+
+			fireEvent.dragStart(tab, {
+				dataTransfer,
+				clientX: 10,
+				clientY: 10,
+				screenX: 10,
+				screenY: 10,
+			});
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			fireEvent.drag(tab, {
+				dataTransfer,
+				clientX: 20,
+				clientY: 20,
+				screenX: 200,
+				screenY: 200,
+			});
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.windows.highlightDropZone).toHaveBeenCalledWith(
+				'secondary-window',
+				true
+			);
+
+			fireEvent.dragEnd(tab, { dataTransfer });
+
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			expect(window.maestro.windows.highlightDropZone).toHaveBeenCalledWith(
+				'secondary-window',
+				false
+			);
+		});
+	});
+
+	describe('drop zone highlight IPC', () => {
+		it('toggles highlight state when IPC event fires', () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			const listeners: Array<(event: { highlight: boolean }) => void> = [];
+			const dropZoneListenerMock = vi.mocked(window.maestro.windows.onDropZoneHighlight);
+			dropZoneListenerMock.mockImplementation((callback) => {
+				listeners.push(callback);
+				return () => {};
+			});
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			const tabBar = document.querySelector('[data-tour="tab-bar"]') as HTMLElement;
+			expect(tabBar).toHaveAttribute('data-drop-target-highlight', 'false');
+
+			act(() => {
+				listeners[0]?.({ highlight: true });
+			});
+			expect(tabBar).toHaveAttribute('data-drop-target-highlight', 'true');
+
+			act(() => {
+				listeners[0]?.({ highlight: false });
+			});
+			expect(tabBar).toHaveAttribute('data-drop-target-highlight', 'false');
+		});
+	});
+
+	describe('moveSessionToWindowHelper', () => {
+		it('moves session when valid target window is provided', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'tab-1',
+				targetWindowId: 'secondary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).toHaveBeenCalledWith({
+				sessionId: 'tab-1',
+				toWindowId: 'secondary',
+				fromWindowId: 'primary',
+			});
+		});
+
+		it('skips when target window matches current window', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'tab-1',
+				targetWindowId: 'primary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
+		});
+
+		it('skips when tab is not part of the AI tab list', async () => {
+			const tabs = [createTab({ id: 'tab-1', name: 'Tab 1' })];
+			await moveSessionToWindowHelper({
+				tabId: 'file-tab-1',
+				targetWindowId: 'secondary',
+				windowId: 'primary',
+				tabs,
+			});
+
+			expect(window.maestro.windows.moveSession).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1954,6 +2264,99 @@ describe('TabBar', () => {
 	});
 
 	describe('tab hover overlay menu (tab move operations)', () => {
+		it('shows "Move to New Window" option for session tabs', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
+			];
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			expect(screen.getByText('Move to New Window')).toBeInTheDocument();
+		});
+
+		it('calls moveSessionToNewWindow when clicking "Move to New Window"', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+				createTab({ id: 'tab-2', name: 'Tab 2', agentSessionId: 'session-2' }),
+			];
+
+			mockWindowContextValue.moveSessionToNewWindow.mockResolvedValue('window-new');
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-2"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 2').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			fireEvent.click(screen.getByText('Move to New Window'));
+
+			expect(mockWindowContextValue.moveSessionToNewWindow).toHaveBeenCalledWith('tab-2');
+		});
+
+		it('shows a toast instead of moving the last primary window tab to a new window', () => {
+			const tabs = [
+				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
+			];
+
+			mockWindowContextValue.sessionIds = ['tab-1'];
+			mockWindowContextValue.isMainWindow = true;
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					onTabReorder={mockOnTabReorder}
+				/>
+			);
+
+			const tab = screen.getByText('Tab 1').closest('[data-tab-id]')!;
+			fireEvent.mouseEnter(tab);
+
+			act(() => {
+				vi.advanceTimersByTime(450);
+			});
+
+			fireEvent.click(screen.getByText('Move to New Window'));
+
+			expect(addToastMock).toHaveBeenCalledTimes(1);
+			expect(mockWindowContextValue.moveSessionToNewWindow).not.toHaveBeenCalled();
+		});
+
 		it('shows "Move to First Position" for non-first tabs', () => {
 			const tabs = [
 				createTab({ id: 'tab-1', name: 'Tab 1', agentSessionId: 'session-1' }),
@@ -3754,7 +4157,7 @@ describe('Unified tabs drag and drop', () => {
 		expect(mockOnUnifiedTabReorder).not.toHaveBeenCalled();
 	});
 
-	it('sets drag over visual feedback on target tab', () => {
+	it('sets drag over visual feedback on target tab', async () => {
 		render(
 			<TabBar
 				tabs={aiTabs}
@@ -3775,19 +4178,25 @@ describe('Unified tabs drag and drop', () => {
 		const fileTabElement = screen.getByText('file1').closest('[data-tab-id]')!;
 
 		// Start dragging AI tab
-		fireEvent.dragStart(aiTabElement, {
-			dataTransfer: {
-				effectAllowed: '',
-				setData: vi.fn(),
-				getData: vi.fn().mockReturnValue('ai-tab-1'),
-			},
+		await act(async () => {
+			fireEvent.dragStart(aiTabElement, {
+				dataTransfer: {
+					effectAllowed: '',
+					setData: vi.fn(),
+					getData: vi.fn().mockReturnValue('ai-tab-1'),
+				},
+			});
+			await Promise.resolve();
 		});
 
 		// Drag over file tab
-		fireEvent.dragOver(fileTabElement, {
-			dataTransfer: {
-				dropEffect: '',
-			},
+		await act(async () => {
+			fireEvent.dragOver(fileTabElement, {
+				dataTransfer: {
+					dropEffect: '',
+				},
+			});
+			await Promise.resolve();
 		});
 
 		// File tab should have ring visual

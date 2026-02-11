@@ -220,6 +220,7 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Test Chat',
 				'claude-code',
+				undefined,
 				undefined
 			);
 			expect(groupChatModerator.spawnModerator).toHaveBeenCalledWith(mockChat, mockProcessManager);
@@ -254,7 +255,33 @@ describe('groupChat IPC handlers', () => {
 			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
 				'Config Chat',
 				'claude-code',
-				moderatorConfig
+				moderatorConfig,
+				undefined
+			);
+		});
+
+		it('should forward initiator window id', async () => {
+			const mockChat: GroupChat = {
+				id: 'gc-init',
+				name: 'Window Scoped',
+				createdAt: Date.now(),
+				updatedAt: Date.now(),
+				moderatorAgentId: 'claude-code',
+				moderatorSessionId: '',
+				participants: [],
+				logPath: '/tmp/log',
+				imagesDir: '/tmp/images',
+			};
+
+			vi.mocked(groupChatStorage.createGroupChat).mockResolvedValue(mockChat);
+			const handler = handlers.get('groupChat:create');
+			await handler!({} as any, 'Window Scoped', 'claude-code', undefined, 'window-5');
+
+			expect(groupChatStorage.createGroupChat).toHaveBeenCalledWith(
+				'Window Scoped',
+				'claude-code',
+				undefined,
+				'window-5'
 			);
 		});
 

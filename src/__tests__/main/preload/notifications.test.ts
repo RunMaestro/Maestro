@@ -36,7 +36,12 @@ describe('Notification Preload API', () => {
 
 			const result = await api.show('Test Title', 'Test Body');
 
-			expect(mockInvoke).toHaveBeenCalledWith('notification:show', 'Test Title', 'Test Body');
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'notification:show',
+				'Test Title',
+				'Test Body',
+				undefined
+			);
 			expect(result).toEqual({ success: true });
 		});
 

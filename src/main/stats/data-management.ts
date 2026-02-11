@@ -35,6 +35,7 @@ export function clearOldData(
 	deletedAutoRunSessions: number;
 	deletedAutoRunTasks: number;
 	deletedSessionLifecycle: number;
+	deletedWindowUsageEvents: number;
 	error?: string;
 } {
 	if (olderThanDays <= 0) {
@@ -44,6 +45,7 @@ export function clearOldData(
 			deletedAutoRunSessions: 0,
 			deletedAutoRunTasks: 0,
 			deletedSessionLifecycle: 0,
+			deletedWindowUsageEvents: 0,
 			error: 'olderThanDays must be greater than 0',
 		};
 	}
@@ -60,6 +62,7 @@ export function clearOldData(
 		let deletedSessions = 0;
 		let deletedTasks = 0;
 		let deletedLifecycle = 0;
+		let deletedWindowUsage = 0;
 
 		// Wrap all deletes in a transaction for atomicity
 		const runCleanup = db.transaction(() => {
@@ -88,13 +91,20 @@ export function clearOldData(
 				.prepare('DELETE FROM session_lifecycle WHERE created_at < ?')
 				.run(cutoffTime);
 			deletedLifecycle = lifecycleResult.changes;
+
+			// Delete window_usage_events
+			const windowUsageResult = db
+				.prepare('DELETE FROM window_usage_events WHERE recorded_at < ?')
+				.run(cutoffTime);
+			deletedWindowUsage = windowUsageResult.changes;
 		});
 
 		runCleanup();
 
-		const totalDeleted = deletedEvents + deletedSessions + deletedTasks + deletedLifecycle;
+		const totalDeleted =
+			deletedEvents + deletedSessions + deletedTasks + deletedLifecycle + deletedWindowUsage;
 		logger.info(
-			`Cleared ${totalDeleted} old stats records (${deletedEvents} query events, ${deletedSessions} auto-run sessions, ${deletedTasks} auto-run tasks, ${deletedLifecycle} session lifecycle)`,
+			`Cleared ${totalDeleted} old stats records (${deletedEvents} query events, ${deletedSessions} auto-run sessions, ${deletedTasks} auto-run tasks, ${deletedLifecycle} session lifecycle, ${deletedWindowUsage} window usage snapshots)`,
 			LOG_CONTEXT
 		);
 
@@ -104,6 +114,7 @@ export function clearOldData(
 			deletedAutoRunSessions: deletedSessions,
 			deletedAutoRunTasks: deletedTasks,
 			deletedSessionLifecycle: deletedLifecycle,
+			deletedWindowUsageEvents: deletedWindowUsage,
 		};
 	} catch (error) {
 		const errorMessage = error instanceof Error ? error.message : String(error);
@@ -114,6 +125,7 @@ export function clearOldData(
 			deletedAutoRunSessions: 0,
 			deletedAutoRunTasks: 0,
 			deletedSessionLifecycle: 0,
+			deletedWindowUsageEvents: 0,
 			error: errorMessage,
 		};
 	}

@@ -17,7 +17,7 @@ export function setupUsageListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		| 'safeSend'
+		| 'broadcastToAllWindows'
 		| 'outputParser'
 		| 'groupChatEmitters'
 		| 'groupChatStorage'
@@ -27,7 +27,7 @@ export function setupUsageListener(
 	>
 ): void {
 	const {
-		safeSend,
+		broadcastToAllWindows,
 		outputParser,
 		groupChatEmitters,
 		groupChatStorage,
@@ -119,6 +119,6 @@ export function setupUsageListener(
 			}
 		}
 
-		safeSend('process:usage', sessionId, usageStats);
+		broadcastToAllWindows('process:usage', sessionId, usageStats);
 	});
 }

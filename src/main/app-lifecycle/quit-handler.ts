@@ -4,11 +4,19 @@
  */
 
 import { app, ipcMain, BrowserWindow } from 'electron';
+import type Store from 'electron-store';
 import { logger } from '../utils/logger';
 import type { ProcessManager } from '../process-manager';
 import type { WebServer } from '../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
+import type { WindowRegistry } from '../window-registry';
+import type { WindowState as WindowStateStoreShape } from '../stores/types';
+import type {
+	MultiWindowState as PersistedMultiWindowState,
+	WindowState as PersistedWindowState,
+} from '../../shared/types/window';
+import { WINDOW_STATE_DEFAULTS } from '../stores/defaults';
 import { isWebContentsAvailable } from '../utils/safe-send';
 
 /** Dependencies for quit handler */
@@ -29,6 +37,10 @@ export interface QuitHandlerDependencies {
 	cleanupAllGroomingSessions: (pm: ProcessManager) => Promise<void>;
 	/** Function to close the stats database */
 	closeStatsDB: () => void;
+	/** Function to get the window registry */
+	getWindowRegistry: () => WindowRegistry | null;
+	/** Store for window state persistence */
+	windowStateStore: Store<WindowStateStoreShape>;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
 }
@@ -50,6 +62,8 @@ export interface QuitHandler {
 	/** Mark quit as confirmed (for programmatic quit) */
 	confirmQuit: () => void;
 }
+
+type RegisteredWindowEntry = ReturnType<WindowRegistry['getAll']>[number];
 
 /**
  * Creates a quit handler that manages application quit flow.
@@ -74,6 +88,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		getActiveGroomingSessionCount,
 		cleanupAllGroomingSessions,
 		closeStatsDB,
+		getWindowRegistry,
+		windowStateStore,
 		stopCliWatcher,
 	} = deps;
 
@@ -146,8 +162,35 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 	 * Performs cleanup operations before app quits.
 	 * Called synchronously from before-quit, so async operations are fire-and-forget.
 	 */
+	function persistWindowLayoutState(): void {
+		try {
+			const windowRegistry = getWindowRegistry();
+			if (!windowRegistry) {
+				return;
+			}
+
+			const windowEntries = windowRegistry.getAll();
+			if (windowEntries.length === 0) {
+				return;
+			}
+
+			const nextState = buildMultiWindowStateFromRegistry(windowEntries, windowStateStore);
+			windowStateStore.set('multiWindowState', nextState);
+
+			const primaryWindow = nextState.windows.find((window) => window.id === nextState.primaryWindowId);
+			if (primaryWindow) {
+				syncLegacyWindowStateSnapshot(windowStateStore, primaryWindow);
+			}
+		} catch (error) {
+			logger.error('Failed to persist window state during shutdown', 'Shutdown', {
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
 	function performCleanup(): void {
 		logger.info('Application shutting down', 'Shutdown');
+		persistWindowLayoutState();
 
 		// Stop history manager watcher
 		getHistoryManager().stopWatching();
@@ -190,4 +233,149 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 
 		logger.info('Shutdown complete', 'Shutdown');
 	}
+}
+
+function buildMultiWindowStateFromRegistry(
+	windowEntries: RegisteredWindowEntry[],
+	windowStateStore: Store<WindowStateStoreShape>
+): PersistedMultiWindowState {
+	const previousState = getMultiWindowStateSnapshot(windowStateStore);
+	const previousStateMap = new Map(previousState.windows.map((window) => [window.id, window]));
+	let primaryWindowId = previousState.primaryWindowId;
+	const windows: PersistedWindowState[] = [];
+
+	for (const entry of windowEntries) {
+		const snapshot = buildWindowStateSnapshot(entry, previousStateMap.get(entry.windowId));
+		windows.push(snapshot);
+		if (entry.isMain) {
+			primaryWindowId = entry.windowId;
+		}
+	}
+
+	if (!windows.length) {
+		return previousState;
+	}
+
+	if (!windows.some((window) => window.id === primaryWindowId)) {
+		primaryWindowId = windows[0].id;
+	}
+
+	return {
+		primaryWindowId,
+		windows,
+	};
+}
+
+function buildWindowStateSnapshot(
+	entry: RegisteredWindowEntry,
+	previousState?: PersistedWindowState
+): PersistedWindowState {
+	const baseState = previousState
+		? cloneWindowState(previousState)
+		: createDefaultWindowStateSnapshot(entry.windowId);
+	const sessionIds = Array.from(new Set(entry.sessionIds));
+	const activeSessionId = resolveActiveSessionId(baseState.activeSessionId, sessionIds);
+
+	const snapshot: PersistedWindowState = {
+		...baseState,
+		id: entry.windowId,
+		sessionIds,
+		activeSessionId,
+	};
+
+	if (!entry.browserWindow.isDestroyed()) {
+		try {
+			const isMaximized = entry.browserWindow.isMaximized();
+			const isFullScreen = entry.browserWindow.isFullScreen();
+			snapshot.isMaximized = isMaximized;
+			snapshot.isFullScreen = isFullScreen;
+
+			if (!isMaximized && !isFullScreen) {
+				const bounds = entry.browserWindow.getBounds();
+				snapshot.x = bounds.x;
+				snapshot.y = bounds.y;
+				snapshot.width = bounds.width;
+				snapshot.height = bounds.height;
+			}
+		} catch (error) {
+			logger.warn('Failed to capture window bounds during shutdown', 'Shutdown', {
+				windowId: entry.windowId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	return snapshot;
+}
+
+function resolveActiveSessionId(
+	previousActive: string | null,
+	sessionIds: string[]
+): string | null {
+	if (previousActive && sessionIds.includes(previousActive)) {
+		return previousActive;
+	}
+	return sessionIds[0] ?? null;
+}
+
+function getMultiWindowStateSnapshot(
+	windowStateStore: Store<WindowStateStoreShape>
+): PersistedMultiWindowState {
+	const fallback = WINDOW_STATE_DEFAULTS.multiWindowState ?? {
+		primaryWindowId: 'primary',
+		windows: [],
+	};
+	const persisted =
+		windowStateStore.get('multiWindowState') ??
+		windowStateStore.store.multiWindowState ??
+		fallback;
+
+	return {
+		primaryWindowId:
+			persisted.primaryWindowId ||
+			fallback.primaryWindowId ||
+			persisted.windows?.[0]?.id ||
+			'primary',
+		windows: (persisted.windows ?? fallback.windows ?? []).map(cloneWindowState),
+	};
+}
+
+function cloneWindowState(windowState: PersistedWindowState): PersistedWindowState {
+	return {
+		...windowState,
+		sessionIds: [...windowState.sessionIds],
+	};
+}
+
+function createDefaultWindowStateSnapshot(windowId: string): PersistedWindowState {
+	const template = WINDOW_STATE_DEFAULTS.multiWindowState?.windows?.[0];
+	return {
+		id: windowId,
+		x: template?.x,
+		y: template?.y,
+		width: template?.width ?? WINDOW_STATE_DEFAULTS.width,
+		height: template?.height ?? WINDOW_STATE_DEFAULTS.height,
+		isMaximized: template?.isMaximized ?? WINDOW_STATE_DEFAULTS.isMaximized,
+		isFullScreen: template?.isFullScreen ?? WINDOW_STATE_DEFAULTS.isFullScreen,
+		sessionIds: [],
+		activeSessionId: null,
+		leftPanelCollapsed: template?.leftPanelCollapsed ?? false,
+		rightPanelCollapsed: template?.rightPanelCollapsed ?? false,
+	};
+}
+
+function syncLegacyWindowStateSnapshot(
+	windowStateStore: Store<WindowStateStoreShape>,
+	windowState: PersistedWindowState
+): void {
+	if (typeof windowState.x === 'number') {
+		windowStateStore.set('x', windowState.x);
+	}
+	if (typeof windowState.y === 'number') {
+		windowStateStore.set('y', windowState.y);
+	}
+	windowStateStore.set('width', windowState.width);
+	windowStateStore.set('height', windowState.height);
+	windowStateStore.set('isMaximized', windowState.isMaximized);
+	windowStateStore.set('isFullScreen', windowState.isFullScreen);
 }

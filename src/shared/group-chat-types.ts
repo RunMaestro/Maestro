@@ -91,6 +91,8 @@ export interface GroupChat {
 	name: string;
 	createdAt: number;
 	updatedAt?: number;
+	/** Window ID that initiated this chat (used to scope which window can display it) */
+	initiatorWindowId?: string | null;
 	moderatorAgentId: string;
 	/** Internal session ID prefix used for routing (e.g., 'group-chat-{id}-moderator') */
 	moderatorSessionId: string;

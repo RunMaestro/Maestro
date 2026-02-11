@@ -8,6 +8,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { NotificationMetadata } from '../../shared/types/notification';
 
 /**
  * Response from showing a notification
@@ -36,8 +37,12 @@ export function createNotificationApi() {
 		 * @param title - Notification title
 		 * @param body - Notification body text
 		 */
-		show: (title: string, body: string): Promise<NotificationShowResponse> =>
-			ipcRenderer.invoke('notification:show', title, body),
+		show: (
+			title: string,
+			body: string,
+			metadata?: NotificationMetadata
+		): Promise<NotificationShowResponse> =>
+			ipcRenderer.invoke('notification:show', title, body, metadata),
 
 		/**
 		 * Execute a custom notification command (e.g., TTS, logging)
@@ -80,3 +85,4 @@ export function createNotificationApi() {
  * TypeScript type for the notification API
  */
 export type NotificationApi = ReturnType<typeof createNotificationApi>;
+export type { NotificationMetadata } from '../../shared/types/notification';

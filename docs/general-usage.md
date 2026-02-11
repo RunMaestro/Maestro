@@ -328,6 +328,23 @@ Click the sidebar toggle (`Opt+Cmd+Left` / `Alt+Ctrl+Left`) to collapse the side
 
 Each agent session can have multiple tabs, allowing you to work on different tasks within the same project workspace.
 
+## Multi-Window Workflow
+
+Maestro windows share the same pool of sessions, and every window is labeled `Maestro [N]` (both in the draggable title bar and your OS window switcher) so you always know where a tab lives.
+
+### Opening a New Window
+
+- **Drag any session tab off the tab bar**. Once your cursor leaves the window frame, release to spawn a new window anchored near your cursor with that tab already active.
+- **Right-click → Move to New Window**. Every session tab context menu includes a "Move to New Window" action if you prefer a precise command instead of drag-and-drop.
+
+Tabs keep their entire conversation history, SSH settings, and toggle states when moved, so you can lay out long-running sessions across monitors without losing context.
+
+### Tracking Where Tabs Live
+
+- The Session List shows a `W2`, `W3`, etc. badge next to sessions that are open in another window, matching the number in the other window's title bar.
+- Clicking a session that's already open elsewhere **focuses that window** instead of duplicating the tab. Maestro simply brings the existing window forward, preventing accidental duplicates and helping you stay oriented.
+- If you actually want to bring the tab back, drag it from the other window or close that window — its sessions are reassigned to the primary window automatically.
+
 ### Automatic Tab Naming
 
 When you send your first message to a new tab, Maestro automatically generates a descriptive name based on your request. This helps you identify tabs at a glance without manual renaming.

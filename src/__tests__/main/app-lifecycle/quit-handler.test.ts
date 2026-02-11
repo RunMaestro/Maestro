@@ -10,6 +10,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Store from 'electron-store';
+import type { WindowState as WindowStateStoreShape } from '../../../main/stores/types';
+import type { MultiWindowState } from '../../../shared/types/window';
 
 // Track event handlers
 let beforeQuitHandler: ((event: { preventDefault: () => void }) => void) | null = null;
@@ -75,6 +78,13 @@ describe('app-lifecycle/quit-handler', () => {
 	let mockTunnelManager: {
 		stop: ReturnType<typeof vi.fn>;
 	};
+	let mockWindowRegistry: { getAll: ReturnType<typeof vi.fn> };
+	let mockWindowStateStoreImpl: {
+		get: ReturnType<typeof vi.fn>;
+		set: ReturnType<typeof vi.fn>;
+		store: { multiWindowState: MultiWindowState };
+	};
+	let mockWindowStateStore: Store<WindowStateStoreShape>;
 
 	let deps: {
 		getMainWindow: ReturnType<typeof vi.fn>;
@@ -85,6 +95,8 @@ describe('app-lifecycle/quit-handler', () => {
 		getActiveGroomingSessionCount: ReturnType<typeof vi.fn>;
 		cleanupAllGroomingSessions: ReturnType<typeof vi.fn>;
 		closeStatsDB: ReturnType<typeof vi.fn>;
+		getWindowRegistry: ReturnType<typeof vi.fn>;
+		windowStateStore: Store<WindowStateStoreShape>;
 		stopCliWatcher: ReturnType<typeof vi.fn>;
 	};
 
@@ -109,6 +121,33 @@ describe('app-lifecycle/quit-handler', () => {
 		mockTunnelManager = {
 			stop: vi.fn().mockResolvedValue(undefined),
 		};
+		mockWindowRegistry = {
+			getAll: vi.fn().mockReturnValue([]),
+		};
+		const defaultWindowState: MultiWindowState = {
+			primaryWindowId: 'primary',
+			windows: [
+				{
+					id: 'primary',
+					width: 1400,
+					height: 900,
+					isMaximized: false,
+					isFullScreen: false,
+					sessionIds: [],
+					activeSessionId: null,
+					leftPanelCollapsed: false,
+					rightPanelCollapsed: false,
+				},
+			],
+		};
+		mockWindowStateStoreImpl = {
+			get: vi.fn().mockImplementation((key: string) =>
+				key === 'multiWindowState' ? defaultWindowState : undefined
+			),
+			set: vi.fn(),
+			store: { multiWindowState: defaultWindowState },
+		};
+		mockWindowStateStore = mockWindowStateStoreImpl as unknown as Store<WindowStateStoreShape>;
 
 		deps = {
 			getMainWindow: vi.fn().mockReturnValue(mockMainWindow),
@@ -119,6 +158,8 @@ describe('app-lifecycle/quit-handler', () => {
 			getActiveGroomingSessionCount: vi.fn().mockReturnValue(0),
 			cleanupAllGroomingSessions: vi.fn().mockResolvedValue(undefined),
 			closeStatsDB: vi.fn(),
+			getWindowRegistry: vi.fn().mockReturnValue(mockWindowRegistry),
+			windowStateStore: mockWindowStateStore,
 			stopCliWatcher: vi.fn(),
 		};
 	});
@@ -284,6 +325,49 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(mockTunnelManager.stop).toHaveBeenCalled();
 			expect(mockWebServer.stop).toHaveBeenCalled();
 			expect(deps.closeStatsDB).toHaveBeenCalled();
+		})
+
+		it('should persist window layout state before cleanup', async () => {
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const mockRegisteredWindow = {
+				windowId: 'primary',
+				browserWindow: {
+					isDestroyed: vi.fn().mockReturnValue(false),
+					isMaximized: vi.fn().mockReturnValue(false),
+					isFullScreen: vi.fn().mockReturnValue(false),
+					getBounds: vi.fn().mockReturnValue({ x: 25, y: 50, width: 1200, height: 800 }),
+				},
+				sessionIds: ['session-123'],
+				isMain: true,
+			};
+			mockWindowRegistry.getAll.mockReturnValue([mockRegisteredWindow as any]);
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			expect(mockWindowRegistry.getAll).toHaveBeenCalled();
+
+			expect(mockWindowStateStoreImpl.set).toHaveBeenCalledWith(
+				'multiWindowState',
+				expect.objectContaining({
+					primaryWindowId: 'primary',
+					windows: [
+						expect.objectContaining({
+							id: 'primary',
+							sessionIds: ['session-123'],
+							x: 25,
+							y: 50,
+							width: 1200,
+							height: 800,
+						}),
+					],
+				}),
+			);
 		});
 
 		it('should cleanup grooming sessions if any are active', async () => {

@@ -209,6 +209,7 @@ describe('process IPC handlers', () => {
 		get: ReturnType<typeof vi.fn>;
 		set: ReturnType<typeof vi.fn>;
 	};
+	let mockBroadcastToAllWindows: ReturnType<typeof vi.fn>;
 	let deps: ProcessHandlerDependencies;
 
 	beforeEach(() => {
@@ -243,14 +244,7 @@ describe('process IPC handlers', () => {
 			set: vi.fn(),
 		};
 
-		// Create mock main window for SSH remote event emission
-		const mockMainWindow = {
-			isDestroyed: vi.fn().mockReturnValue(false),
-			webContents: {
-				send: vi.fn(),
-				isDestroyed: vi.fn().mockReturnValue(false),
-			},
-		};
+		mockBroadcastToAllWindows = vi.fn();
 
 		// Create dependencies
 		deps = {
@@ -258,7 +252,7 @@ describe('process IPC handlers', () => {
 			getAgentDetector: () => mockAgentDetector as any,
 			agentConfigsStore: mockAgentConfigsStore as any,
 			settingsStore: mockSettingsStore as any,
-			getMainWindow: () => mockMainWindow as any,
+			broadcastToAllWindows: mockBroadcastToAllWindows,
 		};
 
 		// Capture all registered handlers
@@ -329,6 +323,11 @@ describe('process IPC handlers', () => {
 				})
 			);
 			expect(result).toEqual({ pid: 12345, success: true });
+			expect(mockBroadcastToAllWindows).toHaveBeenCalledWith(
+				'process:ssh-remote',
+				'session-1',
+				null
+			);
 		});
 
 		it('should return pid on successful spawn', async () => {
@@ -842,6 +841,7 @@ describe('process IPC handlers', () => {
 				getAgentDetector: () => mockAgentDetector as any,
 				agentConfigsStore: mockAgentConfigsStore as any,
 				settingsStore: mockSettingsStore as any,
+				broadcastToAllWindows: vi.fn(),
 			};
 
 			// Re-register handlers with null process manager
@@ -860,6 +860,7 @@ describe('process IPC handlers', () => {
 				getAgentDetector: () => null,
 				agentConfigsStore: mockAgentConfigsStore as any,
 				settingsStore: mockSettingsStore as any,
+				broadcastToAllWindows: vi.fn(),
 			};
 
 			// Re-register handlers with null agent detector
@@ -967,6 +968,15 @@ describe('process IPC handlers', () => {
 					requiresPty: false,
 					// sshStdinScript should contain the command to execute
 					sshStdinScript: expect.stringContaining('claude'),
+				})
+			);
+			expect(mockBroadcastToAllWindows).toHaveBeenCalledWith(
+				'process:ssh-remote',
+				'session-1',
+				expect.objectContaining({
+					id: 'remote-1',
+					name: 'Dev Server',
+					host: 'dev.example.com',
 				})
 			);
 		});

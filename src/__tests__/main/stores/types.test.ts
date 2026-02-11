@@ -196,6 +196,33 @@ describe('stores/types', () => {
 			expect(state.x).toBe(100);
 			expect(state.y).toBe(200);
 		});
+
+		it('should allow persisted multiWindowState layouts', () => {
+			const state: WindowState = {
+				width: 1400,
+				height: 900,
+				isMaximized: false,
+				isFullScreen: false,
+				multiWindowState: {
+					primaryWindowId: 'primary',
+					windows: [
+						{
+							id: 'primary',
+							width: 1400,
+							height: 900,
+							isMaximized: false,
+							isFullScreen: false,
+							sessionIds: [],
+							activeSessionId: null,
+							leftPanelCollapsed: false,
+							rightPanelCollapsed: false,
+						},
+					],
+				},
+			};
+
+			expect(state.multiWindowState?.primaryWindowId).toBe('primary');
+		});
 	});
 
 	describe('ClaudeSessionOrigin', () => {

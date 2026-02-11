@@ -4,11 +4,12 @@ import type { Session, Group, Theme, Shortcut, RightPanelTab, SettingsTab } from
 import type { GroupChat } from '../../shared/group-chat-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { useToast } from '../contexts/ToastContext';
+import { useWindowContext } from '../contexts/WindowContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import type { WizardStep } from './Wizard/WizardContext';
-import { useListNavigation } from '../hooks';
+import { useListNavigation, useSessionWindowAssignments } from '../hooks';
 
 interface QuickAction {
 	id: string;
@@ -211,7 +212,26 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
 	const { addToast } = useToast();
+	const { windowId: currentWindowId, sessionIds: windowSessionIds } = useWindowContext();
+	const sessionWindowAssignments = useSessionWindowAssignments(sessions, windowSessionIds);
 	const activeSession = sessions.find((s) => s.id === activeSessionId);
+
+	const handleSessionQuickAction = useCallback(
+		(sessionId: string): boolean => {
+			const assignment = sessionWindowAssignments.get(sessionId);
+			if (assignment && currentWindowId && assignment.windowId !== currentWindowId) {
+				window.maestro.windows
+					.focusWindow(assignment.windowId)
+					.catch((error) =>
+						console.error('[QuickActionsModal] Failed to focus window for session', error)
+					);
+				return false;
+			}
+			setActiveSessionId(sessionId);
+			return true;
+		},
+		[sessionWindowAssignments, currentWindowId, setActiveSessionId]
+	);
 
 	// Register layer on mount (handler will be updated by separate effect)
 	useEffect(() => {
@@ -305,9 +325,9 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 			id: `jump-${s.id}`,
 			label,
 			action: () => {
-				setActiveSessionId(s.id);
-				// Auto-expand group if it's collapsed
-				if (s.groupId) {
+				const switchedLocally = handleSessionQuickAction(s.id);
+				// Auto-expand group if it's collapsed (only for sessions in this window)
+				if (switchedLocally && s.groupId) {
 					setGroups((prev) =>
 						prev.map((g) => (g.id === s.groupId && g.collapsed ? { ...g, collapsed: false } : g))
 					);

@@ -17,10 +17,22 @@ export function setupSessionIdListener(
 	processManager: ProcessManager,
 	deps: Pick<
 		ProcessListenerDependencies,
-		'safeSend' | 'outputParser' | 'groupChatEmitters' | 'groupChatStorage' | 'logger' | 'patterns'
+		| 'broadcastToAllWindows'
+		| 'outputParser'
+		| 'groupChatEmitters'
+		| 'groupChatStorage'
+		| 'logger'
+		| 'patterns'
 	>
 ): void {
-	const { safeSend, outputParser, groupChatEmitters, groupChatStorage, logger, patterns } = deps;
+	const {
+		broadcastToAllWindows,
+		outputParser,
+		groupChatEmitters,
+		groupChatStorage,
+		logger,
+		patterns,
+	} = deps;
 	const { REGEX_MODERATOR_SESSION_TIMESTAMP } = patterns;
 
 	processManager.on('session-id', (sessionId: string, agentSessionId: string) => {
@@ -77,6 +89,6 @@ export function setupSessionIdListener(
 			// Don't return - still send to renderer for logging purposes
 		}
 
-		safeSend('process:session-id', sessionId, agentSessionId);
+		broadcastToAllWindows('process:session-id', sessionId, agentSessionId);
 	});
 }

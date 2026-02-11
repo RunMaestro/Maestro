@@ -10,8 +10,11 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+import type { BrowserWindowConstructorOptions } from 'electron';
+
 // Track event handlers
 let windowCloseHandler: (() => void) | null = null;
+let lastBrowserWindowOptions: BrowserWindowConstructorOptions | undefined;
 
 // Mock BrowserWindow instance methods
 const mockWebContents = {
@@ -27,10 +30,13 @@ const mockWindowInstance = {
 	setFullScreen: vi.fn(),
 	isMaximized: vi.fn().mockReturnValue(false),
 	isFullScreen: vi.fn().mockReturnValue(false),
+	isDestroyed: vi.fn().mockReturnValue(false),
 	getBounds: vi.fn().mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 }),
 	webContents: mockWebContents,
 	on: vi.fn((event: string, handler: () => void) => {
-		if (event === 'close') windowCloseHandler = handler;
+		if (event === 'close') {
+			windowCloseHandler = handler;
+		}
 	}),
 };
 
@@ -42,22 +48,38 @@ class MockBrowserWindow {
 	setFullScreen = mockWindowInstance.setFullScreen;
 	isMaximized = mockWindowInstance.isMaximized;
 	isFullScreen = mockWindowInstance.isFullScreen;
+	isDestroyed = mockWindowInstance.isDestroyed;
 	getBounds = mockWindowInstance.getBounds;
 	webContents = mockWindowInstance.webContents;
 	on = mockWindowInstance.on;
 
-	constructor(_options: unknown) {
-		// Constructor accepts options but we don't need them for the mock
+	constructor(options: BrowserWindowConstructorOptions) {
+		lastBrowserWindowOptions = options;
 	}
 }
 
 // Mock ipcMain
 const mockHandle = vi.fn();
 
+const defaultDisplay = {
+	id: 1,
+	bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+	workArea: { x: 0, y: 0, width: 1920, height: 1080 },
+};
+
+const mockGetDisplayMatching = vi.fn().mockReturnValue(defaultDisplay);
+const mockGetPrimaryDisplay = vi.fn().mockReturnValue(defaultDisplay);
+const mockGetAllDisplays = vi.fn().mockReturnValue([defaultDisplay]);
+
 vi.mock('electron', () => ({
 	BrowserWindow: MockBrowserWindow,
 	ipcMain: {
 		handle: (...args: unknown[]) => mockHandle(...args),
+	},
+	screen: {
+		getDisplayMatching: (...args: unknown[]) => mockGetDisplayMatching(...args),
+		getPrimaryDisplay: () => mockGetPrimaryDisplay(),
+		getAllDisplays: () => mockGetAllDisplays(),
 	},
 }));
 
@@ -88,36 +110,92 @@ vi.mock('electron-devtools-installer', () => ({
 describe('app-lifecycle/window-manager', () => {
 	let mockWindowStateStore: {
 		store: {
-			x: number;
-			y: number;
+			x?: number;
+			y?: number;
 			width: number;
 			height: number;
 			isMaximized: boolean;
 			isFullScreen: boolean;
+			displayId?: number | null;
+			multiWindowState: {
+				primaryWindowId: string;
+				windows: Array<{
+					id: string;
+					x?: number;
+					y?: number;
+					width: number;
+					height: number;
+					isMaximized: boolean;
+					isFullScreen: boolean;
+					sessionIds: string[];
+					activeSessionId: string | null;
+					leftPanelCollapsed: boolean;
+					rightPanelCollapsed: boolean;
+				}>;
+			};
 		};
 		set: ReturnType<typeof vi.fn>;
+		get: ReturnType<typeof vi.fn>;
 	};
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.resetModules(); // Reset module cache to clear devStubsRegistered flag
 		windowCloseHandler = null;
+		lastBrowserWindowOptions = undefined;
+		mockGetDisplayMatching.mockReset();
+		mockGetPrimaryDisplay.mockReset();
+		mockGetAllDisplays.mockReset();
+		mockGetDisplayMatching.mockReturnValue(defaultDisplay);
+		mockGetPrimaryDisplay.mockReturnValue(defaultDisplay);
+		mockGetAllDisplays.mockReturnValue([defaultDisplay]);
+
+		const defaultWindowState = {
+			id: 'primary',
+			x: 50,
+			y: 50,
+			width: 1400,
+			height: 900,
+			isMaximized: false,
+			isFullScreen: false,
+			sessionIds: [],
+			activeSessionId: null,
+			leftPanelCollapsed: false,
+			rightPanelCollapsed: false,
+			displayId: defaultDisplay.id,
+		};
+
+		const initialStoreState = {
+			x: defaultWindowState.x,
+			y: defaultWindowState.y,
+			width: defaultWindowState.width,
+			height: defaultWindowState.height,
+			isMaximized: defaultWindowState.isMaximized,
+			isFullScreen: defaultWindowState.isFullScreen,
+			displayId: defaultWindowState.displayId,
+			multiWindowState: {
+				primaryWindowId: 'primary',
+				windows: [
+					{ ...defaultWindowState },
+				],
+			},
+		};
 
 		mockWindowStateStore = {
-			store: {
-				x: 50,
-				y: 50,
-				width: 1400,
-				height: 900,
-				isMaximized: false,
-				isFullScreen: false,
-			},
-			set: vi.fn(),
+			store: initialStoreState,
+			set: vi.fn((key: keyof typeof initialStoreState, value: any) => {
+				(mockWindowStateStore.store as any)[key] = value;
+				if (key === 'multiWindowState') {
+					mockWindowStateStore.store.multiWindowState = value;
+				}
+			}),
+			get: vi.fn((key: keyof typeof initialStoreState) => (mockWindowStateStore.store as any)[key]),
 		};
 
 		// Reset mock implementations
 		mockWindowInstance.isMaximized.mockReturnValue(false);
 		mockWindowInstance.isFullScreen.mockReturnValue(false);
+		mockWindowInstance.isDestroyed.mockReturnValue(false);
 		mockWindowInstance.getBounds.mockReturnValue({ x: 100, y: 100, width: 1200, height: 800 });
 	});
 
@@ -141,11 +219,12 @@ describe('app-lifecycle/window-manager', () => {
 
 			expect(windowManager).toHaveProperty('createWindow');
 			expect(typeof windowManager.createWindow).toBe('function');
+			expect(typeof windowManager.createSecondaryWindow).toBe('function');
 		});
 	});
 
-	describe('createWindow', () => {
-		it('should create BrowserWindow and return it', async () => {
+		describe('createWindow', () => {
+			it('should create BrowserWindow and return it', async () => {
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
 			const windowManager = createWindowManager({
@@ -158,13 +237,104 @@ describe('app-lifecycle/window-manager', () => {
 				devServerUrl: 'http://localhost:5173',
 			});
 
-			const result = windowManager.createWindow();
+				const result = windowManager.createWindow();
 
-			expect(result).toBeInstanceOf(MockBrowserWindow);
+				expect(result).toBeInstanceOf(MockBrowserWindow);
+			});
+
+		it('repositions off-screen windows onto the primary display', async () => {
+			mockWindowStateStore.store.multiWindowState.windows[0].x = 4000;
+			mockWindowStateStore.store.multiWindowState.windows[0].y = 2500;
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+				const windowManager = createWindowManager({
+					windowStateStore: mockWindowStateStore as unknown as Parameters<
+						typeof createWindowManager
+					>[0]['windowStateStore'],
+					isDevelopment: false,
+					preloadPath: '/path/to/preload.js',
+					rendererPath: '/path/to/index.html',
+					devServerUrl: 'http://localhost:5173',
+				});
+
+			windowManager.createWindow();
+
+			expect(lastBrowserWindowOptions?.x).toBe(260);
+			expect(lastBrowserWindowOptions?.y).toBe(90);
+			expect(lastBrowserWindowOptions?.width).toBe(1400);
+			expect(lastBrowserWindowOptions?.height).toBe(900);
+		});
+
+		it('centers windows on their preferred secondary display when available', async () => {
+			const secondaryDisplay = {
+				id: 42,
+				workArea: { x: 1920, y: 0, width: 2560, height: 1440 },
+				bounds: { x: 1920, y: 0, width: 2560, height: 1440 },
+			};
+			const savedWindow = mockWindowStateStore.store.multiWindowState.windows[0];
+			savedWindow.x = 9000;
+			savedWindow.y = 9000;
+			savedWindow.displayId = secondaryDisplay.id;
+			mockGetDisplayMatching.mockReturnValue(defaultDisplay);
+			mockGetAllDisplays.mockReturnValue([defaultDisplay, secondaryDisplay]);
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			const expectedX =
+				secondaryDisplay.workArea.x +
+				Math.round((secondaryDisplay.workArea.width - savedWindow.width) / 2);
+			const expectedY =
+				secondaryDisplay.workArea.y +
+				Math.round((secondaryDisplay.workArea.height - savedWindow.height) / 2);
+			expect(lastBrowserWindowOptions?.x).toBe(expectedX);
+			expect(lastBrowserWindowOptions?.y).toBe(expectedY);
+		});
+
+		it('falls back to the primary display when the saved monitor is missing', async () => {
+			const savedWindow = mockWindowStateStore.store.multiWindowState.windows[0];
+			savedWindow.x = 7500;
+			savedWindow.y = 4800;
+			savedWindow.displayId = 777;
+			mockGetDisplayMatching.mockReturnValue(defaultDisplay);
+			mockGetAllDisplays.mockReturnValue([defaultDisplay]);
+
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			const expectedX =
+				defaultDisplay.workArea.x +
+				Math.round((defaultDisplay.workArea.width - savedWindow.width) / 2);
+			const expectedY =
+				defaultDisplay.workArea.y +
+				Math.round((defaultDisplay.workArea.height - savedWindow.height) / 2);
+			expect(lastBrowserWindowOptions?.x).toBe(expectedX);
+			expect(lastBrowserWindowOptions?.y).toBe(expectedY);
 		});
 
 		it('should maximize window if saved state is maximized', async () => {
-			mockWindowStateStore.store.isMaximized = true;
+			mockWindowStateStore.store.multiWindowState.windows[0].isMaximized = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -184,7 +354,7 @@ describe('app-lifecycle/window-manager', () => {
 		});
 
 		it('should set fullscreen if saved state is fullscreen', async () => {
-			mockWindowStateStore.store.isFullScreen = true;
+			mockWindowStateStore.store.multiWindowState.windows[0].isFullScreen = true;
 
 			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
 
@@ -219,7 +389,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html');
+			expect(mockWindowInstance.loadFile).toHaveBeenCalledWith('/path/to/index.html', {
+				query: { windowId: 'primary' },
+			});
 			expect(mockWindowInstance.loadURL).not.toHaveBeenCalled();
 		});
 
@@ -238,7 +410,9 @@ describe('app-lifecycle/window-manager', () => {
 
 			windowManager.createWindow();
 
-			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith('http://localhost:5173');
+			expect(mockWindowInstance.loadURL).toHaveBeenCalledWith(
+				'http://localhost:5173/?windowId=primary'
+			);
 			expect(mockWindowInstance.loadFile).not.toHaveBeenCalled();
 		});
 
@@ -299,12 +473,27 @@ describe('app-lifecycle/window-manager', () => {
 			expect(windowCloseHandler).not.toBeNull();
 			windowCloseHandler!();
 
+			const multiWindowCall = mockWindowStateStore.set.mock.calls.find(
+				([key]) => key === 'multiWindowState'
+			);
+			expect(multiWindowCall).toBeDefined();
+
+			const storedWindow = mockWindowStateStore.store.multiWindowState.windows[0];
+			expect(storedWindow.x).toBe(100);
+			expect(storedWindow.y).toBe(100);
+			expect(storedWindow.width).toBe(1200);
+			expect(storedWindow.height).toBe(800);
+			expect(storedWindow.isMaximized).toBe(false);
+			expect(storedWindow.isFullScreen).toBe(false);
+			expect(storedWindow.displayId).toBe(defaultDisplay.id);
+
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('x', 100);
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('y', 100);
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('width', 1200);
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('height', 800);
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', false);
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isFullScreen', false);
+			expect(mockWindowStateStore.set).toHaveBeenCalledWith('displayId', defaultDisplay.id);
 		});
 
 		it('should not save bounds when maximized', async () => {
@@ -325,10 +514,16 @@ describe('app-lifecycle/window-manager', () => {
 			windowManager.createWindow();
 			windowCloseHandler!();
 
+			const updatedWindow = mockWindowStateStore.store.multiWindowState.windows[0];
+			expect(updatedWindow.x).toBe(50);
+			expect(updatedWindow.isMaximized).toBe(true);
+			expect(mockWindowStateStore.set).toHaveBeenCalledWith('multiWindowState', expect.anything());
+
 			// Should save isMaximized but not bounds
 			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isMaximized', true);
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('x', expect.anything());
-			expect(mockWindowStateStore.set).not.toHaveBeenCalledWith('y', expect.anything());
+			expect(mockWindowStateStore.set).toHaveBeenCalledWith('isFullScreen', false);
+			expect(mockWindowStateStore.set).toHaveBeenCalledWith('displayId', defaultDisplay.id);
+			expect(mockWindowInstance.getBounds).toHaveBeenCalledTimes(1);
 		});
 
 		it('should log window creation details', async () => {
@@ -350,12 +545,49 @@ describe('app-lifecycle/window-manager', () => {
 				'Browser window created',
 				'Window',
 				expect.objectContaining({
+					windowId: 'primary',
 					size: '1400x900',
 					maximized: false,
 					fullScreen: false,
 					mode: 'production',
 				})
 			);
+		});
+	});
+
+		describe('createSecondaryWindow', () => {
+			it('should persist secondary window layout and return BrowserWindow', async () => {
+				const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			const secondaryWindow = windowManager.createSecondaryWindow(
+				['session-123'],
+				{ x: 10, y: 20, width: 800, height: 600 }
+			);
+
+			expect(secondaryWindow).toBeInstanceOf(MockBrowserWindow);
+			expect(mockWindowStateStore.set).toHaveBeenCalledWith('multiWindowState', expect.anything());
+			const storedWindows = mockWindowStateStore.store.multiWindowState.windows;
+			expect(storedWindows).toHaveLength(2);
+			const storedSecondary = storedWindows.find((window) => window.id !== 'primary');
+			expect(storedSecondary).toMatchObject({
+				x: 10,
+				y: 20,
+				width: 800,
+				height: 600,
+				sessionIds: ['session-123'],
+				activeSessionId: 'session-123',
+			});
+			expect(storedSecondary?.id).toBeDefined();
 		});
 	});
 });

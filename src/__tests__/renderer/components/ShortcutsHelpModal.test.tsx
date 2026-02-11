@@ -41,6 +41,7 @@ const createMockShortcuts = (): Record<string, Shortcut> => ({
 		category: 'general',
 		action: 'createSession',
 		editable: true,
+		scope: 'global',
 	},
 	'close-session': {
 		id: 'close-session',
@@ -151,6 +152,35 @@ describe('ShortcutsHelpModal', () => {
 			);
 
 			expect(screen.getByText(/Many shortcuts can be customized/)).toBeInTheDocument();
+		});
+
+		it('labels shortcut scope to distinguish window vs global actions', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			const globalBadges = screen.getAllByTitle(
+				'Syncs across every Maestro window (sessions, bookmarks, shared dashboards).'
+			);
+			const windowBadges = screen.getAllByTitle(
+				'Only impacts the window where you trigger it (panels, focus, tab layout).'
+			);
+			expect(globalBadges.length).toBeGreaterThan(0);
+			expect(windowBadges.length).toBeGreaterThan(0);
+		});
+
+		it('mentions the Move to New Window context menu action', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			expect(
+				screen.getByText(/Right-click any session tab and choose "Move to New Window"/)
+			).toBeInTheDocument();
 		});
 	});
 

@@ -10,14 +10,14 @@ import type { SafeSendFn } from '../../utils/safe-send';
 
 describe('Forwarding Listeners', () => {
 	let mockProcessManager: ProcessManager;
-	let mockSafeSend: SafeSendFn;
+	let mockBroadcast: SafeSendFn;
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
-		mockSafeSend = vi.fn();
+		mockBroadcast = vi.fn();
 
 		mockProcessManager = {
 			on: vi.fn((event: string, handler: (...args: unknown[]) => void) => {
@@ -27,7 +27,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should register all forwarding event listeners', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('slash-commands', expect.any(Function));
 		expect(mockProcessManager.on).toHaveBeenCalledWith('thinking-chunk', expect.any(Function));
@@ -37,7 +37,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward slash-commands events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		const handler = eventHandlers.get('slash-commands');
 		const testSessionId = 'test-session-123';
@@ -45,7 +45,7 @@ describe('Forwarding Listeners', () => {
 
 		handler?.(testSessionId, testCommands);
 
-		expect(mockSafeSend).toHaveBeenCalledWith(
+		expect(mockBroadcast).toHaveBeenCalledWith(
 			'process:slash-commands',
 			testSessionId,
 			testCommands
@@ -53,7 +53,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward thinking-chunk events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		const handler = eventHandlers.get('thinking-chunk');
 		const testSessionId = 'test-session-123';
@@ -61,11 +61,11 @@ describe('Forwarding Listeners', () => {
 
 		handler?.(testSessionId, testChunk);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('process:thinking-chunk', testSessionId, testChunk);
+		expect(mockBroadcast).toHaveBeenCalledWith('process:thinking-chunk', testSessionId, testChunk);
 	});
 
 	it('should forward tool-execution events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		const handler = eventHandlers.get('tool-execution');
 		const testSessionId = 'test-session-123';
@@ -73,7 +73,7 @@ describe('Forwarding Listeners', () => {
 
 		handler?.(testSessionId, testToolExecution);
 
-		expect(mockSafeSend).toHaveBeenCalledWith(
+		expect(mockBroadcast).toHaveBeenCalledWith(
 			'process:tool-execution',
 			testSessionId,
 			testToolExecution
@@ -81,7 +81,7 @@ describe('Forwarding Listeners', () => {
 	});
 
 	it('should forward stderr events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		const handler = eventHandlers.get('stderr');
 		const testSessionId = 'test-session-123';
@@ -89,11 +89,11 @@ describe('Forwarding Listeners', () => {
 
 		handler?.(testSessionId, testStderr);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('process:stderr', testSessionId, testStderr);
+		expect(mockBroadcast).toHaveBeenCalledWith('process:stderr', testSessionId, testStderr);
 	});
 
 	it('should forward command-exit events to renderer', () => {
-		setupForwardingListeners(mockProcessManager, { safeSend: mockSafeSend });
+		setupForwardingListeners(mockProcessManager, { broadcastToAllWindows: mockBroadcast });
 
 		const handler = eventHandlers.get('command-exit');
 		const testSessionId = 'test-session-123';
@@ -101,6 +101,6 @@ describe('Forwarding Listeners', () => {
 
 		handler?.(testSessionId, testExitCode);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('process:command-exit', testSessionId, testExitCode);
+		expect(mockBroadcast).toHaveBeenCalledWith('process:command-exit', testSessionId, testExitCode);
 	});
 });

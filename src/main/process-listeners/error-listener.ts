@@ -13,9 +13,9 @@ import type { ProcessListenerDependencies } from './types';
  */
 export function setupErrorListener(
 	processManager: ProcessManager,
-	deps: Pick<ProcessListenerDependencies, 'safeSend' | 'logger'>
+	deps: Pick<ProcessListenerDependencies, 'broadcastToAllWindows' | 'logger'>
 ): void {
-	const { safeSend, logger } = deps;
+	const { broadcastToAllWindows, logger } = deps;
 
 	// Handle agent errors (auth expired, token exhaustion, rate limits, etc.)
 	processManager.on('agent-error', (sessionId: string, agentError: AgentError) => {
@@ -26,6 +26,6 @@ export function setupErrorListener(
 			message: agentError.message,
 			recoverable: agentError.recoverable,
 		});
-		safeSend('agent:error', sessionId, agentError);
+		broadcastToAllWindows('agent:error', sessionId, agentError);
 	});
 }

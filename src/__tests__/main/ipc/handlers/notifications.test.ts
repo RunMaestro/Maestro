@@ -14,20 +14,43 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
 
 // Create hoisted mocks for more reliable mocking
+function createBrowserWindowMock() {
+	return {
+		show: vi.fn(),
+		focus: vi.fn(),
+		moveTop: vi.fn(),
+		restore: vi.fn(),
+		isDestroyed: vi.fn().mockReturnValue(false),
+		isMinimized: vi.fn().mockReturnValue(false),
+	};
+}
+
 const mocks = vi.hoisted(() => ({
 	mockNotificationShow: vi.fn(),
 	mockNotificationIsSupported: vi.fn().mockReturnValue(true),
+	notificationInstances: [] as Array<{ emitClick: () => void }>,
+	browserWindow: createBrowserWindowMock(),
+	mockBrowserWindowFromWebContents: vi.fn(),
 }));
 
 // Mock electron with a proper class for Notification
 vi.mock('electron', () => {
 	// Create a proper class for Notification
 	class MockNotification {
+		private clickHandler: (() => void) | null = null;
 		constructor(_options: { title: string; body: string; silent?: boolean }) {
-			// Store options if needed for assertions
+			mocks.notificationInstances.push(this as unknown as { emitClick: () => void });
 		}
 		show() {
 			mocks.mockNotificationShow();
+		}
+		once(event: string, handler: () => void) {
+			if (event === 'click') {
+				this.clickHandler = handler;
+			}
+		}
+		emitClick() {
+			this.clickHandler?.();
 		}
 		static isSupported() {
 			return mocks.mockNotificationIsSupported();
@@ -40,7 +63,9 @@ vi.mock('electron', () => {
 		},
 		Notification: MockNotification,
 		BrowserWindow: {
-			getAllWindows: vi.fn().mockReturnValue([]),
+			getAllWindows: vi.fn(() => (mocks.browserWindow ? [mocks.browserWindow] : [])),
+			fromWebContents: (...args: unknown[]) =>
+				mocks.mockBrowserWindowFromWebContents(...args) || mocks.browserWindow,
 		},
 	};
 });
@@ -98,11 +123,20 @@ import {
 
 describe('Notification IPC Handlers', () => {
 	let handlers: Map<string, Function>;
+	let mockWindowRegistry: { get: ReturnType<typeof vi.fn>; getWindowForSession: ReturnType<typeof vi.fn> };
 
 	beforeEach(() => {
 		vi.clearAllMocks();
 		resetNotificationState();
 		handlers = new Map();
+		mockWindowRegistry = {
+			get: vi.fn(),
+			getWindowForSession: vi.fn(),
+		};
+		mocks.notificationInstances.length = 0;
+		mocks.browserWindow = createBrowserWindowMock();
+		mocks.mockBrowserWindowFromWebContents.mockReset();
+		mocks.mockBrowserWindowFromWebContents.mockReturnValue(mocks.browserWindow);
 
 		// Reset mocks
 		mocks.mockNotificationIsSupported.mockReturnValue(true);
@@ -113,7 +147,9 @@ describe('Notification IPC Handlers', () => {
 			handlers.set(channel, handler);
 		});
 
-		registerNotificationsHandlers();
+		registerNotificationsHandlers({
+			getWindowRegistry: () => mockWindowRegistry,
+		});
 	});
 
 	afterEach(() => {
@@ -134,7 +170,7 @@ describe('Notification IPC Handlers', () => {
 			mocks.mockNotificationIsSupported.mockReturnValue(true);
 
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Test Title', 'Test Body');
+			const result = await handler({ sender: {} } as any, 'Test Title', 'Test Body');
 
 			expect(result.success).toBe(true);
 			expect(mocks.mockNotificationShow).toHaveBeenCalled();
@@ -144,7 +180,7 @@ describe('Notification IPC Handlers', () => {
 			mocks.mockNotificationIsSupported.mockReturnValue(false);
 
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Test Title', 'Test Body');
+			const result = await handler({ sender: {} } as any, 'Test Title', 'Test Body');
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Notifications not supported');
@@ -152,7 +188,7 @@ describe('Notification IPC Handlers', () => {
 
 		it('should handle empty strings', async () => {
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, '', '');
+			const result = await handler({ sender: {} } as any, '', '');
 
 			expect(result.success).toBe(true);
 			expect(mocks.mockNotificationShow).toHaveBeenCalled();
@@ -160,14 +196,18 @@ describe('Notification IPC Handlers', () => {
 
 		it('should handle special characters', async () => {
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Title with "quotes"', "Body with 'apostrophes' & symbols");
+			const result = await handler(
+				{ sender: {} } as any,
+				'Title with "quotes"',
+				"Body with 'apostrophes' & symbols"
+			);
 
 			expect(result.success).toBe(true);
 		});
 
 		it('should handle unicode', async () => {
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, '通知タイトル', '通知本文 🎉');
+			const result = await handler({ sender: {} } as any, '通知タイトル', '通知本文 🎉');
 
 			expect(result.success).toBe(true);
 		});
@@ -179,10 +219,50 @@ describe('Notification IPC Handlers', () => {
 			});
 
 			const handler = handlers.get('notification:show')!;
-			const result = await handler({}, 'Test Title', 'Test Body');
+			const result = await handler({ sender: {} } as any, 'Test Title', 'Test Body');
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('Error: Notification failed');
+		});
+
+		it('should focus window specified in metadata on click', async () => {
+			const handler = handlers.get('notification:show')!;
+			mockWindowRegistry.get.mockReturnValue({ browserWindow: mocks.browserWindow });
+
+			await handler({ sender: {} } as any, 'Title', 'Body', { windowId: 'window-123' });
+			const notification = mocks.notificationInstances[0] as unknown as { emitClick: () => void };
+			notification.emitClick();
+
+			expect(mockWindowRegistry.get).toHaveBeenCalledWith('window-123');
+			expect(mocks.browserWindow.show).toHaveBeenCalled();
+			expect(mocks.browserWindow.focus).toHaveBeenCalled();
+		});
+
+		it('should resolve window via sessionId when windowId missing', async () => {
+			const handler = handlers.get('notification:show')!;
+			mockWindowRegistry.getWindowForSession.mockReturnValue('window-session');
+			mockWindowRegistry.get.mockReturnValue({ browserWindow: mocks.browserWindow });
+
+			await handler({ sender: {} } as any, 'Title', 'Body', { sessionId: 'session-1' });
+			const notification = mocks.notificationInstances[0] as unknown as { emitClick: () => void };
+			notification.emitClick();
+
+			expect(mockWindowRegistry.getWindowForSession).toHaveBeenCalledWith('session-1');
+			expect(mockWindowRegistry.get).toHaveBeenCalledWith('window-session');
+			expect(mocks.browserWindow.focus).toHaveBeenCalled();
+		});
+
+		it('should fallback to source window when metadata missing', async () => {
+			const handler = handlers.get('notification:show')!;
+			const fakeSender = { id: 'sender-1' } as any;
+			mocks.mockBrowserWindowFromWebContents.mockReturnValue(mocks.browserWindow);
+
+			await handler({ sender: fakeSender } as any, 'Title', 'Body');
+			const notification = mocks.notificationInstances[0] as unknown as { emitClick: () => void };
+			notification.emitClick();
+
+			expect(mocks.mockBrowserWindowFromWebContents).toHaveBeenCalledWith(fakeSender);
+			expect(mocks.browserWindow.show).toHaveBeenCalled();
 		});
 	});
 

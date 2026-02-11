@@ -3,6 +3,8 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
+import type { NotificationMetadata } from '../shared/types/notification';
+
 // Vite raw imports for .md files
 declare module '*.md?raw' {
 	const content: string;
@@ -45,6 +47,67 @@ interface ProcessConfig {
 	// Windows command line length workaround
 	sendPromptViaStdin?: boolean; // If true, send the prompt via stdin as JSON instead of command line
 	sendPromptViaStdinRaw?: boolean; // If true, send the prompt via stdin as raw text instead of command line
+}
+
+interface MaestroWindowBounds {
+	x?: number;
+	y?: number;
+	width?: number;
+	height?: number;
+}
+
+interface MaestroWindowState {
+	id: string;
+	x?: number;
+	y?: number;
+	width: number;
+	height: number;
+	isMaximized: boolean;
+	isFullScreen: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+	leftPanelCollapsed: boolean;
+	rightPanelCollapsed: boolean;
+}
+
+interface MaestroWindowInfo {
+	id: string;
+	isMain: boolean;
+	sessionIds: string[];
+	activeSessionId: string | null;
+}
+
+interface MaestroCreateWindowOptions {
+	sessionIds?: string[];
+	bounds?: MaestroWindowBounds;
+}
+
+interface MaestroMoveSessionOptions {
+	sessionId: string;
+	toWindowId: string;
+	fromWindowId?: string;
+}
+
+interface MaestroAssignSessionsOptions {
+	sessionIds: string[];
+	windowId?: string;
+}
+
+interface MaestroWindowSessionMovedEvent {
+	sessionId: string;
+	fromWindowId: string;
+	toWindowId: string;
+}
+
+interface MaestroWindowSessionsReassignedEvent {
+	fromWindowId: string;
+	toWindowId: string;
+	sessionIds: string[];
+}
+
+interface MaestroWindowDropZoneHighlightEvent {
+	highlight: boolean;
+	sourceWindowId: string | null;
 }
 
 interface AgentConfigOption {
@@ -1238,7 +1301,11 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
-		show: (title: string, body: string) => Promise<{ success: boolean; error?: string }>;
+		show: (
+			title: string,
+			body: string,
+			metadata?: NotificationMetadata
+		) => Promise<{ success: boolean; error?: string }>;
 		speak: (
 			text: string,
 			command?: string
@@ -1620,7 +1687,8 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
-			}
+			},
+			initiatorWindowId?: string | null
 		) => Promise<{
 			id: string;
 			name: string;
@@ -1635,6 +1703,7 @@ interface MaestroAPI {
 			logPath: string;
 			imagesDir: string;
 			createdAt: number;
+			initiatorWindowId?: string | null;
 		}>;
 		list: () => Promise<
 			Array<{
@@ -1651,6 +1720,7 @@ interface MaestroAPI {
 				logPath: string;
 				imagesDir: string;
 				createdAt: number;
+				initiatorWindowId?: string | null;
 			}>
 		>;
 		load: (id: string) => Promise<{
@@ -1667,6 +1737,7 @@ interface MaestroAPI {
 			logPath: string;
 			imagesDir: string;
 			createdAt: number;
+			initiatorWindowId?: string | null;
 		} | null>;
 		delete: (id: string) => Promise<boolean>;
 		rename: (
@@ -1686,6 +1757,7 @@ interface MaestroAPI {
 			logPath: string;
 			imagesDir: string;
 			createdAt: number;
+			initiatorWindowId?: string | null;
 		}>;
 		update: (
 			id: string,
@@ -1712,6 +1784,7 @@ interface MaestroAPI {
 			logPath: string;
 			imagesDir: string;
 			createdAt: number;
+			initiatorWindowId?: string | null;
 		}>;
 		// Chat log
 		appendMessage: (id: string, from: string, content: string) => Promise<void>;
@@ -2214,6 +2287,7 @@ interface MaestroAPI {
 			deletedAutoRunSessions: number;
 			deletedAutoRunTasks: number;
 			deletedSessionLifecycle: number;
+			deletedWindowUsageEvents: number;
 			error?: string;
 		}>;
 		// Get database size in bytes
@@ -2605,6 +2679,31 @@ interface MaestroAPI {
 				workingDirOverride?: string;
 			};
 		}) => Promise<string | null>;
+	};
+
+	// Multi-window management API
+	windows: {
+		create: (options?: MaestroCreateWindowOptions) => Promise<{ windowId: string }>;
+		close: (windowId: string) => Promise<boolean>;
+		list: () => Promise<MaestroWindowInfo[]>;
+		getForSession: (sessionId: string) => Promise<string | null>;
+		moveSession: (options: MaestroMoveSessionOptions) => Promise<boolean>;
+		assignSessions: (options: MaestroAssignSessionsOptions) => Promise<boolean>;
+		focusWindow: (windowId: string) => Promise<boolean>;
+		getWindowBounds: () => Promise<MaestroWindowBounds>;
+		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;
+		highlightDropZone: (windowId: string, highlight: boolean) => Promise<boolean>;
+		getState: () => Promise<MaestroWindowState | null>;
+		onSessionMoved: (callback: (event: MaestroWindowSessionMovedEvent) => void) => () => void;
+		onSessionsReassigned: (
+			callback: (event: MaestroWindowSessionsReassignedEvent) => void
+		) => () => void;
+		onDropZoneHighlight: (
+			callback: (event: MaestroWindowDropZoneHighlightEvent) => void
+		) => () => void;
+		updateState: (
+			updates: Partial<Pick<MaestroWindowState, 'leftPanelCollapsed' | 'rightPanelCollapsed'>>
+		) => Promise<boolean>;
 	};
 }
 

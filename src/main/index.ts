@@ -23,6 +23,12 @@ import {
 	getAgentSessionOriginsStore,
 	getSshRemoteById,
 } from './stores';
+import type { StoredSession } from './stores/types';
+import { WINDOW_STATE_DEFAULTS } from './stores/defaults';
+import type {
+	MultiWindowState as PersistedMultiWindowState,
+	WindowState as PersistedWindowState,
+} from '../shared/types/window';
 import {
 	registerGitHandlers,
 	registerAutorunHandlers,
@@ -51,6 +57,7 @@ import {
 	registerSymphonyHandlers,
 	registerTabNamingHandlers,
 	registerAgentErrorHandlers,
+	registerWindowsHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -106,9 +113,11 @@ import {
 	createCliWatcher,
 	createWindowManager,
 	createQuitHandler,
+	type WindowManager,
 } from './app-lifecycle';
 // Phase 3 refactoring - process listeners
 import { setupProcessListeners as setupProcessListenersModule } from './process-listeners';
+import { WindowRegistry } from './window-registry';
 
 // ============================================================================
 // Data Directory Configuration (MUST happen before any Store initialization)
@@ -222,9 +231,63 @@ let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
+let windowManager: WindowManager | null = null;
+let windowRegistry: WindowRegistry | null = null;
+
+type WindowManagerCreateOptions = Parameters<WindowManager['createWindow']>[0];
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
+
+function isStatsCollectionEnabledSetting(): boolean {
+	try {
+		const enabled = store.get('statsCollectionEnabled');
+		return enabled !== false;
+	} catch {
+		return true;
+	}
+}
+
+function recordWindowUsageMetrics(metrics: { windowCount: number; sessionCount: number }): void {
+	if (!isStatsCollectionEnabledSetting()) {
+		return;
+	}
+
+	try {
+		const statsDb = getStatsDB();
+		if (!statsDb.isReady()) {
+			return;
+		}
+		statsDb.recordWindowUsageSnapshot({
+			recordedAt: Date.now(),
+			windowCount: metrics.windowCount,
+			sessionCount: metrics.sessionCount,
+			isMultiWindow: metrics.windowCount > 1,
+		});
+	} catch (error) {
+		logger.debug('Failed to record window usage snapshot', 'Window', {
+			error: error instanceof Error ? error.message : String(error),
+		});
+	}
+}
+
+function broadcastToAllWindows(channel: string, ...args: unknown[]): void {
+	const registry = windowRegistry;
+	let sent = false;
+	if (registry) {
+		for (const { browserWindow } of registry.getAll()) {
+			if (!isWebContentsAvailable(browserWindow)) {
+				continue;
+			}
+			browserWindow.webContents.send(channel, ...args);
+			sent = true;
+		}
+	}
+
+	if (!sent) {
+		safeSend(channel, ...args);
+	}
+}
 
 // Create CLI activity watcher with dependency injection (Phase 4 refactoring)
 const cliWatcher = createCliWatcher({
@@ -234,15 +297,6 @@ const cliWatcher = createCliWatcher({
 
 const devServerPort = process.env.VITE_PORT ? parseInt(process.env.VITE_PORT, 10) : 5173;
 const devServerUrl = `http://localhost:${devServerPort}`;
-
-// Create window manager with dependency injection (Phase 4 refactoring)
-const windowManager = createWindowManager({
-	windowStateStore,
-	isDevelopment,
-	preloadPath: path.join(__dirname, 'preload.js'),
-	rendererPath: path.join(__dirname, '../renderer/index.html'),
-	devServerUrl: devServerUrl,
-});
 
 // Create web server factory with dependency injection (Phase 2 refactoring)
 const createWebServer = createWebServerFactory({
@@ -258,18 +312,183 @@ const createWebServer = createWebServerFactory({
 // - Window state persistence (position, size, maximized/fullscreen)
 // - DevTools installation in development
 // - Auto-updater initialization in production
-function createWindow() {
-	mainWindow = windowManager.createWindow();
+function createWindow(options?: WindowManagerCreateOptions) {
+	if (!windowManager) {
+		throw new Error('Window manager is not initialized');
+	}
+
+	const browserWindow = windowManager.createWindow(options);
+	const primaryWindowEntry = windowRegistry?.getPrimary();
+	if (primaryWindowEntry) {
+		mainWindow = primaryWindowEntry.browserWindow;
+	} else if (!mainWindow) {
+		mainWindow = browserWindow;
+	}
 	// Handle closed event to clear the reference
-	mainWindow.on('closed', () => {
-		mainWindow = null;
+	browserWindow.on('closed', () => {
+		if (mainWindow === browserWindow) {
+			mainWindow = null;
+		}
 	});
+}
+
+function restoreWindowsFromSavedState(): void {
+	if (!windowManager) {
+		throw new Error('Window manager is not initialized');
+	}
+	if (!windowRegistry) {
+		throw new Error('Window registry is not initialized');
+	}
+
+	try {
+		const sessions = (sessionsStore.get('sessions', []) ?? []) as StoredSession[];
+		const validSessionIds = new Set(sessions.map((session) => session.id));
+		const persistedState = readPersistedMultiWindowState();
+		const sanitizedState = sanitizeMultiWindowState(persistedState, validSessionIds);
+		const windowsToRestore = orderWindowsForRestore(sanitizedState);
+
+		if (!windowsToRestore.length) {
+			logger.info('No saved windows found, creating default window', 'Startup');
+			createWindow();
+			return;
+		}
+
+		windowStateStore.set('multiWindowState', sanitizedState);
+
+		for (const windowState of windowsToRestore) {
+			createWindow({
+				windowId: windowState.id,
+				sessionIds: windowState.sessionIds,
+			});
+		}
+	} catch (error) {
+		logger.error('Failed to restore window state, creating default window', 'Startup', {
+			error: error instanceof Error ? error.message : String(error),
+		});
+		createWindow();
+	}
+}
+
+function readPersistedMultiWindowState(): PersistedMultiWindowState {
+	const fallback = getDefaultMultiWindowState();
+	const stored =
+		windowStateStore.get('multiWindowState') ??
+		windowStateStore.store.multiWindowState ??
+		fallback;
+
+	const windows = Array.isArray(stored.windows) && stored.windows.length > 0
+		? stored.windows.map(cloneWindowState)
+		: fallback.windows.map(cloneWindowState);
+
+	return {
+		primaryWindowId: stored.primaryWindowId || fallback.primaryWindowId,
+		windows,
+	};
+}
+
+function sanitizeMultiWindowState(
+	state: PersistedMultiWindowState,
+	validSessionIds: Set<string>
+): PersistedMultiWindowState {
+	const sanitizedWindows = state.windows.map((windowState) =>
+		sanitizeWindowState(windowState, validSessionIds)
+	);
+
+	if (!sanitizedWindows.length) {
+		return getDefaultMultiWindowState();
+	}
+
+	const hasValidPrimary = sanitizedWindows.some(
+		(windowState) => windowState.id === state.primaryWindowId
+	);
+
+	return {
+		primaryWindowId: hasValidPrimary ? state.primaryWindowId : sanitizedWindows[0].id,
+		windows: sanitizedWindows,
+	};
+}
+
+function sanitizeWindowState(
+	windowState: PersistedWindowState,
+	validSessionIds: Set<string>
+): PersistedWindowState {
+	const filteredSessionIds = windowState.sessionIds.filter((sessionId) =>
+		validSessionIds.has(sessionId)
+	);
+	const uniqueSessionIds = Array.from(new Set(filteredSessionIds));
+	const activeSessionId = uniqueSessionIds.includes(windowState.activeSessionId ?? '')
+		? windowState.activeSessionId
+		: uniqueSessionIds[0] ?? null;
+
+	return {
+		...windowState,
+		sessionIds: uniqueSessionIds,
+		activeSessionId,
+	};
+}
+
+function orderWindowsForRestore(state: PersistedMultiWindowState): PersistedWindowState[] {
+	const windows = [...state.windows];
+	const primaryIndex = windows.findIndex((window) => window.id === state.primaryWindowId);
+	if (primaryIndex <= 0) {
+		return windows;
+	}
+	const [primaryWindow] = windows.splice(primaryIndex, 1);
+	return [primaryWindow, ...windows];
+}
+
+function getDefaultMultiWindowState(): PersistedMultiWindowState {
+	const fallbackState = WINDOW_STATE_DEFAULTS.multiWindowState ?? {
+		primaryWindowId: 'primary',
+		windows: [],
+	};
+	const hasTemplateWindows = Array.isArray(fallbackState.windows) && fallbackState.windows.length > 0;
+	const windows = hasTemplateWindows
+		? fallbackState.windows
+		: [
+			{
+				id: fallbackState.primaryWindowId ?? 'primary',
+				width: WINDOW_STATE_DEFAULTS.width,
+				height: WINDOW_STATE_DEFAULTS.height,
+				isMaximized: WINDOW_STATE_DEFAULTS.isMaximized,
+				isFullScreen: WINDOW_STATE_DEFAULTS.isFullScreen,
+				sessionIds: [],
+				activeSessionId: null,
+				leftPanelCollapsed: false,
+				rightPanelCollapsed: false,
+			},
+		];
+
+	return {
+		primaryWindowId: fallbackState.primaryWindowId ?? windows[0].id ?? 'primary',
+		windows: windows.map(cloneWindowState),
+	};
+}
+
+function cloneWindowState(windowState: PersistedWindowState): PersistedWindowState {
+	return {
+		...windowState,
+		sessionIds: [...windowState.sessionIds],
+	};
 }
 
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
 setupGlobalErrorHandlers();
 
 app.whenReady().then(async () => {
+	windowRegistry = new WindowRegistry({
+		windowStateStore,
+		onWindowCountChanged: recordWindowUsageMetrics,
+	});
+	windowManager = createWindowManager({
+		windowStateStore,
+		isDevelopment,
+		preloadPath: path.join(__dirname, 'preload.js'),
+		rendererPath: path.join(__dirname, '../renderer/index.html'),
+		devServerUrl: devServerUrl,
+		windowRegistry,
+	});
+
 	// Load logger settings first
 	const logLevel = store.get('logLevel', 'info');
 	logger.setLogLevel(logLevel);
@@ -349,9 +568,9 @@ app.whenReady().then(async () => {
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
 
-	// Create main window
-	logger.info('Creating main window', 'Startup');
-	createWindow();
+	// Restore windows from previous session
+	logger.info('Restoring windows from saved state', 'Startup');
+	restoreWindowsFromSavedState();
 
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
@@ -379,7 +598,8 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-	if (process.platform !== 'darwin') {
+	const primaryWindow = windowRegistry?.getPrimary();
+	if (process.platform !== 'darwin' || !primaryWindow) {
 		app.quit();
 	}
 });
@@ -394,6 +614,8 @@ const quitHandler = createQuitHandler({
 	getActiveGroomingSessionCount,
 	cleanupAllGroomingSessions,
 	closeStatsDB,
+	getWindowRegistry: () => windowRegistry,
+	windowStateStore,
 	stopCliWatcher: () => cliWatcher.stop(),
 });
 quitHandler.setup();
@@ -449,7 +671,7 @@ function setupIpcHandlers() {
 		getAgentDetector: () => agentDetector,
 		agentConfigsStore,
 		settingsStore: store,
-		getMainWindow: () => mainWindow,
+		broadcastToAllWindows,
 		sessionsStore,
 	});
 
@@ -632,6 +854,16 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 	});
+
+	if (!windowManager || !windowRegistry) {
+		throw new Error('Window system has not been initialized');
+	}
+
+	registerWindowsHandlers({
+		windowStateStore,
+		getWindowManager: () => windowManager,
+		getWindowRegistry: () => windowRegistry,
+	});
 }
 
 // Handle process output streaming (set up after initialization)
@@ -643,6 +875,7 @@ function setupProcessListeners() {
 			getWebServer: () => webServer,
 			getAgentDetector: () => agentDetector,
 			safeSend,
+			broadcastToAllWindows,
 			powerManager,
 			groupChatEmitters,
 			groupChatRouter: {

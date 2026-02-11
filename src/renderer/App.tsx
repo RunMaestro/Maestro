@@ -115,6 +115,7 @@ import {
 	// UI
 	useThemeStyles,
 	useAppHandlers,
+	useWindowState,
 	// Auto Run
 	useAutoRunHandlers,
 } from './hooks';
@@ -130,9 +131,10 @@ import { InputProvider, useInputContext } from './contexts/InputContext';
 import { GroupChatProvider, useGroupChat } from './contexts/GroupChatContext';
 import { AutoRunProvider, useAutoRun } from './contexts/AutoRunContext';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
-import { useSessionStore, selectActiveSession } from './stores/sessionStore';
+import { useSessionStore } from './stores/sessionStore';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
+import { WindowProvider, useWindowContext } from './contexts/WindowContext';
 
 // Import services
 import { gitService } from './services/git';
@@ -161,6 +163,7 @@ import type {
 	AgentError,
 	BatchRunState,
 	GroupChatMessage,
+	GroupChat,
 	SpecKitCommand,
 	OpenSpecCommand,
 	LeaderboardRegistration,
@@ -194,6 +197,7 @@ import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
+import { getNextWindowSessionCycle } from './utils/windowSessionOrdering';
 import {
 	estimateContextUsage,
 	estimateAccumulatedGrowth,
@@ -602,9 +606,55 @@ function MaestroConsoleInner() {
 	// Reactive values — each selector triggers re-render only when its specific value changes
 	const sessions = useSessionStore((s) => s.sessions);
 	const groups = useSessionStore((s) => s.groups);
-	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	let activeSessionId = useSessionStore((s) => s.activeSessionId);
 	const sessionsLoaded = useSessionStore((s) => s.sessionsLoaded);
-	const activeSession = useSessionStore(selectActiveSession);
+
+	const {
+		sessionIds: windowSessionIds,
+		activeSessionId: windowActiveSessionId,
+		windowId: currentWindowId,
+		isMainWindow,
+		windowNumber,
+		assignSessionsToWindow,
+	} = useWindowContext();
+	const windowSessionIdSet = useMemo(() => {
+		return windowSessionIds.length ? new Set(windowSessionIds) : null;
+	}, [windowSessionIds]);
+
+	const activeSession = useMemo(() => {
+		if (!sessions.length) {
+			return null;
+		}
+
+		const restrictedSessionIds = windowSessionIdSet;
+
+		const resolveSession = (sessionId?: string | null) => {
+			if (!sessionId) {
+				return null;
+			}
+			const match = sessions.find((session) => session.id === sessionId);
+			if (!match) {
+				return null;
+			}
+			if (restrictedSessionIds && !restrictedSessionIds.has(match.id)) {
+				return null;
+			}
+			return match;
+		};
+
+		if (restrictedSessionIds) {
+			return (
+				resolveSession(windowActiveSessionId) ??
+				resolveSession(activeSessionId) ??
+				sessions.find((session) => restrictedSessionIds.has(session.id)) ??
+				null
+			);
+		}
+
+		return resolveSession(windowActiveSessionId) ?? resolveSession(activeSessionId) ?? sessions[0] ?? null;
+	}, [sessions, windowSessionIdSet, windowActiveSessionId, activeSessionId]);
+
+	activeSessionId = activeSession?.id ?? activeSessionId;
 
 	// Actions — stable references from store, never trigger re-renders
 	const {
@@ -759,11 +809,13 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
+	useWindowState();
+
 	// --- GROUP CHAT STATE (Phase 4: extracted to GroupChatContext) ---
 
 	// Use GroupChatContext for all group chat states
 	const {
-		groupChats,
+		groupChats: scopedGroupChats,
 		setGroupChats,
 		activeGroupChatId,
 		setActiveGroupChatId,
@@ -795,6 +847,28 @@ function MaestroConsoleInner() {
 		groupChatMessagesRef,
 		clearGroupChatError: handleClearGroupChatErrorBase,
 	} = useGroupChat();
+
+	const isWindowScopeReady = isMainWindow || currentWindowId !== null;
+	const isGroupChatVisibleInWindow = useCallback(
+		(chat: GroupChat) => {
+			if (!isWindowScopeReady) {
+				return true;
+			}
+			const initiatorId = chat.initiatorWindowId ?? 'primary';
+			if (initiatorId === 'primary') {
+				return isMainWindow;
+			}
+			return initiatorId === currentWindowId;
+		},
+		[isWindowScopeReady, isMainWindow, currentWindowId]
+	);
+
+	const scopedGroupChats = useMemo(() => {
+		if (!isWindowScopeReady) {
+			return groupChats;
+		}
+		return groupChats.filter(isGroupChatVisibleInWindow);
+	}, [groupChats, isWindowScopeReady, isGroupChatVisibleInWindow]);
 
 	// SSH Remote configs for looking up SSH remote names (used for participant cards in group chat)
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
@@ -4310,6 +4384,7 @@ function MaestroConsoleInner() {
 		sessions,
 		setSessions,
 		activeTabId: activeSession?.activeTabId,
+		assignSessionsToWindow,
 		onSessionCreated: (info) => {
 			// Navigate to the newly created merged session
 			setActiveSessionId(info.sessionId);
@@ -4339,7 +4414,11 @@ function MaestroConsoleInner() {
 			// Show desktop notification for visibility when app is not focused
 			window.maestro.notification.show(
 				'Session Merged',
-				`Created "${info.sessionName}" with merged context`
+				`Created "${info.sessionName}" with merged context`,
+				{
+					sessionId: info.sessionId,
+					windowId: currentWindowId ?? undefined,
+				}
 			);
 
 			// Clear the merge state for the source tab after a short delay
@@ -4403,6 +4482,7 @@ function MaestroConsoleInner() {
 	} = useSendToAgentWithSessions({
 		sessions,
 		setSessions,
+		assignSessionsToWindow,
 		onSessionCreated: (sessionId, sessionName) => {
 			// Navigate to the newly created transferred session
 			setActiveSessionId(sessionId);
@@ -4418,7 +4498,11 @@ function MaestroConsoleInner() {
 			// Show desktop notification for visibility when app is not focused
 			window.maestro.notification.show(
 				'Context Transferred',
-				`Created "${sessionName}" with transferred context`
+				`Created "${sessionName}" with transferred context`,
+				{
+					sessionId,
+					windowId: currentWindowId ?? undefined,
+				}
 			);
 
 			// Reset the transfer state after a short delay to allow progress modal to show "Complete"
@@ -5074,10 +5158,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// PERF: Memoize thinkingSessions at App level to avoid passing full sessions array to children.
 	// This prevents InputArea from re-rendering on unrelated session updates (e.g., terminal output).
 	// The computation is O(n) but only runs when sessions array changes, not on every keystroke.
-	const thinkingSessions = useMemo(
-		() => sessions.filter((s) => s.state === 'busy' && s.busySource === 'ai'),
-		[sessions]
-	);
+	const thinkingSessions = useMemo(() => {
+		const busySessions = sessions.filter((s) => s.state === 'busy' && s.busySource === 'ai');
+		if (!windowSessionIdSet) {
+			return busySessions;
+		}
+		return busySessions.filter((session) => windowSessionIdSet.has(session.id));
+	}, [sessions, windowSessionIdSet]);
 
 	// Images are stored per-tab and only used in AI mode
 	// Get staged images from the active tab
@@ -7000,12 +7087,38 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// falling back to the active session's state. This ensures AutoRun progress is
 	// displayed correctly regardless of which tab/session the user is viewing.
 	// Quick Win 4: Memoized to prevent unnecessary re-calculations
-	const activeBatchRunState = useMemo(() => {
-		if (activeBatchSessionIds.length > 0) {
-			return getBatchState(activeBatchSessionIds[0]);
+	const { activeBatchRunState, activeBatchRunSessionId } = useMemo(() => {
+		const resolveTargetSessionId = () => {
+			if (windowSessionIdSet) {
+				const matchingBatch = activeBatchSessionIds.find((id) => windowSessionIdSet.has(id));
+				if (matchingBatch) {
+					return matchingBatch;
+				}
+				if (activeSession && windowSessionIdSet.has(activeSession.id)) {
+					return activeSession.id;
+				}
+				return null;
+			}
+
+			if (activeBatchSessionIds.length > 0) {
+				return activeBatchSessionIds[0];
+			}
+
+			return activeSession?.id ?? null;
+		};
+
+		const targetSessionId = resolveTargetSessionId();
+		if (targetSessionId) {
+			return {
+				activeBatchRunState: getBatchState(targetSessionId),
+				activeBatchRunSessionId: targetSessionId,
+			};
 		}
-		return activeSession ? getBatchState(activeSession.id) : getBatchState('');
-	}, [activeBatchSessionIds, activeSession, getBatchState]);
+		return {
+			activeBatchRunState: getBatchState(''),
+			activeBatchRunSessionId: null,
+		};
+	}, [activeBatchSessionIds, activeSession, windowSessionIdSet, getBatchState]);
 
 	// Inline wizard context for /wizard command
 	// This manages the state for the inline wizard that creates/iterates on Auto Run documents
@@ -8453,6 +8566,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 		async (id: string) => {
 			const chat = await window.maestro.groupChat.load(id);
 			if (chat) {
+				if (!isGroupChatVisibleInWindow(chat)) {
+					addToast({
+						type: 'info',
+						title: 'Open in original window',
+						message: 'This group chat is being managed in another window.',
+						duration: 5000,
+					});
+					return;
+				}
 				setActiveGroupChatId(id);
 				const messages = await window.maestro.groupChat.getMessages(id);
 				setGroupChatMessages(messages);
@@ -8497,7 +8619,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				}, 100);
 			}
 		},
-		[groupChatStates, allGroupChatParticipantStates]
+		[groupChatStates, allGroupChatParticipantStates, isGroupChatVisibleInWindow, addToast]
 	);
 
 	const handleCloseGroupChat = useCallback(() => {
@@ -8507,6 +8629,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setParticipantStates(new Map());
 		setGroupChatError(null);
 	}, []);
+
+	useEffect(() => {
+		if (!isWindowScopeReady || !activeGroupChatId) {
+			return;
+		}
+		const activeChat = groupChats.find((chat) => chat.id === activeGroupChatId);
+		if (activeChat && !isGroupChatVisibleInWindow(activeChat)) {
+			handleCloseGroupChat();
+			addToast({
+				type: 'info',
+				title: 'Group chat moved',
+				message: 'This group chat is now associated with a different window.',
+				duration: 5000,
+			});
+		}
+	}, [
+		isWindowScopeReady,
+		activeGroupChatId,
+		groupChats,
+		isGroupChatVisibleInWindow,
+		handleCloseGroupChat,
+		addToast,
+	]);
 
 	// Handle right panel tab change with persistence
 	const handleGroupChatRightTabChange = useCallback(
@@ -8566,12 +8711,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customModel?: string;
 			}
 		) => {
-			const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
-			setGroupChats((prev) => [chat, ...prev]);
+			if (!isMainWindow && !currentWindowId) {
+				addToast({
+					type: 'warning',
+					title: 'Window still initializing',
+					message: 'Please wait for this window to finish loading before creating a group chat.',
+					duration: 5000,
+				});
+				return;
+			}
+			const initiatorId = currentWindowId ?? 'primary';
+			const chat = await window.maestro.groupChat.create(
+				name,
+				moderatorAgentId,
+				moderatorConfig,
+				initiatorId
+			);
+			setGroupChats((prev) =>
+				isGroupChatVisibleInWindow(chat) ? [chat, ...prev] : prev
+			);
 			setShowNewGroupChatModal(false);
 			handleOpenGroupChat(chat.id);
 		},
-		[handleOpenGroupChat]
+		[handleOpenGroupChat, addToast, currentWindowId, isMainWindow, isGroupChatVisibleInWindow]
 	);
 
 	const handleDeleteGroupChat = useCallback(
@@ -9042,6 +9204,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// --- ACTIONS ---
 	const cycleSession = (dir: 'next' | 'prev') => {
+		const windowCycleResult = getNextWindowSessionCycle(
+			sessions,
+			windowSessionIds,
+			activeSessionId || null,
+			dir
+		);
+		if (windowCycleResult) {
+			cyclePositionRef.current = windowCycleResult.index;
+			setActiveGroupChatId(null);
+			setActiveSessionIdInternal(windowCycleResult.sessionId);
+			return;
+		}
+
 		// Build the visual order of items as they appear in the sidebar.
 		// This matches the actual rendering order in SessionList.tsx:
 		// 1. Bookmarks section (if open) - sorted alphabetically
@@ -9122,8 +9297,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 			}
 
 			// Group Chats section (if expanded and has group chats)
-			if (groupChatsExpanded && groupChats.length > 0) {
-				const sortedGroupChats = [...groupChats].sort((a, b) =>
+			if (groupChatsExpanded && scopedGroupChats.length > 0) {
+				const sortedGroupChats = [...scopedGroupChats].sort((a, b) =>
 					a.name.toLowerCase().localeCompare(b.name.toLowerCase())
 				);
 				visualOrder.push(
@@ -9523,8 +9698,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
 				sessionSshRemoteConfig,
 			};
-			setSessions((prev) => [...prev, newSession]);
-			setActiveSessionId(newId);
+				setSessions((prev) => [...prev, newSession]);
+				setActiveSessionId(newId);
+				await assignSessionsToWindow([newId]);
+				await assignSessionsToWindow([newId]);
 			// Track session creation in global stats
 			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
@@ -9768,6 +9945,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveFocus,
 			startBatchRun,
 			sessions,
+			assignSessionsToWindow,
 			addToast,
 		]
 	);
@@ -13135,6 +13313,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Batch run state (convert null to undefined for component props)
 		activeBatchRunState: activeBatchRunState ?? undefined,
+		activeBatchRunSessionId,
 		currentSessionBatchState: currentSessionBatchState ?? undefined,
 
 		// File tree
@@ -13593,6 +13772,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 							} as React.CSSProperties
 						}
 					>
+						{typeof windowNumber === 'number' && (
+							<div
+								className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none select-none"
+								style={{ color: theme.colors.textDim }}
+							>
+								<span
+									className="text-[10px] font-semibold uppercase"
+									style={{
+										borderColor: theme.colors.border,
+										backgroundColor: `${theme.colors.bgSidebar}b3`,
+										color: theme.colors.textMain,
+										borderWidth: 1,
+										borderStyle: 'solid',
+										borderRadius: 9999,
+										padding: '4px 10px',
+										display: 'inline-block',
+										letterSpacing: '0.35em',
+									}}
+								>
+									Maestro [{windowNumber}]
+								</span>
+							</div>
+						)}
 						{activeGroupChatId ? (
 							<span
 								className="text-xs select-none opacity-50"
@@ -13648,7 +13850,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					activeSession={activeSession}
 					groups={groups}
 					setGroups={setGroups}
-					groupChats={groupChats}
+					groupChats={scopedGroupChats}
 					shortcuts={shortcuts}
 					tabShortcuts={tabShortcuts}
 					// AppInfoModals props
@@ -14155,6 +14357,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 								setSessions((prev) => [...prev, newSession]);
 								setActiveSessionId(newId);
+								await assignSessionsToWindow([newId]);
 								setSymphonyModalOpen(false);
 
 								// Register active contribution in Symphony persistent state
@@ -14715,15 +14918,29 @@ You are taking over this conversation. Based on the context above, provide a bri
  * See refactor-details-2.md for full plan.
  */
 export default function MaestroConsole() {
+	const initialWindowId = useMemo(() => {
+		if (typeof window === 'undefined') {
+			return undefined;
+		}
+		try {
+			const params = new URLSearchParams(window.location.search);
+			return params.get('windowId') ?? undefined;
+		} catch {
+			return undefined;
+		}
+	}, []);
+
 	return (
-		<AutoRunProvider>
-			<GroupChatProvider>
-				<InlineWizardProvider>
-					<InputProvider>
-						<MaestroConsoleInner />
-					</InputProvider>
-				</InlineWizardProvider>
-			</GroupChatProvider>
-		</AutoRunProvider>
+		<WindowProvider initialWindowId={initialWindowId}>
+			<AutoRunProvider>
+				<GroupChatProvider>
+					<InlineWizardProvider>
+						<InputProvider>
+							<MaestroConsoleInner />
+						</InputProvider>
+					</InlineWizardProvider>
+				</GroupChatProvider>
+			</AutoRunProvider>
+		</WindowProvider>
 	);
 }

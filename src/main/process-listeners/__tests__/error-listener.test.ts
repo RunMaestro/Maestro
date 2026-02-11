@@ -12,7 +12,7 @@ import type { ProcessListenerDependencies } from '../types';
 
 describe('Error Listener', () => {
 	let mockProcessManager: ProcessManager;
-	let mockSafeSend: SafeSendFn;
+	let mockBroadcast: SafeSendFn;
 	let mockLogger: ProcessListenerDependencies['logger'];
 	let eventHandlers: Map<string, (...args: unknown[]) => void>;
 
@@ -20,7 +20,7 @@ describe('Error Listener', () => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
-		mockSafeSend = vi.fn();
+		mockBroadcast = vi.fn();
 		mockLogger = {
 			info: vi.fn(),
 			error: vi.fn(),
@@ -36,13 +36,19 @@ describe('Error Listener', () => {
 	});
 
 	it('should register the agent-error event listener', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			broadcastToAllWindows: mockBroadcast,
+			logger: mockLogger,
+		});
 
 		expect(mockProcessManager.on).toHaveBeenCalledWith('agent-error', expect.any(Function));
 	});
 
 	it('should log agent error and forward to renderer', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			broadcastToAllWindows: mockBroadcast,
+			logger: mockLogger,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'test-session-123';
@@ -68,11 +74,14 @@ describe('Error Listener', () => {
 			})
 		);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
+		expect(mockBroadcast).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
 	});
 
 	it('should handle token exhaustion errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			broadcastToAllWindows: mockBroadcast,
+			logger: mockLogger,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-456';
@@ -86,11 +95,14 @@ describe('Error Listener', () => {
 
 		handler?.(testSessionId, testAgentError);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
+		expect(mockBroadcast).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
 	});
 
 	it('should handle rate limit errors', () => {
-		setupErrorListener(mockProcessManager, { safeSend: mockSafeSend, logger: mockLogger });
+		setupErrorListener(mockProcessManager, {
+			broadcastToAllWindows: mockBroadcast,
+			logger: mockLogger,
+		});
 
 		const handler = eventHandlers.get('agent-error');
 		const testSessionId = 'session-789';
@@ -113,6 +125,6 @@ describe('Error Listener', () => {
 			})
 		);
 
-		expect(mockSafeSend).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
+		expect(mockBroadcast).toHaveBeenCalledWith('agent:error', testSessionId, testAgentError);
 	});
 });
