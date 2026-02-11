@@ -19,7 +19,6 @@ import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../../constan
 import { getLevelIndex } from '../../constants/keyboardMastery';
 import { commitCommandPrompt } from '../../../prompts';
 import type { VibesAssuranceLevel } from '../../../shared/vibes-types';
-import type { VibesSettingsConfig } from '../../../shared/vibes-settings';
 import { VIBES_SETTINGS_DEFAULTS, getVibesSettingWithDefault } from '../../../shared/vibes-settings';
 
 // Default context management settings
