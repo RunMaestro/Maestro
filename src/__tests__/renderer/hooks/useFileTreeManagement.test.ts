@@ -18,6 +18,7 @@ import type { RightPanelHandle } from '../../../renderer/components/RightPanel';
 import type { RefObject, SetStateAction } from 'react';
 import { loadFileTree, compareFileTrees } from '../../../renderer/utils/fileExplorer';
 import { gitService } from '../../../renderer/services/git';
+import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 
 vi.mock('../../../renderer/utils/fileExplorer', () => ({
 	loadFileTree: vi.fn(),
@@ -90,7 +91,6 @@ const createDeps = (
 	setSessions: state.setSessions,
 	activeSessionId: state.getSessions()[0]?.id ?? null,
 	activeSession: state.getSessions()[0] ?? null,
-	fileTreeFilter: '',
 	rightPanelRef: { current: { refreshHistoryPanel: vi.fn() } },
 	...overrides,
 });
@@ -104,6 +104,7 @@ describe('useFileTreeManagement', () => {
 
 	beforeEach(() => {
 		vi.clearAllMocks();
+		useFileExplorerStore.setState({ fileTreeFilter: '' });
 		originalHistory = window.maestro.history as typeof window.maestro.history | undefined;
 		window.maestro = {
 			...window.maestro,
@@ -233,8 +234,9 @@ describe('useFileTreeManagement', () => {
 			{ name: 'notes.txt', type: 'file' },
 		];
 
+		useFileExplorerStore.setState({ fileTreeFilter: 'read' });
 		const state = createSessionsState([createMockSession({ fileTree })]);
-		const deps = createDeps(state, { fileTreeFilter: 'read' });
+		const deps = createDeps(state);
 		const { result } = renderHook(() => useFileTreeManagement(deps));
 
 		expect(result.current.filteredFileTree).toEqual([
