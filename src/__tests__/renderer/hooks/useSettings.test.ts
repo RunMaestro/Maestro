@@ -8,6 +8,7 @@ import type {
 	CustomAICommand,
 } from '../../../renderer/types';
 import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import { VIBES_SETTINGS_DEFAULTS } from '../../../shared/vibes-settings';
 
 // Helper to wait for settings to load
 const waitForSettingsLoaded = async (result: { current: ReturnType<typeof useSettings> }) => {
@@ -1814,6 +1815,208 @@ describe('useSettings', () => {
 				expect(analytics.tourCompletionRate).toBe(75); // 6/8 * 100
 				expect(analytics.averageConversationExchanges).toBe(12.5);
 				expect(analytics.averagePhasesPerWizard).toBe(3.2);
+			});
+		});
+	});
+
+	describe('VIBES Metadata settings', () => {
+		describe('default values', () => {
+			it('should have correct default values for all VIBES settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				expect(result.current.vibesEnabled).toBe(false);
+				expect(result.current.vibesAssuranceLevel).toBe('medium');
+				expect(result.current.vibesTrackedExtensions).toEqual(VIBES_SETTINGS_DEFAULTS.vibesTrackedExtensions);
+				expect(result.current.vibesExcludePatterns).toEqual(VIBES_SETTINGS_DEFAULTS.vibesExcludePatterns);
+				expect(result.current.vibesPerAgentConfig).toEqual({
+					'claude-code': { enabled: true },
+					'codex': { enabled: true },
+				});
+				expect(result.current.vibesMaestroOrchestrationEnabled).toBe(true);
+				expect(result.current.vibesAutoInit).toBe(true);
+				expect(result.current.vibesCheckBinaryPath).toBe('');
+				expect(result.current.vibesCompressReasoningThreshold).toBe(10240);
+				expect(result.current.vibesExternalBlobThreshold).toBe(102400);
+			});
+		});
+
+		describe('loading saved VIBES settings', () => {
+			it('should load saved VIBES settings from electron-store', async () => {
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					vibesEnabled: true,
+					vibesAssuranceLevel: 'high',
+					vibesTrackedExtensions: ['.ts', '.py'],
+					vibesExcludePatterns: ['**/node_modules/**'],
+					vibesPerAgentConfig: { 'claude-code': { enabled: false } },
+					vibesMaestroOrchestrationEnabled: false,
+					vibesAutoInit: false,
+					vibesCheckBinaryPath: '/usr/local/bin/vibescheck',
+					vibesCompressReasoningThreshold: 5000,
+					vibesExternalBlobThreshold: 50000,
+				});
+
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				expect(result.current.vibesEnabled).toBe(true);
+				expect(result.current.vibesAssuranceLevel).toBe('high');
+				expect(result.current.vibesTrackedExtensions).toEqual(['.ts', '.py']);
+				expect(result.current.vibesExcludePatterns).toEqual(['**/node_modules/**']);
+				expect(result.current.vibesPerAgentConfig).toEqual({ 'claude-code': { enabled: false } });
+				expect(result.current.vibesMaestroOrchestrationEnabled).toBe(false);
+				expect(result.current.vibesAutoInit).toBe(false);
+				expect(result.current.vibesCheckBinaryPath).toBe('/usr/local/bin/vibescheck');
+				expect(result.current.vibesCompressReasoningThreshold).toBe(5000);
+				expect(result.current.vibesExternalBlobThreshold).toBe(50000);
+			});
+
+			it('should use defaults for missing VIBES settings via getVibesSettingWithDefault', async () => {
+				// Only set some VIBES settings, others should use defaults
+				vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+					vibesEnabled: true,
+					vibesAssuranceLevel: 'low',
+				});
+
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				expect(result.current.vibesEnabled).toBe(true);
+				expect(result.current.vibesAssuranceLevel).toBe('low');
+				// Unset values should use defaults
+				expect(result.current.vibesTrackedExtensions).toEqual(VIBES_SETTINGS_DEFAULTS.vibesTrackedExtensions);
+				expect(result.current.vibesExcludePatterns).toEqual(VIBES_SETTINGS_DEFAULTS.vibesExcludePatterns);
+				expect(result.current.vibesPerAgentConfig).toEqual(VIBES_SETTINGS_DEFAULTS.vibesPerAgentConfig);
+				expect(result.current.vibesMaestroOrchestrationEnabled).toBe(true);
+				expect(result.current.vibesAutoInit).toBe(true);
+				expect(result.current.vibesCheckBinaryPath).toBe('');
+				expect(result.current.vibesCompressReasoningThreshold).toBe(10240);
+				expect(result.current.vibesExternalBlobThreshold).toBe(102400);
+			});
+		});
+
+		describe('VIBES setter functions', () => {
+			it('should update vibesEnabled and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesEnabled(true);
+				});
+
+				expect(result.current.vibesEnabled).toBe(true);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesEnabled', true);
+			});
+
+			it('should update vibesAssuranceLevel and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesAssuranceLevel('high');
+				});
+
+				expect(result.current.vibesAssuranceLevel).toBe('high');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesAssuranceLevel', 'high');
+			});
+
+			it('should update vibesTrackedExtensions and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				const newExtensions = ['.ts', '.py', '.rs'];
+				act(() => {
+					result.current.setVibesTrackedExtensions(newExtensions);
+				});
+
+				expect(result.current.vibesTrackedExtensions).toEqual(newExtensions);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesTrackedExtensions', newExtensions);
+			});
+
+			it('should update vibesExcludePatterns and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				const newPatterns = ['**/node_modules/**', '**/dist/**'];
+				act(() => {
+					result.current.setVibesExcludePatterns(newPatterns);
+				});
+
+				expect(result.current.vibesExcludePatterns).toEqual(newPatterns);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesExcludePatterns', newPatterns);
+			});
+
+			it('should update vibesPerAgentConfig and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				const newConfig = { 'claude-code': { enabled: false }, 'codex': { enabled: true } };
+				act(() => {
+					result.current.setVibesPerAgentConfig(newConfig);
+				});
+
+				expect(result.current.vibesPerAgentConfig).toEqual(newConfig);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesPerAgentConfig', newConfig);
+			});
+
+			it('should update vibesMaestroOrchestrationEnabled and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesMaestroOrchestrationEnabled(false);
+				});
+
+				expect(result.current.vibesMaestroOrchestrationEnabled).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesMaestroOrchestrationEnabled', false);
+			});
+
+			it('should update vibesAutoInit and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesAutoInit(false);
+				});
+
+				expect(result.current.vibesAutoInit).toBe(false);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesAutoInit', false);
+			});
+
+			it('should update vibesCheckBinaryPath and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesCheckBinaryPath('/opt/bin/vibescheck');
+				});
+
+				expect(result.current.vibesCheckBinaryPath).toBe('/opt/bin/vibescheck');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesCheckBinaryPath', '/opt/bin/vibescheck');
+			});
+
+			it('should update vibesCompressReasoningThreshold and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesCompressReasoningThreshold(20480);
+				});
+
+				expect(result.current.vibesCompressReasoningThreshold).toBe(20480);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesCompressReasoningThreshold', 20480);
+			});
+
+			it('should update vibesExternalBlobThreshold and persist to settings', async () => {
+				const { result } = renderHook(() => useSettings());
+				await waitForSettingsLoaded(result);
+
+				act(() => {
+					result.current.setVibesExternalBlobThreshold(204800);
+				});
+
+				expect(result.current.vibesExternalBlobThreshold).toBe(204800);
+				expect(window.maestro.settings.set).toHaveBeenCalledWith('vibesExternalBlobThreshold', 204800);
 			});
 		});
 	});

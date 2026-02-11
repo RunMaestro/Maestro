@@ -18,6 +18,9 @@ import { DEFAULT_CUSTOM_THEME_COLORS } from '../../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../../constants/shortcuts';
 import { getLevelIndex } from '../../constants/keyboardMastery';
 import { commitCommandPrompt } from '../../../prompts';
+import type { VibesAssuranceLevel } from '../../../shared/vibes-types';
+import type { VibesSettingsConfig } from '../../../shared/vibes-settings';
+import { VIBES_SETTINGS_DEFAULTS, getVibesSettingWithDefault } from '../../../shared/vibes-settings';
 
 // Default context management settings
 const DEFAULT_CONTEXT_MANAGEMENT_SETTINGS: ContextManagementSettings = {
@@ -358,6 +361,28 @@ export interface UseSettingsReturn {
 	// Windows warning suppression
 	suppressWindowsWarning: boolean;
 	setSuppressWindowsWarning: (value: boolean) => void;
+
+	// VIBES Metadata settings
+	vibesEnabled: boolean;
+	setVibesEnabled: (value: boolean) => void;
+	vibesAssuranceLevel: VibesAssuranceLevel;
+	setVibesAssuranceLevel: (value: VibesAssuranceLevel) => void;
+	vibesTrackedExtensions: string[];
+	setVibesTrackedExtensions: (value: string[]) => void;
+	vibesExcludePatterns: string[];
+	setVibesExcludePatterns: (value: string[]) => void;
+	vibesPerAgentConfig: Record<string, { enabled: boolean }>;
+	setVibesPerAgentConfig: (value: Record<string, { enabled: boolean }>) => void;
+	vibesMaestroOrchestrationEnabled: boolean;
+	setVibesMaestroOrchestrationEnabled: (value: boolean) => void;
+	vibesAutoInit: boolean;
+	setVibesAutoInit: (value: boolean) => void;
+	vibesCheckBinaryPath: string;
+	setVibesCheckBinaryPath: (value: string) => void;
+	vibesCompressReasoningThreshold: number;
+	setVibesCompressReasoningThreshold: (value: number) => void;
+	vibesExternalBlobThreshold: number;
+	setVibesExternalBlobThreshold: (value: number) => void;
 }
 
 export function useSettings(): UseSettingsReturn {
@@ -521,6 +546,18 @@ export function useSettings(): UseSettingsReturn {
 
 	// Windows warning suppression
 	const [suppressWindowsWarning, setSuppressWindowsWarningState] = useState(false); // Default: show warning
+
+	// VIBES Metadata settings
+	const [vibesEnabled, setVibesEnabledState] = useState(VIBES_SETTINGS_DEFAULTS.vibesEnabled);
+	const [vibesAssuranceLevel, setVibesAssuranceLevelState] = useState<VibesAssuranceLevel>(VIBES_SETTINGS_DEFAULTS.vibesAssuranceLevel);
+	const [vibesTrackedExtensions, setVibesTrackedExtensionsState] = useState<string[]>(VIBES_SETTINGS_DEFAULTS.vibesTrackedExtensions);
+	const [vibesExcludePatterns, setVibesExcludePatternsState] = useState<string[]>(VIBES_SETTINGS_DEFAULTS.vibesExcludePatterns);
+	const [vibesPerAgentConfig, setVibesPerAgentConfigState] = useState<Record<string, { enabled: boolean }>>(VIBES_SETTINGS_DEFAULTS.vibesPerAgentConfig);
+	const [vibesMaestroOrchestrationEnabled, setVibesMaestroOrchestrationEnabledState] = useState(VIBES_SETTINGS_DEFAULTS.vibesMaestroOrchestrationEnabled);
+	const [vibesAutoInit, setVibesAutoInitState] = useState(VIBES_SETTINGS_DEFAULTS.vibesAutoInit);
+	const [vibesCheckBinaryPath, setVibesCheckBinaryPathState] = useState(VIBES_SETTINGS_DEFAULTS.vibesCheckBinaryPath);
+	const [vibesCompressReasoningThreshold, setVibesCompressReasoningThresholdState] = useState(VIBES_SETTINGS_DEFAULTS.vibesCompressReasoningThreshold);
+	const [vibesExternalBlobThreshold, setVibesExternalBlobThresholdState] = useState(VIBES_SETTINGS_DEFAULTS.vibesExternalBlobThreshold);
 
 	// Wrapper functions that persist to electron-store
 	// PERF: All wrapped in useCallback to prevent re-renders
@@ -1351,6 +1388,57 @@ export function useSettings(): UseSettingsReturn {
 		window.maestro.settings.set('suppressWindowsWarning', value);
 	}, []);
 
+	// VIBES Metadata setters
+	const setVibesEnabled = useCallback((value: boolean) => {
+		setVibesEnabledState(value);
+		window.maestro.settings.set('vibesEnabled', value);
+	}, []);
+
+	const setVibesAssuranceLevel = useCallback((value: VibesAssuranceLevel) => {
+		setVibesAssuranceLevelState(value);
+		window.maestro.settings.set('vibesAssuranceLevel', value);
+	}, []);
+
+	const setVibesTrackedExtensions = useCallback((value: string[]) => {
+		setVibesTrackedExtensionsState(value);
+		window.maestro.settings.set('vibesTrackedExtensions', value);
+	}, []);
+
+	const setVibesExcludePatterns = useCallback((value: string[]) => {
+		setVibesExcludePatternsState(value);
+		window.maestro.settings.set('vibesExcludePatterns', value);
+	}, []);
+
+	const setVibesPerAgentConfig = useCallback((value: Record<string, { enabled: boolean }>) => {
+		setVibesPerAgentConfigState(value);
+		window.maestro.settings.set('vibesPerAgentConfig', value);
+	}, []);
+
+	const setVibesMaestroOrchestrationEnabled = useCallback((value: boolean) => {
+		setVibesMaestroOrchestrationEnabledState(value);
+		window.maestro.settings.set('vibesMaestroOrchestrationEnabled', value);
+	}, []);
+
+	const setVibesAutoInit = useCallback((value: boolean) => {
+		setVibesAutoInitState(value);
+		window.maestro.settings.set('vibesAutoInit', value);
+	}, []);
+
+	const setVibesCheckBinaryPath = useCallback((value: string) => {
+		setVibesCheckBinaryPathState(value);
+		window.maestro.settings.set('vibesCheckBinaryPath', value);
+	}, []);
+
+	const setVibesCompressReasoningThreshold = useCallback((value: number) => {
+		setVibesCompressReasoningThresholdState(value);
+		window.maestro.settings.set('vibesCompressReasoningThreshold', value);
+	}, []);
+
+	const setVibesExternalBlobThreshold = useCallback((value: number) => {
+		setVibesExternalBlobThresholdState(value);
+		window.maestro.settings.set('vibesExternalBlobThreshold', value);
+	}, []);
+
 	// Load settings from electron-store
 	// This function is called on mount and on system resume (after sleep/suspend)
 	// PERF: Use batch loading to reduce IPC calls from ~60 to 3
@@ -1804,6 +1892,38 @@ export function useSettings(): UseSettingsReturn {
 			if (savedSuppressWindowsWarning !== undefined) {
 				setSuppressWindowsWarningState(savedSuppressWindowsWarning as boolean);
 			}
+
+			// VIBES Metadata settings
+			setVibesEnabledState(
+				getVibesSettingWithDefault('vibesEnabled', allSettings['vibesEnabled'] as boolean | undefined)
+			);
+			setVibesAssuranceLevelState(
+				getVibesSettingWithDefault('vibesAssuranceLevel', allSettings['vibesAssuranceLevel'] as VibesAssuranceLevel | undefined)
+			);
+			setVibesTrackedExtensionsState(
+				getVibesSettingWithDefault('vibesTrackedExtensions', allSettings['vibesTrackedExtensions'] as string[] | undefined)
+			);
+			setVibesExcludePatternsState(
+				getVibesSettingWithDefault('vibesExcludePatterns', allSettings['vibesExcludePatterns'] as string[] | undefined)
+			);
+			setVibesPerAgentConfigState(
+				getVibesSettingWithDefault('vibesPerAgentConfig', allSettings['vibesPerAgentConfig'] as Record<string, { enabled: boolean }> | undefined)
+			);
+			setVibesMaestroOrchestrationEnabledState(
+				getVibesSettingWithDefault('vibesMaestroOrchestrationEnabled', allSettings['vibesMaestroOrchestrationEnabled'] as boolean | undefined)
+			);
+			setVibesAutoInitState(
+				getVibesSettingWithDefault('vibesAutoInit', allSettings['vibesAutoInit'] as boolean | undefined)
+			);
+			setVibesCheckBinaryPathState(
+				getVibesSettingWithDefault('vibesCheckBinaryPath', allSettings['vibesCheckBinaryPath'] as string | undefined)
+			);
+			setVibesCompressReasoningThresholdState(
+				getVibesSettingWithDefault('vibesCompressReasoningThreshold', allSettings['vibesCompressReasoningThreshold'] as number | undefined)
+			);
+			setVibesExternalBlobThresholdState(
+				getVibesSettingWithDefault('vibesExternalBlobThreshold', allSettings['vibesExternalBlobThreshold'] as number | undefined)
+			);
 		} catch (error) {
 			console.error('[Settings] Failed to load settings:', error);
 		} finally {
@@ -1990,6 +2110,28 @@ export function useSettings(): UseSettingsReturn {
 			setFileTabAutoRefreshEnabled,
 			suppressWindowsWarning,
 			setSuppressWindowsWarning,
+
+			// VIBES Metadata settings
+			vibesEnabled,
+			setVibesEnabled,
+			vibesAssuranceLevel,
+			setVibesAssuranceLevel,
+			vibesTrackedExtensions,
+			setVibesTrackedExtensions,
+			vibesExcludePatterns,
+			setVibesExcludePatterns,
+			vibesPerAgentConfig,
+			setVibesPerAgentConfig,
+			vibesMaestroOrchestrationEnabled,
+			setVibesMaestroOrchestrationEnabled,
+			vibesAutoInit,
+			setVibesAutoInit,
+			vibesCheckBinaryPath,
+			setVibesCheckBinaryPath,
+			vibesCompressReasoningThreshold,
+			setVibesCompressReasoningThreshold,
+			vibesExternalBlobThreshold,
+			setVibesExternalBlobThreshold,
 		}),
 		[
 			// State values
@@ -2139,6 +2281,28 @@ export function useSettings(): UseSettingsReturn {
 			setFileTabAutoRefreshEnabled,
 			suppressWindowsWarning,
 			setSuppressWindowsWarning,
+			// VIBES Metadata state values
+			vibesEnabled,
+			vibesAssuranceLevel,
+			vibesTrackedExtensions,
+			vibesExcludePatterns,
+			vibesPerAgentConfig,
+			vibesMaestroOrchestrationEnabled,
+			vibesAutoInit,
+			vibesCheckBinaryPath,
+			vibesCompressReasoningThreshold,
+			vibesExternalBlobThreshold,
+			// VIBES Metadata setter functions (stable via useCallback)
+			setVibesEnabled,
+			setVibesAssuranceLevel,
+			setVibesTrackedExtensions,
+			setVibesExcludePatterns,
+			setVibesPerAgentConfig,
+			setVibesMaestroOrchestrationEnabled,
+			setVibesAutoInit,
+			setVibesCheckBinaryPath,
+			setVibesCompressReasoningThreshold,
+			setVibesExternalBlobThreshold,
 		]
 	);
 }
