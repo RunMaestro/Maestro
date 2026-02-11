@@ -57,6 +57,9 @@ import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
+import type { WindowManager } from '../../app-lifecycle/window-manager';
+import type { WindowRegistry } from '../../window-registry';
+import type { WindowState } from '../../stores/types';
 
 // Type for tunnel manager instance
 type TunnelManagerType = typeof tunnelManagerInstance;
@@ -147,6 +150,7 @@ export interface HandlerDependencies {
 	agentConfigsStore: Store<AgentConfigsData>;
 	// Process-specific dependencies
 	getProcessManager: () => ProcessManager | null;
+	broadcastToAllWindows: (channel: string, ...args: unknown[]) => void;
 	settingsStore: Store<MaestroSettings>;
 	// Persistence-specific dependencies
 	sessionsStore: Store<SessionsData>;
@@ -156,6 +160,10 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	// Windows handler dependencies (optional for backwards compatibility)
+	windowStateStore?: Store<WindowState>;
+	getWindowRegistry?: () => WindowRegistry | null;
+	getWindowManager?: () => WindowManager | null;
 }
 
 /**
@@ -184,7 +192,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
 		settingsStore: deps.settingsStore,
-		getMainWindow: deps.getMainWindow,
+		broadcastToAllWindows: deps.broadcastToAllWindows,
 		sessionsStore: deps.sessionsStore,
 	});
 	registerPersistenceHandlers({
@@ -260,7 +268,9 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({
+		getWindowRegistry: deps.getWindowRegistry,
+	});
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,
@@ -281,6 +291,14 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 	});
+
+	if (deps.windowStateStore && deps.getWindowRegistry && deps.getWindowManager) {
+		registerWindowsHandlers({
+			windowStateStore: deps.windowStateStore,
+			getWindowRegistry: deps.getWindowRegistry,
+			getWindowManager: deps.getWindowManager,
+		});
+	}
 	// Setup logger event forwarding to renderer
 	setupLoggerEventForwarding(deps.getMainWindow);
 }

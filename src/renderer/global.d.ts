@@ -3,6 +3,8 @@
  * This file makes the window.maestro API available throughout the renderer.
  */
 
+import type { NotificationMetadata } from '../shared/types/notification';
+
 // Vite raw imports for .md files
 declare module '*.md?raw' {
 	const content: string;
@@ -84,6 +86,11 @@ interface MaestroMoveSessionOptions {
 	sessionId: string;
 	toWindowId: string;
 	fromWindowId?: string;
+}
+
+interface MaestroAssignSessionsOptions {
+	sessionIds: string[];
+	windowId?: string;
 }
 
 interface MaestroWindowSessionMovedEvent {
@@ -1320,7 +1327,11 @@ interface MaestroAPI {
 		reload: () => Promise<boolean>;
 	};
 	notification: {
-		show: (title: string, body: string) => Promise<{ success: boolean; error?: string }>;
+		show: (
+			title: string,
+			body: string,
+			metadata?: NotificationMetadata
+		) => Promise<{ success: boolean; error?: string }>;
 		speak: (
 			text: string,
 			command?: string
@@ -2302,6 +2313,7 @@ interface MaestroAPI {
 			deletedAutoRunSessions: number;
 			deletedAutoRunTasks: number;
 			deletedSessionLifecycle: number;
+			deletedWindowUsageEvents: number;
 			error?: string;
 		}>;
 		// Get database size in bytes
@@ -2767,6 +2779,7 @@ interface MaestroAPI {
 		list: () => Promise<MaestroWindowInfo[]>;
 		getForSession: (sessionId: string) => Promise<string | null>;
 		moveSession: (options: MaestroMoveSessionOptions) => Promise<boolean>;
+		assignSessions: (options: MaestroAssignSessionsOptions) => Promise<boolean>;
 		focusWindow: (windowId: string) => Promise<boolean>;
 		getWindowBounds: () => Promise<MaestroWindowBounds>;
 		findWindowAtPoint: (screenX: number, screenY: number) => Promise<string | null>;

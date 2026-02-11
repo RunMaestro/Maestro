@@ -126,6 +126,25 @@ export const CREATE_SESSION_LIFECYCLE_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Window Usage Snapshots (Migration v4)
+// ============================================================================
+
+export const CREATE_WINDOW_USAGE_EVENTS_SQL = `
+  CREATE TABLE IF NOT EXISTS window_usage_events (
+    id TEXT PRIMARY KEY,
+    recorded_at INTEGER NOT NULL,
+    window_count INTEGER NOT NULL,
+    session_count INTEGER NOT NULL,
+    is_multi_window INTEGER NOT NULL CHECK(is_multi_window IN (0, 1))
+  )
+`;
+
+export const CREATE_WINDOW_USAGE_EVENTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_window_usage_recorded_at ON window_usage_events(recorded_at);
+  CREATE INDEX IF NOT EXISTS idx_window_usage_multi ON window_usage_events(is_multi_window)
+`;
+
+// ============================================================================
 // Utilities
 // ============================================================================
 

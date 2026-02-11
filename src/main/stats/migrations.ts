@@ -24,6 +24,8 @@ import {
 	CREATE_AUTO_RUN_TASKS_INDEXES_SQL,
 	CREATE_SESSION_LIFECYCLE_SQL,
 	CREATE_SESSION_LIFECYCLE_INDEXES_SQL,
+	CREATE_WINDOW_USAGE_EVENTS_SQL,
+	CREATE_WINDOW_USAGE_EVENTS_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -53,6 +55,11 @@ export function getMigrations(): Migration[] {
 			version: 3,
 			description: 'Add session_lifecycle table for tracking session creation and closure',
 			up: (db) => migrateV3(db),
+		},
+		{
+			version: 4,
+			description: 'Add window_usage_events table for multi-window analytics',
+			up: (db) => migrateV4(db),
 		},
 	];
 }
@@ -231,4 +238,13 @@ function migrateV3(db: Database.Database): void {
 	runStatements(db, CREATE_SESSION_LIFECYCLE_INDEXES_SQL);
 
 	logger.debug('Created session_lifecycle table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v4: Add window_usage_events table
+ */
+function migrateV4(db: Database.Database): void {
+	db.prepare(CREATE_WINDOW_USAGE_EVENTS_SQL).run();
+	runStatements(db, CREATE_WINDOW_USAGE_EVENTS_INDEXES_SQL);
+	logger.debug('Created window_usage_events table', LOG_CONTEXT);
 }

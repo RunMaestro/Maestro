@@ -35,6 +35,7 @@ export interface SessionItemProps {
 	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
+	remoteWindowNumber?: number | null;
 
 	// Handlers
 	onSelect: () => void;
@@ -83,6 +84,7 @@ export const SessionItem = memo(function SessionItem({
 	onFinishRename,
 	onStartRename,
 	onToggleBookmark,
+	remoteWindowNumber,
 }: SessionItemProps) {
 	// Determine if we show the GIT/LOCAL badge (not shown in bookmark variant, terminal sessions, or worktree variant)
 	const showGitLocalBadge =
@@ -191,6 +193,19 @@ export const SessionItem = memo(function SessionItem({
 
 			{/* Right side: Indicators and actions */}
 			<div className="flex items-center gap-2 ml-2">
+				{/* Indicator for sessions assigned to another window */}
+				{remoteWindowNumber && (
+					<div
+						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+						style={{
+							backgroundColor: theme.colors.accent + '20',
+							color: theme.colors.accent,
+						}}
+						title={`Open in window ${remoteWindowNumber}`}
+					>
+						W{remoteWindowNumber}
+					</div>
+				)}
 				{/* Git Dirty Indicator (only in wide mode) - placed before GIT/LOCAL for vertical alignment */}
 				{leftSidebarOpen && session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
 					<div

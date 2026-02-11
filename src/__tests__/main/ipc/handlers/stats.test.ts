@@ -76,7 +76,14 @@ describe('stats IPC handlers', () => {
 				bySessionByDay: {},
 			}),
 			exportToCsv: vi.fn().mockReturnValue('id,sessionId,...'),
-			clearOldData: vi.fn().mockReturnValue({ success: true, deletedCount: 0 }),
+			clearOldData: vi.fn().mockReturnValue({
+				success: true,
+				deletedQueryEvents: 0,
+				deletedAutoRunSessions: 0,
+				deletedAutoRunTasks: 0,
+				deletedSessionLifecycle: 0,
+				deletedWindowUsageEvents: 0,
+			}),
 			getDatabaseSize: vi.fn().mockReturnValue({ sizeBytes: 1024, sizeFormatted: '1 KB' }),
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
@@ -489,18 +496,41 @@ describe('stats IPC handlers', () => {
 
 				const result = await handler!({} as any, 30);
 
-				expect(result).toEqual({ success: true, deletedCount: 0 });
+				expect(result).toEqual({
+					success: true,
+					deletedQueryEvents: 0,
+					deletedAutoRunSessions: 0,
+					deletedAutoRunTasks: 0,
+					deletedSessionLifecycle: 0,
+					deletedWindowUsageEvents: 0,
+				});
 				expect(mockStatsDB.clearOldData).toHaveBeenCalledWith(30);
 				expect(mockMainWindow.webContents.send).toHaveBeenCalledWith('stats:updated');
 			});
 
 			it('should not broadcast when clear fails', async () => {
-				vi.mocked(mockStatsDB.clearOldData).mockReturnValue({ success: false, deletedCount: 0 });
+				vi.mocked(mockStatsDB.clearOldData).mockReturnValue({
+					success: false,
+					deletedQueryEvents: 0,
+					deletedAutoRunSessions: 0,
+					deletedAutoRunTasks: 0,
+					deletedSessionLifecycle: 0,
+					deletedWindowUsageEvents: 0,
+					error: 'failed',
+				});
 
 				const handler = handlers.get('stats:clear-old-data');
 				const result = await handler!({} as any, 30);
 
-				expect(result).toEqual({ success: false, deletedCount: 0 });
+				expect(result).toEqual({
+					success: false,
+					deletedQueryEvents: 0,
+					deletedAutoRunSessions: 0,
+					deletedAutoRunTasks: 0,
+					deletedSessionLifecycle: 0,
+					deletedWindowUsageEvents: 0,
+					error: 'failed',
+				});
 				// Should not broadcast on failure
 				expect(mockMainWindow.webContents.send).not.toHaveBeenCalled();
 			});

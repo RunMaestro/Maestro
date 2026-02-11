@@ -371,6 +371,7 @@ export type {
 	NotificationApi,
 	NotificationShowResponse,
 	NotificationCommandResponse,
+	NotificationMetadata,
 } from './notifications';
 export type {
 	// From leaderboard

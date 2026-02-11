@@ -33,6 +33,7 @@ interface SaveWindowStateOptions {
 interface WindowRegistryOptions {
 	windowStateStore: Store<WindowStateStoreShape>;
 	saveDebounceMs?: number;
+	onWindowCountChanged?: (metrics: { windowCount: number; sessionCount: number }) => void;
 }
 
 export class WindowRegistry {
@@ -46,9 +47,12 @@ export class WindowRegistry {
 
 	private primaryWindowId: string | null = null;
 
+	private readonly windowCountCallback?: (metrics: { windowCount: number; sessionCount: number }) => void;
+
 	constructor(options: WindowRegistryOptions) {
 		this.windowStateStore = options.windowStateStore;
 		this.saveDebounceMs = options.saveDebounceMs ?? 250;
+		this.windowCountCallback = options.onWindowCountChanged;
 	}
 
 	create(options: CreateWindowOptions): BrowserWindow {
@@ -73,6 +77,7 @@ export class WindowRegistry {
 		};
 
 		this.windows.set(resolvedWindowId, windowEntry);
+		this.emitWindowCountMetrics();
 
 		if (isMain) {
 			this.primaryWindowId = resolvedWindowId;
@@ -166,6 +171,7 @@ export class WindowRegistry {
 
 		this.clearPendingSave(windowId);
 		this.windows.delete(windowId);
+		this.emitWindowCountMetrics();
 
 		if (this.primaryWindowId === windowId) {
 			this.primaryWindowId = null;
@@ -349,6 +355,24 @@ export class WindowRegistry {
 			clearTimeout(timer);
 			this.pendingSaveTimers.delete(windowId);
 		}
+	}
+
+	private emitWindowCountMetrics(): void {
+		if (!this.windowCountCallback) {
+			return;
+		}
+
+		const uniqueSessions = new Set<string>();
+		for (const entry of this.windows.values()) {
+			for (const sessionId of entry.sessionIds) {
+				uniqueSessions.add(sessionId);
+			}
+		}
+
+		this.windowCountCallback({
+			windowCount: this.windows.size,
+			sessionCount: uniqueSessions.size,
+		});
 	}
 
 	private persistWindowState(entry: RegisteredWindow, windowId: string): void {

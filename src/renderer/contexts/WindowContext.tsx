@@ -24,6 +24,7 @@ export interface WindowContextValue {
 	openSession: (sessionId: string) => Promise<void>;
 	closeTab: (sessionId: string) => Promise<void>;
 	moveSessionToNewWindow: (sessionId: string) => Promise<string | null>;
+	assignSessionsToWindow: (sessionIds: string[]) => Promise<void>;
 }
 
 interface WindowProviderProps {
@@ -233,6 +234,54 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 	const sessionIds = windowState?.sessionIds ?? [];
 	const activeSessionId = windowState?.activeSessionId ?? null;
 
+	const assignSessionsToWindow = useCallback(
+		async (sessionIdsToAssign: string[]) => {
+			if (!windowId || !sessionIdsToAssign.length) {
+				return;
+			}
+
+			setWindowState((prev) => {
+				if (!prev) {
+					return prev;
+				}
+
+				const existing = new Set(prev.sessionIds);
+				let changed = false;
+				for (const sessionId of sessionIdsToAssign) {
+					if (!existing.has(sessionId)) {
+						existing.add(sessionId);
+						changed = true;
+					}
+				}
+
+				if (!changed) {
+					return prev;
+				}
+
+				return {
+					...prev,
+					sessionIds: Array.from(existing),
+				};
+			});
+
+			if (!window.maestro?.windows?.assignSessions) {
+				return;
+			}
+
+			try {
+				await window.maestro.windows.assignSessions({
+					sessionIds: sessionIdsToAssign,
+					windowId,
+				});
+			} catch (error) {
+				console.error('Failed to assign sessions to window', error);
+			} finally {
+				await hydrateState();
+			}
+		},
+		[windowId, hydrateState]
+	);
+
 	const value = useMemo<WindowContextValue>(
 		() => ({
 			windowId,
@@ -243,6 +292,7 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,
+			assignSessionsToWindow,
 		}),
 		[
 			windowId,
@@ -253,6 +303,7 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			openSession,
 			closeTab,
 			moveSessionToNewWindow,
+			assignSessionsToWindow,
 		]
 	);
 

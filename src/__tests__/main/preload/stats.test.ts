@@ -261,6 +261,8 @@ describe('Stats Preload API', () => {
 				deletedQueryEvents: 100,
 				deletedAutoRunSessions: 10,
 				deletedAutoRunTasks: 50,
+				deletedSessionLifecycle: 5,
+				deletedWindowUsageEvents: 2,
 			};
 			mockInvoke.mockResolvedValue(response);
 
@@ -276,6 +278,8 @@ describe('Stats Preload API', () => {
 				deletedQueryEvents: 0,
 				deletedAutoRunSessions: 0,
 				deletedAutoRunTasks: 0,
+				deletedSessionLifecycle: 0,
+				deletedWindowUsageEvents: 0,
 				error: 'Database error',
 			});
 

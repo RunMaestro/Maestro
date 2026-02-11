@@ -589,6 +589,7 @@ function MaestroConsoleInner() {
 		windowId: currentWindowId,
 		isMainWindow,
 		windowNumber,
+		assignSessionsToWindow,
 	} = useWindowContext();
 	const windowSessionIdSet = useMemo(() => {
 		return windowSessionIds.length ? new Set(windowSessionIds) : null;
@@ -2779,6 +2780,7 @@ function MaestroConsoleInner() {
 		sessions,
 		setSessions,
 		activeTabId: activeSession?.activeTabId,
+		assignSessionsToWindow,
 		onSessionCreated: (info) => {
 			// Navigate to the newly created merged session
 			setActiveSessionId(info.sessionId);
@@ -2876,6 +2878,7 @@ function MaestroConsoleInner() {
 	} = useSendToAgentWithSessions({
 		sessions,
 		setSessions,
+		assignSessionsToWindow,
 		onSessionCreated: (sessionId, sessionName) => {
 			// Navigate to the newly created transferred session
 			setActiveSessionId(sessionId);
@@ -8168,8 +8171,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Default Auto Run folder path (user can change later)
 				autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
 			};
-			setSessions((prev) => [...prev, newSession]);
-			setActiveSessionId(newId);
+				setSessions((prev) => [...prev, newSession]);
+				setActiveSessionId(newId);
+				await assignSessionsToWindow([newId]);
+				await assignSessionsToWindow([newId]);
 			// Track session creation in global stats
 			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
@@ -8413,6 +8418,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveFocus,
 			startBatchRun,
 			sessions,
+			assignSessionsToWindow,
 			addToast,
 		]
 	);
@@ -12463,6 +12469,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 								setSessions((prev) => [...prev, newSession]);
 								setActiveSessionId(newId);
+								await assignSessionsToWindow([newId]);
 								setSymphonyModalOpen(false);
 
 								// Register active contribution in Symphony persistent state
