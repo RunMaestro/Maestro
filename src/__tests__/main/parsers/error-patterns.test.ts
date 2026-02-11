@@ -332,6 +332,16 @@ describe('error-patterns', () => {
 				expect(result?.type).toBe('rate_limited');
 				expect(result?.recoverable).toBe(false);
 			});
+
+			it('should detect credit exhaustion (exceeded current quota)', () => {
+				const result = matchErrorPattern(
+					CLAUDE_ERROR_PATTERNS,
+					'You exceeded your current quota, please check your plan and billing details.'
+				);
+				expect(result).not.toBeNull();
+				expect(result?.type).toBe('rate_limited');
+				expect(result?.recoverable).toBe(false);
+			});
 		});
 
 		describe('network_error patterns', () => {
@@ -465,6 +475,16 @@ describe('error-patterns', () => {
 
 				it('should match "quota exceeded"', () => {
 					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'quota exceeded');
+					expect(result).not.toBeNull();
+					expect(result?.type).toBe('rate_limited');
+					expect(result?.recoverable).toBe(false);
+				});
+
+				it('should detect credit exhaustion (billing/quota)', () => {
+					const result = matchErrorPattern(
+						CODEX_ERROR_PATTERNS,
+						'Error: insufficient_quota (You exceeded your current quota, please check your plan and billing details.)'
+					);
 					expect(result).not.toBeNull();
 					expect(result?.type).toBe('rate_limited');
 					expect(result?.recoverable).toBe(false);

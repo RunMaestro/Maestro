@@ -416,6 +416,7 @@ describe('CodexOutputParser', () => {
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('auth_expired');
 			expect(error?.agentId).toBe('codex');
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should detect rate limit errors from JSON', () => {
@@ -423,6 +424,38 @@ describe('CodexOutputParser', () => {
 			const error = parser.detectErrorFromLine(line);
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('should detect quota exhaustion as non-recoverable rate limit from JSON', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				error: {
+					message:
+						'insufficient_quota (You exceeded your current quota, please check your plan and billing details.)',
+				},
+				headers: {
+					'retry-after': '30',
+					'x-ratelimit-remaining-requests': '0',
+				},
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(false);
+			expect(error?.parsedJson).toBeDefined();
+		});
+
+		it('should return unknown for unmatched structured JSON errors', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				error: { message: 'Provider diagnostic code ZXCV1234' },
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('Provider diagnostic code ZXCV1234');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should detect token exhaustion errors from JSON', () => {
@@ -459,6 +492,26 @@ describe('CodexOutputParser', () => {
 			const error = parser.detectErrorFromExit(1, '', 'rate limit exceeded');
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('should extract structured quota errors from stderr JSON', () => {
+			const stderr =
+				'Error from provider: 429 {"type":"error","error":{"message":"insufficient_quota (You exceeded your current quota, please check your plan and billing details.)"},"headers":{"x-ratelimit-remaining-requests":"0"}}';
+			const error = parser.detectErrorFromExit(1, stderr, '');
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(false);
+			expect(error?.parsedJson).toBeDefined();
+		});
+
+		it('should return unknown for unmatched structured stderr errors', () => {
+			const stderr =
+				'Error from provider: 500 {"type":"error","error":{"message":"Provider diagnostic code ZXCV1234"}}';
+			const error = parser.detectErrorFromExit(1, stderr, '');
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('Provider diagnostic code ZXCV1234');
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should return agent_crashed for unknown non-zero exit', () => {

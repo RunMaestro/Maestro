@@ -60,6 +60,11 @@ interface ClaudeRawMessage {
 	total_cost_usd?: number;
 }
 
+interface ExtractedStructuredError {
+	errorText: string | null;
+	parsedJson: unknown | null;
+}
+
 /**
  * Claude Code Output Parser Implementation
  *
@@ -67,6 +72,7 @@ interface ClaudeRawMessage {
  */
 export class ClaudeOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'claude-code';
+	private readonly errorPatterns = getErrorPatterns(this.agentId);
 
 	/**
 	 * Parse a single JSON line from Claude Code output
@@ -328,91 +334,163 @@ export class ClaudeOutputParser implements AgentOutputParser {
 	 * 2. stderr output (handled separately by process-manager)
 	 * 3. Non-zero exit code (handled by detectErrorFromExit)
 	 */
+	private extractErrorMessage(errorField: unknown): string | null {
+		if (typeof errorField === 'string') {
+			return errorField;
+		}
+
+		if (typeof errorField === 'number' || typeof errorField === 'boolean') {
+			return String(errorField);
+		}
+
+		if (errorField && typeof errorField === 'object') {
+			const message = (errorField as { message?: unknown }).message;
+			if (typeof message === 'string') {
+				return message;
+			}
+			return JSON.stringify(errorField);
+		}
+
+		return null;
+	}
+
+	private extractErrorFromParsedLine(parsed: unknown): ExtractedStructuredError {
+		if (!parsed || typeof parsed !== 'object') {
+			return { errorText: null, parsedJson: null };
+		}
+
+		const parsedRecord = parsed as {
+			type?: unknown;
+			message?: unknown;
+			error?: unknown;
+		};
+
+		const type = typeof parsedRecord.type === 'string' ? parsedRecord.type : '';
+		const message = typeof parsedRecord.message === 'string' ? parsedRecord.message : null;
+		const errorField = parsedRecord.error;
+
+		if (type === 'error' && message) {
+			return { errorText: message, parsedJson: parsed };
+		}
+
+		if (type === 'turn.failed' || type === 'turn_failed') {
+			const turnFailedMessage = this.extractErrorMessage(errorField);
+			if (turnFailedMessage) {
+				return { errorText: turnFailedMessage, parsedJson: parsed };
+			}
+		}
+
+		if (type === 'error') {
+			const nestedErrorMessage = this.extractErrorMessage(errorField);
+			if (nestedErrorMessage) {
+				return { errorText: nestedErrorMessage, parsedJson: parsed };
+			}
+		}
+
+		if (errorField) {
+			const errorMessage = this.extractErrorMessage(errorField);
+			if (errorMessage) {
+				return { errorText: errorMessage, parsedJson: parsed };
+			}
+		}
+
+		return { errorText: null, parsedJson: null };
+	}
+
+	private buildPatternMatchedError(
+		errorText: string,
+		raw: NonNullable<AgentError['raw']>,
+		parsedJson?: unknown
+	): AgentError | null {
+		const match = matchErrorPattern(this.errorPatterns, errorText);
+		if (!match) {
+			return null;
+		}
+
+		return {
+			type: match.type,
+			message: match.message,
+			recoverable: match.recoverable,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+			parsedJson,
+		};
+	}
+
+	private buildUnknownStructuredError(
+		errorText: string,
+		raw: NonNullable<AgentError['raw']>,
+		parsedJson: unknown
+	): AgentError {
+		return {
+			type: 'unknown',
+			message: errorText,
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+			parsedJson,
+		};
+	}
+
 	detectErrorFromLine(line: string): AgentError | null {
 		// Skip empty lines
 		if (!line.trim()) {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
-		let errorText: string | null = null;
+		let extracted: ExtractedStructuredError = { errorText: null, parsedJson: null };
 		try {
-			const parsed = JSON.parse(line);
-			// Check for error type messages
-			// Claude Code uses type: 'error' for some errors and type: 'turn.failed' for others
-			if (parsed.type === 'error' && parsed.message) {
-				errorText = parsed.message;
-			} else if (
-				(parsed.type === 'turn.failed' || parsed.type === 'turn_failed') &&
-				parsed.error?.message
-			) {
-				// Handle turn.failed/turn_failed format: {"type":"turn.failed","error":{"message":"..."}}
-				errorText = parsed.error.message;
-			} else if (parsed.error) {
-				errorText = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
-			}
-			// If no error field in JSON, this is normal output - don't check it
+			extracted = this.extractErrorFromParsedLine(JSON.parse(line));
 		} catch {
 			// Not pure JSON - try to extract embedded JSON from stderr messages
 			// Example: "Error streaming...: 400 {"type":"error","error":{"type":"invalid_request_error","message":"..."}}"
-			errorText = this.extractErrorFromMixedLine(line);
+			extracted = this.extractErrorFromMixedLine(line);
 		}
 
-		// If no error text was extracted, no error to detect
-		if (!errorText) {
+		if (!extracted.errorText) {
 			return null;
 		}
 
-		// Match against error patterns
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, errorText);
+		const raw: NonNullable<AgentError['raw']> = { errorLine: line };
+		const matchedError = this.buildPatternMatchedError(
+			extracted.errorText,
+			raw,
+			extracted.parsedJson ?? undefined
+		);
+		if (matchedError) {
+			return matchedError;
+		}
 
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
-			};
+		if (extracted.parsedJson) {
+			return this.buildUnknownStructuredError(extracted.errorText, raw, extracted.parsedJson);
 		}
 
 		return null;
 	}
 
 	/**
-	 * Extract error message from a line that contains embedded JSON.
+	 * Extract error message + JSON from a line that contains embedded JSON.
+	 *
 	 * Handles stderr output like:
 	 * "Error streaming, falling back to non-streaming mode: 400 {"type":"error","error":{"type":"invalid_request_error","message":"prompt is too long: 206491 tokens > 200000 maximum"}}"
 	 */
-	private extractErrorFromMixedLine(line: string): string | null {
+	private extractErrorFromMixedLine(line: string): ExtractedStructuredError {
 		// Look for embedded JSON in the line
 		const jsonStart = line.indexOf('{');
 		if (jsonStart === -1) {
-			return null;
+			return { errorText: null, parsedJson: null };
 		}
 
 		try {
 			const jsonPart = line.substring(jsonStart);
-			const parsed = JSON.parse(jsonPart);
-
-			// Handle nested error structure from API: { "type": "error", "error": { "message": "..." } }
-			if (parsed.error?.message) {
-				return parsed.error.message;
-			}
-			// Handle flat error structure: { "type": "error", "message": "..." }
-			if (parsed.message) {
-				return parsed.message;
-			}
+			return this.extractErrorFromParsedLine(JSON.parse(jsonPart));
 		} catch {
 			// JSON parsing failed, ignore
 		}
 
-		return null;
+		return { errorText: null, parsedJson: null };
 	}
 
 	/**
@@ -424,46 +502,39 @@ export class ClaudeOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		const raw: NonNullable<AgentError['raw']> = {
+			exitCode,
+			stderr,
+			stdout,
+		};
+
 		// First try to extract detailed error from embedded JSON in stderr
-		// This handles messages like: "Error streaming...: 400 {"type":"error","error":{"message":"prompt is too long: 206491 tokens > 200000 maximum"}}"
-		const extractedError = this.extractErrorFromMixedLine(stderr);
-		if (extractedError) {
-			const patterns = getErrorPatterns(this.agentId);
-			const match = matchErrorPattern(patterns, extractedError);
-			if (match) {
-				return {
-					type: match.type,
-					message: match.message,
-					recoverable: match.recoverable,
-					agentId: this.agentId,
-					timestamp: Date.now(),
-					raw: {
-						exitCode,
-						stderr,
-						stdout,
-					},
-				};
+		const extracted = this.extractErrorFromMixedLine(stderr);
+		if (extracted.errorText) {
+			const matchedStructuredError = this.buildPatternMatchedError(
+				extracted.errorText,
+				raw,
+				extracted.parsedJson ?? undefined
+			);
+			if (matchedStructuredError) {
+				return matchedStructuredError;
 			}
 		}
 
 		// Check stderr and stdout for error patterns (fallback to raw text matching)
 		const combined = `${stderr}\n${stdout}`;
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, combined);
+		const matchedFallbackError = this.buildPatternMatchedError(
+			combined,
+			raw,
+			extracted.parsedJson ?? undefined
+		);
+		if (matchedFallbackError) {
+			return matchedFallbackError;
+		}
 
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: {
-					exitCode,
-					stderr,
-					stdout,
-				},
-			};
+		// We have a structured error but no pattern match - return it verbatim
+		if (extracted.errorText && extracted.parsedJson) {
+			return this.buildUnknownStructuredError(extracted.errorText, raw, extracted.parsedJson);
 		}
 
 		// Non-zero exit with no recognized pattern - treat as crash

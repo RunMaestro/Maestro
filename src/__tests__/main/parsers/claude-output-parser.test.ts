@@ -562,6 +562,7 @@ describe('ClaudeOutputParser', () => {
 			expect(error?.agentId).toBe('claude-code');
 			expect(error?.recoverable).toBe(true);
 			expect(error?.timestamp).toBeGreaterThan(0);
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should detect token exhaustion errors from JSON', () => {
@@ -576,6 +577,36 @@ describe('ClaudeOutputParser', () => {
 			const error = parser.detectErrorFromLine(line);
 			expect(error).not.toBeNull();
 			expect(error?.type).toBe('rate_limited');
+		});
+
+		it('should detect quota exhaustion as non-recoverable rate limit from JSON', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				message: 'You exceeded your current quota, please check your plan and billing details.',
+				headers: {
+					'retry-after': '30',
+					'anthropic-ratelimit-requests-remaining': '0',
+				},
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('rate_limited');
+			expect(error?.recoverable).toBe(false);
+			expect(error?.parsedJson).toBeDefined();
+		});
+
+		it('should return unknown for unmatched structured JSON errors', () => {
+			const line = JSON.stringify({
+				type: 'error',
+				message: 'Provider diagnostic code ZXCV1234',
+				error: { code: 'ZXCV1234' },
+			});
+			const error = parser.detectErrorFromLine(line);
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('Provider diagnostic code ZXCV1234');
+			expect(error?.recoverable).toBe(true);
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should detect network errors from JSON', () => {
@@ -653,6 +684,16 @@ describe('ClaudeOutputParser', () => {
 			expect(error?.message).toContain('206,491');
 			expect(error?.message).toContain('200,000');
 			expect(error?.raw?.stderr).toBe(stderr);
+		});
+
+		it('should return unknown when structured stderr error has no known pattern', () => {
+			const stderr =
+				'Error streaming, falling back to non-streaming mode: 500 {"type":"error","error":{"message":"Provider diagnostic code ZXCV1234"}}';
+			const error = parser.detectErrorFromExit(1, stderr, '');
+			expect(error).not.toBeNull();
+			expect(error?.type).toBe('unknown');
+			expect(error?.message).toBe('Provider diagnostic code ZXCV1234');
+			expect(error?.parsedJson).toBeDefined();
 		});
 
 		it('should return agent_crashed for unrecognized non-zero exit', () => {

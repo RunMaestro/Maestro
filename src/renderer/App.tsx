@@ -3191,7 +3191,9 @@ function MaestroConsoleInner() {
 									: agentError.type === 'token_exhaustion'
 										? '- Start a new session to reset the context window'
 										: agentError.type === 'rate_limited'
-											? '- Wait a few minutes before retrying'
+											? agentError.recoverable
+												? '- Wait a few minutes before retrying'
+												: '- Add credits/upgrade your plan (or wait for quota reset), then resume Auto Run'
 											: agentError.type === 'network_error'
 												? '- Check your internet connection and try again'
 												: '- Review the error message and take appropriate action',

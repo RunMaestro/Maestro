@@ -108,7 +108,9 @@ function getRecoveryActionsForError(
 				actions.push({
 					id: 'retry',
 					label: 'Try Again',
-					description: 'Wait a moment and retry',
+					description: error.recoverable
+						? 'Wait a moment and retry'
+						: 'After adding credits/upgrading your plan, retry',
 					primary: true,
 					icon: <RefreshCw className="w-4 h-4" />,
 					onClick: options.onRetry,

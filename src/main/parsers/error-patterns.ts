@@ -54,6 +54,15 @@ export type AgentErrorPatterns = {
 	[K in AgentErrorType]?: ErrorPattern[];
 };
 
+const QUOTA_EXCEEDED_PATTERN =
+	/exceed(?:ed|s)?\b.*?\bquota\b|\bquota\b.*?\bexceed(?:ed|s)?\b/i;
+const CREDIT_EXHAUSTION_PATTERN =
+	/insufficient[_\s-]*quota|insufficient[_\s-]*credits?|insufficient balance|not enough credits?|no (?:remaining )?credits?|credits? exhausted|(?:credit|quota) exhausted|credit balance.*too low|balance.*too low|out of (?:credits?|quota)|billing.*(?:hard\s+)?limit|plan and billing details|payment required|\b402\b.*payment required|\bpayment required\b.*\b402\b/i;
+const QUOTA_EXCEEDED_MESSAGE =
+	'Usage limit reached (quota). Add credits/upgrade your plan (or wait for quota reset), then retry.';
+const CREDIT_EXHAUSTION_MESSAGE =
+	"Usage credits exhausted (billing/quota). Restarting won't help; add credits/upgrade your plan, then retry.";
+
 // ============================================================================
 // Claude Code Error Patterns
 // ============================================================================
@@ -188,14 +197,22 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /quota exceeded/i,
-			message: 'Your API quota has been exceeded.',
+			// OpenAI-style: "You exceeded your current quota, please check your plan and billing details."
+			pattern: QUOTA_EXCEEDED_PATTERN,
+			message: QUOTA_EXCEEDED_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// Common provider codes/messages for credit exhaustion
+			pattern: CREDIT_EXHAUSTION_PATTERN,
+			message: CREDIT_EXHAUSTION_MESSAGE,
 			recoverable: false,
 		},
 		{
 			// Matches: "usage limit" or "hit your limit"
 			pattern: /usage.?limit|hit your.*limit/i,
-			message: 'Usage limit reached. Check your plan for available quota.',
+			message:
+				'Usage limit reached. Check your plan/billing (or wait for quota reset), then retry.',
 			recoverable: false,
 		},
 	],
@@ -447,8 +464,15 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			pattern: /quota.*exceeded/i,
-			message: 'Your API quota has been exceeded.',
+			// OpenAI-style: "You exceeded your current quota, please check your plan and billing details."
+			pattern: QUOTA_EXCEEDED_PATTERN,
+			message: QUOTA_EXCEEDED_MESSAGE,
+			recoverable: false,
+		},
+		{
+			// Common provider codes/messages for credit exhaustion
+			pattern: CREDIT_EXHAUSTION_PATTERN,
+			message: CREDIT_EXHAUSTION_MESSAGE,
 			recoverable: false,
 		},
 		{

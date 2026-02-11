@@ -150,6 +150,11 @@ interface CodexUsage {
 	reasoning_output_tokens?: number;
 }
 
+interface ExtractedStructuredError {
+	errorText: string | null;
+	parsedJson: unknown | null;
+}
+
 /**
  * Codex CLI Output Parser Implementation
  *
@@ -158,6 +163,7 @@ interface CodexUsage {
  */
 export class CodexOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'codex';
+	private readonly errorPatterns = getErrorPatterns(this.agentId);
 
 	// Cached context window - read once from config
 	private contextWindow: number;
@@ -442,50 +448,137 @@ export class CodexOutputParser implements AgentOutputParser {
 	 * 2. stderr output (handled separately by process-manager)
 	 * 3. Non-zero exit code (handled by detectErrorFromExit)
 	 */
+	private extractErrorMessage(errorField: unknown): string | null {
+		if (typeof errorField === 'string') {
+			return errorField;
+		}
+
+		if (typeof errorField === 'number' || typeof errorField === 'boolean') {
+			return String(errorField);
+		}
+
+		if (errorField && typeof errorField === 'object') {
+			const message = (errorField as { message?: unknown }).message;
+			if (typeof message === 'string') {
+				return message;
+			}
+			return JSON.stringify(errorField);
+		}
+
+		return null;
+	}
+
+	private extractErrorFromParsedLine(parsed: unknown): ExtractedStructuredError {
+		if (!parsed || typeof parsed !== 'object') {
+			return { errorText: null, parsedJson: null };
+		}
+
+		const parsedRecord = parsed as {
+			type?: unknown;
+			error?: unknown;
+			message?: unknown;
+		};
+
+		const type = typeof parsedRecord.type === 'string' ? parsedRecord.type : '';
+		const errorField = parsedRecord.error;
+		const message = typeof parsedRecord.message === 'string' ? parsedRecord.message : null;
+
+		if (errorField) {
+			const errorMessage = this.extractErrorMessage(errorField);
+			if (errorMessage) {
+				return { errorText: errorMessage, parsedJson: parsed };
+			}
+		}
+
+		if (type === 'error' && message) {
+			return { errorText: message, parsedJson: parsed };
+		}
+
+		return { errorText: null, parsedJson: null };
+	}
+
+	private buildPatternMatchedError(
+		errorText: string,
+		raw: NonNullable<AgentError['raw']>,
+		parsedJson?: unknown
+	): AgentError | null {
+		const match = matchErrorPattern(this.errorPatterns, errorText);
+		if (!match) {
+			return null;
+		}
+
+		return {
+			type: match.type,
+			message: match.message,
+			recoverable: match.recoverable,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+			parsedJson,
+		};
+	}
+
+	private buildUnknownStructuredError(
+		errorText: string,
+		raw: NonNullable<AgentError['raw']>,
+		parsedJson: unknown
+	): AgentError {
+		return {
+			type: 'unknown',
+			message: errorText,
+			recoverable: true,
+			agentId: this.agentId,
+			timestamp: Date.now(),
+			raw,
+			parsedJson,
+		};
+	}
+
+	private extractErrorFromMixedLine(line: string): ExtractedStructuredError {
+		const jsonStart = line.indexOf('{');
+		if (jsonStart === -1) {
+			return { errorText: null, parsedJson: null };
+		}
+
+		try {
+			const jsonPart = line.substring(jsonStart);
+			return this.extractErrorFromParsedLine(JSON.parse(jsonPart));
+		} catch {
+			return { errorText: null, parsedJson: null };
+		}
+	}
+
 	detectErrorFromLine(line: string): AgentError | null {
 		// Skip empty lines
 		if (!line.trim()) {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
-		let errorText: string | null = null;
+		let extracted: ExtractedStructuredError = { errorText: null, parsedJson: null };
 		try {
-			const parsed = JSON.parse(line);
-			// Check for error type messages
-			if (parsed.type === 'error' && parsed.error) {
-				errorText = parsed.error;
-			} else if (parsed.error) {
-				errorText = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
-			}
-			// If no error field in JSON, this is normal output - don't check it
+			extracted = this.extractErrorFromParsedLine(JSON.parse(line));
 		} catch {
 			// Not JSON - skip pattern matching entirely
 			// Errors should come through structured JSON, stderr, or exit codes
 			// Pattern matching on arbitrary text causes false positives
 		}
 
-		// If no error text was extracted, no error to detect
-		if (!errorText) {
+		if (!extracted.errorText) {
 			return null;
 		}
 
-		// Match against error patterns
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, errorText);
+		const raw: NonNullable<AgentError['raw']> = { errorLine: line };
+		const matchedError = this.buildPatternMatchedError(
+			extracted.errorText,
+			raw,
+			extracted.parsedJson ?? undefined
+		);
+		if (matchedError) {
+			return matchedError;
+		}
 
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: {
-					errorLine: line,
-				},
-			};
+		if (extracted.parsedJson) {
+			return this.buildUnknownStructuredError(extracted.errorText, raw, extracted.parsedJson);
 		}
 
 		return null;
@@ -500,24 +593,33 @@ export class CodexOutputParser implements AgentOutputParser {
 			return null;
 		}
 
+		const raw: NonNullable<AgentError['raw']> = { exitCode, stderr, stdout };
+
+		const extracted = this.extractErrorFromMixedLine(stderr);
+		if (extracted.errorText) {
+			const matchedStructuredError = this.buildPatternMatchedError(
+				extracted.errorText,
+				raw,
+				extracted.parsedJson ?? undefined
+			);
+			if (matchedStructuredError) {
+				return matchedStructuredError;
+			}
+		}
+
 		// Check stderr and stdout for error patterns
 		const combined = `${stderr}\n${stdout}`;
-		const patterns = getErrorPatterns(this.agentId);
-		const match = matchErrorPattern(patterns, combined);
+		const matchedFallbackError = this.buildPatternMatchedError(
+			combined,
+			raw,
+			extracted.parsedJson ?? undefined
+		);
+		if (matchedFallbackError) {
+			return matchedFallbackError;
+		}
 
-		if (match) {
-			return {
-				type: match.type,
-				message: match.message,
-				recoverable: match.recoverable,
-				agentId: this.agentId,
-				timestamp: Date.now(),
-				raw: {
-					exitCode,
-					stderr,
-					stdout,
-				},
-			};
+		if (extracted.errorText && extracted.parsedJson) {
+			return this.buildUnknownStructuredError(extracted.errorText, raw, extracted.parsedJson);
 		}
 
 		// Non-zero exit with no recognized pattern - treat as crash
