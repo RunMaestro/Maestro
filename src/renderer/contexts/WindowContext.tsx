@@ -11,9 +11,13 @@ import React, {
 
 import type { WindowState } from '../../shared/types/window';
 import { useToast } from './ToastContext';
+import { getWindowNumberForId } from '../utils/windowOrdering';
+
+const WINDOW_TITLE_SUFFIX = ' - Agent Orchestration Command Center';
 
 export interface WindowContextValue {
 	windowId: string | null;
+	windowNumber: number | null;
 	isMainWindow: boolean;
 	sessionIds: string[];
 	activeSessionId: string | null;
@@ -33,11 +37,12 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 	const [windowState, setWindowState] = useState<WindowState | null>(null);
 	const [windowId, setWindowId] = useState<string | null>(initialWindowId ?? null);
 	const [isMainWindow, setIsMainWindow] = useState(false);
+	const [windowNumber, setWindowNumber] = useState<number | null>(null);
 	const mountedRef = useRef(true);
 	const windowIdRef = useRef<string | null>(initialWindowId ?? null);
 	const { addToast } = useToast();
 
-	const refreshIsMainWindow = useCallback(async (id: string) => {
+	const refreshWindowMetadata = useCallback(async (id: string) => {
 		try {
 			const windows = await window.maestro.windows.list();
 			if (!mountedRef.current) {
@@ -45,6 +50,7 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			}
 			const current = windows.find((entry) => entry.id === id);
 			setIsMainWindow(current?.isMain ?? id === 'primary');
+			setWindowNumber(getWindowNumberForId(windows, id));
 		} catch (error) {
 			console.error('Failed to fetch window list', error);
 		}
@@ -60,16 +66,17 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			if (!state) {
 				setWindowState(null);
 				setIsMainWindow(false);
+				setWindowNumber(null);
 				return;
 			}
 
 			setWindowState(state);
 			setWindowId(state.id);
-			await refreshIsMainWindow(state.id);
+			await refreshWindowMetadata(state.id);
 		} catch (error) {
 			console.error('Failed to load window state', error);
 		}
-	}, [refreshIsMainWindow]);
+	}, [refreshWindowMetadata]);
 
 	useEffect(() => {
 		mountedRef.current = true;
@@ -229,6 +236,7 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 	const value = useMemo<WindowContextValue>(
 		() => ({
 			windowId,
+			windowNumber,
 			isMainWindow,
 			sessionIds,
 			activeSessionId,
@@ -236,8 +244,29 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			closeTab,
 			moveSessionToNewWindow,
 		}),
-		[windowId, isMainWindow, sessionIds, activeSessionId, openSession, closeTab, moveSessionToNewWindow]
+		[
+			windowId,
+			windowNumber,
+			isMainWindow,
+			sessionIds,
+			activeSessionId,
+			openSession,
+			closeTab,
+			moveSessionToNewWindow,
+		]
 	);
+
+	useEffect(() => {
+		const resolvedBase =
+			typeof windowNumber === 'number' ? `Maestro [${windowNumber}]` : 'Maestro';
+		document.title = `${resolvedBase}${WINDOW_TITLE_SUFFIX}`;
+	}, [windowNumber]);
+
+	useEffect(() => {
+		return () => {
+			document.title = `Maestro${WINDOW_TITLE_SUFFIX}`;
+		};
+	}, []);
 
 	return <WindowContext.Provider value={value}>{children}</WindowContext.Provider>;
 }

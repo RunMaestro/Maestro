@@ -1,27 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Session } from '../../types';
 import type { WindowInfo } from '../../../shared/types/window';
+import { orderWindowsForDisplay } from '../../utils/windowOrdering';
 
 export interface SessionWindowAssignment {
 	windowId: string;
 	windowNumber: number;
-}
-
-function orderWindowsForDisplay(windows: WindowInfo[]): WindowInfo[] {
-	if (!windows.length) {
-		return [];
-	}
-	const mainWindow = windows.find((entry) => entry.isMain);
-	const ordered: WindowInfo[] = [];
-	if (mainWindow) {
-		ordered.push(mainWindow);
-	}
-	for (const entry of windows) {
-		if (!mainWindow || entry.id !== mainWindow.id) {
-			ordered.push(entry);
-		}
-	}
-	return ordered;
 }
 
 function windowAssignmentsEqual(
@@ -85,4 +69,3 @@ export function useSessionWindowAssignments(
 
 	return assignments;
 }
-

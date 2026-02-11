@@ -588,6 +588,7 @@ function MaestroConsoleInner() {
 		activeSessionId: windowActiveSessionId,
 		windowId: currentWindowId,
 		isMainWindow,
+		windowNumber,
 	} = useWindowContext();
 	const windowSessionIdSet = useMemo(() => {
 		return windowSessionIds.length ? new Set(windowSessionIds) : null;
@@ -11879,6 +11880,29 @@ You are taking over this conversation. Based on the context above, provide a bri
 							} as React.CSSProperties
 						}
 					>
+						{typeof windowNumber === 'number' && (
+							<div
+								className="absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none select-none"
+								style={{ color: theme.colors.textDim }}
+							>
+								<span
+									className="text-[10px] font-semibold uppercase"
+									style={{
+										borderColor: theme.colors.border,
+										backgroundColor: `${theme.colors.bgSidebar}b3`,
+										color: theme.colors.textMain,
+										borderWidth: 1,
+										borderStyle: 'solid',
+										borderRadius: 9999,
+										padding: '4px 10px',
+										display: 'inline-block',
+										letterSpacing: '0.35em',
+									}}
+								>
+									Maestro [{windowNumber}]
+								</span>
+							</div>
+						)}
 						{activeGroupChatId ? (
 							<span
 								className="text-xs select-none opacity-50"
