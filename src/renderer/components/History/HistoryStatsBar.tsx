@@ -45,11 +45,7 @@ function StatItem({ icon, label, value, color, theme }: StatItemProps) {
 export const HistoryStatsBar = memo(function HistoryStatsBar({ stats, theme }: HistoryStatsBarProps) {
 	return (
 		<div
-			className="flex items-center gap-4 px-3 py-2 mb-3 rounded-lg border flex-wrap"
-			style={{
-				backgroundColor: theme.colors.bgMain,
-				borderColor: theme.colors.border,
-			}}
+			className="flex items-center justify-center gap-4 py-2 mb-3 flex-wrap"
 		>
 			<StatItem
 				icon={<Layers className="w-3 h-3" />}
