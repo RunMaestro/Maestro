@@ -14,6 +14,7 @@ import {
 import type { Theme } from '../../types';
 import type { UseVibesDataReturn } from '../../hooks';
 import type { VibesAssuranceLevel } from '../../../shared/vibes-types';
+import { VibesLiveMonitor } from './VibesLiveMonitor';
 
 interface VibesDashboardProps {
 	theme: Theme;
@@ -289,6 +290,9 @@ export const VibesDashboard: React.FC<VibesDashboardProps> = ({
 					/>
 				</div>
 			</div>
+
+			{/* Live Monitor */}
+			<VibesLiveMonitor theme={theme} projectPath={projectPath} />
 
 			{/* Action Status */}
 			{actionStatus && (
