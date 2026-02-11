@@ -79,6 +79,17 @@ export { useStats, useComputedStats } from './useStats';
 export type { StatsTimeRange, StatsAggregation, UseStatsReturn, ComputedStats } from './useStats';
 
 // ============================================================================
+// VIBES Module - AI audit metadata for projects
+// ============================================================================
+export { useVibesData } from './useVibesData';
+export type {
+	VibesStatsData,
+	VibesSessionInfo,
+	VibesModelInfo,
+	UseVibesDataReturn,
+} from './useVibesData';
+
+// ============================================================================
 // Re-export TransferError types from component for convenience
 // ============================================================================
 export type {

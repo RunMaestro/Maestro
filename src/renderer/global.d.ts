@@ -2606,6 +2606,71 @@ interface MaestroAPI {
 			};
 		}) => Promise<string | null>;
 	};
+
+	// VIBES API (AI audit metadata integration)
+	vibes: {
+		isInitialized: (projectPath: string) => Promise<boolean>;
+		init: (
+			projectPath: string,
+			config: {
+				projectName: string;
+				assuranceLevel: 'low' | 'medium' | 'high';
+				extensions?: string[];
+			}
+		) => Promise<{ success: boolean; error?: string }>;
+		getStats: (projectPath: string, file?: string) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getBlame: (projectPath: string, file: string) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getLog: (
+			projectPath: string,
+			options?: {
+				file?: string;
+				model?: string;
+				session?: string;
+				limit?: number;
+				json?: boolean;
+			}
+		) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getCoverage: (projectPath: string) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getReport: (
+			projectPath: string,
+			format?: 'markdown' | 'html' | 'json'
+		) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getSessions: (projectPath: string) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		getModels: (projectPath: string) => Promise<{
+			success: boolean;
+			data?: string;
+			error?: string;
+		}>;
+		build: (projectPath: string) => Promise<{
+			success: boolean;
+			error?: string;
+		}>;
+		findBinary: (customPath?: string) => Promise<string | null>;
+	};
 }
 
 declare global {
