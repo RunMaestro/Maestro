@@ -17,6 +17,7 @@ vi.mock('lucide-react', () => ({
 	Brain: () => <span data-testid="icon-brain">Brain</span>,
 	Play: () => <span data-testid="icon-play">Play</span>,
 	Square: () => <span data-testid="icon-square">Square</span>,
+	AlertTriangle: () => <span data-testid="icon-alert-triangle">AlertTriangle</span>,
 }));
 
 const mockTheme: Theme = {
@@ -381,5 +382,83 @@ describe('VibesAnnotationLog', () => {
 
 		// session_id 'session-001' sliced to first 8 chars = 'session-'
 		expect(screen.getByText('session-')).toBeTruthy();
+	});
+
+	// ========================================================================
+	// Parse error handling
+	// ========================================================================
+
+	it('shows parse error warning for malformed annotations', () => {
+		const malformed = { garbage: 'data' } as unknown as VibesAnnotation;
+
+		render(
+			<VibesAnnotationLog
+				theme={mockTheme}
+				annotations={[mockLineAnnotation, malformed]}
+				isLoading={false}
+			/>,
+		);
+
+		expect(screen.getByText(/1 annotation skipped due to malformed data/)).toBeTruthy();
+	});
+
+	it('shows correct count for multiple malformed annotations', () => {
+		const malformed1 = { garbage: true } as unknown as VibesAnnotation;
+		const malformed2 = { type: 'line' } as unknown as VibesAnnotation;
+
+		render(
+			<VibesAnnotationLog
+				theme={mockTheme}
+				annotations={[mockLineAnnotation, malformed1, malformed2]}
+				isLoading={false}
+			/>,
+		);
+
+		expect(screen.getByText(/2 annotations skipped due to malformed data/)).toBeTruthy();
+	});
+
+	it('does not show parse error warning when all annotations are valid', () => {
+		render(
+			<VibesAnnotationLog
+				theme={mockTheme}
+				annotations={allAnnotations}
+				isLoading={false}
+			/>,
+		);
+
+		expect(screen.queryByText(/skipped due to malformed data/)).toBeNull();
+	});
+
+	it('shows footer with skipped count when parse errors exist', () => {
+		const malformed = { bad: 'data' } as unknown as VibesAnnotation;
+
+		render(
+			<VibesAnnotationLog
+				theme={mockTheme}
+				annotations={[mockLineAnnotation, mockSessionStart, malformed]}
+				isLoading={false}
+			/>,
+		);
+
+		expect(screen.getByText(/2 of 2 annotations/)).toBeTruthy();
+		expect(screen.getByText(/1 skipped/)).toBeTruthy();
+	});
+
+	// ========================================================================
+	// Skeleton loading state
+	// ========================================================================
+
+	it('renders skeleton rows in loading state', () => {
+		const { container } = render(
+			<VibesAnnotationLog
+				theme={mockTheme}
+				annotations={[]}
+				isLoading={true}
+			/>,
+		);
+
+		// Should have multiple skeleton placeholder rows with animate-pulse
+		const pulseElements = container.querySelectorAll('.animate-pulse');
+		expect(pulseElements.length).toBeGreaterThanOrEqual(1);
 	});
 });

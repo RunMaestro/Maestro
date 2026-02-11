@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
 	FileText,
 	Copy,
@@ -7,6 +7,7 @@ import {
 	AlertTriangle,
 	CheckCircle2,
 	Database,
+	Clock,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 
@@ -59,6 +60,11 @@ export const VibesReportView: React.FC<VibesReportViewProps> = ({
 	const [isBuilding, setIsBuilding] = useState(false);
 	const [copySuccess, setCopySuccess] = useState(false);
 	const [exportSuccess, setExportSuccess] = useState(false);
+	const [isTimedOut, setIsTimedOut] = useState(false);
+	const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+	/** Report generation timeout — 60 seconds for large projects. */
+	const REPORT_TIMEOUT_MS = 60_000;
 
 	// ========================================================================
 	// Generate report
@@ -73,6 +79,12 @@ export const VibesReportView: React.FC<VibesReportViewProps> = ({
 		setReportContent(null);
 		setCopySuccess(false);
 		setExportSuccess(false);
+		setIsTimedOut(false);
+
+		// Set a timeout timer for large projects
+		timeoutRef.current = setTimeout(() => {
+			setIsTimedOut(true);
+		}, REPORT_TIMEOUT_MS);
 
 		try {
 			const result = await window.maestro.vibes.getReport(projectPath, format);
@@ -86,6 +98,12 @@ export const VibesReportView: React.FC<VibesReportViewProps> = ({
 					errMsg.toLowerCase().includes('audit.db')
 				) {
 					setNeedsBuild(true);
+				} else if (
+					errMsg.toLowerCase().includes('timeout') ||
+					errMsg.toLowerCase().includes('timed out') ||
+					errMsg.toLowerCase().includes('etimedout')
+				) {
+					setError('Report generation timed out. This project may be too large. Try generating a JSON report for faster results, or run vibescheck from the command line.');
 				} else {
 					setError(errMsg);
 				}
@@ -97,10 +115,21 @@ export const VibesReportView: React.FC<VibesReportViewProps> = ({
 				errMsg.toLowerCase().includes('not found')
 			) {
 				setError('vibescheck binary not found. Please install vibescheck or configure its path in Settings.');
+			} else if (
+				errMsg.toLowerCase().includes('timeout') ||
+				errMsg.toLowerCase().includes('timed out') ||
+				errMsg.toLowerCase().includes('etimedout')
+			) {
+				setError('Report generation timed out. This project may be too large. Try generating a JSON report for faster results, or run vibescheck from the command line.');
 			} else {
 				setError(errMsg);
 			}
 		} finally {
+			if (timeoutRef.current) {
+				clearTimeout(timeoutRef.current);
+				timeoutRef.current = null;
+			}
+			setIsTimedOut(false);
 			setIsLoading(false);
 		}
 	}, [projectPath, format]);
@@ -310,6 +339,14 @@ export const VibesReportView: React.FC<VibesReportViewProps> = ({
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							Generating report...
 						</span>
+						{isTimedOut && (
+							<div className="flex items-center gap-1.5 mt-2">
+								<Clock className="w-3.5 h-3.5" style={{ color: '#eab308' }} />
+								<span className="text-[11px]" style={{ color: '#eab308' }}>
+									Taking longer than expected — large projects may need extra time.
+								</span>
+							</div>
+						)}
 					</div>
 				)}
 

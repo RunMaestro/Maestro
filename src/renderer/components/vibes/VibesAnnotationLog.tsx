@@ -11,6 +11,7 @@ import {
 	Brain,
 	Play,
 	Square,
+	AlertTriangle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type {
@@ -91,6 +92,19 @@ const ASSURANCE_COLORS: Record<VibesAssuranceLevel, { bg: string; text: string }
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** Check if an annotation has minimum required fields to be renderable. */
+function isValidAnnotation(annotation: VibesAnnotation): boolean {
+	if (!annotation || typeof annotation !== 'object') return false;
+	if (!annotation.type || !annotation.timestamp) return false;
+	if (annotation.type === 'session') {
+		return typeof annotation.session_id === 'string' && typeof annotation.event === 'string';
+	}
+	if (annotation.type === 'line' || annotation.type === 'function') {
+		return typeof annotation.file_path === 'string' && typeof annotation.action === 'string';
+	}
+	return false;
+}
 
 /** Format a timestamp as relative time (e.g., "2 min ago"). */
 function formatRelativeTime(timestamp: string): string {
@@ -183,9 +197,23 @@ export const VibesAnnotationLog: React.FC<VibesAnnotationLogProps> = ({
 	});
 	const [expandedId, setExpandedId] = useState<string | null>(null);
 
+	// Filter out malformed annotations and track parse errors
+	const { validAnnotations, parseErrorCount } = useMemo(() => {
+		const valid: VibesAnnotation[] = [];
+		let errors = 0;
+		for (const a of annotations) {
+			if (isValidAnnotation(a)) {
+				valid.push(a);
+			} else {
+				errors++;
+			}
+		}
+		return { validAnnotations: valid, parseErrorCount: errors };
+	}, [annotations]);
+
 	const filteredAnnotations = useMemo(
-		() => annotations.filter((a) => matchesFilters(a, filters)),
-		[annotations, filters],
+		() => validAnnotations.filter((a) => matchesFilters(a, filters)),
+		[validAnnotations, filters],
 	);
 
 	const updateFilter = useCallback(
@@ -225,11 +253,37 @@ export const VibesAnnotationLog: React.FC<VibesAnnotationLogProps> = ({
 
 	if (isLoading) {
 		return (
-			<div className="flex flex-col items-center justify-center gap-3 py-12 px-4 text-center">
-				<Clock className="w-6 h-6 animate-pulse" style={{ color: theme.colors.textDim }} />
-				<span className="text-xs" style={{ color: theme.colors.textDim }}>
-					Loading annotations...
-				</span>
+			<div className="flex flex-col gap-0">
+				{Array.from({ length: 6 }).map((_, i) => (
+					<div
+						key={i}
+						className="flex items-center gap-2 px-3 py-2.5 border-b animate-pulse"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div
+							className="w-3 h-3 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity }}
+						/>
+						<div
+							className="w-14 h-3 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity }}
+						/>
+						<div
+							className="flex-1 h-3 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity }}
+						/>
+						<div
+							className="w-12 h-4 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity }}
+						/>
+					</div>
+				))}
+				<div className="flex items-center justify-center gap-2 py-3">
+					<Clock className="w-4 h-4 animate-pulse" style={{ color: theme.colors.textDim }} />
+					<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+						Loading annotations...
+					</span>
+				</div>
 			</div>
 		);
 	}
@@ -292,13 +346,29 @@ export const VibesAnnotationLog: React.FC<VibesAnnotationLogProps> = ({
 				</div>
 			</div>
 
+			{/* Parse Error Warning */}
+			{parseErrorCount > 0 && (
+				<div
+					className="flex items-center gap-2 mx-3 mt-2 px-2.5 py-1.5 rounded text-[11px]"
+					style={{
+						backgroundColor: 'rgba(234, 179, 8, 0.1)',
+						border: '1px solid rgba(234, 179, 8, 0.25)',
+					}}
+				>
+					<AlertTriangle className="w-3 h-3 shrink-0" style={{ color: '#eab308' }} />
+					<span style={{ color: '#eab308' }}>
+						{parseErrorCount} annotation{parseErrorCount !== 1 ? 's' : ''} skipped due to malformed data
+					</span>
+				</div>
+			)}
+
 			{/* Annotation List */}
 			<div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
 				{filteredAnnotations.length === 0 ? (
 					<div className="flex flex-col items-center justify-center gap-2 py-12 px-4 text-center">
 						<FileCode className="w-6 h-6 opacity-40" style={{ color: theme.colors.textDim }} />
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
-							{annotations.length === 0
+							{validAnnotations.length === 0
 								? 'No annotations recorded yet'
 								: 'No annotations match the current filters'}
 						</span>
@@ -343,7 +413,8 @@ export const VibesAnnotationLog: React.FC<VibesAnnotationLogProps> = ({
 				}}
 			>
 				<span>
-					{filteredAnnotations.length} of {annotations.length} annotations
+					{filteredAnnotations.length} of {validAnnotations.length} annotations
+					{parseErrorCount > 0 && ` (${parseErrorCount} skipped)`}
 				</span>
 				{activeFilterCount > 0 && (
 					<span>{activeFilterCount} filter{activeFilterCount !== 1 ? 's' : ''} active</span>

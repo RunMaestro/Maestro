@@ -9,6 +9,7 @@ import {
 	AlertTriangle,
 	Database,
 	Loader2,
+	FolderOpen,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 
@@ -389,21 +390,29 @@ export const VibeCoverageView: React.FC<VibeCoverageViewProps> = ({
 					</div>
 				)}
 
-				{/* Empty state — no coverage data */}
+				{/* Empty state — no tracked files / no coverage data */}
 				{!isLoading && !error && !needsBuild && files.length === 0 && (
 					<div className="flex flex-col items-center justify-center gap-3 py-12 px-4 text-center">
-						<BarChart3 className="w-6 h-6 opacity-40" style={{ color: theme.colors.textDim }} />
+						<FolderOpen className="w-6 h-6 opacity-40" style={{ color: theme.colors.textDim }} />
 						<span
 							className="text-sm font-medium"
 							style={{ color: theme.colors.textMain }}
 						>
-							No coverage data
+							No tracked files
 						</span>
 						<span
 							className="text-xs max-w-xs"
 							style={{ color: theme.colors.textDim }}
 						>
-							No AI annotation coverage data is available for this project.
+							This project has no AI annotation coverage data. This may occur if no files match the configured tracked extensions, or if no annotations have been recorded yet.
+						</span>
+						<span
+							className="text-[10px] max-w-xs"
+							style={{ color: theme.colors.textDim }}
+						>
+							Check that your <code className="font-mono">tracked_extensions</code> are configured in{' '}
+							<code className="font-mono">.ai-audit/config.json</code> — for example:{' '}
+							<code className="font-mono">[".ts", ".tsx", ".js", ".py"]</code>
 						</span>
 					</div>
 				)}

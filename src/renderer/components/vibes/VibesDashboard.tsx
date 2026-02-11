@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
 	FileText,
 	FolderOpen,
@@ -10,6 +10,8 @@ import {
 	AlertCircle,
 	CheckCircle2,
 	Shield,
+	Loader2,
+	AlertTriangle,
 } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { UseVibesDataReturn } from '../../hooks';
@@ -48,6 +50,25 @@ export const VibesDashboard: React.FC<VibesDashboardProps> = ({
 	const [initProjectName, setInitProjectName] = useState('');
 	const [isInitializing, setIsInitializing] = useState(false);
 	const [actionStatus, setActionStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+	const [binaryStatus, setBinaryStatus] = useState<'checking' | 'found' | 'not-found'>('checking');
+
+	// Check vibescheck binary availability on mount
+	useEffect(() => {
+		let cancelled = false;
+		(async () => {
+			try {
+				const path = await window.maestro.vibes.findBinary();
+				if (!cancelled) {
+					setBinaryStatus(path ? 'found' : 'not-found');
+				}
+			} catch {
+				if (!cancelled) {
+					setBinaryStatus('not-found');
+				}
+			}
+		})();
+		return () => { cancelled = true; };
+	}, []);
 
 	// ========================================================================
 	// Quick Actions
@@ -122,6 +143,20 @@ export const VibesDashboard: React.FC<VibesDashboardProps> = ({
 				</span>
 				<span className="text-xs" style={{ color: theme.colors.textDim }}>
 					Enable VIBES in Settings to start tracking AI attribution metadata.
+				</span>
+			</div>
+		);
+	}
+
+	if (isLoading && !isInitialized && !stats) {
+		return (
+			<div className="flex flex-col items-center justify-center gap-3 py-12 px-4 text-center">
+				<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.textDim }} />
+				<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					Initializing...
+				</span>
+				<span className="text-xs" style={{ color: theme.colors.textDim }}>
+					Loading VIBES data for this project.
 				</span>
 			</div>
 		);
@@ -208,6 +243,28 @@ export const VibesDashboard: React.FC<VibesDashboardProps> = ({
 					assurance level
 				</span>
 			</div>
+
+			{/* Binary Not Found Warning */}
+			{binaryStatus === 'not-found' && (
+				<div
+					className="flex flex-col gap-1.5 px-3 py-2.5 rounded text-xs"
+					style={{
+						backgroundColor: 'rgba(234, 179, 8, 0.1)',
+						border: '1px solid rgba(234, 179, 8, 0.3)',
+					}}
+				>
+					<div className="flex items-center gap-2">
+						<AlertTriangle className="w-3.5 h-3.5 shrink-0" style={{ color: '#eab308' }} />
+						<span className="font-medium" style={{ color: '#eab308' }}>
+							vibescheck binary not found
+						</span>
+					</div>
+					<span style={{ color: theme.colors.textDim }}>
+						Some features (blame, reports, build) require the vibescheck CLI.
+						Install with <code className="font-mono px-1 py-0.5 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>cargo install vibescheck</code> or configure the path in Settings.
+					</span>
+				</div>
+			)}
 
 			{/* Error Banner */}
 			{error && (

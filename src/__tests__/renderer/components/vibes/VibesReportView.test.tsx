@@ -12,6 +12,7 @@ vi.mock('lucide-react', () => ({
 	AlertTriangle: () => <span data-testid="icon-alert">AlertTriangle</span>,
 	CheckCircle2: () => <span data-testid="icon-check">CheckCircle2</span>,
 	Database: () => <span data-testid="icon-database">Database</span>,
+	Clock: () => <span data-testid="icon-clock">Clock</span>,
 }));
 
 const mockTheme: Theme = {
@@ -401,5 +402,46 @@ describe('VibesReportView', () => {
 
 		// writeFile should NOT have been called
 		expect(mockWriteFile).not.toHaveBeenCalled();
+	});
+
+	// ========================================================================
+	// Timeout error handling
+	// ========================================================================
+
+	it('shows timeout error when report generation times out', async () => {
+		mockGetReport.mockResolvedValue({
+			success: false,
+			error: 'Command timed out after 30000ms',
+		});
+
+		render(
+			<VibesReportView
+				theme={mockTheme}
+				projectPath="/test/project"
+			/>,
+		);
+
+		fireEvent.click(screen.getByText('Generate Report'));
+
+		await waitFor(() => {
+			expect(screen.getByText(/timed out/)).toBeTruthy();
+		});
+	});
+
+	it('shows timeout error on exception with timeout message', async () => {
+		mockGetReport.mockRejectedValue(new Error('ETIMEDOUT: operation timed out'));
+
+		render(
+			<VibesReportView
+				theme={mockTheme}
+				projectPath="/test/project"
+			/>,
+		);
+
+		fireEvent.click(screen.getByText('Generate Report'));
+
+		await waitFor(() => {
+			expect(screen.getByText(/timed out/)).toBeTruthy();
+		});
 	});
 });

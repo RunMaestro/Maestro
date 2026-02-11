@@ -14,6 +14,8 @@ vi.mock('lucide-react', () => ({
 	AlertTriangle: () => <span data-testid="icon-alert">AlertTriangle</span>,
 	Database: () => <span data-testid="icon-database">Database</span>,
 	Loader2: () => <span data-testid="icon-loader">Loader2</span>,
+	Settings: () => <span data-testid="icon-settings">Settings</span>,
+	FolderOpen: () => <span data-testid="icon-folderopen">FolderOpen</span>,
 }));
 
 const mockTheme: Theme = {
@@ -340,10 +342,11 @@ describe('VibeCoverageView', () => {
 		);
 
 		await waitFor(() => {
-			expect(screen.getByText('No coverage data')).toBeTruthy();
+			expect(screen.getByText('No tracked files')).toBeTruthy();
 		});
 
-		expect(screen.getByText(/No AI annotation coverage data is available/)).toBeTruthy();
+		expect(screen.getByText(/no AI annotation coverage data/)).toBeTruthy();
+		expect(screen.getByText(/tracked_extensions/)).toBeTruthy();
 	});
 
 	// ========================================================================
