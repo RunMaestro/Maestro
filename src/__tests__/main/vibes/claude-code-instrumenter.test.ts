@@ -884,4 +884,273 @@ describe('claude-code-instrumenter', () => {
 			expect(cmdEntries[0].command_type).toBe('api_call');
 		});
 	});
+
+	// ========================================================================
+	// Error Handling
+	// ========================================================================
+	describe('error handling', () => {
+		it('should not throw when handleToolExecution receives null event', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleToolExecution('sess-1', null as unknown as { toolName: string; state: unknown; timestamp: number }),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleToolExecution receives event with missing toolName', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleToolExecution('sess-1', { toolName: undefined as unknown as string, state: {}, timestamp: Date.now() }),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleToolExecution receives event with non-object state', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleToolExecution('sess-1', {
+					toolName: 'Write',
+					state: 'not-an-object',
+					timestamp: Date.now(),
+				}),
+			).resolves.not.toThrow();
+		});
+
+		it('should handle file_path as number without throwing', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleToolExecution('sess-1', {
+					toolName: 'Write',
+					state: { status: 'running', input: { file_path: 12345 } },
+					timestamp: Date.now(),
+				}),
+			).resolves.not.toThrow();
+
+			// Command entry should still be created (no line annotation though)
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const cmdEntries = entries.filter((e) => e.type === 'command');
+			expect(cmdEntries).toHaveLength(1);
+		});
+
+		it('should not throw when handleThinkingChunk called with empty text', () => {
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'high',
+			});
+
+			expect(() => instrumenter.handleThinkingChunk('sess-1', '')).not.toThrow();
+		});
+
+		it('should not throw when handleUsage called with malformed data', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			expect(() =>
+				instrumenter.handleUsage('sess-1', { inputTokens: NaN, outputTokens: -1 }),
+			).not.toThrow();
+		});
+
+		it('should not throw when handleResult called for non-existent session', async () => {
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(instrumenter.handleResult('nonexistent', 'text')).resolves.not.toThrow();
+		});
+
+		it('should not throw when handlePrompt called for non-existent session', async () => {
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(instrumenter.handlePrompt('nonexistent', 'prompt')).resolves.not.toThrow();
+		});
+
+		it('should not throw when flush called for non-existent session', async () => {
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(instrumenter.flush('nonexistent')).resolves.not.toThrow();
+		});
+	});
+
+	// ========================================================================
+	// Exclude Patterns
+	// ========================================================================
+	describe('exclude patterns', () => {
+		it('should skip annotations for files matching exclude patterns', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+				excludePatterns: ['**/node_modules/**'],
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'node_modules/foo/index.js' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter((a) => a.type === 'line');
+			expect(lineAnnotations).toHaveLength(0);
+
+			// But command entry should still be created
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const cmdEntries = Object.values(manifest.entries).filter((e) => e.type === 'command');
+			expect(cmdEntries).toHaveLength(1);
+		});
+
+		it('should not skip annotations for files not matching exclude patterns', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+				excludePatterns: ['**/node_modules/**'],
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/main.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter((a) => a.type === 'line');
+			expect(lineAnnotations).toHaveLength(1);
+		});
+
+		it('should support setExcludePatterns to update patterns at runtime', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			// Initially no patterns — write to dist/ should create annotation
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'dist/bundle.js' } },
+				timestamp: Date.now(),
+			});
+
+			let annotations = await readAnnotations(tmpDir);
+			let lineAnnotations = annotations.filter((a) => a.type === 'line');
+			expect(lineAnnotations).toHaveLength(1);
+
+			// Set exclude patterns
+			instrumenter.setExcludePatterns(['dist/**']);
+
+			// Now write to dist/ should NOT create annotation
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'dist/other.js' } },
+				timestamp: Date.now(),
+			});
+
+			annotations = await readAnnotations(tmpDir);
+			lineAnnotations = annotations.filter((a) => a.type === 'line');
+			// Still only 1 from before — the second was excluded
+			expect(lineAnnotations).toHaveLength(1);
+		});
+
+		it('should handle invalid glob patterns gracefully', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+				excludePatterns: ['[invalid-pattern'],
+			});
+
+			// Should not throw — invalid patterns are skipped
+			await expect(
+				instrumenter.handleToolExecution('sess-1', {
+					toolName: 'Write',
+					state: { status: 'running', input: { file_path: 'src/main.ts' } },
+					timestamp: Date.now(),
+				}),
+			).resolves.not.toThrow();
+
+			// Annotation should still be created since the pattern was invalid
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter((a) => a.type === 'line');
+			expect(lineAnnotations).toHaveLength(1);
+		});
+	});
+
+	// ========================================================================
+	// Path Normalization
+	// ========================================================================
+	describe('path normalization', () => {
+		it('should normalize file paths with . and .. segments', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: 'src/../src/./main.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(1);
+			expect(lineAnnotations[0].file_path).toBe('src/main.ts');
+		});
+
+		it('should handle absolute paths in tool events', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Write',
+				state: { status: 'running', input: { file_path: '/home/user/project/src/main.ts' } },
+				timestamp: Date.now(),
+			});
+
+			const annotations = await readAnnotations(tmpDir);
+			const lineAnnotations = annotations.filter(
+				(a) => a.type === 'line',
+			) as VibesLineAnnotation[];
+			expect(lineAnnotations).toHaveLength(1);
+			expect(lineAnnotations[0].file_path).toBe('/home/user/project/src/main.ts');
+		});
+	});
 });

@@ -4,6 +4,8 @@
 // from the settings store to determine whether instrumentation is enabled.
 
 import type { EventEmitter } from 'events';
+import { access, constants } from 'fs/promises';
+import * as path from 'path';
 import { logger } from '../utils/logger';
 import { VibesSessionManager } from './vibes-session';
 import { ClaudeCodeInstrumenter } from './instrumenters/claude-code-instrumenter';
@@ -65,6 +67,12 @@ export class VibesCoordinator {
 	/** Maps Maestro session IDs to their agent types for event routing. */
 	private sessionAgentTypes: Map<string, string> = new Map();
 
+	/** Projects where .ai-audit/ is not writable — instrumentation disabled. */
+	private unwritableProjects: Set<string> = new Set();
+
+	/** Whether the vibescheck binary missing warning has been logged this session. */
+	private vibesBinaryMissingLogged = false;
+
 	constructor(params: { settingsStore: VibesSettingsStore }) {
 		this.settingsStore = params.settingsStore;
 		this.sessionManager = new VibesSessionManager();
@@ -99,6 +107,9 @@ export class VibesCoordinator {
 	 * - `thinking-chunk` → routes to the appropriate agent instrumenter
 	 * - `usage` → routes to the appropriate agent instrumenter
 	 *
+	 * All event handler callbacks are wrapped in try-catch to ensure
+	 * instrumentation errors never propagate to the agent process.
+	 *
 	 * Note: Session lifecycle is handled via `handleProcessSpawn()` / `handleProcessExit()`
 	 * called from the IPC process handlers, not via the `session-id` event.
 	 */
@@ -114,27 +125,51 @@ export class VibesCoordinator {
 		processManager.on(
 			'tool-execution',
 			(sessionId: string, tool: ToolExecution) => {
-				this.handleToolExecution(sessionId, tool).catch((err) => {
-					logger.error(
-						'[VibesCoordinator] Error handling tool-execution event',
+				try {
+					this.handleToolExecution(sessionId, tool).catch((err) => {
+						logger.warn(
+							'[VibesCoordinator] Error handling tool-execution event',
+							'VibesCoordinator',
+							{ sessionId, error: String(err) },
+						);
+					});
+				} catch (err) {
+					logger.warn(
+						'[VibesCoordinator] Sync error in tool-execution handler',
 						'VibesCoordinator',
 						{ sessionId, error: String(err) },
 					);
-				});
+				}
 			},
 		);
 
 		processManager.on(
 			'thinking-chunk',
 			(sessionId: string, text: string) => {
-				this.handleThinkingChunk(sessionId, text);
+				try {
+					this.handleThinkingChunk(sessionId, text);
+				} catch (err) {
+					logger.warn(
+						'[VibesCoordinator] Error handling thinking-chunk event',
+						'VibesCoordinator',
+						{ sessionId, error: String(err) },
+					);
+				}
 			},
 		);
 
 		processManager.on(
 			'usage',
 			(sessionId: string, stats: UsageStats) => {
-				this.handleUsage(sessionId, stats);
+				try {
+					this.handleUsage(sessionId, stats);
+				} catch (err) {
+					logger.warn(
+						'[VibesCoordinator] Error handling usage event',
+						'VibesCoordinator',
+						{ sessionId, error: String(err) },
+					);
+				}
 			},
 		);
 
@@ -151,6 +186,7 @@ export class VibesCoordinator {
 	/**
 	 * Called when a new agent process is spawned.
 	 * Creates a VIBES session if VIBES is enabled for that agent type.
+	 * Checks that the .ai-audit/ directory is writable before proceeding.
 	 */
 	async handleProcessSpawn(sessionId: string, config: ProcessConfig): Promise<void> {
 		if (!this.isEnabled()) {
@@ -175,6 +211,26 @@ export class VibesCoordinator {
 				{ sessionId, agentType },
 			);
 			return;
+		}
+
+		// Check if this project has been marked as unwritable
+		if (this.unwritableProjects.has(projectPath)) {
+			logger.debug(
+				'[VibesCoordinator] Project .ai-audit/ is not writable, skipping VIBES session',
+				'VibesCoordinator',
+				{ sessionId, agentType, projectPath },
+			);
+			return;
+		}
+
+		// Check that .ai-audit/ directory is writable
+		const auditDir = path.join(projectPath, '.ai-audit');
+		try {
+			await access(auditDir, constants.W_OK);
+		} catch {
+			// Directory doesn't exist yet or is not writable — try to continue anyway.
+			// The ensureAuditDir in vibes-io will attempt to create it; if that also
+			// fails, the session start will be caught below.
 		}
 
 		try {
@@ -204,11 +260,22 @@ export class VibesCoordinator {
 				{ sessionId, agentType, assuranceLevel, projectPath },
 			);
 		} catch (err) {
-			logger.error(
-				'[VibesCoordinator] Failed to start VIBES session',
-				'VibesCoordinator',
-				{ sessionId, agentType, error: String(err) },
-			);
+			// If session start fails due to write permissions, mark project as unwritable
+			const errMsg = String(err);
+			if (errMsg.includes('EACCES') || errMsg.includes('EPERM') || errMsg.includes('EROFS')) {
+				this.unwritableProjects.add(projectPath);
+				logger.warn(
+					'[VibesCoordinator] .ai-audit/ directory is not writable, disabling VIBES for this project',
+					'VibesCoordinator',
+					{ sessionId, agentType, projectPath, error: errMsg },
+				);
+			} else {
+				logger.warn(
+					'[VibesCoordinator] Failed to start VIBES session',
+					'VibesCoordinator',
+					{ sessionId, agentType, error: errMsg },
+				);
+			}
 		}
 	}
 
@@ -241,7 +308,7 @@ export class VibesCoordinator {
 				{ sessionId, agentType },
 			);
 		} catch (err) {
-			logger.error(
+			logger.warn(
 				'[VibesCoordinator] Failed to end VIBES session',
 				'VibesCoordinator',
 				{ sessionId, error: String(err) },
@@ -277,7 +344,7 @@ export class VibesCoordinator {
 				await instrumenter.handlePrompt(sessionId, prompt, contextFiles);
 			}
 		} catch (err) {
-			logger.error(
+			logger.warn(
 				'[VibesCoordinator] Failed to record prompt',
 				'VibesCoordinator',
 				{ sessionId, error: String(err) },
@@ -345,6 +412,36 @@ export class VibesCoordinator {
 		return this.sessionManager;
 	}
 
+	/**
+	 * Log a vibescheck binary not-found warning once per session.
+	 * Returns true if this is the first call (warning was logged).
+	 */
+	notifyVibesBinaryMissing(): boolean {
+		if (this.vibesBinaryMissingLogged) {
+			return false;
+		}
+		this.vibesBinaryMissingLogged = true;
+		logger.warn(
+			'[VibesCoordinator] vibescheck binary not found — CLI-dependent features disabled',
+			'VibesCoordinator',
+		);
+		return true;
+	}
+
+	/**
+	 * Check if a project has been marked as unwritable.
+	 */
+	isProjectUnwritable(projectPath: string): boolean {
+		return this.unwritableProjects.has(projectPath);
+	}
+
+	/**
+	 * Clear the unwritable project cache (e.g. on settings change).
+	 */
+	clearUnwritableProjectCache(): void {
+		this.unwritableProjects.clear();
+	}
+
 	// ========================================================================
 	// Event Routing
 	// ========================================================================
@@ -366,9 +463,17 @@ export class VibesCoordinator {
 			return;
 		}
 
-		const instrumenter = this.getInstrumenter(agentType);
-		if (instrumenter) {
-			await instrumenter.handleToolExecution(sessionId, tool);
+		try {
+			const instrumenter = this.getInstrumenter(agentType);
+			if (instrumenter) {
+				await instrumenter.handleToolExecution(sessionId, tool);
+			}
+		} catch (err) {
+			logger.warn(
+				'[VibesCoordinator] Error routing tool-execution event',
+				'VibesCoordinator',
+				{ sessionId, error: String(err) },
+			);
 		}
 	}
 
@@ -386,9 +491,17 @@ export class VibesCoordinator {
 			return;
 		}
 
-		const instrumenter = this.getInstrumenter(agentType);
-		if (instrumenter) {
-			instrumenter.handleThinkingChunk(sessionId, text);
+		try {
+			const instrumenter = this.getInstrumenter(agentType);
+			if (instrumenter) {
+				instrumenter.handleThinkingChunk(sessionId, text);
+			}
+		} catch (err) {
+			logger.warn(
+				'[VibesCoordinator] Error routing thinking-chunk event',
+				'VibesCoordinator',
+				{ sessionId, error: String(err) },
+			);
 		}
 	}
 
@@ -406,18 +519,26 @@ export class VibesCoordinator {
 			return;
 		}
 
-		const instrumenter = this.getInstrumenter(agentType);
-		if (instrumenter) {
-			// Convert UsageStats to ParsedEvent usage format
-			instrumenter.handleUsage(sessionId, {
-				inputTokens: stats.inputTokens,
-				outputTokens: stats.outputTokens,
-				cacheReadTokens: stats.cacheReadInputTokens,
-				cacheCreationTokens: stats.cacheCreationInputTokens,
-				costUsd: stats.totalCostUsd,
-				contextWindow: stats.contextWindow,
-				reasoningTokens: stats.reasoningTokens,
-			});
+		try {
+			const instrumenter = this.getInstrumenter(agentType);
+			if (instrumenter) {
+				// Convert UsageStats to ParsedEvent usage format
+				instrumenter.handleUsage(sessionId, {
+					inputTokens: stats.inputTokens,
+					outputTokens: stats.outputTokens,
+					cacheReadTokens: stats.cacheReadInputTokens,
+					cacheCreationTokens: stats.cacheCreationInputTokens,
+					costUsd: stats.totalCostUsd,
+					contextWindow: stats.contextWindow,
+					reasoningTokens: stats.reasoningTokens,
+				});
+			}
+		} catch (err) {
+			logger.warn(
+				'[VibesCoordinator] Error routing usage event',
+				'VibesCoordinator',
+				{ sessionId, error: String(err) },
+			);
 		}
 	}
 

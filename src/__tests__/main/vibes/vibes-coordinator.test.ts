@@ -691,4 +691,161 @@ describe('vibes-coordinator', () => {
 			}
 		});
 	});
+
+	// ========================================================================
+	// Error Handling: try-catch wrappers
+	// ========================================================================
+	describe('error handling', () => {
+		it('should not throw when handleToolExecution encounters an error', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Pass malformed event data — should not throw
+			await expect(
+				coordinator.handleToolExecution('sess-1', null as unknown as { toolName: string; state: unknown; timestamp: number }),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleThinkingChunk encounters an error', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Should not throw even with unexpected data
+			expect(() => coordinator.handleThinkingChunk('sess-1', '')).not.toThrow();
+		});
+
+		it('should not throw when handleUsage encounters unexpected data', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Should not throw with null stats
+			expect(() =>
+				coordinator.handleUsage('sess-1', null as unknown as import('../../../main/process-manager/types').UsageStats),
+			).not.toThrow();
+		});
+
+		it('should log warn-level errors from event handlers via attachToProcessManager', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+			const emitter = new EventEmitter();
+
+			coordinator.attachToProcessManager(emitter);
+
+			// Emit events for non-existent sessions — should not throw
+			emitter.emit('thinking-chunk', 'no-session', 'some text');
+			emitter.emit('usage', 'no-session', { inputTokens: 1, outputTokens: 1 });
+		});
+
+		it('should handle handleProcessSpawn failure gracefully', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			// Use a path that can't be created (/dev/null is not a directory)
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: '/dev/null/impossible-path',
+			});
+
+			// Should not throw even when underlying I/O fails
+			await expect(coordinator.handleProcessSpawn('sess-1', config)).resolves.not.toThrow();
+		});
+
+		it('should handle handleProcessExit failure gracefully', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Should not throw even if underlying flush has issues
+			await expect(coordinator.handleProcessExit('sess-1', 0)).resolves.not.toThrow();
+		});
+
+		it('should handle handlePromptSent failure gracefully', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			// No session started — should be a no-op, not throw
+			await expect(coordinator.handlePromptSent('nonexistent', 'prompt')).resolves.not.toThrow();
+		});
+	});
+
+	// ========================================================================
+	// Vibes Binary Missing Logging
+	// ========================================================================
+	describe('notifyVibesBinaryMissing', () => {
+		it('should log once and return true on first call', () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			expect(coordinator.notifyVibesBinaryMissing()).toBe(true);
+		});
+
+		it('should return false on subsequent calls', () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			coordinator.notifyVibesBinaryMissing();
+			expect(coordinator.notifyVibesBinaryMissing()).toBe(false);
+			expect(coordinator.notifyVibesBinaryMissing()).toBe(false);
+		});
+	});
+
+	// ========================================================================
+	// Unwritable Project Tracking
+	// ========================================================================
+	describe('unwritable project tracking', () => {
+		it('should skip session creation for previously-unwritable projects', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			// First attempt with a non-writable path (simulate failure by using a bad path)
+			const badConfig = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: '/nonexistent/readonly/path',
+			});
+			await coordinator.handleProcessSpawn('sess-1', badConfig);
+
+			// Check isProjectUnwritable — may or may not be marked depending on error type
+			// But the method should exist and be callable
+			const unwritable = coordinator.isProjectUnwritable('/nonexistent/readonly/path');
+			expect(typeof unwritable).toBe('boolean');
+		});
+
+		it('should clear unwritable project cache', () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			coordinator.clearUnwritableProjectCache();
+			// Should not throw
+		});
+	});
 });

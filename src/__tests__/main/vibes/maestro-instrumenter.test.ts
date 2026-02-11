@@ -681,4 +681,118 @@ describe('maestro-instrumenter', () => {
 			expect(promptEntries).toHaveLength(2);
 		});
 	});
+
+	// ========================================================================
+	// Error Handling
+	// ========================================================================
+	describe('error handling', () => {
+		it('should not throw when handleAgentSpawn encounters an error', async () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			// No session created — should be a graceful no-op
+			await expect(
+				instrumenter.handleAgentSpawn({
+					maestroSessionId: 'nonexistent',
+					agentSessionId: 'agent-abc',
+					agentType: 'claude-code',
+					projectPath: '/tmp/test',
+				}),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleAgentComplete encounters an error', async () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleAgentComplete({
+					maestroSessionId: 'nonexistent',
+					agentSessionId: 'agent-abc',
+					agentType: 'claude-code',
+					success: true,
+					duration: 1000,
+				}),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleBatchRunStart encounters an error', async () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleBatchRunStart({
+					maestroSessionId: 'nonexistent',
+					projectPath: '/tmp/test',
+					documents: ['doc.md'],
+					agentType: 'claude-code',
+				}),
+			).resolves.not.toThrow();
+		});
+
+		it('should not throw when handleBatchRunComplete encounters an error', async () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await expect(
+				instrumenter.handleBatchRunComplete({
+					maestroSessionId: 'nonexistent',
+					documentsCompleted: 0,
+					totalTasks: 0,
+				}),
+			).resolves.not.toThrow();
+		});
+	});
+
+	// ========================================================================
+	// Maestro Version Handling
+	// ========================================================================
+	describe('maestro version', () => {
+		it('should default to unknown when no version is provided', () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			expect(instrumenter.getMaestroVersion()).toBe('unknown');
+		});
+
+		it('should accept version in constructor', () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+				maestroVersion: '2.1.0',
+			});
+
+			expect(instrumenter.getMaestroVersion()).toBe('2.1.0');
+		});
+
+		it('should allow updating version via setMaestroVersion', () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			instrumenter.setMaestroVersion('3.0.0');
+			expect(instrumenter.getMaestroVersion()).toBe('3.0.0');
+		});
+
+		it('should fall back to unknown when empty string is set', () => {
+			const instrumenter = new MaestroInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			instrumenter.setMaestroVersion('');
+			expect(instrumenter.getMaestroVersion()).toBe('unknown');
+		});
+	});
 });

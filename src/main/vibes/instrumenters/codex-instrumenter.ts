@@ -8,7 +8,11 @@
 // - Tool state has { status: 'running', input: { ...args } } for tool_call events
 //   and { status: 'completed', output: '...' } for tool_result events
 // - Reasoning comes via isPartial:true text events (from 'reasoning' items)
+//
+// Error handling: All public methods catch and log errors at 'warn' level
+// to ensure instrumentation failures never crash the agent session.
 
+import * as path from 'path';
 import type { VibesSessionManager } from '../vibes-session';
 import {
 	createCommandEntry,
@@ -55,6 +59,7 @@ const TOOL_ACTION_MAP: Record<string, VibesAction> = {
 /**
  * Extract file path from a Codex tool's input object.
  * Codex tools use various field names for file paths.
+ * Handles missing or malformed input gracefully by returning null.
  */
 function extractFilePath(input: unknown): string | null {
 	if (!input || typeof input !== 'object') {
@@ -66,6 +71,57 @@ function extractFilePath(input: unknown): string | null {
 	if (typeof obj.filename === 'string') return obj.filename;
 	if (typeof obj.target_file === 'string') return obj.target_file;
 	return null;
+}
+
+/**
+ * Normalize a file path to handle relative vs absolute paths.
+ * Normalizes separators and resolves . / .. segments.
+ */
+function normalizePath(filePath: string): string {
+	return path.normalize(filePath);
+}
+
+/**
+ * Check if a file path matches any of the exclude patterns.
+ * Supports simple glob patterns: `*` (any segment chars), `**` (any path depth).
+ */
+function matchesExcludePattern(filePath: string, excludePatterns: string[]): boolean {
+	if (!excludePatterns || excludePatterns.length === 0) {
+		return false;
+	}
+	const normalized = normalizePath(filePath);
+	return excludePatterns.some((pattern) => {
+		try {
+			return simpleGlobMatch(normalized, pattern);
+		} catch {
+			return false;
+		}
+	});
+}
+
+/**
+ * Simple glob matcher supporting `*` and `**` patterns.
+ * Converts a glob pattern to a regex for matching.
+ * `**` matches any number of path segments (including zero).
+ * `*` matches any characters within a single path segment.
+ */
+function simpleGlobMatch(filePath: string, pattern: string): boolean {
+	// Escape regex special chars except * and ?
+	let regex = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+	// Replace glob ? with single-char matcher
+	regex = regex.replace(/\?/g, '\x00QMARK');
+	// Handle **/ (globstar followed by separator) — matches zero or more directories
+	regex = regex.replace(/\*\*\//g, '\x00GLOBSTAR_SEP');
+	// Handle remaining ** (e.g. at end of pattern)
+	regex = regex.replace(/\*\*/g, '\x00GLOBSTAR');
+	// Single * matches within one segment
+	regex = regex.replace(/\*/g, '\x00STAR');
+	// Now substitute the actual regex fragments (no glob chars left to interfere)
+	regex = regex.replace(/\x00QMARK/g, '[^/]');
+	regex = regex.replace(/\x00GLOBSTAR_SEP/g, '(.+/)?');
+	regex = regex.replace(/\x00GLOBSTAR/g, '.*');
+	regex = regex.replace(/\x00STAR/g, '[^/]*');
+	return new RegExp(`^${regex}$`).test(filePath);
 }
 
 /**
@@ -90,6 +146,15 @@ function truncateSummary(text: string, maxLen = 200): string {
 }
 
 // ============================================================================
+// Warn-level logger for non-critical instrumentation errors
+// ============================================================================
+
+function logWarn(message: string, data?: Record<string, unknown>): void {
+	const detail = data ? ` ${JSON.stringify(data)}` : '';
+	console.warn(`[codex-instrumenter] ${message}${detail}`);
+}
+
+// ============================================================================
 // Codex Instrumenter
 // ============================================================================
 
@@ -102,10 +167,16 @@ function truncateSummary(text: string, maxLen = 200): string {
  * - Usage events (token counts and model info)
  * - Result events (final responses, flushes buffered reasoning)
  * - Prompt events (captures prompts at Medium+ assurance)
+ *
+ * Error handling: All public methods are wrapped in try-catch. Errors are
+ * logged at warn level and never propagate to the caller.
  */
 export class CodexInstrumenter {
 	private sessionManager: VibesSessionManager;
 	private assuranceLevel: VibesAssuranceLevel;
+
+	/** Exclude patterns loaded from the project's VIBES config. */
+	private excludePatterns: string[] = [];
 
 	/** Buffered reasoning text per session, accumulated from thinking chunks. */
 	private reasoningBuffers: Map<string, string> = new Map();
@@ -119,120 +190,148 @@ export class CodexInstrumenter {
 	constructor(params: {
 		sessionManager: VibesSessionManager;
 		assuranceLevel: VibesAssuranceLevel;
+		excludePatterns?: string[];
 	}) {
 		this.sessionManager = params.sessionManager;
 		this.assuranceLevel = params.assuranceLevel;
+		this.excludePatterns = params.excludePatterns ?? [];
+	}
+
+	/**
+	 * Update the exclude patterns (e.g. after loading project config).
+	 */
+	setExcludePatterns(patterns: string[]): void {
+		this.excludePatterns = patterns;
 	}
 
 	/**
 	 * Process a tool_use / tool-execution event from the StdoutHandler.
 	 *
-	 * The event shape matches what StdoutHandler emits:
-	 *   { toolName: string; state: unknown; timestamp: number }
-	 *
-	 * For file write/patch tools: creates line annotations and command entries.
-	 * For file read tools: creates command entries with type 'file_read'.
-	 * For shell tools: creates command entries with type 'shell'.
-	 * For search tools: creates command entries with type 'tool_use'.
+	 * Handles missing or malformed tool execution data without throwing.
 	 */
 	async handleToolExecution(
 		sessionId: string,
 		event: { toolName: string; state: unknown; timestamp: number },
 	): Promise<void> {
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
-
-		// Flush any buffered reasoning before recording a tool execution
-		await this.flushReasoning(sessionId);
-
-		const commandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
-		const toolInput = this.extractToolInput(event.state);
-
-		// Build command text from the tool execution
-		const commandText = this.buildCommandText(event.toolName, toolInput);
-
-		// Create and record command manifest entry
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText,
-			commandType,
-		});
-		await this.sessionManager.recordManifestEntry(sessionId, cmdHash, cmdEntry);
-
-		// For file-modifying tools, also create a line annotation
-		const action = TOOL_ACTION_MAP[event.toolName];
-		if (action) {
-			const filePath = extractFilePath(toolInput);
-			if (filePath && session.environmentHash) {
-				const annotation = createLineAnnotation({
-					filePath,
-					lineStart: 1,
-					lineEnd: 1,
-					environmentHash: session.environmentHash,
-					commandHash: cmdHash,
-					action,
-					sessionId: session.vibesSessionId,
-					assuranceLevel: session.assuranceLevel,
-				});
-				await this.sessionManager.recordAnnotation(sessionId, annotation);
+		try {
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
 			}
+
+			// Validate event data
+			if (!event || typeof event.toolName !== 'string') {
+				logWarn('Skipping malformed tool execution event', { sessionId });
+				return;
+			}
+
+			// Flush any buffered reasoning before recording a tool execution
+			await this.flushReasoning(sessionId);
+
+			const commandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
+			const toolInput = this.extractToolInput(event.state);
+
+			// Build command text from the tool execution
+			const commandText = this.buildCommandText(event.toolName, toolInput);
+
+			// Create and record command manifest entry
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText,
+				commandType,
+			});
+			await this.sessionManager.recordManifestEntry(sessionId, cmdHash, cmdEntry);
+
+			// For file-modifying tools, also create a line annotation
+			const action = TOOL_ACTION_MAP[event.toolName];
+			if (action) {
+				const filePath = extractFilePath(toolInput);
+				if (filePath && session.environmentHash) {
+					// Normalize the file path
+					const normalizedPath = normalizePath(filePath);
+
+					// Skip files matching exclude patterns
+					if (matchesExcludePattern(normalizedPath, this.excludePatterns)) {
+						return;
+					}
+
+					const annotation = createLineAnnotation({
+						filePath: normalizedPath,
+						lineStart: 1,
+						lineEnd: 1,
+						environmentHash: session.environmentHash,
+						commandHash: cmdHash,
+						action,
+						sessionId: session.vibesSessionId,
+						assuranceLevel: session.assuranceLevel,
+					});
+					await this.sessionManager.recordAnnotation(sessionId, annotation);
+				}
+			}
+		} catch (err) {
+			logWarn('Error handling tool execution', { sessionId, error: String(err) });
 		}
 	}
 
 	/**
 	 * Buffer a thinking/reasoning chunk for later flushing.
 	 * Only captures at High assurance level.
-	 * Codex reasoning comes from 'reasoning' item.completed events,
-	 * which are emitted as text events with isPartial: true.
 	 */
 	handleThinkingChunk(sessionId: string, text: string): void {
-		if (this.assuranceLevel !== 'high') {
-			return;
-		}
+		try {
+			if (this.assuranceLevel !== 'high') {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		const existing = this.reasoningBuffers.get(sessionId) ?? '';
-		this.reasoningBuffers.set(sessionId, existing + text);
+			const existing = this.reasoningBuffers.get(sessionId) ?? '';
+			this.reasoningBuffers.set(sessionId, existing + text);
+		} catch (err) {
+			logWarn('Error buffering thinking chunk', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
 	 * Capture model info and token counts from a usage event.
-	 * Codex usage events come from turn.completed messages and include
-	 * reasoning_output_tokens tracked separately.
 	 */
 	handleUsage(sessionId: string, usage: ParsedEvent['usage']): void {
-		if (!usage) {
-			return;
-		}
+		try {
+			if (!usage) {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		if (usage.reasoningTokens !== undefined) {
-			const existing = this.reasoningTokenCounts.get(sessionId) ?? 0;
-			this.reasoningTokenCounts.set(sessionId, existing + usage.reasoningTokens);
+			if (usage.reasoningTokens !== undefined) {
+				const existing = this.reasoningTokenCounts.get(sessionId) ?? 0;
+				this.reasoningTokenCounts.set(sessionId, existing + usage.reasoningTokens);
+			}
+		} catch (err) {
+			logWarn('Error handling usage event', { sessionId, error: String(err) });
 		}
 	}
 
 	/**
 	 * Process the final result from the agent.
-	 * Codex results come from 'agent_message' item.completed events.
 	 * Flushes any buffered reasoning data.
 	 */
 	async handleResult(sessionId: string, _text: string): Promise<void> {
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+		try {
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		await this.flushReasoning(sessionId);
+			await this.flushReasoning(sessionId);
+		} catch (err) {
+			logWarn('Error handling result', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
@@ -244,21 +343,25 @@ export class CodexInstrumenter {
 		promptText: string,
 		contextFiles?: string[],
 	): Promise<void> {
-		if (this.assuranceLevel === 'low') {
-			return;
-		}
+		try {
+			if (this.assuranceLevel === 'low') {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		const { entry, hash } = createPromptEntry({
-			promptText,
-			promptType: 'user_instruction',
-			contextFiles,
-		});
-		await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+			const { entry, hash } = createPromptEntry({
+				promptText,
+				promptType: 'user_instruction',
+				contextFiles,
+			});
+			await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+		} catch (err) {
+			logWarn('Error handling prompt', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
@@ -266,8 +369,12 @@ export class CodexInstrumenter {
 	 * Called when a session ends or when explicitly requested.
 	 */
 	async flush(sessionId: string): Promise<void> {
-		await this.flushReasoning(sessionId);
-		this.cleanupSession(sessionId);
+		try {
+			await this.flushReasoning(sessionId);
+			this.cleanupSession(sessionId);
+		} catch (err) {
+			logWarn('Error flushing session', { sessionId, error: String(err) });
+		}
 	}
 
 	// ========================================================================
@@ -309,9 +416,8 @@ export class CodexInstrumenter {
 	}
 
 	/**
-	 * Extract the tool input from the state object emitted by StdoutHandler.
-	 * For tool_call events the state is `{ status: 'running', input: { ...args } }`.
-	 * For tool_result events the state is `{ status: 'completed', output: '...' }`.
+	 * Extract the tool input from the state object.
+	 * Handles missing or malformed state gracefully.
 	 */
 	private extractToolInput(state: unknown): unknown {
 		if (!state || typeof state !== 'object') {

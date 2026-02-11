@@ -1,6 +1,9 @@
 // VIBES v1.0 Maestro Orchestration Instrumenter — Captures Maestro's own
 // orchestration-level VIBES data: agent dispatch events, task assignments,
 // parallel coordination, and batch/Auto Run session boundaries.
+//
+// Error handling: All public methods catch and log errors at 'warn' level
+// to ensure instrumentation failures never crash the agent session.
 
 import type { VibesSessionManager } from '../vibes-session';
 import {
@@ -22,6 +25,15 @@ function truncateSummary(text: string, maxLen = 200): string {
 }
 
 // ============================================================================
+// Warn-level logger for non-critical instrumentation errors
+// ============================================================================
+
+function logWarn(message: string, data?: Record<string, unknown>): void {
+	const detail = data ? ` ${JSON.stringify(data)}` : '';
+	console.warn(`[maestro-instrumenter] ${message}${detail}`);
+}
+
+// ============================================================================
 // Maestro Instrumenter
 // ============================================================================
 
@@ -33,17 +45,41 @@ function truncateSummary(text: string, maxLen = 200): string {
  * - Agent dispatch (spawn) and completion
  * - Batch/Auto Run session start and completion
  * - Task assignment prompts (at Medium+ assurance)
+ *
+ * Error handling: All public methods are wrapped in try-catch. Errors are
+ * logged at warn level and never propagate to the caller.
  */
 export class MaestroInstrumenter {
 	private sessionManager: VibesSessionManager;
 	private assuranceLevel: VibesAssuranceLevel;
 
+	/** Cached Maestro version string. Defaults to 'unknown' if unavailable. */
+	private maestroVersion: string = 'unknown';
+
 	constructor(params: {
 		sessionManager: VibesSessionManager;
 		assuranceLevel: VibesAssuranceLevel;
+		maestroVersion?: string;
 	}) {
 		this.sessionManager = params.sessionManager;
 		this.assuranceLevel = params.assuranceLevel;
+		if (params.maestroVersion) {
+			this.maestroVersion = params.maestroVersion;
+		}
+	}
+
+	/**
+	 * Update the Maestro version. Called when version info becomes available.
+	 */
+	setMaestroVersion(version: string): void {
+		this.maestroVersion = version || 'unknown';
+	}
+
+	/**
+	 * Get the current Maestro version string.
+	 */
+	getMaestroVersion(): string {
+		return this.maestroVersion;
 	}
 
 	/**
@@ -59,35 +95,42 @@ export class MaestroInstrumenter {
 		taskDescription?: string;
 		projectPath: string;
 	}): Promise<void> {
-		const session = this.sessionManager.getSession(params.maestroSessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+		try {
+			const session = this.sessionManager.getSession(params.maestroSessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		// Record the dispatch as a command entry
-		const commandText = `Maestro: dispatch ${params.agentType} agent [${params.agentSessionId}]`;
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText: truncateSummary(commandText),
-			commandType: 'tool_use',
-			workingDirectory: params.projectPath,
-		});
-		await this.sessionManager.recordManifestEntry(
-			params.maestroSessionId,
-			cmdHash,
-			cmdEntry,
-		);
-
-		// Record the task description as a prompt entry (Medium+ assurance)
-		if (params.taskDescription && this.assuranceLevel !== 'low') {
-			const { entry: promptEntry, hash: promptHash } = createPromptEntry({
-				promptText: params.taskDescription,
-				promptType: 'user_instruction',
+			// Record the dispatch as a command entry
+			const commandText = `Maestro: dispatch ${params.agentType} agent [${params.agentSessionId}]`;
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText: truncateSummary(commandText),
+				commandType: 'tool_use',
+				workingDirectory: params.projectPath,
 			});
 			await this.sessionManager.recordManifestEntry(
 				params.maestroSessionId,
-				promptHash,
-				promptEntry,
+				cmdHash,
+				cmdEntry,
 			);
+
+			// Record the task description as a prompt entry (Medium+ assurance)
+			if (params.taskDescription && this.assuranceLevel !== 'low') {
+				const { entry: promptEntry, hash: promptHash } = createPromptEntry({
+					promptText: params.taskDescription,
+					promptType: 'user_instruction',
+				});
+				await this.sessionManager.recordManifestEntry(
+					params.maestroSessionId,
+					promptHash,
+					promptEntry,
+				);
+			}
+		} catch (err) {
+			logWarn('Error handling agent spawn', {
+				maestroSessionId: params.maestroSessionId,
+				error: String(err),
+			});
 		}
 	}
 
@@ -104,27 +147,34 @@ export class MaestroInstrumenter {
 		success: boolean;
 		duration: number;
 	}): Promise<void> {
-		const session = this.sessionManager.getSession(params.maestroSessionId);
-		if (!session || !session.isActive) {
-			return;
+		try {
+			const session = this.sessionManager.getSession(params.maestroSessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
+
+			const exitCode = params.success ? 0 : 1;
+			const durationSec = (params.duration / 1000).toFixed(1);
+			const outputSummary = `${params.agentType} agent [${params.agentSessionId}] ${params.success ? 'completed successfully' : 'failed'} in ${durationSec}s`;
+
+			const commandText = `Maestro: ${params.agentType} agent complete [${params.agentSessionId}]`;
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText: truncateSummary(commandText),
+				commandType: 'tool_use',
+				exitCode,
+				outputSummary: truncateSummary(outputSummary),
+			});
+			await this.sessionManager.recordManifestEntry(
+				params.maestroSessionId,
+				cmdHash,
+				cmdEntry,
+			);
+		} catch (err) {
+			logWarn('Error handling agent complete', {
+				maestroSessionId: params.maestroSessionId,
+				error: String(err),
+			});
 		}
-
-		const exitCode = params.success ? 0 : 1;
-		const durationSec = (params.duration / 1000).toFixed(1);
-		const outputSummary = `${params.agentType} agent [${params.agentSessionId}] ${params.success ? 'completed successfully' : 'failed'} in ${durationSec}s`;
-
-		const commandText = `Maestro: ${params.agentType} agent complete [${params.agentSessionId}]`;
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText: truncateSummary(commandText),
-			commandType: 'tool_use',
-			exitCode,
-			outputSummary: truncateSummary(outputSummary),
-		});
-		await this.sessionManager.recordManifestEntry(
-			params.maestroSessionId,
-			cmdHash,
-			cmdEntry,
-		);
 	}
 
 	/**
@@ -139,26 +189,33 @@ export class MaestroInstrumenter {
 		documents: string[];
 		agentType: string;
 	}): Promise<void> {
-		const session = this.sessionManager.getSession(params.maestroSessionId);
-		if (!session || !session.isActive) {
-			return;
+		try {
+			const session = this.sessionManager.getSession(params.maestroSessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
+
+			const docList = params.documents.join(', ');
+			const commandText = `Maestro: batch run start — ${params.documents.length} document(s) with ${params.agentType}`;
+			const outputSummary = `Documents: ${docList}`;
+
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText: truncateSummary(commandText),
+				commandType: 'tool_use',
+				workingDirectory: params.projectPath,
+				outputSummary: truncateSummary(outputSummary),
+			});
+			await this.sessionManager.recordManifestEntry(
+				params.maestroSessionId,
+				cmdHash,
+				cmdEntry,
+			);
+		} catch (err) {
+			logWarn('Error handling batch run start', {
+				maestroSessionId: params.maestroSessionId,
+				error: String(err),
+			});
 		}
-
-		const docList = params.documents.join(', ');
-		const commandText = `Maestro: batch run start — ${params.documents.length} document(s) with ${params.agentType}`;
-		const outputSummary = `Documents: ${docList}`;
-
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText: truncateSummary(commandText),
-			commandType: 'tool_use',
-			workingDirectory: params.projectPath,
-			outputSummary: truncateSummary(outputSummary),
-		});
-		await this.sessionManager.recordManifestEntry(
-			params.maestroSessionId,
-			cmdHash,
-			cmdEntry,
-		);
 	}
 
 	/**
@@ -172,24 +229,31 @@ export class MaestroInstrumenter {
 		documentsCompleted: number;
 		totalTasks: number;
 	}): Promise<void> {
-		const session = this.sessionManager.getSession(params.maestroSessionId);
-		if (!session || !session.isActive) {
-			return;
+		try {
+			const session = this.sessionManager.getSession(params.maestroSessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
+
+			const commandText = `Maestro: batch run complete — ${params.documentsCompleted} document(s)`;
+			const outputSummary = `Completed ${params.documentsCompleted} document(s), ${params.totalTasks} total task(s)`;
+
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText: truncateSummary(commandText),
+				commandType: 'tool_use',
+				exitCode: 0,
+				outputSummary: truncateSummary(outputSummary),
+			});
+			await this.sessionManager.recordManifestEntry(
+				params.maestroSessionId,
+				cmdHash,
+				cmdEntry,
+			);
+		} catch (err) {
+			logWarn('Error handling batch run complete', {
+				maestroSessionId: params.maestroSessionId,
+				error: String(err),
+			});
 		}
-
-		const commandText = `Maestro: batch run complete — ${params.documentsCompleted} document(s)`;
-		const outputSummary = `Completed ${params.documentsCompleted} document(s), ${params.totalTasks} total task(s)`;
-
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText: truncateSummary(commandText),
-			commandType: 'tool_use',
-			exitCode: 0,
-			outputSummary: truncateSummary(outputSummary),
-		});
-		await this.sessionManager.recordManifestEntry(
-			params.maestroSessionId,
-			cmdHash,
-			cmdEntry,
-		);
 	}
 }

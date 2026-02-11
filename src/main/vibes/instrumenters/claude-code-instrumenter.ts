@@ -1,7 +1,11 @@
 // VIBES v1.0 Claude Code Instrumenter — Processes events from the Claude Code
 // agent output parser to generate VIBES annotations. Handles tool executions,
 // thinking chunks, usage stats, prompts, and final results.
+//
+// Error handling: All public methods catch and log errors at 'warn' level
+// to ensure instrumentation failures never crash the agent session.
 
+import * as path from 'path';
 import type { VibesSessionManager } from '../vibes-session';
 import {
 	createCommandEntry,
@@ -52,6 +56,7 @@ const TOOL_ACTION_MAP: Record<string, VibesAction> = {
 /**
  * Extract file path from a tool's input object.
  * Claude Code tools use `file_path`, `path`, or `command` fields.
+ * Handles missing or malformed input gracefully by returning null.
  */
 function extractFilePath(input: unknown): string | null {
 	if (!input || typeof input !== 'object') {
@@ -62,6 +67,61 @@ function extractFilePath(input: unknown): string | null {
 	if (typeof obj.path === 'string') return obj.path;
 	if (typeof obj.notebook_path === 'string') return obj.notebook_path;
 	return null;
+}
+
+/**
+ * Normalize a file path to handle relative vs absolute paths.
+ * If the path is absolute, returns it as-is.
+ * If relative, returns it as-is (annotations store paths relative to project root).
+ */
+function normalizePath(filePath: string): string {
+	// Normalize separators and resolve . / .. segments
+	return path.normalize(filePath);
+}
+
+/**
+ * Check if a file path matches any of the exclude patterns.
+ * Supports simple glob patterns: `*` (any segment chars), `**` (any path depth),
+ * and literal path segments. No external dependency required.
+ */
+function matchesExcludePattern(filePath: string, excludePatterns: string[]): boolean {
+	if (!excludePatterns || excludePatterns.length === 0) {
+		return false;
+	}
+	const normalized = normalizePath(filePath);
+	return excludePatterns.some((pattern) => {
+		try {
+			return simpleGlobMatch(normalized, pattern);
+		} catch {
+			// Invalid pattern — skip silently
+			return false;
+		}
+	});
+}
+
+/**
+ * Simple glob matcher supporting `*` and `**` patterns.
+ * Converts a glob pattern to a regex for matching.
+ * `**` matches any number of path segments (including zero).
+ * `*` matches any characters within a single path segment.
+ */
+function simpleGlobMatch(filePath: string, pattern: string): boolean {
+	// Escape regex special chars except * and ?
+	let regex = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+	// Replace glob ? with single-char matcher
+	regex = regex.replace(/\?/g, '\x00QMARK');
+	// Handle **/ (globstar followed by separator) — matches zero or more directories
+	regex = regex.replace(/\*\*\//g, '\x00GLOBSTAR_SEP');
+	// Handle remaining ** (e.g. at end of pattern)
+	regex = regex.replace(/\*\*/g, '\x00GLOBSTAR');
+	// Single * matches within one segment
+	regex = regex.replace(/\*/g, '\x00STAR');
+	// Now substitute the actual regex fragments (no glob chars left to interfere)
+	regex = regex.replace(/\x00QMARK/g, '[^/]');
+	regex = regex.replace(/\x00GLOBSTAR_SEP/g, '(.+/)?');
+	regex = regex.replace(/\x00GLOBSTAR/g, '.*');
+	regex = regex.replace(/\x00STAR/g, '[^/]*');
+	return new RegExp(`^${regex}$`).test(filePath);
 }
 
 /**
@@ -108,6 +168,15 @@ function truncateSummary(text: string, maxLen = 200): string {
 }
 
 // ============================================================================
+// Warn-level logger for non-critical instrumentation errors
+// ============================================================================
+
+function logWarn(message: string, data?: Record<string, unknown>): void {
+	const detail = data ? ` ${JSON.stringify(data)}` : '';
+	console.warn(`[claude-code-instrumenter] ${message}${detail}`);
+}
+
+// ============================================================================
 // Claude Code Instrumenter
 // ============================================================================
 
@@ -120,10 +189,16 @@ function truncateSummary(text: string, maxLen = 200): string {
  * - Usage events (token counts and model info)
  * - Result events (final responses, flushes buffered reasoning)
  * - Prompt events (captures prompts at Medium+ assurance)
+ *
+ * Error handling: All public methods are wrapped in try-catch. Errors are
+ * logged at warn level and never propagate to the caller.
  */
 export class ClaudeCodeInstrumenter {
 	private sessionManager: VibesSessionManager;
 	private assuranceLevel: VibesAssuranceLevel;
+
+	/** Exclude patterns loaded from the project's VIBES config. */
+	private excludePatterns: string[] = [];
 
 	/** Buffered reasoning text per session, accumulated from thinking chunks. */
 	private reasoningBuffers: Map<string, string> = new Map();
@@ -137,9 +212,18 @@ export class ClaudeCodeInstrumenter {
 	constructor(params: {
 		sessionManager: VibesSessionManager;
 		assuranceLevel: VibesAssuranceLevel;
+		excludePatterns?: string[];
 	}) {
 		this.sessionManager = params.sessionManager;
 		this.assuranceLevel = params.assuranceLevel;
+		this.excludePatterns = params.excludePatterns ?? [];
+	}
+
+	/**
+	 * Update the exclude patterns (e.g. after loading project config).
+	 */
+	setExcludePatterns(patterns: string[]): void {
+		this.excludePatterns = patterns;
 	}
 
 	/**
@@ -152,50 +236,70 @@ export class ClaudeCodeInstrumenter {
 	 * For file read tools: creates command entries with type 'file_read'.
 	 * For bash/shell tools: creates command entries with type 'shell'.
 	 * For search tools (Glob/Grep): creates command entries with type 'tool_use'.
+	 *
+	 * Handles missing or malformed tool execution data without throwing.
 	 */
 	async handleToolExecution(
 		sessionId: string,
 		event: { toolName: string; state: unknown; timestamp: number },
 	): Promise<void> {
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
-
-		// Flush any buffered reasoning before recording a tool execution
-		await this.flushReasoning(sessionId);
-
-		const commandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
-		const toolInput = this.extractToolInput(event.state);
-
-		// Build command text from the tool execution
-		const commandText = this.buildCommandText(event.toolName, toolInput);
-
-		// Create and record command manifest entry
-		const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
-			commandText,
-			commandType,
-		});
-		await this.sessionManager.recordManifestEntry(sessionId, cmdHash, cmdEntry);
-
-		// For file-modifying tools, also create a line annotation
-		const action = TOOL_ACTION_MAP[event.toolName];
-		if (action) {
-			const filePath = extractFilePath(toolInput);
-			if (filePath && session.environmentHash) {
-				const lineRange = extractLineRange(toolInput);
-				const annotation = createLineAnnotation({
-					filePath,
-					lineStart: lineRange?.lineStart ?? 1,
-					lineEnd: lineRange?.lineEnd ?? 1,
-					environmentHash: session.environmentHash,
-					commandHash: cmdHash,
-					action,
-					sessionId: session.vibesSessionId,
-					assuranceLevel: session.assuranceLevel,
-				});
-				await this.sessionManager.recordAnnotation(sessionId, annotation);
+		try {
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
 			}
+
+			// Validate event data
+			if (!event || typeof event.toolName !== 'string') {
+				logWarn('Skipping malformed tool execution event', { sessionId });
+				return;
+			}
+
+			// Flush any buffered reasoning before recording a tool execution
+			await this.flushReasoning(sessionId);
+
+			const commandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
+			const toolInput = this.extractToolInput(event.state);
+
+			// Build command text from the tool execution
+			const commandText = this.buildCommandText(event.toolName, toolInput);
+
+			// Create and record command manifest entry
+			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
+				commandText,
+				commandType,
+			});
+			await this.sessionManager.recordManifestEntry(sessionId, cmdHash, cmdEntry);
+
+			// For file-modifying tools, also create a line annotation
+			const action = TOOL_ACTION_MAP[event.toolName];
+			if (action) {
+				const filePath = extractFilePath(toolInput);
+				if (filePath && session.environmentHash) {
+					// Normalize the file path
+					const normalizedPath = normalizePath(filePath);
+
+					// Skip files matching exclude patterns
+					if (matchesExcludePattern(normalizedPath, this.excludePatterns)) {
+						return;
+					}
+
+					const lineRange = extractLineRange(toolInput);
+					const annotation = createLineAnnotation({
+						filePath: normalizedPath,
+						lineStart: lineRange?.lineStart ?? 1,
+						lineEnd: lineRange?.lineEnd ?? 1,
+						environmentHash: session.environmentHash,
+						commandHash: cmdHash,
+						action,
+						sessionId: session.vibesSessionId,
+						assuranceLevel: session.assuranceLevel,
+					});
+					await this.sessionManager.recordAnnotation(sessionId, annotation);
+				}
+			}
+		} catch (err) {
+			logWarn('Error handling tool execution', { sessionId, error: String(err) });
 		}
 	}
 
@@ -205,17 +309,21 @@ export class ClaudeCodeInstrumenter {
 	 * Chunks are accumulated until a tool execution or result completes the turn.
 	 */
 	handleThinkingChunk(sessionId: string, text: string): void {
-		if (this.assuranceLevel !== 'high') {
-			return;
-		}
+		try {
+			if (this.assuranceLevel !== 'high') {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		const existing = this.reasoningBuffers.get(sessionId) ?? '';
-		this.reasoningBuffers.set(sessionId, existing + text);
+			const existing = this.reasoningBuffers.get(sessionId) ?? '';
+			this.reasoningBuffers.set(sessionId, existing + text);
+		} catch (err) {
+			logWarn('Error buffering thinking chunk', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
@@ -223,18 +331,22 @@ export class ClaudeCodeInstrumenter {
 	 * Stores reasoning token count for later inclusion in reasoning entries.
 	 */
 	handleUsage(sessionId: string, usage: ParsedEvent['usage']): void {
-		if (!usage) {
-			return;
-		}
+		try {
+			if (!usage) {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		if (usage.reasoningTokens !== undefined) {
-			const existing = this.reasoningTokenCounts.get(sessionId) ?? 0;
-			this.reasoningTokenCounts.set(sessionId, existing + usage.reasoningTokens);
+			if (usage.reasoningTokens !== undefined) {
+				const existing = this.reasoningTokenCounts.get(sessionId) ?? 0;
+				this.reasoningTokenCounts.set(sessionId, existing + usage.reasoningTokens);
+			}
+		} catch (err) {
+			logWarn('Error handling usage event', { sessionId, error: String(err) });
 		}
 	}
 
@@ -243,12 +355,16 @@ export class ClaudeCodeInstrumenter {
 	 * Flushes any buffered reasoning data.
 	 */
 	async handleResult(sessionId: string, _text: string): Promise<void> {
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+		try {
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		await this.flushReasoning(sessionId);
+			await this.flushReasoning(sessionId);
+		} catch (err) {
+			logWarn('Error handling result', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
@@ -260,21 +376,25 @@ export class ClaudeCodeInstrumenter {
 		promptText: string,
 		contextFiles?: string[],
 	): Promise<void> {
-		if (this.assuranceLevel === 'low') {
-			return;
-		}
+		try {
+			if (this.assuranceLevel === 'low') {
+				return;
+			}
 
-		const session = this.sessionManager.getSession(sessionId);
-		if (!session || !session.isActive) {
-			return;
-		}
+			const session = this.sessionManager.getSession(sessionId);
+			if (!session || !session.isActive) {
+				return;
+			}
 
-		const { entry, hash } = createPromptEntry({
-			promptText,
-			promptType: 'user_instruction',
-			contextFiles,
-		});
-		await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+			const { entry, hash } = createPromptEntry({
+				promptText,
+				promptType: 'user_instruction',
+				contextFiles,
+			});
+			await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
+		} catch (err) {
+			logWarn('Error handling prompt', { sessionId, error: String(err) });
+		}
 	}
 
 	/**
@@ -282,8 +402,12 @@ export class ClaudeCodeInstrumenter {
 	 * Called when a session ends or when explicitly requested.
 	 */
 	async flush(sessionId: string): Promise<void> {
-		await this.flushReasoning(sessionId);
-		this.cleanupSession(sessionId);
+		try {
+			await this.flushReasoning(sessionId);
+			this.cleanupSession(sessionId);
+		} catch (err) {
+			logWarn('Error flushing session', { sessionId, error: String(err) });
+		}
 	}
 
 	// ========================================================================
@@ -328,6 +452,7 @@ export class ClaudeCodeInstrumenter {
 	 * Extract the tool input from the state object emitted by StdoutHandler.
 	 * For toolUseBlocks the state is `{ status: 'running', input: ... }`.
 	 * For direct tool_use events the state may be the input itself.
+	 * Handles missing or malformed state gracefully.
 	 */
 	private extractToolInput(state: unknown): unknown {
 		if (!state || typeof state !== 'object') {
