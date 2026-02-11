@@ -62,14 +62,16 @@ export class VibesSessionManager {
 
 	/**
 	 * Start a new VIBES session for an agent.
-	 * Creates the session state, writes a session start annotation, and
-	 * creates an environment manifest entry.
+	 * Creates the session state and writes a session start annotation.
+	 * If an environmentHash is provided, it is included in the session start
+	 * annotation and set on the session state (VIBES spec requires this).
 	 */
 	async startSession(
 		sessionId: string,
 		projectPath: string,
 		agentType: string,
 		assuranceLevel: VibesAssuranceLevel,
+		environmentHash?: string,
 	): Promise<VibesSessionState> {
 		const vibesSessionId = generateUUID();
 		const startedAt = new Date().toISOString();
@@ -80,7 +82,7 @@ export class VibesSessionManager {
 			projectPath,
 			agentType,
 			assuranceLevel,
-			environmentHash: null,
+			environmentHash: environmentHash ?? null,
 			annotationCount: 0,
 			startedAt,
 			isActive: true,
@@ -88,10 +90,11 @@ export class VibesSessionManager {
 
 		this.sessions.set(sessionId, state);
 
-		// Write session start annotation
+		// Write session start annotation (includes environment_hash if available)
 		const startRecord = createSessionRecord({
 			event: 'start',
 			sessionId: vibesSessionId,
+			environmentHash,
 			assuranceLevel,
 			description: `${agentType} agent session`,
 		});

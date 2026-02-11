@@ -289,6 +289,55 @@ describe('vibes-coordinator', () => {
 			expect(stats).not.toBeNull();
 		});
 
+		it('should include environment_hash in session start annotation', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			const annotations = await readAnnotations(tmpDir);
+			expect(annotations.length).toBeGreaterThanOrEqual(1);
+
+			const startRecord = annotations[0] as VibesSessionRecord;
+			expect(startRecord.type).toBe('session');
+			expect(startRecord.event).toBe('start');
+			expect(startRecord.environment_hash).toBeDefined();
+			expect(typeof startRecord.environment_hash).toBe('string');
+			expect(startRecord.environment_hash!.length).toBeGreaterThan(0);
+		});
+
+		it('should set environment_hash on session state at start', async () => {
+			const store = createMockSettingsStore();
+			const coordinator = new VibesCoordinator({ settingsStore: store });
+
+			const config = createProcessConfig({
+				sessionId: 'sess-1',
+				toolType: 'claude-code',
+				projectPath: tmpDir,
+			});
+
+			await coordinator.handleProcessSpawn('sess-1', config);
+
+			// Verify the session state's environmentHash matches the manifest entry
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const envHashes = Object.keys(manifest.entries).filter(
+				(k) => manifest.entries[k].type === 'environment',
+			);
+			expect(envHashes).toHaveLength(1);
+
+			const sessionManager = coordinator.getSessionManager();
+			const state = sessionManager.getSession('sess-1');
+			expect(state).not.toBeNull();
+			expect(state!.environmentHash).toBe(envHashes[0]);
+		});
+
 		it('should set Codex tool name for codex agents', async () => {
 			const store = createMockSettingsStore();
 			const coordinator = new VibesCoordinator({ settingsStore: store });

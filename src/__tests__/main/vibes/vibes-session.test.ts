@@ -94,6 +94,29 @@ describe('vibes-session', () => {
 				expect(state.assuranceLevel).toBe(levels[i]);
 			}
 		});
+
+		it('should include environment_hash in session start annotation when provided', async () => {
+			const envHash = 'a'.repeat(64);
+			const state = await manager.startSession('sess-env', tmpDir, 'claude-code', 'medium', envHash);
+
+			expect(state.environmentHash).toBe(envHash);
+
+			const annotations = await readAnnotations(tmpDir);
+			expect(annotations).toHaveLength(1);
+
+			const record = annotations[0] as VibesSessionRecord;
+			expect(record.type).toBe('session');
+			expect(record.event).toBe('start');
+			expect(record.environment_hash).toBe(envHash);
+		});
+
+		it('should omit environment_hash from session start annotation when not provided', async () => {
+			await manager.startSession('sess-no-env', tmpDir, 'claude-code', 'medium');
+
+			const annotations = await readAnnotations(tmpDir);
+			const record = annotations[0] as VibesSessionRecord;
+			expect(record.environment_hash).toBeUndefined();
+		});
 	});
 
 	// ========================================================================

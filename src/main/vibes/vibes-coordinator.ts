@@ -287,24 +287,29 @@ export class VibesCoordinator {
 
 		try {
 			const assuranceLevel = this.getAssuranceLevel();
-			const state = await this.sessionManager.startSession(
-				sessionId,
-				projectPath,
-				agentType,
-				assuranceLevel,
-			);
 
-			this.sessionAgentTypes.set(sessionId, agentType);
-
-			// Create and store environment entry
-			const { entry, hash } = createEnvironmentEntry({
+			// Create environment entry first so the hash is available for the
+			// session start annotation (VIBES spec: session start must include
+			// environment_hash — fixes DIVERGENCE 3).
+			const { entry: envEntry, hash: envHash } = createEnvironmentEntry({
 				toolName: this.getToolName(agentType),
 				toolVersion: 'unknown',
 				modelName: 'unknown',
 				modelVersion: 'unknown',
 			});
-			await this.sessionManager.recordManifestEntry(sessionId, hash, entry);
-			state.environmentHash = hash;
+
+			const state = await this.sessionManager.startSession(
+				sessionId,
+				projectPath,
+				agentType,
+				assuranceLevel,
+				envHash,
+			);
+
+			this.sessionAgentTypes.set(sessionId, agentType);
+
+			// Record the environment manifest entry (session already has the hash)
+			await this.sessionManager.recordManifestEntry(sessionId, envHash, envEntry);
 
 			logger.info(
 				'[VibesCoordinator] VIBES session started',
