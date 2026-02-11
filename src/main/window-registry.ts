@@ -7,6 +7,7 @@ import type {
 	MultiWindowState as PersistedMultiWindowState,
 	WindowState as PersistedWindowState,
 	WindowSessionMovedEvent,
+	WindowSessionsReassignedEvent,
 } from '../shared/types/window';
 import { logger } from './utils/logger';
 import { isWebContentsAvailable } from './utils/safe-send';
@@ -251,6 +252,12 @@ export class WindowRegistry {
 				toWindowId: primaryEntry.windowId,
 			});
 		}
+
+		this.broadcastSessionsReassigned({
+			fromWindowId: windowId,
+			toWindowId: primaryEntry.windowId,
+			sessionIds: sessionsToMove,
+		});
 	}
 
 	private persistSessionsFromClosedWindow(
@@ -322,6 +329,15 @@ export class WindowRegistry {
 				continue;
 			}
 			browserWindow.webContents.send('windows:sessionMoved', event);
+		}
+	}
+
+	private broadcastSessionsReassigned(event: WindowSessionsReassignedEvent): void {
+		for (const { browserWindow } of this.getAll()) {
+			if (!isWebContentsAvailable(browserWindow)) {
+				continue;
+			}
+			browserWindow.webContents.send('windows:sessionsReassigned', event);
 		}
 	}
 

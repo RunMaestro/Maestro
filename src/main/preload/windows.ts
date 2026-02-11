@@ -14,6 +14,7 @@ import type {
 	WindowDropZoneHighlightEvent,
 	WindowInfo,
 	WindowSessionMovedEvent,
+	WindowSessionsReassignedEvent,
 	WindowState,
 } from '../../shared/types/window';
 
@@ -108,6 +109,20 @@ export function createWindowsApi() {
 				callback(event);
 			ipcRenderer.on('windows:sessionMoved', handler);
 			return () => ipcRenderer.removeListener('windows:sessionMoved', handler);
+		},
+
+		/**
+		 * Listen for bulk session reassignment events (e.g., on window close)
+		 */
+			onSessionsReassigned: (
+			callback: (event: WindowSessionsReassignedEvent) => void
+			) => {
+			const handler = (
+				_event: Electron.IpcRendererEvent,
+				event: WindowSessionsReassignedEvent
+			) => callback(event);
+			ipcRenderer.on('windows:sessionsReassigned', handler);
+			return () => ipcRenderer.removeListener('windows:sessionsReassigned', handler);
 		},
 
 		/**

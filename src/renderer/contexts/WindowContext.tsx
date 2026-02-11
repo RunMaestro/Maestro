@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 
 import type { WindowState } from '../../shared/types/window';
+import { useToast } from './ToastContext';
 
 export interface WindowContextValue {
 	windowId: string | null;
@@ -34,6 +35,7 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 	const [isMainWindow, setIsMainWindow] = useState(false);
 	const mountedRef = useRef(true);
 	const windowIdRef = useRef<string | null>(initialWindowId ?? null);
+	const { addToast } = useToast();
 
 	const refreshIsMainWindow = useCallback(async (id: string) => {
 		try {
@@ -99,6 +101,33 @@ export function WindowProvider({ children, initialWindowId }: WindowProviderProp
 			unsubscribe();
 		};
 	}, [hydrateState]);
+
+	useEffect(() => {
+		if (!window.maestro?.windows?.onSessionsReassigned) {
+			return undefined;
+		}
+		const unsubscribe = window.maestro.windows.onSessionsReassigned((event) => {
+			const currentWindowId = windowIdRef.current;
+			if (!currentWindowId || event.toWindowId !== currentWindowId) {
+				return;
+			}
+			if (!event.sessionIds?.length) {
+				return;
+			}
+			void hydrateState();
+			const movedCount = event.sessionIds.length;
+			const label = movedCount === 1 ? 'session' : 'sessions';
+			addToast({
+				type: 'info',
+				title: 'Sessions moved',
+				message: `${movedCount} ${label} moved to main window`,
+				windowId: currentWindowId,
+			});
+		});
+		return () => {
+			unsubscribe();
+		};
+	}, [hydrateState, addToast]);
 
 	const openSession = useCallback(
 		async (sessionId: string) => {

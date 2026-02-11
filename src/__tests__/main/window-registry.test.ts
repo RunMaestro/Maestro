@@ -232,6 +232,15 @@ describe('WindowRegistry session reassignment', () => {
 			'windows:sessionMoved',
 			expect.objectContaining({ sessionId: 'child-2', fromWindowId: 'secondary', toWindowId: 'primary' })
 		);
+
+		expect(primaryWindow.webContents.send).toHaveBeenCalledWith(
+			'windows:sessionsReassigned',
+			expect.objectContaining({
+				fromWindowId: 'secondary',
+				toWindowId: 'primary',
+				sessionIds: ['child-1', 'child-2'],
+			})
+		);
 	});
 
 	it('ignores primary window closures', () => {
@@ -252,5 +261,16 @@ describe('WindowRegistry session reassignment', () => {
 		const savedState = savedStateCall?.[1];
 		expect(savedState.windows).toHaveLength(1);
 		expect(savedState.windows[0].id).toBe('primary');
+	});
+
+	it('does not broadcast reassignment when there are no sessions to move', () => {
+		const { primaryWindow } = seedWindows({ primarySessions: ['base'], secondarySessions: [] });
+
+		(registry as any).reassignSessionsToPrimary('secondary');
+
+		expect(primaryWindow.webContents.send).not.toHaveBeenCalledWith(
+			'windows:sessionsReassigned',
+			expect.anything()
+		);
 	});
 });

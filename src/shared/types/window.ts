@@ -35,6 +35,12 @@ export interface WindowSessionMovedEvent {
 	toWindowId: string;
 }
 
+export interface WindowSessionsReassignedEvent {
+	fromWindowId: string;
+	toWindowId: string;
+	sessionIds: string[];
+}
+
 export interface WindowDropZoneHighlightEvent {
 	highlight: boolean;
 	sourceWindowId: string | null;
