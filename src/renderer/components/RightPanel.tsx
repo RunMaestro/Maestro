@@ -7,7 +7,7 @@ import React, {
 	useCallback,
 	memo,
 } from 'react';
-import { PanelRightClose, PanelRightOpen, Loader2, GitBranch } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, Loader2, GitBranch, Skull } from 'lucide-react';
 import type { Session, Theme, RightPanelTab, Shortcut, BatchRunState, FocusArea } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -16,6 +16,7 @@ import { AutoRun, AutoRunHandle } from './AutoRun';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { ConfirmModal } from './ConfirmModal';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -207,6 +208,9 @@ export const RightPanel = memo(
 
 		// Elapsed time for Auto Run display - tracks wall clock time from startTime
 		const [elapsedTime, setElapsedTime] = useState<string>('');
+
+		// Kill confirmation modal for force-killing during Auto Run stop
+		const [showKillConfirm, setShowKillConfirm] = useState(false);
 
 		// Shared draft state for Auto Run (shared between panel and expanded modal)
 		// This ensures edits in one view are immediately visible in the other
@@ -567,6 +571,20 @@ export const RightPanel = memo(
 										<GitBranch className="w-4 h-4" style={{ color: theme.colors.warning }} />
 									</span>
 								)}
+								{currentSessionBatchState.isStopping && (
+									<button
+										onClick={() => setShowKillConfirm(true)}
+										className="flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-90"
+										style={{
+											backgroundColor: theme.colors.error,
+											color: 'white',
+										}}
+										title="Force kill the running process"
+									>
+										<Skull className="w-3 h-3" />
+										Kill
+									</button>
+								)}
 							</div>
 							{/* Elapsed time - wall clock time since run started */}
 							{elapsedTime && (
@@ -695,6 +713,25 @@ export const RightPanel = memo(
 							)}
 						</div>
 					</div>
+				)}
+
+				{/* Kill confirmation modal */}
+				{showKillConfirm && (
+					<ConfirmModal
+						theme={theme}
+						title="Force Kill Process"
+						message="This will immediately terminate the running agent process. The current task will be interrupted mid-execution and may leave incomplete changes. Are you sure?"
+						headerIcon={<Skull className="w-4 h-4" style={{ color: theme.colors.error }} />}
+						icon={<Skull className="w-5 h-5" style={{ color: theme.colors.error }} />}
+						confirmLabel="Kill Process"
+						destructive
+						onConfirm={() => {
+							if (session?.id) {
+								window.maestro.process.kill(session.id);
+							}
+						}}
+						onClose={() => setShowKillConfirm(false)}
+					/>
 				)}
 			</div>
 		);

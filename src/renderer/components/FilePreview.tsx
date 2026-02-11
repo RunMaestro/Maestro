@@ -31,6 +31,9 @@ import {
 	Share2,
 	GitGraph,
 	List,
+	ExternalLink,
+	RefreshCw,
+	X,
 } from 'lucide-react';
 import { visit } from 'unist-util-visit';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -134,6 +137,10 @@ interface FilePreviewProps {
 	onSearchQueryChange?: (query: string) => void;
 	/** When true, disables click-outside-to-close and layer registration (for tab-based rendering) */
 	isTabMode?: boolean;
+	/** Timestamp (ms) when file was last modified on disk — used for change detection polling */
+	lastModified?: number;
+	/** Callback to reload file content from disk (called when user clicks Reload in the change banner) */
+	onReloadFile?: () => void;
 }
 
 export interface FilePreviewHandle {
@@ -643,6 +650,8 @@ export const FilePreview = React.memo(
 			initialSearchQuery,
 			onSearchQueryChange,
 			isTabMode,
+			lastModified,
+			onReloadFile,
 		},
 		ref
 	) {
@@ -699,6 +708,42 @@ export const FilePreview = React.memo(
 		const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
+
+		// File change detection state
+		const [fileChangedOnDisk, setFileChangedOnDisk] = useState(false);
+		const lastModifiedRef = useRef(lastModified);
+
+		// Keep ref in sync with prop (reset when parent reloads content with new lastModified)
+		useEffect(() => {
+			lastModifiedRef.current = lastModified;
+			setFileChangedOnDisk(false);
+		}, [lastModified]);
+
+		// Poll file stat to detect external changes (every 3s for the active file)
+		useEffect(() => {
+			if (!file?.path || !lastModified || fileChangedOnDisk) return;
+
+			const interval = setInterval(async () => {
+				try {
+					const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
+					if (!stat?.modifiedAt) return;
+					const currentMtime = new Date(stat.modifiedAt).getTime();
+					if (currentMtime > (lastModifiedRef.current ?? 0)) {
+						setFileChangedOnDisk(true);
+					}
+				} catch {
+					// Silently ignore — file may have been deleted or become inaccessible
+				}
+			}, 3000);
+
+			return () => clearInterval(interval);
+		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk]);
+
+		// Handle reload click
+		const handleReloadFile = useCallback(() => {
+			setFileChangedOnDisk(false);
+			onReloadFile?.();
+		}, [onReloadFile]);
 
 		// Expose focus method to parent via ref
 		useImperativeHandle(
@@ -1832,6 +1877,16 @@ export const FilePreview = React.memo(
 									<GitGraph className="w-4 h-4" />
 								</button>
 							)}
+							{!sshRemoteId && (
+								<button
+									onClick={() => window.maestro?.shell?.openExternal(`file://${file.path}`)}
+									className="p-2 rounded hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textDim }}
+									title="Open in Default App"
+								>
+									<ExternalLink className="w-4 h-4" />
+								</button>
+							)}
 							<button
 								onClick={copyPathToClipboard}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -2013,6 +2068,43 @@ export const FilePreview = React.memo(
 						</div>
 					) : null}
 				</div>
+
+				{/* File changed on disk banner */}
+				{fileChangedOnDisk && (
+					<div
+						className="flex items-center gap-3 px-6 py-2 border-b shrink-0"
+						style={{
+							backgroundColor: theme.colors.accent + '15',
+							borderColor: theme.colors.accent + '40',
+						}}
+					>
+						<RefreshCw className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
+						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
+							{hasChanges
+								? 'File changed on disk. You have unsaved edits — reloading will discard them.'
+								: 'File changed on disk.'}
+						</span>
+						<div className="flex items-center gap-2 shrink-0">
+							<button
+								onClick={handleReloadFile}
+								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground ?? '#000',
+								}}
+							>
+								Reload
+							</button>
+							<button
+								onClick={() => setFileChangedOnDisk(false)}
+								className="p-1 rounded hover:bg-white/10 transition-colors"
+								title="Dismiss"
+							>
+								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							</button>
+						</div>
+					</div>
+				)}
 
 				{/* Content - isolated scroll to prevent scroll chaining */}
 				<div

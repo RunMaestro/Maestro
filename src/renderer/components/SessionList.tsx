@@ -56,6 +56,7 @@ import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
 import { useLiveOverlay, useClickOutside } from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
+import { useUIStore } from '../stores/uiStore';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -1228,7 +1229,8 @@ function SessionListInner(props: SessionListProps) {
 	} = props;
 
 	const [sessionFilter, setSessionFilter] = useState('');
-	const [sessionFilterOpen, setSessionFilterOpen] = useState(false);
+	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
+	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const [preFilterGroupStates, setPreFilterGroupStates] = useState<Map<string, boolean>>(new Map());
 	const [preFilterBookmarksCollapsed, setPreFilterBookmarksCollapsed] = useState<boolean | null>(
 		null

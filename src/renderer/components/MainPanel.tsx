@@ -234,6 +234,8 @@ interface MainPanelProps {
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	/** Handler to update file tab searchQuery when searching in FilePreview */
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
+	/** Handler to reload file tab content from disk */
+	onReloadFileTab?: (tabId: string) => void;
 
 	// Scroll position persistence
 	onScrollPositionChange?: (scrollTop: number) => void;
@@ -841,6 +843,12 @@ export const MainPanel = React.memo(
 			},
 			[activeFileTabId, onFileTabSearchQueryChange]
 		);
+
+		const handleFilePreviewReload = useCallback(() => {
+			if (activeFileTabId) {
+				props.onReloadFileTab?.(activeFileTabId);
+			}
+		}, [activeFileTabId, props.onReloadFileTab]);
 
 		// Memoize sshRemoteId to prevent object recreation
 		const filePreviewSshRemoteId = useMemo(
@@ -1688,6 +1696,9 @@ export const MainPanel = React.memo(
 									// Pass search query props for persistence across tab switches
 									initialSearchQuery={activeFileTab.searchQuery}
 									onSearchQueryChange={handleFilePreviewSearchQueryChange}
+									// File change detection
+									lastModified={activeFileTab.lastModified}
+									onReloadFile={handleFilePreviewReload}
 								/>
 							</div>
 						) : (

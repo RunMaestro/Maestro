@@ -24,7 +24,6 @@ import {
 	processLogTextHelper,
 	filterTextByLinesHelper,
 	getCachedAnsiHtml,
-	stripMarkdown,
 } from '../utils/textProcessing';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { QueuedItemsList } from './QueuedItemsList';
@@ -741,15 +740,12 @@ const LogItemComponent = memo(
 										onFileClick={onFileClick}
 									/>
 								) : (
-									// Plain text mode (strip markdown formatting for readability)
+									// Raw markdown source mode (show original text with markdown syntax visible)
 									<div
 										className="whitespace-pre-wrap text-sm break-words"
 										style={{ color: theme.colors.textMain }}
 									>
-										{highlightMatches(
-											isAIMode ? stripMarkdown(filteredText) : filteredText,
-											outputSearchQuery
-										)}
+										{highlightMatches(filteredText, outputSearchQuery)}
 									</div>
 								)}
 							</>

@@ -886,6 +886,7 @@ export interface AppUtilityModalsProps {
 	// FileSearchModal
 	fuzzyFileSearchOpen: boolean;
 	filteredFileTree: FileNode[];
+	fileExplorerExpanded?: string[];
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 
@@ -1063,6 +1064,7 @@ export function AppUtilityModals({
 	// FileSearchModal
 	fuzzyFileSearchOpen,
 	filteredFileTree,
+	fileExplorerExpanded,
 	onCloseFileSearch,
 	onFileSearchSelect,
 	// PromptComposerModal
@@ -1273,6 +1275,7 @@ export function AppUtilityModals({
 				<FileSearchModal
 					theme={theme}
 					fileTree={filteredFileTree}
+					expandedFolders={fileExplorerExpanded}
 					shortcut={shortcuts.fuzzyFileSearch}
 					onFileSelect={onFileSearchSelect}
 					onClose={onCloseFileSearch}
@@ -1954,6 +1957,7 @@ export interface AppModalsProps {
 	) => void;
 	fuzzyFileSearchOpen: boolean;
 	filteredFileTree: FileNode[];
+	fileExplorerExpanded?: string[];
 	onCloseFileSearch: () => void;
 	onFileSearchSelect: (file: FlatFileItem) => void;
 	promptComposerOpen: boolean;
@@ -2265,6 +2269,7 @@ export function AppModals(props: AppModalsProps) {
 		onNamedSessionSelect,
 		fuzzyFileSearchOpen,
 		filteredFileTree,
+		fileExplorerExpanded,
 		onCloseFileSearch,
 		onFileSearchSelect,
 		promptComposerOpen,
@@ -2570,6 +2575,7 @@ export function AppModals(props: AppModalsProps) {
 				colorBlindMode={colorBlindMode}
 				fuzzyFileSearchOpen={fuzzyFileSearchOpen}
 				filteredFileTree={filteredFileTree}
+				fileExplorerExpanded={fileExplorerExpanded}
 				onCloseFileSearch={onCloseFileSearch}
 				onFileSearchSelect={onFileSearchSelect}
 				promptComposerOpen={promptComposerOpen}

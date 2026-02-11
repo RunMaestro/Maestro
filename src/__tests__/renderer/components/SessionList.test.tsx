@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react';
 import { SessionList } from '../../../renderer/components/SessionList';
 import type { Session, Group, Theme, Shortcut, AutoRunStats } from '../../../renderer/types';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 // Mock QRCodeSVG to avoid complex rendering
 vi.mock('qrcode.react', () => ({
@@ -222,6 +223,8 @@ const createDefaultProps = (overrides: Partial<Parameters<typeof SessionList>[0]
 describe('SessionList', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Reset uiStore state used by SessionList
+		useUIStore.setState({ sessionFilterOpen: false });
 	});
 
 	afterEach(() => {

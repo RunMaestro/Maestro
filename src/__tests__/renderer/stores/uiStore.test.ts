@@ -22,6 +22,8 @@ function resetStore() {
 		successFlashNotification: null,
 		outputSearchOpen: false,
 		outputSearchQuery: '',
+		sessionFilterOpen: false,
+		historySearchFilterOpen: false,
 		draggingSessionId: null,
 		editingGroupId: null,
 		editingSessionId: null,
@@ -51,6 +53,8 @@ describe('uiStore', () => {
 			expect(state.successFlashNotification).toBeNull();
 			expect(state.outputSearchOpen).toBe(false);
 			expect(state.outputSearchQuery).toBe('');
+			expect(state.sessionFilterOpen).toBe(false);
+			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
@@ -219,6 +223,30 @@ describe('uiStore', () => {
 		it('sets output search query', () => {
 			useUIStore.getState().setOutputSearchQuery('find this');
 			expect(useUIStore.getState().outputSearchQuery).toBe('find this');
+		});
+	});
+
+	describe('session filter state', () => {
+		it('sets session filter open', () => {
+			useUIStore.getState().setSessionFilterOpen(true);
+			expect(useUIStore.getState().sessionFilterOpen).toBe(true);
+		});
+
+		it('sets session filter open with an updater', () => {
+			useUIStore.getState().setSessionFilterOpen((prev) => !prev);
+			expect(useUIStore.getState().sessionFilterOpen).toBe(true);
+		});
+	});
+
+	describe('history search filter state', () => {
+		it('sets history search filter open', () => {
+			useUIStore.getState().setHistorySearchFilterOpen(true);
+			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
+		});
+
+		it('sets history search filter open with an updater', () => {
+			useUIStore.getState().setHistorySearchFilterOpen((prev) => !prev);
+			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
 		});
 	});
 

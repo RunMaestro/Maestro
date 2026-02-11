@@ -22,6 +22,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { HistoryPanel, HistoryPanelHandle } from '../../../renderer/components/HistoryPanel';
 import type { Theme, Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 // Mock child components
 vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
@@ -162,6 +163,9 @@ describe('HistoryPanel', () => {
 
 	beforeEach(() => {
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+
+		// Reset uiStore state used by HistoryPanel
+		useUIStore.setState({ historySearchFilterOpen: false });
 
 		// Mock scrollIntoView for jsdom
 		Element.prototype.scrollIntoView = vi.fn();

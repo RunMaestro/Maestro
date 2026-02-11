@@ -1443,7 +1443,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
 		});
 
-		it('strips markdown when markdownEditMode is true (plain text mode)', () => {
+		it('shows raw markdown source when markdownEditMode is true (plain text mode)', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: '# Heading\n\n**Bold text**', source: 'stdout' }),
 			];
@@ -1460,11 +1460,10 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// In plain text mode, markdown should be stripped
-			// Heading symbol (#) should be removed
-			// Bold markers (**) should be removed
-			expect(screen.getByText(/Heading/)).toBeInTheDocument();
-			expect(screen.getByText(/Bold text/)).toBeInTheDocument();
+			// In plain text mode, raw markdown source should be shown
+			// Heading symbol (#) and bold markers (**) should be preserved
+			expect(screen.getByText(/# Heading/)).toBeInTheDocument();
+			expect(screen.getByText(/\*\*Bold text\*\*/)).toBeInTheDocument();
 			// Should not render via MarkdownRenderer
 			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
 		});
@@ -1509,7 +1508,7 @@ describe('TerminalOutput', () => {
 			expect(toggleButton).toHaveStyle({ color: defaultTheme.colors.textDim });
 		});
 
-		it('preserves code block content when stripping markdown', () => {
+		it('preserves code fences in raw markdown mode', () => {
 			const codeBlockText = '```javascript\nconst x = 1;\nconst y = 2;\n```';
 			const logs: LogEntry[] = [createLogEntry({ text: codeBlockText, source: 'stdout' })];
 
@@ -1525,12 +1524,12 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Code content should be preserved without fences
+			// Code content and fences should be preserved in raw mode
 			expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
 			expect(screen.getByText(/const y = 2/)).toBeInTheDocument();
 		});
 
-		it('renders inline code without backticks when stripping markdown', () => {
+		it('preserves inline code backticks in raw markdown mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'Use the `console.log` function', source: 'stdout' }),
 			];
@@ -1547,8 +1546,8 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Should show the code without backticks
-			expect(screen.getByText(/Use the console.log function/)).toBeInTheDocument();
+			// Should show the raw text with backticks preserved
+			expect(screen.getByText(/Use the `console.log` function/)).toBeInTheDocument();
 		});
 
 		it('shows markdown toggle button for stderr messages in AI mode', () => {
@@ -1592,9 +1591,9 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			// Both AI responses should be affected by the same markdown mode
-			// In plain text mode, we should see stripped markdown for both
-			expect(screen.getByText(/First Response/)).toBeInTheDocument();
-			expect(screen.getByText(/Second Response/)).toBeInTheDocument();
+			// In raw mode, we should see raw markdown source for both
+			expect(screen.getByText(/# First Response/)).toBeInTheDocument();
+			expect(screen.getByText(/# Second Response/)).toBeInTheDocument();
 		});
 
 		it('shows Eye icon when markdownEditMode is true', () => {
@@ -1660,7 +1659,7 @@ describe('TerminalOutput', () => {
 			expect(toggleButton).toHaveClass('group-hover:opacity-50');
 		});
 
-		it('removes links from markdown when in plain text mode', () => {
+		it('shows raw markdown source including link URLs in plain text mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: 'Check out [this link](https://example.com)', source: 'stdout' }),
 			];
@@ -1677,11 +1676,11 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Link text should be shown, but not as a link
-			expect(screen.getByText(/Check out this link/)).toBeInTheDocument();
+			// Raw markdown source should be visible including the URL
+			expect(screen.getByText(/\[this link\]\(https:\/\/example\.com\)/)).toBeInTheDocument();
 		});
 
-		it('removes list markers from markdown when in plain text mode', () => {
+		it('shows raw list markers in plain text mode', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({ text: '* Item one\n* Item two\n* Item three', source: 'stdout' }),
 			];
@@ -1698,8 +1697,8 @@ describe('TerminalOutput', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// List items should be shown (stripMarkdown converts * to - for list markers)
-			expect(screen.getByText(/Item one/)).toBeInTheDocument();
+			// Raw markdown with * markers should be visible
+			expect(screen.getByText(/\* Item one/)).toBeInTheDocument();
 		});
 	});
 
@@ -2203,8 +2202,8 @@ describe('helper function behaviors (tested via component)', () => {
 		});
 	});
 
-	describe('stripMarkdown behavior', () => {
-		it('strips markdown when in raw mode', () => {
+	describe('raw markdown source mode', () => {
+		it('shows raw markdown syntax in plain text mode', () => {
 			const markdownText = '# Heading\n\n**Bold** and *italic*\n\n```js\ncode\n```';
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
@@ -2220,11 +2219,12 @@ describe('helper function behaviors (tested via component)', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// In raw mode, markdown should be stripped
-			// Headings, bold markers should be removed
+			// Raw markdown syntax should be preserved (# for headings, ** for bold, etc.)
+			expect(screen.getByText(/# Heading/)).toBeInTheDocument();
+			expect(screen.getByText(/\*\*Bold\*\*/)).toBeInTheDocument();
 		});
 
-		it('preserves code block content without fences', () => {
+		it('preserves code fences in raw mode', () => {
 			const markdownText = '```javascript\nconst x = 1;\n```';
 			const logs: LogEntry[] = [createLogEntry({ text: markdownText, source: 'stdout' })];
 
@@ -2240,7 +2240,7 @@ describe('helper function behaviors (tested via component)', () => {
 
 			render(<TerminalOutput {...props} />);
 
-			// Code content should be preserved
+			// Code fences and content should be preserved
 			expect(screen.getByText(/const x = 1/)).toBeInTheDocument();
 		});
 	});

@@ -22,6 +22,9 @@ vi.mock('lucide-react', () => ({
 	Share2: () => <span data-testid="share-icon">Share2</span>,
 	GitGraph: () => <span data-testid="gitgraph-icon">GitGraph</span>,
 	List: () => <span data-testid="list-icon">List</span>,
+	ExternalLink: () => <span data-testid="external-link-icon">ExternalLink</span>,
+	RefreshCw: () => <span data-testid="refresh-icon">RefreshCw</span>,
+	X: () => <span data-testid="x-icon">X</span>,
 }));
 
 // Mock react-markdown
@@ -229,6 +232,209 @@ describe('FilePreview', () => {
 			);
 
 			expect(screen.getByTitle('View in Document Graph (⌘⇧G)')).toBeInTheDocument();
+		});
+	});
+
+	describe('Open in Default App button', () => {
+		it('shows Open in Default App button with ExternalLink icon', () => {
+			render(<FilePreview {...defaultProps} />);
+
+			const button = screen.getByTitle('Open in Default App');
+			expect(button).toBeInTheDocument();
+			expect(screen.getByTestId('external-link-icon')).toBeInTheDocument();
+		});
+
+		it('calls shell.openExternal with file:// URL when clicked', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'readme.md', content: '# Readme', path: '/test/readme.md' }}
+				/>
+			);
+
+			const button = screen.getByTitle('Open in Default App');
+			fireEvent.click(button);
+
+			expect(window.maestro?.shell?.openExternal).toHaveBeenCalledWith('file:///test/readme.md');
+		});
+
+		it('hides Open in Default App button for SSH remote sessions', () => {
+			render(
+				<FilePreview
+					{...defaultProps}
+					sshRemoteId="remote-host-1"
+				/>
+			);
+
+			expect(screen.queryByTitle('Open in Default App')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('file changed on disk banner', () => {
+		it('shows reload banner when polling detects a newer mtime', async () => {
+			vi.useFakeTimers();
+			const onReloadFile = vi.fn();
+
+			// Mock stat to return a newer mtime than lastModified
+			const mockStat = vi.fn().mockResolvedValue({
+				modifiedAt: new Date(2000).toISOString(),
+				size: 100,
+				isFile: true,
+				isDirectory: false,
+			});
+			window.maestro.fs.stat = mockStat;
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					lastModified={1000}
+					onReloadFile={onReloadFile}
+				/>
+			);
+
+			// Banner should not be visible initially
+			expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
+
+			// Advance timer to trigger the 3s polling interval
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			expect(screen.getByText('File changed on disk.')).toBeInTheDocument();
+			expect(screen.getByTestId('refresh-icon')).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('calls onReloadFile when Reload button is clicked', async () => {
+			vi.useFakeTimers();
+			const onReloadFile = vi.fn();
+
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				modifiedAt: new Date(2000).toISOString(),
+				size: 100,
+				isFile: true,
+				isDirectory: false,
+			});
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					lastModified={1000}
+					onReloadFile={onReloadFile}
+				/>
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			const reloadButton = screen.getByText('Reload');
+			fireEvent.click(reloadButton);
+
+			expect(onReloadFile).toHaveBeenCalledOnce();
+			// Banner should be dismissed after reload
+			expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('dismisses banner when X button is clicked', async () => {
+			vi.useFakeTimers();
+
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				modifiedAt: new Date(2000).toISOString(),
+				size: 100,
+				isFile: true,
+				isDirectory: false,
+			});
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					lastModified={1000}
+					onReloadFile={vi.fn()}
+				/>
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			expect(screen.getByText('File changed on disk.')).toBeInTheDocument();
+
+			const dismissButton = screen.getByTitle('Dismiss');
+			fireEvent.click(dismissButton);
+
+			expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('shows unsaved edits warning when in edit mode with changes', async () => {
+			vi.useFakeTimers();
+
+			window.maestro.fs.stat = vi.fn().mockResolvedValue({
+				modifiedAt: new Date(2000).toISOString(),
+				size: 100,
+				isFile: true,
+				isDirectory: false,
+			});
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.md', content: '# Original', path: '/test/test.md' }}
+					markdownEditMode={true}
+					externalEditContent="# Modified by user"
+					lastModified={1000}
+					onReloadFile={vi.fn()}
+				/>
+			);
+
+			await act(async () => {
+				vi.advanceTimersByTime(3000);
+			});
+
+			expect(
+				screen.getByText(/File changed on disk\. You have unsaved edits/)
+			).toBeInTheDocument();
+
+			vi.useRealTimers();
+		});
+
+		it('does not poll when lastModified is not provided', async () => {
+			vi.useFakeTimers();
+			const mockStat = vi.fn().mockResolvedValue({
+				modifiedAt: new Date(2000).toISOString(),
+				size: 100,
+				isFile: true,
+				isDirectory: false,
+			});
+			window.maestro.fs.stat = mockStat;
+
+			render(
+				<FilePreview
+					{...defaultProps}
+					onReloadFile={vi.fn()}
+				/>
+			);
+
+			// Allow the initial file stats fetch to complete
+			await act(async () => {
+				await Promise.resolve();
+			});
+
+			const callsAfterMount = mockStat.mock.calls.length;
+
+			// Advance timers past multiple poll intervals — no additional calls should happen
+			await act(async () => {
+				vi.advanceTimersByTime(6000);
+			});
+
+			expect(mockStat).toHaveBeenCalledTimes(callsAfterMount);
+
+			vi.useRealTimers();
 		});
 	});
 

@@ -24,6 +24,21 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	isMacOS: vi.fn(() => false),
 }));
 
+vi.mock('../../../renderer/components/ConfirmModal', () => ({
+	ConfirmModal: vi.fn(({ title, message, onConfirm, onClose, confirmLabel }) => (
+		<div data-testid="confirm-modal">
+			<span data-testid="confirm-modal-title">{title}</span>
+			<span data-testid="confirm-modal-message">{message}</span>
+			<button data-testid="confirm-modal-confirm" onClick={() => { onConfirm?.(); onClose(); }}>
+				{confirmLabel || 'Confirm'}
+			</button>
+			<button data-testid="confirm-modal-cancel" onClick={onClose}>
+				Cancel
+			</button>
+		</div>
+	)),
+}));
+
 // Mock lucide-react
 vi.mock('lucide-react', () => ({
 	PanelRightClose: () => <span data-testid="panel-right-close">Close</span>,
@@ -31,6 +46,16 @@ vi.mock('lucide-react', () => ({
 	Loader2: ({ className }: { className?: string }) => (
 		<span data-testid="loader" className={className}>
 			Loading
+		</span>
+	),
+	GitBranch: ({ className }: { className?: string }) => (
+		<span data-testid="git-branch" className={className}>
+			GitBranch
+		</span>
+	),
+	Skull: ({ className }: { className?: string }) => (
+		<span data-testid="skull" className={className}>
+			Skull
 		</span>
 	),
 }));
@@ -516,6 +541,133 @@ describe('RightPanel', () => {
 
 			expect(screen.getByText('Stopping...')).toBeInTheDocument();
 			expect(screen.getByText(/waiting for current task/i)).toBeInTheDocument();
+		});
+
+		it('should show Kill pill when isStopping is true', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			const killButton = screen.getByTitle('Force kill the running process');
+			expect(killButton).toBeInTheDocument();
+			expect(killButton.textContent).toContain('Kill');
+		});
+
+		it('should not show Kill pill when not stopping', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: false,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			expect(screen.queryByTitle('Force kill the running process')).not.toBeInTheDocument();
+		});
+
+		it('should show confirmation modal when Kill pill is clicked', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			// Click the Kill pill
+			fireEvent.click(screen.getByTitle('Force kill the running process'));
+
+			// Confirmation modal should appear
+			expect(screen.getByTestId('confirm-modal')).toBeInTheDocument();
+			expect(screen.getByTestId('confirm-modal-title')).toHaveTextContent('Force Kill Process');
+		});
+
+		it('should call process.kill when kill is confirmed', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			// Click Kill pill to open modal
+			fireEvent.click(screen.getByTitle('Force kill the running process'));
+
+			// Click confirm button in modal
+			fireEvent.click(screen.getByTestId('confirm-modal-confirm'));
+
+			expect(window.maestro.process.kill).toHaveBeenCalledWith('session-1');
+		});
+
+		it('should dismiss modal without killing when cancel is clicked', () => {
+			const currentSessionBatchState: BatchRunState = {
+				isRunning: true,
+				isStopping: true,
+				documents: ['doc1'],
+				currentDocumentIndex: 0,
+				totalTasks: 10,
+				completedTasks: 5,
+				currentDocTasksTotal: 10,
+				currentDocTasksCompleted: 5,
+				totalTasksAcrossAllDocs: 10,
+				completedTasksAcrossAllDocs: 5,
+				loopEnabled: false,
+				loopIteration: 0,
+			};
+			const props = createDefaultProps({ currentSessionBatchState });
+			render(<RightPanel {...props} />);
+
+			// Click Kill pill to open modal
+			fireEvent.click(screen.getByTitle('Force kill the running process'));
+			expect(screen.getByTestId('confirm-modal')).toBeInTheDocument();
+
+			// Click cancel
+			fireEvent.click(screen.getByTestId('confirm-modal-cancel'));
+
+			// Modal should be dismissed, kill should not be called
+			expect(screen.queryByTestId('confirm-modal')).not.toBeInTheDocument();
+			expect(window.maestro.process.kill).not.toHaveBeenCalled();
 		});
 
 		it('should show loop iteration indicator when loopEnabled', () => {

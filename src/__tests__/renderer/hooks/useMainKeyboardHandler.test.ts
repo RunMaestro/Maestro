@@ -1248,4 +1248,137 @@ describe('useMainKeyboardHandler', () => {
 			});
 		});
 	});
+
+	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {
+		it('should toggle chatRawTextMode when on AI tab with no file tab', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'main',
+				activeRightTab: 'files',
+				activeBatchRunState: null,
+				activeSession: {
+					id: 'session-1',
+					activeFileTabId: null,
+					inputMode: 'ai',
+				},
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(true);
+		});
+
+		it('should toggle chatRawTextMode even when a file tab exists in the session', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: true,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'main',
+				activeRightTab: 'files',
+				activeBatchRunState: null,
+				activeSession: {
+					id: 'session-1',
+					activeFileTabId: 'file-tab-1',
+					filePreviewTabs: [{ id: 'file-tab-1', path: '/test.ts' }],
+					inputMode: 'ai',
+				},
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// Should still toggle - FilePreview handles its own Cmd+E with stopPropagation
+			// when focused, so if the event reaches the main handler, toggle chat mode
+			expect(mockSetChatRawTextMode).toHaveBeenCalledWith(false);
+		});
+
+		it('should NOT toggle when in AutoRun panel', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'right',
+				activeRightTab: 'autorun',
+				activeBatchRunState: null,
+				activeSession: {
+					id: 'session-1',
+					activeFileTabId: null,
+					inputMode: 'ai',
+				},
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetChatRawTextMode).not.toHaveBeenCalled();
+		});
+
+		it('should NOT toggle when Auto Run is locked (running without worktree)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+			const mockSetChatRawTextMode = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, id: string) => id === 'toggleMarkdownMode',
+				chatRawTextMode: false,
+				setChatRawTextMode: mockSetChatRawTextMode,
+				activeFocus: 'main',
+				activeRightTab: 'files',
+				activeBatchRunState: { isRunning: true, worktreeActive: false },
+				activeSession: {
+					id: 'session-1',
+					activeFileTabId: null,
+					inputMode: 'ai',
+				},
+				recordShortcutUsage: vi.fn().mockReturnValue({ newLevel: null }),
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'e',
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetChatRawTextMode).not.toHaveBeenCalled();
+		});
+	});
 });

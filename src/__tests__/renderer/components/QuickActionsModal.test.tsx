@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { QuickActionsModal } from '../../../renderer/components/QuickActionsModal';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
+import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
 
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
@@ -181,6 +183,17 @@ const createDefaultProps = (
 describe('QuickActionsModal', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		// Reset uiStore state used by search actions
+		useUIStore.setState({
+			sessionFilterOpen: false,
+			historySearchFilterOpen: false,
+			outputSearchOpen: false,
+			activeFocus: 'main',
+		});
+		// Reset fileExplorerStore state
+		useFileExplorerStore.setState({
+			fileTreeFilterOpen: false,
+		});
 	});
 
 	afterEach(() => {
@@ -481,6 +494,101 @@ describe('QuickActionsModal', () => {
 			expect(props.setRightPanelOpen).toHaveBeenCalledWith(true);
 			expect(props.setActiveRightTab).toHaveBeenCalledWith('autorun');
 			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+	});
+
+	describe('Search actions', () => {
+		it('renders all four search actions', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Search: Agents')).toBeInTheDocument();
+			expect(screen.getByText('Search: Message History')).toBeInTheDocument();
+			expect(screen.getByText('Search: Files')).toBeInTheDocument();
+			expect(screen.getByText('Search: History')).toBeInTheDocument();
+		});
+
+		it('handles Search: Agents action', async () => {
+			vi.useFakeTimers();
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Search: Agents'));
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(props.setLeftSidebarOpen).toHaveBeenCalledWith(true);
+			expect(useUIStore.getState().activeFocus).toBe('sidebar');
+
+			// sessionFilterOpen is set after a 50ms timeout
+			vi.advanceTimersByTime(50);
+			expect(useUIStore.getState().sessionFilterOpen).toBe(true);
+
+			vi.useRealTimers();
+		});
+
+		it('handles Search: Message History action', async () => {
+			vi.useFakeTimers();
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Search: Message History'));
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(useUIStore.getState().activeFocus).toBe('main');
+
+			vi.advanceTimersByTime(50);
+			expect(useUIStore.getState().outputSearchOpen).toBe(true);
+
+			vi.useRealTimers();
+		});
+
+		it('handles Search: Files action', async () => {
+			vi.useFakeTimers();
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Search: Files'));
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(props.setRightPanelOpen).toHaveBeenCalledWith(true);
+			expect(props.setActiveRightTab).toHaveBeenCalledWith('files');
+			expect(useUIStore.getState().activeFocus).toBe('right');
+
+			vi.advanceTimersByTime(50);
+			expect(useFileExplorerStore.getState().fileTreeFilterOpen).toBe(true);
+
+			vi.useRealTimers();
+		});
+
+		it('handles Search: History action', async () => {
+			vi.useFakeTimers();
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Search: History'));
+
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			expect(props.setRightPanelOpen).toHaveBeenCalledWith(true);
+			expect(props.setActiveRightTab).toHaveBeenCalledWith('history');
+			expect(useUIStore.getState().activeFocus).toBe('right');
+
+			vi.advanceTimersByTime(50);
+			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
+
+			vi.useRealTimers();
+		});
+
+		it('search actions appear when filtering for "search"', () => {
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			const input = screen.getByPlaceholderText('Type a command or jump to agent...');
+			fireEvent.change(input, { target: { value: 'search' } });
+
+			expect(screen.getByText('Search: Agents')).toBeInTheDocument();
+			expect(screen.getByText('Search: Message History')).toBeInTheDocument();
+			expect(screen.getByText('Search: Files')).toBeInTheDocument();
+			expect(screen.getByText('Search: History')).toBeInTheDocument();
 		});
 	});
 
