@@ -66,6 +66,7 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 	const { windowStateStore } = deps;
 	const getWindowManager = () => requireDependency(deps.getWindowManager, 'Window manager');
 	const getWindowRegistry = () => requireDependency(deps.getWindowRegistry, 'Window registry');
+	const enqueueSessionMove = createSerialTaskQueue();
 
 	ipcMain.handle(
 		'windows:create',
@@ -138,25 +139,27 @@ export function registerWindowsHandlers(deps: WindowsHandlerDependencies): void 
 				throw new Error('toWindowId is required');
 			}
 
-			const windowRegistry = getWindowRegistry();
-			const sourceWindowId = fromWindowId ?? windowRegistry.getWindowForSession(sessionId);
+			return enqueueSessionMove(async () => {
+				const windowRegistry = getWindowRegistry();
+				const sourceWindowId = resolveSourceWindowId(windowRegistry, sessionId, fromWindowId);
 
-			if (!sourceWindowId) {
-				throw new Error(`Session ${sessionId} is not assigned to any window`);
-			}
+				if (!sourceWindowId) {
+					throw new Error(`Session ${sessionId} is not assigned to any window`);
+				}
 
-			if (sourceWindowId === toWindowId) {
+				if (sourceWindowId === toWindowId) {
+					return true;
+				}
+
+				windowRegistry.moveSession(sessionId, sourceWindowId, toWindowId);
+				persistSessionMove(windowStateStore, sessionId, sourceWindowId, toWindowId);
+				broadcastSessionMoved(windowRegistry, {
+					sessionId,
+					fromWindowId: sourceWindowId,
+					toWindowId,
+				});
 				return true;
-			}
-
-			windowRegistry.moveSession(sessionId, sourceWindowId, toWindowId);
-			persistSessionMove(windowStateStore, sessionId, sourceWindowId, toWindowId);
-			broadcastSessionMoved(windowRegistry, {
-				sessionId,
-				fromWindowId: sourceWindowId,
-				toWindowId,
 			});
-			return true;
 		})
 	);
 
@@ -347,6 +350,34 @@ function buildWindowInfoList(
 			activeSessionId: persisted?.activeSessionId ?? null,
 		};
 	});
+}
+
+function resolveSourceWindowId(
+	windowRegistry: WindowRegistry,
+	sessionId: string,
+	preferredWindowId?: string
+): string | null {
+	if (preferredWindowId) {
+		const preferredWindow = windowRegistry.get(preferredWindowId);
+		if (preferredWindow?.sessionIds.includes(sessionId)) {
+			return preferredWindowId;
+		}
+	}
+
+	return windowRegistry.getWindowForSession(sessionId) ?? null;
+}
+
+function createSerialTaskQueue() {
+	let pending: Promise<void> = Promise.resolve();
+	return function enqueueTask<T>(task: () => T | Promise<T>): Promise<T> {
+		const runTask = () => Promise.resolve().then(task);
+		const next = pending.then(runTask, runTask);
+		pending = next.then(
+			() => undefined,
+			() => undefined
+		);
+		return next;
+	};
 }
 
 function persistSessionMove(
