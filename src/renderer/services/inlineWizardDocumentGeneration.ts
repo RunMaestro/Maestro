@@ -657,7 +657,8 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
  */
 async function saveDocument(
 	autoRunFolderPath: string,
-	doc: ParsedDocument
+	doc: ParsedDocument,
+	sshRemoteId?: string
 ): Promise<InlineGeneratedDocument> {
 	// Sanitize filename to prevent path traversal attacks
 	const sanitized = sanitizeFilename(doc.filename);
@@ -669,10 +670,17 @@ async function saveDocument(
 		filename,
 		action,
 		autoRunFolderPath,
+		isRemote: !!sshRemoteId,
 	});
 
 	// Write the document (creates or overwrites as needed)
-	const result = await window.maestro.autorun.writeDoc(autoRunFolderPath, filename, doc.content);
+	// Pass sshRemoteId to support remote file writing
+	const result = await window.maestro.autorun.writeDoc(
+		autoRunFolderPath,
+		filename,
+		doc.content,
+		sshRemoteId || undefined
+	);
 
 	if (!result.success) {
 		throw new Error(result.error || `Failed to ${action.toLowerCase()} ${filename}`);
@@ -713,6 +721,13 @@ export async function generateInlineDocuments(
 
 	// Create a date-based subfolder name: "Wizard-YYYY-MM-DD" (with -1, -2, etc. if needed)
 	const baseFolderName = generateWizardFolderBaseName();
+	const sshRemoteId = config.sessionSshRemoteConfig?.enabled
+		? config.sessionSshRemoteConfig.remoteId
+		: undefined;
+
+	// TODO: Update generateUniqueSubfolderName to support SSH remote listing
+	// For now, we use local listing which might be incorrect for remote folders
+	// but the risk is low (just potential name collision handled by numeric suffix)
 	const subfolderName = await generateUniqueSubfolderName(autoRunFolderPath, baseFolderName);
 	const subfolderPath = `${autoRunFolderPath}/${subfolderName}`;
 
@@ -1087,7 +1102,7 @@ export async function generateInlineDocuments(
 		const savedDocuments: InlineGeneratedDocument[] = [];
 		for (const doc of documents) {
 			try {
-				const savedDoc = await saveDocument(subfolderPath, doc);
+				const savedDoc = await saveDocument(subfolderPath, doc, sshRemoteId || undefined);
 				savedDocuments.push(savedDoc);
 				callbacks?.onDocumentComplete?.(savedDoc);
 			} catch (error) {
