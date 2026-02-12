@@ -3,9 +3,17 @@
  *
  * These tests verify that SSH remote IDs are correctly propagated to file operations
  * during document generation.
+ *
+ * Key mock strategy: The function generates a dynamic session ID internally
+ * (`inline-wizard-gen-${Date.now()}-...`), so we capture it from the spawn call
+ * and use it when firing onData/onExit callbacks to match the internal guard.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Captured callbacks from onData/onExit registration
+let capturedDataCallback: ((sessionId: string, data: string) => void) | null = null;
+let capturedExitCallback: ((sessionId: string, code: number) => void) | null = null;
 
 // Mock window.maestro
 const mockMaestro = {
@@ -14,8 +22,15 @@ const mockMaestro = {
 	},
 	process: {
 		spawn: vi.fn(),
-		onData: vi.fn(() => vi.fn()),
-		onExit: vi.fn(() => vi.fn()),
+		kill: vi.fn().mockResolvedValue(undefined),
+		onData: vi.fn((cb) => {
+			capturedDataCallback = cb;
+			return vi.fn(); // cleanup function
+		}),
+		onExit: vi.fn((cb) => {
+			capturedExitCallback = cb;
+			return vi.fn(); // cleanup function
+		}),
 	},
 	autorun: {
 		watchFolder: vi.fn().mockResolvedValue({ success: true }),
@@ -23,6 +38,10 @@ const mockMaestro = {
 		onFileChanged: vi.fn(() => vi.fn()),
 		listDocs: vi.fn().mockResolvedValue({ success: true, tree: [] }),
 		writeDoc: vi.fn().mockResolvedValue({ success: true }),
+		readDoc: vi.fn().mockResolvedValue({ success: false }),
+	},
+	fs: {
+		readFile: vi.fn().mockResolvedValue(''),
 	},
 };
 
@@ -31,13 +50,38 @@ vi.stubGlobal('window', { maestro: mockMaestro });
 // Import after mocking
 import { generateInlineDocuments } from '../../../renderer/services/inlineWizardDocumentGeneration';
 
+/**
+ * Configure spawn mock to capture the session ID and fire data + exit callbacks
+ * with the correct session ID so the internal guards pass.
+ */
+function setupSpawnMock(mockOutput: string) {
+	mockMaestro.process.spawn.mockImplementation(async (config: { sessionId: string }) => {
+		const sid = config.sessionId;
+
+		// Fire data callback with the real session ID (after a microtask to match async flow)
+		setTimeout(() => {
+			if (capturedDataCallback) {
+				capturedDataCallback(sid, mockOutput);
+			}
+		}, 5);
+
+		// Fire exit callback with code 0 (after data arrives)
+		setTimeout(() => {
+			if (capturedExitCallback) {
+				capturedExitCallback(sid, 0);
+			}
+		}, 15);
+	});
+}
+
 describe('inlineWizardDocumentGeneration - SSH Remote Support', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		capturedDataCallback = null;
+		capturedExitCallback = null;
 	});
 
 	it('should pass sshRemoteId to writeDoc when saving documents', async () => {
-		// Setup mock agent
 		const mockAgent = {
 			id: 'opencode',
 			available: true,
@@ -46,14 +90,6 @@ describe('inlineWizardDocumentGeneration - SSH Remote Support', () => {
 		};
 		mockMaestro.agents.get.mockResolvedValue(mockAgent);
 
-		// Mock process spawn to succeed immediately with output
-		mockMaestro.process.spawn.mockResolvedValue(undefined);
-		mockMaestro.process.onExit.mockImplementation((callback) => {
-			setTimeout(() => callback('test-session', 0), 10);
-			return vi.fn();
-		});
-
-		// Mock generated output
 		const mockOutput = `
 ---BEGIN DOCUMENT---
 FILENAME: Phase-01-Test.md
@@ -62,15 +98,9 @@ CONTENT:
 - [ ] Task 1
 ---END DOCUMENT---
 `;
+		setupSpawnMock(mockOutput);
 
-		// Mock process data to return output
-		mockMaestro.process.onData.mockImplementation((callback) => {
-			setTimeout(() => callback('test-session', mockOutput), 5);
-			return vi.fn();
-		});
-
-		// Start generation with SSH config
-		const generationPromise = generateInlineDocuments({
+		await generateInlineDocuments({
 			agentType: 'opencode',
 			directoryPath: '/remote/path',
 			projectName: 'Test Project',
@@ -83,8 +113,6 @@ CONTENT:
 			},
 		});
 
-		await generationPromise;
-
 		// Verify writeDoc was called with sshRemoteId
 		expect(mockMaestro.autorun.writeDoc).toHaveBeenCalledWith(
 			expect.stringContaining('/remote/path/Auto Run Docs'), // folder path
@@ -95,7 +123,6 @@ CONTENT:
 	});
 
 	it('should NOT pass sshRemoteId when SSH is disabled', async () => {
-		// Setup mock agent
 		const mockAgent = {
 			id: 'opencode',
 			available: true,
@@ -104,27 +131,16 @@ CONTENT:
 		};
 		mockMaestro.agents.get.mockResolvedValue(mockAgent);
 
-		// Mock process spawn/exit
-		mockMaestro.process.spawn.mockResolvedValue(undefined);
-		mockMaestro.process.onExit.mockImplementation((callback) => {
-			setTimeout(() => callback('test-session', 0), 10);
-			return vi.fn();
-		});
-
-		// Mock output
 		const mockOutput = `
 ---BEGIN DOCUMENT---
 FILENAME: Phase-01-Test.md
 CONTENT:
 # Test
+- [ ] Task 1
 ---END DOCUMENT---
 `;
-		mockMaestro.process.onData.mockImplementation((callback) => {
-			setTimeout(() => callback('test-session', mockOutput), 5);
-			return vi.fn();
-		});
+		setupSpawnMock(mockOutput);
 
-		// Start generation WITHOUT SSH config
 		await generateInlineDocuments({
 			agentType: 'opencode',
 			directoryPath: '/local/path',
