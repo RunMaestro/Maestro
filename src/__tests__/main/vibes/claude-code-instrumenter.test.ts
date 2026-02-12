@@ -150,6 +150,70 @@ describe('claude-code-instrumenter', () => {
 			expect(cmdEntries[0].command_text).toBe('npm test');
 		});
 
+		it('should map Bash rm command to file_delete command type', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Bash',
+				state: { status: 'running', input: { command: 'rm -rf dist/' } },
+				timestamp: Date.now(),
+			});
+
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const cmdEntries = entries.filter((e) => e.type === 'command') as VibesCommandEntry[];
+			expect(cmdEntries).toHaveLength(1);
+			expect(cmdEntries[0].command_type).toBe('file_delete');
+			expect(cmdEntries[0].command_text).toBe('rm -rf dist/');
+		});
+
+		it('should map Bash unlink command to file_delete command type', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Bash',
+				state: { status: 'running', input: { command: 'unlink /tmp/lockfile' } },
+				timestamp: Date.now(),
+			});
+
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const cmdEntries = entries.filter((e) => e.type === 'command') as VibesCommandEntry[];
+			expect(cmdEntries).toHaveLength(1);
+			expect(cmdEntries[0].command_type).toBe('file_delete');
+		});
+
+		it('should not map non-delete Bash commands to file_delete', async () => {
+			await setupSession('sess-1');
+			const instrumenter = new ClaudeCodeInstrumenter({
+				sessionManager: manager,
+				assuranceLevel: 'medium',
+			});
+
+			await instrumenter.handleToolExecution('sess-1', {
+				toolName: 'Bash',
+				state: { status: 'running', input: { command: 'npm test' } },
+				timestamp: Date.now(),
+			});
+
+			await flushAll();
+			const manifest = await readVibesManifest(tmpDir);
+			const entries = Object.values(manifest.entries);
+			const cmdEntries = entries.filter((e) => e.type === 'command') as VibesCommandEntry[];
+			expect(cmdEntries).toHaveLength(1);
+			expect(cmdEntries[0].command_type).toBe('shell');
+		});
+
 		it('should not create line annotations for Bash tools', async () => {
 			await setupSession('sess-1');
 			const instrumenter = new ClaudeCodeInstrumenter({

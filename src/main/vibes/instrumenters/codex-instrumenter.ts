@@ -48,6 +48,11 @@ const TOOL_COMMAND_TYPE_MAP: Record<string, VibesCommandType> = {
 	codebase_search: 'tool_use',
 };
 
+// NOTE: Codex does not expose a dedicated file-delete tool (e.g. `delete_file`
+// or `remove_file`). File deletions happen through the `shell` tool (`rm`,
+// `unlink`). If Codex adds an explicit delete tool in the future, add it here
+// as `'file_delete'` and in `TOOL_ACTION_MAP` as `'delete'`.
+
 /** Map Codex tool names to VIBES actions for file-modifying tools. */
 const TOOL_ACTION_MAP: Record<string, VibesAction> = {
 	write_file: 'modify',

@@ -165,6 +165,18 @@ function extractBashCommand(input: unknown): string | null {
 }
 
 /**
+ * Detect whether a Bash command is a file deletion command.
+ * Checks if the command starts with `rm ` or `rm -`, or contains `unlink` or `shutil.rmtree`.
+ */
+function detectDeleteCommand(commandText: string): boolean {
+	const trimmed = commandText.trimStart();
+	if (/^rm\s/.test(trimmed)) return true;
+	if (/\bunlink\b/.test(trimmed)) return true;
+	if (/\bshutil\.rmtree\b/.test(trimmed)) return true;
+	return false;
+}
+
+/**
  * Extract a truncated output summary (max 200 chars).
  */
 function truncateSummary(text: string, maxLen = 200): string {
@@ -279,11 +291,16 @@ export class ClaudeCodeInstrumenter {
 			// Flush any buffered reasoning before recording a tool execution
 			await this.flushReasoning(sessionId);
 
-			const commandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
+			let commandType: VibesCommandType = TOOL_COMMAND_TYPE_MAP[event.toolName] ?? 'other';
 			const toolInput = this.extractToolInput(event.state);
 
 			// Build command text from the tool execution
 			const commandText = this.buildCommandText(event.toolName, toolInput);
+
+			// Heuristic: detect file deletion via Bash rm/unlink commands (GAP 3)
+			if (event.toolName === 'Bash' && detectDeleteCommand(commandText)) {
+				commandType = 'file_delete';
+			}
 
 			// Create and record command manifest entry
 			const { entry: cmdEntry, hash: cmdHash } = createCommandEntry({
