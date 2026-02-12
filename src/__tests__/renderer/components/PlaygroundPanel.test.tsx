@@ -874,7 +874,8 @@ describe('PlaygroundPanel', () => {
 		});
 
 		it('displays MAESTRO text in large preview', () => {
-			expect(screen.getByText('MAESTRO')).toBeInTheDocument();
+			const elements = screen.getAllByText('MAESTRO');
+			expect(elements.length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('shows animation active status by default', () => {

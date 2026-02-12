@@ -325,6 +325,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 
 		const expectedLabels = [
 			/Agents/i,
+			/Open Tabs/i,
 			/Total Queries/i,
 			/Queries\/Session/i,
 			/Total Time/i,
