@@ -81,7 +81,7 @@ describe('claude-code-instrumenter', () => {
 			expect(cmdEntries[0].command_text).toBe('Write: src/main.ts');
 		});
 
-		it('should create a line annotation for file write tools', async () => {
+		it('should create a line annotation for file write tools with modify action (DIVERGENCE 2 fix)', async () => {
 			await setupSession('sess-1');
 			const instrumenter = new ClaudeCodeInstrumenter({
 				sessionManager: manager,
@@ -102,7 +102,8 @@ describe('claude-code-instrumenter', () => {
 			) as VibesLineAnnotation[];
 			expect(lineAnnotations).toHaveLength(1);
 			expect(lineAnnotations[0].file_path).toBe('src/index.ts');
-			expect(lineAnnotations[0].action).toBe('create');
+			// Write defaults to 'modify' because it can overwrite existing files
+			expect(lineAnnotations[0].action).toBe('modify');
 			expect(lineAnnotations[0].environment_hash).toBe('e'.repeat(64));
 		});
 

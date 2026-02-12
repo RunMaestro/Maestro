@@ -44,9 +44,11 @@ const TOOL_COMMAND_TYPE_MAP: Record<string, VibesCommandType> = {
 	Task: 'tool_use',
 };
 
-/** Map Claude Code tool names to VIBES actions for file-modifying tools. */
+/** Map Claude Code tool names to VIBES actions for file-modifying tools.
+ * Write defaults to 'modify' because Claude Code's Write tool can overwrite
+ * existing files — 'modify' is the safer default from an audit perspective. */
 const TOOL_ACTION_MAP: Record<string, VibesAction> = {
-	Write: 'create',
+	Write: 'modify',
 	Edit: 'modify',
 	MultiEdit: 'modify',
 	NotebookEdit: 'modify',
