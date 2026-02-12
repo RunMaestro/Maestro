@@ -218,6 +218,14 @@ async function flushManifestDebounce(projectPath: string): Promise<void> {
 		try {
 			await ensureAuditDir(projectPath);
 			const manifest = await readVibesManifest(projectPath);
+
+			// Version compatibility check — warn but still write (fail open).
+			// readVibesManifest() already validates, but we log an extra note
+			// when we're about to modify a manifest with an unexpected version.
+			if (manifest.version !== '1.0') {
+				logWarn(`Adding entries to manifest with version '${manifest.version}' — proceeding (forward-compat)`);
+			}
+
 			let changed = false;
 			for (const [hash, entry] of entries) {
 				if (!(hash in manifest.entries)) {
@@ -284,13 +292,25 @@ export async function writeReasoningBlob(
 /**
  * Read and parse the .ai-audit/config.json file.
  * Returns null if the file does not exist or cannot be parsed.
+ * Validates that `standard === 'VIBES'` and `standard_version === '1.0'`.
+ * Logs a warning if the version is unsupported but still returns the config (fail open).
  */
 export async function readVibesConfig(projectPath: string): Promise<VibesConfig | null> {
 	const configPath = path.join(projectPath, AUDIT_DIR, CONFIG_FILE);
 	try {
 		await access(configPath, constants.F_OK);
 		const raw = await readFile(configPath, 'utf8');
-		return JSON.parse(raw) as VibesConfig;
+		const config = JSON.parse(raw) as VibesConfig;
+
+		// Validate standard and version — warn but don't block (fail open)
+		if (config.standard !== 'VIBES') {
+			logWarn(`Config has unexpected standard: '${config.standard}' (expected 'VIBES')`);
+		}
+		if (config.standard_version !== '1.0') {
+			logWarn(`Config has unsupported standard_version: '${config.standard_version}' (expected '1.0')`);
+		}
+
+		return config;
 	} catch {
 		return null;
 	}
@@ -313,13 +333,25 @@ export async function writeVibesConfig(projectPath: string, config: VibesConfig)
 /**
  * Read and parse the .ai-audit/manifest.json file.
  * Returns an empty manifest if the file does not exist.
+ * Validates that `standard === 'VIBES'` and `version === '1.0'`.
+ * Logs a warning if the version is unsupported but still returns the manifest (fail open).
  */
 export async function readVibesManifest(projectPath: string): Promise<VibesManifest> {
 	const manifestPath = path.join(projectPath, AUDIT_DIR, MANIFEST_FILE);
 	try {
 		await access(manifestPath, constants.F_OK);
 		const raw = await readFile(manifestPath, 'utf8');
-		return JSON.parse(raw) as VibesManifest;
+		const manifest = JSON.parse(raw) as VibesManifest;
+
+		// Validate standard and version — warn but don't block (fail open)
+		if (manifest.standard !== 'VIBES') {
+			logWarn(`Manifest has unexpected standard: '${manifest.standard}' (expected 'VIBES')`);
+		}
+		if (manifest.version !== '1.0') {
+			logWarn(`Manifest has unsupported version: '${manifest.version}' (expected '1.0')`);
+		}
+
+		return manifest;
 	} catch {
 		return { standard: 'VIBES', version: '1.0', entries: {} };
 	}

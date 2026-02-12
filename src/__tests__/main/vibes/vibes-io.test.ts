@@ -281,6 +281,91 @@ describe('vibes-io', () => {
 	});
 
 	// ========================================================================
+	// Version Validation (GAP 4 fix)
+	// ========================================================================
+	describe('version validation', () => {
+		it('warns when manifest version is not 1.0', async () => {
+			await ensureAuditDir(tmpDir);
+			const manifestPath = path.join(tmpDir, '.ai-audit', 'manifest.json');
+			const badManifest = { standard: 'VIBES', version: '2.0', entries: {} };
+			await fsWriteFile(manifestPath, JSON.stringify(badManifest), 'utf8');
+
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				await readVibesManifest(tmpDir);
+				expect(warnSpy).toHaveBeenCalledWith(
+					expect.stringContaining("unsupported version: '2.0'"),
+				);
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('warns when config standard_version is not 1.0', async () => {
+			await ensureAuditDir(tmpDir);
+			const configPath = path.join(tmpDir, '.ai-audit', 'config.json');
+			const badConfig = {
+				...SAMPLE_CONFIG,
+				standard_version: '2.0',
+			};
+			await fsWriteFile(configPath, JSON.stringify(badConfig), 'utf8');
+
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				await readVibesConfig(tmpDir);
+				expect(warnSpy).toHaveBeenCalledWith(
+					expect.stringContaining("unsupported standard_version: '2.0'"),
+				);
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('reads manifest successfully even with unsupported version (fail open)', async () => {
+			await ensureAuditDir(tmpDir);
+			const manifestPath = path.join(tmpDir, '.ai-audit', 'manifest.json');
+			const badManifest = {
+				standard: 'VIBES',
+				version: '99.0',
+				entries: { 'abc': { type: 'environment', tool_name: 'test', tool_version: '1.0', model_name: 'm', model_version: '1', created_at: '2026-02-10T12:00:00Z' } },
+			};
+			await fsWriteFile(manifestPath, JSON.stringify(badManifest), 'utf8');
+
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const manifest = await readVibesManifest(tmpDir);
+				// Should return the manifest data despite version mismatch
+				expect(manifest.version).toBe('99.0');
+				expect(manifest.entries['abc']).toBeDefined();
+				expect(manifest.entries['abc'].type).toBe('environment');
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+
+		it('reads config successfully even with unsupported version (fail open)', async () => {
+			await ensureAuditDir(tmpDir);
+			const configPath = path.join(tmpDir, '.ai-audit', 'config.json');
+			const badConfig = {
+				...SAMPLE_CONFIG,
+				standard_version: '99.0',
+			};
+			await fsWriteFile(configPath, JSON.stringify(badConfig), 'utf8');
+
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			try {
+				const config = await readVibesConfig(tmpDir);
+				// Should return the config data despite version mismatch
+				expect(config).not.toBeNull();
+				expect(config!.standard_version).toBe('99.0');
+				expect(config!.project_name).toBe('test-project');
+			} finally {
+				warnSpy.mockRestore();
+			}
+		});
+	});
+
+	// ========================================================================
 	// Atomic Writes (DIVERGENCE 1 fix)
 	// ========================================================================
 	describe('atomic writes', () => {
