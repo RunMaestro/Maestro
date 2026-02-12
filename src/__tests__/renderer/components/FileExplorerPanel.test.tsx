@@ -162,6 +162,16 @@ vi.mock('../../../renderer/utils/theme', () => ({
 		if (type === 'deleted') return <span data-testid="deleted-icon">-</span>;
 		return <span data-testid="file-icon">📄</span>;
 	},
+	getExplorerFileIcon: (name: string, _theme: Theme, type?: string) => {
+		if (type === 'added') return <span data-testid="added-icon">+</span>;
+		if (type === 'modified') return <span data-testid="modified-icon">~</span>;
+		if (type === 'deleted') return <span data-testid="deleted-icon">-</span>;
+		void name;
+		return <span data-testid="file-icon">📄</span>;
+	},
+	getExplorerFolderIcon: (_name: string, _isExpanded: boolean, _theme: Theme) => (
+		<span data-testid="folder-icon">📁</span>
+	),
 }));
 
 // Mock MODAL_PRIORITIES

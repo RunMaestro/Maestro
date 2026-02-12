@@ -32,7 +32,7 @@ import {
 	findNodeInTree,
 	countNodesInTree,
 } from '../utils/fileExplorer';
-import { getFileIcon } from '../utils/theme';
+import { getExplorerFileIcon, getExplorerFolderIcon } from '../utils/theme';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
@@ -969,11 +969,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							<ChevronRight className="w-3 h-3 flex-shrink-0" />
 						))}
 					<span className="flex-shrink-0">
-						{isFolder ? (
-							<Folder className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						) : (
-							getFileIcon(change?.type, theme)
-						)}
+						{isFolder
+							? getExplorerFolderIcon(node.name, isExpanded, theme)
+							: getExplorerFileIcon(node.name, theme, change?.type)}
 					</span>
 					<span
 						className={`truncate min-w-0 flex-1 ${change ? 'font-medium' : ''}`}
