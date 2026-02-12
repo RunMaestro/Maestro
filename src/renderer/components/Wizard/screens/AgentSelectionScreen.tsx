@@ -711,7 +711,10 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			if (agent?.capabilities?.supportsModelSelection) {
 				setLoadingModels(true);
 				try {
-					const models = await window.maestro.agents.getModels(agentId);
+					const sshRemoteId = sshRemoteConfig?.enabled
+						? (sshRemoteConfig.remoteId ?? undefined)
+						: undefined;
+					const models = await window.maestro.agents.getModels(agentId, false, sshRemoteId);
 					setAvailableModels(models);
 				} catch (err) {
 					console.error('Failed to load models:', err);
@@ -735,7 +738,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 			setAnnouncement(`Configuring ${tile?.name || agentId}`);
 			setAnnouncementKey((prev) => prev + 1);
 		},
-		[detectedAgents, setSelectedAgent]
+		[detectedAgents, setSelectedAgent, sshRemoteConfig]
 	);
 
 	/**
@@ -802,14 +805,17 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		if (!configuringAgentId) return;
 		setLoadingModels(true);
 		try {
-			const models = await window.maestro.agents.getModels(configuringAgentId, true);
+			const sshRemoteId = sshRemoteConfig?.enabled
+				? (sshRemoteConfig.remoteId ?? undefined)
+				: undefined;
+			const models = await window.maestro.agents.getModels(configuringAgentId, true, sshRemoteId);
 			setAvailableModels(models);
 		} catch (err) {
 			console.error('Failed to refresh models:', err);
 		} finally {
 			setLoadingModels(false);
 		}
-	}, [configuringAgentId]);
+	}, [configuringAgentId, sshRemoteConfig]);
 
 	// Get the agent being configured
 	// When SSH detection is in progress, detectedAgents may be stale or empty.

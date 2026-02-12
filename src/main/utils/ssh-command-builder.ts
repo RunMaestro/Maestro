@@ -221,7 +221,7 @@ export async function buildSshCommandWithStdin(
 
 	// PATH setup - same directories as before
 	scriptLines.push(
-		'export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"'
+		'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"'
 	);
 
 	// Change directory if specified
@@ -468,6 +468,7 @@ export async function buildSshCommand(
 	//
 	// We prepend common binary locations to PATH:
 	// - ~/.local/bin: Claude Code, pip --user installs
+	// - ~/.opencode/bin: OpenCode installer default location
 	// - ~/bin: User scripts
 	// - /usr/local/bin: Homebrew on Intel Mac, manual installs
 	// - /opt/homebrew/bin: Homebrew on Apple Silicon
@@ -482,7 +483,7 @@ export async function buildSshCommand(
 	//
 	// The inner command uses shellEscape() which handles embedded single quotes via '\'' pattern.
 	const pathSetup =
-		'export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"';
+		'export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"';
 	const fullBashCommand = `${pathSetup} && ${remoteCommand}`;
 	const wrappedCommand = `/bin/bash --norc --noprofile -c ${shellEscape(fullBashCommand)}`;
 	args.push(wrappedCommand);

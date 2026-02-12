@@ -102,7 +102,7 @@ vi.mock('../../../../main/utils/ssh-command-builder', () => ({
 
 		// Build the stdin script that would be sent to bash
 		const scriptLines: string[] = [];
-		scriptLines.push('export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"');
+		scriptLines.push('export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/bin:/usr/local/bin:/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"');
 
 		if (remoteOptions.cwd) {
 			scriptLines.push(`cd '${remoteOptions.cwd}' || exit 1`);
