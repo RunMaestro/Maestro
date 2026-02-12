@@ -326,7 +326,7 @@ describe('Agents Preload API', () => {
 
 			const result = await api.getModels('opencode');
 
-			expect(mockInvoke).toHaveBeenCalledWith('agents:getModels', 'opencode', undefined);
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getModels', 'opencode', undefined, undefined);
 			expect(result).toEqual(models);
 		});
 
@@ -335,7 +335,7 @@ describe('Agents Preload API', () => {
 
 			await api.getModels('opencode', true);
 
-			expect(mockInvoke).toHaveBeenCalledWith('agents:getModels', 'opencode', true);
+			expect(mockInvoke).toHaveBeenCalledWith('agents:getModels', 'opencode', true, undefined);
 		});
 	});
 
