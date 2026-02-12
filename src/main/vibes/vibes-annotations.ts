@@ -14,6 +14,7 @@ import type {
 	VibesPromptEntry,
 	VibesReasoningEntry,
 	VibesLineAnnotation,
+	VibeFunctionAnnotation,
 	VibesSessionRecord,
 } from '../../shared/vibes-types';
 
@@ -230,6 +231,59 @@ export function createLineAnnotation(params: {
 		assurance_level: params.assuranceLevel,
 	};
 
+	if (params.commandHash !== undefined) {
+		annotation.command_hash = params.commandHash;
+	}
+	if (params.promptHash !== undefined) {
+		annotation.prompt_hash = params.promptHash;
+	}
+	if (params.reasoningHash !== undefined) {
+		annotation.reasoning_hash = params.reasoningHash;
+	}
+	if (params.sessionId !== undefined) {
+		annotation.session_id = params.sessionId;
+	}
+	if (params.commitHash !== undefined) {
+		annotation.commit_hash = params.commitHash;
+	}
+
+	return annotation;
+}
+
+// ============================================================================
+// Function Annotation
+// ============================================================================
+
+/**
+ * Create a function-level annotation linking a named function to provenance metadata.
+ * References manifest entries by their content-addressed hashes.
+ */
+export function createFunctionAnnotation(params: {
+	filePath: string;
+	functionName: string;
+	functionSignature?: string;
+	environmentHash: string;
+	commandHash?: string;
+	promptHash?: string;
+	reasoningHash?: string;
+	action: VibesAction;
+	sessionId?: string;
+	commitHash?: string;
+	assuranceLevel: VibesAssuranceLevel;
+}): VibeFunctionAnnotation {
+	const annotation: VibeFunctionAnnotation = {
+		type: 'function',
+		file_path: params.filePath,
+		function_name: params.functionName,
+		environment_hash: params.environmentHash,
+		action: params.action,
+		timestamp: new Date().toISOString(),
+		assurance_level: params.assuranceLevel,
+	};
+
+	if (params.functionSignature !== undefined) {
+		annotation.function_signature = params.functionSignature;
+	}
 	if (params.commandHash !== undefined) {
 		annotation.command_hash = params.commandHash;
 	}

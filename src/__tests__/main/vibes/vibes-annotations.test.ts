@@ -13,6 +13,7 @@ import {
 	createReasoningEntry,
 	createExternalReasoningEntry,
 	createLineAnnotation,
+	createFunctionAnnotation,
 	createSessionRecord,
 } from '../../../main/vibes/vibes-annotations';
 
@@ -526,6 +527,83 @@ describe('vibes-annotations', () => {
 				});
 				expect(annotation.assurance_level).toBe(assuranceLevel);
 			}
+		});
+	});
+
+	// ========================================================================
+	// createFunctionAnnotation
+	// ========================================================================
+	describe('createFunctionAnnotation', () => {
+		it('creates function annotation with required fields', () => {
+			const annotation = createFunctionAnnotation({
+				filePath: 'src/utils.ts',
+				functionName: 'calculateTotal',
+				environmentHash: 'a'.repeat(64),
+				action: 'create',
+				assuranceLevel: 'medium',
+			});
+
+			expect(annotation.type).toBe('function');
+			expect(annotation.file_path).toBe('src/utils.ts');
+			expect(annotation.function_name).toBe('calculateTotal');
+			expect(annotation.environment_hash).toBe('a'.repeat(64));
+			expect(annotation.action).toBe('create');
+			expect(annotation.assurance_level).toBe('medium');
+			expect(annotation.function_signature).toBeUndefined();
+			expect(annotation.command_hash).toBeUndefined();
+			expect(annotation.prompt_hash).toBeUndefined();
+			expect(annotation.reasoning_hash).toBeUndefined();
+			expect(annotation.session_id).toBeUndefined();
+			expect(annotation.commit_hash).toBeUndefined();
+		});
+
+		it('includes optional fields when provided', () => {
+			const annotation = createFunctionAnnotation({
+				filePath: 'src/auth.ts',
+				functionName: 'authenticate',
+				functionSignature: 'authenticate(user: string, pass: string): Promise<boolean>',
+				environmentHash: 'e'.repeat(64),
+				commandHash: 'c'.repeat(64),
+				promptHash: 'p'.repeat(64),
+				reasoningHash: 'r'.repeat(64),
+				action: 'modify',
+				sessionId: 'session-456',
+				commitHash: 'def5678',
+				assuranceLevel: 'high',
+			});
+
+			expect(annotation.function_signature).toBe(
+				'authenticate(user: string, pass: string): Promise<boolean>',
+			);
+			expect(annotation.command_hash).toBe('c'.repeat(64));
+			expect(annotation.prompt_hash).toBe('p'.repeat(64));
+			expect(annotation.reasoning_hash).toBe('r'.repeat(64));
+			expect(annotation.session_id).toBe('session-456');
+			expect(annotation.commit_hash).toBe('def5678');
+		});
+
+		it('sets type to function', () => {
+			const annotation = createFunctionAnnotation({
+				filePath: 'src/index.ts',
+				functionName: 'main',
+				environmentHash: 'e'.repeat(64),
+				action: 'create',
+				assuranceLevel: 'low',
+			});
+
+			expect(annotation.type).toBe('function');
+		});
+
+		it('sets timestamp to ISO string', () => {
+			const annotation = createFunctionAnnotation({
+				filePath: 'src/index.ts',
+				functionName: 'init',
+				environmentHash: 'e'.repeat(64),
+				action: 'create',
+				assuranceLevel: 'low',
+			});
+
+			expect(annotation.timestamp).toBe(FIXED_ISO);
 		});
 	});
 
