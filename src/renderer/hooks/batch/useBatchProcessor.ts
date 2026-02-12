@@ -92,7 +92,7 @@ interface UseBatchProcessorReturn {
 	// Stop batch run for a specific session
 	stopBatchRun: (sessionId: string) => void;
 	// Force kill the running process and immediately end the batch run
-	killBatchRun: (sessionId: string) => void;
+	killBatchRun: (sessionId: string) => Promise<void>;
 	// Custom prompts per session
 	customPrompts: Record<string, string>;
 	setCustomPrompt: (sessionId: string, prompt: string) => void;
@@ -1696,11 +1696,15 @@ export function useBatchProcessor({
 	 * this terminates the agent process immediately and resets all batch state.
 	 */
 	const killBatchRun = useCallback(
-		(sessionId: string) => {
+		async (sessionId: string) => {
 			console.log('[BatchProcessor:killBatchRun] Force killing session:', sessionId);
 
-			// 1. Kill the agent process immediately
-			window.maestro.process.kill(sessionId);
+			// 1. Kill the agent process and wait for termination before cleaning up state
+			try {
+				await window.maestro.process.kill(sessionId);
+			} catch (error) {
+				console.error('[BatchProcessor:killBatchRun] Failed to kill process:', error);
+			}
 
 			// 2. Set stop flag so the processing loop exits if it's still running
 			stopRequestedRefs.current[sessionId] = true;

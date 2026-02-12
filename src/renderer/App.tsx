@@ -6696,9 +6696,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// Handler to force kill a batch run (process killed immediately, no waiting)
 	// Confirmation is handled by the calling component's own modal
 	const handleKillBatchRun = useCallback(
-		(sessionId: string) => {
+		async (sessionId: string) => {
 			console.log('[App:handleKillBatchRun] Force killing sessionId:', sessionId);
-			killBatchRun(sessionId);
+			await killBatchRun(sessionId);
 		},
 		[killBatchRun]
 	);
