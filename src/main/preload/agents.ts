@@ -167,8 +167,8 @@ export function createAgentsApi() {
 		 * Discover available models for agents that support model selection
 		 * (e.g., OpenCode with Ollama)
 		 */
-		getModels: (agentId: string, forceRefresh?: boolean): Promise<string[]> =>
-			ipcRenderer.invoke('agents:getModels', agentId, forceRefresh),
+		getModels: (agentId: string, forceRefresh?: boolean, sshRemoteId?: string): Promise<string[]> =>
+			ipcRenderer.invoke('agents:getModels', agentId, forceRefresh, sshRemoteId),
 
 		/**
 		 * Discover available slash commands for an agent by spawning it briefly
