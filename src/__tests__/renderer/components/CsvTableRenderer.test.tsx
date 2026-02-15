@@ -256,6 +256,24 @@ describe('CsvTableRenderer', () => {
 			const cells = container.querySelectorAll('tbody td');
 			expect((cells[1] as HTMLElement).style.textAlign).toBe('right');
 		});
+
+		it('right-aligns currency and percentage values via pre-compiled regex', () => {
+			const { container } = render(
+				<CsvTableRenderer content={"Amount\n$1,000\n($500)\n25%"} theme={mockTheme} />
+			);
+
+			const cells = container.querySelectorAll('tbody td');
+			expect((cells[1] as HTMLElement).style.textAlign).toBe('right');
+		});
+
+		it('left-aligns columns with majority non-numeric values', () => {
+			const { container } = render(
+				<CsvTableRenderer content={"Label\nhello\nworld\nfoo"} theme={mockTheme} />
+			);
+
+			const cells = container.querySelectorAll('tbody td');
+			expect((cells[1] as HTMLElement).style.textAlign).toBe('left');
+		});
 	});
 
 	describe('search filtering', () => {
@@ -354,6 +372,52 @@ describe('CsvTableRenderer', () => {
 			const marks = container.querySelectorAll('mark');
 			expect(marks).toHaveLength(1);
 			expect(marks[0]).toHaveTextContent('NYC');
+		});
+
+		it('highlights matches across multiple cells using memoized regex', () => {
+			const { container } = render(
+				<CsvTableRenderer
+					content={"Name,City\nAlice NYC,NYC"}
+					theme={mockTheme}
+					searchQuery="NYC"
+				/>
+			);
+
+			const marks = container.querySelectorAll('mark');
+			// One mark in "Alice NYC" cell, one in "NYC" cell
+			expect(marks).toHaveLength(2);
+		});
+
+		it('escapes regex special characters in search query', () => {
+			const { container } = render(
+				<CsvTableRenderer
+					content={"Expr,Value\n(1+2),3\nfoo,bar"}
+					theme={mockTheme}
+					searchQuery="(1+2)"
+				/>
+			);
+
+			// Should not throw or match incorrectly — regex chars are escaped
+			const rows = container.querySelectorAll('tbody tr');
+			expect(rows).toHaveLength(1);
+			expect(rows[0]).toHaveTextContent('(1+2)');
+
+			const marks = container.querySelectorAll('mark');
+			expect(marks).toHaveLength(1);
+			expect(marks[0]).toHaveTextContent('(1+2)');
+		});
+
+		it('renders no highlights when search query is empty', () => {
+			const { container } = render(
+				<CsvTableRenderer
+					content={"Name,City\nAlice,NYC"}
+					theme={mockTheme}
+					searchQuery=""
+				/>
+			);
+
+			const marks = container.querySelectorAll('mark');
+			expect(marks).toHaveLength(0);
 		});
 	});
 });

@@ -12,6 +12,10 @@ interface CsvTableRendererProps {
 
 const MAX_DISPLAY_ROWS = 500;
 
+// Pre-compiled regex patterns (avoid re-creation on every call)
+const NUMERIC_VALUE_REGEX = /^[($\-]*[\d,]+(\.\d+)?[%)]*$/;
+const REGEX_ESCAPE_PATTERN = /[.*+?^${}()|[\]\\]/g;
+
 type SortDirection = 'asc' | 'desc';
 
 interface SortState {
@@ -82,7 +86,7 @@ function isNumericValue(value: string): boolean {
 	const trimmed = value.trim();
 	if (trimmed === '') return false;
 	// Match: optional currency/sign prefix, digits with optional commas, optional decimal, optional suffix
-	return /^[($\-]*[\d,]+(\.\d+)?[%)]*$/.test(trimmed);
+	return NUMERIC_VALUE_REGEX.test(trimmed);
 }
 
 /**
@@ -139,12 +143,10 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 
 /**
  * Highlight matching substrings within a cell value.
+ * Accepts a pre-compiled regex to avoid re-creation per cell.
  */
-function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const regex = new RegExp(`(${escaped})`, 'gi');
-	const parts = text.split(regex);
+function highlightMatches(text: string, searchRegex: RegExp, accentColor: string): ReactNode {
+	const parts = text.split(searchRegex);
 	if (parts.length === 1) return text;
 	// Use running character offset as key to guarantee uniqueness across
 	// identical substrings appearing at different positions.
@@ -152,7 +154,7 @@ function highlightMatches(text: string, query: string, accentColor: string): Rea
 	return parts.map((part) => {
 		const key = offset;
 		offset += part.length;
-		return regex.test(part) ? (
+		return searchRegex.test(part) ? (
 			<mark
 				key={key}
 				style={{
@@ -182,6 +184,13 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 		[allRows],
 	);
 	const dataRows = useMemo(() => allRows.slice(1), [allRows]);
+
+	// Pre-compile search regex once per query change (avoids re-creation per cell in render loop)
+	const searchRegex = useMemo(() => {
+		if (!query) return null;
+		const escaped = query.replace(REGEX_ESCAPE_PATTERN, '\\$&');
+		return new RegExp(`(${escaped})`, 'gi');
+	}, [query]);
 
 	// Filter rows by search query (match any cell, case-insensitive)
 	const filteredRows = useMemo(() => {
@@ -349,8 +358,8 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 										}}
 										title={row[colIdx] ?? ''}
 									>
-										{query
-											? highlightMatches(row[colIdx] ?? '', query, theme.colors.accent)
+										{searchRegex
+											? highlightMatches(row[colIdx] ?? '', searchRegex, theme.colors.accent)
 											: (row[colIdx] ?? '')}
 									</td>
 								))}
