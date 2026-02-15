@@ -211,6 +211,8 @@ interface MaestroAPI {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Account multiplexing
+				accountId?: string;
 			}
 		) => Promise<string>;
 		// Cancel all active grooming sessions

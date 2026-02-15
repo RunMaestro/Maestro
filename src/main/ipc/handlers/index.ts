@@ -82,6 +82,7 @@ import {
 } from './windows';
 import { registerAccountHandlers, AccountHandlerDependencies } from './accounts';
 import { AgentDetector } from '../../agents';
+import type { AccountRegistry } from '../../accounts/account-registry';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import type { WindowRegistry } from '../../window-registry';
@@ -205,6 +206,7 @@ export interface HandlerDependencies {
 	// later phase). Until then the windows:* handlers report "not initialized".
 	getWindowRegistry?: () => WindowRegistry | null;
 	getWindowManager?: () => WindowManager | null;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -294,6 +296,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
 		agentConfigsStore: deps.agentConfigsStore,
+		getAccountRegistry: deps.getAccountRegistry || (() => null),
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({

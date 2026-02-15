@@ -27,6 +27,7 @@ import type { AgentDetector } from '../../agents';
 import type Store from 'electron-store';
 import type { AgentConfigsData } from '../../stores/types';
 import { captureException } from '../../utils/sentry';
+import type { AccountRegistry } from '../../accounts/account-registry';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -51,6 +52,7 @@ export interface ContextHandlerDependencies {
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
 	agentConfigsStore: Store<AgentConfigsData>;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -81,7 +83,7 @@ const GROOMING_TIMEOUT_MS = 5 * 60 * 1000;
  * - cleanupGroomingSession: Clean up a temporary grooming session
  */
 export function registerContextHandlers(deps: ContextHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore } = deps;
+	const { getProcessManager, getAgentDetector, agentConfigsStore, getAccountRegistry } = deps;
 
 	logger.info('Registering context IPC handlers', LOG_CONTEXT);
 	logger.info('[ContextMerge] Registering context IPC handlers (v2 with response collection)');
@@ -150,6 +152,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					accountId?: string;
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -171,6 +174,8 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomArgs: options?.customArgs,
 						sessionCustomEnvVars: options?.customEnvVars,
 						agentConfigValues,
+						accountRegistry: getAccountRegistry?.() || undefined,
+						accountId: options?.accountId,
 					},
 					processManager,
 					agentDetector
