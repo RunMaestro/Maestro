@@ -87,8 +87,12 @@ export class AccountThrottleHandler {
 				return;
 			}
 
-			// 4. Find next available account
-			const nextAccount = this.accountRegistry.selectNextAccount([accountId]);
+			// 4. Find next available account (capacity-aware when stats are available)
+			const statsDb2 = this.getStatsDB();
+			const nextAccount = this.accountRegistry.selectNextAccount(
+				[accountId],
+				statsDb2.isReady() ? statsDb2 : undefined
+			);
 			if (!nextAccount) {
 				// No alternative accounts available
 				this.safeSend('account:throttled', {

@@ -4,8 +4,10 @@ import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountRegistry } from '../../accounts/account-registry';
 import { injectAccountEnv } from '../../accounts/account-env-injector';
+import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import { isWindows } from '../../../shared/platformDetection';
 import type { SafeSendFn } from '../../utils/safe-send';
@@ -63,6 +65,7 @@ export interface ProcessHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<{ sessions: any[] }>;
 	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
 	getAccountRegistry?: () => AccountRegistry | null;
 	safeSend?: SafeSendFn;
 }
@@ -80,7 +83,7 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher, getAccountRegistry, safeSend: depsSafeSend } =
+	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher, getAccountAuthRecovery, getAccountRegistry, safeSend: depsSafeSend } =
 		deps;
 
 	// Spawn a new process for a session
@@ -336,6 +339,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						registry,
 						config.accountId, // May be passed from renderer
 						depsSafeSend,
+						() => { const db = getStatsDB(); return db.isReady() ? db : null; },
 					);
 					if (assignedAccountId) {
 						customEnvVarsToPass = envToInject;
@@ -611,10 +615,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			});
 			const result = processManager.write(sessionId, data);
 
-			// Record the last prompt for account switching resume
+			// Record the last prompt for account switching/auth recovery resume
 			const accountSwitcher = getAccountSwitcher?.();
 			if (accountSwitcher) {
 				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+			const authRecovery = getAccountAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.recordLastPrompt(sessionId, data);
 			}
 
 			return result;

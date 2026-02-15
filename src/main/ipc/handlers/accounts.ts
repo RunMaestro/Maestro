@@ -13,6 +13,7 @@
 import { ipcMain } from 'electron';
 import type { AccountRegistry } from '../../accounts/account-registry';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountSwitchConfig, AccountSwitchEvent } from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
@@ -26,6 +27,7 @@ import {
 	buildLoginCommand,
 	removeAccountDirectory,
 	validateRemoteAccountDir,
+	syncCredentialsFromBase,
 } from '../../accounts/account-setup';
 
 const LOG_CONTEXT = '[Accounts]';
@@ -36,13 +38,14 @@ const LOG_CONTEXT = '[Accounts]';
 export interface AccountHandlerDependencies {
 	getAccountRegistry: () => AccountRegistry | null;
 	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
 }
 
 /**
  * Register all account multiplexing IPC handlers.
  */
 export function registerAccountHandlers(deps: AccountHandlerDependencies): void {
-	const { getAccountRegistry, getAccountSwitcher } = deps;
+	const { getAccountRegistry, getAccountSwitcher, getAccountAuthRecovery } = deps;
 
 	/** Get the account registry or throw if not initialized */
 	function requireRegistry(): AccountRegistry {
@@ -241,7 +244,8 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 
 	ipcMain.handle('accounts:select-next', async (_event, excludeIds?: string[]) => {
 		try {
-			return requireRegistry().selectNextAccount(excludeIds);
+			const db = getStatsDB();
+			return requireRegistry().selectNextAccount(excludeIds, db.isReady() ? db : undefined);
 		} catch (error) {
 			logger.error('select next error', LOG_CONTEXT, { error: String(error) });
 			return null;
@@ -334,6 +338,15 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
+	ipcMain.handle('accounts:sync-credentials', async (_event, configDir: string) => {
+		try {
+			return await syncCredentialsFromBase(configDir);
+		} catch (error) {
+			logger.error('sync credentials error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
 	// --- Session Cleanup ---
 
 	ipcMain.handle('accounts:cleanup-session', async (_event, sessionId: string) => {
@@ -345,6 +358,10 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 			const switcher = getAccountSwitcher?.();
 			if (switcher) {
 				switcher.cleanupSession(sessionId);
+			}
+			const authRecovery = getAccountAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.cleanupSession(sessionId);
 			}
 			return { success: true };
 		} catch (error) {
@@ -433,6 +450,27 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 			return { success: !!result, event: result };
 		} catch (error) {
 			logger.error('execute switch error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// --- Auth Recovery ---
+
+	ipcMain.handle('accounts:trigger-auth-recovery', async (_event, sessionId: string) => {
+		try {
+			const authRecovery = getAccountAuthRecovery?.();
+			if (!authRecovery) {
+				return { success: false, error: 'Auth recovery not initialized' };
+			}
+			const registry = requireRegistry();
+			const assignment = registry.getAssignment(sessionId);
+			if (!assignment) {
+				return { success: false, error: 'No account assigned to session' };
+			}
+			const result = await authRecovery.recoverAuth(sessionId, assignment.accountId);
+			return { success: result };
+		} catch (error) {
+			logger.error('trigger auth recovery error', LOG_CONTEXT, { error: String(error) });
 			return { success: false, error: String(error) };
 		}
 	});
