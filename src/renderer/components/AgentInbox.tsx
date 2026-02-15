@@ -8,6 +8,7 @@ import { useAgentInbox } from '../hooks/useAgentInbox';
 import { useModalLayer } from '../hooks/ui/useModalLayer';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { formatRelativeTime } from '../utils/formatters';
+import { getAgentIcon } from '../constants/agentIcons';
 
 interface AgentInboxProps {
 	theme: Theme;
@@ -170,6 +171,17 @@ function InboxItemCardContent({
 
 				{/* Row 3: badges */}
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+					<span
+						data-testid="agent-type-badge"
+						title={item.toolType}
+						aria-label={`Agent: ${item.toolType}`}
+						style={{
+							fontSize: 11,
+							lineHeight: 1,
+						}}
+					>
+						{getAgentIcon(item.toolType)}
+					</span>
 					{item.gitBranch && (
 						<span
 							data-testid="git-branch-badge"

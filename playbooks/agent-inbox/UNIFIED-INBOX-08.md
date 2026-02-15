@@ -97,7 +97,7 @@ The Agent Inbox is a modal (`AgentInbox.tsx`) displaying a virtualized list of s
 
     **Verify:** `npm run test -- --testPathPattern="AgentInbox" --no-coverage` — all tests pass.
 
-- [ ] **TASK 3 — Add agent icon badge to each inbox card (icon only, no text).** In `src/renderer/components/AgentInbox.tsx`:
+- [x] **TASK 3 — Add agent icon badge to each inbox card (icon only, no text).** In `src/renderer/components/AgentInbox.tsx`:
 
     1. Add import: `import { getAgentIcon } from '../constants/agentIcons';`
     2. In `InboxItemCardContent`, in the **Row 3 badges** div (the `display: 'flex'` div around line 172), add as the **first child** (before git branch badge):

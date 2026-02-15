@@ -1359,7 +1359,7 @@ describe('AgentInbox', () => {
 			expect(badge.style.backgroundColor).toBeTruthy();
 		});
 
-		it('card has no standalone emoji', () => {
+		it('card has no standalone emoji outside agent-type-badge', () => {
 			const groups = [createGroup({ id: 'g1', name: 'Test Group' })];
 			const sessions = [
 				createInboxSession('s1', 't1', { groupId: 'g1' }),
@@ -1373,10 +1373,23 @@ describe('AgentInbox', () => {
 				/>
 			);
 			const option = container.querySelector('[role="option"]');
-			const textContent = option?.textContent ?? '';
-			// No emoji characters — check for common emoji range
+			// Remove agent-type-badge content before checking for emojis
+			const clone = option?.cloneNode(true) as HTMLElement;
+			const agentBadge = clone?.querySelector('[data-testid="agent-type-badge"]');
+			if (agentBadge) agentBadge.textContent = '';
+			const textContent = clone?.textContent ?? '';
+			// No emoji characters outside the agent badge
 			const emojiRegex = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}]/u;
 			expect(emojiRegex.test(textContent)).toBe(false);
+		});
+
+		it('renders agent icon badge with tooltip', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(<AgentInbox theme={theme} sessions={sessions} groups={[]} onClose={onClose} />);
+			const badge = screen.getByTestId('agent-type-badge');
+			expect(badge).toBeTruthy();
+			expect(badge.getAttribute('title')).toBe('claude-code');
+			expect(badge.getAttribute('aria-label')).toBe('Agent: claude-code');
 		});
 
 		it('card has correct height and border-radius', () => {
