@@ -24,6 +24,7 @@ import { getSessionStorage, type SessionMessagesResult } from '../../agents';
 import { groomContext, cancelAllGroomingSessions } from '../../utils/context-groomer';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
+import type { AccountRegistry } from '../../accounts/account-registry';
 
 const LOG_CONTEXT = '[ContextMerge]';
 
@@ -47,6 +48,7 @@ export interface ContextHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
+	getAccountRegistry: () => AccountRegistry | null;
 }
 
 /**
@@ -77,7 +79,7 @@ const GROOMING_TIMEOUT_MS = 5 * 60 * 1000;
  * - cleanupGroomingSession: Clean up a temporary grooming session
  */
 export function registerContextHandlers(deps: ContextHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector } = deps;
+	const { getProcessManager, getAgentDetector, getAccountRegistry } = deps;
 
 	logger.info('Registering context IPC handlers', LOG_CONTEXT);
 	console.log('[ContextMerge] Registering context IPC handlers (v2 with response collection)');
@@ -145,6 +147,7 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 					customPath?: string;
 					customArgs?: string;
 					customEnvVars?: Record<string, string>;
+					accountId?: string;
 				}
 			): Promise<string> => {
 				const processManager = requireDependency(getProcessManager, 'Process manager');
@@ -161,6 +164,8 @@ export function registerContextHandlers(deps: ContextHandlerDependencies): void 
 						sessionCustomPath: options?.customPath,
 						sessionCustomArgs: options?.customArgs,
 						sessionCustomEnvVars: options?.customEnvVars,
+						accountRegistry: getAccountRegistry() || undefined,
+						accountId: options?.accountId,
 					},
 					processManager,
 					agentDetector

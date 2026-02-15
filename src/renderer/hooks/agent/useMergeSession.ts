@@ -365,10 +365,14 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					},
 				});
 
+				// Use target session account, fallback to source
+				const groomAccountId = targetSession?.accountId || sourceSession?.accountId;
+
 				const groomingRequest: MergeRequest = {
 					sources: [sourceContext, targetContext],
 					targetAgent: sourceSession.toolType,
 					targetProjectRoot: sourceSession.projectRoot,
+					accountId: groomAccountId,
 				};
 
 				const groomingResult = await groomingServiceRef.current.groomContexts(
@@ -446,6 +450,13 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 					groupId: sourceSession.groupId,
 					saveToHistory: true,
 				});
+
+				// Inherit account from target session, fallback to source
+				const mergeInheritFrom = targetSession?.accountId ? targetSession : sourceSession;
+				if (mergeInheritFrom?.accountId) {
+					mergedSession.accountId = mergeInheritFrom.accountId;
+					mergedSession.accountName = mergeInheritFrom.accountName;
+				}
 
 				result = {
 					success: true,
@@ -673,6 +684,13 @@ export function useMergeSessionWithSessions(
 							mergedLogs,
 							groupId: sourceSession.groupId,
 						});
+
+						// Inherit account from target session, fallback to source
+						const inheritFrom = targetSession?.accountId ? targetSession : sourceSession;
+						if (inheritFrom?.accountId) {
+							newSession.accountId = inheritFrom.accountId;
+							newSession.accountName = inheritFrom.accountName;
+						}
 
 						// Add new session to state
 						setSessions((prev) => [...prev, newSession]);

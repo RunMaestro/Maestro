@@ -58,6 +58,8 @@ export function createContextApi() {
 				customPath?: string;
 				customArgs?: string;
 				customEnvVars?: Record<string, string>;
+				// Account multiplexing
+				accountId?: string;
 			}
 		): Promise<string> =>
 			ipcRenderer.invoke('context:groomContext', projectRoot, agentType, prompt, options),

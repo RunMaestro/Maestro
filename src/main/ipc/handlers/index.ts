@@ -54,6 +54,7 @@ import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNa
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { registerAccountHandlers, AccountHandlerDependencies } from './accounts';
 import { AgentDetector } from '../../agents';
+import type { AccountRegistry } from '../../accounts/account-registry';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../../tunnel-manager';
@@ -156,6 +157,7 @@ export interface HandlerDependencies {
 	tunnelManager: TunnelManagerType;
 	// Claude-specific dependencies
 	claudeSessionOriginsStore: Store<ClaudeSessionOriginsData>;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -229,6 +231,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		getMainWindow: deps.getMainWindow,
 		getProcessManager: deps.getProcessManager,
 		getAgentDetector: deps.getAgentDetector,
+		getAccountRegistry: deps.getAccountRegistry || (() => null),
 	});
 	// Register marketplace handlers
 	registerMarketplaceHandlers({

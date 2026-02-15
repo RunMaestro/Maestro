@@ -46,6 +46,8 @@ export interface MergeRequest {
 	targetProjectRoot: string;
 	/** Optional custom prompt for the grooming agent */
 	groomingPrompt?: string;
+	/** Account ID to inherit for the grooming agent (for account multiplexing) */
+	accountId?: string;
 }
 
 /**
