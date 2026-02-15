@@ -1062,6 +1062,11 @@ export interface Session {
 		modeReason: 'auto' | 'limit';
 		lastUsageSnapshotKey?: string;
 	};
+
+	/** Account ID assigned to this session for multiplexing */
+	accountId?: string;
+	/** Display name of the assigned account (for UI display without lookup) */
+	accountName?: string;
 }
 
 // AgentConfigOption, AgentCapabilities, and AgentConfig are re-exported from shared/types above
