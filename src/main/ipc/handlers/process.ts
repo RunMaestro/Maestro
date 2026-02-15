@@ -7,6 +7,7 @@ import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
+import type { AccountSwitcher } from '../../accounts/account-switcher';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -83,6 +84,7 @@ export interface ProcessHandlerDependencies {
 	 * can omit it cleanly.
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
+	getAccountSwitcher?: () => AccountSwitcher | null;
 }
 
 /**
@@ -105,6 +107,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		settingsStore,
 		getMainWindow,
 		safeSend,
+		getAccountSwitcher,
 	} = deps;
 
 	// Wire the Claude Code permission relay: surface requests to the renderer
@@ -146,7 +149,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionId,
 				dataLength: data.length,
 			});
-			return processManager.write(sessionId, data);
+			const result = processManager.write(sessionId, data);
+
+			// Record the last prompt for account switching resume
+			const accountSwitcher = getAccountSwitcher?.();
+			if (accountSwitcher) {
+				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+
+			return result;
 		})
 	);
 

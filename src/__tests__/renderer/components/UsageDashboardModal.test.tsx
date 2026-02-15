@@ -279,12 +279,13 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				// Use getAllByRole('tab') to find tabs - there may be multiple elements with text 'Agents'
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(6);
+				expect(tabs).toHaveLength(7);
 				expect(tabs[0]).toHaveTextContent('Overview');
 				expect(tabs[1]).toHaveTextContent('Agent Overview');
 				expect(tabs[2]).toHaveTextContent('Agents');
 				expect(tabs[3]).toHaveTextContent('Activity');
 				expect(tabs[4]).toHaveTextContent('Auto Run');
+				expect(tabs[5]).toHaveTextContent('Accounts');
 			});
 		});
 
@@ -1632,7 +1633,7 @@ describe('UsageDashboardModal', () => {
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs).toHaveLength(6);
+				expect(tabs).toHaveLength(7);
 
 				// First tab (Overview) should be selected
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
@@ -1702,12 +1703,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to last tab (Shortcuts, index 5)
+			// Press ArrowLeft while on first tab - should wrap to last tab (Shortcuts, index 6)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs[5]).toHaveAttribute('aria-selected', 'true'); // Shortcuts tab
+				expect(tabs[6]).toHaveAttribute('aria-selected', 'true'); // Shortcuts tab
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
@@ -1721,11 +1722,11 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to last tab (Shortcuts, index 5)
+			// Navigate to last tab (Shortcuts, index 6)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
 
 			await waitFor(() => {
-				expect(screen.getAllByRole('tab')[5]).toHaveAttribute('aria-selected', 'true');
+				expect(screen.getAllByRole('tab')[6]).toHaveAttribute('aria-selected', 'true');
 			});
 
 			// Press ArrowRight - should wrap to first tab (Overview)
@@ -1734,7 +1735,7 @@ describe('UsageDashboardModal', () => {
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'true');
-				expect(tabs[5]).toHaveAttribute('aria-selected', 'false');
+				expect(tabs[6]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
 

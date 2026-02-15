@@ -12,7 +12,8 @@
 
 import { ipcMain } from 'electron';
 import type { AccountRegistry } from '../../accounts/account-registry';
-import type { AccountSwitchConfig } from '../../../shared/account-types';
+import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountSwitchConfig, AccountSwitchEvent } from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import {
@@ -34,13 +35,14 @@ const LOG_CONTEXT = '[Accounts]';
  */
 export interface AccountHandlerDependencies {
 	getAccountRegistry: () => AccountRegistry | null;
+	getAccountSwitcher?: () => AccountSwitcher | null;
 }
 
 /**
  * Register all account multiplexing IPC handlers.
  */
 export function registerAccountHandlers(deps: AccountHandlerDependencies): void {
-	const { getAccountRegistry } = deps;
+	const { getAccountRegistry, getAccountSwitcher } = deps;
 
 	/** Get the account registry or throw if not initialized */
 	function requireRegistry(): AccountRegistry {
@@ -329,6 +331,47 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		} catch (error) {
 			logger.error('validate remote dir error', LOG_CONTEXT, { error: String(error) });
 			return { exists: false, hasAuth: false, symlinksValid: false, error: String(error) };
+		}
+	});
+
+	// --- Session Cleanup ---
+
+	ipcMain.handle('accounts:cleanup-session', async (_event, sessionId: string) => {
+		try {
+			const registry = getAccountRegistry();
+			if (registry) {
+				registry.removeAssignment(sessionId);
+			}
+			const switcher = getAccountSwitcher?.();
+			if (switcher) {
+				switcher.cleanupSession(sessionId);
+			}
+			return { success: true };
+		} catch (error) {
+			logger.error('cleanup session error', LOG_CONTEXT, { error: String(error), sessionId });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// --- Account Switching ---
+
+	ipcMain.handle('accounts:execute-switch', async (_event, params: {
+		sessionId: string;
+		fromAccountId: string;
+		toAccountId: string;
+		reason: AccountSwitchEvent['reason'];
+		automatic: boolean;
+	}) => {
+		try {
+			const switcher = getAccountSwitcher?.();
+			if (!switcher) {
+				return { success: false, error: 'Account switcher not initialized' };
+			}
+			const result = await switcher.executeSwitch(params);
+			return { success: !!result, event: result };
+		} catch (error) {
+			logger.error('execute switch error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
 		}
 	});
 }

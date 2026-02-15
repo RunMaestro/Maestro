@@ -232,6 +232,63 @@ export function createAccountsApi() {
 			ipcRenderer.on('account:status-changed', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:status-changed', wrappedHandler);
 		},
+
+		// --- Session Cleanup ---
+
+		/** Clean up account data when a session is closed */
+		cleanupSession: (sessionId: string): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('accounts:cleanup-session', sessionId),
+
+		// --- Account Switching ---
+
+		/** Execute an account switch for a session */
+		executeSwitch: (params: {
+			sessionId: string;
+			fromAccountId: string;
+			toAccountId: string;
+			reason: string;
+			automatic: boolean;
+		}): Promise<{ success: boolean; event?: unknown; error?: string }> =>
+			ipcRenderer.invoke('accounts:execute-switch', params),
+
+		/** Subscribe to switch-started events */
+		onSwitchStarted: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:switch-started', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-started', wrappedHandler);
+		},
+
+		/** Subscribe to switch-respawn events (renderer must respawn the agent) */
+		onSwitchRespawn: (handler: (data: {
+			sessionId: string;
+			toAccountId: string;
+			toAccountName: string;
+			configDir: string;
+			lastPrompt: string | null;
+			reason: string;
+		}) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
+				handler(data);
+			ipcRenderer.on('account:switch-respawn', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-respawn', wrappedHandler);
+		},
+
+		/** Subscribe to switch-completed events */
+		onSwitchCompleted: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:switch-completed', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-completed', wrappedHandler);
+		},
+
+		/** Subscribe to switch-failed events */
+		onSwitchFailed: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:switch-failed', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-failed', wrappedHandler);
+		},
 	};
 }
 

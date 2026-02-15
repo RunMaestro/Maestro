@@ -71,6 +71,7 @@ export type UsageDashboardViewMode =
 	| 'agent-overview'
 	| 'activity'
 	| 'autorun'
+	| 'accounts'
 	| 'anthropic-usage'
 	| 'codex-usage'
 	| 'cue'

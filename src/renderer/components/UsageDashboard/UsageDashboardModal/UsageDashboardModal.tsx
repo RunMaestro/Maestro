@@ -49,6 +49,7 @@ import {
 	ProviderQuotaUsageView,
 	ShortcutsView,
 } from './views';
+import { AccountUsageDashboard } from '../AccountUsageDashboard';
 import { ResizeHandles } from '../../ui/ResizeHandles';
 
 const EMPTY_SESSIONS: Session[] = [];
@@ -185,7 +186,8 @@ export function UsageDashboardModal({
 						viewMode === 'agent-overview' ||
 						viewMode === 'shortcuts' ||
 						viewMode === 'anthropic-usage' ||
-						viewMode === 'codex-usage'
+						viewMode === 'codex-usage' ||
+						viewMode === 'accounts'
 							? 'overview'
 							: viewMode
 					}
@@ -219,6 +221,12 @@ export function UsageDashboardModal({
 
 		if (viewMode === 'shortcuts') {
 			return <ShortcutsView key={viewMode} timeRange={timeRange} theme={theme} />;
+		}
+
+		if (viewMode === 'accounts') {
+			return (
+				<AccountUsageDashboard key={viewMode} theme={theme} sessions={sessions} onClose={onClose} />
+			);
 		}
 
 		if (viewMode === 'anthropic-usage' || viewMode === 'codex-usage') {

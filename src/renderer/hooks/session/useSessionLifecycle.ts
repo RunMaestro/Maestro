@@ -543,6 +543,15 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 				});
 			}
 
+			// Clean up account assignment and switcher tracking
+			try {
+				await window.maestro.accounts.cleanupSession(id);
+			} catch (error) {
+				captureException(error, {
+					extra: { sessionId: id, operation: 'cleanup-account-session' },
+				});
+			}
+
 			// If this is a worktree session, track its path to prevent re-discovery
 			if (session.worktreeParentPath && session.cwd) {
 				setRemovedWorktreePaths((prev) => new Set([...prev, session.cwd]));
