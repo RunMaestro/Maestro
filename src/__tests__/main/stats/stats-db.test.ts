@@ -284,8 +284,8 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			db.initialize();
 
-			// Currently we have version 4 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes)
-			expect(db.getTargetVersion()).toBe(4);
+			// v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: account usage tracking
+			expect(db.getTargetVersion()).toBe(5);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {

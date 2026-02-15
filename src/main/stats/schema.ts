@@ -138,6 +138,53 @@ export const CREATE_COMPOUND_INDEXES_SQL = `
 `;
 
 // ============================================================================
+// Account Usage Windows (Migration v5)
+// ============================================================================
+
+export const CREATE_ACCOUNT_USAGE_WINDOWS_SQL = `
+  CREATE TABLE IF NOT EXISTS account_usage_windows (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    window_start INTEGER NOT NULL,
+    window_end INTEGER NOT NULL,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    cache_creation_tokens INTEGER DEFAULT 0,
+    cost_usd REAL DEFAULT 0,
+    query_count INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )
+`;
+
+export const CREATE_ACCOUNT_USAGE_WINDOWS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_account_usage_windows_account ON account_usage_windows(account_id);
+  CREATE INDEX IF NOT EXISTS idx_account_usage_windows_time ON account_usage_windows(window_start, window_end)
+`;
+
+// ============================================================================
+// Account Throttle Events (Migration v5)
+// ============================================================================
+
+export const CREATE_ACCOUNT_THROTTLE_EVENTS_SQL = `
+  CREATE TABLE IF NOT EXISTS account_throttle_events (
+    id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    session_id TEXT,
+    timestamp INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    tokens_at_throttle INTEGER DEFAULT 0,
+    window_start INTEGER,
+    window_end INTEGER
+  )
+`;
+
+export const CREATE_ACCOUNT_THROTTLE_EVENTS_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_throttle_events_account ON account_throttle_events(account_id);
+  CREATE INDEX IF NOT EXISTS idx_throttle_events_time ON account_throttle_events(timestamp)
+`;
+
+// ============================================================================
 // Utilities
 // ============================================================================
 
