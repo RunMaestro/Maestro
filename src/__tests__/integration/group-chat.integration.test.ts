@@ -65,7 +65,7 @@ function createMockProcessManager(): IProcessManager & {
 		spawnedSessions,
 		writtenMessages,
 
-		spawn(config) {
+		async spawn(config) {
 			spawnedSessions.set(config.sessionId, {
 				toolType: config.toolType,
 				prompt: config.prompt,

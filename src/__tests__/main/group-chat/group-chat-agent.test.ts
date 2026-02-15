@@ -78,7 +78,7 @@ describe('group-chat-agent', () => {
 
 		// Create a fresh mock for each test
 		mockProcessManager = {
-			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
+			spawn: vi.fn().mockResolvedValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
 		};
@@ -189,7 +189,7 @@ describe('group-chat-agent', () => {
 			// Note: spawnModerator no longer calls spawn (uses batch mode),
 			// so we only need to mock the participant spawn to fail
 			const failingProcessManager: IProcessManager = {
-				spawn: vi.fn().mockReturnValue({ pid: -1, success: false }), // Participant fails
+				spawn: vi.fn().mockResolvedValue({ pid: -1, success: false }), // Participant fails
 				write: vi.fn(),
 				kill: vi.fn(),
 			};

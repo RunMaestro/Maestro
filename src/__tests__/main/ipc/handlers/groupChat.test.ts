@@ -125,7 +125,7 @@ describe('groupChat IPC handlers', () => {
 
 		// Setup mock process manager
 		mockProcessManager = {
-			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
+			spawn: vi.fn().mockResolvedValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
 		};

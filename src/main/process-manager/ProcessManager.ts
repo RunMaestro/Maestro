@@ -46,7 +46,7 @@ export class ProcessManager extends EventEmitter {
 	/**
 	 * Spawn a new process for a session
 	 */
-	spawn(config: ProcessConfig): SpawnResult {
+	async spawn(config: ProcessConfig): Promise<SpawnResult> {
 		const usePty = this.shouldUsePty(config);
 
 		if (usePty) {

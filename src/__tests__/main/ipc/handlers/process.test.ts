@@ -307,7 +307,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			const result = await handler!({} as any, {
@@ -335,7 +335,7 @@ describe('process IPC handlers', () => {
 			const mockAgent = { id: 'terminal', requiresPty: true };
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 99999, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 99999, success: true });
 
 			const handler = handlers.get('process:spawn');
 			const result = await handler!({} as any, {
@@ -354,7 +354,7 @@ describe('process IPC handlers', () => {
 			const mockAgent = { id: 'claude-code' };
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: -1, success: false });
+			mockProcessManager.spawn.mockResolvedValue({ pid: -1, success: false });
 
 			const handler = handlers.get('process:spawn');
 			const result = await handler!({} as any, {
@@ -376,7 +376,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 1000, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 1000, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -403,7 +403,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -433,7 +433,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -461,7 +461,7 @@ describe('process IPC handlers', () => {
 				if (key === 'defaultShell') return 'fish';
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 1001, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 1001, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -490,7 +490,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 2001, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -521,7 +521,7 @@ describe('process IPC handlers', () => {
 			};
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
-			mockProcessManager.spawn.mockReturnValue({ pid: 2002, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 2002, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -905,7 +905,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -940,7 +940,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -983,7 +983,7 @@ describe('process IPC handlers', () => {
 				if (key === 'defaultShell') return 'zsh';
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1037,7 +1037,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1078,7 +1078,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1113,7 +1113,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return []; // No remotes configured
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1156,7 +1156,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1206,7 +1206,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1249,7 +1249,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1292,7 +1292,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const testImages = ['data:image/png;base64,iVBORw0KGgo=='];
 			const handler = handlers.get('process:spawn');
@@ -1344,7 +1344,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const testImages = ['data:image/png;base64,AAAA', 'data:image/jpeg;base64,BBBB'];
 			const handler = handlers.get('process:spawn');
@@ -1393,7 +1393,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1435,7 +1435,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {
@@ -1471,7 +1471,7 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				return defaultValue;
 			});
-			mockProcessManager.spawn.mockReturnValue({ pid: 12345, success: true });
+			mockProcessManager.spawn.mockResolvedValue({ pid: 12345, success: true });
 
 			const handler = handlers.get('process:spawn');
 			await handler!({} as any, {

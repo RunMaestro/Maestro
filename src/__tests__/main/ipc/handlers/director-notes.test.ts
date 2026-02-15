@@ -76,7 +76,7 @@ describe('director-notes IPC handlers', () => {
 
 		// Create mock process manager and agent detector
 		mockProcessManager = {
-			spawn: vi.fn().mockReturnValue({ pid: 123 }),
+			spawn: vi.fn().mockResolvedValue({ pid: 123 }),
 			on: vi.fn(),
 			off: vi.fn(),
 			kill: vi.fn(),

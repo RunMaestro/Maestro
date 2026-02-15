@@ -79,7 +79,7 @@ describe('group-chat-moderator', () => {
 
 		// Create a fresh mock for each test
 		mockProcessManager = {
-			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
+			spawn: vi.fn().mockResolvedValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
 		};

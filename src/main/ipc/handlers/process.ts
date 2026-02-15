@@ -446,7 +446,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					isSshCommand: !!sshRemoteUsed,
 				});
 
-				const result = processManager.spawn({
+				const result = await processManager.spawn({
 					...config,
 					command: commandToSpawn,
 					args: argsToSpawn,

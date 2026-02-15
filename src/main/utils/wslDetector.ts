@@ -1,4 +1,4 @@
-import * as fs from 'fs';
+import * as fs from 'fs/promises';
 import { logger } from './logger';
 
 /**
@@ -15,7 +15,7 @@ let wslDetectionCache: boolean | null = null;
  * Detect if the current environment is WSL (Windows Subsystem for Linux).
  * Result is cached after first call.
  */
-export function isWsl(): boolean {
+export async function isWsl(): Promise<boolean> {
 	if (wslDetectionCache !== null) {
 		return wslDetectionCache;
 	}
@@ -26,13 +26,11 @@ export function isWsl(): boolean {
 	}
 
 	try {
-		if (fs.existsSync('/proc/version')) {
-			const version = fs.readFileSync('/proc/version', 'utf8').toLowerCase();
-			wslDetectionCache = version.includes('microsoft') || version.includes('wsl');
-			return wslDetectionCache;
-		}
+		const version = await fs.readFile('/proc/version', 'utf8');
+		wslDetectionCache = version.toLowerCase().includes('microsoft') || version.toLowerCase().includes('wsl');
+		return wslDetectionCache;
 	} catch {
-		// Ignore read errors
+		// Ignore read errors (file doesn't exist or not readable)
 	}
 
 	wslDetectionCache = false;
@@ -54,8 +52,8 @@ export function isWindowsMountPath(filepath: string): boolean {
  * @param cwd - The current working directory to check
  * @returns true if running from a problematic Windows mount path
  */
-export function checkWslEnvironment(cwd: string): boolean {
-	if (!isWsl()) {
+export async function checkWslEnvironment(cwd: string): Promise<boolean> {
+	if (!(await isWsl())) {
 		return false;
 	}
 

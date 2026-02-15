@@ -284,7 +284,7 @@ app.whenReady().then(async () => {
 	});
 
 	// Check for WSL + Windows mount issues early
-	checkWslEnvironment(process.cwd());
+	await checkWslEnvironment(process.cwd());
 
 	// Initialize core services
 	logger.info('Initializing core services', 'Startup');

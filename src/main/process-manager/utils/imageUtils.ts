@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as fsPromises from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
@@ -20,7 +19,7 @@ export function parseDataUrl(dataUrl: string): { base64: string; mediaType: stri
  * Save a base64 data URL image to a temp file.
  * Returns the full path to the temp file, or null on failure.
  */
-export function saveImageToTempFile(dataUrl: string, index: number): string | null {
+export async function saveImageToTempFile(dataUrl: string, index: number): Promise<string | null> {
 	const parsed = parseDataUrl(dataUrl);
 	if (!parsed) {
 		logger.warn('[ProcessManager] Failed to parse data URL for temp file', 'ProcessManager');
@@ -33,7 +32,7 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 
 	try {
 		const buffer = Buffer.from(parsed.base64, 'base64');
-		fs.writeFileSync(tempPath, buffer);
+		await fsPromises.writeFile(tempPath, buffer);
 		logger.debug('[ProcessManager] Saved image to temp file', 'ProcessManager', {
 			tempPath,
 			size: buffer.length,
