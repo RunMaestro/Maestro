@@ -75,6 +75,8 @@ function parseCsv(content: string, delimiter = ','): string[][] {
 	return rows;
 }
 
+const NUMERIC_VALUE_REGEX = /^[($\-]*[\d,]+(\.\d+)?[%)]*$/;
+
 /**
  * Detect if a cell value looks numeric (for right-alignment).
  */
@@ -82,7 +84,7 @@ function isNumericValue(value: string): boolean {
 	const trimmed = value.trim();
 	if (trimmed === '') return false;
 	// Match: optional currency/sign prefix, digits with optional commas, optional decimal, optional suffix
-	return /^[($\-]*[\d,]+(\.\d+)?[%)]*$/.test(trimmed);
+	return NUMERIC_VALUE_REGEX.test(trimmed);
 }
 
 /**
@@ -140,19 +142,18 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 /**
  * Highlight matching substrings within a cell value.
  */
-function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
-	if (!query) return text;
-	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	const regex = new RegExp(`(${escaped})`, 'gi');
+function highlightMatches(text: string, regex: RegExp | null, accentColor: string): ReactNode {
+	if (!regex) return text;
+	regex.lastIndex = 0;
 	const parts = text.split(regex);
 	if (parts.length === 1) return text;
 	// Use running character offset as key to guarantee uniqueness across
 	// identical substrings appearing at different positions.
 	let offset = 0;
-	return parts.map((part) => {
+	return parts.map((part, index) => {
 		const key = offset;
 		offset += part.length;
-		return regex.test(part) ? (
+		return index % 2 === 1 ? (
 			<mark
 				key={key}
 				style={{
@@ -173,6 +174,11 @@ function highlightMatches(text: string, query: string, accentColor: string): Rea
 export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery, onMatchCount }: CsvTableRendererProps) {
 	const [sort, setSort] = useState<SortState | null>(null);
 	const query = (searchQuery?.trim() ?? '').slice(0, 200);
+	const highlightRegex = useMemo(() => {
+		if (!query) return null;
+		const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		return new RegExp(`(${escaped})`, 'gi');
+	}, [query]);
 
 	const allRows = useMemo(() => parseCsv(content, delimiter), [content, delimiter]);
 
@@ -349,9 +355,7 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 										}}
 										title={row[colIdx] ?? ''}
 									>
-										{query
-											? highlightMatches(row[colIdx] ?? '', query, theme.colors.accent)
-											: (row[colIdx] ?? '')}
+										{highlightMatches(row[colIdx] ?? '', highlightRegex, theme.colors.accent)}
 									</td>
 								))}
 							</tr>
