@@ -65,6 +65,7 @@ import { createCoworkingApi } from './coworking';
 import { createBrowserSessionApi } from './browserSession';
 import { createWindowsApi } from './windows';
 import { createImagesApi } from './images';
+import { createAccountsApi } from './accounts';
 import { MAESTRO_CLI_PATH_ARG_PREFIX } from '../../shared/maestro-cli';
 
 /**
@@ -264,6 +265,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Session Images API (resolve maestro-image:// refs back to data URLs)
 	images: createImagesApi(),
+
+	// Account Multiplexing API (usage events, limit warnings)
+	accounts: createAccountsApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -368,6 +372,8 @@ export {
 	createWindowsApi,
 	// Session Images
 	createImagesApi,
+	// Accounts
+	createAccountsApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -646,3 +652,9 @@ export type {
 	// From images
 	ImagesApi,
 } from './images';
+export type {
+	// From accounts
+	AccountsApi,
+	AccountUsageUpdate,
+	AccountLimitEvent,
+} from './accounts';

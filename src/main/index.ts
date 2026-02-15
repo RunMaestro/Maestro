@@ -175,6 +175,7 @@ import {
 	registerWindowsHandlers,
 	wireWindowRegistryBroadcast,
 	wireEmptySecondaryWindowAutoClose,
+	registerAccountHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -183,6 +184,8 @@ import { startCoworkingBridge, stopCoworkingBridge } from './coworking/coworking
 import { ensureCoworkingServerScript } from './coworking/coworking-server-paths';
 import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
 import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
+import { AccountRegistry } from './accounts/account-registry';
+import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
 	routeModeratorResponse,
@@ -501,6 +504,7 @@ let pluginAuthStore: AuthorizationStore | null = null;
 let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
+let accountRegistry: AccountRegistry | null = null;
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2676,6 +2680,16 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
+		// Initialize account registry for account multiplexing
+		try {
+			accountRegistry = new AccountRegistry(getAccountStore());
+			logger.info('Account registry initialized', 'Startup');
+		} catch (error) {
+			void captureException(error);
+			logger.error(`Failed to initialize account registry: ${error}`, 'Startup');
+			logger.warn('Continuing without account multiplexing', 'Startup');
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers();
@@ -3320,6 +3334,11 @@ function setupIpcHandlers() {
 		getCueEngine: () => cueEngine,
 	});
 
+	// Register Account Multiplexing handlers (CRUD, assignments, usage queries)
+	registerAccountHandlers({
+		getAccountRegistry: () => accountRegistry,
+	});
+
 	// Register Document Graph handlers for file watching
 	registerDocumentGraphHandlers({
 		getMainWindow: () => mainWindow,
@@ -3487,6 +3506,7 @@ function setupProcessListeners() {
 				calculateContextTokens,
 			},
 			getStatsDB,
+			getAccountRegistry: () => accountRegistry,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

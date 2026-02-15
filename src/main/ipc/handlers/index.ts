@@ -80,6 +80,7 @@ import {
 	wireEmptySecondaryWindowAutoClose,
 	WindowsHandlerDependencies,
 } from './windows';
+import { registerAccountHandlers, AccountHandlerDependencies } from './accounts';
 import { AgentDetector } from '../../agents';
 import { ProcessManager } from '../../process-manager';
 import { WebServer } from '../../web-server';
@@ -156,6 +157,8 @@ export { registerWindowsHandlers };
 export { wireWindowRegistryBroadcast };
 export { wireEmptySecondaryWindowAutoClose };
 export type { WindowsHandlerDependencies };
+export { registerAccountHandlers };
+export type { AccountHandlerDependencies };
 export type { AgentsHandlerDependencies };
 export type { ProcessHandlerDependencies };
 export type { PersistenceHandlerDependencies };

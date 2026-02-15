@@ -18,6 +18,7 @@ import { setupErrorListener } from './error-listener';
 import { setupStatsListener } from './stats-listener';
 import { setupExitListener } from './exit-listener';
 import { setupPluginEventListener } from './plugin-event-listener';
+import { setupAccountUsageListener } from './account-usage-listener';
 
 // Re-export types for consumers
 export type { ProcessListenerDependencies, ParticipantInfo } from './types';
@@ -57,4 +58,14 @@ export function setupProcessListeners(
 	// Plugin event-bus bridge: forwards metadata-only lifecycle events to plugins
 	// that hold events:subscribe (no-op when the plugin bus is not wired).
 	setupPluginEventListener(processManager, deps);
+
+	// Account usage listener (per-account token aggregation for limit tracking)
+	if (deps.getAccountRegistry) {
+		setupAccountUsageListener(processManager, {
+			getAccountRegistry: deps.getAccountRegistry,
+			getStatsDB: deps.getStatsDB,
+			safeSend: deps.safeSend,
+			logger: deps.logger,
+		});
+	}
 }

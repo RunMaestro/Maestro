@@ -1,0 +1,237 @@
+/**
+ * Account Multiplexing IPC Handlers
+ *
+ * Registers IPC handlers for all account management operations:
+ * - CRUD operations for account profiles
+ * - Session-to-account assignments
+ * - Usage queries (windowed token consumption)
+ * - Throttle event queries (capacity planning)
+ * - Switch configuration management
+ * - Account selection (default, next available)
+ */
+
+import { ipcMain } from 'electron';
+import type { AccountRegistry } from '../../accounts/account-registry';
+import type { AccountSwitchConfig } from '../../../shared/account-types';
+import { getStatsDB } from '../../stats';
+import { logger } from '../../utils/logger';
+
+const LOG_CONTEXT = '[Accounts]';
+
+/**
+ * Dependencies for account handlers
+ */
+export interface AccountHandlerDependencies {
+	getAccountRegistry: () => AccountRegistry | null;
+}
+
+/**
+ * Register all account multiplexing IPC handlers.
+ */
+export function registerAccountHandlers(deps: AccountHandlerDependencies): void {
+	const { getAccountRegistry } = deps;
+
+	/** Get the account registry or throw if not initialized */
+	function requireRegistry(): AccountRegistry {
+		const registry = getAccountRegistry();
+		if (!registry) {
+			throw new Error('Account registry not initialized');
+		}
+		return registry;
+	}
+
+	// --- Account CRUD ---
+
+	ipcMain.handle('accounts:list', async () => {
+		try {
+			return requireRegistry().getAll();
+		} catch (error) {
+			logger.error('list accounts error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	ipcMain.handle('accounts:get', async (_event, accountId: string) => {
+		try {
+			return requireRegistry().get(accountId);
+		} catch (error) {
+			logger.error('get account error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:add', async (_event, params: {
+		name: string; email: string; configDir: string;
+	}) => {
+		try {
+			const profile = requireRegistry().add(params);
+			return { success: true, account: profile };
+		} catch (error) {
+			logger.error('add account error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:update', async (_event, accountId: string, updates: Record<string, unknown>) => {
+		try {
+			const updated = requireRegistry().update(accountId, updates);
+			if (!updated) return { success: false, error: 'Account not found' };
+			return { success: true, account: updated };
+		} catch (error) {
+			logger.error('update account error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:remove', async (_event, accountId: string) => {
+		try {
+			const removed = requireRegistry().remove(accountId);
+			return { success: removed, error: removed ? undefined : 'Account not found' };
+		} catch (error) {
+			logger.error('remove account error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:set-default', async (_event, accountId: string) => {
+		try {
+			const updated = requireRegistry().update(accountId, { isDefault: true });
+			return { success: !!updated };
+		} catch (error) {
+			logger.error('set default error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// --- Assignments ---
+
+	ipcMain.handle('accounts:assign', async (_event, sessionId: string, accountId: string) => {
+		try {
+			const assignment = requireRegistry().assignToSession(sessionId, accountId);
+			return { success: true, assignment };
+		} catch (error) {
+			logger.error('assign account error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:get-assignment', async (_event, sessionId: string) => {
+		try {
+			return requireRegistry().getAssignment(sessionId);
+		} catch (error) {
+			logger.error('get assignment error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:get-all-assignments', async () => {
+		try {
+			return requireRegistry().getAllAssignments();
+		} catch (error) {
+			logger.error('get all assignments error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	// --- Usage Queries ---
+
+	ipcMain.handle('accounts:get-usage', async (_event, accountId: string, windowStart: number, windowEnd: number) => {
+		try {
+			const db = getStatsDB();
+			return db.getAccountUsageInWindow(accountId, windowStart, windowEnd);
+		} catch (error) {
+			logger.error('get usage error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:get-all-usage', async () => {
+		try {
+			const registry = requireRegistry();
+			const db = getStatsDB();
+			const accounts = registry.getAll();
+			const now = Date.now();
+			const results: Record<string, unknown> = {};
+
+			for (const account of accounts) {
+				const windowMs = account.tokenWindowMs || 5 * 60 * 60 * 1000;
+				// Align to window boundaries from midnight
+				const dayStart = new Date(now);
+				dayStart.setHours(0, 0, 0, 0);
+				const dayStartMs = dayStart.getTime();
+				const windowsSinceDayStart = Math.floor((now - dayStartMs) / windowMs);
+				const windowStart = dayStartMs + windowsSinceDayStart * windowMs;
+				const windowEnd = windowStart + windowMs;
+
+				const usage = db.getAccountUsageInWindow(account.id, windowStart, windowEnd);
+				const totalTokens = usage.inputTokens + usage.outputTokens + usage.cacheReadTokens + usage.cacheCreationTokens;
+
+				results[account.id] = {
+					...usage,
+					totalTokens,
+					usagePercent: account.tokenLimitPerWindow > 0
+						? Math.min(100, (totalTokens / account.tokenLimitPerWindow) * 100)
+						: null,
+					windowStart,
+					windowEnd,
+					account,
+				};
+			}
+			return results;
+		} catch (error) {
+			logger.error('get all usage error', LOG_CONTEXT, { error: String(error) });
+			return {};
+		}
+	});
+
+	ipcMain.handle('accounts:get-throttle-events', async (_event, accountId?: string, since?: number) => {
+		try {
+			const db = getStatsDB();
+			return db.getThrottleEvents(accountId, since);
+		} catch (error) {
+			logger.error('get throttle events error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	// --- Switch Configuration ---
+
+	ipcMain.handle('accounts:get-switch-config', async () => {
+		try {
+			return requireRegistry().getSwitchConfig();
+		} catch (error) {
+			logger.error('get switch config error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:update-switch-config', async (_event, updates: Partial<AccountSwitchConfig>) => {
+		try {
+			const updated = requireRegistry().updateSwitchConfig(updates);
+			return { success: true, config: updated };
+		} catch (error) {
+			logger.error('update switch config error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	// --- Account Selection ---
+
+	ipcMain.handle('accounts:get-default', async () => {
+		try {
+			return requireRegistry().getDefaultAccount();
+		} catch (error) {
+			logger.error('get default error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:select-next', async (_event, excludeIds?: string[]) => {
+		try {
+			return requireRegistry().selectNextAccount(excludeIds);
+		} catch (error) {
+			logger.error('select next error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+}
