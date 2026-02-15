@@ -191,6 +191,9 @@ export const MODAL_PRIORITIES = {
 	/** Update check modal */
 	UPDATE_CHECK: 610,
 
+	/** Agent Inbox modal */
+	AGENT_INBOX: 555,
+
 	/** Process monitor modal */
 	PROCESS_MONITOR: 550,
 

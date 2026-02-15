@@ -244,6 +244,7 @@
     "react-diff-view": "^3.3.2",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.0",
+    "react-window": "^2.2.7",
     "reactflow": "^11.11.4",
     "recharts": "^3.6.0",
     "rehype-raw": "^7.0.0",
