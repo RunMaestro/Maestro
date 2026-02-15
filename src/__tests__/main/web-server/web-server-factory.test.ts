@@ -49,9 +49,9 @@ vi.mock('../../../main/themes', () => ({
 // Mock history manager
 vi.mock('../../../main/history-manager', () => ({
 	getHistoryManager: vi.fn().mockReturnValue({
-		getEntries: vi.fn().mockReturnValue([]),
-		getEntriesByProjectPath: vi.fn().mockReturnValue([]),
-		getAllEntries: vi.fn().mockReturnValue([]),
+		getEntries: vi.fn().mockResolvedValue([]),
+		getEntriesByProjectPath: vi.fn().mockResolvedValue([]),
+		getAllEntries: vi.fn().mockResolvedValue([]),
 	}),
 }));
 
@@ -412,9 +412,9 @@ describe('web-server/web-server-factory', () => {
 	});
 
 	describe('getHistoryCallback behavior', () => {
-		it('should get entries for specific session', () => {
+		it('should get entries for specific session', async () => {
 			const mockHistoryManager = {
-				getEntries: vi.fn().mockReturnValue([{ id: 1 }]),
+				getEntries: vi.fn().mockResolvedValue([{ id: 1 }]),
 				getEntriesByProjectPath: vi.fn(),
 				getAllEntries: vi.fn(),
 			};
@@ -426,15 +426,15 @@ describe('web-server/web-server-factory', () => {
 			const setHistoryCallback = server.setGetHistoryCallback as ReturnType<typeof vi.fn>;
 			const callback = setHistoryCallback.mock.calls[0][0];
 
-			callback(undefined, 'session-1');
+			await callback(undefined, 'session-1');
 
 			expect(mockHistoryManager.getEntries).toHaveBeenCalledWith('session-1');
 		});
 
-		it('should get entries by project path', () => {
+		it('should get entries by project path', async () => {
 			const mockHistoryManager = {
 				getEntries: vi.fn(),
-				getEntriesByProjectPath: vi.fn().mockReturnValue([{ id: 1 }]),
+				getEntriesByProjectPath: vi.fn().mockResolvedValue([{ id: 1 }]),
 				getAllEntries: vi.fn(),
 			};
 			vi.mocked(getHistoryManager).mockReturnValue(mockHistoryManager as any);
@@ -445,16 +445,16 @@ describe('web-server/web-server-factory', () => {
 			const setHistoryCallback = server.setGetHistoryCallback as ReturnType<typeof vi.fn>;
 			const callback = setHistoryCallback.mock.calls[0][0];
 
-			callback('/test/project');
+			await callback('/test/project');
 
 			expect(mockHistoryManager.getEntriesByProjectPath).toHaveBeenCalledWith('/test/project');
 		});
 
-		it('should get all entries when no filter', () => {
+		it('should get all entries when no filter', async () => {
 			const mockHistoryManager = {
 				getEntries: vi.fn(),
 				getEntriesByProjectPath: vi.fn(),
-				getAllEntries: vi.fn().mockReturnValue([{ id: 1 }]),
+				getAllEntries: vi.fn().mockResolvedValue([{ id: 1 }]),
 			};
 			vi.mocked(getHistoryManager).mockReturnValue(mockHistoryManager as any);
 
@@ -464,7 +464,7 @@ describe('web-server/web-server-factory', () => {
 			const setHistoryCallback = server.setGetHistoryCallback as ReturnType<typeof vi.fn>;
 			const callback = setHistoryCallback.mock.calls[0][0];
 
-			callback();
+			await callback();
 
 			expect(mockHistoryManager.getAllEntries).toHaveBeenCalled();
 		});

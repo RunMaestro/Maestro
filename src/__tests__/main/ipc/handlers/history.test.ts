@@ -54,41 +54,41 @@ describe('history IPC handlers', () => {
 		// Clear mocks
 		vi.clearAllMocks();
 
-		// Create mock history manager
+		// Create mock history manager (all methods return Promises since they are async)
 		mockHistoryManager = {
-			getEntries: vi.fn().mockReturnValue([]),
-			getEntriesByProjectPath: vi.fn().mockReturnValue([]),
-			getAllEntries: vi.fn().mockReturnValue([]),
-			getEntriesPaginated: vi.fn().mockReturnValue({
+			getEntries: vi.fn().mockResolvedValue([]),
+			getEntriesByProjectPath: vi.fn().mockResolvedValue([]),
+			getAllEntries: vi.fn().mockResolvedValue([]),
+			getEntriesPaginated: vi.fn().mockResolvedValue({
 				entries: [],
 				total: 0,
 				limit: 100,
 				offset: 0,
 				hasMore: false,
 			}),
-			getEntriesByProjectPathPaginated: vi.fn().mockReturnValue({
+			getEntriesByProjectPathPaginated: vi.fn().mockResolvedValue({
 				entries: [],
 				total: 0,
 				limit: 100,
 				offset: 0,
 				hasMore: false,
 			}),
-			getAllEntriesPaginated: vi.fn().mockReturnValue({
+			getAllEntriesPaginated: vi.fn().mockResolvedValue({
 				entries: [],
 				total: 0,
 				limit: 100,
 				offset: 0,
 				hasMore: false,
 			}),
-			addEntry: vi.fn(),
-			clearSession: vi.fn(),
-			clearByProjectPath: vi.fn(),
-			clearAll: vi.fn(),
-			deleteEntry: vi.fn().mockReturnValue(false),
-			updateEntry: vi.fn().mockReturnValue(false),
-			updateSessionNameByClaudeSessionId: vi.fn().mockReturnValue(0),
-			getHistoryFilePath: vi.fn().mockReturnValue(null),
-			listSessionsWithHistory: vi.fn().mockReturnValue([]),
+			addEntry: vi.fn().mockResolvedValue(undefined),
+			clearSession: vi.fn().mockResolvedValue(undefined),
+			clearByProjectPath: vi.fn().mockResolvedValue(undefined),
+			clearAll: vi.fn().mockResolvedValue(undefined),
+			deleteEntry: vi.fn().mockResolvedValue(false),
+			updateEntry: vi.fn().mockResolvedValue(false),
+			updateSessionNameByClaudeSessionId: vi.fn().mockResolvedValue(0),
+			getHistoryFilePath: vi.fn().mockResolvedValue(null),
+			listSessionsWithHistory: vi.fn().mockResolvedValue([]),
 		};
 
 		vi.mocked(historyManagerModule.getHistoryManager).mockReturnValue(
@@ -136,7 +136,7 @@ describe('history IPC handlers', () => {
 				createMockEntry({ id: 'entry-1', timestamp: 2000 }),
 				createMockEntry({ id: 'entry-2', timestamp: 1000 }),
 			];
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue(mockEntries);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue(mockEntries);
 
 			const handler = handlers.get('history:getAll');
 			const result = await handler!({} as any, undefined, 'session-1');
@@ -150,7 +150,7 @@ describe('history IPC handlers', () => {
 
 		it('should return entries filtered by project path', async () => {
 			const mockEntries = [createMockEntry()];
-			vi.mocked(mockHistoryManager.getEntriesByProjectPath).mockReturnValue(mockEntries);
+			vi.mocked(mockHistoryManager.getEntriesByProjectPath).mockResolvedValue(mockEntries);
 
 			const handler = handlers.get('history:getAll');
 			const result = await handler!({} as any, '/test/project');
@@ -161,7 +161,7 @@ describe('history IPC handlers', () => {
 
 		it('should return all entries when no filters provided', async () => {
 			const mockEntries = [createMockEntry()];
-			vi.mocked(mockHistoryManager.getAllEntries).mockReturnValue(mockEntries);
+			vi.mocked(mockHistoryManager.getAllEntries).mockResolvedValue(mockEntries);
 
 			const handler = handlers.get('history:getAll');
 			const result = await handler!({} as any);
@@ -171,7 +171,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return empty array when session has no history', async () => {
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([]);
 
 			const handler = handlers.get('history:getAll');
 			const result = await handler!({} as any, undefined, 'session-1');
@@ -189,7 +189,7 @@ describe('history IPC handlers', () => {
 				offset: 0,
 				hasMore: true,
 			};
-			vi.mocked(mockHistoryManager.getEntriesPaginated).mockReturnValue(mockResult);
+			vi.mocked(mockHistoryManager.getEntriesPaginated).mockResolvedValue(mockResult);
 
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, {
@@ -212,7 +212,7 @@ describe('history IPC handlers', () => {
 				offset: 0,
 				hasMore: true,
 			};
-			vi.mocked(mockHistoryManager.getEntriesByProjectPathPaginated).mockReturnValue(mockResult);
+			vi.mocked(mockHistoryManager.getEntriesByProjectPathPaginated).mockResolvedValue(mockResult);
 
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, {
@@ -235,7 +235,7 @@ describe('history IPC handlers', () => {
 				offset: 0,
 				hasMore: false,
 			};
-			vi.mocked(mockHistoryManager.getAllEntriesPaginated).mockReturnValue(mockResult);
+			vi.mocked(mockHistoryManager.getAllEntriesPaginated).mockResolvedValue(mockResult);
 
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, {});
@@ -252,7 +252,7 @@ describe('history IPC handlers', () => {
 				offset: 0,
 				hasMore: false,
 			};
-			vi.mocked(mockHistoryManager.getAllEntriesPaginated).mockReturnValue(mockResult);
+			vi.mocked(mockHistoryManager.getAllEntriesPaginated).mockResolvedValue(mockResult);
 
 			const handler = handlers.get('history:getAllPaginated');
 			const result = await handler!({} as any, undefined);
@@ -343,7 +343,7 @@ describe('history IPC handlers', () => {
 
 	describe('history:delete', () => {
 		it('should delete entry from specific session', async () => {
-			vi.mocked(mockHistoryManager.deleteEntry).mockReturnValue(true);
+			vi.mocked(mockHistoryManager.deleteEntry).mockResolvedValue(true);
 
 			const handler = handlers.get('history:delete');
 			const result = await handler!({} as any, 'entry-123', 'session-1');
@@ -353,7 +353,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return false when entry not found in session', async () => {
-			vi.mocked(mockHistoryManager.deleteEntry).mockReturnValue(false);
+			vi.mocked(mockHistoryManager.deleteEntry).mockResolvedValue(false);
 
 			const handler = handlers.get('history:delete');
 			const result = await handler!({} as any, 'non-existent', 'session-1');
@@ -362,13 +362,13 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should search all sessions when sessionId not provided', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
 			vi.mocked(mockHistoryManager.deleteEntry)
-				.mockReturnValueOnce(false)
-				.mockReturnValueOnce(true);
+				.mockResolvedValueOnce(false)
+				.mockResolvedValueOnce(true);
 
 			const handler = handlers.get('history:delete');
 			const result = await handler!({} as any, 'entry-123');
@@ -380,11 +380,11 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return false when entry not found in any session', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
-			vi.mocked(mockHistoryManager.deleteEntry).mockReturnValue(false);
+			vi.mocked(mockHistoryManager.deleteEntry).mockResolvedValue(false);
 
 			const handler = handlers.get('history:delete');
 			const result = await handler!({} as any, 'non-existent');
@@ -395,7 +395,7 @@ describe('history IPC handlers', () => {
 
 	describe('history:update', () => {
 		it('should update entry in specific session', async () => {
-			vi.mocked(mockHistoryManager.updateEntry).mockReturnValue(true);
+			vi.mocked(mockHistoryManager.updateEntry).mockResolvedValue(true);
 
 			const updates = { validated: true };
 			const handler = handlers.get('history:update');
@@ -410,7 +410,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return false when entry not found in session', async () => {
-			vi.mocked(mockHistoryManager.updateEntry).mockReturnValue(false);
+			vi.mocked(mockHistoryManager.updateEntry).mockResolvedValue(false);
 
 			const handler = handlers.get('history:update');
 			const result = await handler!({} as any, 'non-existent', { validated: true }, 'session-1');
@@ -419,13 +419,13 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should search all sessions when sessionId not provided', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
 			vi.mocked(mockHistoryManager.updateEntry)
-				.mockReturnValueOnce(false)
-				.mockReturnValueOnce(true);
+				.mockResolvedValueOnce(false)
+				.mockResolvedValueOnce(true);
 
 			const updates = { summary: 'Updated summary' };
 			const handler = handlers.get('history:update');
@@ -445,8 +445,8 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return false when entry not found in any session', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.updateEntry).mockReturnValue(false);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.updateEntry).mockResolvedValue(false);
 
 			const handler = handlers.get('history:update');
 			const result = await handler!({} as any, 'non-existent', { validated: true });
@@ -457,7 +457,7 @@ describe('history IPC handlers', () => {
 
 	describe('history:updateSessionName', () => {
 		it('should update session name for matching entries', async () => {
-			vi.mocked(mockHistoryManager.updateSessionNameByClaudeSessionId).mockReturnValue(5);
+			vi.mocked(mockHistoryManager.updateSessionNameByClaudeSessionId).mockResolvedValue(5);
 
 			const handler = handlers.get('history:updateSessionName');
 			const result = await handler!({} as any, 'agent-session-123', 'New Session Name');
@@ -470,7 +470,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return 0 when no matching entries found', async () => {
-			vi.mocked(mockHistoryManager.updateSessionNameByClaudeSessionId).mockReturnValue(0);
+			vi.mocked(mockHistoryManager.updateSessionNameByClaudeSessionId).mockResolvedValue(0);
 
 			const handler = handlers.get('history:updateSessionName');
 			const result = await handler!({} as any, 'non-existent-agent', 'Name');
@@ -481,7 +481,7 @@ describe('history IPC handlers', () => {
 
 	describe('history:getFilePath', () => {
 		it('should return file path for existing session', async () => {
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockResolvedValue(
 				'/path/to/history/session-1.json'
 			);
 
@@ -493,7 +493,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return null for non-existent session', async () => {
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(null);
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockResolvedValue(null);
 
 			const handler = handlers.get('history:getFilePath');
 			const result = await handler!({} as any, 'non-existent');
@@ -504,7 +504,7 @@ describe('history IPC handlers', () => {
 
 	describe('history:listSessions', () => {
 		it('should return list of sessions with history', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 				'session-3',
@@ -518,7 +518,7 @@ describe('history IPC handlers', () => {
 		});
 
 		it('should return empty array when no sessions have history', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([]);
 
 			const handler = handlers.get('history:listSessions');
 			const result = await handler!({} as any);
