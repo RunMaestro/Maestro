@@ -129,6 +129,8 @@ export interface GroupChat {
 	logPath: string;
 	imagesDir: string;
 	archived?: boolean;
+	/** Account ID for all participants in this group chat */
+	accountId?: string;
 }
 
 /**
