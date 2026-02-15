@@ -44,6 +44,7 @@ import { preparePermissionRelayArgs } from '../../../permission-relay';
 import type { SpawnProcessConfig } from './spawn-types';
 import type { AccountRegistry } from '../../../accounts/account-registry';
 import { injectAccountEnv } from '../../../accounts/account-env-injector';
+import { getStatsDB } from '../../../stats';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -621,7 +622,11 @@ export async function handleProcessSpawn(
 			envToInject,
 			accountRegistry,
 			config.accountId, // May be passed from renderer
-			safeSend
+			safeSend,
+			() => {
+				const db = getStatsDB();
+				return db.isReady() ? db : null;
+			}
 		);
 		if (assignedAccountId) {
 			customEnvVarsToPass = envToInject;

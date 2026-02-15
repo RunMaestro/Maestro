@@ -8,8 +8,10 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountRegistry } from '../../accounts/account-registry';
 import { injectAccountEnv } from '../../accounts/account-env-injector';
+import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -87,6 +89,7 @@ export interface ProcessHandlerDependencies {
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
 	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
 	getAccountRegistry?: () => AccountRegistry | null;
 }
 
@@ -111,6 +114,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		getMainWindow,
 		safeSend,
 		getAccountSwitcher,
+		getAccountAuthRecovery,
 		getAccountRegistry,
 	} = deps;
 
@@ -156,10 +160,14 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 			});
 			const result = processManager.write(sessionId, data);
 
-			// Record the last prompt for account switching resume
+			// Record the last prompt for account switching/auth recovery resume
 			const accountSwitcher = getAccountSwitcher?.();
 			if (accountSwitcher) {
 				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+			const authRecovery = getAccountAuthRecovery?.();
+			if (authRecovery) {
+				authRecovery.recordLastPrompt(sessionId, data);
 			}
 
 			return result;

@@ -9,8 +9,11 @@
  * - Session resume
  */
 
-import type { AccountRegistry } from './account-registry';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { AccountRegistry, AccountUsageStatsProvider } from './account-registry';
 import type { SafeSendFn } from '../utils/safe-send';
+import { syncCredentialsFromBase } from './account-setup';
 import { logger } from '../utils/logger';
 
 const LOG_CONTEXT = 'account-env-injector';
@@ -23,12 +26,17 @@ interface SpawnEnv {
  * Injects CLAUDE_CONFIG_DIR into spawn environment for account multiplexing.
  * Called by all code paths that spawn Claude Code agents.
  *
+ * Does NOT validate credential freshness — Claude Code handles its own
+ * token refresh via the OAuth refresh token in .credentials.json.
+ * If the refresh fails, the error listener catches the auth error.
+ *
  * @param sessionId - The session ID being spawned
  * @param agentType - The agent type (only 'claude-code' is handled)
  * @param env - Mutable env object to inject into
  * @param accountRegistry - The account registry instance
  * @param accountId - Pre-assigned account ID (optional, auto-assigns if missing)
  * @param safeSend - Optional safeSend function to notify renderer of assignment
+ * @param getStatsDB - Optional function to get stats DB for capacity-aware selection
  * @returns The account ID used (or null if no accounts configured)
  */
 export function injectAccountEnv(
@@ -38,6 +46,7 @@ export function injectAccountEnv(
 	accountRegistry: AccountRegistry,
 	accountId?: string | null,
 	safeSend?: SafeSendFn,
+	getStatsDB?: () => AccountUsageStatsProvider | null,
 ): string | null {
 	if (agentType !== 'claude-code') return null;
 
@@ -65,13 +74,31 @@ export function injectAccountEnv(
 	}
 	if (!resolvedAccountId) {
 		const defaultAccount = accountRegistry.getDefaultAccount();
-		const selected = defaultAccount ?? accountRegistry.selectNextAccount();
+		const statsDB = getStatsDB?.() ?? undefined;
+		const selected = defaultAccount ?? accountRegistry.selectNextAccount([], statsDB ?? undefined);
 		if (!selected) return null;
 		resolvedAccountId = selected.id;
 	}
 
 	const account = accountRegistry.get(resolvedAccountId);
 	if (!account) return null;
+
+	// Ensure credentials exist in the account dir before spawning.
+	// If missing, attempt a best-effort sync from base ~/.claude dir.
+	const credPath = path.join(account.configDir, '.credentials.json');
+	if (!fs.existsSync(credPath)) {
+		logger.info('No .credentials.json in account dir, attempting sync from base', LOG_CONTEXT, {
+			sessionId, configDir: account.configDir,
+		});
+		// Fire-and-forget — don't block spawn on this
+		syncCredentialsFromBase(account.configDir).then((result) => {
+			if (result.success) {
+				logger.info('Auto-synced credentials from base dir', LOG_CONTEXT);
+			} else {
+				logger.warn(`Credential sync failed: ${result.error}`, LOG_CONTEXT);
+			}
+		}).catch(() => {});
+	}
 
 	// Inject the env var
 	env.CLAUDE_CONFIG_DIR = account.configDir;
