@@ -128,6 +128,7 @@ export interface GroupChat {
 	participants: GroupChatParticipant[];
 	logPath: string;
 	imagesDir: string;
+	archived?: boolean;
 }
 
 /**
@@ -143,6 +144,7 @@ export type GroupChatUpdate = Partial<
 		| 'moderatorConfig'
 		| 'participants'
 		| 'updatedAt'
+		| 'archived'
 	>
 >;
 

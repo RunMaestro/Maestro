@@ -239,6 +239,28 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 		})
 	);
 
+	// Archive or unarchive a group chat
+	ipcMain.handle(
+		'groupChat:archive',
+		withIpcErrorLogging(
+			handlerOpts('archive'),
+			async (id: string, archived: boolean): Promise<GroupChat> => {
+				logger.info(`${archived ? 'Archiving' : 'Unarchiving'} group chat: ${id}`, LOG_CONTEXT);
+
+				// When archiving, stop the moderator and all participants
+				if (archived) {
+					const processManager = getProcessManager();
+					await killModerator(id, processManager ?? undefined);
+					await clearAllParticipantSessions(id, processManager ?? undefined);
+				}
+
+				const updated = await updateGroupChat(id, { archived });
+				logger.info(`${archived ? 'Archived' : 'Unarchived'} group chat: ${id}`, LOG_CONTEXT);
+				return updated;
+			}
+		)
+	);
+
 	// Rename a group chat
 	ipcMain.handle(
 		'groupChat:rename',

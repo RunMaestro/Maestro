@@ -1739,6 +1739,25 @@ interface MaestroAPI {
 			imagesDir: string;
 			createdAt: number;
 		}>;
+		archive: (
+			id: string,
+			archived: boolean
+		) => Promise<{
+			id: string;
+			name: string;
+			moderatorAgentId: string;
+			moderatorSessionId: string;
+			participants: Array<{
+				name: string;
+				agentId: string;
+				sessionId: string;
+				addedAt: number;
+			}>;
+			logPath: string;
+			imagesDir: string;
+			createdAt: number;
+			archived?: boolean;
+		}>;
 		// Chat log
 		appendMessage: (id: string, from: string, content: string) => Promise<void>;
 		getMessages: (id: string) => Promise<

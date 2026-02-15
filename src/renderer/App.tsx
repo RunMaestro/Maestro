@@ -1711,6 +1711,7 @@ function MaestroConsoleInner() {
 		handleCloseGroupChat,
 		handleCreateGroupChat,
 		handleUpdateGroupChat,
+		handleArchiveGroupChat,
 		deleteGroupChatWithConfirmation,
 		handleProcessMonitorNavigateToGroupChat,
 		handleOpenModeratorSession,
@@ -8222,6 +8223,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleEditGroupChat,
 		handleOpenRenameGroupChatModal,
 		handleOpenDeleteGroupChatModal,
+		handleArchiveGroupChat,
 
 		// Context warning thresholds
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,

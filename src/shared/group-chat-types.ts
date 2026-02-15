@@ -102,6 +102,7 @@ export interface GroupChat {
 	logPath: string;
 	imagesDir: string;
 	draftMessage?: string;
+	archived?: boolean;
 }
 
 /**

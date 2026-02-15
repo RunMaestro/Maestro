@@ -1146,6 +1146,7 @@ interface SessionListProps {
 	onEditGroupChat?: (id: string) => void;
 	onRenameGroupChat?: (id: string) => void;
 	onDeleteGroupChat?: (id: string) => void;
+	onArchiveGroupChat?: (id: string, archived: boolean) => void;
 	/** Controlled expanded state for group chats (lifted to parent for keyboard navigation) */
 	groupChatsExpanded?: boolean;
 	/** Callback when group chats expanded state changes */
@@ -1249,6 +1250,7 @@ function SessionListInner(props: SessionListProps) {
 		onEditGroupChat,
 		onRenameGroupChat,
 		onDeleteGroupChat,
+		onArchiveGroupChat,
 		groupChatsExpanded,
 		onGroupChatsExpandedChange,
 		groupChatState = 'idle',
@@ -2867,6 +2869,7 @@ function SessionListInner(props: SessionListProps) {
 						onEditGroupChat &&
 						onRenameGroupChat &&
 						onDeleteGroupChat &&
+						onArchiveGroupChat &&
 						sessions.filter((s) => s.toolType !== 'terminal').length >= 2 && (
 							<GroupChatList
 								theme={theme}
@@ -2877,6 +2880,7 @@ function SessionListInner(props: SessionListProps) {
 								onEditGroupChat={onEditGroupChat}
 								onRenameGroupChat={onRenameGroupChat}
 								onDeleteGroupChat={onDeleteGroupChat}
+								onArchiveGroupChat={onArchiveGroupChat}
 								isExpanded={groupChatsExpanded}
 								onExpandedChange={onGroupChatsExpandedChange}
 								groupChatState={groupChatState}
