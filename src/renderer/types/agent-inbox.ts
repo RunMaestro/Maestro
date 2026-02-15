@@ -6,6 +6,7 @@ export interface InboxItem {
 	groupId?: string
 	groupName?: string
 	sessionName: string
+	tabName?: string
 	toolType: string
 	gitBranch?: string
 	contextUsage?: number        // 0-100, undefined = unknown

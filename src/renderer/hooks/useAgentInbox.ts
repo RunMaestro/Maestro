@@ -27,6 +27,15 @@ function matchesFilter(
 }
 
 /**
+ * Computes a display name for a tab.
+ * Uses tab.name if set, otherwise falls back to "Tab N".
+ */
+function getTabDisplayName(tab: { name: string | null; agentSessionId: string | null; id: string }, tabIndex: number): string {
+	if (tab.name) return tab.name
+	return `Tab ${tabIndex + 1}`
+}
+
+/**
  * Truncates text to MAX_MESSAGE_LENGTH with ellipsis.
  */
 export function truncate(text: string): string {
@@ -166,7 +175,8 @@ export function useAgentInbox(
 
 			const tabs = session.aiTabs ?? []
 
-			for (const tab of tabs) {
+			for (let tabIdx = 0; tabIdx < tabs.length; tabIdx++) {
+				const tab = tabs[tabIdx]
 				const hasUnread = tab.hasUnread === true
 
 				if (!matchesFilter(session.state, hasUnread, filterMode)) continue
@@ -179,6 +189,7 @@ export function useAgentInbox(
 					groupId: session.groupId ?? undefined,
 					groupName: parentGroup?.name ?? undefined,
 					sessionName: session.name,
+					tabName: tabs.length > 1 ? getTabDisplayName(tab, tabIdx) : undefined,
 					toolType: session.toolType,
 					gitBranch: session.worktreeBranch ?? undefined,
 					contextUsage: session.contextUsage ?? undefined,

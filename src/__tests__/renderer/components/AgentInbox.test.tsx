@@ -1392,6 +1392,49 @@ describe('AgentInbox', () => {
 			expect(badge.getAttribute('aria-label')).toBe('Agent: claude-code');
 		});
 
+		it('renders tab name after session name when tabName is present', () => {
+			// Session with 2 tabs — tabName will be populated for each
+			const sessions = [
+				createSession({
+					id: 's1',
+					name: 'My Session',
+					state: 'waiting_input',
+					aiTabs: [
+						createTab({ id: 't1', hasUnread: true, name: 'Refactor' }),
+						createTab({ id: 't2', hasUnread: true, name: 'Debug' }),
+					] as any,
+				}),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// The card should show "My Session / Refactor" or "My Session / Debug"
+			const sessionNames = screen.getAllByText(/My Session/);
+			// At least one should contain the tab name separator
+			const withTabName = sessionNames.find(el => el.textContent?.includes(' / '));
+			expect(withTabName).toBeTruthy();
+		});
+
+		it('does not render tab name separator for single-tab sessions', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const sessionName = screen.getByText('Session s1');
+			// Single tab — no " / " separator in the session name element
+			expect(sessionName.textContent).toBe('Session s1');
+		});
+
 		it('card has correct height and border-radius', () => {
 			const sessions = [createInboxSession('s1', 't1')];
 			render(

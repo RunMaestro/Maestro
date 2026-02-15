@@ -131,7 +131,7 @@ The Agent Inbox is a modal (`AgentInbox.tsx`) displaying a virtualized list of s
 
     **Verify:** `npm run test -- --testPathPattern="AgentInbox" --no-coverage` — all tests pass.
 
-- [ ] **TASK 4 — Add tab name to inbox card display.** This requires changes to the type, the data hook, and the component.
+- [x] **TASK 4 — Add tab name to inbox card display.** This requires changes to the type, the data hook, and the component.
 
     **In `src/renderer/types/agent-inbox.ts`:**
     1. Add `tabName?: string` to the `InboxItem` interface (after `sessionName`)
