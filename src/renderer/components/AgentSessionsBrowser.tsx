@@ -646,6 +646,12 @@ export function AgentSessionsBrowser({
 	const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
 	const prevFiltersRef = useRef({ namedOnly, showAllSessions, showSearchPanel });
 
+	// Pre-compute mapped activity entries so the useEffect doesn't re-allocate on every run
+	const mappedActivityEntries = useMemo(
+		() => filteredSessions.map((s) => ({ timestamp: s.modifiedAt })),
+		[filteredSessions]
+	);
+
 	useEffect(() => {
 		const filtersChanged =
 			prevFiltersRef.current.namedOnly !== namedOnly ||
@@ -664,9 +670,9 @@ export function AgentSessionsBrowser({
 			(!showSearchPanel && activityEntries.length === 0 && filteredSessions.length > 0);
 
 		if (shouldUpdate) {
-			setActivityEntries(filteredSessions.map((s) => ({ timestamp: s.modifiedAt })));
+			setActivityEntries(mappedActivityEntries);
 		}
-	}, [showSearchPanel, namedOnly, showAllSessions, filteredSessions, activityEntries.length]);
+	}, [showSearchPanel, namedOnly, showAllSessions, mappedActivityEntries, activityEntries.length]);
 
 	// Handle activity graph bar click - scroll to first session in that time range
 	const handleGraphBarClick = useCallback(
