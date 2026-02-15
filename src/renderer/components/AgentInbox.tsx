@@ -260,10 +260,11 @@ function SegmentedControl<T extends string>({
 					key={opt.value}
 					onClick={() => onChange(opt.value)}
 					style={{
-						padding: '3px 10px',
+						padding: '4px 10px',
 						fontSize: 12,
 						border: 'none',
 						cursor: 'pointer',
+						transition: 'background 150ms',
 						backgroundColor: value === opt.value ? theme.colors.accent : 'transparent',
 						color: value === opt.value ? theme.colors.accentForeground : theme.colors.textDim,
 						outline: 'none',
@@ -316,7 +317,7 @@ function InboxRow({
 					display: 'flex',
 					alignItems: 'center',
 					paddingLeft: 16,
-					fontSize: 12,
+					fontSize: 13,
 					fontWeight: 600,
 					color: theme.colors.textDim,
 					letterSpacing: '0.5px',
