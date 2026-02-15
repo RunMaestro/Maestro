@@ -69,6 +69,8 @@ interface RunPlaybookOptions {
 	debug?: boolean;
 	verbose?: boolean;
 	wait?: boolean;
+	account?: string;
+	accountRotation?: boolean;
 }
 
 /**
@@ -265,6 +267,8 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			writeHistory: options.history !== false, // --no-history sets history to false
 			debug: options.debug,
 			verbose: options.verbose,
+			account: options.account,
+			accountRotation: options.accountRotation,
 		});
 
 		for await (const event of generator) {

@@ -13,6 +13,7 @@ import { showAgent } from './commands/show-agent';
 import { cleanPlaybooks } from './commands/clean-playbooks';
 import { send } from './commands/send';
 import { listSessions } from './commands/list-sessions';
+import { listAccounts } from './commands/accounts';
 
 // Read version from package.json at runtime
 function getVersion(): string {
@@ -87,6 +88,8 @@ program
 	.option('--debug', 'Show detailed debug output for troubleshooting')
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option('--account <name>', 'Claude account name or ID to use for all spawned agents')
+	.option('--account-rotation', 'Rotate through available accounts for parallel tasks')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -108,5 +111,13 @@ program
 	.description('Send a message to an agent and get a JSON response')
 	.option('-s, --session <id>', 'Resume an existing agent session (for multi-turn conversations)')
 	.action(send);
+
+// Accounts command
+program
+	.command('accounts')
+	.description('List configured Claude accounts')
+	.action(async () => {
+		await listAccounts();
+	});
 
 program.parse();

@@ -223,10 +223,16 @@ export function getCodexCommand(): string {
 async function spawnClaudeAgent(
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	configDir?: string
 ): Promise<AgentResult> {
 	return new Promise((resolve) => {
 		const env = buildExpandedEnv();
+
+		// Inject account config dir if provided (account multiplexing)
+		if (configDir) {
+			env.CLAUDE_CONFIG_DIR = configDir;
+		}
 
 		// Build args: base args + session handling + prompt
 		const args = [...CLAUDE_ARGS];
@@ -473,14 +479,15 @@ export async function spawnAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	configDir?: string
 ): Promise<AgentResult> {
 	if (toolType === 'codex') {
 		return spawnCodexAgent(cwd, prompt, agentSessionId);
 	}
 
 	if (toolType === 'claude-code') {
-		return spawnClaudeAgent(cwd, prompt, agentSessionId);
+		return spawnClaudeAgent(cwd, prompt, agentSessionId, configDir);
 	}
 
 	return {
