@@ -92,7 +92,7 @@ The agent icon badge (`data-testid="agent-type-badge"`) was added in Phase 08 Ta
 
     **Verify:** `npm run test -- --testPathPattern="AgentInbox" --no-coverage` — all tests pass. `npm run lint` passes.
 
-- [ ] **TASK 2 — Fix modal header spacing.** In `src/renderer/components/AgentInbox.tsx`, the header section (around line 595-655) currently crams title, badge, sort buttons, filter buttons, and close button in one 48px row. Restructure it to use two rows:
+- [x] **TASK 2 — Fix modal header spacing.** In `src/renderer/components/AgentInbox.tsx`, the header section (around line 595-655) currently crams title, badge, sort buttons, filter buttons, and close button in one 48px row. Restructure it to use two rows:
 
     **Row 1 (top):** Title "Unified Inbox" + badge "N need action" + close button (X)
     **Row 2 (bottom):** Sort SegmentedControl (left) + Filter SegmentedControl (right)
