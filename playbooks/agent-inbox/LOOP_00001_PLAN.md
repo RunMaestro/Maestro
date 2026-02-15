@@ -23,7 +23,8 @@ related:
 | Metric | Value |
 |--------|-------|
 | **Total Candidates** | 6 |
-| **Auto-Implement (PENDING)** | 3 |
+| **Auto-Implement (PENDING)** | 2 |
+| **Implemented** | 1 |
 | **Manual Review (PENDING - MANUAL REVIEW)** | 0 |
 | **Won't Do** | 3 |
 | **Current Coverage (Agent Inbox Overall)** | ~93% |
@@ -71,7 +72,7 @@ related:
 
 | Field | Value |
 |-------|-------|
-| **Status** | `PENDING` |
+| **Status** | `IMPLEMENTED` |
 | **File** | `src/renderer/components/AgentInbox.tsx` (lines 446–455) |
 | **Importance** | **HIGH** — Core navigation logic; if broken, items won't scroll into view in grouped mode |
 | **Testability** | **MEDIUM** — Requires rendering in grouped mode and selecting an item to trigger the callback; manageable with existing test infrastructure |
