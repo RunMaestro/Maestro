@@ -59,6 +59,11 @@ export function getMigrations(): Migration[] {
 			description: 'Add compound indexes for time-range + column queries',
 			up: (db) => migrateV4(db),
 		},
+		{
+			version: 5,
+			description: 'Fix compound index column order: equality columns before range columns',
+			up: (db) => migrateV5(db),
+		},
 	];
 }
 
@@ -261,4 +266,29 @@ function migrateV4(db: Database.Database): void {
 	).run();
 
 	logger.debug('Added compound indexes for time-range queries', LOG_CONTEXT);
+}
+
+/**
+ * Migration v5: Fix compound index column order for source and project_path queries
+ *
+ * SQLite's B-tree index optimization requires equality predicates to precede
+ * range predicates. The v4 indexes (start_time, source) and (start_time, project_path)
+ * were not used by the query planner because start_time is a range predicate.
+ * Reversing the column order to (source, start_time) and (project_path, start_time)
+ * allows SQLite to use equality on the leading column, then range on start_time.
+ */
+function migrateV5(db: Database.Database): void {
+	// Drop the v4 indexes with incorrect column order
+	db.prepare('DROP INDEX IF EXISTS idx_query_time_source').run();
+	db.prepare('DROP INDEX IF EXISTS idx_query_time_project').run();
+
+	// Create replacement indexes with equality column leading
+	db.prepare(
+		'CREATE INDEX IF NOT EXISTS idx_query_source_time ON query_events(source, start_time)'
+	).run();
+	db.prepare(
+		'CREATE INDEX IF NOT EXISTS idx_query_project_time ON query_events(project_path, start_time)'
+	).run();
+
+	logger.debug('Fixed compound index column order for source and project_path queries', LOG_CONTEXT);
 }

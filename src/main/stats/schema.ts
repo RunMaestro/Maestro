@@ -57,8 +57,8 @@ export const CREATE_QUERY_EVENTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_query_project_path ON query_events(project_path);
   CREATE INDEX IF NOT EXISTS idx_query_agent_time ON query_events(agent_type, start_time);
   CREATE INDEX IF NOT EXISTS idx_query_time_agent ON query_events(start_time, agent_type);
-  CREATE INDEX IF NOT EXISTS idx_query_time_source ON query_events(start_time, source);
-  CREATE INDEX IF NOT EXISTS idx_query_time_project ON query_events(start_time, project_path)
+  CREATE INDEX IF NOT EXISTS idx_query_source_time ON query_events(source, start_time);
+  CREATE INDEX IF NOT EXISTS idx_query_project_time ON query_events(project_path, start_time)
 `;
 
 // ============================================================================

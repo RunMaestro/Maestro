@@ -297,13 +297,13 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			await db.initialize();
 
-			// Currently we have version 4 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes)
-			expect(db.getTargetVersion()).toBe(4);
+			// Currently we have version 5 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: fix index column order)
+			expect(db.getTargetVersion()).toBe(5);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 4 }];
+				if (sql === 'user_version') return [{ user_version: 5 }];
 				return undefined;
 			});
 
@@ -318,8 +318,8 @@ describe('StatsDB class (mocked)', () => {
 			// This test verifies the hasPendingMigrations() logic
 			// by checking current version < target version
 
-			// Simulate a database that's already at version 4 (target version)
-			let currentVersion = 4;
+			// Simulate a database that's already at version 5 (target version)
+			let currentVersion = 5;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -333,9 +333,9 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			await db.initialize();
 
-			// At version 4, target is 4, so no pending migrations
-			expect(db.getCurrentVersion()).toBe(4);
-			expect(db.getTargetVersion()).toBe(4);
+			// At version 5, target is 5, so no pending migrations
+			expect(db.getCurrentVersion()).toBe(5);
+			expect(db.getTargetVersion()).toBe(5);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -703,7 +703,7 @@ describe('Daily backup system', () => {
 		// Return integrity_check: 'ok' so initialize() doesn't trigger corruption recovery
 		mockDb.pragma.mockImplementation((pragmaStr: string) => {
 			if (pragmaStr === 'integrity_check') return [{ integrity_check: 'ok' }];
-			return [{ user_version: 4 }];
+			return [{ user_version: 5 }];
 		});
 		mockDb.prepare.mockReturnValue(mockStatement);
 		mockStatement.run.mockReturnValue({ changes: 1 });
@@ -935,7 +935,7 @@ describe('Daily backup system', () => {
 					callOrder.push('checkpoint');
 				}
 				if (pragmaStr === 'integrity_check') return [{ integrity_check: 'ok' }];
-				return [{ user_version: 4 }];
+				return [{ user_version: 5 }];
 			});
 			mockFsCopyFile.mockImplementation(() => {
 				callOrder.push('copy');
