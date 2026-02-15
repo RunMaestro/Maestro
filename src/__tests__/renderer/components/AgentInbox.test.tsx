@@ -411,6 +411,34 @@ describe('AgentInbox', () => {
 			unmount();
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-inbox-123');
 		});
+
+		it('cancels pending requestAnimationFrame on unmount', () => {
+			const cancelSpy = vi.spyOn(window, 'cancelAnimationFrame');
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockReturnValue(42);
+
+			const sessions = [createInboxSession('s1', 't1')];
+			const { unmount } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+					onNavigateToSession={onNavigateToSession}
+				/>
+			);
+
+			// Trigger close (which schedules a requestAnimationFrame)
+			const closeBtn = screen.getByTitle('Close (Esc)');
+			fireEvent.click(closeBtn);
+			expect(rafSpy).toHaveBeenCalled();
+
+			// Unmount before the rAF fires
+			unmount();
+			expect(cancelSpy).toHaveBeenCalledWith(42);
+
+			cancelSpy.mockRestore();
+			rafSpy.mockRestore();
+		});
 	});
 
 	// ==========================================================================

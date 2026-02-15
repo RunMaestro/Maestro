@@ -337,14 +337,21 @@ export default function AgentInbox({
 
 	// Store trigger element ref for focus restoration
 	const triggerRef = useRef<Element | null>(null);
+	const rafIdRef = useRef<number | null>(null);
 	useEffect(() => {
 		triggerRef.current = document.activeElement;
+		return () => {
+			if (rafIdRef.current !== null) {
+				cancelAnimationFrame(rafIdRef.current);
+			}
+		};
 	}, []);
 
 	// Restore focus on close
 	const handleClose = useCallback(() => {
 		onClose();
-		requestAnimationFrame(() => {
+		rafIdRef.current = requestAnimationFrame(() => {
+			rafIdRef.current = null;
 			if (triggerRef.current && triggerRef.current instanceof HTMLElement) {
 				triggerRef.current.focus();
 			}
