@@ -184,6 +184,54 @@ export function createAccountsApi() {
 			ipcRenderer.on('account:limit-reached', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:limit-reached', wrappedHandler);
 		},
+
+		/**
+		 * Subscribe to account throttled events (rate limit detected)
+		 * @param handler - Callback with throttle data
+		 * @returns Cleanup function to unsubscribe
+		 */
+		onThrottled: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:throttled', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:throttled', wrappedHandler);
+		},
+
+		/**
+		 * Subscribe to account switch prompt events (user confirmation needed)
+		 * @param handler - Callback with switch prompt data
+		 * @returns Cleanup function to unsubscribe
+		 */
+		onSwitchPrompt: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:switch-prompt', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-prompt', wrappedHandler);
+		},
+
+		/**
+		 * Subscribe to automatic account switch events (no confirmation needed)
+		 * @param handler - Callback with switch execution data
+		 * @returns Cleanup function to unsubscribe
+		 */
+		onSwitchExecute: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:switch-execute', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:switch-execute', wrappedHandler);
+		},
+
+		/**
+		 * Subscribe to account status change events (e.g., throttled -> active recovery)
+		 * @param handler - Callback with status change data
+		 * @returns Cleanup function to unsubscribe
+		 */
+		onStatusChanged: (handler: (data: Record<string, unknown>) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: Record<string, unknown>) =>
+				handler(data);
+			ipcRenderer.on('account:status-changed', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:status-changed', wrappedHandler);
+		},
 	};
 }
 

@@ -42,6 +42,7 @@ export function setupAccountUsageListener(
 		getStatsDB: () => StatsDB;
 		safeSend: (channel: string, ...args: unknown[]) => void;
 		logger: {
+			info?: (message: string, context: string, data?: Record<string, unknown>) => void;
 			error: (message: string, context: string, data?: Record<string, unknown>) => void;
 			debug: (message: string, context: string, data?: Record<string, unknown>) => void;
 		};
@@ -115,6 +116,21 @@ export function setupAccountUsageListener(
 						usagePercent,
 						sessionId,
 					});
+				}
+			}
+
+			// Auto-recover from throttle if window has advanced past throttle point
+			if (account.status === 'throttled' && account.lastThrottledAt > 0) {
+				const timeSinceThrottle = now - account.lastThrottledAt;
+				if (timeSinceThrottle > windowMs) {
+					accountRegistry.setStatus(account.id, 'active');
+					safeSend('account:status-changed', {
+						accountId: account.id,
+						accountName: account.name,
+						oldStatus: 'throttled',
+						newStatus: 'active',
+					});
+					logger.info?.(`Account ${account.name} recovered from throttle`, LOG_CONTEXT);
 				}
 			}
 

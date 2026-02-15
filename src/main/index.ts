@@ -185,6 +185,8 @@ import { ensureCoworkingServerScript } from './coworking/coworking-server-paths'
 import { resolveSessionFromPidWalk } from './coworking/pid-resolution';
 import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry } from './stats';
 import { AccountRegistry } from './accounts/account-registry';
+import { AccountThrottleHandler } from './accounts/account-throttle-handler';
+import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -505,6 +507,8 @@ let pluginEventBus: PluginEventBusImpl | null = null;
 let usageRefreshScheduler: UsageRefreshScheduler | null = null;
 let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig> | null = null;
 let accountRegistry: AccountRegistry | null = null;
+let accountThrottleHandler: AccountThrottleHandler | null = null;
+let accountThrottleHandler: AccountThrottleHandler | null = null;
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2680,9 +2684,15 @@ app
 			logger.warn('Continuing without stats - usage tracking will be unavailable', 'Startup');
 		}
 
-		// Initialize account registry for account multiplexing
+		// Initialize account registry and throttle handler for account multiplexing
 		try {
 			accountRegistry = new AccountRegistry(getAccountStore());
+			accountThrottleHandler = new AccountThrottleHandler(
+				accountRegistry,
+				getStatsDB,
+				safeSend,
+				logger
+			);
 			logger.info('Account registry initialized', 'Startup');
 		} catch (error) {
 			void captureException(error);
@@ -3507,6 +3517,7 @@ function setupProcessListeners() {
 			},
 			getStatsDB,
 			getAccountRegistry: () => accountRegistry,
+			getThrottleHandler: () => accountThrottleHandler,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

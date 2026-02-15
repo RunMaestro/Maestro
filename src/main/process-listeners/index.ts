@@ -46,8 +46,11 @@ export function setupProcessListeners(
 	// Session ID listener (with group chat participant/moderator storage)
 	setupSessionIdListener(processManager, deps);
 
-	// Agent error listener
-	setupErrorListener(processManager, deps);
+	// Agent error listener (with optional account throttle handling)
+	setupErrorListener(processManager, deps, deps.getAccountRegistry ? {
+		getAccountRegistry: deps.getAccountRegistry,
+		getThrottleHandler: deps.getThrottleHandler ?? (() => null),
+	} : undefined);
 
 	// Stats/query-complete listener
 	setupStatsListener(processManager, deps);
