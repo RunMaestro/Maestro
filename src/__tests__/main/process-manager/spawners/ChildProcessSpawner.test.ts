@@ -73,7 +73,7 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 }));
 
 vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
-	saveImageToTempFile: vi.fn(),
+	saveImageToTempFile: vi.fn(() => Promise.resolve(null)),
 }));
 
 vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
@@ -132,10 +132,10 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('isStreamJsonMode detection', () => {
-		it('should enable stream-json mode when args contain "stream-json"', () => {
+		it('should enable stream-json mode when args contain "stream-json"', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--output-format', 'stream-json'],
 				})
@@ -145,10 +145,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should enable stream-json mode when args contain "--json"', () => {
+		it('should enable stream-json mode when args contain "--json"', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--json'],
 				})
@@ -158,10 +158,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should enable stream-json mode when args contain "--format" and "json"', () => {
+		it('should enable stream-json mode when args contain "--format" and "json"', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--format', 'json'],
 				})
@@ -171,10 +171,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should enable stream-json mode when sendPromptViaStdin is true', () => {
+		it('should enable stream-json mode when sendPromptViaStdin is true', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--print'],
 					sendPromptViaStdin: true,
@@ -186,12 +186,12 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should NOT enable stream-json mode when sendPromptViaStdinRaw is true', () => {
+		it('should NOT enable stream-json mode when sendPromptViaStdinRaw is true', async () => {
 			const { processes, spawner } = createTestContext();
 
 			// sendPromptViaStdinRaw sends RAW text via stdin, not JSON
 			// So it should NOT set isStreamJsonMode (which is for JSON streaming)
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--print'],
 					sendPromptViaStdinRaw: true,
@@ -203,12 +203,12 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(false);
 		});
 
-		it('should enable stream-json mode when sshStdinScript is provided', () => {
+		it('should enable stream-json mode when sshStdinScript is provided', async () => {
 			const { processes, spawner } = createTestContext();
 
 			// SSH sessions pass a script via stdin - this should trigger stream-json mode
 			// even though the args (SSH args) don't contain 'stream-json'
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['-o', 'BatchMode=yes', 'user@host', '/bin/bash'],
 					sshStdinScript: 'export PATH="$HOME/.local/bin:$PATH"\ncd /project\nexec claude --print',
@@ -219,10 +219,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(true);
 		});
 
-		it('should NOT enable stream-json mode for plain args without JSON flags', () => {
+		it('should NOT enable stream-json mode for plain args without JSON flags', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--print', '--verbose'],
 				})
@@ -232,10 +232,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isStreamJsonMode).toBe(false);
 		});
 
-		it('should enable stream-json mode when images are provided with prompt', () => {
+		it('should enable stream-json mode when images are provided with prompt', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: ['--print'],
 					images: ['data:image/png;base64,abc123'],
@@ -249,10 +249,10 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('isBatchMode detection', () => {
-		it('should enable batch mode when prompt is provided', () => {
+		it('should enable batch mode when prompt is provided', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					prompt: 'test prompt',
 				})
@@ -262,10 +262,10 @@ describe('ChildProcessSpawner', () => {
 			expect(proc?.isBatchMode).toBe(true);
 		});
 
-		it('should NOT enable batch mode when no prompt is provided', () => {
+		it('should NOT enable batch mode when no prompt is provided', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					prompt: undefined,
 				})
@@ -277,10 +277,10 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('SSH remote context', () => {
-		it('should store sshRemoteId on managed process', () => {
+		it('should store sshRemoteId on managed process', async () => {
 			const { processes, spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					sshRemoteId: 'my-remote-server',
 					sshRemoteHost: 'dev.example.com',
@@ -309,10 +309,10 @@ describe('ChildProcessSpawner', () => {
 			'--dangerously-skip-permissions',
 		];
 
-		it('should add --input-format stream-json when images are present with default Claude Code args', () => {
+		it('should add --input-format stream-json when images are present with default Claude Code args', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					images: ['data:image/png;base64,abc123'],
@@ -327,10 +327,10 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs[inputFormatIdx + 1]).toBe('stream-json');
 		});
 
-		it('should add --input-format stream-json even when sendPromptViaStdin is true', () => {
+		it('should add --input-format stream-json even when sendPromptViaStdin is true', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					images: ['data:image/png;base64,abc123'],
@@ -345,10 +345,10 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs[inputFormatIdx + 1]).toBe('stream-json');
 		});
 
-		it('should not duplicate --input-format when it is already in args', () => {
+		it('should not duplicate --input-format when it is already in args', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: [...CLAUDE_DEFAULT_ARGS, '--input-format', 'stream-json'],
 					images: ['data:image/png;base64,abc123'],
@@ -361,10 +361,10 @@ describe('ChildProcessSpawner', () => {
 			expect(inputFormatCount).toBe(1);
 		});
 
-		it('should send stream-json message via stdin when images are present', () => {
+		it('should send stream-json message via stdin when images are present', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					images: ['data:image/png;base64,abc123'],
@@ -382,7 +382,7 @@ describe('ChildProcessSpawner', () => {
 			expect(mockChildProcess.stdin.end).toHaveBeenCalled();
 		});
 
-		it('should send stream-json message via stdin with multiple images', () => {
+		it('should send stream-json message via stdin with multiple images', async () => {
 			const { spawner } = createTestContext();
 
 			const images = [
@@ -391,7 +391,7 @@ describe('ChildProcessSpawner', () => {
 				'data:image/webp;base64,ghi789',
 			];
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					images,
@@ -418,10 +418,10 @@ describe('ChildProcessSpawner', () => {
 			'--dangerously-skip-permissions',
 		];
 
-		it('should NOT treat --output-format stream-json as promptViaStdin', () => {
+		it('should NOT treat --output-format stream-json as promptViaStdin', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					prompt: 'hello',
@@ -434,10 +434,10 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs).toContain('hello');
 		});
 
-		it('should treat --input-format stream-json as promptViaStdin', () => {
+		it('should treat --input-format stream-json as promptViaStdin', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: [...CLAUDE_DEFAULT_ARGS, '--input-format', 'stream-json'],
 					prompt: 'hello',
@@ -450,10 +450,10 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs).not.toContain('hello');
 		});
 
-		it('should treat sendPromptViaStdin as promptViaStdin', () => {
+		it('should treat sendPromptViaStdin as promptViaStdin', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					prompt: 'hello',
@@ -465,10 +465,10 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs).not.toContain('hello');
 		});
 
-		it('should treat sendPromptViaStdinRaw as promptViaStdin', () => {
+		it('should treat sendPromptViaStdinRaw as promptViaStdin', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					args: CLAUDE_DEFAULT_ARGS,
 					prompt: 'hello',
@@ -482,7 +482,7 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('stdin write guard for non-stream-json-input agents', () => {
-		it('should NOT write stream-json to stdin when prompt is already in CLI args (Codex --json)', () => {
+		it('should NOT write stream-json to stdin when prompt is already in CLI args (Codex --json)', async () => {
 			// Codex uses --json for JSON *output*, not input. The prompt goes as a CLI arg.
 			// Without the promptViaStdin guard, isStreamJsonMode (true from --json) would
 			// cause the prompt to be double-sent: once in CLI args and once via stdin.
@@ -492,7 +492,7 @@ describe('ChildProcessSpawner', () => {
 
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					toolType: 'codex',
 					command: 'codex',
@@ -516,10 +516,10 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('child process event handling', () => {
-		it('should listen on "close" event (not "exit") to ensure all stdio data is drained', () => {
+		it('should listen on "close" event (not "exit") to ensure all stdio data is drained', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(createBaseConfig({ prompt: 'test' }));
+			await spawner.spawn(createBaseConfig({ prompt: 'test' }));
 
 			// Verify 'close' is registered (ensures all stdout/stderr data is consumed
 			// before exit handler runs — fixes data loss for short-lived processes)
@@ -529,10 +529,10 @@ describe('ChildProcessSpawner', () => {
 			expect(eventNames).not.toContain('exit');
 		});
 
-		it('should listen for "error" events on the child process', () => {
+		it('should listen for "error" events on the child process', async () => {
 			const { spawner } = createTestContext();
 
-			spawner.spawn(createBaseConfig({ prompt: 'test' }));
+			await spawner.spawn(createBaseConfig({ prompt: 'test' }));
 
 			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
 			const eventNames = onCalls.map(([event]) => event);
@@ -541,16 +541,16 @@ describe('ChildProcessSpawner', () => {
 	});
 
 	describe('image handling with non-stream-json agents', () => {
-		it('should use file-based image args for agents without stream-json support', () => {
+		it('should use file-based image args for agents without stream-json support', async () => {
 			// Override capabilities for this test
 			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
 				supportsStreamJsonInput: false,
 			} as any);
-			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+			vi.mocked(saveImageToTempFile).mockResolvedValueOnce('/tmp/maestro-image-0.png');
 
 			const { spawner } = createTestContext();
 
-			spawner.spawn(
+			await spawner.spawn(
 				createBaseConfig({
 					toolType: 'codex',
 					command: 'codex',

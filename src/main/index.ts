@@ -284,7 +284,7 @@ app.whenReady().then(async () => {
 	});
 
 	// Check for WSL + Windows mount issues early
-	checkWslEnvironment(process.cwd());
+	await checkWslEnvironment(process.cwd());
 
 	// Initialize core services
 	logger.info('Initializing core services', 'Startup');
@@ -333,7 +333,7 @@ app.whenReady().then(async () => {
 	// Initialize stats database for usage tracking
 	logger.info('Initializing stats database', 'Startup');
 	try {
-		initializeStatsDB();
+		await initializeStatsDB();
 		logger.info('Stats database initialized', 'Startup');
 	} catch (error) {
 		// Stats initialization failed - log error but continue with app startup
