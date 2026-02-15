@@ -62,6 +62,7 @@ vi.mock('lucide-react', () => ({
 	Server: () => <span data-testid="icon-server" />,
 	Music: () => <span data-testid="icon-music" />,
 	Command: () => <span data-testid="icon-command" />,
+	Users: () => <span data-testid="icon-users" />,
 }));
 
 // Mock gitService

@@ -37,6 +37,7 @@ import {
 	Music,
 	Command,
 	User,
+	Users,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type {
@@ -458,6 +459,7 @@ interface HamburgerMenuContentProps {
 	setAboutModalOpen: (open: boolean) => void;
 	setMenuOpen: (open: boolean) => void;
 	setQuickActionOpen: (open: boolean) => void;
+	setVirtuososOpen: (open: boolean) => void;
 }
 
 function HamburgerMenuContent({
@@ -478,6 +480,7 @@ function HamburgerMenuContent({
 	setAboutModalOpen,
 	setMenuOpen,
 	setQuickActionOpen,
+	setVirtuososOpen,
 }: HamburgerMenuContentProps) {
 	return (
 		<div className="p-1">
@@ -620,6 +623,23 @@ function HamburgerMenuContent({
 				>
 					{formatShortcutKeys(shortcuts.settings.keys)}
 				</span>
+			</button>
+			<button
+				onClick={() => {
+					setVirtuososOpen(true);
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Users className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Virtuosos
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						AI Account Providers
+					</div>
+				</div>
 			</button>
 			<button
 				onClick={() => {
@@ -1097,6 +1117,7 @@ interface SessionListProps {
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen: (open: boolean) => void;
 	setQuickActionOpen: (open: boolean) => void;
+	setVirtuososOpen: (open: boolean) => void;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
 	handleDragOver: (e: React.DragEvent) => void;
@@ -1221,6 +1242,7 @@ function SessionListInner(props: SessionListProps) {
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
 		setQuickActionOpen,
+		setVirtuososOpen,
 		toggleGroup,
 		handleDragStart,
 		handleDragOver,
@@ -2515,6 +2537,7 @@ function SessionListInner(props: SessionListProps) {
 										setAboutModalOpen={setAboutModalOpen}
 										setMenuOpen={setMenuOpen}
 										setQuickActionOpen={setQuickActionOpen}
+										setVirtuososOpen={setVirtuososOpen}
 									/>
 								</div>
 							)}
@@ -2557,6 +2580,7 @@ function SessionListInner(props: SessionListProps) {
 									setAboutModalOpen={setAboutModalOpen}
 									setMenuOpen={setMenuOpen}
 									setQuickActionOpen={setQuickActionOpen}
+									setVirtuososOpen={setVirtuososOpen}
 								/>
 							</div>
 						)}

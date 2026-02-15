@@ -134,7 +134,7 @@ const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
-	{ value: 'accounts', label: 'Accounts' },
+	{ value: 'accounts', label: 'Virtuosos' },
 ];
 
 export function UsageDashboardModal({

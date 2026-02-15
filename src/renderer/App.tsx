@@ -45,6 +45,7 @@ import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
 import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
 import { AccountSwitchModal } from './components/AccountSwitchModal';
+import { VirtuososModal } from './components/VirtuososModal';
 
 // Lazy-loaded components for performance (rarely-used heavy modals)
 // These are loaded on-demand when the user first opens them
@@ -408,6 +409,9 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Virtuosos Modal
+		virtuososOpen,
+		setVirtuososOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -2187,8 +2191,8 @@ function MaestroConsoleInner() {
 		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
 			addToastRef.current({
 				type: 'warning',
-				title: 'Account Limit Warning',
-				message: `Account ${data.accountName} is at ${Math.round(data.usagePercent)}% of its token limit`,
+				title: 'Virtuoso Limit Warning',
+				message: `Virtuoso ${data.accountName} is at ${Math.round(data.usagePercent)}% of its token limit`,
 				duration: 10_000,
 			});
 		});
@@ -2196,8 +2200,8 @@ function MaestroConsoleInner() {
 		const unsubReached = window.maestro.accounts.onLimitReached((data) => {
 			addToastRef.current({
 				type: 'error',
-				title: 'Account Limit Reached',
-				message: `Account ${data.accountName} has reached its token limit (${Math.round(data.usagePercent)}%)`,
+				title: 'Virtuoso Limit Reached',
+				message: `Virtuoso ${data.accountName} has reached its token limit (${Math.round(data.usagePercent)}%)`,
 				duration: 0, // Do NOT auto-dismiss
 			});
 		});
@@ -2213,10 +2217,10 @@ function MaestroConsoleInner() {
 		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
 			addToastRef.current({
 				type: 'success',
-				title: 'Account Recovered',
+				title: 'Virtuoso Recovered',
 				message: data.recoveredCount === 1
-					? 'Account is available again'
-					: `${data.recoveredCount} accounts are available again`,
+					? 'Virtuoso is available again'
+					: `${data.recoveredCount} virtuosos are available again`,
 				duration: 8_000,
 			});
 
@@ -2232,7 +2236,7 @@ function MaestroConsoleInner() {
 					batchState.error.type === 'rate_limited' ||
 					(batchState.error.message?.includes('rate') ?? false) ||
 					(batchState.error.message?.includes('throttle') ?? false) ||
-					(batchState.error.message?.includes('All accounts') ?? false);
+					(batchState.error.message?.includes('All virtuosos') ?? false);
 
 				if (isRateLimitPause) {
 					const recoveredForThis = data.recoveredAccountIds.includes(session.accountId || '');
@@ -2242,7 +2246,7 @@ function MaestroConsoleInner() {
 						addToastRef.current({
 							type: 'info',
 							title: 'Auto Run Resuming',
-							message: 'Resuming after account recovery',
+							message: 'Resuming after virtuoso recovery',
 							duration: 5_000,
 						});
 					}
@@ -2270,13 +2274,13 @@ function MaestroConsoleInner() {
 				sessionId,
 				{
 					type: 'rate_limited',
-					message: 'All accounts have been rate-limited. Waiting for automatic recovery...',
+					message: 'All virtuosos have been rate-limited. Waiting for automatic recovery...',
 					recoverable: true,
 					agentId: (data.agentId as string) || 'claude-code',
 					timestamp: Date.now(),
 				},
 				batchState.currentDocumentIndex,
-				'Waiting for account recovery'
+				'Waiting for virtuoso recovery'
 			);
 		});
 
@@ -11800,6 +11804,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setDuplicatingSessionId,
 		setGroupChatsExpanded,
 		setQuickActionOpen,
+		setVirtuososOpen,
 
 		// Handlers
 		toggleGlobalLive,
@@ -12758,11 +12763,17 @@ You are taking over this conversation. Based on the context above, provide a bri
 						}}
 						onViewDashboard={() => {
 							setSwitchPromptData(null);
-							setSettingsModalOpen(true);
-							setSettingsTab('accounts');
+							setVirtuososOpen(true);
 						}}
 					/>
 				)}
+
+				{/* Virtuosos Modal */}
+				<VirtuososModal
+					isOpen={virtuososOpen}
+					onClose={() => setVirtuososOpen(false)}
+					theme={theme}
+				/>
 
 				{/* --- EMPTY STATE VIEW (when no sessions) --- */}
 				{sessions.length === 0 && !isMobileLandscape ? (

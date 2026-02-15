@@ -232,7 +232,7 @@ describe('UsageDashboardModal', () => {
 				expect(tabs[1]).toHaveTextContent('Agents');
 				expect(tabs[2]).toHaveTextContent('Activity');
 				expect(tabs[3]).toHaveTextContent('Auto Run');
-				expect(tabs[4]).toHaveTextContent('Accounts');
+				expect(tabs[4]).toHaveTextContent('Virtuosos');
 			});
 		});
 
@@ -1623,12 +1623,12 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Press ArrowLeft while on first tab - should wrap to last tab (Accounts)
+			// Press ArrowLeft while on first tab - should wrap to last tab (Virtuosos)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' });
 
 			await waitFor(() => {
 				const tabs = screen.getAllByRole('tab');
-				expect(tabs[4]).toHaveAttribute('aria-selected', 'true'); // Accounts tab
+				expect(tabs[4]).toHaveAttribute('aria-selected', 'true'); // Virtuosos tab
 				expect(tabs[0]).toHaveAttribute('aria-selected', 'false');
 			});
 		});
@@ -1642,7 +1642,7 @@ describe('UsageDashboardModal', () => {
 
 			const tablist = screen.getByTestId('view-mode-tabs');
 
-			// Navigate to last tab (Accounts)
+			// Navigate to last tab (Virtuosos)
 			fireEvent.keyDown(tablist, { key: 'ArrowLeft' }); // Wraps to last
 
 			await waitFor(() => {

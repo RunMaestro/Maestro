@@ -181,14 +181,12 @@ export const SessionItem = memo(function SessionItem({
 							<span
 								className="text-[9px] px-1 py-0.5 rounded font-bold"
 								style={{
-									backgroundColor: theme.colors.accentDim
-										? theme.colors.accentDim + '30'
-										: theme.colors.accent + '15',
-									color: theme.colors.accentDim || theme.colors.accent,
+									backgroundColor: `${theme.colors.accent}25`,
+									color: theme.colors.accentText || theme.colors.accent,
 								}}
-								title={`Account: ${session.accountName}`}
+								title={`Virtuoso: ${session.accountName}`}
 							>
-								{session.accountName.split('@')[0]?.slice(0, 3)?.toUpperCase() || 'ACC'}
+								{session.accountName.split('@')[0]?.slice(0, 10)?.toUpperCase() || 'ACC'}
 							</span>
 						)}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}

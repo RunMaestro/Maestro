@@ -212,7 +212,9 @@ export type ModalId =
 	// Platform Warnings
 	| 'windowsWarning'
 	// Director's Notes
-	| 'directorNotes';
+	| 'directorNotes'
+	// Virtuosos (Account Management)
+	| 'virtuosos';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -731,6 +733,10 @@ export function getModalActions() {
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
 
+		// Virtuosos Modal
+		setVirtuososOpen: (open: boolean) =>
+			open ? openModal('virtuosos') : closeModal('virtuosos'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -818,6 +824,7 @@ export function useModalActions() {
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
+	const virtuososOpen = useModalStore(selectModalOpen('virtuosos'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -981,6 +988,9 @@ export function useModalActions() {
 
 		// Director's Notes Modal
 		directorNotesOpen,
+
+		// Virtuosos Modal
+		virtuososOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

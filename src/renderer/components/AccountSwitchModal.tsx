@@ -34,29 +34,29 @@ export interface AccountSwitchModalProps {
 function getReasonHeader(reason: string): string {
 	switch (reason) {
 		case 'throttled':
-			return 'Account Throttled';
+			return 'Virtuoso Throttled';
 		case 'limit-approaching':
 		case 'limit-reached':
-			return 'Account Limit Reached';
+			return 'Virtuoso Limit Reached';
 		case 'auth-expired':
 			return 'Authentication Expired';
 		default:
-			return 'Account Switch Recommended';
+			return 'Virtuoso Switch Recommended';
 	}
 }
 
 function getReasonDescription(reason: string, name: string, usagePercent?: number): string {
 	switch (reason) {
 		case 'throttled':
-			return `Account ${name} has been rate limited`;
+			return `Virtuoso ${name} has been rate limited`;
 		case 'limit-approaching':
-			return `Account ${name} is at ${usagePercent != null ? Math.round(usagePercent) : '?'}% of its token limit`;
+			return `Virtuoso ${name} is at ${usagePercent != null ? Math.round(usagePercent) : '?'}% of its token limit`;
 		case 'limit-reached':
-			return `Account ${name} has reached its token limit (${usagePercent != null ? Math.round(usagePercent) : '?'}%)`;
+			return `Virtuoso ${name} has reached its token limit (${usagePercent != null ? Math.round(usagePercent) : '?'}%)`;
 		case 'auth-expired':
-			return `Account ${name} authentication has expired`;
+			return `Virtuoso ${name} authentication has expired`;
 		default:
-			return `Account ${name} needs to be switched`;
+			return `Virtuoso ${name} needs to be switched`;
 	}
 }
 
@@ -103,10 +103,10 @@ export function AccountSwitchModal({
 						onClick={onViewDashboard}
 						className="flex items-center gap-1.5 px-3 py-2 rounded text-xs transition-colors hover:bg-white/5"
 						style={{ color: theme.colors.textDim }}
-						title="View All Accounts"
+						title="View All Virtuosos"
 					>
 						<BarChart3 className="w-3.5 h-3.5" />
-						View All Accounts
+						View All Virtuosos
 					</button>
 					<div className="flex-1" />
 					<button
@@ -143,7 +143,7 @@ export function AccountSwitchModal({
 							color: theme.colors.accentForeground,
 						}}
 					>
-						Switch Account
+						Switch Virtuoso
 					</button>
 				</div>
 			}
@@ -154,7 +154,7 @@ export function AccountSwitchModal({
 					{getReasonDescription(reason, fromAccountName, usagePercent)}
 				</p>
 
-				{/* Current account */}
+				{/* Current virtuoso */}
 				<div
 					className="flex items-center gap-3 p-3 rounded-lg border"
 					style={{
@@ -171,7 +171,7 @@ export function AccountSwitchModal({
 							{fromAccountName}
 						</div>
 						<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
-							Current account
+							Current virtuoso
 							{usagePercent != null && ` \u00B7 ${Math.round(usagePercent)}% used`}
 						</div>
 					</div>
