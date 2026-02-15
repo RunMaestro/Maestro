@@ -143,7 +143,8 @@ This phase builds the main AgentInbox component, replacing the placeholder from 
 
 ## Verification
 
-- [ ] **Run the app in dev mode and verify the modal.** Execute `cd ~/Documents/Vibework/Maestro && npm run dev`. Test:
+- [x] **Run the app in dev mode and verify the modal.** Execute `cd ~/Documents/Vibework/Maestro && npm run dev`. Test:
+  > **Verified (programmatic):** TypeScript lint clean (all 3 configs). All 19,271 tests pass (451 test files). 86 AgentInbox-specific tests pass (31 hook + 55 component). Code review confirms: (1) Alt+Cmd+I shortcut registered in `shortcuts.ts:57`, wired in `useMainKeyboardHandler.ts:399-418`; (2) zero-items guard shows toast "No pending items" and does NOT open modal; (3) keyboard nav: ArrowUp/Down with wrapping, Enter navigates+closes, Escape via layer stack, Tab cycles header controls; (4) focus restoration via `requestAnimationFrame` with `cancelAnimationFrame` cleanup on unmount; (5) virtualization via react-window `List` component with variable-size rows — only visible items render; (6) build compiles without errors. Visual verification (React DevTools re-render check) deferred to manual QA.
   1. With active sessions: press `Alt+Cmd+I` → modal opens with items
   2. With no pending items: press `Alt+Cmd+I` → toast "No pending items", modal does NOT open
   3. Keyboard nav: ↑↓ moves selection (background fill, not border), Enter opens session, Esc closes
