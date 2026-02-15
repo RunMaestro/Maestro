@@ -956,6 +956,19 @@ function MaestroConsoleInner() {
 		};
 	}, []);
 
+	// Subscribe to account assignment events (update session state when main process assigns an account)
+	useEffect(() => {
+		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
+			setSessions((prev) =>
+				prev.map(s => {
+					if (!data.sessionId.startsWith(s.id)) return s;
+					return { ...s, accountId: data.accountId, accountName: data.accountName };
+				})
+			);
+		});
+		return () => unsubAssigned();
+	}, []);
+
 	// Subscribe to account switch events (respawn agent with new account after switch)
 	useEffect(() => {
 		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {

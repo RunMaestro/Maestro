@@ -197,6 +197,7 @@ import {
 	setGetAgentConfigCallback,
 	setGetModeratorSettingsCallback,
 	setSshStore,
+	setAccountRegistry as setGroupChatAccountRegistry,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
 	spawnModeratorSynthesis,
@@ -3151,6 +3152,7 @@ function setupIpcHandlers() {
 				};
 			});
 		},
+		getAccountRegistry: () => accountRegistry,
 	});
 
 	// Persistence operations - extracted to src/main/ipc/handlers/persistence.ts
@@ -3403,6 +3405,11 @@ function setupIpcHandlers() {
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
+
+	// Set up account registry for group chat account multiplexing
+	if (accountRegistry) {
+		setGroupChatAccountRegistry(accountRegistry);
+	}
 
 	// Set up callback for group chat to get custom shell path (for Windows PowerShell preference)
 	// This is used by both group-chat-router.ts and group-chat-agent.ts via the shared config module

@@ -233,6 +233,18 @@ export function createAccountsApi() {
 			return () => ipcRenderer.removeListener('account:status-changed', wrappedHandler);
 		},
 
+		/**
+		 * Subscribe to account assignment events (when a session is assigned an account during spawn)
+		 * @param handler - Callback with assignment data
+		 * @returns Cleanup function to unsubscribe
+		 */
+		onAssigned: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: { sessionId: string; accountId: string; accountName: string }) =>
+				handler(data);
+			ipcRenderer.on('account:assigned', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:assigned', wrappedHandler);
+		},
+
 		// --- Session Cleanup ---
 
 		/** Clean up account data when a session is closed */

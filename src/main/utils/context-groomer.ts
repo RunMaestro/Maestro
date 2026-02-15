@@ -17,6 +17,8 @@ import { logger } from './logger';
 import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
 import { isWindows } from '../../shared/platformDetection';
 import type { AgentDetector } from '../agents';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -148,6 +150,10 @@ export interface GroomContextOptions {
 	agentConfigValues?: Record<string, any>;
 	/** Optional callback for progress updates during grooming */
 	onProgress?: (update: GroomProgressUpdate) => void;
+	/** Account registry for multiplexing (optional) */
+	accountRegistry?: AccountRegistry;
+	/** Account ID to inherit from parent session (optional) */
+	accountId?: string;
 }
 
 /**
@@ -191,6 +197,8 @@ export async function groomContext(
 		sessionCustomEnvVars,
 		agentConfigValues,
 		onProgress,
+		accountRegistry: optAccountRegistry,
+		accountId: optAccountId,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -372,6 +380,22 @@ export async function groomContext(
 		// SSH sessions have their own stdin handling (ssh-spawn-wrapper), so skip.
 		const useStdinForPrompt = isWindows() && !sessionSshRemoteConfig?.enabled;
 
+		// Inject CLAUDE_CONFIG_DIR for account multiplexing (grooming inherits parent account)
+		let effectiveEnvVars = resolvedEnvVars;
+		if (optAccountRegistry) {
+			const envToInject: Record<string, string> = effectiveEnvVars ? { ...effectiveEnvVars } : {};
+			const assignedId = injectAccountEnv(
+				groomerSessionId,
+				agentType,
+				envToInject,
+				optAccountRegistry,
+				optAccountId
+			);
+			if (assignedId) {
+				effectiveEnvVars = envToInject;
+			}
+		}
+
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
@@ -385,8 +409,9 @@ export async function groomContext(
 			sendPromptViaStdinRaw: useStdinForPrompt,
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
-			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
-			customEnvVars: resolvedEnvVars,
+			// Pass resolved env vars (merged from agent defaults + agent config +
+			// session overrides + account multiplexing CLAUDE_CONFIG_DIR)
+			customEnvVars: effectiveEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

@@ -8,6 +8,8 @@ import { AgentDetector } from '../../agents';
 import type { InteractiveReplayController } from '../../agents/claude-interactive-replay';
 import type { ProcessConfig as ProcessSpawnConfig } from '../../process-manager/types';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountRegistry } from '../../accounts/account-registry';
+import { injectAccountEnv } from '../../accounts/account-env-injector';
 import { logger } from '../../utils/logger';
 import { getChildProcesses } from '../../process-manager/utils/childProcessInfo';
 import { addBreadcrumb } from '../../utils/sentry';
@@ -85,6 +87,7 @@ export interface ProcessHandlerDependencies {
 	 */
 	interactiveReplayController?: InteractiveReplayController<ProcessSpawnConfig>;
 	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountRegistry?: () => AccountRegistry | null;
 }
 
 /**
@@ -108,6 +111,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		getMainWindow,
 		safeSend,
 		getAccountSwitcher,
+		getAccountRegistry,
 	} = deps;
 
 	// Wire the Claude Code permission relay: surface requests to the renderer
@@ -136,6 +140,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				safeSend,
 				sessionsStore: deps.sessionsStore,
 				interactiveReplayController: deps.interactiveReplayController,
+				getAccountRegistry,
 			})
 		)
 	);

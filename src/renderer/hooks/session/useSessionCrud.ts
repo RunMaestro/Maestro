@@ -309,6 +309,22 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 						agentId === 'claude-code' ? { mode: 'api', modeReason: 'auto' } : undefined,
 				};
 
+				// Pre-assign account for Claude Code sessions if accounts are configured
+				if (newSession.toolType === 'claude-code') {
+					try {
+						const defaultAccount = (await window.maestro.accounts.getDefault()) as {
+							id: string;
+							name: string;
+						} | null;
+						if (defaultAccount) {
+							newSession.accountId = defaultAccount.id;
+							newSession.accountName = defaultAccount.name;
+						}
+					} catch {
+						// Accounts not configured or unavailable — proceed without assignment
+					}
+				}
+
 				setSessions((prev) => [...prev, newSession]);
 				setActiveSessionId(newId);
 				// Claim the agent for THIS window before any process spawns, so a

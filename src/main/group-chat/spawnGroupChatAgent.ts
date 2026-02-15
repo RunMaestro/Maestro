@@ -23,6 +23,8 @@ import {
 	buildRemoteInteractiveSpawn,
 } from '../agents/resolveClaudeSpawnMode';
 import type { ClaudeTokenMode } from '../../shared/claudeTokenMode';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 export interface SpawnGroupChatAgentConfig {
 	/** Stable session id for the process manager */
@@ -71,6 +73,10 @@ export interface SpawnGroupChatAgentConfig {
 	 * full 10 minutes. Same contract Cue follows. Ignored on the API path.
 	 */
 	maxWaitSeconds?: number;
+	/** Account registry for account multiplexing (optional) */
+	accountRegistry?: AccountRegistry | null;
+	/** Group-level account ID to use for this spawn (optional) */
+	accountId?: string;
 }
 
 export interface SpawnGroupChatAgentResult {
@@ -100,7 +106,6 @@ export async function spawnGroupChatAgent(
 		args,
 		cwd,
 		prompt,
-		customEnvVars,
 		agentConfigValues,
 		sshRemoteConfig,
 		sshStore,
@@ -110,6 +115,24 @@ export async function spawnGroupChatAgent(
 	} = config;
 
 	const baseCommand = config.command ?? agent.path ?? agent.command;
+
+	// Inject CLAUDE_CONFIG_DIR for account multiplexing. Runs before the token
+	// mode resolver and SSH wrapping so the env var flows through every path
+	// (local, maestro-p interactive, and remote spawns).
+	let customEnvVars = config.customEnvVars;
+	if (config.accountRegistry) {
+		const envToInject: Record<string, string> = customEnvVars ? { ...customEnvVars } : {};
+		const assignedId = injectAccountEnv(
+			sessionId,
+			agentId,
+			envToInject,
+			config.accountRegistry,
+			config.accountId
+		);
+		if (assignedId) {
+			customEnvVars = envToInject;
+		}
+	}
 
 	let spawnCommand = baseCommand;
 	let spawnArgs = args;
