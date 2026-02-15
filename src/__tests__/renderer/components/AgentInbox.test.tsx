@@ -1390,8 +1390,8 @@ describe('AgentInbox', () => {
 				/>
 			);
 			const option = screen.getByRole('option');
-			// height = ITEM_HEIGHT (80) - 12 = 68px
-			expect(option.style.height).toBe('68px');
+			// height = ITEM_HEIGHT (100) - 12 = 88px
+			expect(option.style.height).toBe('88px');
 			expect(option.style.borderRadius).toBe('8px');
 		});
 
@@ -1716,6 +1716,28 @@ describe('AgentInbox', () => {
 			const fill = bar.firstElementChild as HTMLElement;
 			// #ff8800 → rgb(255, 136, 0) — proves it reads from theme, not hardcoded
 			expect(fill.style.backgroundColor).toBe('rgb(255, 136, 0)');
+		});
+
+		it('renders divider between inbox items', () => {
+			const sessions = [
+				createInboxSession('s1', 't1'),
+				createInboxSession('s2', 't2'),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const options = screen.getAllByRole('option');
+			// First item's row wrapper should have a borderBottom divider
+			const firstRowWrapper = options[0].parentElement!;
+			expect(firstRowWrapper.style.borderBottom).toContain('1px solid');
+			// Last item's row wrapper should NOT have a borderBottom divider
+			const lastRowWrapper = options[1].parentElement!;
+			expect(lastRowWrapper.style.borderBottom).toBe('');
 		});
 
 		it('selected card has tabIndex=0, non-selected has tabIndex=-1', () => {

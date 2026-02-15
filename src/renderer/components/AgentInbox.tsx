@@ -17,7 +17,7 @@ interface AgentInboxProps {
 	onNavigateToSession?: (sessionId: string, tabId?: string) => void;
 }
 
-const ITEM_HEIGHT = 80;
+const ITEM_HEIGHT = 100;
 const GROUP_HEADER_HEIGHT = 36;
 const MODAL_HEADER_HEIGHT = 48;
 const MODAL_FOOTER_HEIGHT = 36;
@@ -126,7 +126,7 @@ function InboxItemCardContent({
 			}}
 		>
 			{/* Card content */}
-			<div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flex: 1 }}>
+			<div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, flex: 1 }}>
 				{/* Row 1: group / session name + timestamp */}
 				<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
 					{item.groupName && (
@@ -335,12 +335,15 @@ function InboxRow({
 					color: theme.colors.textDim,
 					letterSpacing: '0.5px',
 					textTransform: 'uppercase',
+					borderBottom: `1px solid ${theme.colors.border}60`,
 				}}
 			>
 				{row.groupName}
 			</div>
 		);
 	}
+
+	const isLastRow = index === rows.length - 1;
 
 	return (
 		<div
@@ -350,6 +353,7 @@ function InboxRow({
 				paddingRight: 16,
 				paddingTop: 6,
 				paddingBottom: 6,
+				borderBottom: isLastRow ? undefined : `1px solid ${theme.colors.border}40`,
 			}}
 		>
 			<InboxItemCardContent

@@ -84,7 +84,7 @@ The Agent Inbox is a modal (`AgentInbox.tsx`) displaying a virtualized list of s
 
     **Verify:** `npm run test -- --testPathPattern="AgentInbox|useAgentInbox" --no-coverage` — all tests pass.
 
-- [ ] **TASK 2 — Increase card row height to prevent text clipping + add dividers.** In `src/renderer/components/AgentInbox.tsx`:
+- [x] **TASK 2 — Increase card row height to prevent text clipping + add dividers.** In `src/renderer/components/AgentInbox.tsx`:
 
     1. Change `ITEM_HEIGHT` from `80` to `100` (line 20). This gives 88px visible area (100 - 12 row padding), solving the confirmed 62px-in-52px clipping.
     2. Increase inner padding gap from `gap: 4` (line 129) to `gap: 6` for breathing room between rows.
