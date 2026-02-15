@@ -99,7 +99,8 @@ export interface SessionLifecycleReturn {
 		maestroPPath?: string,
 		maestroPMode?: 'interactive' | 'dynamic',
 		retryOnAvailabilityErrors?: boolean,
-		retryOnTokenExhaustion?: boolean
+		retryOnTokenExhaustion?: boolean,
+		accountId?: string
 	) => void;
 	/** Rename the currently-selected tab (persists to agent session storage + history) */
 	handleRenameTab: (newName: string) => void;
@@ -170,7 +171,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			maestroPPath?: string,
 			maestroPMode?: 'interactive' | 'dynamic',
 			retryOnAvailabilityErrors?: boolean,
-			retryOnTokenExhaustion?: boolean
+			retryOnTokenExhaustion?: boolean,
+			accountId?: string
 		) => {
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
@@ -194,6 +196,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						// cleared on a provider switch below (unlike maestroP fields).
 						retryOnAvailabilityErrors,
 						retryOnTokenExhaustion,
+						...(accountId !== undefined ? { accountId } : {}),
 					};
 
 					// If provider changed, reset tabs and provider-specific config
@@ -247,6 +250,46 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 					return { ...s, ...updatedFields };
 				})
 			);
+
+			// Handle account change: resolve name immediately, then trigger switch/assign
+			if (accountId) {
+				const currentSession = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === sessionId);
+				const fromAccountId = currentSession?.accountId;
+
+				// Resolve account name and update session right away
+				window.maestro.accounts
+					.list()
+					.then((accounts) => {
+						const account = accounts.find((a) => a.id === accountId);
+						if (account) {
+							useSessionStore.getState().setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== sessionId) return s;
+									return { ...s, accountId, accountName: account.name };
+								})
+							);
+						}
+					})
+					.catch(() => {});
+
+				if (fromAccountId && fromAccountId !== accountId) {
+					// Full switch: kills running process, reassigns, respawns with new CLAUDE_CONFIG_DIR
+					window.maestro.accounts
+						.executeSwitch({
+							sessionId,
+							fromAccountId,
+							toAccountId: accountId,
+							reason: 'manual',
+							automatic: false,
+						})
+						.catch((err) => captureException(err, { operation: 'accounts:executeSwitch' }));
+				} else {
+					// First assignment or same account — just update registry
+					window.maestro.accounts.assign(sessionId, accountId).catch(() => {});
+				}
+			}
 		},
 		[]
 	);

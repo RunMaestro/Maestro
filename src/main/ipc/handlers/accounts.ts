@@ -14,6 +14,7 @@ import { ipcMain } from 'electron';
 import type { AccountRegistry } from '../../accounts/account-registry';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
 import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
+import type { AccountRecoveryPoller } from '../../accounts/account-recovery-poller';
 import type { AccountSwitchConfig, AccountSwitchEvent } from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
@@ -39,13 +40,14 @@ export interface AccountHandlerDependencies {
 	getAccountRegistry: () => AccountRegistry | null;
 	getAccountSwitcher?: () => AccountSwitcher | null;
 	getAccountAuthRecovery?: () => AccountAuthRecovery | null;
+	getRecoveryPoller?: () => AccountRecoveryPoller | null;
 }
 
 /**
  * Register all account multiplexing IPC handlers.
  */
 export function registerAccountHandlers(deps: AccountHandlerDependencies): void {
-	const { getAccountRegistry, getAccountSwitcher, getAccountAuthRecovery } = deps;
+	const { getAccountRegistry, getAccountSwitcher, getAccountAuthRecovery, getRecoveryPoller } = deps;
 
 	/** Get the account registry or throw if not initialized */
 	function requireRegistry(): AccountRegistry {
@@ -472,6 +474,20 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		} catch (error) {
 			logger.error('trigger auth recovery error', LOG_CONTEXT, { error: String(error) });
 			return { success: false, error: String(error) };
+		}
+	});
+
+	// --- Recovery Poller ---
+
+	ipcMain.handle('accounts:check-recovery', async () => {
+		try {
+			const poller = getRecoveryPoller?.();
+			if (!poller) return { recovered: [] };
+			const recovered = poller.poll();
+			return { recovered };
+		} catch (error) {
+			logger.error('check recovery error', LOG_CONTEXT, { error: String(error) });
+			return { recovered: [] };
 		}
 	});
 }

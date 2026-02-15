@@ -187,6 +187,8 @@ import { initializeStatsDB, closeStatsDB, getStatsDB, wireMultiWindowTelemetry }
 import { AccountRegistry } from './accounts/account-registry';
 import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { AccountThrottleHandler } from './accounts/account-throttle-handler';
+import { AccountAuthRecovery } from './accounts/account-auth-recovery';
+import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
 import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -510,6 +512,8 @@ let interactiveReplayController: InteractiveReplayController<ProcessSpawnConfig>
 let accountRegistry: AccountRegistry | null = null;
 let accountThrottleHandler: AccountThrottleHandler | null = null;
 let accountThrottleHandler: AccountThrottleHandler | null = null;
+let accountAuthRecovery: AccountAuthRecovery | null = null;
+let accountRecoveryPoller: AccountRecoveryPoller | null = null;
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2701,6 +2705,37 @@ app
 			logger.warn('Continuing without account multiplexing', 'Startup');
 		}
 
+		// Initialize auth recovery for automatic re-login on expired tokens
+		if (accountRegistry && processManager && agentDetector) {
+			try {
+				accountAuthRecovery = new AccountAuthRecovery(
+					processManager,
+					accountRegistry,
+					agentDetector,
+					safeSend
+				);
+				logger.info('Account auth recovery initialized', 'Startup');
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize auth recovery: ${error}`, 'Startup');
+			}
+		}
+
+		// Initialize recovery poller for timer-based throttle recovery
+		if (accountRegistry) {
+			try {
+				accountRecoveryPoller = new AccountRecoveryPoller({
+					accountRegistry,
+					safeSend,
+				});
+				accountRecoveryPoller.start();
+				logger.info('Account recovery poller started', 'Startup');
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize recovery poller: ${error}`, 'Startup');
+			}
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers();
@@ -3035,6 +3070,11 @@ quitHandler = createQuitHandler({
 });
 quitHandler.setup();
 
+// Stop recovery poller on quit (must run before the quit handler's cleanup)
+app.on('before-quit', () => {
+	accountRecoveryPoller?.stop();
+});
+
 // startCliActivityWatcher is now handled by cliWatcher (Phase 4 refactoring)
 
 function setupIpcHandlers() {
@@ -3131,6 +3171,7 @@ function setupIpcHandlers() {
 		agentConfigsStore,
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
+		getAccountAuthRecovery: () => accountAuthRecovery,
 		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
@@ -3350,6 +3391,8 @@ function setupIpcHandlers() {
 	// Register Account Multiplexing handlers (CRUD, assignments, usage queries)
 	registerAccountHandlers({
 		getAccountRegistry: () => accountRegistry,
+		getAccountAuthRecovery: () => accountAuthRecovery,
+		getRecoveryPoller: () => accountRecoveryPoller,
 	});
 
 	// Register Document Graph handlers for file watching
@@ -3526,6 +3569,7 @@ function setupProcessListeners() {
 			getStatsDB,
 			getAccountRegistry: () => accountRegistry,
 			getThrottleHandler: () => accountThrottleHandler,
+			getAuthRecovery: () => accountAuthRecovery,
 			debugLog,
 			patterns: {
 				REGEX_MODERATOR_SESSION,

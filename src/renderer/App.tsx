@@ -901,6 +901,9 @@ function MaestroConsoleInner() {
 	>(null);
 	// Ref for handleResumeSession - bridges ordering gap between useModalHandlers and useAgentSessionManagement
 	const handleResumeSessionRef = useRef<((agentSessionId: string) => void) | null>(null);
+	// Ref for resumeAfterError - populated after useBatchHandlers so the account
+	// recovery listener (declared earlier) can auto-resume paused Auto Runs.
+	const resumeAfterErrorRef = useRef<((sessionId: string) => void) | null>(null);
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
@@ -954,6 +957,81 @@ function MaestroConsoleInner() {
 			unsubWarning();
 			unsubReached();
 		};
+	}, []);
+
+	// Subscribe to account recovery events for auto-resume of paused Auto Runs
+	useEffect(() => {
+		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
+			addToastRef.current({
+				type: 'success',
+				title: 'Account Recovered',
+				message: data.recoveredCount === 1
+					? 'Account is available again'
+					: `${data.recoveredCount} accounts are available again`,
+				duration: 8_000,
+			});
+
+			// Auto-resume any Auto Runs that are paused due to rate limiting
+			const currentSessions = sessionsRef.current;
+			for (const session of currentSessions) {
+				const batchState = getBatchStateRef.current?.(session.id);
+				if (!batchState?.isRunning || batchState.processingState !== 'PAUSED_ERROR') continue;
+				if (!batchState.error) continue;
+
+				// Check if the pause was due to rate limiting
+				const isRateLimitPause =
+					batchState.error.type === 'rate_limited' ||
+					(batchState.error.message?.includes('rate') ?? false) ||
+					(batchState.error.message?.includes('throttle') ?? false) ||
+					(batchState.error.message?.includes('All accounts') ?? false);
+
+				if (isRateLimitPause) {
+					const recoveredForThis = data.recoveredAccountIds.includes(session.accountId || '');
+					if (recoveredForThis || data.recoveredAccountIds.length > 0) {
+						resumeAfterErrorRef.current?.(session.id);
+
+						addToastRef.current({
+							type: 'info',
+							title: 'Auto Run Resuming',
+							message: 'Resuming after account recovery',
+							duration: 5_000,
+						});
+					}
+				}
+			}
+		});
+
+		return () => unsubRecovery();
+	}, []);
+
+	// Subscribe to all-accounts-exhausted throttle events for Auto Run pause
+	useEffect(() => {
+		const unsubThrottled = window.maestro.accounts.onThrottled((data) => {
+			if (!data.noAlternatives) return; // Only handle the exhausted case
+
+			const sessionId = data.sessionId as string;
+			if (!sessionId) return;
+
+			// Check if this session has an active Auto Run
+			const batchState = getBatchStateRef.current?.(sessionId);
+			if (!batchState?.isRunning || batchState.errorPaused) return;
+
+			// Pause the batch with a specific rate_limited error so recovery can auto-resolve it
+			pauseBatchOnErrorRef.current?.(
+				sessionId,
+				{
+					type: 'rate_limited',
+					message: 'All accounts have been rate-limited. Waiting for automatic recovery...',
+					recoverable: true,
+					agentId: (data.agentId as string) || 'claude-code',
+					timestamp: Date.now(),
+				},
+				batchState.currentDocumentIndex,
+				'Waiting for account recovery'
+			);
+		});
+
+		return () => unsubThrottled();
 	}, []);
 
 	// Subscribe to account assignment events (update session state when main process assigns an account)
@@ -1782,6 +1860,9 @@ function MaestroConsoleInner() {
 		processQueuedItemRef,
 		handleClearAgentError,
 	});
+	// Keep the account-recovery listener's resume hook current (declared above
+	// the hook because the listener effect is registered earlier in the file).
+	resumeAfterErrorRef.current = resumeAutoRunAfterError;
 
 	// Agent Resilience: give the retry engine a way to resume a parked Auto Run
 	// batch so batch turns can auto-continue after transient upstream/quota errors.
