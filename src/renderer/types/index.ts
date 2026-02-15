@@ -3,6 +3,9 @@
 // Re-export context merge types
 export * from './contextMerge';
 
+// Re-export agent inbox types
+export * from './agent-inbox';
+
 // Re-export theme types from shared location
 export type { Theme, ThemeId, ThemeMode, ThemeColors } from '../../shared/theme-types';
 export { isValidThemeId } from '../../shared/theme-types';
