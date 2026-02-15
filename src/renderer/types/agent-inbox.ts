@@ -18,8 +18,8 @@ export interface InboxItem {
 /** UI labels: "Newest", "Oldest", "Grouped" */
 export type InboxSortMode = 'newest' | 'oldest' | 'grouped'
 
-/** UI labels: "All", "Needs Input", "Ready" */
-export type InboxFilterMode = 'all' | 'needs_input' | 'ready'
+/** UI labels: "All", "Unread", "Read" */
+export type InboxFilterMode = 'all' | 'unread' | 'read'
 
 /** Human-readable status badges */
 export const STATUS_LABELS: Record<SessionState, string> = {

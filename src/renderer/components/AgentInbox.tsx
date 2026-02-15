@@ -27,8 +27,8 @@ const MODAL_FOOTER_HEIGHT = 36;
 // ============================================================================
 const EMPTY_STATE_MESSAGES: Record<InboxFilterMode, { text: string; showIcon: boolean }> = {
 	all: { text: 'All caught up — no sessions need attention.', showIcon: true },
-	needs_input: { text: 'No sessions waiting for input.', showIcon: false },
-	ready: { text: 'No idle sessions with unread messages.', showIcon: false },
+	unread: { text: 'No unread sessions.', showIcon: false },
+	read: { text: 'No read sessions with activity.', showIcon: false },
 };
 
 // ============================================================================
@@ -373,8 +373,8 @@ const SORT_OPTIONS: { value: InboxSortMode; label: string }[] = [
 
 const FILTER_OPTIONS: { value: InboxFilterMode; label: string }[] = [
 	{ value: 'all', label: 'All' },
-	{ value: 'needs_input', label: 'Needs Input' },
-	{ value: 'ready', label: 'Ready' },
+	{ value: 'unread', label: 'Unread' },
+	{ value: 'read', label: 'Read' },
 ];
 
 export default function AgentInbox({

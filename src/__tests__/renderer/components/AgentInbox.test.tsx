@@ -335,9 +335,9 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// "Needs Input" appears in both the filter button and the status badge
+			// "Needs Input" appears only in the status badge (filter buttons are now Unread/Read)
 			const matches = screen.getAllByText('Needs Input');
-			expect(matches.length).toBeGreaterThanOrEqual(2);
+			expect(matches.length).toBeGreaterThanOrEqual(1);
 			// The status badge is a <span> with borderRadius (pill style)
 			const badge = matches.find((el) => el.tagName === 'SPAN');
 			expect(badge).toBeTruthy();
@@ -822,7 +822,7 @@ describe('AgentInbox', () => {
 	// Filter controls
 	// ==========================================================================
 	describe('filter controls', () => {
-		it('renders filter buttons: All, Needs Input, Ready', () => {
+		it('renders filter buttons: All, Unread, Read', () => {
 			render(
 				<AgentInbox
 					theme={theme}
@@ -832,12 +832,12 @@ describe('AgentInbox', () => {
 				/>
 			);
 			expect(screen.getByText('All')).toBeTruthy();
-			expect(screen.getByText('Needs Input')).toBeTruthy();
-			expect(screen.getByText('Ready')).toBeTruthy();
+			expect(screen.getByText('Unread')).toBeTruthy();
+			expect(screen.getByText('Read')).toBeTruthy();
 		});
 
 		it('changes filter when clicking filter button', () => {
-			// Session in 'idle' state with unread — visible under 'all' and 'ready', but not 'needs_input'
+			// Session in 'idle' state with unread — visible under 'all' and 'unread', but not 'read'
 			const sessions = [
 				createInboxSession('s1', 't1', { state: 'idle' }),
 			];
@@ -852,13 +852,13 @@ describe('AgentInbox', () => {
 			// Should be visible under 'all'
 			expect(screen.getByText('Session s1')).toBeTruthy();
 
-			// Switch to 'needs_input' filter
-			fireEvent.click(screen.getByText('Needs Input'));
-			// Item should disappear (idle, not waiting_input)
+			// Switch to 'read' filter
+			fireEvent.click(screen.getByText('Read'));
+			// Item should disappear (hasUnread=true, read requires hasUnread=false)
 			expect(screen.queryByText('Session s1')).toBeNull();
 
-			// Switch to 'Ready' — should reappear
-			fireEvent.click(screen.getByText('Ready'));
+			// Switch to 'Unread' — should reappear
+			fireEvent.click(screen.getByText('Unread'));
 			expect(screen.getByText('Session s1')).toBeTruthy();
 		});
 	});
@@ -1041,7 +1041,7 @@ describe('AgentInbox', () => {
 			);
 			const filterControl = container.querySelector('[aria-label="Filter sessions"]');
 			const buttons = filterControl!.querySelectorAll('button');
-			// Click "Needs Input" button
+			// Click "Unread" button
 			fireEvent.click(buttons[1]);
 			expect(buttons[0].getAttribute('aria-pressed')).toBe('false');
 			expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
@@ -1067,7 +1067,7 @@ describe('AgentInbox', () => {
 			expect(screen.getByTestId('inbox-empty-icon')).toBeTruthy();
 		});
 
-		it('shows "No sessions waiting for input" without icon when filter is "Needs Input"', () => {
+		it('shows "No unread sessions." without icon when filter is "Unread"', () => {
 			render(
 				<AgentInbox
 					theme={theme}
@@ -1076,13 +1076,13 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// Switch to "Needs Input" filter
-			fireEvent.click(screen.getByText('Needs Input'));
-			expect(screen.getByText('No sessions waiting for input.')).toBeTruthy();
+			// Switch to "Unread" filter
+			fireEvent.click(screen.getByText('Unread'));
+			expect(screen.getByText('No unread sessions.')).toBeTruthy();
 			expect(screen.queryByTestId('inbox-empty-icon')).toBeNull();
 		});
 
-		it('shows "No idle sessions with unread messages" without icon when filter is "Ready"', () => {
+		it('shows "No read sessions with activity." without icon when filter is "Read"', () => {
 			render(
 				<AgentInbox
 					theme={theme}
@@ -1091,14 +1091,14 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// Switch to "Ready" filter
-			fireEvent.click(screen.getByText('Ready'));
-			expect(screen.getByText('No idle sessions with unread messages.')).toBeTruthy();
+			// Switch to "Read" filter
+			fireEvent.click(screen.getByText('Read'));
+			expect(screen.getByText('No read sessions with activity.')).toBeTruthy();
 			expect(screen.queryByTestId('inbox-empty-icon')).toBeNull();
 		});
 
 		it('shows empty state when modal is open and user switches to a filter with no results', () => {
-			// Session in 'idle' state with unread — visible under 'all' and 'ready', but not 'needs_input'
+			// Session in 'idle' state with unread — visible under 'all' and 'unread', but not 'read'
 			const sessions = [
 				createInboxSession('s1', 't1', { state: 'idle' }),
 			];
@@ -1113,10 +1113,10 @@ describe('AgentInbox', () => {
 			// Initially visible under "All"
 			expect(screen.getByText('Session s1')).toBeTruthy();
 
-			// Switch to "Needs Input" — no items match
-			fireEvent.click(screen.getByText('Needs Input'));
+			// Switch to "Read" — no items match (hasUnread=true, read requires hasUnread=false)
+			fireEvent.click(screen.getByText('Read'));
 			expect(screen.queryByText('Session s1')).toBeNull();
-			expect(screen.getByText('No sessions waiting for input.')).toBeTruthy();
+			expect(screen.getByText('No read sessions with activity.')).toBeTruthy();
 			expect(screen.getByTestId('inbox-empty-state')).toBeTruthy();
 		});
 
@@ -1178,8 +1178,8 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// Switch to "Needs Input" — no items, but modal stays open
-			fireEvent.click(screen.getByText('Needs Input'));
+			// Switch to "Read" — no items (hasUnread=true), but modal stays open
+			fireEvent.click(screen.getByText('Read'));
 			expect(onClose).not.toHaveBeenCalled();
 			// Modal is still rendered
 			expect(screen.getByRole('dialog')).toBeTruthy();
@@ -1351,14 +1351,12 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// "Needs Input" status badge — find the pill (span with borderRadius)
-			const badges = screen.getAllByText('Needs Input');
-			const pill = badges.find(
-				(el) => el.tagName === 'SPAN' && el.style.borderRadius === '10px'
-			);
-			expect(pill).toBeTruthy();
+			// "Needs Input" status badge — now only appears in the card badge (not filter button)
+			const badge = screen.getByText('Needs Input');
+			expect(badge.tagName).toBe('SPAN');
+			expect(badge.style.borderRadius).toBe('10px');
 			// Pill should have colored background
-			expect(pill!.style.backgroundColor).toBeTruthy();
+			expect(badge.style.backgroundColor).toBeTruthy();
 		});
 
 		it('card has no standalone emoji', () => {

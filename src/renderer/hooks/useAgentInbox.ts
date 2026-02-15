@@ -17,10 +17,10 @@ function matchesFilter(
 	switch (filterMode) {
 		case 'all':
 			return hasUnread || sessionState === 'waiting_input' || sessionState === 'idle'
-		case 'needs_input':
-			return sessionState === 'waiting_input'
-		case 'ready':
-			return sessionState === 'idle' && hasUnread
+		case 'unread':
+			return hasUnread === true
+		case 'read':
+			return hasUnread === false && (sessionState === 'idle' || sessionState === 'waiting_input')
 		default:
 			return false
 	}

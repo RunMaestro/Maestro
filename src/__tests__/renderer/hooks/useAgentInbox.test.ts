@@ -188,8 +188,8 @@ describe('useAgentInbox', () => {
 		});
 	});
 
-	describe('filter mode: needs_input', () => {
-		it('should only include tabs when session state is waiting_input', () => {
+	describe('filter mode: unread', () => {
+		it('should only include tabs with hasUnread=true', () => {
 			const sessions = [
 				makeSession({
 					id: 's1',
@@ -201,17 +201,22 @@ describe('useAgentInbox', () => {
 					state: 'idle',
 					aiTabs: [makeTab({ id: 't2', hasUnread: true })],
 				}),
+				makeSession({
+					id: 's3',
+					state: 'idle',
+					aiTabs: [makeTab({ id: 't3', hasUnread: false })],
+				}),
 			];
 			const { result } = renderHook(() =>
-				useAgentInbox(sessions, [], 'needs_input', 'newest')
+				useAgentInbox(sessions, [], 'unread', 'newest')
 			);
-			expect(result.current).toHaveLength(1);
-			expect(result.current[0].sessionId).toBe('s1');
+			expect(result.current).toHaveLength(2);
+			expect(result.current.map(i => i.sessionId).sort()).toEqual(['s1', 's2']);
 		});
 	});
 
-	describe('filter mode: ready', () => {
-		it('should only include tabs when session is idle AND has unread', () => {
+	describe('filter mode: read', () => {
+		it('should only include tabs with hasUnread=false and idle/waiting_input state', () => {
 			const sessions = [
 				makeSession({
 					id: 's1',
@@ -226,14 +231,21 @@ describe('useAgentInbox', () => {
 				makeSession({
 					id: 's3',
 					state: 'waiting_input',
-					aiTabs: [makeTab({ id: 't3', hasUnread: true })],
+					aiTabs: [makeTab({ id: 't3', hasUnread: false })],
+				}),
+				makeSession({
+					id: 's4',
+					state: 'busy',
+					aiTabs: [makeTab({ id: 't4', hasUnread: false })],
 				}),
 			];
 			const { result } = renderHook(() =>
-				useAgentInbox(sessions, [], 'ready', 'newest')
+				useAgentInbox(sessions, [], 'read', 'newest')
 			);
-			expect(result.current).toHaveLength(1);
-			expect(result.current[0].sessionId).toBe('s1');
+			// s2 (idle, hasUnread=false) and s3 (waiting_input, hasUnread=false) match
+			// s1 excluded (hasUnread=true), s4 excluded (busy state)
+			expect(result.current).toHaveLength(2);
+			expect(result.current.map(i => i.sessionId).sort()).toEqual(['s2', 's3']);
 		});
 	});
 
@@ -751,9 +763,9 @@ describe('useAgentInbox', () => {
 				}),
 			];
 			const { result } = renderHook(() =>
-				useAgentInbox(sessions, [], 'ready', 'newest')
+				useAgentInbox(sessions, [], 'unread', 'newest')
 			);
-			// 'ready' = idle AND hasUnread → t1, t2 match; t3 does not
+			// 'unread' = hasUnread → t1, t2 match; t3 does not
 			expect(result.current).toHaveLength(2);
 			expect(result.current.map(i => i.tabId).sort()).toEqual(['t1', 't2']);
 		});
@@ -825,7 +837,7 @@ describe('useAgentInbox', () => {
 				{ initialProps: { f: 'all' as InboxFilterMode } }
 			);
 			const firstResult = result.current;
-			rerender({ f: 'needs_input' });
+			rerender({ f: 'unread' });
 			expect(result.current).not.toBe(firstResult);
 		});
 	});
