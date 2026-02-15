@@ -1030,6 +1030,7 @@ function MaestroConsoleInner() {
 					},
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
+					accountId: toAccountId,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 

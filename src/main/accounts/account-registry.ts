@@ -9,6 +9,9 @@ import type {
 } from '../../shared/account-types';
 import { DEFAULT_TOKEN_WINDOW_MS, ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { generateUUID } from '../../shared/uuid';
+import { logger } from '../utils/logger';
+
+const LOG_CONTEXT = 'AccountRegistry';
 
 export class AccountRegistry {
 	constructor(private store: Store<AccountStoreData>) {}
@@ -206,6 +209,28 @@ export class AccountRegistry {
 		// least-used: sort by lastUsedAt ascending (least recently used first)
 		available.sort((a, b) => a.lastUsedAt - b.lastUsedAt);
 		return available[0];
+	}
+
+	// --- Reconciliation ---
+
+	/**
+	 * Reconcile assignments with a list of active session IDs.
+	 * Removes assignments for sessions that no longer exist.
+	 * Called on app startup after session restore.
+	 */
+	reconcileAssignments(activeSessionIds: Set<string>): number {
+		const assignments = this.getAllAssignments();
+		let removed = 0;
+		for (const assignment of assignments) {
+			if (!activeSessionIds.has(assignment.sessionId)) {
+				this.removeAssignment(assignment.sessionId);
+				removed++;
+			}
+		}
+		if (removed > 0) {
+			logger.info(`Reconciled ${removed} stale account assignments`, LOG_CONTEXT);
+		}
+		return removed;
 	}
 
 	// --- Switch Config ---

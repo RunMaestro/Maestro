@@ -620,7 +620,7 @@ export async function handleProcessSpawn(
 			config.toolType,
 			envToInject,
 			accountRegistry,
-			(config as { accountId?: string }).accountId, // May be passed from renderer
+			config.accountId, // May be passed from renderer
 			safeSend
 		);
 		if (assignedAccountId) {

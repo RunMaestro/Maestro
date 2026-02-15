@@ -1265,6 +1265,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							sessionCustomModel: freshActiveTab?.customModel ?? freshSession.customModel,
 							sessionCustomEffort: freshActiveTab?.customEffort ?? freshSession.customEffort,
 							sessionCustomContextWindow: freshSession.customContextWindow,
+							// Account multiplexing - pass accountId so spawn uses the correct account
+							accountId: freshSession.accountId,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: freshSession.sessionSshRemoteConfig,
 							// Windows stdin handling - send prompt via stdin to avoid shell escaping issues

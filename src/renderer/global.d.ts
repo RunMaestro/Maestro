@@ -65,6 +65,8 @@ interface ProcessConfig {
 	sessionCustomModel?: string;
 	sessionCustomEffort?: string;
 	sessionCustomContextWindow?: number;
+	// Account multiplexing
+	accountId?: string;
 	// Per-session SSH remote config (takes precedence over agent-level SSH config)
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
@@ -3636,6 +3638,7 @@ interface MaestroAPI {
 		onSwitchExecute: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onStatusChanged: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onAssigned: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
+		reconcileSessions: (activeSessionIds: string[]) => Promise<{ success: boolean; removed: number; corrections: Array<{ sessionId: string; accountId: string | null; accountName: string | null; configDir: string | null; status: 'valid' | 'removed' | 'inactive' }>; error?: string }>;
 		cleanupSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
 		executeSwitch: (params: { sessionId: string; fromAccountId: string; toAccountId: string; reason: string; automatic: boolean }) => Promise<{ success: boolean; event?: unknown; error?: string }>;
 		onSwitchStarted: (handler: (data: Record<string, unknown>) => void) => () => void;

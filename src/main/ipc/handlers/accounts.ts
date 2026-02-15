@@ -353,6 +353,68 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
+	// --- Startup Reconciliation ---
+
+	ipcMain.handle('accounts:reconcile-sessions', async (_event, activeSessionIds: string[]) => {
+		try {
+			const registry = requireRegistry();
+			const idSet = new Set(activeSessionIds);
+
+			// Remove stale assignments for sessions that no longer exist
+			const removed = registry.reconcileAssignments(idSet);
+
+			// For each active session with an assignment, validate the account still exists
+			// Return corrections for sessions whose accounts were removed
+			const corrections: Array<{
+				sessionId: string;
+				accountId: string | null;
+				accountName: string | null;
+				configDir: string | null;
+				status: 'valid' | 'removed' | 'inactive';
+			}> = [];
+
+			for (const sessionId of activeSessionIds) {
+				const assignment = registry.getAssignment(sessionId);
+				if (!assignment) continue;
+
+				const account = registry.get(assignment.accountId);
+				if (!account) {
+					// Account was removed — clear the assignment
+					registry.removeAssignment(sessionId);
+					corrections.push({
+						sessionId,
+						accountId: null,
+						accountName: null,
+						configDir: null,
+						status: 'removed',
+					});
+				} else if (account.status !== 'active') {
+					// Account exists but is throttled/disabled — still usable but warn
+					corrections.push({
+						sessionId,
+						accountId: account.id,
+						accountName: account.name,
+						configDir: account.configDir,
+						status: 'inactive',
+					});
+				} else {
+					corrections.push({
+						sessionId,
+						accountId: account.id,
+						accountName: account.name,
+						configDir: account.configDir,
+						status: 'valid',
+					});
+				}
+			}
+
+			return { success: true, removed, corrections };
+		} catch (error) {
+			logger.error('reconcile sessions error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, removed: 0, corrections: [], error: String(error) };
+		}
+	});
+
 	// --- Account Switching ---
 
 	ipcMain.handle('accounts:execute-switch', async (_event, params: {
