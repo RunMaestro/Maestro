@@ -902,6 +902,88 @@ describe('AgentInbox', () => {
 			const liveRegion = screen.getByText('0 need action');
 			expect(liveRegion.getAttribute('aria-live')).toBe('polite');
 		});
+
+		it('filter control has aria-label="Filter sessions"', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const filterControl = container.querySelector('[aria-label="Filter sessions"]');
+			expect(filterControl).toBeTruthy();
+		});
+
+		it('sort control has aria-label="Sort sessions"', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const sortControl = container.querySelector('[aria-label="Sort sessions"]');
+			expect(sortControl).toBeTruthy();
+		});
+
+		it('filter segment buttons have aria-pressed attribute', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const filterControl = container.querySelector('[aria-label="Filter sessions"]');
+			expect(filterControl).toBeTruthy();
+			const buttons = filterControl!.querySelectorAll('button');
+			expect(buttons.length).toBe(3);
+			// "All" is active by default
+			expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+			expect(buttons[1].getAttribute('aria-pressed')).toBe('false');
+			expect(buttons[2].getAttribute('aria-pressed')).toBe('false');
+		});
+
+		it('sort segment buttons have aria-pressed attribute', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const sortControl = container.querySelector('[aria-label="Sort sessions"]');
+			expect(sortControl).toBeTruthy();
+			const buttons = sortControl!.querySelectorAll('button');
+			expect(buttons.length).toBe(3);
+			// "Newest" is active by default
+			expect(buttons[0].getAttribute('aria-pressed')).toBe('true');
+			expect(buttons[1].getAttribute('aria-pressed')).toBe('false');
+			expect(buttons[2].getAttribute('aria-pressed')).toBe('false');
+		});
+
+		it('aria-pressed updates when filter changes', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const filterControl = container.querySelector('[aria-label="Filter sessions"]');
+			const buttons = filterControl!.querySelectorAll('button');
+			// Click "Needs Input" button
+			fireEvent.click(buttons[1]);
+			expect(buttons[0].getAttribute('aria-pressed')).toBe('false');
+			expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
+			expect(buttons[2].getAttribute('aria-pressed')).toBe('false');
+		});
 	});
 
 	// ==========================================================================

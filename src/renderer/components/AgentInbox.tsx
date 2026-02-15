@@ -238,6 +238,7 @@ interface SegmentedControlProps<T extends string> {
 	value: T;
 	onChange: (value: T) => void;
 	theme: Theme;
+	ariaLabel?: string;
 }
 
 function SegmentedControl<T extends string>({
@@ -245,9 +246,11 @@ function SegmentedControl<T extends string>({
 	value,
 	onChange,
 	theme,
+	ariaLabel,
 }: SegmentedControlProps<T>) {
 	return (
 		<div
+			aria-label={ariaLabel}
 			style={{
 				display: 'inline-flex',
 				borderRadius: 6,
@@ -258,6 +261,7 @@ function SegmentedControl<T extends string>({
 			{options.map((opt) => (
 				<button
 					key={opt.value}
+					aria-pressed={value === opt.value}
 					onClick={() => onChange(opt.value)}
 					style={{
 						padding: '4px 10px',
@@ -608,12 +612,14 @@ export default function AgentInbox({
 							value={sortMode}
 							onChange={setSortMode}
 							theme={theme}
+							ariaLabel="Sort sessions"
 						/>
 						<SegmentedControl
 							options={FILTER_OPTIONS}
 							value={filterMode}
 							onChange={setFilterMode}
 							theme={theme}
+							ariaLabel="Filter sessions"
 						/>
 						<button
 							onClick={handleClose}

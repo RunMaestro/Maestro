@@ -32,7 +32,8 @@ This phase adds the segmented controls for sort/filter, empty state handling, an
 
 ## Filter Control (Segmented, Not Toggle)
 
-- [ ] **Implement filter as a segmented control.** Same pattern as sort, positioned next to it in the header.
+- [x] **Implement filter as a segmented control.** Same pattern as sort, positioned next to it in the header.
+  > ✅ Filter control was already implemented in Phase 03 with correct segments (All, Needs Input, Ready), state management, and badge count. Added missing ARIA: `aria-label="Filter sessions"` on container, `aria-pressed={isActive}` on each `<button>`. Also added `aria-label="Sort sessions"` to sort control for consistency. 6 new ARIA tests added. All 19,297 tests pass.
 
   **Segments:**
   - `"All"` (default, active)
