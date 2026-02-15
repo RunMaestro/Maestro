@@ -20,7 +20,7 @@ interface AgentInboxProps {
 
 const ITEM_HEIGHT = 100;
 const GROUP_HEADER_HEIGHT = 36;
-const MODAL_HEADER_HEIGHT = 48;
+const MODAL_HEADER_HEIGHT = 80;
 const MODAL_FOOTER_HEIGHT = 36;
 
 // ============================================================================
@@ -98,7 +98,9 @@ function InboxItemCardContent({
 }) {
 	const statusColor = resolveStatusColor(item.state, theme);
 	const hasValidContext = item.contextUsage !== undefined && !isNaN(item.contextUsage);
-	const contextColor = hasValidContext ? resolveContextUsageColor(item.contextUsage!, theme) : undefined;
+	const contextColor = hasValidContext
+		? resolveContextUsageColor(item.contextUsage!, theme)
+		: undefined;
 
 	return (
 		<div
@@ -127,7 +129,16 @@ function InboxItemCardContent({
 			}}
 		>
 			{/* Card content */}
-			<div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 6, flex: 1 }}>
+			<div
+				style={{
+					padding: '8px 12px',
+					display: 'flex',
+					flexDirection: 'column',
+					justifyContent: 'center',
+					gap: 6,
+					flex: 1,
+				}}
+			>
 				{/* Row 1: group / (agent_icon) session name / (pencil) tab name + timestamp */}
 				<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
 					{item.groupName && (
@@ -160,12 +171,27 @@ function InboxItemCardContent({
 						{item.tabName && (
 							<span style={{ fontWeight: 400, color: theme.colors.textDim }}>
 								{' / '}
-								<Edit3 style={{ width: 10, height: 10, display: 'inline', verticalAlign: 'middle', marginRight: 2 }} />
+								<Edit3
+									style={{
+										width: 10,
+										height: 10,
+										display: 'inline',
+										verticalAlign: 'middle',
+										marginRight: 2,
+									}}
+								/>
 								{item.tabName}
 							</span>
 						)}
 					</span>
-					<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap', flexShrink: 0 }}>
+					<span
+						style={{
+							fontSize: 12,
+							color: theme.colors.textDim,
+							whiteSpace: 'nowrap',
+							flexShrink: 0,
+						}}
+					>
 						{formatRelativeTime(item.timestamp)}
 					</span>
 				</div>
@@ -494,9 +520,7 @@ export default function AgentInbox({
 	// Collect focusable header elements for Tab cycling
 	const getHeaderFocusables = useCallback((): HTMLElement[] => {
 		if (!headerRef.current) return [];
-		return Array.from(
-			headerRef.current.querySelectorAll<HTMLElement>('button, [tabindex="0"]')
-		);
+		return Array.from(headerRef.current.querySelectorAll<HTMLElement>('button, [tabindex="0"]'));
 	}, []);
 
 	// Keyboard navigation
@@ -582,10 +606,7 @@ export default function AgentInbox({
 	// Calculate list height
 	const listHeight = useMemo(() => {
 		if (typeof window === 'undefined') return 400;
-		return Math.min(
-			window.innerHeight * 0.8 - MODAL_HEADER_HEIGHT - MODAL_FOOTER_HEIGHT - 80,
-			600
-		);
+		return Math.min(window.innerHeight * 0.8 - MODAL_HEADER_HEIGHT - MODAL_FOOTER_HEIGHT - 80, 600);
 	}, []);
 
 	const actionCount = items.length;
@@ -610,31 +631,57 @@ export default function AgentInbox({
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={handleKeyDown}
 			>
-				{/* Header — 48px */}
+				{/* Header — 80px, two rows */}
 				<div
 					ref={headerRef}
-					className="flex items-center justify-between px-4 border-b"
+					className="px-4 border-b"
 					style={{
 						height: MODAL_HEADER_HEIGHT,
 						borderColor: theme.colors.border,
+						display: 'flex',
+						flexDirection: 'column',
+						justifyContent: 'center',
+						gap: 8,
 					}}
 				>
-					<div className="flex items-center gap-3">
-						<h2 className="text-base font-semibold" style={{ color: theme.colors.textMain }}>
-							Unified Inbox
-						</h2>
-						<span
-							aria-live="polite"
-							className="text-xs px-2 py-0.5 rounded-full"
-							style={{
-								backgroundColor: `${theme.colors.accent}20`,
-								color: theme.colors.accent,
+					{/* Header row 1: title + badge + close */}
+					<div className="flex items-center justify-between">
+						<div className="flex items-center gap-3">
+							<h2 className="text-base font-semibold" style={{ color: theme.colors.textMain }}>
+								Unified Inbox
+							</h2>
+							<span
+								aria-live="polite"
+								className="text-xs px-2 py-0.5 rounded-full"
+								style={{
+									backgroundColor: `${theme.colors.accent}20`,
+									color: theme.colors.accent,
+								}}
+							>
+								{actionCount} need action
+							</span>
+						</div>
+						<button
+							onClick={handleClose}
+							className="p-1.5 rounded"
+							style={{ color: theme.colors.textDim }}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+							}
+							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+							onFocus={(e) => {
+								e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
 							}}
+							onBlur={(e) => {
+								e.currentTarget.style.outline = 'none';
+							}}
+							title="Close (Esc)"
 						>
-							{actionCount} need action
-						</span>
+							<X className="w-4 h-4" />
+						</button>
 					</div>
-					<div className="flex items-center gap-2">
+					{/* Header row 2: sort + filter controls */}
+					<div className="flex items-center justify-between">
 						<SegmentedControl
 							options={SORT_OPTIONS}
 							value={sortMode}
@@ -649,26 +696,6 @@ export default function AgentInbox({
 							theme={theme}
 							ariaLabel="Filter sessions"
 						/>
-						<button
-							onClick={handleClose}
-							className="p-1.5 rounded"
-							style={{ color: theme.colors.textDim }}
-							onMouseEnter={(e) =>
-								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
-							}
-							onMouseLeave={(e) =>
-								(e.currentTarget.style.backgroundColor = 'transparent')
-							}
-							onFocus={(e) => {
-								e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
-							}}
-							onBlur={(e) => {
-								e.currentTarget.style.outline = 'none';
-							}}
-							title="Close (Esc)"
-						>
-							<X className="w-4 h-4" />
-						</button>
 					</div>
 				</div>
 
