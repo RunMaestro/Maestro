@@ -109,6 +109,44 @@ export function createAccountsApi() {
 		selectNext: (excludeIds?: string[]): Promise<unknown> =>
 			ipcRenderer.invoke('accounts:select-next', excludeIds),
 
+		// --- Account Setup ---
+
+		/** Validate that the base ~/.claude directory exists */
+		validateBaseDir: (): Promise<{ valid: boolean; baseDir: string; errors: string[] }> =>
+			ipcRenderer.invoke('accounts:validate-base-dir'),
+
+		/** Discover existing ~/.claude-* account directories */
+		discoverExisting: (): Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>> =>
+			ipcRenderer.invoke('accounts:discover-existing'),
+
+		/** Create a new account directory with symlinks */
+		createDirectory: (name: string): Promise<{ success: boolean; configDir: string; error?: string }> =>
+			ipcRenderer.invoke('accounts:create-directory', name),
+
+		/** Validate symlinks in an account directory */
+		validateSymlinks: (configDir: string): Promise<{ valid: boolean; broken: string[]; missing: string[] }> =>
+			ipcRenderer.invoke('accounts:validate-symlinks', configDir),
+
+		/** Repair broken or missing symlinks */
+		repairSymlinks: (configDir: string): Promise<{ repaired: string[]; errors: string[] }> =>
+			ipcRenderer.invoke('accounts:repair-symlinks', configDir),
+
+		/** Read the email from an account's .claude.json */
+		readEmail: (configDir: string): Promise<string | null> =>
+			ipcRenderer.invoke('accounts:read-email', configDir),
+
+		/** Get the login command string for an account */
+		getLoginCommand: (configDir: string): Promise<string | null> =>
+			ipcRenderer.invoke('accounts:get-login-command', configDir),
+
+		/** Remove an account directory */
+		removeDirectory: (configDir: string): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('accounts:remove-directory', configDir),
+
+		/** Validate an account directory on a remote SSH host */
+		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }): Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }> =>
+			ipcRenderer.invoke('accounts:validate-remote-dir', params),
+
 		// --- Event Listeners ---
 
 		/**

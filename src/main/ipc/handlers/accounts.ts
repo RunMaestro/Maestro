@@ -15,6 +15,17 @@ import type { AccountRegistry } from '../../accounts/account-registry';
 import type { AccountSwitchConfig } from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
+import {
+	validateBaseClaudeDir,
+	discoverExistingAccounts,
+	createAccountDirectory,
+	validateAccountSymlinks,
+	repairAccountSymlinks,
+	readAccountEmail,
+	buildLoginCommand,
+	removeAccountDirectory,
+	validateRemoteAccountDir,
+} from '../../accounts/account-setup';
 
 const LOG_CONTEXT = '[Accounts]';
 
@@ -232,6 +243,92 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		} catch (error) {
 			logger.error('select next error', LOG_CONTEXT, { error: String(error) });
 			return null;
+		}
+	});
+
+	// --- Account Setup ---
+
+	ipcMain.handle('accounts:validate-base-dir', async () => {
+		try {
+			return await validateBaseClaudeDir();
+		} catch (error) {
+			logger.error('validate base dir error', LOG_CONTEXT, { error: String(error) });
+			return { valid: false, baseDir: '', errors: [String(error)] };
+		}
+	});
+
+	ipcMain.handle('accounts:discover-existing', async () => {
+		try {
+			return await discoverExistingAccounts();
+		} catch (error) {
+			logger.error('discover accounts error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	ipcMain.handle('accounts:create-directory', async (_event, accountName: string) => {
+		try {
+			return await createAccountDirectory(accountName);
+		} catch (error) {
+			logger.error('create directory error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, configDir: '', error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:validate-symlinks', async (_event, configDir: string) => {
+		try {
+			return await validateAccountSymlinks(configDir);
+		} catch (error) {
+			logger.error('validate symlinks error', LOG_CONTEXT, { error: String(error) });
+			return { valid: false, broken: [], missing: [] };
+		}
+	});
+
+	ipcMain.handle('accounts:repair-symlinks', async (_event, configDir: string) => {
+		try {
+			return await repairAccountSymlinks(configDir);
+		} catch (error) {
+			logger.error('repair symlinks error', LOG_CONTEXT, { error: String(error) });
+			return { repaired: [], errors: [String(error)] };
+		}
+	});
+
+	ipcMain.handle('accounts:read-email', async (_event, configDir: string) => {
+		try {
+			return await readAccountEmail(configDir);
+		} catch (error) {
+			logger.error('read email error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:get-login-command', async (_event, configDir: string) => {
+		try {
+			return buildLoginCommand(configDir);
+		} catch (error) {
+			logger.error('get login command error', LOG_CONTEXT, { error: String(error) });
+			return null;
+		}
+	});
+
+	ipcMain.handle('accounts:remove-directory', async (_event, configDir: string) => {
+		try {
+			return await removeAccountDirectory(configDir);
+		} catch (error) {
+			logger.error('remove directory error', LOG_CONTEXT, { error: String(error) });
+			return { success: false, error: String(error) };
+		}
+	});
+
+	ipcMain.handle('accounts:validate-remote-dir', async (_event, params: {
+		sshConfig: { host: string; user?: string; port?: number };
+		configDir: string;
+	}) => {
+		try {
+			return await validateRemoteAccountDir(params.sshConfig, params.configDir);
+		} catch (error) {
+			logger.error('validate remote dir error', LOG_CONTEXT, { error: String(error) });
+			return { exists: false, hasAuth: false, symlinksValid: false, error: String(error) };
 		}
 	});
 }
