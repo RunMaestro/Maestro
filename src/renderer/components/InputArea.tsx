@@ -34,6 +34,7 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
+import { AccountSelector } from './AccountSelector';
 
 interface SlashCommand {
 	command: string;
@@ -997,6 +998,29 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							</div>
 
 							<div className="flex items-center gap-2">
+								{/* Account selector - AI mode + claude-code only */}
+								{session.inputMode === 'ai' && session.toolType === 'claude-code' && (
+									<AccountSelector
+										theme={theme}
+										sessionId={session.id}
+										currentAccountId={session.accountId}
+										onSwitchAccount={async (toAccountId) => {
+											const currentAccountId = session.accountId;
+											if (currentAccountId && currentAccountId !== toAccountId) {
+												await window.maestro.accounts.executeSwitch({
+													sessionId: session.id,
+													fromAccountId: currentAccountId,
+													toAccountId,
+													reason: 'manual',
+													automatic: false,
+												});
+											} else {
+												await window.maestro.accounts.assign(session.id, toAccountId);
+											}
+										}}
+										compact
+									/>
+								)}
 								{/* Save to History toggle - AI mode only */}
 								{session.inputMode === 'ai' && onToggleTabSaveToHistory && (
 									<button

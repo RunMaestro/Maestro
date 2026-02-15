@@ -29,6 +29,9 @@ export const MODAL_PRIORITIES = {
 	/** Agent error modal - critical, shows recovery options */
 	AGENT_ERROR: 1010,
 
+	/** Account switch confirmation modal - triggered by throttle/limit events */
+	ACCOUNT_SWITCH: 1005,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 

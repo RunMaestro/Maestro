@@ -44,6 +44,7 @@ import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
 import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
+import { AccountSwitchModal } from './components/AccountSwitchModal';
 
 // Lazy-loaded components for performance (rarely-used heavy modals)
 // These are loaded on-demand when the user first opens them
@@ -888,6 +889,18 @@ function MaestroConsoleInner() {
 	// Delete Agent Modal State
 	const [deleteAgentModalOpen, setDeleteAgentModalOpen] = useState(false);
 	const [deleteAgentSession, setDeleteAgentSession] = useState<Session | null>(null);
+
+	// Account Switch Prompt Modal State
+	const [switchPromptData, setSwitchPromptData] = useState<{
+		sessionId: string;
+		fromAccountId: string;
+		fromAccountName: string;
+		toAccountId: string;
+		toAccountName: string;
+		reason: string;
+		tokensAtThrottle?: number;
+		usagePercent?: number;
+	} | null>(null);
 
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
 
@@ -2272,6 +2285,36 @@ function MaestroConsoleInner() {
 			unsubRespawn();
 			unsubSwitchFailed();
 			unsubSwitchExecute();
+		};
+	}, []);
+
+	// Subscribe to account switch prompt events (user confirmation needed)
+	useEffect(() => {
+		const unsubSwitchPrompt = window.maestro.accounts.onSwitchPrompt((data: any) => {
+			setSwitchPromptData({
+				sessionId: data.sessionId,
+				fromAccountId: data.fromAccountId,
+				fromAccountName: data.fromAccountName ?? data.fromAccountId,
+				toAccountId: data.toAccountId,
+				toAccountName: data.toAccountName ?? data.toAccountId,
+				reason: data.reason ?? 'throttled',
+				tokensAtThrottle: data.tokensAtThrottle,
+				usagePercent: data.usagePercent,
+			});
+		});
+
+		const unsubSwitchCompleted = window.maestro.accounts.onSwitchCompleted((data: any) => {
+			addToastRef.current({
+				type: 'success',
+				title: 'Account Switched',
+				message: `Switched from ${data.fromAccountName ?? data.fromAccountId} to ${data.toAccountName ?? data.toAccountId}`,
+				duration: 5_000,
+			});
+		});
+
+		return () => {
+			unsubSwitchPrompt();
+			unsubSwitchCompleted();
 		};
 	}, []);
 
@@ -12513,6 +12556,31 @@ You are taking over this conversation. Based on the context above, provide a bri
 						onConfirm={() => performDeleteSession(deleteAgentSession, false)}
 						onConfirmAndErase={() => performDeleteSession(deleteAgentSession, true)}
 						onClose={handleCloseDeleteAgentModal}
+					/>
+				)}
+
+				{/* Account Switch Confirmation Modal */}
+				{switchPromptData && (
+					<AccountSwitchModal
+						theme={theme}
+						isOpen={true}
+						onClose={() => setSwitchPromptData(null)}
+						switchData={switchPromptData}
+						onConfirmSwitch={async () => {
+							await window.maestro.accounts.executeSwitch({
+								sessionId: switchPromptData.sessionId,
+								fromAccountId: switchPromptData.fromAccountId,
+								toAccountId: switchPromptData.toAccountId,
+								reason: switchPromptData.reason,
+								automatic: false,
+							});
+							setSwitchPromptData(null);
+						}}
+						onViewDashboard={() => {
+							setSwitchPromptData(null);
+							setSettingsModalOpen(true);
+							setSettingsTab('accounts');
+						}}
 					/>
 				)}
 
