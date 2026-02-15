@@ -122,7 +122,8 @@ This phase builds the main AgentInbox component, replacing the placeholder from 
 
 ## Memory Leak Prevention
 
-- [ ] **Audit and fix event listener cleanup.** Review the AgentInbox component and `useAgentInbox` hook for:
+- [x] **Audit and fix event listener cleanup.** Review the AgentInbox component and `useAgentInbox` hook for:
+  > **Completed:** Full audit performed. No `addEventListener`, `setInterval`, or `setTimeout` calls found in either file. `useModalLayer` hook already has proper cleanup (calls `unregisterLayer` on unmount). Found and fixed one memory leak: `requestAnimationFrame` in `handleClose` was not cancelled on unmount — added `rafIdRef` to track the frame ID and `cancelAnimationFrame` in the `useEffect` cleanup. `useAgentInbox` is purely `useMemo`-based with no side effects. 1 new test added verifying rAF cancellation on unmount (55 total component tests pass). All 19,271 tests pass. TypeScript lint clean.
 
   1. **All `useEffect` hooks must return cleanup functions** that remove any event listeners added. Pattern:
      ```ts
