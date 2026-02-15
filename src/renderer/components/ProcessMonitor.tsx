@@ -14,6 +14,7 @@ import {
 	FolderOpen,
 	Hash,
 	Play,
+	User,
 } from 'lucide-react';
 import type { Session, Group, Theme, GroupChat } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -1002,6 +1003,28 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								GENERATING
 							</span>
 						)}
+						{/* Account badge — show if session has an account assigned */}
+						{(() => {
+							const sess = sessions.find(s => s.id === node.agentSessionId);
+							if (sess?.accountName) {
+								return (
+									<span
+										className="flex-shrink-0"
+										style={{
+											fontSize: '9px',
+											padding: '1px 5px',
+											borderRadius: '3px',
+											backgroundColor: theme.colors.accentDim || (theme.colors.accent + '20'),
+											color: theme.colors.accent,
+											fontWeight: 500,
+										}}
+									>
+										{sess.accountName}
+									</span>
+								);
+							}
+							return null;
+						})()}
 						{/* Kill button */}
 						{node.processSessionId && (
 							<button
@@ -1406,6 +1429,30 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 								{new Date(detailView.startTime).toLocaleString()}
 							</span>
 						</div>
+
+						{/* Account Info */}
+						{(() => {
+							const sess = sessions.find(s => s.id === detailView.agentSessionId);
+							if (sess?.accountId) {
+								return (
+									<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
+										<div className="flex items-center gap-2 mb-2">
+											<User className="w-4 h-4" style={{ color: theme.colors.accent }} />
+											<span
+												className="text-xs font-medium uppercase tracking-wide"
+												style={{ color: theme.colors.textDim }}
+											>
+												Account
+											</span>
+										</div>
+										<span className="text-sm" style={{ color: theme.colors.textMain }}>
+											{sess.accountName || sess.accountId}
+										</span>
+									</div>
+								);
+							}
+							return null;
+						})()}
 					</div>
 				</div>
 

@@ -36,6 +36,7 @@ import {
 	Server,
 	Music,
 	Command,
+	User,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type {
@@ -208,6 +209,17 @@ function SessionContextMenu({
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
 			</button>
+
+			{/* Account info - non-clickable info item */}
+			{session.accountId && (
+				<div
+					className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2"
+					style={{ color: theme.colors.textDim }}
+				>
+					<User className="w-3.5 h-3.5" />
+					Account: {session.accountName || session.accountId}
+				</div>
+			)}
 
 			{/* Duplicate */}
 			<button
@@ -934,6 +946,11 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 				{session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
+			{session.accountName && (
+				<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+					Account: <span style={{ color: theme.colors.accent }}>{session.accountName}</span>
+				</div>
+			)}
 
 			<div
 				className="pt-2 mt-2 space-y-1.5"
