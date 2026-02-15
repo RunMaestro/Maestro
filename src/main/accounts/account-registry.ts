@@ -10,6 +10,18 @@ import type {
 import { DEFAULT_TOKEN_WINDOW_MS, ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { generateUUID } from '../../shared/uuid';
 import { logger } from '../utils/logger';
+import { getWindowBounds } from './account-utils';
+
+/** Minimal interface for usage stats queries — avoids hard dependency on StatsDB */
+export interface AccountUsageStatsProvider {
+	getAccountUsageInWindow(id: string, start: number, end: number): {
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
+	};
+	isReady(): boolean;
+}
 
 const LOG_CONTEXT = 'AccountRegistry';
 
@@ -188,8 +200,12 @@ export class AccountRegistry {
 			?? null;
 	}
 
-	/** Select the next account using the configured strategy */
-	selectNextAccount(excludeIds: AccountId[] = []): AccountProfile | null {
+	/**
+	 * Select the next account using the configured strategy.
+	 * When statsDB is provided, uses actual token consumption for routing.
+	 * Falls back to lastUsedAt-based selection when statsDB is unavailable.
+	 */
+	selectNextAccount(excludeIds: AccountId[] = [], statsDB?: AccountUsageStatsProvider): AccountProfile | null {
 		const config = this.getSwitchConfig();
 		const available = this.getAll().filter(
 			a => a.status === 'active' && a.autoSwitchEnabled && !excludeIds.includes(a.id)
@@ -206,9 +222,74 @@ export class AccountRegistry {
 			return available.find(a => a.id === order[idx]) ?? available[0];
 		}
 
-		// least-used: sort by lastUsedAt ascending (least recently used first)
+		// least-used: prefer capacity-aware selection when statsDB is available
+		if (statsDB && statsDB.isReady()) {
+			return this.selectByRemainingCapacity(available, statsDB);
+		}
+
+		// Fallback: sort by lastUsedAt ascending (least recently used first)
 		available.sort((a, b) => a.lastUsedAt - b.lastUsedAt);
 		return available[0];
+	}
+
+	/**
+	 * Select the account with the most remaining capacity in its current window.
+	 * Accounts without configured limits are treated as having infinite remaining capacity,
+	 * but deprioritized behind accounts with known remaining capacity.
+	 */
+	private selectByRemainingCapacity(
+		accounts: AccountProfile[],
+		statsDB: AccountUsageStatsProvider,
+	): AccountProfile {
+		const now = Date.now();
+
+		const scored = accounts.map(account => {
+			const windowMs = account.tokenWindowMs || DEFAULT_TOKEN_WINDOW_MS;
+			const { start: windowStart, end: windowEnd } = getWindowBounds(now, windowMs);
+
+			const usage = statsDB.getAccountUsageInWindow(account.id, windowStart, windowEnd);
+			const totalTokens = usage.inputTokens + usage.outputTokens
+				+ usage.cacheReadTokens + usage.cacheCreationTokens;
+
+			let remainingCapacity: number;
+
+			if (account.tokenLimitPerWindow > 0) {
+				remainingCapacity = Math.max(0, account.tokenLimitPerWindow - totalTokens);
+			} else {
+				remainingCapacity = Infinity;
+			}
+
+			// Deprioritize accounts that were recently throttled (within last 2 windows)
+			const recentThrottlePenalty = account.lastThrottledAt > 0
+				&& (now - account.lastThrottledAt) < windowMs * 2
+				? 0.5
+				: 1.0;
+
+			return {
+				account,
+				remainingCapacity: remainingCapacity === Infinity
+					? Infinity
+					: remainingCapacity * recentThrottlePenalty,
+			};
+		});
+
+		// Sort: most remaining capacity first
+		const hasLimits = scored.some(s => s.remainingCapacity !== Infinity);
+
+		if (hasLimits) {
+			scored.sort((a, b) => {
+				// Finite capacity always before infinite
+				if (a.remainingCapacity === Infinity && b.remainingCapacity !== Infinity) return 1;
+				if (a.remainingCapacity !== Infinity && b.remainingCapacity === Infinity) return -1;
+				// Both finite: higher remaining first
+				return (b.remainingCapacity as number) - (a.remainingCapacity as number);
+			});
+		} else {
+			// No limits configured on any account — fall back to LRU
+			scored.sort((a, b) => a.account.lastUsedAt - b.account.lastUsedAt);
+		}
+
+		return scored[0].account;
 	}
 
 	// --- Reconciliation ---

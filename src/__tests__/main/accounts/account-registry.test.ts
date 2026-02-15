@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AccountRegistry } from '../../../main/accounts/account-registry';
+import type { AccountUsageStatsProvider } from '../../../main/accounts/account-registry';
 import type { AccountStoreData } from '../../../main/stores/account-store-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../../shared/account-types';
 
@@ -340,6 +341,130 @@ describe('AccountRegistry', () => {
 			// Should cycle through accounts
 			expect([first?.id, second?.id]).toContain(a.id);
 			expect([first?.id, second?.id]).toContain(b.id);
+		});
+
+		describe('capacity-aware selection', () => {
+			function createMockStatsDB(usageMap: Record<string, number>): AccountUsageStatsProvider {
+				return {
+					isReady: () => true,
+					getAccountUsageInWindow: (id: string) => {
+						const total = usageMap[id] ?? 0;
+						return {
+							inputTokens: total,
+							outputTokens: 0,
+							cacheReadTokens: 0,
+							cacheCreationTokens: 0,
+						};
+					},
+				};
+			}
+
+			it('should select account with most remaining capacity', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				registry.update(b.id, { tokenLimitPerWindow: 10000 });
+
+				// A used 8000, B used 2000 → B has more remaining
+				const statsDB = createMockStatsDB({ [a.id]: 8000, [b.id]: 2000 });
+				const next = registry.selectNextAccount([], statsDB);
+
+				expect(next?.id).toBe(b.id);
+			});
+
+			it('should fall back to LRU when statsDB is not ready', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				registry.update(b.id, { tokenLimitPerWindow: 10000 });
+
+				registry.touchLastUsed(a.id);
+
+				const statsDB: AccountUsageStatsProvider = {
+					isReady: () => false,
+					getAccountUsageInWindow: () => ({
+						inputTokens: 0, outputTokens: 0,
+						cacheReadTokens: 0, cacheCreationTokens: 0,
+					}),
+				};
+
+				const next = registry.selectNextAccount([], statsDB);
+				expect(next?.id).toBe(b.id); // b has lower lastUsedAt
+			});
+
+			it('should deprioritize recently throttled accounts', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				registry.update(b.id, { tokenLimitPerWindow: 10000 });
+
+				// A has more remaining capacity but was recently throttled
+				registry.update(a.id, { lastThrottledAt: Date.now() - 60_000 }); // 1 min ago
+				const statsDB = createMockStatsDB({ [a.id]: 2000, [b.id]: 4000 });
+
+				const next = registry.selectNextAccount([], statsDB);
+				// A remaining: (10000-2000)*0.5 = 4000 (penalized)
+				// B remaining: 10000-4000 = 6000
+				expect(next?.id).toBe(b.id);
+			});
+
+			it('should prefer accounts with configured limits over unlimited', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				// b has no limit (tokenLimitPerWindow = 0)
+
+				const statsDB = createMockStatsDB({ [a.id]: 2000, [b.id]: 0 });
+				const next = registry.selectNextAccount([], statsDB);
+
+				// A has known remaining capacity (8000), B is Infinity but deprioritized
+				expect(next?.id).toBe(a.id);
+			});
+
+			it('should fall back to LRU when no accounts have limits', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				// Neither has tokenLimitPerWindow set
+
+				registry.touchLastUsed(a.id);
+
+				const statsDB = createMockStatsDB({ [a.id]: 5000, [b.id]: 1000 });
+				const next = registry.selectNextAccount([], statsDB);
+
+				// Both have Infinity remaining → falls back to LRU → b (lastUsedAt=0) wins
+				expect(next?.id).toBe(b.id);
+			});
+
+			it('should select only remaining account when one is at capacity', () => {
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				registry.update(b.id, { tokenLimitPerWindow: 10000 });
+
+				// A is at 100% capacity, B has headroom
+				const statsDB = createMockStatsDB({ [a.id]: 15000, [b.id]: 3000 });
+				const next = registry.selectNextAccount([], statsDB);
+
+				expect(next?.id).toBe(b.id);
+			});
+
+			it('should not use capacity-aware selection for round-robin strategy', () => {
+				registry.updateSwitchConfig({ selectionStrategy: 'round-robin' });
+
+				const a = registry.add(makeParams({ email: 'a@example.com' }));
+				registry.update(a.id, { tokenLimitPerWindow: 10000 });
+				const b = registry.add(makeParams({ email: 'b@example.com' }));
+				registry.update(b.id, { tokenLimitPerWindow: 10000 });
+
+				// Even though A has way more usage, round-robin should still cycle deterministically
+				const statsDB = createMockStatsDB({ [a.id]: 9000, [b.id]: 1000 });
+				const first = registry.selectNextAccount([], statsDB);
+				const second = registry.selectNextAccount([], statsDB);
+
+				// Both should appear (round-robin cycles)
+				expect([first?.id, second?.id]).toContain(a.id);
+				expect([first?.id, second?.id]).toContain(b.id);
+			});
 		});
 	});
 
