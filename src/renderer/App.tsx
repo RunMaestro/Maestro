@@ -268,6 +268,8 @@ function MaestroConsoleInner() {
 		// Process Monitor
 		processMonitorOpen,
 		setProcessMonitorOpen,
+		// Agent Inbox
+		setAgentInboxOpen,
 		// Usage Dashboard
 		usageDashboardOpen,
 		setUsageDashboardOpen,
@@ -10640,7 +10642,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setAgentSessionsOpen,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
+		setAgentInboxOpen,
 		setUsageDashboardOpen,
+		addToast,
 		logsEndRef,
 		inputRef,
 		terminalOutputRef,

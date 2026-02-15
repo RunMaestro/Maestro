@@ -110,7 +110,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isSystemUtilShortcut =
 					e.altKey &&
 					(e.metaKey || e.ctrlKey) &&
-					(codeKeyLower === 'l' || codeKeyLower === 'p' || codeKeyLower === 'u');
+					(codeKeyLower === 'l' || codeKeyLower === 'p' || codeKeyLower === 'u' || codeKeyLower === 'i');
 				// Allow session jump shortcuts (Alt+Cmd+NUMBER) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters
 				const isSessionJumpShortcut =
@@ -396,6 +396,26 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setProcessMonitorOpen(true);
 				trackShortcut('processMonitor');
+			} else if (ctx.isShortcut(e, 'agentInbox')) {
+				e.preventDefault();
+				// Zero-items guard: count sessions with actionable items
+				const actionableCount = (ctx.sessions as Session[]).filter(
+					(s: Session) =>
+						s.state === 'waiting_input' ||
+						s.aiTabs?.some((t: AITab) => t.hasUnread)
+				).length;
+				if (actionableCount === 0) {
+					// Show toast and do NOT open modal
+					ctx.addToast({
+						type: 'info',
+						title: 'Agent Inbox',
+						message: 'No pending items',
+						duration: 1500,
+					});
+				} else {
+					ctx.setAgentInboxOpen(true);
+				}
+				trackShortcut('agentInbox');
 			} else if (ctx.isShortcut(e, 'usageDashboard')) {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
