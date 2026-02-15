@@ -1256,7 +1256,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
 											style={{ backgroundColor: tile.brandColor || theme.colors.accent }}
 										>
-											<Check className="w-3 h-3" style={{ color: '#fff' }} />
+											<Check className="w-3 h-3" style={{ color: theme.colors.accentForeground }} />
 										</div>
 									)}
 

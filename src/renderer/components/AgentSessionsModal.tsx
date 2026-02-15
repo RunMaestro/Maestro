@@ -611,7 +611,7 @@ export function AgentSessionsModal({
 											className="w-full text-left px-4 py-3 flex items-start gap-3 hover:bg-opacity-10 transition-colors group"
 											style={{
 												backgroundColor: i === selectedIndex ? theme.colors.accent : 'transparent',
-												color: theme.colors.textMain,
+												color: i === selectedIndex ? theme.colors.accentForeground : theme.colors.textMain,
 											}}
 										>
 											{/* Star button */}

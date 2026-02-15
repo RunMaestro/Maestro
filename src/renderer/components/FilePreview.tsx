@@ -1313,7 +1313,7 @@ export const FilePreview = React.memo(
 			// Highlight first match with different color and scroll to it
 			if (matchElements.length > 0) {
 				matchElements[0].style.backgroundColor = theme.colors.accent;
-				matchElements[0].style.color = '#fff';
+				matchElements[0].style.color = theme.colors.accentForeground;
 				matchElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
 
@@ -1502,7 +1502,7 @@ export const FilePreview = React.memo(
 				// Highlight new current match and scroll to it
 				if (matches[nextIndex]) {
 					matches[nextIndex].style.backgroundColor = theme.colors.accent;
-					matches[nextIndex].style.color = '#fff';
+					matches[nextIndex].style.color = theme.colors.accentForeground;
 					matches[nextIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
 				}
 			}
@@ -1528,7 +1528,7 @@ export const FilePreview = React.memo(
 				// Highlight new current match and scroll to it
 				if (matches[prevIndex]) {
 					matches[prevIndex].style.backgroundColor = theme.colors.accent;
-					matches[prevIndex].style.color = '#fff';
+					matches[prevIndex].style.color = theme.colors.accentForeground;
 					matches[prevIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
 				}
 			}

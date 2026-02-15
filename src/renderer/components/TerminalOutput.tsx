@@ -184,7 +184,7 @@ const LogItemComponent = memo(
 						key={`match-${idx}`}
 						style={{
 							backgroundColor: theme.colors.warning,
-							color: theme.mode === 'light' ? '#fff' : '#000',
+							color: theme.colors.bgMain,
 							padding: '1px 2px',
 							borderRadius: '2px',
 						}}
@@ -219,7 +219,7 @@ const LogItemComponent = memo(
 				if (idx === -1) break;
 
 				result += text.substring(lastIndex, idx);
-				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.mode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
+				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.colors.bgMain}; padding: 1px 2px; border-radius: 2px;">`;
 				result += text.substring(idx, idx + query.length);
 				result += '</mark>';
 

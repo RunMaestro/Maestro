@@ -1141,7 +1141,7 @@ export function LeaderboardRegistrationModal({
 									className="w-full px-3 py-2 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
 									style={{
 										backgroundColor: theme.colors.accent,
-										color: '#fff',
+										color: theme.colors.accentForeground,
 									}}
 								>
 									{isResending ? (
@@ -1199,7 +1199,7 @@ export function LeaderboardRegistrationModal({
 										className="px-3 py-2 text-xs font-medium rounded transition-colors disabled:opacity-50"
 										style={{
 											backgroundColor: theme.colors.accent,
-											color: '#fff',
+											color: theme.colors.accentForeground,
 										}}
 									>
 										Submit
@@ -1253,7 +1253,7 @@ export function LeaderboardRegistrationModal({
 									className="px-3 py-1.5 text-xs rounded transition-colors flex items-center gap-1.5"
 									style={{
 										backgroundColor: theme.colors.error,
-										color: '#fff',
+										color: theme.colors.accentForeground,
 									}}
 								>
 									<UserX className="w-3.5 h-3.5" />
