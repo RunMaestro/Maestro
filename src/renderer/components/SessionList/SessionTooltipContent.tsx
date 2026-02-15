@@ -121,6 +121,11 @@ export const SessionTooltipContent = memo(function SessionTooltipContent({
 				{session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
+			{session.accountName && (
+				<div className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+					Account: <span style={{ color: theme.colors.accent }}>{session.accountName}</span>
+				</div>
+			)}
 
 			<div
 				className="pt-2 mt-2 space-y-1.5"

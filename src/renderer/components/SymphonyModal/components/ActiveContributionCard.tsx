@@ -13,6 +13,8 @@ export interface ActiveContributionCardProps {
 	onSync: () => void;
 	isSyncing: boolean;
 	sessionName: string | null;
+	/** Assigned account name for the owning agent (account multiplexing) */
+	accountName?: string | null;
 	onNavigateToSession: () => void;
 }
 
@@ -23,6 +25,7 @@ export const ActiveContributionCard = memo(function ActiveContributionCard({
 	onSync,
 	isSyncing,
 	sessionName,
+	accountName,
 	onNavigateToSession,
 }: ActiveContributionCardProps) {
 	const statusInfo = getStatusInfo(contribution.status);
@@ -59,15 +62,30 @@ export const ActiveContributionCard = memo(function ActiveContributionCard({
 						{contribution.repoSlug}
 					</p>
 					{sessionName && (
-						<button
-							onClick={onNavigateToSession}
-							className="flex items-center gap-1 text-xs mt-0.5 hover:underline cursor-pointer"
-							style={{ color: theme.colors.accent }}
-							title={`Go to session: ${sessionName}`}
-						>
-							<Terminal className="w-3 h-3" />
-							<span className="truncate">{sessionName}</span>
-						</button>
+						<div className="flex items-center gap-1.5 mt-0.5">
+							<button
+								onClick={onNavigateToSession}
+								className="flex items-center gap-1 text-xs hover:underline cursor-pointer"
+								style={{ color: theme.colors.accent }}
+								title={`Go to session: ${sessionName}`}
+							>
+								<Terminal className="w-3 h-3" />
+								<span className="truncate">{sessionName}</span>
+							</button>
+							{accountName && (
+								<span
+									style={{
+										fontSize: '9px',
+										padding: '1px 4px',
+										borderRadius: '3px',
+										backgroundColor: `${theme.colors.accent}20`,
+										color: theme.colors.accent,
+									}}
+								>
+									{accountName}
+								</span>
+							)}
+						</div>
 					)}
 				</div>
 				<div className="flex items-center gap-2 shrink-0">

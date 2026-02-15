@@ -17,6 +17,7 @@ import {
 	Plus,
 	Pencil,
 	Check,
+	User,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -252,6 +253,17 @@ export function SessionContextMenu({
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
 			</button>
+
+			{/* Account info - non-clickable info item */}
+			{session.accountId && (
+				<div
+					className="w-full text-left px-3 py-1.5 text-xs flex items-center gap-2"
+					style={{ color: theme.colors.textDim }}
+				>
+					<User className="w-3.5 h-3.5" />
+					Account: {session.accountName || session.accountId}
+				</div>
+			)}
 
 			{!session.isPianola && (
 				<button

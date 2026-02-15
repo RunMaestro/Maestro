@@ -8,12 +8,13 @@ import {
 	RefreshCw,
 	XCircle,
 } from 'lucide-react';
-import type { Theme } from '../../types';
+import type { Session, Theme } from '../../types';
 import type { ProcessNode, ProcessMonitorProps } from './types';
 import { formatRuntime } from './runtime';
 
 export interface ProcessListViewProps {
 	theme: Theme;
+	sessions: Session[];
 	tree: ProcessNode[];
 	isLoading: boolean;
 	selectedNodeId: string | null;
@@ -33,6 +34,7 @@ export interface ProcessListViewProps {
 export function ProcessListView(props: ProcessListViewProps) {
 	const {
 		theme,
+		sessions,
 		tree,
 		isLoading,
 		selectedNodeId,
@@ -392,6 +394,28 @@ export function ProcessListView(props: ProcessListViewProps) {
 										{node.cueEventType?.replace('.', ' ').toUpperCase() ?? 'CUE'}
 									</span>
 								)}
+								{/* Account badge — show if session has an account assigned */}
+								{(() => {
+									const sess = sessions.find((s) => s.id === node.agentSessionId);
+									if (sess?.accountName) {
+										return (
+											<span
+												className="flex-shrink-0"
+												style={{
+													fontSize: '9px',
+													padding: '1px 5px',
+													borderRadius: '3px',
+													backgroundColor: `${theme.colors.accent}20`,
+													color: theme.colors.accent,
+													fontWeight: 500,
+												}}
+											>
+												{sess.accountName}
+											</span>
+										);
+									}
+									return null;
+								})()}
 								{node.sessionId &&
 									onNavigateToSession &&
 									!isGroupChatProcess &&

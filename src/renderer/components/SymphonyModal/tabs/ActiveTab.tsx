@@ -101,6 +101,7 @@ export const ActiveTab = memo(function ActiveTab({
 									onSync={() => onSyncContribution(contribution.id)}
 									isSyncing={syncingContributionId === contribution.id}
 									sessionName={session?.name ?? null}
+									accountName={session?.accountName}
 									onNavigateToSession={() => {
 										if (session) {
 											onSelectSession(session.id);
