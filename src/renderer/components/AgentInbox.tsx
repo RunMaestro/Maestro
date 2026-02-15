@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { List, type ListImperativeAPI } from 'react-window';
-import { X } from 'lucide-react';
+import { X, CheckCircle } from 'lucide-react';
 import type { Theme, Session, Group, SessionState } from '../types';
 import type { InboxItem, InboxFilterMode, InboxSortMode } from '../types/agent-inbox';
 import { STATUS_LABELS, STATUS_COLORS } from '../types/agent-inbox';
@@ -21,6 +21,15 @@ const ITEM_HEIGHT = 80;
 const GROUP_HEADER_HEIGHT = 36;
 const MODAL_HEADER_HEIGHT = 48;
 const MODAL_FOOTER_HEIGHT = 36;
+
+// ============================================================================
+// Empty state messages per filter mode
+// ============================================================================
+const EMPTY_STATE_MESSAGES: Record<InboxFilterMode, { text: string; showIcon: boolean }> = {
+	all: { text: 'All caught up — no sessions need attention.', showIcon: true },
+	needs_input: { text: 'No sessions waiting for input.', showIcon: false },
+	ready: { text: 'No idle sessions with unread messages.', showIcon: false },
+};
 
 // ============================================================================
 // Grouped list model: interleaves group headers with items when sort = 'grouped'
@@ -653,10 +662,31 @@ export default function AgentInbox({
 				>
 					{rows.length === 0 ? (
 						<div
-							className="flex items-center justify-center"
-							style={{ height: 120, color: theme.colors.textDim, fontSize: 14 }}
+							data-testid="inbox-empty-state"
+							className="flex flex-col items-center justify-center gap-3"
+							style={{ height: listHeight, color: theme.colors.textDim }}
 						>
-							No items match the current filter
+							{EMPTY_STATE_MESSAGES[filterMode].showIcon && (
+								<CheckCircle
+									data-testid="inbox-empty-icon"
+									style={{
+										width: 32,
+										height: 32,
+										color: theme.colors.textDim,
+										opacity: 0.5,
+									}}
+								/>
+							)}
+							<span
+								style={{
+									fontSize: 14,
+									color: theme.colors.textDim,
+									maxWidth: 280,
+									textAlign: 'center',
+								}}
+							>
+								{EMPTY_STATE_MESSAGES[filterMode].text}
+							</span>
 						</div>
 					) : (
 						<List

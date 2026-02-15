@@ -16,6 +16,11 @@ vi.mock('lucide-react', () => ({
 			×
 		</span>
 	),
+	CheckCircle: ({ style, ...props }: { style?: React.CSSProperties; 'data-testid'?: string }) => (
+		<span data-testid={props['data-testid'] ?? 'check-circle-icon'} style={style}>
+			✓
+		</span>
+	),
 }));
 
 // Mock layer stack context
@@ -270,7 +275,8 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			expect(screen.getByText('No items match the current filter')).toBeTruthy();
+			// Default filter is 'all' → shows "All caught up" message
+			expect(screen.getByText('All caught up — no sessions need attention.')).toBeTruthy();
 		});
 
 		it('renders footer with keyboard hints', () => {
@@ -983,6 +989,144 @@ describe('AgentInbox', () => {
 			expect(buttons[0].getAttribute('aria-pressed')).toBe('false');
 			expect(buttons[1].getAttribute('aria-pressed')).toBe('true');
 			expect(buttons[2].getAttribute('aria-pressed')).toBe('false');
+		});
+	});
+
+	// ==========================================================================
+	// Empty states (filter-aware)
+	// ==========================================================================
+	describe('empty states', () => {
+		it('shows "All caught up" with checkmark icon when filter is "All" and no items', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			expect(screen.getByTestId('inbox-empty-state')).toBeTruthy();
+			expect(screen.getByText('All caught up — no sessions need attention.')).toBeTruthy();
+			expect(screen.getByTestId('inbox-empty-icon')).toBeTruthy();
+		});
+
+		it('shows "No sessions waiting for input" without icon when filter is "Needs Input"', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// Switch to "Needs Input" filter
+			fireEvent.click(screen.getByText('Needs Input'));
+			expect(screen.getByText('No sessions waiting for input.')).toBeTruthy();
+			expect(screen.queryByTestId('inbox-empty-icon')).toBeNull();
+		});
+
+		it('shows "No idle sessions with unread messages" without icon when filter is "Ready"', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// Switch to "Ready" filter
+			fireEvent.click(screen.getByText('Ready'));
+			expect(screen.getByText('No idle sessions with unread messages.')).toBeTruthy();
+			expect(screen.queryByTestId('inbox-empty-icon')).toBeNull();
+		});
+
+		it('shows empty state when modal is open and user switches to a filter with no results', () => {
+			// Session in 'idle' state with unread — visible under 'all' and 'ready', but not 'needs_input'
+			const sessions = [
+				createInboxSession('s1', 't1', { state: 'idle' }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// Initially visible under "All"
+			expect(screen.getByText('Session s1')).toBeTruthy();
+
+			// Switch to "Needs Input" — no items match
+			fireEvent.click(screen.getByText('Needs Input'));
+			expect(screen.queryByText('Session s1')).toBeNull();
+			expect(screen.getByText('No sessions waiting for input.')).toBeTruthy();
+			expect(screen.getByTestId('inbox-empty-state')).toBeTruthy();
+		});
+
+		it('empty state icon has 32px size and 50% opacity', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const icon = screen.getByTestId('inbox-empty-icon');
+			expect(icon.style.width).toBe('32px');
+			expect(icon.style.height).toBe('32px');
+			expect(icon.style.opacity).toBe('0.5');
+		});
+
+		it('empty state text has 14px font, textDim color, max-width 280px, and center alignment', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const text = screen.getByText('All caught up — no sessions need attention.');
+			expect(text.style.fontSize).toBe('14px');
+			expect(text.style.maxWidth).toBe('280px');
+			expect(text.style.textAlign).toBe('center');
+		});
+
+		it('empty state is centered vertically and horizontally', () => {
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const emptyState = screen.getByTestId('inbox-empty-state');
+			// Uses flexbox centering
+			expect(emptyState.className).toContain('flex');
+			expect(emptyState.className).toContain('items-center');
+			expect(emptyState.className).toContain('justify-center');
+		});
+
+		it('modal does NOT close when filter has no results — stays open with empty state', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { state: 'idle' }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// Switch to "Needs Input" — no items, but modal stays open
+			fireEvent.click(screen.getByText('Needs Input'));
+			expect(onClose).not.toHaveBeenCalled();
+			// Modal is still rendered
+			expect(screen.getByRole('dialog')).toBeTruthy();
+			expect(screen.getByTestId('inbox-empty-state')).toBeTruthy();
 		});
 	});
 
