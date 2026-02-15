@@ -117,6 +117,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					remoteId: string | null;
 					workingDirOverride?: string;
 				};
+				// Account multiplexing
+				accountId?: string; // Account to use for this session
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
@@ -298,7 +300,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						config.toolType,
 						envToInject,
 						registry,
-						(config as any).accountId, // May be passed from renderer
+						config.accountId, // May be passed from renderer
 						depsSafeSend,
 					);
 					if (assignedAccountId) {

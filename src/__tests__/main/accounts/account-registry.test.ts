@@ -343,6 +343,50 @@ describe('AccountRegistry', () => {
 		});
 	});
 
+	describe('reconcileAssignments', () => {
+		it('should remove assignments for sessions not in the active set', () => {
+			const account = registry.add(makeParams());
+			registry.assignToSession('session-1', account.id);
+			registry.assignToSession('session-2', account.id);
+			registry.assignToSession('session-3', account.id);
+
+			// Only session-1 and session-3 are still active
+			const removed = registry.reconcileAssignments(new Set(['session-1', 'session-3']));
+
+			expect(removed).toBe(1);
+			expect(registry.getAssignment('session-1')).not.toBeNull();
+			expect(registry.getAssignment('session-2')).toBeNull();
+			expect(registry.getAssignment('session-3')).not.toBeNull();
+		});
+
+		it('should return 0 when all assignments are valid', () => {
+			const account = registry.add(makeParams());
+			registry.assignToSession('session-1', account.id);
+
+			const removed = registry.reconcileAssignments(new Set(['session-1']));
+
+			expect(removed).toBe(0);
+			expect(registry.getAssignment('session-1')).not.toBeNull();
+		});
+
+		it('should handle empty assignment map', () => {
+			const removed = registry.reconcileAssignments(new Set(['session-1']));
+
+			expect(removed).toBe(0);
+		});
+
+		it('should remove all assignments when no sessions are active', () => {
+			const account = registry.add(makeParams());
+			registry.assignToSession('session-1', account.id);
+			registry.assignToSession('session-2', account.id);
+
+			const removed = registry.reconcileAssignments(new Set());
+
+			expect(removed).toBe(2);
+			expect(registry.getAllAssignments()).toHaveLength(0);
+		});
+	});
+
 	describe('switchConfig', () => {
 		it('should return defaults initially', () => {
 			const config = registry.getSwitchConfig();

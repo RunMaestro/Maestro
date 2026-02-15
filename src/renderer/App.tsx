@@ -1402,6 +1402,45 @@ function MaestroConsoleInner() {
 						setActiveSessionId(restoredSessions[0].id);
 					}
 
+					// Reconcile account assignments after session restore (ACCT-MUX-13)
+					// This validates accounts still exist and updates customEnvVars accordingly
+					try {
+						const activeIds = restoredSessions.map(s => s.id);
+						const reconciliation = await window.maestro.accounts.reconcileSessions(activeIds);
+						if (reconciliation.success && reconciliation.corrections.length > 0) {
+							setSessions(prev => prev.map(session => {
+								const correction = reconciliation.corrections.find(c => c.sessionId === session.id);
+								if (!correction) return session;
+
+								if (correction.status === 'removed') {
+									// Account was removed — clear session's account fields and CLAUDE_CONFIG_DIR
+									const cleanedEnvVars = { ...session.customEnvVars };
+									delete cleanedEnvVars.CLAUDE_CONFIG_DIR;
+									return {
+										...session,
+										accountId: undefined,
+										accountName: undefined,
+										customEnvVars: Object.keys(cleanedEnvVars).length > 0 ? cleanedEnvVars : undefined,
+									};
+								} else if (correction.configDir && session.accountId) {
+									// Account exists — ensure CLAUDE_CONFIG_DIR is current
+									return {
+										...session,
+										accountId: correction.accountId ?? undefined,
+										accountName: correction.accountName ?? undefined,
+										customEnvVars: {
+											...session.customEnvVars,
+											CLAUDE_CONFIG_DIR: correction.configDir,
+										},
+									};
+								}
+								return session;
+							}));
+						}
+					} catch (reconcileError) {
+						console.error('[App] Account reconciliation failed:', reconcileError);
+					}
+
 					// For remote (SSH) sessions, fetch git info in background to avoid blocking
 					// startup on SSH connection timeouts. This runs after UI is shown.
 					for (const session of restoredSessions) {
@@ -2242,6 +2281,7 @@ function MaestroConsoleInner() {
 					},
 					sessionCustomModel: session.customModel,
 					sessionCustomContextWindow: session.customContextWindow,
+					accountId: toAccountId,
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
 				});
 

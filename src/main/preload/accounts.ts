@@ -245,6 +245,23 @@ export function createAccountsApi() {
 			return () => ipcRenderer.removeListener('account:assigned', wrappedHandler);
 		},
 
+		// --- Session Reconciliation ---
+
+		/** Reconcile account assignments after session restore on startup.
+		 * Removes stale assignments and returns account validation for sessions with accountId. */
+		reconcileSessions: (activeSessionIds: string[]): Promise<{
+			success: boolean;
+			removed: number;
+			corrections: Array<{
+				sessionId: string;
+				accountId: string | null;
+				accountName: string | null;
+				configDir: string | null;
+				status: 'valid' | 'removed' | 'inactive';
+			}>;
+			error?: string;
+		}> => ipcRenderer.invoke('accounts:reconcile-sessions', activeSessionIds),
+
 		// --- Session Cleanup ---
 
 		/** Clean up account data when a session is closed */
