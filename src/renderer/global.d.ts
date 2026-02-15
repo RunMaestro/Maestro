@@ -2641,6 +2641,7 @@ interface MaestroAPI {
 		onSwitchPrompt: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onSwitchExecute: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onStatusChanged: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onAssigned: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
 		cleanupSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
 		executeSwitch: (params: { sessionId: string; fromAccountId: string; toAccountId: string; reason: string; automatic: boolean }) => Promise<{ success: boolean; event?: unknown; error?: string }>;
 		onSwitchStarted: (handler: (data: Record<string, unknown>) => void) => () => void;

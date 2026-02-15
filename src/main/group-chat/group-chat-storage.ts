@@ -125,6 +125,8 @@ export interface GroupChat {
 	participants: GroupChatParticipant[];
 	logPath: string;
 	imagesDir: string;
+	/** Account ID for all participants in this group chat */
+	accountId?: string;
 }
 
 /**

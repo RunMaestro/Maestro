@@ -16,6 +16,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
 import { buildAgentArgs } from './agent-args';
 import type { AgentDetector } from '../agents';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 const LOG_CONTEXT = '[ContextGroomer]';
 
@@ -129,6 +131,10 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/** Account registry for multiplexing (optional) */
+	accountRegistry?: AccountRegistry;
+	/** Account ID to inherit from parent session (optional) */
+	accountId?: string;
 }
 
 /**
@@ -170,6 +176,8 @@ export async function groomContext(
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		accountRegistry: optAccountRegistry,
+		accountId: optAccountId,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -317,6 +325,22 @@ export async function groomContext(
 		processManager.on('exit', onExit);
 		processManager.on('agent-error', onError);
 
+		// Inject CLAUDE_CONFIG_DIR for account multiplexing (grooming inherits parent account)
+		let effectiveEnvVars = sessionCustomEnvVars;
+		if (optAccountRegistry) {
+			const envToInject: Record<string, string> = effectiveEnvVars ? { ...effectiveEnvVars } : {};
+			const assignedId = injectAccountEnv(
+				groomerSessionId,
+				agentType,
+				envToInject,
+				optAccountRegistry,
+				optAccountId,
+			);
+			if (assignedId) {
+				effectiveEnvVars = envToInject;
+			}
+		}
+
 		// Spawn the process in batch mode
 		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
@@ -331,7 +355,7 @@ export async function groomContext(
 			sessionSshRemoteConfig,
 			sessionCustomPath,
 			sessionCustomArgs,
-			sessionCustomEnvVars,
+			sessionCustomEnvVars: effectiveEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

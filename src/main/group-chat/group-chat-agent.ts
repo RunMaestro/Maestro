@@ -29,6 +29,8 @@ import { groupChatParticipantPrompt } from '../../prompts';
 import { wrapSpawnWithSsh } from '../utils/ssh-spawn-wrapper';
 import type { SshRemoteSettingsStore } from '../utils/ssh-remote-resolver';
 import { getWindowsSpawnConfig } from './group-chat-config';
+import type { AccountRegistry } from '../accounts/account-registry';
+import { injectAccountEnv } from '../accounts/account-env-injector';
 
 /**
  * In-memory store for active participant sessions.
@@ -88,6 +90,8 @@ export interface SessionOverrides {
  * @param customEnvVars - Optional custom environment variables for the agent (deprecated, use sessionOverrides)
  * @param sessionOverrides - Optional session-specific overrides (customModel, customArgs, customEnvVars, sshRemoteConfig)
  * @param sshStore - Optional SSH settings store for remote execution support
+ * @param accountRegistry - Optional account registry for account multiplexing
+ * @param accountId - Optional account ID to use for this participant
  * @returns The created participant
  */
 export async function addParticipant(
@@ -100,7 +104,9 @@ export async function addParticipant(
 	agentConfigValues?: Record<string, any>,
 	customEnvVars?: Record<string, string>,
 	sessionOverrides?: SessionOverrides,
-	sshStore?: SshRemoteSettingsStore
+	sshStore?: SshRemoteSettingsStore,
+	accountRegistry?: AccountRegistry,
+	accountId?: string,
 ): Promise<GroupChatParticipant> {
 	console.log(`[GroupChat:Debug] ========== ADD PARTICIPANT ==========`);
 	console.log(`[GroupChat:Debug] Group Chat ID: ${groupChatId}`);
@@ -183,6 +189,21 @@ export async function addParticipant(
 	let spawnEnvVars = configResolution.effectiveCustomEnvVars ?? effectiveEnvVars;
 	let spawnShell: string | undefined;
 	let spawnRunInShell = false;
+
+	// Inject CLAUDE_CONFIG_DIR for account multiplexing
+	if (accountRegistry) {
+		const envToInject: Record<string, string> = spawnEnvVars ? { ...spawnEnvVars } : {};
+		const assignedId = injectAccountEnv(
+			sessionId,
+			agentId,
+			envToInject,
+			accountRegistry,
+			accountId,
+		);
+		if (assignedId) {
+			spawnEnvVars = envToInject;
+		}
+	}
 
 	// Apply SSH wrapping if SSH is configured and store is available
 	if (sshStore && sessionOverrides?.sshRemoteConfig) {

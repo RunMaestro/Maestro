@@ -2168,6 +2168,19 @@ function MaestroConsoleInner() {
 		};
 	}, []);
 
+	// Subscribe to account assignment events (update session state when main process assigns an account)
+	useEffect(() => {
+		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
+			setSessions((prev) =>
+				prev.map(s => {
+					if (!data.sessionId.startsWith(s.id)) return s;
+					return { ...s, accountId: data.accountId, accountName: data.accountName };
+				})
+			);
+		});
+		return () => unsubAssigned();
+	}, []);
+
 	// Subscribe to account switch events (respawn agent with new account after switch)
 	useEffect(() => {
 		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
@@ -8112,6 +8125,20 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
 				sessionSshRemoteConfig,
 			};
+
+			// Pre-assign account for Claude Code sessions if accounts are configured
+			if (newSession.toolType === 'claude-code') {
+				try {
+					const defaultAccount = await window.maestro.accounts.getDefault() as { id: string; name: string } | null;
+					if (defaultAccount) {
+						newSession.accountId = defaultAccount.id;
+						newSession.accountName = defaultAccount.name;
+					}
+				} catch {
+					// Accounts not configured or unavailable — proceed without assignment
+				}
+			}
+
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
 			// Track session creation in global stats

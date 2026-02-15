@@ -4,7 +4,10 @@ import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
+import type { AccountRegistry } from '../../accounts/account-registry';
+import { injectAccountEnv } from '../../accounts/account-env-injector';
 import { logger } from '../../utils/logger';
+import type { SafeSendFn } from '../../utils/safe-send';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
@@ -59,6 +62,8 @@ export interface ProcessHandlerDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<{ sessions: any[] }>;
 	getAccountSwitcher?: () => AccountSwitcher | null;
+	getAccountRegistry?: () => AccountRegistry | null;
+	safeSend?: SafeSendFn;
 }
 
 /**
@@ -74,7 +79,7 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher } =
+	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher, getAccountRegistry, safeSend: depsSafeSend } =
 		deps;
 
 	// Spawn a new process for a session
@@ -280,6 +285,26 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				let sshRemoteUsed: SshRemoteConfig | null = null;
 				let customEnvVarsToPass: Record<string, string> | undefined = effectiveCustomEnvVars;
 				let sshStdinScript: string | undefined;
+
+				// ========================================================================
+				// Account Multiplexing: Inject CLAUDE_CONFIG_DIR for account assignment
+				// Must happen before SSH command building so the env var is included
+				// ========================================================================
+				const registry = getAccountRegistry?.();
+				if (registry) {
+					const envToInject: Record<string, string> = customEnvVarsToPass ? { ...customEnvVarsToPass } : {};
+					const assignedAccountId = injectAccountEnv(
+						config.sessionId,
+						config.toolType,
+						envToInject,
+						registry,
+						(config as any).accountId, // May be passed from renderer
+						depsSafeSend,
+					);
+					if (assignedAccountId) {
+						customEnvVarsToPass = envToInject;
+					}
+				}
 
 				if (config.sessionCustomPath) {
 					logger.debug(`Using session-level custom path for ${config.toolType}`, LOG_CONTEXT, {
