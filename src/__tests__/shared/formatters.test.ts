@@ -153,17 +153,22 @@ describe('shared/formatters', () => {
 			expect(formatRelativeTime(now - 23 * 60 * 60000)).toBe('23h ago');
 		});
 
-		it('should format days ago', () => {
-			expect(formatRelativeTime(now - 24 * 60 * 60000)).toBe('1d ago');
-			expect(formatRelativeTime(now - 5 * 24 * 60 * 60000)).toBe('5d ago');
-			expect(formatRelativeTime(now - 6 * 24 * 60 * 60000)).toBe('6d ago');
+		it('should format 1 day as yesterday', () => {
+			expect(formatRelativeTime(now - 24 * 60 * 60000)).toBe('yesterday');
 		});
 
-		it('should format older dates as localized date', () => {
-			const result = formatRelativeTime(now - 10 * 24 * 60 * 60000);
-			// Should be formatted like "Dec 10" or similar (locale dependent)
-			expect(result).not.toContain('ago');
-			expect(result).toMatch(/[A-Za-z]+ \d+/); // e.g., "Dec 10"
+		it('should format days ago for 2-29 days', () => {
+			expect(formatRelativeTime(now - 2 * 24 * 60 * 60000)).toBe('2d ago');
+			expect(formatRelativeTime(now - 5 * 24 * 60 * 60000)).toBe('5d ago');
+			expect(formatRelativeTime(now - 6 * 24 * 60 * 60000)).toBe('6d ago');
+			expect(formatRelativeTime(now - 10 * 24 * 60 * 60000)).toBe('10d ago');
+			expect(formatRelativeTime(now - 29 * 24 * 60 * 60000)).toBe('29d ago');
+		});
+
+		it('should format months ago for >= 30 days', () => {
+			expect(formatRelativeTime(now - 30 * 24 * 60 * 60000)).toBe('1mo ago');
+			expect(formatRelativeTime(now - 60 * 24 * 60 * 60000)).toBe('2mo ago');
+			expect(formatRelativeTime(now - 365 * 24 * 60 * 60000)).toBe('12mo ago');
 		});
 
 		it('should accept Date objects', () => {
@@ -174,6 +179,18 @@ describe('shared/formatters', () => {
 		it('should accept ISO date strings', () => {
 			expect(formatRelativeTime(new Date(now).toISOString())).toBe('just now');
 			expect(formatRelativeTime(new Date(now - 60000).toISOString())).toBe('1m ago');
+		});
+
+		// Edge case guards
+		it('should return "—" for invalid timestamps', () => {
+			expect(formatRelativeTime(0)).toBe('\u2014');
+			expect(formatRelativeTime(-1)).toBe('\u2014');
+			expect(formatRelativeTime(NaN)).toBe('\u2014');
+		});
+
+		it('should return "just now" for future timestamps (clock skew)', () => {
+			expect(formatRelativeTime(now + 60000)).toBe('just now');
+			expect(formatRelativeTime(now + 3600000)).toBe('just now');
 		});
 	});
 

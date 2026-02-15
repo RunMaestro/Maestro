@@ -250,8 +250,8 @@ describe('OfflineQueueBanner', () => {
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
 			fireEvent.click(toggleButton);
 
-			// 24 hours = 1 day, so formatRelativeTime returns "1d ago"
-			expect(screen.getByText(/1d ago/)).toBeInTheDocument();
+			// 24 hours = 1 day, so formatRelativeTime returns "yesterday"
+			expect(screen.getByText(/yesterday/)).toBeInTheDocument();
 		});
 	});
 
@@ -993,9 +993,8 @@ describe('OfflineQueueBanner', () => {
 			const toggleButton = screen.getByRole('button', { name: /command.* queued/i });
 			fireEvent.click(toggleButton);
 
-			// Should show date format for epoch timestamp (> 7 days ago)
-			// formatRelativeTime shows a date format like "Jan 1" or "1 Jan" (locale-dependent)
-			// Just verify it's not showing "ago" since it should be a date
+			// Timestamp 0 is an invalid timestamp — formatRelativeTime returns "—" (em-dash)
+			// Just verify it's not showing "ago"
 			expect(screen.queryByText(/ago/)).not.toBeInTheDocument();
 		});
 	});
