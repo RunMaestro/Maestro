@@ -25,6 +25,8 @@ export interface SshCommandResult {
 	args: string[];
 	/** Script to send via stdin (for stdin-based execution) */
 	stdinScript?: string;
+	/** Remote temp file paths created during image decoding (for informational/logging purposes) */
+	remoteTempImagePaths?: string[];
 }
 
 /**
@@ -252,6 +254,8 @@ export async function buildSshCommandWithStdin(
 	// - Embeds paths in the prompt/stdinInput for resumed sessions (imageResumeMode === 'prompt-embed')
 	const imageArgParts: string[] = [];
 	const remoteImagePaths: string[] = [];
+	/** All remote temp file paths created during image decoding (for cleanup) */
+	const allRemoteTempPaths: string[] = [];
 	if (remoteOptions.images && remoteOptions.images.length > 0 && remoteOptions.imageArgs) {
 		const timestamp = Date.now();
 		for (let i = 0; i < remoteOptions.images.length; i++) {
@@ -259,6 +263,7 @@ export async function buildSshCommandWithStdin(
 			if (!parsed) continue;
 			const ext = parsed.mediaType.split('/')[1] || 'png';
 			const remoteTempPath = `/tmp/maestro-image-${timestamp}-${i}.${ext}`;
+			allRemoteTempPaths.push(remoteTempPath);
 			// Use heredoc + base64 decode to create the file on the remote host
 			// Heredoc avoids shell argument length limits for large images
 			// Base64 alphabet (A-Za-z0-9+/=) is safe in heredocs
@@ -305,10 +310,16 @@ export async function buildSshCommandWithStdin(
 		cmdParts.push(shellEscape(remoteOptions.prompt));
 	}
 
-	// Use exec to replace the shell with the command (cleaner process tree)
-	// When stdinInput is provided, the prompt will be appended after the script
-	// and passed through to the exec'd command via stdin inheritance
-	scriptLines.push(`exec ${cmdParts.join(' ')}`);
+	// When remote temp files exist, don't use exec (which replaces the shell) so that
+	// cleanup commands can run after the agent exits. When no temp files, use exec for
+	// a cleaner process tree. When stdinInput is provided, the prompt will be appended
+	// after the script and passed through to the command via stdin inheritance.
+	if (allRemoteTempPaths.length > 0) {
+		const rmPaths = allRemoteTempPaths.map(p => shellEscape(p)).join(' ');
+		scriptLines.push(`${cmdParts.join(' ')}; rm -f ${rmPaths}`);
+	} else {
+		scriptLines.push(`exec ${cmdParts.join(' ')}`);
+	}
 
 	// Build the final stdin content: script + optional prompt passthrough
 	// The script ends with exec, which replaces bash with the target command
@@ -339,6 +350,7 @@ export async function buildSshCommandWithStdin(
 		command: sshPath,
 		args,
 		stdinScript,
+		remoteTempImagePaths: allRemoteTempPaths.length > 0 ? allRemoteTempPaths : undefined,
 	};
 }
 
