@@ -8,6 +8,7 @@ import {
   SYMPHONY_REGISTRY_URL,
   GITHUB_API_BASE,
   SYMPHONY_ISSUE_LABEL,
+  SYMPHONY_BLOCKING_LABEL,
   REGISTRY_CACHE_TTL_MS,
   ISSUES_CACHE_TTL_MS,
   BRANCH_TEMPLATE,
@@ -46,6 +47,12 @@ describe('shared/symphony-constants', () => {
   describe('SYMPHONY_ISSUE_LABEL', () => {
     it('should be "runmaestro.ai"', () => {
       expect(SYMPHONY_ISSUE_LABEL).toBe('runmaestro.ai');
+    });
+  });
+
+  describe('SYMPHONY_BLOCKING_LABEL', () => {
+    it('should be "blocking"', () => {
+      expect(SYMPHONY_BLOCKING_LABEL).toBe('blocking');
     });
   });
 

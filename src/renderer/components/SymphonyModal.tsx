@@ -39,6 +39,7 @@ import {
 	HelpCircle,
 	Github,
 	Terminal,
+	Lock,
 } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type {
@@ -48,7 +49,7 @@ import type {
 	CompletedContribution,
 	ContributionStatus,
 } from '../../shared/symphony-types';
-import { SYMPHONY_CATEGORIES } from '../../shared/symphony-constants';
+import { SYMPHONY_CATEGORIES, SYMPHONY_BLOCKING_LABEL } from '../../shared/symphony-constants';
 import { COLORBLIND_AGENT_PALETTE } from '../constants/colorblindPalettes';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -275,7 +276,10 @@ function IssueCard({
 	isSelected: boolean;
 	onSelect: () => void;
 }) {
-	const isAvailable = issue.status === 'available';
+	const isBlocked = issue.labels?.some(
+		(l) => l.name.toLowerCase() === SYMPHONY_BLOCKING_LABEL.toLowerCase()
+	);
+	const isAvailable = issue.status === 'available' && !isBlocked;
 	const isClaimed = issue.status === 'in_progress';
 
 	return (
@@ -305,22 +309,36 @@ function IssueCard({
 			<div className="flex items-start justify-between gap-2 mb-1">
 				<h4
 					className="font-medium text-sm flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
+					style={{ color: isBlocked ? theme.colors.textDim : theme.colors.textMain }}
 				>
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						#{issue.number}
 					</span>
 					{issue.title}
 				</h4>
-				{isClaimed && (
-					<span
-						className="px-1.5 py-0.5 rounded text-xs shrink-0 flex items-center gap-1"
-						style={{ backgroundColor: `${STATUS_COLORS.running}20`, color: STATUS_COLORS.running }}
-					>
-						<GitPullRequest className="w-3 h-3" />
-						Claimed
-					</span>
-				)}
+				<div className="flex items-center gap-1.5 shrink-0">
+					{isBlocked && (
+						<span
+							className="px-1.5 py-0.5 rounded text-xs flex items-center gap-1"
+							style={{
+								backgroundColor: `${STATUS_COLORS.cancelled}20`,
+								color: STATUS_COLORS.cancelled,
+							}}
+						>
+							<Lock className="w-3 h-3" />
+							Blocked
+						</span>
+					)}
+					{isClaimed && (
+						<span
+							className="px-1.5 py-0.5 rounded text-xs flex items-center gap-1"
+							style={{ backgroundColor: `${STATUS_COLORS.running}20`, color: STATUS_COLORS.running }}
+						>
+							<GitPullRequest className="w-3 h-3" />
+							Claimed
+						</span>
+					)}
+				</div>
 			</div>
 
 			<div
@@ -398,7 +416,10 @@ function RepositoryDetailView({
 	onPreviewDocument: (path: string, isExternal: boolean) => void;
 }) {
 	const categoryInfo = SYMPHONY_CATEGORIES[repo.category] ?? { label: repo.category, emoji: '📦' };
-	const availableIssues = issues.filter((i) => i.status === 'available');
+	const isIssueBlocked = (i: SymphonyIssue) =>
+		i.labels?.some((l) => l.name.toLowerCase() === SYMPHONY_BLOCKING_LABEL.toLowerCase());
+	const availableIssues = issues.filter((i) => i.status === 'available' && !isIssueBlocked(i));
+	const blockedIssues = issues.filter((i) => i.status === 'available' && isIssueBlocked(i));
 	const inProgressIssues = issues.filter((i) => i.status === 'in_progress');
 	const [selectedDocIndex, setSelectedDocIndex] = useState<number>(0);
 	const [showDocDropdown, setShowDocDropdown] = useState(false);
@@ -660,7 +681,7 @@ function RepositoryDetailView({
 										/>
 									)}
 								</h4>
-								{availableIssues.length === 0 ? (
+								{availableIssues.length === 0 && blockedIssues.length === 0 ? (
 									<p className="text-sm text-center py-4" style={{ color: theme.colors.textDim }}>
 										All issues are currently being worked on
 									</p>
@@ -678,6 +699,30 @@ function RepositoryDetailView({
 									</div>
 								)}
 							</div>
+
+							{/* Blocked Issues Section */}
+							{blockedIssues.length > 0 && (
+								<div className="mt-4">
+									<h4
+										className="text-xs font-semibold mb-2 uppercase tracking-wide flex items-center gap-2"
+										style={{ color: STATUS_COLORS.cancelled }}
+									>
+										<Lock className="w-3 h-3" />
+										<span>Blocked ({blockedIssues.length})</span>
+									</h4>
+									<div className="space-y-2">
+										{blockedIssues.map((issue) => (
+											<IssueCard
+												key={issue.number}
+												issue={issue}
+												theme={theme}
+												isSelected={selectedIssue?.number === issue.number}
+												onSelect={() => onSelectIssue(issue)}
+											/>
+										))}
+									</div>
+								</div>
+							)}
 						</>
 					)}
 				</div>
@@ -722,6 +767,18 @@ function RepositoryDetailView({
 									<FileText className="w-3 h-3" />
 									<span>{selectedIssue.documentPaths.length} Auto Run documents to process</span>
 								</div>
+								{isIssueBlocked(selectedIssue) && (
+									<div
+										className="mt-2 px-2 py-1.5 rounded text-xs flex items-center gap-2"
+										style={{
+											backgroundColor: `${STATUS_COLORS.cancelled}15`,
+											color: STATUS_COLORS.cancelled,
+										}}
+									>
+										<Lock className="w-3 h-3 shrink-0" />
+										This issue is blocked by a dependency. The maintainer will remove the blocking label when prerequisites are met.
+									</div>
+								)}
 							</div>
 
 							{/* Document selector dropdown */}
@@ -822,7 +879,7 @@ function RepositoryDetailView({
 			</div>
 
 			{/* Footer */}
-			{selectedIssue && selectedIssue.status === 'available' && (
+			{selectedIssue && selectedIssue.status === 'available' && !isIssueBlocked(selectedIssue) && (
 				<div
 					className="shrink-0 px-4 py-3 border-t flex items-center justify-between"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
@@ -1251,6 +1308,7 @@ export function SymphonyModal({
 	const [isLoadingDocument, setIsLoadingDocument] = useState(false);
 	const [isStarting, setIsStarting] = useState(false);
 	const [showAgentDialog, setShowAgentDialog] = useState(false);
+	const [showBuildWarning, setShowBuildWarning] = useState(false);
 	const [showHelp, setShowHelp] = useState(false);
 	const [isCheckingPRStatuses, setIsCheckingPRStatuses] = useState(false);
 	const [prStatusMessage, setPrStatusMessage] = useState<string | null>(null);
@@ -1363,11 +1421,16 @@ export function SymphonyModal({
 		[selectedRepo]
 	);
 
-	// Start contribution - opens agent creation dialog
+	// Start contribution - show build warning first, then open agent creation dialog
 	const handleStartContribution = useCallback(() => {
 		if (!selectedRepo || !selectedIssue) return;
-		setShowAgentDialog(true);
+		setShowBuildWarning(true);
 	}, [selectedRepo, selectedIssue]);
+
+	const handleBuildWarningConfirm = useCallback(() => {
+		setShowBuildWarning(false);
+		setShowAgentDialog(true);
+	}, []);
 
 	// Handle agent creation from dialog
 	const handleCreateAgent = useCallback(
@@ -2218,6 +2281,77 @@ export function SymphonyModal({
 	return (
 		<>
 			{createPortal(modalContent, document.body)}
+			{/* Build Tools Warning Dialog */}
+			{showBuildWarning &&
+				createPortal(
+					<div
+						className="fixed inset-0 flex items-center justify-center"
+						style={{ zIndex: 10001 }}
+					>
+						<div
+							className="absolute inset-0"
+							style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+							onClick={() => setShowBuildWarning(false)}
+						/>
+						<div
+							className="relative rounded-lg border shadow-2xl p-6 max-w-md mx-4"
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								borderColor: theme.colors.border,
+							}}
+						>
+							<div className="flex items-start gap-3 mb-4">
+								<AlertCircle
+									className="w-6 h-6 shrink-0 mt-0.5"
+									style={{ color: STATUS_COLORS.paused }}
+								/>
+								<div>
+									<h3
+										className="font-semibold text-base mb-2"
+										style={{ color: theme.colors.textMain }}
+									>
+										Build Tools Required
+									</h3>
+									<p
+										className="text-sm leading-relaxed"
+										style={{ color: theme.colors.textDim }}
+									>
+										Symphony will clone this repository and run Auto Run documents that may compile code, run tests, and make changes. Before proceeding, make sure you have the project's build tools and dependencies installed on your machine (e.g., Node.js, Python, Rust toolchain, etc.).
+									</p>
+									<p
+										className="text-sm leading-relaxed mt-2"
+										style={{ color: theme.colors.textDim }}
+									>
+										Consider cloning the project first and verifying you can build it successfully. Without the right toolchain, the contribution is likely to fail.
+									</p>
+								</div>
+							</div>
+							<div className="flex justify-end gap-2 mt-4">
+								<button
+									onClick={() => setShowBuildWarning(false)}
+									className="px-4 py-2 rounded text-sm transition-colors hover:bg-white/10"
+									style={{
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								>
+									Cancel
+								</button>
+								<button
+									onClick={handleBuildWarningConfirm}
+									className="px-4 py-2 rounded font-semibold text-sm transition-colors"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+									}}
+								>
+									I Have the Build Tools
+								</button>
+							</div>
+						</div>
+					</div>,
+					document.body
+				)}
 			{/* Agent Creation Dialog */}
 			{selectedRepo && selectedIssue && (
 				<AgentCreationDialog

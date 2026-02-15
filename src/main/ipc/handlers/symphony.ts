@@ -439,6 +439,7 @@ async function fetchIssues(repoSlug: string): Promise<SymphonyIssue[]> {
 			user: { login: string };
 			created_at: string;
 			updated_at: string;
+			labels: Array<{ name: string; color: string }>;
 		}>;
 
 		// Transform to SymphonyIssue format (initially all as available)
@@ -452,6 +453,9 @@ async function fetchIssues(repoSlug: string): Promise<SymphonyIssue[]> {
 			createdAt: issue.created_at,
 			updatedAt: issue.updated_at,
 			documentPaths: parseDocumentPaths(issue.body || ''),
+			labels: (issue.labels || [])
+				.filter((l) => l.name !== SYMPHONY_ISSUE_LABEL)
+				.map((l) => ({ name: l.name, color: l.color })),
 			status: 'available' as IssueStatus,
 		}));
 

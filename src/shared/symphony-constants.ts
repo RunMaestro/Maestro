@@ -14,6 +14,9 @@ export const GITHUB_API_BASE = 'https://api.github.com';
 // Issue label to look for
 export const SYMPHONY_ISSUE_LABEL = 'runmaestro.ai';
 
+// Label that marks an issue as blocked (grayed out in UI)
+export const SYMPHONY_BLOCKING_LABEL = 'blocking';
+
 // Cache settings
 export const REGISTRY_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;        // 5 minutes (issues change frequently)
