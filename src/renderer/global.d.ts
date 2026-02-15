@@ -3601,6 +3601,38 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// Account Multiplexing API
+	accounts: {
+		list: () => Promise<unknown[]>;
+		get: (id: string) => Promise<unknown>;
+		add: (params: { name: string; email: string; configDir: string }) => Promise<unknown>;
+		update: (id: string, updates: Record<string, unknown>) => Promise<unknown>;
+		remove: (id: string) => Promise<unknown>;
+		setDefault: (id: string) => Promise<unknown>;
+		assign: (sessionId: string, accountId: string) => Promise<unknown>;
+		getAssignment: (sessionId: string) => Promise<unknown>;
+		getAllAssignments: () => Promise<unknown[]>;
+		getUsage: (accountId: string, windowStart: number, windowEnd: number) => Promise<unknown>;
+		getAllUsage: () => Promise<unknown>;
+		getThrottleEvents: (accountId?: string, since?: number) => Promise<unknown[]>;
+		getSwitchConfig: () => Promise<unknown>;
+		updateSwitchConfig: (updates: Record<string, unknown>) => Promise<unknown>;
+		getDefault: () => Promise<unknown>;
+		selectNext: (excludeIds?: string[]) => Promise<unknown>;
+		validateBaseDir: () => Promise<{ valid: boolean; baseDir: string; errors: string[] }>;
+		discoverExisting: () => Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>>;
+		createDirectory: (name: string) => Promise<{ success: boolean; configDir: string; error?: string }>;
+		validateSymlinks: (configDir: string) => Promise<{ valid: boolean; broken: string[]; missing: string[] }>;
+		repairSymlinks: (configDir: string) => Promise<{ repaired: string[]; errors: string[] }>;
+		readEmail: (configDir: string) => Promise<string | null>;
+		getLoginCommand: (configDir: string) => Promise<string | null>;
+		removeDirectory: (configDir: string) => Promise<{ success: boolean; error?: string }>;
+		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
+		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number; totalTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
+		onLimitWarning: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
+		onLimitReached: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
