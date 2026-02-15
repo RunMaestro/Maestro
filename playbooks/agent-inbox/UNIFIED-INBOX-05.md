@@ -39,7 +39,8 @@ This phase writes comprehensive tests including edge cases from the blind spot r
 
 ## Component Tests
 
-- [ ] **Write component tests for AgentInbox.** Create `src/__tests__/renderer/components/AgentInbox.test.tsx`. Reference `ProcessMonitor.test.tsx` for testing patterns and mocking strategies.
+- [x] **Write component tests for AgentInbox.** Create `src/__tests__/renderer/components/AgentInbox.test.tsx`. Reference `ProcessMonitor.test.tsx` for testing patterns and mocking strategies.
+  <!-- MAESTRO: Tests already existed from prior phase — 86 tests covering all 15 spec items except Escape-triggers-close and focus-return-to-trigger. Added 2 new tests: (1) Escape triggers onClose via layer stack onEscape handler, (2) focus returns to trigger element on modal close. Total: 88 tests, all passing. Full suite: 19,314 tests, 0 failures. -->
 
   **Standard test cases:**
   1. Renders modal with correct title "Inbox" (NOT "Unified Inbox")

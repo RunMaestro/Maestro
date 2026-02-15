@@ -498,6 +498,63 @@ describe('AgentInbox', () => {
 			fireEvent.click(dialog);
 			expect(onClose).not.toHaveBeenCalled();
 		});
+
+		it('Escape triggers onClose via layer stack onEscape handler', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// The modal registers with the layer stack, passing handleClose as onEscape.
+			// Invoking the registered onEscape callback should trigger onClose.
+			expect(mockRegisterLayer).toHaveBeenCalledTimes(1);
+			const layerConfig = mockRegisterLayer.mock.calls[0][0];
+			expect(layerConfig.onEscape).toBeDefined();
+
+			// Simulate the layer stack calling onEscape (as happens when Escape is pressed)
+			layerConfig.onEscape();
+			expect(onClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('restores focus to trigger element on modal close', () => {
+			// Create a trigger button and focus it before mounting the modal
+			const triggerBtn = document.createElement('button');
+			triggerBtn.textContent = 'Open Inbox';
+			document.body.appendChild(triggerBtn);
+			triggerBtn.focus();
+			expect(document.activeElement).toBe(triggerBtn);
+
+			const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+				// Execute callback synchronously for test determinism
+				cb(0);
+				return 1;
+			});
+
+			const { unmount } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+
+			// Trigger close via close button
+			const closeBtn = screen.getByTitle('Close (Esc)');
+			fireEvent.click(closeBtn);
+
+			// rAF was called; the callback should have restored focus to the trigger button
+			expect(rafSpy).toHaveBeenCalled();
+			expect(document.activeElement).toBe(triggerBtn);
+
+			// Clean up
+			unmount();
+			document.body.removeChild(triggerBtn);
+			rafSpy.mockRestore();
+		});
 	});
 
 	// ==========================================================================
