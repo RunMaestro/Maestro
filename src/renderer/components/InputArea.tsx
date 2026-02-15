@@ -307,16 +307,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// PERF: Memoize both the lowercase conversion and filtered results to avoid
 	// recalculating on every render - inputValue changes on every keystroke
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
+	const searchTerm = useMemo(() => inputValueLower.replace(/^\//, ''), [inputValueLower]);
 	const filteredSlashCommands = useMemo(() => {
 		return slashCommands.filter((cmd) => {
 			// Check if command is only available in terminal mode
 			if (cmd.terminalOnly && !isTerminalMode) return false;
 			// Check if command is only available in AI mode
 			if (cmd.aiOnly && isTerminalMode) return false;
-			// Check if command matches input
-			return cmd.command.toLowerCase().includes(inputValueLower) || (cmd.description && cmd.description.toLowerCase().includes(inputValueLower));
+			// Check if command matches input (strip leading / from both for substring matching)
+			const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
+			return cmdName.includes(searchTerm) || (cmd.description && cmd.description.toLowerCase().includes(searchTerm));
 		});
-	}, [slashCommands, isTerminalMode, inputValueLower]);
+	}, [slashCommands, isTerminalMode, searchTerm]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
 	const safeSelectedIndex = Math.min(

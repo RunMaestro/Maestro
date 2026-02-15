@@ -9373,9 +9373,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
 				// Check if command is only available in AI mode
 				if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-				// Check if command matches input
-				const inputLower = inputValue.toLowerCase();
-				return cmd.command.toLowerCase().includes(inputLower) || (cmd.description && cmd.description.toLowerCase().includes(inputLower));
+				// Check if command matches input (strip leading / from both for substring matching)
+				const searchTerm = inputValue.toLowerCase().replace(/^\//, '');
+				const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
+				return cmdName.includes(searchTerm) || (cmd.description && cmd.description.toLowerCase().includes(searchTerm));
 			});
 
 			if (e.key === 'ArrowDown') {
