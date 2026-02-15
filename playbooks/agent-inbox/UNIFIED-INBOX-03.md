@@ -39,7 +39,8 @@ This phase enriches each inbox item with context usage data, git branch info, an
 
 ## Smart Summary
 
-- [ ] **Generate a 1-line conversation summary (deterministic heuristic, no LLM).** In `useAgentInbox`, improve the `lastMessage` field. Extract the last 2-3 log entries from `tab.logs` (guard: `tab.logs ?? []`).
+- [x] **Generate a 1-line conversation summary (deterministic heuristic, no LLM).** In `useAgentInbox`, improve the `lastMessage` field. Extract the last 2-3 log entries from `tab.logs` (guard: `tab.logs ?? []`).
+  > ✅ Completed: Replaced `extractLastMessage` with `generateSmartSummary` in `useAgentInbox.ts`. Implements all 4 summary rules: "Waiting:" prefix for `waiting_input` state, direct question display for `?`-ending AI messages, "Done:" prefix with first-sentence extraction for AI statements, and `"No activity yet"` for empty logs. Added `truncate()` and `firstSentence()` helpers. Scans last 3 log entries for AI source, with fallback to raw last-log text. All null guards: `logs ?? []`, skips entries with falsy `.text`, handles null/undefined text. 12 new hook tests added (waiting_input with/without AI text, question detection, Done prefix, entry scanning, undefined/null text guards, truncation). Updated 2 component tests for new default message. All 104 tests pass (38 hook + 66 component). TSC + ESLint clean.
 
   **Summary rules:**
   - If `session.state === 'waiting_input'`: prefix with `"Waiting: "` + last AI message snippet

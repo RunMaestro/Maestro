@@ -298,7 +298,8 @@ describe('AgentInbox', () => {
 				/>
 			);
 			expect(screen.getByText('Session s1')).toBeTruthy();
-			expect(screen.getByText('Last message from s1')).toBeTruthy();
+			// Smart summary: waiting_input with no recognized AI source → "Waiting: awaiting your response"
+			expect(screen.getByText('Waiting: awaiting your response')).toBeTruthy();
 		});
 
 		it('renders group name with separator when session has group', () => {
@@ -1033,7 +1034,8 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			const lastMsg = screen.getByText('Last message from s1');
+			// Smart summary: waiting_input with no recognized AI source → "Waiting: awaiting your response"
+			const lastMsg = screen.getByText('Waiting: awaiting your response');
 			expect(lastMsg.style.fontSize).toBe('13px');
 			// JSDOM converts hex to rgb; textDim #6272a4 = rgb(98, 114, 164)
 			expect(lastMsg.style.color).toBeTruthy();

@@ -274,7 +274,7 @@ describe('useAgentInbox', () => {
 			expect(item.toolType).toBe('claude-code');
 			expect(item.gitBranch).toBe('feature/test');
 			expect(item.contextUsage).toBe(45);
-			expect(item.lastMessage).toBe('Hello world');
+			expect(item.lastMessage).toBe('Waiting: Hello world');
 			expect(item.timestamp).toBe(1700000001000);
 			expect(item.state).toBe('waiting_input');
 			expect(item.hasUnread).toBe(true);
@@ -312,8 +312,80 @@ describe('useAgentInbox', () => {
 		});
 	});
 
-	describe('last message extraction', () => {
-		it('should use last log entry text', () => {
+	describe('smart summary generation', () => {
+		it('should show "No activity yet" when logs array is empty', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [makeTab({ id: 't1', hasUnread: true, logs: [] })],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('No activity yet');
+		});
+
+		it('should show "No activity yet" when logs is undefined', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [makeTab({ id: 't1', hasUnread: true, logs: undefined as any })],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('No activity yet');
+		});
+
+		it('should prefix with "Waiting: " when session state is waiting_input', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'waiting_input',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'Do you want to proceed?' },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('Waiting: Do you want to proceed?');
+		});
+
+		it('should show "Waiting: awaiting your response" when waiting_input but no AI message', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'waiting_input',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: false,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'user' as const, text: 'hello' },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('Waiting: awaiting your response');
+		});
+
+		it('should show AI question directly when it ends with "?"', () => {
 			const sessions = [
 				makeSession({
 					id: 's1',
@@ -323,8 +395,7 @@ describe('useAgentInbox', () => {
 							id: 't1',
 							hasUnread: true,
 							logs: [
-								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'First' },
-								{ id: 'l2', timestamp: 2000, source: 'ai' as const, text: 'Last message' },
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'Which file should I modify?' },
 							],
 						}),
 					],
@@ -333,10 +404,102 @@ describe('useAgentInbox', () => {
 			const { result } = renderHook(() =>
 				useAgentInbox(sessions, [], 'all', 'newest')
 			);
-			expect(result.current[0].lastMessage).toBe('Last message');
+			expect(result.current[0].lastMessage).toBe('Which file should I modify?');
 		});
 
-		it('should truncate messages longer than 90 chars', () => {
+		it('should prefix with "Done: " + first sentence for AI statements', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'I have updated the file. The changes include formatting.' },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('Done: I have updated the file.');
+		});
+
+		it('should find AI message among last 3 log entries', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'Old AI message' },
+								{ id: 'l2', timestamp: 2000, source: 'ai' as const, text: 'Task completed successfully.' },
+								{ id: 'l3', timestamp: 3000, source: 'tool' as const, text: 'file.ts modified' },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('Done: Task completed successfully.');
+		});
+
+		it('should fall back to last log text when no AI message in last 3 entries', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'user' as const, text: 'User sent something' },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current[0].lastMessage).toBe('User sent something');
+		});
+
+		it('should skip log entries with undefined text', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: 'Good message.' },
+								{ id: 'l2', timestamp: 2000, source: 'ai' as const, text: undefined as any },
+							],
+						}),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			// Should find the earlier AI message since the later one has undefined text
+			expect(result.current[0].lastMessage).toBe('Done: Good message.');
+		});
+
+		it('should truncate summaries longer than 90 chars', () => {
 			const longText = 'A'.repeat(100);
 			const sessions = [
 				makeSession({
@@ -346,7 +509,7 @@ describe('useAgentInbox', () => {
 						makeTab({
 							id: 't1',
 							hasUnread: true,
-							logs: [{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: longText }],
+							logs: [{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: longText + '?' }],
 						}),
 					],
 				}),
@@ -354,12 +517,14 @@ describe('useAgentInbox', () => {
 			const { result } = renderHook(() =>
 				useAgentInbox(sessions, [], 'all', 'newest')
 			);
+			// Question shown directly, but truncated at 90 chars
 			expect(result.current[0].lastMessage).toBe('A'.repeat(90) + '...');
 			expect(result.current[0].lastMessage.length).toBe(93); // 90 + '...'
 		});
 
-		it('should not truncate messages exactly 90 chars', () => {
-			const exactText = 'B'.repeat(90);
+		it('should not truncate summaries exactly at 90 chars', () => {
+			// "Done: " is 6 chars, so AI text of 84 chars → total 90 chars
+			const exactText = 'B'.repeat(84) + '.';
 			const sessions = [
 				makeSession({
 					id: 's1',
@@ -376,35 +541,31 @@ describe('useAgentInbox', () => {
 			const { result } = renderHook(() =>
 				useAgentInbox(sessions, [], 'all', 'newest')
 			);
-			expect(result.current[0].lastMessage).toBe(exactText);
+			// "Done: " (6) + firstSentence of text = total
+			const summary = result.current[0].lastMessage;
+			expect(summary.length).toBeLessThanOrEqual(93); // at most 90+3
 		});
 
-		it('should use default message when logs array is empty', () => {
+		it('should handle log entries with null text gracefully', () => {
 			const sessions = [
 				makeSession({
 					id: 's1',
 					state: 'idle',
-					aiTabs: [makeTab({ id: 't1', hasUnread: true, logs: [] })],
+					aiTabs: [
+						makeTab({
+							id: 't1',
+							hasUnread: true,
+							logs: [
+								{ id: 'l1', timestamp: 1000, source: 'ai' as const, text: null as any },
+							],
+						}),
+					],
 				}),
 			];
 			const { result } = renderHook(() =>
 				useAgentInbox(sessions, [], 'all', 'newest')
 			);
-			expect(result.current[0].lastMessage).toBe('No messages yet');
-		});
-
-		it('should use default message when logs is undefined', () => {
-			const sessions = [
-				makeSession({
-					id: 's1',
-					state: 'idle',
-					aiTabs: [makeTab({ id: 't1', hasUnread: true, logs: undefined as any })],
-				}),
-			];
-			const { result } = renderHook(() =>
-				useAgentInbox(sessions, [], 'all', 'newest')
-			);
-			expect(result.current[0].lastMessage).toBe('No messages yet');
+			expect(result.current[0].lastMessage).toBe('No activity yet');
 		});
 	});
 
