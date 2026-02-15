@@ -15,6 +15,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useDebouncedCallback } from '../utils';
 
 // Stats time range type matching the backend API
 export type StatsTimeRange = 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all';
@@ -52,26 +53,6 @@ export interface UseStatsReturn {
 	refresh: () => Promise<void>;
 	/** Whether a manual refresh is in progress */
 	refreshing: boolean;
-}
-
-/**
- * Simple debounce implementation for real-time updates
- */
-function debounce<T extends (...args: unknown[]) => unknown>(
-	fn: T,
-	delay: number
-): (...args: Parameters<T>) => void {
-	let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-	return (...args: Parameters<T>) => {
-		if (timeoutId) {
-			clearTimeout(timeoutId);
-		}
-		timeoutId = setTimeout(() => {
-			fn(...args);
-			timeoutId = null;
-		}, delay);
-	};
 }
 
 /**
@@ -145,17 +126,10 @@ export function useStats(range: StatsTimeRange, enabled: boolean = true): UseSta
 		await fetchStats(true);
 	}, [fetchStats]);
 
-	// Use refs to ensure debounce works correctly across re-renders
-	const fetchStatsRef = useRef(fetchStats);
-	fetchStatsRef.current = fetchStats;
-
-	// Create stable debounced function once
-	const debouncedFetchRef = useRef<(() => void) | null>(null);
-	if (!debouncedFetchRef.current) {
-		debouncedFetchRef.current = debounce(() => {
-			fetchStatsRef.current(true);
-		}, 1000);
-	}
+	// Debounced fetch for real-time updates — uses established utility with proper cleanup
+	const { debouncedCallback: debouncedFetch } = useDebouncedCallback(() => {
+		fetchStats(true);
+	}, 1000);
 
 	// Initial fetch and real-time updates subscription
 	useEffect(() => {
@@ -168,14 +142,14 @@ export function useStats(range: StatsTimeRange, enabled: boolean = true): UseSta
 		// Initial fetch
 		fetchStats();
 
-		// Subscribe to stats updates with stable debounced function
-		const unsubscribe = window.maestro.stats.onStatsUpdate(debouncedFetchRef.current!);
+		// Subscribe to stats updates with debounced function
+		const unsubscribe = window.maestro.stats.onStatsUpdate(debouncedFetch);
 
 		return () => {
 			mountedRef.current = false;
 			unsubscribe();
 		};
-	}, [enabled, fetchStats]);
+	}, [enabled, fetchStats, debouncedFetch]);
 
 	// Memoize return value for stable reference
 	return useMemo(
