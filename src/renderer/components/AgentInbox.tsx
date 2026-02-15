@@ -163,9 +163,10 @@ function InboxItemCardContent({
 				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
 					{item.gitBranch && (
 						<span
+							data-testid="git-branch-badge"
 							style={{
 								fontSize: 11,
-								fontFamily: 'monospace',
+								fontFamily: "'SF Mono', 'Menlo', monospace",
 								padding: '1px 6px',
 								borderRadius: 4,
 								backgroundColor: `${theme.colors.accent}15`,
@@ -173,10 +174,10 @@ function InboxItemCardContent({
 								whiteSpace: 'nowrap',
 								overflow: 'hidden',
 								textOverflow: 'ellipsis',
-								maxWidth: 160,
+								maxWidth: 200,
 							}}
 						>
-							{item.gitBranch}
+							⎇ {item.gitBranch.length > 25 ? item.gitBranch.slice(0, 25) + '...' : item.gitBranch}
 						</span>
 					)}
 					<span
