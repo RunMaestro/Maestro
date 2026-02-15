@@ -732,6 +732,11 @@ export interface Session {
 
 	// Symphony contribution metadata (only set for Symphony sessions)
 	symphonyMetadata?: SymphonySessionMetadata;
+
+	/** Account ID assigned to this session for multiplexing */
+	accountId?: string;
+	/** Display name of the assigned account (for UI display without lookup) */
+	accountName?: string;
 }
 
 export interface AgentConfigOption {
