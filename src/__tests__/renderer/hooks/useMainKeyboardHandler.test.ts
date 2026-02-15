@@ -1249,6 +1249,176 @@ describe('useMainKeyboardHandler', () => {
 		});
 	});
 
+	describe('agentInbox zero-items guard', () => {
+		it('should show toast and NOT open modal when no pending items', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetAgentInboxOpen = vi.fn();
+			const mockAddToast = vi.fn();
+			const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentInbox',
+				sessions: [
+					{ id: 's1', state: 'busy', aiTabs: [{ id: 't1', hasUnread: false }] },
+				],
+				setAgentInboxOpen: mockSetAgentInboxOpen,
+				addToast: mockAddToast,
+				recordShortcutUsage: mockRecordShortcutUsage,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						code: 'KeyI',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// Toast should be shown
+			expect(mockAddToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'info',
+					title: 'Agent Inbox',
+					message: 'No pending items',
+				})
+			);
+			// Modal should NOT open
+			expect(mockSetAgentInboxOpen).not.toHaveBeenCalled();
+		});
+
+		it('should show toast when sessions array is empty', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetAgentInboxOpen = vi.fn();
+			const mockAddToast = vi.fn();
+			const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentInbox',
+				sessions: [],
+				setAgentInboxOpen: mockSetAgentInboxOpen,
+				addToast: mockAddToast,
+				recordShortcutUsage: mockRecordShortcutUsage,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						code: 'KeyI',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockAddToast).toHaveBeenCalled();
+			expect(mockSetAgentInboxOpen).not.toHaveBeenCalled();
+		});
+
+		it('should open modal when sessions have waiting_input state', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetAgentInboxOpen = vi.fn();
+			const mockAddToast = vi.fn();
+			const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentInbox',
+				sessions: [
+					{ id: 's1', state: 'waiting_input', aiTabs: [{ id: 't1', hasUnread: false }] },
+				],
+				setAgentInboxOpen: mockSetAgentInboxOpen,
+				addToast: mockAddToast,
+				recordShortcutUsage: mockRecordShortcutUsage,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						code: 'KeyI',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// Modal should open
+			expect(mockSetAgentInboxOpen).toHaveBeenCalledWith(true);
+			// Toast should NOT be shown
+			expect(mockAddToast).not.toHaveBeenCalled();
+		});
+
+		it('should open modal when tabs have unread messages', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSetAgentInboxOpen = vi.fn();
+			const mockAddToast = vi.fn();
+			const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentInbox',
+				sessions: [
+					{ id: 's1', state: 'busy', aiTabs: [{ id: 't1', hasUnread: true }] },
+				],
+				setAgentInboxOpen: mockSetAgentInboxOpen,
+				addToast: mockAddToast,
+				recordShortcutUsage: mockRecordShortcutUsage,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						code: 'KeyI',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetAgentInboxOpen).toHaveBeenCalledWith(true);
+			expect(mockAddToast).not.toHaveBeenCalled();
+		});
+
+		it('should track shortcut usage regardless of whether modal opens or toast shows', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockRecordShortcutUsage = vi.fn().mockReturnValue({ newLevel: null });
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'agentInbox',
+				sessions: [],
+				setAgentInboxOpen: vi.fn(),
+				addToast: vi.fn(),
+				recordShortcutUsage: mockRecordShortcutUsage,
+			});
+
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: 'i',
+						code: 'KeyI',
+						altKey: true,
+						metaKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockRecordShortcutUsage).toHaveBeenCalledWith('agentInbox');
+		});
+	});
+
 	describe('Cmd+E markdown toggle (toggleMarkdownMode)', () => {
 		it('should toggle chatRawTextMode when on AI tab with no file tab', () => {
 			const { result } = renderHook(() => useMainKeyboardHandler());

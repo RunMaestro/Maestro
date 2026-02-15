@@ -138,7 +138,8 @@ This phase runs automated checks to verify that the 27 actionable findings from 
 
 ## Zero-Items Guard
 
-- [ ] **Verify the zero-items toast guard works.** Check the keyboard handler:
+- [x] **Verify the zero-items toast guard works.** Check the keyboard handler:
+  > ✅ Zero-items guard verified at L399–418 of useMainKeyboardHandler.ts. Handler counts sessions with `waiting_input` state or tabs with `hasUnread`, shows toast ("No pending items") when count=0, opens modal only when count>0. Added 5 test cases covering: zero items with busy sessions, empty sessions array, waiting_input opens modal, unread tabs open modal, shortcut tracking always fires. All 51 keyboard handler tests pass.
 
   ```bash
   cd ~/Documents/Vibework/Maestro
