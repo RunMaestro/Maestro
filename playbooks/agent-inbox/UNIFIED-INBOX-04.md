@@ -92,9 +92,11 @@ This phase adds the segmented controls for sort/filter, empty state handling, an
 
 ## Existing Test Compatibility
 
-- [ ] **Run the full test suite and fix regressions.** Execute `cd ~/Documents/Vibework/Maestro && npm test -- --run`. If any existing tests break due to our changes:
+- [x] **Run the full test suite and fix regressions.** Execute `cd ~/Documents/Vibework/Maestro && npm test -- --run`. If any existing tests break due to our changes:
   - **modalStore tests:** Add `'agentInbox'` to any `ModalId` type assertions
   - **keyboard handler tests:** Update expectations to include the `Alt+Cmd+I` shortcut
   - **AppModals tests:** Add the AgentInbox lazy import to any mock/assertion lists
 
   Do NOT write new feature tests in this phase — that's Phase 05. Only fix regressions in existing tests.
+
+  > ✅ Full test suite passed clean: 451 test files passed, 19,312 tests passed, 107 skipped (pre-existing), 0 failures. No regressions from AgentInbox changes — modalStore, keyboard handler, and AppModals tests all pass without modification.
