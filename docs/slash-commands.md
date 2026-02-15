@@ -106,6 +106,38 @@ It's {{WEEKDAY}}, {{DATE}}. I'm on branch {{GIT_BRANCH}} at {{AGENT_PATH}}.
 Summarize what I worked on yesterday and suggest priorities for today.
 ```
 
+### Passing Arguments to Commands
+
+Any text typed after a slash command is treated as arguments and included in the prompt sent to the agent.
+
+**Explicit placement with `$ARGUMENTS`**: Use `$ARGUMENTS` in your prompt to control exactly where user input is inserted:
+
+```
+# Prompt for /plan command
+Create a plan for: $ARGUMENTS
+```
+
+Typing `/plan user authentication flow` sends: `Create a plan for: user authentication flow`
+
+**Automatic appending**: If your prompt doesn't contain `$ARGUMENTS`, any trailing text is automatically appended after the prompt:
+
+```
+# Prompt for /commit command
+Please commit all changes with a descriptive message
+```
+
+Typing `/commit fix the login bug` sends:
+
+```
+Please commit all changes with a descriptive message
+
+fix the login bug
+```
+
+<Tip>
+Use `$ARGUMENTS` for precise control over where user input appears within your prompt. Omit it for simple commands where appending is sufficient.
+</Tip>
+
 ## Spec-Kit Commands
 
 Maestro bundles [GitHub's spec-kit](https://github.com/github/spec-kit) methodology for structured feature development:

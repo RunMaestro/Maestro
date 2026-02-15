@@ -21,27 +21,6 @@ import { useSessionStore } from '../../stores/sessionStore';
 export const DEFAULT_BATCH_FLUSH_INTERVAL = 150;
 
 /**
- * Types of updates that can be batched
- */
-type _UpdateType =
-	| {
-			type: 'appendLog';
-			sessionId: string;
-			tabId: string | null;
-			isAi: boolean;
-			data: string;
-			isStderr?: boolean;
-	  }
-	| { type: 'setStatus'; sessionId: string; tabId: string | null; status: SessionState }
-	| { type: 'setTabStatus'; sessionId: string; tabId: string; status: 'idle' | 'busy' }
-	| { type: 'updateUsage'; sessionId: string; tabId: string | null; usage: UsageStats }
-	| { type: 'updateContextUsage'; sessionId: string; percentage: number }
-	| { type: 'markDelivered'; sessionId: string; tabId: string }
-	| { type: 'updateCycleBytes'; sessionId: string; bytes: number }
-	| { type: 'updateCycleTokens'; sessionId: string; tokens: number }
-	| { type: 'markUnread'; sessionId: string; tabId: string; unread: boolean };
-
-/**
  * Accumulated log data for efficient string concatenation
  */
 interface LogAccumulator {

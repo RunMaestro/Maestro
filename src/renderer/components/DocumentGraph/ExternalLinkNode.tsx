@@ -11,7 +11,7 @@
  * Styled with theme colors and supports selection/hover states.
  */
 
-import React, { memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { Globe, ExternalLink as ExternalLinkIcon } from 'lucide-react';
 import type { Theme } from '../../types';

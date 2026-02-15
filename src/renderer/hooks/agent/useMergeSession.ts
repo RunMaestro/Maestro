@@ -17,9 +17,11 @@
  * - Per-tab state tracking (allows other tabs to remain interactive during merge)
  * - Non-blocking overlay replaces input area instead of modal
  * - Toast notifications with click-to-navigate on completion
+ *
+ * State lives in operationStore (Zustand); this hook owns orchestration only.
  */
 
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Session, AITab, LogEntry } from '../../types';
 import type { MergeResult, GroomingProgress, MergeRequest } from '../../types/contextMerge';
 import type { MergeOptions } from '../../components/MergeSessionModal';
@@ -27,6 +29,11 @@ import { ContextGroomingService, contextGroomingService } from '../../services/c
 import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession, getActiveTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
+import { useOperationStore, selectIsAnyMerging } from '../../stores/operationStore';
+import type { MergeState, TabMergeState } from '../../stores/operationStore';
+
+// Re-export types from the canonical store location
+export type { MergeState, TabMergeState } from '../../stores/operationStore';
 
 /**
  * Maximum recommended context tokens before warning the user
@@ -41,33 +48,6 @@ const MAX_CONTEXT_TOKENS_WARNING = 100000;
 function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 	return Math.round(totalChars / 4);
-}
-
-/**
- * Global flag to track if a merge is in progress.
- * Only one merge operation should run at a time.
- */
-let globalMergeInProgress = false;
-
-/**
- * State of the merge operation
- */
-export type MergeState = 'idle' | 'merging' | 'complete' | 'error';
-
-/**
- * Per-tab merge state for non-blocking UI
- * Tracks merge operations initiated FROM a specific source tab
- */
-export interface TabMergeState {
-	state: MergeState;
-	progress: GroomingProgress | null;
-	result: MergeResult | null;
-	error: string | null;
-	startTime: number;
-	/** Display name of the source tab/session */
-	sourceName?: string;
-	/** Display name of the target tab/session */
-	targetName?: string;
 }
 
 /**
@@ -137,17 +117,6 @@ function getSessionDisplayName(session: Session): string {
 }
 
 /**
- * Get the display name for a tab
- */
-function _getTabDisplayName(tab: AITab): string {
-	if (tab.name) return tab.name;
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Tab';
-}
-
-/**
  * Generate a name for the merged session
  */
 function generateMergedSessionName(
@@ -202,52 +171,39 @@ function generateMergedSessionName(
  * const isTabMerging = tabState?.state === 'merging';
  */
 export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
-	// Per-tab state tracking: Map<sourceTabId, TabMergeState>
-	const [tabStates, setTabStates] = useState<Map<string, TabMergeState>>(new Map());
+	// Per-tab state lives in operationStore
+	const tabStates = useOperationStore((s) => s.mergeStates);
+	const globalMergeInProgress = useOperationStore((s) => s.globalMergeInProgress);
 	const cancelRefs = useRef<Map<string, boolean>>(new Map());
 	const groomingServiceRef = useRef<ContextGroomingService>(contextGroomingService);
 
 	// Get state for the active tab (for backwards compatibility)
 	const activeTabState = activeTabId ? tabStates.get(activeTabId) : null;
 
+	// Selector: any tab currently merging?
+	const isAnyMerging = useOperationStore(selectIsAnyMerging);
+
 	/**
 	 * Get merge state for a specific source tab
 	 */
-	const getTabMergeState = useCallback(
-		(tabId: string): TabMergeState | null => {
-			return tabStates.get(tabId) || null;
-		},
-		[tabStates]
-	);
-
-	/**
-	 * Check if any tab is currently merging
-	 */
-	const isAnyMerging = useMemo(() => {
-		for (const state of tabStates.values()) {
-			if (state.state === 'merging') return true;
-		}
-		return false;
-	}, [tabStates]);
+	const getTabMergeState = useCallback((tabId: string): TabMergeState | null => {
+		return useOperationStore.getState().mergeStates.get(tabId) || null;
+	}, []);
 
 	/**
 	 * Reset the hook state to idle
 	 */
 	const reset = useCallback(() => {
-		setTabStates(new Map());
+		useOperationStore.getState().clearAllMergeStates();
 		cancelRefs.current = new Map();
-		globalMergeInProgress = false;
+		useOperationStore.getState().setGlobalMergeInProgress(false);
 	}, []);
 
 	/**
 	 * Clear the state for a specific source tab (call after handling completion)
 	 */
 	const clearTabState = useCallback((tabId: string) => {
-		setTabStates((prev) => {
-			const next = new Map(prev);
-			next.delete(tabId);
-			return next;
-		});
+		useOperationStore.getState().clearMergeTabState(tabId);
 		cancelRefs.current.delete(tabId);
 	}, []);
 
@@ -257,322 +213,301 @@ export function useMergeSession(activeTabId?: string): UseMergeSessionResult {
 	const cancelTab = useCallback((tabId: string) => {
 		cancelRefs.current.set(tabId, true);
 		groomingServiceRef.current.cancelGrooming();
-		setTabStates((prev) => {
-			const next = new Map(prev);
-			next.delete(tabId);
-			return next;
-		});
-		globalMergeInProgress = false;
+		useOperationStore.getState().clearMergeTabState(tabId);
+		useOperationStore.getState().setGlobalMergeInProgress(false);
 	}, []);
 
 	/**
 	 * Cancel all in-progress merge operations
 	 */
 	const cancelMerge = useCallback(() => {
-		for (const tabId of tabStates.keys()) {
+		const states = useOperationStore.getState().mergeStates;
+		for (const tabId of states.keys()) {
 			cancelRefs.current.set(tabId, true);
 		}
 		groomingServiceRef.current.cancelGrooming();
-		setTabStates(new Map());
-		globalMergeInProgress = false;
-	}, [tabStates]);
-
-	/**
-	 * Helper to update tab state
-	 */
-	const updateTabState = useCallback((tabId: string, updates: Partial<TabMergeState>) => {
-		setTabStates((prev) => {
-			const next = new Map(prev);
-			const existing = next.get(tabId);
-			if (existing) {
-				next.set(tabId, { ...existing, ...updates });
-			}
-			return next;
-		});
+		useOperationStore.getState().clearAllMergeStates();
+		useOperationStore.getState().setGlobalMergeInProgress(false);
 	}, []);
 
 	/**
 	 * Execute the merge workflow
 	 */
-	const startMerge = useCallback(
-		async (request: MergeSessionRequest): Promise<MergeResult> => {
-			const { sourceSession, sourceTabId, targetSession, targetTabId, options } = request;
+	const startMerge = useCallback(async (request: MergeSessionRequest): Promise<MergeResult> => {
+		const { sourceSession, sourceTabId, targetSession, targetTabId, options } = request;
 
-			// Edge case: Check for concurrent merge operations
-			if (globalMergeInProgress) {
-				return {
-					success: false,
-					error: 'A merge operation is already in progress. Please wait for it to complete.',
-				};
+		// Edge case: Check for concurrent merge operations
+		if (useOperationStore.getState().globalMergeInProgress) {
+			return {
+				success: false,
+				error: 'A merge operation is already in progress. Please wait for it to complete.',
+			};
+		}
+
+		// Check if this source tab is already merging
+		const existingState = useOperationStore.getState().mergeStates.get(sourceTabId);
+		if (existingState?.state === 'merging') {
+			return {
+				success: false,
+				error: 'This tab is already being merged.',
+			};
+		}
+
+		// Set global merge flag
+		useOperationStore.getState().setGlobalMergeInProgress(true);
+
+		const startTime = Date.now();
+		const sourceDisplayName = getSessionDisplayName(sourceSession);
+		const store = useOperationStore.getState();
+
+		// Initialize tab state
+		cancelRefs.current.set(sourceTabId, false);
+		store.setMergeTabState(sourceTabId, {
+			state: 'merging',
+			progress: INITIAL_PROGRESS,
+			result: null,
+			error: null,
+			startTime,
+			sourceName: sourceDisplayName,
+			targetName: undefined, // Will be set after we resolve the target tab
+		});
+
+		try {
+			// Step 1: Validate inputs and get tabs
+			const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
+			if (!sourceTab) {
+				throw new Error('Source tab not found');
 			}
 
-			// Check if this source tab is already merging
-			const existingState = tabStates.get(sourceTabId);
-			if (existingState?.state === 'merging') {
-				return {
-					success: false,
-					error: 'This tab is already being merged.',
-				};
+			const resolvedTargetTabId = targetTabId ?? getActiveTab(targetSession)?.id;
+			const targetTab = resolvedTargetTabId
+				? targetSession.aiTabs.find((t) => t.id === resolvedTargetTabId)
+				: getActiveTab(targetSession);
+			if (!targetTab) {
+				throw new Error('Target tab not found');
 			}
 
-			// Set global merge flag
-			globalMergeInProgress = true;
+			// Update tab state with target name
+			const targetDisplayName = getSessionDisplayName(targetSession);
+			useOperationStore
+				.getState()
+				.updateMergeTabState(sourceTabId, { targetName: targetDisplayName });
 
-			const startTime = Date.now();
-			const sourceDisplayName = getSessionDisplayName(sourceSession);
+			// Edge case: Check for self-merge attempt
+			if (sourceSession.id === targetSession.id && sourceTabId === targetTab.id) {
+				throw new Error('Cannot merge a tab with itself');
+			}
 
-			// Initialize tab state
-			cancelRefs.current.set(sourceTabId, false);
-			setTabStates((prev) => {
-				const next = new Map(prev);
-				next.set(sourceTabId, {
-					state: 'merging',
-					progress: INITIAL_PROGRESS,
-					result: null,
-					error: null,
-					startTime,
-					sourceName: sourceDisplayName,
-					targetName: undefined, // Will be set after we resolve the target tab
-				});
-				return next;
+			// Edge case: Check for empty context source
+			if (sourceTab.logs.length === 0) {
+				throw new Error('Cannot merge empty context - source tab has no conversation history');
+			}
+
+			// Edge case: Check for empty target context (just a warning, allow it)
+			if (targetTab.logs.length === 0 && sourceTab.logs.length > 0) {
+				console.info('Merging into empty target tab - will copy source context');
+			}
+
+			// Edge case: Check for context too large
+			const sourceTokens = estimateTokensFromLogs(sourceTab.logs);
+			const targetTokens = estimateTokensFromLogs(targetTab.logs);
+			const estimatedMergedTokens = sourceTokens + targetTokens;
+
+			if (estimatedMergedTokens > MAX_CONTEXT_TOKENS_WARNING) {
+				console.warn(
+					`Large context merge: ~${estimatedMergedTokens.toLocaleString()} tokens. ` +
+						`This may exceed some agents' context windows.`
+				);
+			}
+
+			// Check for cancellation
+			if (cancelRefs.current.get(sourceTabId)) {
+				return { success: false, error: 'Merge cancelled' };
+			}
+
+			// Step 2: Extract contexts from both tabs
+			useOperationStore.getState().updateMergeTabState(sourceTabId, {
+				progress: {
+					stage: 'collecting',
+					progress: 10,
+					message: 'Extracting source context...',
+				},
 			});
 
-			try {
-				// Step 1: Validate inputs and get tabs
-				const sourceTab = sourceSession.aiTabs.find((t) => t.id === sourceTabId);
-				if (!sourceTab) {
-					throw new Error('Source tab not found');
-				}
+			const sourceContext = extractTabContext(sourceTab, sourceDisplayName, sourceSession);
 
-				const resolvedTargetTabId = targetTabId ?? getActiveTab(targetSession)?.id;
-				const targetTab = resolvedTargetTabId
-					? targetSession.aiTabs.find((t) => t.id === resolvedTargetTabId)
-					: getActiveTab(targetSession);
-				if (!targetTab) {
-					throw new Error('Target tab not found');
-				}
+			useOperationStore.getState().updateMergeTabState(sourceTabId, {
+				progress: {
+					stage: 'collecting',
+					progress: 20,
+					message: 'Extracting target context...',
+				},
+			});
 
-				// Update tab state with target name
-				const targetDisplayName = getSessionDisplayName(targetSession);
-				updateTabState(sourceTabId, { targetName: targetDisplayName });
+			const targetContext = extractTabContext(targetTab, targetDisplayName, targetSession);
 
-				// Edge case: Check for self-merge attempt
-				if (sourceSession.id === targetSession.id && sourceTabId === targetTab.id) {
-					throw new Error('Cannot merge a tab with itself');
-				}
+			// Check for cancellation
+			if (cancelRefs.current.get(sourceTabId)) {
+				return { success: false, error: 'Merge cancelled' };
+			}
 
-				// Edge case: Check for empty context source
-				if (sourceTab.logs.length === 0) {
-					throw new Error('Cannot merge empty context - source tab has no conversation history');
-				}
+			// Step 3: Determine which logs to use (groomed or raw)
+			let mergedLogs: LogEntry[];
+			let tokensSaved = 0;
 
-				// Edge case: Check for empty target context (just a warning, allow it)
-				if (targetTab.logs.length === 0 && sourceTab.logs.length > 0) {
-					console.info('Merging into empty target tab - will copy source context');
-				}
-
-				// Edge case: Check for context too large
-				const sourceTokens = estimateTokensFromLogs(sourceTab.logs);
-				const targetTokens = estimateTokensFromLogs(targetTab.logs);
-				const estimatedMergedTokens = sourceTokens + targetTokens;
-
-				if (estimatedMergedTokens > MAX_CONTEXT_TOKENS_WARNING) {
-					console.warn(
-						`Large context merge: ~${estimatedMergedTokens.toLocaleString()} tokens. ` +
-							`This may exceed some agents' context windows.`
-					);
-				}
-
-				// Check for cancellation
-				if (cancelRefs.current.get(sourceTabId)) {
-					return { success: false, error: 'Merge cancelled' };
-				}
-
-				// Step 2: Extract contexts from both tabs
-				updateTabState(sourceTabId, {
+			if (options.groomContext) {
+				// Use AI grooming to consolidate and deduplicate
+				useOperationStore.getState().updateMergeTabState(sourceTabId, {
 					progress: {
-						stage: 'collecting',
-						progress: 10,
-						message: 'Extracting source context...',
+						stage: 'grooming',
+						progress: 30,
+						message: 'Starting AI grooming...',
 					},
 				});
 
-				const sourceContext = extractTabContext(sourceTab, sourceDisplayName, sourceSession);
+				const groomingRequest: MergeRequest = {
+					sources: [sourceContext, targetContext],
+					targetAgent: sourceSession.toolType,
+					targetProjectRoot: sourceSession.projectRoot,
+				};
 
-				updateTabState(sourceTabId, {
-					progress: {
-						stage: 'collecting',
-						progress: 20,
-						message: 'Extracting target context...',
-					},
-				});
-
-				const targetContext = extractTabContext(targetTab, targetDisplayName, targetSession);
-
-				// Check for cancellation
-				if (cancelRefs.current.get(sourceTabId)) {
-					return { success: false, error: 'Merge cancelled' };
-				}
-
-				// Step 3: Determine which logs to use (groomed or raw)
-				let mergedLogs: LogEntry[];
-				let tokensSaved = 0;
-
-				if (options.groomContext) {
-					// Use AI grooming to consolidate and deduplicate
-					updateTabState(sourceTabId, {
-						progress: {
-							stage: 'grooming',
-							progress: 30,
-							message: 'Starting AI grooming...',
-						},
-					});
-
-					const groomingRequest: MergeRequest = {
-						sources: [sourceContext, targetContext],
-						targetAgent: sourceSession.toolType,
-						targetProjectRoot: sourceSession.projectRoot,
-					};
-
-					const groomingResult = await groomingServiceRef.current.groomContexts(
-						groomingRequest,
-						(groomProgress) => {
-							if (!cancelRefs.current.get(sourceTabId)) {
-								updateTabState(sourceTabId, { progress: groomProgress });
-							}
+				const groomingResult = await groomingServiceRef.current.groomContexts(
+					groomingRequest,
+					(groomProgress) => {
+						if (!cancelRefs.current.get(sourceTabId)) {
+							useOperationStore
+								.getState()
+								.updateMergeTabState(sourceTabId, { progress: groomProgress });
 						}
-					);
-
-					// Check for cancellation
-					if (cancelRefs.current.get(sourceTabId)) {
-						return { success: false, error: 'Merge cancelled' };
 					}
-
-					if (!groomingResult.success) {
-						throw new Error(groomingResult.error || 'Grooming failed');
-					}
-
-					mergedLogs = groomingResult.groomedLogs;
-					tokensSaved = groomingResult.tokensSaved;
-				} else {
-					// Simply concatenate logs without grooming
-					updateTabState(sourceTabId, {
-						progress: {
-							stage: 'creating',
-							progress: 60,
-							message: 'Combining contexts...',
-						},
-					});
-
-					// Merge logs maintaining chronological order
-					mergedLogs = options.preserveTimestamps
-						? [...sourceContext.logs, ...targetContext.logs].sort(
-								(a, b) => a.timestamp - b.timestamp
-							)
-						: [...sourceContext.logs, ...targetContext.logs];
-				}
-
-				// Check for cancellation
-				if (cancelRefs.current.get(sourceTabId)) {
-					return { success: false, error: 'Merge cancelled' };
-				}
-
-				// Step 4: Create the merged result
-				updateTabState(sourceTabId, {
-					progress: {
-						stage: 'creating',
-						progress: 90,
-						message: 'Creating merged session...',
-					},
-				});
-
-				// Generate merged session name
-				const mergedName = generateMergedSessionName(
-					sourceSession,
-					sourceTab,
-					targetSession,
-					targetTab
 				);
 
-				let result: MergeResult;
-
-				// Get estimated tokens for notification (display names already set above)
-				const estimatedTokens = estimateTokensFromLogs(mergedLogs);
-
-				if (options.createNewSession) {
-					// Create a new session with merged context
-					const { session: mergedSession, tabId: newTabId } = createMergedSession({
-						name: mergedName,
-						projectRoot: sourceSession.projectRoot,
-						toolType: sourceSession.toolType,
-						mergedLogs,
-						groupId: sourceSession.groupId,
-						saveToHistory: true,
-					});
-
-					result = {
-						success: true,
-						newSessionId: mergedSession.id,
-						newTabId,
-						tokensSaved,
-						sourceSessionName: sourceDisplayName,
-						targetSessionName: targetDisplayName,
-						estimatedTokens,
-					};
-				} else {
-					// Merge into existing target tab - return merged logs for caller to apply
-					result = {
-						success: true,
-						tokensSaved,
-						mergedLogs,
-						targetSessionId: targetSession.id,
-						targetTabId: targetTab.id,
-						sourceSessionName: sourceDisplayName,
-						targetSessionName: targetDisplayName,
-						estimatedTokens,
-					};
+				// Check for cancellation
+				if (cancelRefs.current.get(sourceTabId)) {
+					return { success: false, error: 'Merge cancelled' };
 				}
 
-				// Complete!
-				updateTabState(sourceTabId, {
-					state: 'complete',
+				if (!groomingResult.success) {
+					throw new Error(groomingResult.error || 'Grooming failed');
+				}
+
+				mergedLogs = groomingResult.groomedLogs;
+				tokensSaved = groomingResult.tokensSaved;
+			} else {
+				// Simply concatenate logs without grooming
+				useOperationStore.getState().updateMergeTabState(sourceTabId, {
 					progress: {
-						stage: 'complete',
-						progress: 100,
-						message: `Merge complete!${tokensSaved > 0 ? ` Saved ~${tokensSaved} tokens` : ''}`,
+						stage: 'creating',
+						progress: 60,
+						message: 'Combining contexts...',
 					},
-					result,
 				});
 
-				return result;
-			} catch (err) {
-				const errorMessage = err instanceof Error ? err.message : 'Unknown error during merge';
+				// Merge logs maintaining chronological order
+				mergedLogs = options.preserveTimestamps
+					? [...sourceContext.logs, ...targetContext.logs].sort((a, b) => a.timestamp - b.timestamp)
+					: [...sourceContext.logs, ...targetContext.logs];
+			}
 
-				if (!cancelRefs.current.get(sourceTabId)) {
-					const errorResult: MergeResult = {
-						success: false,
-						error: errorMessage,
-					};
+			// Check for cancellation
+			if (cancelRefs.current.get(sourceTabId)) {
+				return { success: false, error: 'Merge cancelled' };
+			}
 
-					updateTabState(sourceTabId, {
-						state: 'error',
-						progress: null,
-						result: errorResult,
-						error: errorMessage,
-					});
-				}
+			// Step 4: Create the merged result
+			useOperationStore.getState().updateMergeTabState(sourceTabId, {
+				progress: {
+					stage: 'creating',
+					progress: 90,
+					message: 'Creating merged session...',
+				},
+			});
 
-				return {
+			// Generate merged session name
+			const mergedName = generateMergedSessionName(
+				sourceSession,
+				sourceTab,
+				targetSession,
+				targetTab
+			);
+
+			let result: MergeResult;
+
+			// Get estimated tokens for notification (display names already set above)
+			const estimatedTokens = estimateTokensFromLogs(mergedLogs);
+
+			if (options.createNewSession) {
+				// Create a new session with merged context
+				const { session: mergedSession, tabId: newTabId } = createMergedSession({
+					name: mergedName,
+					projectRoot: sourceSession.projectRoot,
+					toolType: sourceSession.toolType,
+					mergedLogs,
+					groupId: sourceSession.groupId,
+					saveToHistory: true,
+				});
+
+				result = {
+					success: true,
+					newSessionId: mergedSession.id,
+					newTabId,
+					tokensSaved,
+					sourceSessionName: sourceDisplayName,
+					targetSessionName: targetDisplayName,
+					estimatedTokens,
+				};
+			} else {
+				// Merge into existing target tab - return merged logs for caller to apply
+				result = {
+					success: true,
+					tokensSaved,
+					mergedLogs,
+					targetSessionId: targetSession.id,
+					targetTabId: targetTab.id,
+					sourceSessionName: sourceDisplayName,
+					targetSessionName: targetDisplayName,
+					estimatedTokens,
+				};
+			}
+
+			// Complete!
+			useOperationStore.getState().updateMergeTabState(sourceTabId, {
+				state: 'complete',
+				progress: {
+					stage: 'complete',
+					progress: 100,
+					message: `Merge complete!${tokensSaved > 0 ? ` Saved ~${tokensSaved} tokens` : ''}`,
+				},
+				result,
+			});
+
+			return result;
+		} catch (err) {
+			const errorMessage = err instanceof Error ? err.message : 'Unknown error during merge';
+
+			if (!cancelRefs.current.get(sourceTabId)) {
+				const errorResult: MergeResult = {
 					success: false,
 					error: errorMessage,
 				};
-			} finally {
-				// Always clear the global merge flag when done
-				globalMergeInProgress = false;
+
+				useOperationStore.getState().updateMergeTabState(sourceTabId, {
+					state: 'error',
+					progress: null,
+					result: errorResult,
+					error: errorMessage,
+				});
 			}
-		},
-		[tabStates, updateTabState]
-	);
+
+			return {
+				success: false,
+				error: errorMessage,
+			};
+		} finally {
+			// Always clear the global merge flag when done
+			useOperationStore.getState().setGlobalMergeInProgress(false);
+		}
+	}, []);
 
 	return {
 		// Active tab state (backwards compatibility)
@@ -886,6 +821,6 @@ export default useMergeSession;
 export const __resetMergeInProgress =
 	process.env.NODE_ENV === 'test'
 		? (): void => {
-				globalMergeInProgress = false;
+				useOperationStore.getState().setGlobalMergeInProgress(false);
 			}
 		: undefined;

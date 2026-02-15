@@ -14,7 +14,9 @@
  */
 
 import { create } from 'zustand';
-import type { Session, Group } from '../types';
+import type { Session, Group, LogEntry } from '../types';
+import { generateId } from '../utils/ids';
+import { getActiveTab } from '../utils/tabHelpers';
 
 // ============================================================================
 // Store Types
@@ -115,6 +117,18 @@ export interface SessionStoreActions {
 
 	setCyclePosition: (pos: number) => void;
 	resetCyclePosition: () => void;
+
+	// === Log management ===
+
+	/**
+	 * Add a log entry to a specific tab's logs (or active tab if no tabId provided).
+	 * Used for slash commands, system messages, queued items, etc.
+	 */
+	addLogToTab: (
+		sessionId: string,
+		logEntry: Omit<LogEntry, 'id' | 'timestamp'> & { id?: string; timestamp?: number },
+		tabId?: string
+	) => void;
 }
 
 export type SessionStore = SessionStoreState & SessionStoreActions;
@@ -251,6 +265,44 @@ export const useSessionStore = create<SessionStore>()((set) => ({
 	// Navigation
 	setCyclePosition: (pos) => set({ cyclePosition: pos }),
 	resetCyclePosition: () => set({ cyclePosition: -1 }),
+
+	// Log management
+	addLogToTab: (sessionId, logEntry, tabId?) =>
+		set((s) => {
+			const entry: LogEntry = {
+				id: logEntry.id || generateId(),
+				timestamp: logEntry.timestamp || Date.now(),
+				source: logEntry.source,
+				text: logEntry.text,
+				...(logEntry.images && { images: logEntry.images }),
+				...(logEntry.delivered !== undefined && { delivered: logEntry.delivered }),
+				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
+			};
+
+			const newSessions = s.sessions.map((session) => {
+				if (session.id !== sessionId) return session;
+
+				const targetTab = tabId
+					? session.aiTabs.find((tab) => tab.id === tabId)
+					: getActiveTab(session);
+
+				if (!targetTab) {
+					console.error(
+						'[addLogToTab] No target tab found - session has no aiTabs, this should not happen'
+					);
+					return session;
+				}
+
+				return {
+					...session,
+					aiTabs: session.aiTabs.map((tab) =>
+						tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, entry] } : tab
+					),
+				};
+			});
+
+			return { sessions: newSessions };
+		}),
 }));
 
 // ============================================================================
@@ -335,6 +387,15 @@ export const selectSessionCount = (state: SessionStore): number => state.session
 export const selectIsReady = (state: SessionStore): boolean =>
 	state.sessionsLoaded && state.initialLoadComplete;
 
+/**
+ * Select whether any session is currently busy (agent actively processing).
+ *
+ * @example
+ * const anyBusy = useSessionStore(selectIsAnySessionBusy);
+ */
+export const selectIsAnySessionBusy = (state: SessionStore): boolean =>
+	state.sessions.some((s) => s.state === 'busy');
+
 // ============================================================================
 // Non-React Access
 // ============================================================================
@@ -378,5 +439,6 @@ export function getSessionActions() {
 		setRemovedWorktreePaths: state.setRemovedWorktreePaths,
 		setCyclePosition: state.setCyclePosition,
 		resetCyclePosition: state.resetCyclePosition,
+		addLogToTab: state.addLogToTab,
 	};
 }

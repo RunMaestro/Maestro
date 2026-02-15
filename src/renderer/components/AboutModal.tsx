@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
 	X,
 	Wand2,
@@ -308,7 +308,7 @@ export function AboutModal({
 												style={{ color: theme.colors.success }}
 											>
 												$
-												{globalStats.totalCostUsd.toLocaleString('en-US', {
+												{(globalStats.totalCostUsd ?? 0).toLocaleString('en-US', {
 													minimumFractionDigits: 2,
 													maximumFractionDigits: 2,
 												})}
@@ -330,7 +330,7 @@ export function AboutModal({
 					{/* Project Link */}
 					<button
 						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/pedramamini/Maestro')
+							window.maestro.shell.openExternal('https://github.com/RunMaestro/Maestro')
 						}
 						className="flex-1 flex items-center justify-between p-3 rounded border hover:bg-white/5 transition-colors"
 						style={{ borderColor: theme.colors.border }}

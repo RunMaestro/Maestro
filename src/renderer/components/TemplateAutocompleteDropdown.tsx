@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import { forwardRef } from 'react';
 import type { Theme } from '../types';
 import type { AutocompleteState } from '../hooks';
 

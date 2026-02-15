@@ -163,38 +163,34 @@ describe('main/constants', () => {
 	});
 
 	describe('REGEX_AI_SUFFIX', () => {
-		it('should match session IDs with -ai- suffix', () => {
+		it('should match session IDs with -ai- suffix and any tab ID format', () => {
 			expect('session-123-ai-tab1'.match(REGEX_AI_SUFFIX)).not.toBeNull();
+			expect('session-123-ai-abc123def'.match(REGEX_AI_SUFFIX)).not.toBeNull();
+			expect('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_SUFFIX)).not.toBeNull();
 		});
 
 		it('should not match session IDs without -ai- suffix', () => {
 			expect('session-123-terminal'.match(REGEX_AI_SUFFIX)).toBeNull();
-		});
-
-		it('should not match session IDs without -ai- suffix pattern', () => {
-			// Missing the tab ID after -ai-
-			expect('session-ai-'.match(REGEX_AI_SUFFIX)).toBeNull();
-			// No -ai- suffix at all
 			expect('session-123'.match(REGEX_AI_SUFFIX)).toBeNull();
 		});
 
-		it('should match session IDs with -ai-{tabId} even in middle (suffix matches end)', () => {
-			// This DOES match because the regex looks for -ai-{non-hyphen chars} at the END
-			expect('session-ai-123'.match(REGEX_AI_SUFFIX)).not.toBeNull();
+		it('should correctly strip -ai- suffix to extract base session ID', () => {
+			const sessionId = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
+			expect(sessionId.replace(REGEX_AI_SUFFIX, '')).toBe('51cee651-6629-4de8-abdd-1c1540555f2d');
 		});
 	});
 
 	describe('REGEX_AI_TAB_ID', () => {
-		it('should extract tab ID from session ID', () => {
+		it('should extract simple tab ID from session ID', () => {
 			const match = 'session-123-ai-tab1'.match(REGEX_AI_TAB_ID);
 			expect(match).not.toBeNull();
 			expect(match![1]).toBe('tab1');
 		});
 
-		it('should extract complex tab IDs', () => {
-			const match = 'session-123-ai-abc123def'.match(REGEX_AI_TAB_ID);
+		it('should extract UUID tab ID from session ID', () => {
+			const match = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_TAB_ID);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('abc123def');
+			expect(match![1]).toBe('73aaeb23-6673-45a4-8fdf-c769802f79bb');
 		});
 	});
 

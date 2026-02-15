@@ -12,7 +12,7 @@ import {
 	InlineWizardProvider,
 	useInlineWizardContext,
 } from '../../../renderer/contexts/InlineWizardContext';
-import type { PreviousUIState } from '../../../renderer/hooks/useInlineWizard';
+import type { PreviousUIState } from '../../../renderer/hooks/batch/useInlineWizard';
 
 // Mock the dependencies used by useInlineWizard
 vi.mock('../../../renderer/services/wizardIntentParser', () => ({

@@ -61,8 +61,8 @@ vi.mock('../../../main/utils/remote-fs', () => ({
 // Mock statsCache
 vi.mock('../../../main/utils/statsCache', () => ({
 	encodeClaudeProjectPath: vi.fn((projectPath: string) => {
-		// Simple encoding for tests - replace / with -
-		return projectPath.replace(/\//g, '-').replace(/^-/, '');
+		// Match Claude Code's encoding: replace all non-alphanumeric with -
+		return projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 	}),
 }));
 

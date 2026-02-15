@@ -481,6 +481,65 @@ describe('ChildProcessSpawner', () => {
 		});
 	});
 
+	describe('stdin write guard for non-stream-json-input agents', () => {
+		it('should NOT write stream-json to stdin when prompt is already in CLI args (Codex --json)', () => {
+			// Codex uses --json for JSON *output*, not input. The prompt goes as a CLI arg.
+			// Without the promptViaStdin guard, isStreamJsonMode (true from --json) would
+			// cause the prompt to be double-sent: once in CLI args and once via stdin.
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+			} as any);
+
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex',
+					args: ['exec', '--json', '--dangerously-bypass-approvals-and-sandbox'],
+					prompt: 'test prompt',
+				})
+			);
+
+			// Prompt should be in CLI args
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnArgs).toContain('--');
+			expect(spawnArgs).toContain('test prompt');
+
+			// stdin should NOT have received the prompt as stream-json
+			// buildStreamJsonMessage should NOT have been called
+			expect(buildStreamJsonMessage).not.toHaveBeenCalled();
+			// stdin.write should only be called for actual stdin delivery, not here
+			// stdin.end should be called (to close stdin for batch mode)
+			expect(mockChildProcess.stdin.end).toHaveBeenCalled();
+		});
+	});
+
+	describe('child process event handling', () => {
+		it('should listen on "close" event (not "exit") to ensure all stdio data is drained', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test' }));
+
+			// Verify 'close' is registered (ensures all stdout/stderr data is consumed
+			// before exit handler runs — fixes data loss for short-lived processes)
+			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
+			const eventNames = onCalls.map(([event]) => event);
+			expect(eventNames).toContain('close');
+			expect(eventNames).not.toContain('exit');
+		});
+
+		it('should listen for "error" events on the child process', () => {
+			const { spawner } = createTestContext();
+
+			spawner.spawn(createBaseConfig({ prompt: 'test' }));
+
+			const onCalls = mockChildProcess.on.mock.calls as [string, Function][];
+			const eventNames = onCalls.map(([event]) => event);
+			expect(eventNames).toContain('error');
+		});
+	});
+
 	describe('image handling with non-stream-json agents', () => {
 		it('should use file-based image args for agents without stream-json support', () => {
 			// Override capabilities for this test

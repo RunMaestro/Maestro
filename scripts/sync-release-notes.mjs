@@ -180,7 +180,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
   md += `## Downloading Releases
 
-All releases are available on the [GitHub Releases page](https://github.com/pedramamini/Maestro/releases).
+All releases are available on the [GitHub Releases page](https://github.com/RunMaestro/Maestro/releases).
 
 Maestro is available for:
 - **macOS** - Apple Silicon (arm64) and Intel (x64)

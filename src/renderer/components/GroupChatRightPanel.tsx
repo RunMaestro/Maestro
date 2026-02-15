@@ -19,6 +19,7 @@ import {
 	saveColorPreferences,
 	type ParticipantColorInfo,
 } from '../utils/participantColors';
+import { useResizablePanel } from '../hooks';
 
 export type GroupChatRightTab = 'participants' | 'history';
 
@@ -81,6 +82,14 @@ export function GroupChatRightPanel({
 }: GroupChatRightPanelProps): JSX.Element | null {
 	// Color preferences state
 	const [colorPreferences, setColorPreferences] = useState<Record<string, number>>({});
+	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
+		width,
+		minWidth: 200,
+		maxWidth: 600,
+		settingsKey: 'rightPanelWidth',
+		setWidth: setWidthState,
+		side: 'right',
+	});
 
 	// Load color preferences on mount
 	useEffect(() => {
@@ -235,7 +244,8 @@ export function GroupChatRightPanel({
 
 	return (
 		<div
-			className="relative border-l flex flex-col transition-all duration-300"
+			ref={panelRef}
+			className={`relative border-l flex flex-col ${transitionClass}`}
 			style={{
 				width: `${width}px`,
 				backgroundColor: theme.colors.bgSidebar,
@@ -245,27 +255,7 @@ export function GroupChatRightPanel({
 			{/* Resize Handle */}
 			<div
 				className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-blue-500 transition-colors z-20"
-				onMouseDown={(e) => {
-					e.preventDefault();
-					const startX = e.clientX;
-					const startWidth = width;
-					let currentWidth = startWidth;
-
-					const handleMouseMove = (moveEvent: MouseEvent) => {
-						const delta = startX - moveEvent.clientX; // Reversed for right panel
-						currentWidth = Math.max(200, Math.min(600, startWidth + delta));
-						setWidthState(currentWidth);
-					};
-
-					const handleMouseUp = () => {
-						window.maestro.settings.set('rightPanelWidth', currentWidth);
-						document.removeEventListener('mousemove', handleMouseMove);
-						document.removeEventListener('mouseup', handleMouseUp);
-					};
-
-					document.addEventListener('mousemove', handleMouseMove);
-					document.addEventListener('mouseup', handleMouseUp);
-				}}
+				onMouseDown={onResizeStart}
 			/>
 
 			{/* Tab Header - matches RightPanel styling */}

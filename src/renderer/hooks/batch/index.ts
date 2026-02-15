@@ -119,7 +119,7 @@ export { useMarketplace } from './useMarketplace';
 export type { UseMarketplaceReturn } from './useMarketplace';
 
 // Inline wizard for creating/iterating Auto Run documents
-export { useInlineWizard } from '../useInlineWizard';
+export { useInlineWizard } from './useInlineWizard';
 export type {
 	InlineWizardMode,
 	InlineWizardMessage,
@@ -127,7 +127,7 @@ export type {
 	InlineGeneratedDocument,
 	InlineWizardState,
 	UseInlineWizardReturn,
-} from '../useInlineWizard';
+} from './useInlineWizard';
 
 // Re-export ExistingDocument type from existingDocsDetector for convenience
 export type { ExistingDocument } from '../../utils/existingDocsDetector';

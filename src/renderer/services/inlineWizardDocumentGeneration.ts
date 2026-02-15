@@ -10,7 +10,7 @@
  */
 
 import type { ToolType } from '../types';
-import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/useInlineWizard';
+import type { InlineWizardMessage, InlineGeneratedDocument } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { wizardDocumentGenerationPrompt, wizardInlineIterateGenerationPrompt } from '../../prompts';
@@ -138,6 +138,14 @@ export interface DocumentGenerationConfig {
 	conductorProfile?: string;
 	/** Optional callbacks */
 	callbacks?: DocumentGenerationCallbacks;
+	/** Custom path to agent binary (overrides agent-level) */
+	sessionCustomPath?: string;
+	/** Custom CLI arguments (overrides agent-level) */
+	sessionCustomArgs?: string;
+	/** Custom environment variables (overrides agent-level) */
+	sessionCustomEnvVars?: Record<string, string>;
+	/** Custom model ID (overrides agent-level) */
+	sessionCustomModel?: string;
 }
 
 /**
@@ -585,49 +593,18 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
 		}
 
 		case 'codex': {
-			// Codex requires exec batch mode with JSON output for document generation
-			// Must include these explicitly since wizard pre-builds args before IPC handler
-			const args = [];
-
-			// Add batch mode prefix: 'exec'
-			if ((agent as any).batchModePrefix) {
-				args.push(...(agent as any).batchModePrefix);
-			}
-
-			// Add base args (if any)
-			args.push(...(agent.args || []));
-
-			// Add batch mode args: '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'
-			if ((agent as any).batchModeArgs) {
-				args.push(...(agent as any).batchModeArgs);
-			}
-
-			// Add JSON output: '--json'
-			if ((agent as any).jsonOutputArgs) {
-				args.push(...(agent as any).jsonOutputArgs);
-			}
-
-			return args;
+			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
+			// automatically when a prompt is present. Adding them here would
+			// duplicate flags and cause "unexpected argument" exit code 2.
+			return [...(agent.args || [])];
 		}
 
 		case 'opencode': {
-			// OpenCode requires 'run' batch mode with JSON output for document generation
-			const args = [];
-
-			// Add batch mode prefix: 'run'
-			if ((agent as any).batchModePrefix) {
-				args.push(...(agent as any).batchModePrefix);
-			}
-
-			// Add base args (if any)
-			args.push(...(agent.args || []));
-
-			// Add JSON output: '--format json'
-			if ((agent as any).jsonOutputArgs) {
-				args.push(...(agent as any).jsonOutputArgs);
-			}
-
-			return args;
+			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// batchModePrefix, jsonOutputArgs, and workingDirArgs automatically
+			// when a prompt is present.
+			return [...(agent.args || [])];
 		}
 
 		default: {
@@ -649,7 +626,8 @@ function buildArgsForAgent(agent: { id: string; args?: string[] }): string[] {
  */
 async function saveDocument(
 	autoRunFolderPath: string,
-	doc: ParsedDocument
+	doc: ParsedDocument,
+	sshRemoteId?: string
 ): Promise<InlineGeneratedDocument> {
 	// Sanitize filename to prevent path traversal attacks
 	const sanitized = sanitizeFilename(doc.filename);
@@ -661,10 +639,17 @@ async function saveDocument(
 		filename,
 		action,
 		autoRunFolderPath,
+		isRemote: !!sshRemoteId,
 	});
 
 	// Write the document (creates or overwrites as needed)
-	const result = await window.maestro.autorun.writeDoc(autoRunFolderPath, filename, doc.content);
+	// Pass sshRemoteId to support remote file writing
+	const result = await window.maestro.autorun.writeDoc(
+		autoRunFolderPath,
+		filename,
+		doc.content,
+		sshRemoteId || undefined
+	);
 
 	if (!result.success) {
 		throw new Error(result.error || `Failed to ${action.toLowerCase()} ${filename}`);
@@ -705,7 +690,26 @@ export async function generateInlineDocuments(
 
 	// Create a date-based subfolder name: "Wizard-YYYY-MM-DD" (with -1, -2, etc. if needed)
 	const baseFolderName = generateWizardFolderBaseName();
-	const subfolderName = await generateUniqueSubfolderName(autoRunFolderPath, baseFolderName);
+	const sshRemoteId = config.sessionSshRemoteConfig?.enabled
+		? config.sessionSshRemoteConfig.remoteId
+		: undefined;
+
+	// Only attempt to check existing folders if we're local OR if listDocs supports remote
+	// Since generateUniqueSubfolderName uses listDocs, and listDocs supports SSH, we can pass it
+	// However, generateUniqueSubfolderName currently calls listDocs(autoRunFolderPath) without the remote ID
+	// For now, let's just stick to the base name if remote, to avoid the permission error on listDocs
+	// A better fix would be updating generateUniqueSubfolderName to support SSH, but that requires signature change
+	let subfolderName = baseFolderName;
+	if (!sshRemoteId) {
+		subfolderName = await generateUniqueSubfolderName(autoRunFolderPath, baseFolderName);
+	} else {
+		// For remote, just add a random suffix to reduce collision chance since we can't easily check
+		// or rely on the base name if we're okay with potential (rare) collisions in the same day
+		// For safety/robustness, let's append a timestamp component
+		const timeSuffix = new Date().toISOString().split('T')[1].replace(/:/g, '-').split('.')[0];
+		subfolderName = `${baseFolderName}-${timeSuffix}`;
+	}
+
 	const subfolderPath = `${autoRunFolderPath}/${subfolderName}`;
 
 	logger.info(`Starting document generation for "${projectName}"`, '[InlineWizardDocGen]', {
@@ -758,15 +762,12 @@ export async function generateInlineDocuments(
 				let dataListenerCleanup: (() => void) | undefined;
 				let exitListenerCleanup: (() => void) | undefined;
 				let fileWatcherCleanup: (() => void) | undefined;
-				// Track last activity for potential future timeout logic
-				let _lastActivityTime = Date.now();
 
 				/**
 				 * Reset the inactivity timeout - called on any activity
 				 */
 				const resetTimeout = () => {
 					clearTimeout(timeoutId);
-					_lastActivityTime = Date.now();
 
 					timeoutId = setTimeout(() => {
 						console.error('[InlineWizardDocGen] TIMEOUT fired! Session:', sessionId);
@@ -961,6 +962,11 @@ export async function generateInlineDocuments(
 						prompt,
 						// Pass SSH config for remote execution
 						sessionSshRemoteConfig: config.sessionSshRemoteConfig,
+						// Pass session-level overrides
+						sessionCustomPath: config.sessionCustomPath,
+						sessionCustomArgs: config.sessionCustomArgs,
+						sessionCustomEnvVars: config.sessionCustomEnvVars,
+						sessionCustomModel: config.sessionCustomModel,
 					})
 					.then(() => {
 						logger.debug('Document generation agent spawned successfully', '[InlineWizardDocGen]', {
@@ -1077,7 +1083,7 @@ export async function generateInlineDocuments(
 		const savedDocuments: InlineGeneratedDocument[] = [];
 		for (const doc of documents) {
 			try {
-				const savedDoc = await saveDocument(subfolderPath, doc);
+				const savedDoc = await saveDocument(subfolderPath, doc, sshRemoteId || undefined);
 				savedDocuments.push(savedDoc);
 				callbacks?.onDocumentComplete?.(savedDoc);
 			} catch (error) {

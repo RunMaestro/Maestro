@@ -72,12 +72,6 @@ export function AutoRunDocumentSelector({
 		});
 	};
 
-	// Get display name for selected document (just the filename, not full path)
-	const _getDisplayName = (path: string) => {
-		const parts = path.split('/');
-		return parts[parts.length - 1];
-	};
-
 	// Get percentage display for a document's task completion
 	const getTaskPercentage = (docPath: string): number | null => {
 		if (!documentTaskCounts) return null;

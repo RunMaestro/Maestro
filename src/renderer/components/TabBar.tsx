@@ -252,7 +252,7 @@ const Tab = memo(function Tab({
 		// Only show overlay if there's something meaningful to show:
 		// - Tabs with sessions or logs: always show (for session/context actions)
 		// - Tabs without sessions or logs: show if there are move actions available
-		if (!tab.agentSessionId && !(tab.logs?.length) && isFirstTab && isLastTab) return;
+		if (!tab.agentSessionId && !tab.logs?.length && isFirstTab && isLastTab) return;
 
 		// Open overlay after delay
 		hoverTimeoutRef.current = setTimeout(() => {
@@ -1662,9 +1662,6 @@ function TabBarInner({
 
 	// Can always close tabs - closing the last one creates a fresh new tab
 	const canClose = true;
-
-	// Count unread tabs for the filter toggle tooltip (reserved for future use)
-	const _unreadCount = tabs.filter((t) => t.hasUnread).length;
 
 	// Filter tabs based on unread filter state
 	// When filter is on, show: unread tabs + active tab + tabs with drafts

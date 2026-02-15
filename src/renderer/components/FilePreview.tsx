@@ -11,6 +11,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSlug from 'rehype-slug';
+import GithubSlugger from 'github-slugger';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import {
@@ -31,6 +32,9 @@ import {
 	Share2,
 	GitGraph,
 	List,
+	ExternalLink,
+	RefreshCw,
+	X,
 } from 'lucide-react';
 import { visit } from 'unist-util-visit';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -38,6 +42,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MermaidRenderer } from './MermaidRenderer';
+import { CsvTableRenderer } from './CsvTableRenderer';
 import { getEncoder, formatTokenCount } from '../utils/tokenCounter';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
@@ -134,6 +139,10 @@ interface FilePreviewProps {
 	onSearchQueryChange?: (query: string) => void;
 	/** When true, disables click-outside-to-close and layer registration (for tab-based rendering) */
 	isTabMode?: boolean;
+	/** Timestamp (ms) when file was last modified on disk — used for change detection polling */
+	lastModified?: number;
+	/** Callback to reload file content from disk (called when user clicks Reload in the change banner) */
+	onReloadFile?: () => void;
 }
 
 export interface FilePreviewHandle {
@@ -168,6 +177,8 @@ const getLanguageFromFilename = (filename: string): string => {
 		yml: 'yaml',
 		toml: 'toml',
 		xml: 'xml',
+		csv: 'csv',
+		tsv: 'csv',
 	};
 	return languageMap[ext || ''] || 'text';
 };
@@ -298,6 +309,7 @@ const extractHeadings = (content: string): TocEntry[] => {
 	const headings: TocEntry[] = [];
 	const lines = content.split('\n');
 	let inCodeFence = false;
+	const slugger = new GithubSlugger();
 
 	for (const line of lines) {
 		// Track code fence boundaries (``` or ~~~, optionally with language specifier)
@@ -316,12 +328,8 @@ const extractHeadings = (content: string): TocEntry[] => {
 		if (match) {
 			const level = match[1].length;
 			const text = match[2].trim();
-			// Generate slug same way rehype-slug does (lowercase, replace spaces with hyphens, remove special chars)
-			const slug = text
-				.toLowerCase()
-				.replace(/[^\w\s-]/g, '')
-				.replace(/\s+/g, '-')
-				.replace(/^-+|-+$/g, '');
+			// Use github-slugger to match rehype-slug's ID generation exactly
+			const slug = slugger.slug(text);
 			headings.push({ level, text, slug });
 		}
 	}
@@ -643,6 +651,8 @@ export const FilePreview = React.memo(
 			initialSearchQuery,
 			onSearchQueryChange,
 			isTabMode,
+			lastModified,
+			onReloadFile,
 		},
 		ref
 	) {
@@ -700,6 +710,42 @@ export const FilePreview = React.memo(
 		const tocButtonRef = useRef<HTMLButtonElement>(null);
 		const tocOverlayRef = useRef<HTMLDivElement>(null);
 
+		// File change detection state
+		const [fileChangedOnDisk, setFileChangedOnDisk] = useState(false);
+		const lastModifiedRef = useRef(lastModified);
+
+		// Keep ref in sync with prop (reset when parent reloads content with new lastModified)
+		useEffect(() => {
+			lastModifiedRef.current = lastModified;
+			setFileChangedOnDisk(false);
+		}, [lastModified]);
+
+		// Poll file stat to detect external changes (every 3s for the active file)
+		useEffect(() => {
+			if (!file?.path || !lastModified || fileChangedOnDisk) return;
+
+			const interval = setInterval(async () => {
+				try {
+					const stat = await window.maestro?.fs?.stat(file.path, sshRemoteId);
+					if (!stat?.modifiedAt) return;
+					const currentMtime = new Date(stat.modifiedAt).getTime();
+					if (currentMtime > (lastModifiedRef.current ?? 0)) {
+						setFileChangedOnDisk(true);
+					}
+				} catch {
+					// Silently ignore — file may have been deleted or become inaccessible
+				}
+			}, 3000);
+
+			return () => clearInterval(interval);
+		}, [file?.path, lastModified, sshRemoteId, fileChangedOnDisk]);
+
+		// Handle reload click
+		const handleReloadFile = useCallback(() => {
+			setFileChangedOnDisk(false);
+			onReloadFile?.();
+		}, [onReloadFile]);
+
 		// Expose focus method to parent via ref
 		useImperativeHandle(
 			ref,
@@ -719,6 +765,8 @@ export const FilePreview = React.memo(
 		// Compute derived values - must be before any early returns but after hooks
 		const language = file ? getLanguageFromFilename(file.name) : '';
 		const isMarkdown = language === 'markdown';
+		const isCsv = language === 'csv';
+		const csvDelimiter = file?.name.toLowerCase().endsWith('.tsv') ? '\t' : ',';
 		const isImage = file ? isImageFile(file.name) : false;
 
 		// Check for binary files - either by extension or by content analysis
@@ -1196,7 +1244,7 @@ export const FilePreview = React.memo(
 
 		// Highlight search matches in syntax-highlighted code
 		useEffect(() => {
-			if (!searchQuery.trim() || !codeContainerRef.current || isMarkdown || isImage) {
+			if (!searchQuery.trim() || !codeContainerRef.current || isMarkdown || isImage || isCsv) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(0);
 				matchElementsRef.current = [];
@@ -1280,7 +1328,7 @@ export const FilePreview = React.memo(
 				});
 				matchElementsRef.current = [];
 			};
-		}, [searchQuery, file?.content, isMarkdown, isImage, theme.colors.accent]);
+		}, [searchQuery, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
@@ -1832,6 +1880,16 @@ export const FilePreview = React.memo(
 									<GitGraph className="w-4 h-4" />
 								</button>
 							)}
+							{!sshRemoteId && (
+								<button
+									onClick={() => window.maestro?.shell?.openExternal(`file://${file.path}`)}
+									className="p-2 rounded hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textDim }}
+									title="Open in Default App"
+								>
+									<ExternalLink className="w-4 h-4" />
+								</button>
+							)}
 							<button
 								onClick={copyPathToClipboard}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
@@ -2013,6 +2071,43 @@ export const FilePreview = React.memo(
 						</div>
 					) : null}
 				</div>
+
+				{/* File changed on disk banner */}
+				{fileChangedOnDisk && (
+					<div
+						className="flex items-center gap-3 px-6 py-2 border-b shrink-0"
+						style={{
+							backgroundColor: theme.colors.accent + '15',
+							borderColor: theme.colors.accent + '40',
+						}}
+					>
+						<RefreshCw className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
+						<span className="flex-1 text-xs" style={{ color: theme.colors.textMain }}>
+							{hasChanges
+								? 'File changed on disk. You have unsaved edits — reloading will discard them.'
+								: 'File changed on disk.'}
+						</span>
+						<div className="flex items-center gap-2 shrink-0">
+							<button
+								onClick={handleReloadFile}
+								className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
+								style={{
+									backgroundColor: theme.colors.accent,
+									color: theme.colors.accentForeground ?? '#000',
+								}}
+							>
+								Reload
+							</button>
+							<button
+								onClick={() => setFileChangedOnDisk(false)}
+								className="p-1 rounded hover:bg-white/10 transition-colors"
+								title="Dismiss"
+							>
+								<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							</button>
+						</div>
+					</div>
+				)}
 
 				{/* Content - isolated scroll to prevent scroll chaining */}
 				<div
@@ -2220,6 +2315,17 @@ export const FilePreview = React.memo(
 									// Scroll to show the cursor
 									textarea.scrollTop += textarea.clientHeight;
 								}
+							}}
+						/>
+					) : isCsv && !markdownEditMode ? (
+						<CsvTableRenderer
+							content={file.content}
+							theme={theme}
+							delimiter={csvDelimiter}
+							searchQuery={searchQuery}
+							onMatchCount={(count) => {
+								setTotalMatches(count);
+								setCurrentMatchIndex(count > 0 ? 0 : -1);
 							}}
 						/>
 					) : isMarkdown ? (

@@ -5,7 +5,7 @@ Thank you for your interest in the security of Maestro. We welcome contributions
 ## Reporting a Vulnerability
 
 ### For Most Issues
-Please open a [GitHub issue](https://github.com/pedramamini/Maestro/issues) with the `security` label. Include:
+Please open a [GitHub issue](https://github.com/RunMaestro/Maestro/issues) with the `security` label. Include:
 - A clear description of the vulnerability
 - Steps to reproduce
 - Potential impact

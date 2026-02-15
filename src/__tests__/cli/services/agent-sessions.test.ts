@@ -26,7 +26,7 @@ vi.mock('os', () => ({
 
 describe('listClaudeSessions', () => {
 	const projectPath = '/path/to/project';
-	// encodeClaudeProjectPath: replace / and . with -
+	// encodeClaudeProjectPath: replace all non-alphanumeric with -
 	const encodedPath = '-path-to-project';
 	const sessionsDir = `/home/testuser/.claude/projects/${encodedPath}`;
 

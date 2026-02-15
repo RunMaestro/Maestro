@@ -18,13 +18,12 @@ function resetStore() {
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
-		selectedFileIndex: 0,
-		fileTreeFilter: '',
-		fileTreeFilterOpen: false,
 		flashNotification: null,
 		successFlashNotification: null,
 		outputSearchOpen: false,
 		outputSearchQuery: '',
+		sessionFilterOpen: false,
+		historySearchFilterOpen: false,
 		draggingSessionId: null,
 		editingGroupId: null,
 		editingSessionId: null,
@@ -50,13 +49,12 @@ describe('uiStore', () => {
 			expect(state.preFilterActiveTabId).toBeNull();
 			expect(state.preTerminalFileTabId).toBeNull();
 			expect(state.selectedSidebarIndex).toBe(0);
-			expect(state.selectedFileIndex).toBe(0);
-			expect(state.fileTreeFilter).toBe('');
-			expect(state.fileTreeFilterOpen).toBe(false);
 			expect(state.flashNotification).toBeNull();
 			expect(state.successFlashNotification).toBeNull();
 			expect(state.outputSearchOpen).toBe(false);
 			expect(state.outputSearchQuery).toBe('');
+			expect(state.sessionFilterOpen).toBe(false);
+			expect(state.historySearchFilterOpen).toBe(false);
 			expect(state.draggingSessionId).toBeNull();
 			expect(state.editingGroupId).toBeNull();
 			expect(state.editingSessionId).toBeNull();
@@ -198,29 +196,6 @@ describe('uiStore', () => {
 		});
 	});
 
-	describe('file explorer state', () => {
-		it('sets selected file index', () => {
-			useUIStore.getState().setSelectedFileIndex(10);
-			expect(useUIStore.getState().selectedFileIndex).toBe(10);
-		});
-
-		it('sets selected file index with an updater', () => {
-			useUIStore.getState().setSelectedFileIndex(5);
-			useUIStore.getState().setSelectedFileIndex((prev) => Math.max(0, prev - 3));
-			expect(useUIStore.getState().selectedFileIndex).toBe(2);
-		});
-
-		it('sets file tree filter', () => {
-			useUIStore.getState().setFileTreeFilter('test');
-			expect(useUIStore.getState().fileTreeFilter).toBe('test');
-		});
-
-		it('sets file tree filter open', () => {
-			useUIStore.getState().setFileTreeFilterOpen(true);
-			expect(useUIStore.getState().fileTreeFilterOpen).toBe(true);
-		});
-	});
-
 	describe('flash notification state', () => {
 		it('sets flash notification', () => {
 			useUIStore.getState().setFlashNotification('Commands disabled');
@@ -248,6 +223,30 @@ describe('uiStore', () => {
 		it('sets output search query', () => {
 			useUIStore.getState().setOutputSearchQuery('find this');
 			expect(useUIStore.getState().outputSearchQuery).toBe('find this');
+		});
+	});
+
+	describe('session filter state', () => {
+		it('sets session filter open', () => {
+			useUIStore.getState().setSessionFilterOpen(true);
+			expect(useUIStore.getState().sessionFilterOpen).toBe(true);
+		});
+
+		it('sets session filter open with an updater', () => {
+			useUIStore.getState().setSessionFilterOpen((prev) => !prev);
+			expect(useUIStore.getState().sessionFilterOpen).toBe(true);
+		});
+	});
+
+	describe('history search filter state', () => {
+		it('sets history search filter open', () => {
+			useUIStore.getState().setHistorySearchFilterOpen(true);
+			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
+		});
+
+		it('sets history search filter open with an updater', () => {
+			useUIStore.getState().setHistorySearchFilterOpen((prev) => !prev);
+			expect(useUIStore.getState().historySearchFilterOpen).toBe(true);
 		});
 	});
 
@@ -307,7 +306,7 @@ describe('uiStore', () => {
 
 			// Change unrelated state
 			act(() => {
-				useUIStore.getState().setFileTreeFilter('test');
+				useUIStore.getState().setOutputSearchQuery('test');
 			});
 
 			// Should not have re-rendered (selector isolation)
@@ -337,7 +336,7 @@ describe('uiStore', () => {
 		it('returns stable action references across state changes', () => {
 			const actionsBefore = useUIStore.getState();
 			useUIStore.getState().setLeftSidebarOpen(false);
-			useUIStore.getState().setFileTreeFilter('changed');
+			useUIStore.getState().setOutputSearchQuery('changed');
 			const actionsAfter = useUIStore.getState();
 
 			// Actions must be the same function references after state mutations.
@@ -346,33 +345,29 @@ describe('uiStore', () => {
 			expect(actionsAfter.setLeftSidebarOpen).toBe(actionsBefore.setLeftSidebarOpen);
 			expect(actionsAfter.toggleLeftSidebar).toBe(actionsBefore.toggleLeftSidebar);
 			expect(actionsAfter.setActiveFocus).toBe(actionsBefore.setActiveFocus);
-			expect(actionsAfter.setFileTreeFilter).toBe(actionsBefore.setFileTreeFilter);
 			expect(actionsAfter.setFlashNotification).toBe(actionsBefore.setFlashNotification);
 			expect(actionsAfter.setSelectedSidebarIndex).toBe(actionsBefore.setSelectedSidebarIndex);
 		});
 
 		it('extracted actions still mutate state correctly', () => {
 			// Grab actions once, then call them — mirrors the App.tsx pattern
-			const { setLeftSidebarOpen, setFileTreeFilter, setActiveFocus } = useUIStore.getState();
+			const { setLeftSidebarOpen, setActiveFocus } = useUIStore.getState();
 
 			setLeftSidebarOpen(false);
 			expect(useUIStore.getState().leftSidebarOpen).toBe(false);
-
-			setFileTreeFilter('hello');
-			expect(useUIStore.getState().fileTreeFilter).toBe('hello');
 
 			setActiveFocus('sidebar');
 			expect(useUIStore.getState().activeFocus).toBe('sidebar');
 		});
 
 		it('extracted actions work with updater functions', () => {
-			const { setSelectedFileIndex } = useUIStore.getState();
+			const { setSelectedSidebarIndex } = useUIStore.getState();
 
-			setSelectedFileIndex(10);
-			expect(useUIStore.getState().selectedFileIndex).toBe(10);
+			setSelectedSidebarIndex(10);
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(10);
 
-			setSelectedFileIndex((prev) => prev - 3);
-			expect(useUIStore.getState().selectedFileIndex).toBe(7);
+			setSelectedSidebarIndex((prev) => prev - 3);
+			expect(useUIStore.getState().selectedSidebarIndex).toBe(7);
 		});
 	});
 

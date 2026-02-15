@@ -15,7 +15,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import React from 'react';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
-import type { StatsAggregation } from '../../../../renderer/hooks/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
 
 // Test theme

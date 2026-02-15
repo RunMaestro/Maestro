@@ -28,6 +28,7 @@ import { SessionStats } from './SessionStats';
 import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
+import { LongestAutoRunsTable } from './LongestAutoRunsTable';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
@@ -49,7 +50,7 @@ const OVERVIEW_SECTIONS = [
 ] as const;
 const AGENTS_SECTIONS = ['session-stats', 'agent-efficiency', 'agent-comparison', 'agent-usage'] as const;
 const ACTIVITY_SECTIONS = ['activity-heatmap', 'weekday-comparison', 'duration-trends'] as const;
-const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour'] as const;
+const AUTORUN_SECTIONS = ['autorun-stats', 'tasks-by-hour', 'longest-autoruns'] as const;
 
 type SectionId =
 	| (typeof OVERVIEW_SECTIONS)[number]
@@ -362,6 +363,7 @@ export function UsageDashboardModal({
 			'duration-trends': 'Duration Trends Chart',
 			'autorun-stats': 'Auto Run Statistics',
 			'tasks-by-hour': 'Tasks by Time of Day Chart',
+			'longest-autoruns': 'Top 25 Longest Auto Runs',
 		};
 		return labels[sectionId] || sectionId;
 	}, []);
@@ -1146,6 +1148,31 @@ export function UsageDashboardModal({
 									>
 										<ChartErrorBoundary theme={theme} chartName="Tasks by Hour">
 											<TasksByHourChart
+												timeRange={timeRange}
+												theme={theme}
+											/>
+										</ChartErrorBoundary>
+									</div>
+
+									{/* Top 25 Longest Auto Runs */}
+									<div
+										ref={setSectionRef('longest-autoruns')}
+										tabIndex={0}
+										role="region"
+										aria-label={getSectionLabel('longest-autoruns')}
+										onKeyDown={(e) => handleSectionKeyDown(e, 'longest-autoruns')}
+										className="outline-none rounded-lg transition-shadow dashboard-section-enter"
+										style={{
+											boxShadow:
+												focusedSection === 'longest-autoruns'
+													? `0 0 0 2px ${theme.colors.accent}`
+													: 'none',
+											animationDelay: '200ms',
+										}}
+										data-testid="section-longest-autoruns"
+									>
+										<ChartErrorBoundary theme={theme} chartName="Longest Auto Runs">
+											<LongestAutoRunsTable
 												timeRange={timeRange}
 												theme={theme}
 											/>

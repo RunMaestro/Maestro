@@ -12,6 +12,10 @@ import { app } from 'electron';
 import path from 'path';
 import fs from 'fs/promises';
 import { logger } from './logger';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
+
+// Re-export so existing consumers don't need import changes
+export { encodeClaudeProjectPath };
 
 // ============================================================================
 // Per-Project Stats Cache
@@ -85,14 +89,6 @@ export interface SessionStatsCache {
  * - v2: Added archived flag to preserve session stats when JSONL files are deleted
  */
 export const STATS_CACHE_VERSION = 2;
-
-/**
- * Encode a project path the same way Claude Code does.
- * Claude replaces both '/' and '.' with '-' in the path encoding.
- */
-export function encodeClaudeProjectPath(projectPath: string): string {
-	return projectPath.replace(/[/.]/g, '-');
-}
 
 /**
  * Get the cache file path for a project's stats.

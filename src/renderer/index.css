@@ -392,6 +392,41 @@ textarea::placeholder {
   animation: search-highlight-glow 2s ease-in-out infinite;
 }
 
+/* Wand sparkle animation - sparkle paths vanish/reappear with subtle movement */
+@keyframes wand-sparkle {
+  0%, 100% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  35% {
+    opacity: 0;
+    transform: translate(0.5px, -0.5px);
+  }
+  65% {
+    opacity: 0;
+    transform: translate(-0.5px, 0.5px);
+  }
+}
+
+/* Target sparkle paths (3rd-8th children in Lucide Wand2 SVG) */
+svg.wand-sparkle-active path:nth-child(n+3) {
+  animation: wand-sparkle 3s ease-in-out infinite;
+}
+
+/* Stagger each sparkle for organic feel (non-uniform delays) */
+svg.wand-sparkle-active path:nth-child(3) { animation-delay: 0s; }
+svg.wand-sparkle-active path:nth-child(4) { animation-delay: 0.5s; }
+svg.wand-sparkle-active path:nth-child(5) { animation-delay: 1s; }
+svg.wand-sparkle-active path:nth-child(6) { animation-delay: 1.5s; }
+svg.wand-sparkle-active path:nth-child(7) { animation-delay: 0.7s; }
+svg.wand-sparkle-active path:nth-child(8) { animation-delay: 1.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+  svg.wand-sparkle-active path:nth-child(n+3) {
+    animation: none;
+  }
+}
+
 /* React Flow - Document Graph edge hover styling */
 /* Subtle glow effect on edge hover */
 .react-flow__edge-path {

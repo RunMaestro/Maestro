@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { X, Award, CheckCircle, Trophy } from 'lucide-react';
 import type { Theme, Shortcut, KeyboardMasteryStats } from '../types';
 import { fuzzyMatch } from '../utils/search';

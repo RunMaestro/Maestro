@@ -8,7 +8,7 @@
  * - Generate the package with a progress indicator
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Package, Check, Loader2, FolderOpen, AlertCircle, Copy } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -362,7 +362,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 							<strong style={{ color: theme.colors.textMain }}>To submit:</strong>
 						</p>
 						<ol className="list-decimal list-inside space-y-1">
-							<li>Open a GitHub issue at github.com/pedramamini/Maestro/issues</li>
+							<li>Open a GitHub issue at github.com/RunMaestro/Maestro/issues</li>
 							<li>Describe the problem you encountered</li>
 							<li>Attach the generated zip file</li>
 						</ol>

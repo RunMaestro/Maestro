@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useSessionStore,
@@ -10,6 +10,7 @@ import {
 	selectGroupById,
 	selectSessionCount,
 	selectIsReady,
+	selectIsAnySessionBusy,
 	getSessionState,
 	getSessionActions,
 } from '../../../renderer/stores/sessionStore';
@@ -607,6 +608,37 @@ describe('sessionStore', () => {
 				useSessionStore.getState().setSessionsLoaded(true);
 				useSessionStore.getState().setInitialLoadComplete(true);
 				expect(selectIsReady(useSessionStore.getState())).toBe(true);
+			});
+		});
+
+		describe('selectIsAnySessionBusy', () => {
+			it('returns false when no sessions exist', () => {
+				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(false);
+			});
+
+			it('returns false when all sessions are idle', () => {
+				useSessionStore.getState().setSessions([
+					createMockSession({ id: 'a', state: 'idle' }),
+					createMockSession({ id: 'b', state: 'idle' }),
+				]);
+				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(false);
+			});
+
+			it('returns true when at least one session is busy', () => {
+				useSessionStore.getState().setSessions([
+					createMockSession({ id: 'a', state: 'idle' }),
+					createMockSession({ id: 'b', state: 'busy' }),
+				]);
+				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(true);
+			});
+
+			it('returns false for non-busy active states', () => {
+				useSessionStore.getState().setSessions([
+					createMockSession({ id: 'a', state: 'waiting_input' }),
+					createMockSession({ id: 'b', state: 'connecting' }),
+					createMockSession({ id: 'c', state: 'error' }),
+				]);
+				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(false);
 			});
 		});
 	});
@@ -1359,6 +1391,255 @@ describe('sessionStore', () => {
 				expect(result.current?.filePreviewTabs[0].path).toBe('/b.ts');
 				expect(result.current?.activeFileTabId).toBe('f2');
 			});
+		});
+	});
+
+	describe('addLogToTab', () => {
+		it('adds log entry to active tab when no tabId provided', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'user',
+				text: 'Hello, world!',
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].logs).toHaveLength(1);
+			expect(updated.aiTabs[0].logs[0].source).toBe('user');
+			expect(updated.aiTabs[0].logs[0].text).toBe('Hello, world!');
+		});
+
+		it('adds log entry to specific tab by tabId', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			// Add to tab-2 explicitly (not the active tab)
+			useSessionStore
+				.getState()
+				.addLogToTab('session-1', { source: 'system', text: 'Command executed' }, 'tab-2');
+
+			const updated = useSessionStore.getState().sessions[0];
+			expect(updated.aiTabs[0].logs).toHaveLength(0); // tab-1 untouched
+			expect(updated.aiTabs[1].logs).toHaveLength(1);
+			expect(updated.aiTabs[1].logs[0].text).toBe('Command executed');
+		});
+
+		it('generates id and timestamp when not provided', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'stdout',
+				text: 'Output text',
+			});
+
+			const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+			expect(log.id).toBeTruthy();
+			expect(typeof log.id).toBe('string');
+			expect(log.timestamp).toBeGreaterThan(0);
+		});
+
+		it('uses provided id and timestamp when given', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				id: 'custom-id-123',
+				timestamp: 1234567890,
+				source: 'user',
+				text: 'Custom entry',
+			});
+
+			const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+			expect(log.id).toBe('custom-id-123');
+			expect(log.timestamp).toBe(1234567890);
+		});
+
+		it('includes optional fields (images, delivered, aiCommand)', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'user',
+				text: 'With extras',
+				images: ['base64data'],
+				delivered: true,
+				aiCommand: { command: '/commit', description: 'Commit changes' },
+			});
+
+			const log = useSessionStore.getState().sessions[0].aiTabs[0].logs[0];
+			expect(log.images).toEqual(['base64data']);
+			expect(log.delivered).toBe(true);
+			expect(log.aiCommand).toEqual({ command: '/commit', description: 'Commit changes' });
+		});
+
+		it('does not affect other sessions', () => {
+			const session1 = createMockSession({
+				id: 'session-1',
+				aiTabs: [
+					{
+						id: 'tab-1',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-1',
+			});
+			const session2 = createMockSession({
+				id: 'session-2',
+				aiTabs: [
+					{
+						id: 'tab-2',
+						agentSessionId: null,
+						name: null,
+						starred: false,
+						logs: [],
+						inputValue: '',
+						stagedImages: [],
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTabId: 'tab-2',
+			});
+
+			useSessionStore.getState().setSessions([session1, session2]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'user',
+				text: 'Only for session 1',
+			});
+
+			const sessions = useSessionStore.getState().sessions;
+			expect(sessions[0].aiTabs[0].logs).toHaveLength(1);
+			expect(sessions[1].aiTabs[0].logs).toHaveLength(0); // Untouched
+		});
+
+		it('logs error when no target tab found', () => {
+			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const session = createMockSession({
+				id: 'session-1',
+				aiTabs: [], // No tabs!
+				activeTabId: '',
+			});
+
+			useSessionStore.getState().setSessions([session]);
+
+			useSessionStore.getState().addLogToTab('session-1', {
+				source: 'user',
+				text: 'Should not appear',
+			});
+
+			expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('[addLogToTab]'));
+			consoleSpy.mockRestore();
+		});
+
+		it('is available via getSessionActions()', () => {
+			const actions = getSessionActions();
+			expect(typeof actions.addLogToTab).toBe('function');
 		});
 	});
 });

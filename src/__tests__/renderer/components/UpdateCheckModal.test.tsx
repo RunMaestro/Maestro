@@ -79,7 +79,7 @@ const createMockRelease = (
 	tag_name: 'v1.1.0',
 	name: 'Version 1.1.0',
 	body: '## New Features\n- Added feature X\n- Fixed bug Y',
-	html_url: 'https://github.com/pedramamini/Maestro/releases/tag/v1.1.0',
+	html_url: 'https://github.com/RunMaestro/Maestro/releases/tag/v1.1.0',
 	published_at: '2024-01-15T12:00:00Z',
 	...overrides,
 });
@@ -103,7 +103,7 @@ const createMockUpdateResult = (
 	assetsReady: true,
 	versionsBehind: 1,
 	releases: [createMockRelease()],
-	releasesUrl: 'https://github.com/pedramamini/Maestro/releases',
+	releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
 	...overrides,
 });
 
@@ -487,7 +487,7 @@ describe('UpdateCheckModal', () => {
 			fireEvent.click(screen.getByText('View all releases'));
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro/releases'
+				'https://github.com/RunMaestro/Maestro/releases'
 			);
 		});
 	});
@@ -529,7 +529,7 @@ describe('UpdateCheckModal', () => {
 			fireEvent.click(screen.getByText('Check releases manually'));
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro/releases'
+				'https://github.com/RunMaestro/Maestro/releases'
 			);
 		});
 
@@ -921,7 +921,7 @@ describe('UpdateCheckModal', () => {
 			fireEvent.click(screen.getByText('Download manually from GitHub'));
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro/releases'
+				'https://github.com/RunMaestro/Maestro/releases'
 			);
 		});
 
@@ -1175,7 +1175,7 @@ describe('UpdateCheckModal', () => {
 			fireEvent.click(screen.getByText('Or download manually from GitHub'));
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro/releases'
+				'https://github.com/RunMaestro/Maestro/releases'
 			);
 		});
 

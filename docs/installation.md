@@ -6,7 +6,7 @@ icon: download
 
 ## Download
 
-Download the latest release for your platform from the [Releases](https://github.com/pedramamini/maestro/releases) page:
+Download the latest release for your platform from the [Releases](https://github.com/RunMaestro/Maestro/releases) page:
 
 - **macOS**: `.dmg` or `.zip` (available for both Intel and Apple Silicon)
 - **Windows**: `.exe` installer or portable `.exe` (no installation required)
@@ -47,7 +47,7 @@ Using Windows mounts causes several critical issues:
 ```bash
 # Clone to Linux filesystem (not /mnt/...)
 cd ~
-git clone https://github.com/pedramamini/maestro.git
+git clone https://github.com/RunMaestro/Maestro.git
 cd maestro
 
 # Install dependencies
@@ -82,7 +82,7 @@ If you prefer to build Maestro from source:
 node --version  # Verify version
 
 # Clone the repository
-git clone https://github.com/pedramamini/maestro.git
+git clone https://github.com/RunMaestro/Maestro.git
 cd maestro
 
 # Install dependencies

@@ -17,7 +17,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import { format, subDays, startOfWeek, addDays, getDay } from 'date-fns';
 import type { Theme } from '../../types';
-import type { StatsTimeRange, StatsAggregation } from '../../hooks/useStats';
+import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_HEATMAP_SCALE } from '../../constants/colorblindPalettes';
 
 // Metric display mode
@@ -760,17 +760,13 @@ export function ActivityHeatmap({
 										<div
 											className="text-xs text-center truncate h-[18px] flex items-center justify-center"
 											style={{
-												color: isFirstOfMonth
-													? theme.colors.accent
-													: theme.colors.textDim,
+												color: isFirstOfMonth ? theme.colors.accent : theme.colors.textDim,
 												fontSize: 10,
 												fontWeight: isFirstOfMonth ? 600 : 400,
 											}}
 											title={format(col.date, 'EEEE, MMM d')}
 										>
-											{showMonthLabel && isFirstOfMonth
-												? format(col.date, 'MMM')
-												: col.dayLabel}
+											{showMonthLabel && isFirstOfMonth ? format(col.date, 'MMM') : col.dayLabel}
 										</div>
 										{/* Time block cells */}
 										{col.blocks.map((block) => (

@@ -95,7 +95,6 @@ import {
 	useTabCompletion,
 	useAtMentionCompletion,
 	useInputProcessing,
-	DEFAULT_IMAGE_ONLY_PROMPT,
 	// Keyboard handling
 	useKeyboardShortcutHelpers,
 	useKeyboardNavigation,
@@ -123,6 +122,7 @@ import {
 } from './hooks';
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
+import { useAgentListeners } from './hooks/agent/useAgentListeners';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -130,10 +130,12 @@ import { useToast } from './contexts/ToastContext';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
-import { GroupChatProvider, useGroupChat } from './contexts/GroupChatContext';
-import { AutoRunProvider, useAutoRun } from './contexts/AutoRunContext';
+import { useGroupChatStore } from './stores/groupChatStore';
+import type { GroupChatMessagesHandle } from './components/GroupChatMessages';
+import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import { useSessionStore, selectActiveSession } from './stores/sessionStore';
+import { useAgentStore } from './stores/agentStore';
 import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineWizardContext';
 import { ToastContainer } from './components/Toast';
 
@@ -148,7 +150,7 @@ import { parseSynopsis } from '../shared/synopsis';
 import { formatRelativeTime } from '../shared/formatters';
 
 // Import types and constants
-// Note: GroupChat, GroupChatState are now imported via GroupChatContext; GroupChatMessage still used locally
+// Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
 import type {
 	ToolType,
 	SessionState,
@@ -158,13 +160,10 @@ import type {
 	AITab,
 	FilePreviewTab,
 	UnifiedTabRef,
-	UsageStats,
 	QueuedItem,
 	BatchRunConfig,
 	AgentError,
 	BatchRunState,
-	Group,
-	GroupChatMessage,
 	SpecKitCommand,
 	OpenSpecCommand,
 	LeaderboardRegistration,
@@ -182,7 +181,6 @@ import {
 	closeFileTab as closeFileTabHelper,
 	addAiTabToUnifiedHistory,
 	getActiveTab,
-	getWriteModeTab,
 	navigateToNextTab,
 	navigateToPrevTab,
 	navigateToTabByIndex,
@@ -198,48 +196,11 @@ import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
 import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
-import {
-	estimateContextUsage,
-	estimateAccumulatedGrowth,
-	DEFAULT_CONTEXT_WINDOWS,
-} from './utils/contextUsage';
 import { formatLogsForClipboard } from './utils/contextExtractor';
-import {
-	parseSessionId,
-	parseGroupChatSessionId,
-	isSynopsisSession,
-	isBatchSession,
-} from './utils/sessionIdParser';
-import { isLikelyConcatenatedToolNames, getSlashCommandDescription } from './constants/app';
+import { getSlashCommandDescription } from './constants/app';
 import { useUIStore } from './stores/uiStore';
 import { useTabStore } from './stores/tabStore';
-
-// Note: DEFAULT_IMAGE_ONLY_PROMPT is now imported from useInputProcessing hook
-
-/**
- * Get a human-readable title for an agent error type.
- * Used for toast notifications and history entries.
- */
-function getErrorTitleForType(type: AgentError['type']): string {
-	switch (type) {
-		case 'auth_expired':
-			return 'Authentication Required';
-		case 'token_exhaustion':
-			return 'Context Limit Reached';
-		case 'rate_limited':
-			return 'Rate Limit Exceeded';
-		case 'network_error':
-			return 'Connection Error';
-		case 'agent_crashed':
-			return 'Agent Error';
-		case 'permission_denied':
-			return 'Permission Denied';
-		case 'session_not_found':
-			return 'Session Not Found';
-		default:
-			return 'Error';
-	}
-}
+import { useFileExplorerStore } from './stores/fileExplorerStore';
 
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
@@ -648,15 +609,6 @@ function MaestroConsoleInner() {
 		[]
 	) as React.MutableRefObject<Session[]>;
 
-	const groupsRef = useMemo(
-		() => ({
-			get current() {
-				return useSessionStore.getState().groups;
-			},
-		}),
-		[]
-	) as React.MutableRefObject<Group[]>;
-
 	const activeSessionIdRef = useMemo(
 		() => ({
 			get current() {
@@ -732,9 +684,9 @@ function MaestroConsoleInner() {
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
 	const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
-	const selectedFileIndex = useUIStore((s) => s.selectedFileIndex);
-	const fileTreeFilter = useUIStore((s) => s.fileTreeFilter);
-	const fileTreeFilterOpen = useUIStore((s) => s.fileTreeFilterOpen);
+	const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
+	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
+	const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
 	const editingSessionId = useUIStore((s) => s.editingSessionId);
 	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
@@ -753,9 +705,6 @@ function MaestroConsoleInner() {
 		setBookmarksCollapsed,
 		setGroupChatsExpanded,
 		setShowUnreadOnly,
-		setSelectedFileIndex,
-		setFileTreeFilter,
-		setFileTreeFilterOpen,
 		setEditingGroupId,
 		setEditingSessionId,
 		setDraggingSessionId,
@@ -766,42 +715,54 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
-	// --- GROUP CHAT STATE (Phase 4: extracted to GroupChatContext) ---
+	const { setSelectedFileIndex, setFileTreeFilter, setFileTreeFilterOpen, setFlatFileList } =
+		useFileExplorerStore.getState();
 
-	// Use GroupChatContext for all group chat states
+	// --- GROUP CHAT STATE (now in groupChatStore) ---
+
+	// Reactive reads from groupChatStore (granular subscriptions)
+	const groupChats = useGroupChatStore((s) => s.groupChats);
+	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
+	const groupChatMessages = useGroupChatStore((s) => s.groupChatMessages);
+	const groupChatState = useGroupChatStore((s) => s.groupChatState);
+	const groupChatStagedImages = useGroupChatStore((s) => s.groupChatStagedImages);
+	const groupChatReadOnlyMode = useGroupChatStore((s) => s.groupChatReadOnlyMode);
+	const groupChatExecutionQueue = useGroupChatStore((s) => s.groupChatExecutionQueue);
+	const groupChatRightTab = useGroupChatStore((s) => s.groupChatRightTab);
+	const groupChatParticipantColors = useGroupChatStore((s) => s.groupChatParticipantColors);
+	const moderatorUsage = useGroupChatStore((s) => s.moderatorUsage);
+	const participantStates = useGroupChatStore((s) => s.participantStates);
+	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
+	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+	const groupChatError = useGroupChatStore((s) => s.groupChatError);
+
+	// Stable actions from groupChatStore (non-reactive)
 	const {
-		groupChats,
 		setGroupChats,
-		activeGroupChatId,
 		setActiveGroupChatId,
-		groupChatMessages,
 		setGroupChatMessages,
-		groupChatState,
 		setGroupChatState,
-		groupChatStagedImages,
 		setGroupChatStagedImages,
-		groupChatReadOnlyMode,
 		setGroupChatReadOnlyMode,
-		groupChatExecutionQueue,
 		setGroupChatExecutionQueue,
-		groupChatRightTab,
 		setGroupChatRightTab,
-		groupChatParticipantColors,
 		setGroupChatParticipantColors,
-		moderatorUsage,
 		setModeratorUsage,
-		participantStates,
 		setParticipantStates,
-		groupChatStates,
 		setGroupChatStates,
-		allGroupChatParticipantStates,
 		setAllGroupChatParticipantStates,
-		groupChatError,
 		setGroupChatError,
-		groupChatInputRef,
-		groupChatMessagesRef,
-		clearGroupChatError: handleClearGroupChatErrorBase,
-	} = useGroupChat();
+	} = useGroupChatStore.getState();
+
+	// Refs for focus management (previously in GroupChatContext)
+	const groupChatInputRef = useRef<HTMLTextAreaElement>(null);
+	const groupChatMessagesRef = useRef<GroupChatMessagesHandle>(null);
+
+	// clearGroupChatError: store clears error, we handle the focus side-effect
+	const handleClearGroupChatErrorBase = useCallback(() => {
+		useGroupChatStore.getState().clearGroupChatError();
+		setTimeout(() => groupChatInputRef.current?.focus(), 0);
+	}, []);
 
 	// SSH Remote configs for looking up SSH remote names (used for participant cards in group chat)
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
@@ -910,21 +871,12 @@ function MaestroConsoleInner() {
 		setCommandHistorySelectedIndex,
 	} = useInputContext();
 
-	// File Explorer State
-	const [filePreviewLoading, setFilePreviewLoading] = useState<{
-		name: string;
-		path: string;
-	} | null>(null);
-	const [flatFileList, setFlatFileList] = useState<any[]>([]);
-	const [isGraphViewOpen, setIsGraphViewOpen] = useState(false);
-	// File path to focus on when opening the Document Graph (relative to session.cwd)
-	const [graphFocusFilePath, setGraphFocusFilePath] = useState<string | undefined>(undefined);
-	// Track the last opened document graph for quick re-open from command palette
-	const [lastGraphFocusFilePath, setLastGraphFocusFilePath] = useState<string | undefined>(
-		undefined
-	);
-	// PERF: Ref to access lastGraphFocusFilePath in memoized callbacks without causing re-renders
-	const lastGraphFocusFilePathRef = useRef(lastGraphFocusFilePath);
+	// File Explorer State (reads from fileExplorerStore)
+	const filePreviewLoading = useFileExplorerStore((s) => s.filePreviewLoading);
+	const flatFileList = useFileExplorerStore((s) => s.flatFileList);
+	const isGraphViewOpen = useFileExplorerStore((s) => s.isGraphViewOpen);
+	const graphFocusFilePath = useFileExplorerStore((s) => s.graphFocusFilePath);
+	const lastGraphFocusFilePath = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
 
 	// GitHub CLI availability (for gist publishing)
 	const [ghCliAvailable, setGhCliAvailable] = useState(false);
@@ -1050,18 +1002,18 @@ function MaestroConsoleInner() {
 	const [isLiveMode, setIsLiveMode] = useState(false);
 	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
 
-	// Auto Run document management state (Phase 5: now from AutoRunContext)
+	// Auto Run document management state (from batchStore)
 	// Content is per-session in session.autoRunContent
+	const autoRunDocumentList = useBatchStore((s) => s.documentList);
+	const autoRunDocumentTree = useBatchStore((s) => s.documentTree);
+	const autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
+	const autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
 	const {
-		documentList: autoRunDocumentList,
 		setDocumentList: setAutoRunDocumentList,
-		documentTree: autoRunDocumentTree,
 		setDocumentTree: setAutoRunDocumentTree,
-		isLoadingDocuments: autoRunIsLoadingDocuments,
 		setIsLoadingDocuments: setAutoRunIsLoadingDocuments,
-		documentTaskCounts: autoRunDocumentTaskCounts,
 		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
-	} = useAutoRun();
+	} = useBatchStore.getState();
 
 	// Restore focus when LogViewer closes to ensure global hotkeys work
 	useEffect(() => {
@@ -1419,8 +1371,6 @@ function MaestroConsoleInner() {
 		console.log('[App] Starting loadSessionsAndGroups');
 
 		const loadSessionsAndGroups = async () => {
-			let _hasSessionsLoaded = false;
-
 			try {
 				console.log('[App] About to call sessions.getAll()');
 				const savedSessions = await window.maestro.sessions.getAll();
@@ -1431,7 +1381,6 @@ function MaestroConsoleInner() {
 				if (savedSessions && savedSessions.length > 0) {
 					const restoredSessions = await Promise.all(savedSessions.map((s) => restoreSession(s)));
 					setSessions(restoredSessions);
-					_hasSessionsLoaded = true;
 					// Set active session to first session if current activeSessionId is invalid
 					if (
 						restoredSessions.length > 0 &&
@@ -1973,1530 +1922,7 @@ function MaestroConsoleInner() {
 		loadOpenspecCommands();
 	}, []);
 
-	// Set up process event listeners for real-time output
-	useEffect(() => {
-		// Copy ref value to local variable for cleanup (React ESLint rule)
-		const thinkingChunkBuffer = thinkingChunkBufferRef.current;
-
-		// Handle process output data (BATCHED for performance)
-		// sessionId will be in format: "{id}-ai-{tabId}", "{id}-terminal", "{id}-batch-{timestamp}", etc.
-		const unsubscribeData = window.maestro.process.onData((sessionId: string, data: string) => {
-			// Parse sessionId to determine which process this is from
-			let actualSessionId: string;
-			let isFromAi: boolean;
-			let tabIdFromSession: string | undefined;
-
-			// Format: sessionId-ai-tabId
-			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-			if (aiTabMatch) {
-				actualSessionId = aiTabMatch[1];
-				tabIdFromSession = aiTabMatch[2];
-				isFromAi = true;
-			} else if (sessionId.endsWith('-terminal')) {
-				// Ignore PTY terminal output - we use runCommand for terminal commands,
-				// which emits data with plain session ID (not -terminal suffix)
-				return;
-			} else if (sessionId.includes('-batch-')) {
-				// Ignore batch task output - these are handled separately by spawnAgentForSession
-				// and their output goes to history entries, not to the AI terminal
-				return;
-			} else {
-				// Plain session ID = output from runCommand (terminal commands)
-				actualSessionId = sessionId;
-				isFromAi = false;
-			}
-
-			// Filter out empty stdout for terminal commands (AI output should pass through)
-			if (!isFromAi && !data.trim()) return;
-
-			// For terminal output, use batched append to shell logs
-			if (!isFromAi) {
-				batchedUpdater.appendLog(actualSessionId, null, false, data);
-				return;
-			}
-
-			// For AI output, determine target tab ID
-			// Priority: 1) tab ID from session ID (most reliable), 2) busy tab, 3) active tab
-			let targetTabId = tabIdFromSession;
-			if (!targetTabId) {
-				// Fallback: look up session from ref to find busy/active tab
-				const session = sessionsRef.current.find((s) => s.id === actualSessionId);
-				if (session) {
-					const targetTab = getWriteModeTab(session) || getActiveTab(session);
-					if (targetTab) {
-						targetTabId = targetTab.id;
-					}
-				}
-			}
-
-			if (!targetTabId) {
-				console.error(
-					'[onData] No target tab found - session has no aiTabs, this should not happen'
-				);
-				return;
-			}
-
-			// Batch the log append, delivery mark, unread mark, and byte tracking
-			batchedUpdater.appendLog(actualSessionId, targetTabId, true, data);
-			batchedUpdater.markDelivered(actualSessionId, targetTabId);
-			batchedUpdater.updateCycleBytes(actualSessionId, data.length);
-
-			// Clear error state if session had an error but is now receiving successful data
-			// This indicates the user fixed the issue (e.g., re-authenticated) and the agent is working
-			const sessionForErrorCheck = sessionsRef.current.find((s) => s.id === actualSessionId);
-			if (sessionForErrorCheck?.agentError) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						// Clear error from session and the specific tab
-						const updatedAiTabs = s.aiTabs.map((tab) =>
-							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
-						);
-						return {
-							...s,
-							agentError: undefined,
-							agentErrorTabId: undefined,
-							agentErrorPaused: false,
-							state: 'busy' as SessionState, // Keep busy since we're receiving data
-							aiTabs: updatedAiTabs,
-						};
-					})
-				);
-				// Notify main process to clear error state
-				window.maestro.agentError.clearError(actualSessionId).catch((err) => {
-					console.error('Failed to clear agent error on successful data:', err);
-				});
-			}
-
-			// Determine if tab should be marked as unread
-			// Mark as unread if user hasn't seen the new message:
-			// - The tab is not the active tab in this session, OR
-			// - The session is not the active session, OR
-			// - The user has scrolled up (not at bottom)
-			const session = sessionsRef.current.find((s) => s.id === actualSessionId);
-			if (session) {
-				const targetTab = session.aiTabs?.find((t) => t.id === targetTabId);
-				if (targetTab) {
-					const isTargetTabActive = targetTab.id === session.activeTabId;
-					const isThisSessionActive = session.id === activeSessionIdRef.current;
-					const isUserAtBottom = targetTab.isAtBottom !== false; // Default to true if undefined
-					const shouldMarkUnread = !isTargetTabActive || !isThisSessionActive || !isUserAtBottom;
-					batchedUpdater.markUnread(actualSessionId, targetTabId, shouldMarkUnread);
-				}
-			}
-		});
-
-		// Handle process exit
-		const unsubscribeExit = window.maestro.process.onExit(
-			async (sessionId: string, code: number) => {
-				// Log all exit events to help diagnose thinking pill disappearing prematurely
-				console.log('[onExit] Process exit event received:', {
-					rawSessionId: sessionId,
-					exitCode: code,
-					timestamp: new Date().toISOString(),
-				});
-
-				// Parse sessionId to determine which process exited
-				// Format: {id}-ai-{tabId}, {id}-terminal, {id}-batch-{timestamp}
-				let actualSessionId: string;
-				let isFromAi: boolean;
-				let tabIdFromSession: string | undefined;
-
-				// Format: sessionId-ai-tabId
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-					tabIdFromSession = aiTabMatch[2];
-					isFromAi = true;
-				} else if (sessionId.endsWith('-terminal')) {
-					actualSessionId = sessionId.slice(0, -9);
-					isFromAi = false;
-				} else if (sessionId.includes('-batch-')) {
-					// Ignore batch task exits - handled separately by spawnAgentForSession's own listener
-					return;
-				} else {
-					actualSessionId = sessionId;
-					isFromAi = false;
-				}
-
-				// SAFETY CHECK: Verify the process is actually gone before transitioning to idle
-				// This prevents the thinking pill from disappearing while the process is still running
-				// (which can happen if we receive a stale/duplicate exit event)
-				if (isFromAi) {
-					try {
-						const activeProcesses = await window.maestro.process.getActiveProcesses();
-						const processStillRunning = activeProcesses.some((p) => p.sessionId === sessionId);
-						if (processStillRunning) {
-							console.warn('[onExit] Process still running despite exit event, ignoring:', {
-								sessionId,
-								activeProcesses: activeProcesses.map((p) => p.sessionId),
-							});
-							return;
-						}
-					} catch (error) {
-						console.error('[onExit] Failed to verify process status:', error);
-						// Continue with exit handling if we can't verify - better than getting stuck
-					}
-				}
-
-				// For AI exits, gather toast data BEFORE state update to avoid side effects in updater
-				// React 18 StrictMode may call state updater functions multiple times
-				let toastData: {
-					title: string;
-					summary: string;
-					groupName: string;
-					projectName: string;
-					duration: number;
-					agentSessionId?: string;
-					tabName?: string;
-					usageStats?: UsageStats;
-					prompt?: string;
-					response?: string;
-					sessionSizeKB?: string;
-					sessionId?: string; // Maestro session ID for toast navigation
-					tabId?: string; // Tab ID for toast navigation
-					// Stats tracking fields
-					agentType?: string;
-					projectPath?: string;
-					startTime?: number;
-					isRemote?: boolean; // Whether this was an SSH remote session
-				} | null = null;
-				let queuedItemToProcess: {
-					sessionId: string;
-					item: QueuedItem;
-				} | null = null;
-				// Track if we need to run synopsis after completion (for /commit and other AI commands)
-				let synopsisData: {
-					sessionId: string;
-					cwd: string;
-					agentSessionId: string;
-					command: string;
-					groupName: string;
-					projectName: string;
-					tabName?: string;
-					tabId?: string;
-					lastSynopsisTime?: number;
-					taskDuration?: number; // Duration of the task that just completed (from thinkingStartTime)
-					toolType?: ToolType;
-					sessionConfig?: {
-						customPath?: string;
-						customArgs?: string;
-						customEnvVars?: Record<string, string>;
-						customModel?: string;
-						customContextWindow?: number;
-					};
-				} | null = null;
-
-				if (isFromAi) {
-					const currentSession = sessionsRef.current.find((s) => s.id === actualSessionId);
-					if (currentSession) {
-						// Check if there are queued items to process next
-						// We still want to show a toast for this tab's completion even if other tabs have work queued
-						// BUT don't process queue if there's an active error - wait for error resolution
-						if (
-							currentSession.executionQueue.length > 0 &&
-							!(currentSession.state === 'error' && currentSession.agentError)
-						) {
-							queuedItemToProcess = {
-								sessionId: actualSessionId,
-								item: currentSession.executionQueue[0],
-							};
-						}
-
-						// Gather toast notification data for the completed tab
-						// Show toast regardless of queue state - each tab completion deserves notification
-						// Use the SPECIFIC tab that just completed (from tabIdFromSession), NOT the active tab
-						// This is critical for parallel tab execution where multiple tabs complete independently
-						const completedTab = tabIdFromSession
-							? currentSession.aiTabs?.find((tab) => tab.id === tabIdFromSession)
-							: getActiveTab(currentSession);
-						const logs = completedTab?.logs || [];
-						const lastUserLog = logs.filter((log) => log.source === 'user').pop();
-						// Find last AI response: 'stdout' or 'ai' source (note: 'thinking' logs are already excluded since they have a distinct source type)
-						const lastAiLog = logs
-							.filter((log) => log.source === 'stdout' || log.source === 'ai')
-							.pop();
-						// Use the completed tab's thinkingStartTime for accurate per-tab duration
-						const completedTabData = currentSession.aiTabs?.find(
-							(tab) => tab.id === tabIdFromSession
-						);
-						const duration = completedTabData?.thinkingStartTime
-							? Date.now() - completedTabData.thinkingStartTime
-							: currentSession.thinkingStartTime
-								? Date.now() - currentSession.thinkingStartTime
-								: 0;
-
-						// Calculate session size in bytes for debugging context issues
-						const sessionSizeBytes = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
-						const sessionSizeKB = (sessionSizeBytes / 1024).toFixed(1);
-
-						// Get group name for this session (sessions have groupId, groups have id)
-						const sessionGroup = currentSession.groupId
-							? groupsRef.current.find((g: any) => g.id === currentSession.groupId)
-							: null;
-						const groupName = sessionGroup?.name || 'Ungrouped';
-						const projectName =
-							currentSession.name || currentSession.cwd.split('/').pop() || 'Unknown';
-
-						// Create title from user's request (truncated)
-						let title = 'Task Complete';
-						if (lastUserLog?.text) {
-							const userText = lastUserLog.text.trim();
-							title = userText.length > 50 ? userText.substring(0, 47) + '...' : userText;
-						}
-
-						// Create a short summary from the last AI response
-						// Skip conversational fillers like "Excellent!", "Perfect!", etc.
-						let summary = '';
-						if (lastAiLog?.text) {
-							const text = lastAiLog.text.trim();
-							if (text.length > 10) {
-								// Match sentences (text ending with . ! or ?)
-								const sentences = text.match(/[^.!?\n]+[.!?]+/g) || [];
-								// Pattern to detect conversational filler sentences
-								const fillerPattern =
-									/^(excellent|perfect|great|awesome|wonderful|fantastic|good|nice|cool|done|ok|okay|alright|sure|yes|yeah|absolutely|certainly|definitely|looks?\s+good|all\s+(set|done|ready)|got\s+it|understood|will\s+do|on\s+it|no\s+problem|no\s+worries|happy\s+to\s+help)[!.\s]*$/i;
-								// Find the first non-filler sentence
-								const meaningfulSentence = sentences.find((s) => !fillerPattern.test(s.trim()));
-								const firstSentence = meaningfulSentence?.trim() || text.substring(0, 120);
-								summary =
-									firstSentence.length < text.length
-										? firstSentence
-										: text.substring(0, 120) + (text.length > 120 ? '...' : '');
-							}
-						}
-						if (!summary) {
-							summary = 'Completed successfully';
-						}
-
-						// Get the completed tab's agentSessionId for traceability
-						const agentSessionId = completedTab?.agentSessionId || currentSession.agentSessionId;
-						// Get tab name: prefer tab's name, fallback to short UUID from agentSessionId
-						const tabName =
-							completedTab?.name ||
-							(agentSessionId ? agentSessionId.substring(0, 8).toUpperCase() : undefined);
-
-						toastData = {
-							title,
-							summary,
-							groupName,
-							projectName,
-							duration,
-							agentSessionId: agentSessionId || undefined,
-							tabName,
-							usageStats: currentSession.usageStats,
-							prompt: lastUserLog?.text,
-							response: lastAiLog?.text,
-							sessionSizeKB,
-							sessionId: actualSessionId, // For toast navigation
-							tabId: completedTab?.id, // For toast navigation to specific tab
-							// Stats tracking fields
-							agentType: currentSession.toolType,
-							projectPath: currentSession.cwd,
-							startTime: completedTabData?.thinkingStartTime || currentSession.thinkingStartTime,
-							// SSH remote session tracking: check both sshRemoteId (set after spawn) and sessionSshRemoteConfig (set before spawn)
-							isRemote: !!(
-								currentSession.sshRemoteId || currentSession.sessionSshRemoteConfig?.enabled
-							),
-						};
-
-						// Check if synopsis should be triggered:
-						// 1. Tab has saveToHistory enabled, OR
-						// 2. This was a custom AI command (pendingAICommandForSynopsis)
-						// Only trigger when queue is empty (final task complete) and we have a agentSessionId
-						const shouldSynopsis =
-							currentSession.executionQueue.length === 0 &&
-							(completedTab?.agentSessionId || currentSession.agentSessionId) &&
-							(completedTab?.saveToHistory || currentSession.pendingAICommandForSynopsis);
-
-						if (shouldSynopsis) {
-							synopsisData = {
-								sessionId: actualSessionId,
-								cwd: currentSession.cwd,
-								agentSessionId: completedTab?.agentSessionId || currentSession.agentSessionId!,
-								command: currentSession.pendingAICommandForSynopsis || 'Save to History',
-								groupName,
-								projectName,
-								tabName,
-								tabId: completedTab?.id,
-								lastSynopsisTime: completedTab?.lastSynopsisTime, // Track when last synopsis was generated
-								taskDuration: duration, // Duration of the task that just completed
-								toolType: currentSession.toolType, // Pass tool type for multi-provider support
-								sessionConfig: {
-									customPath: currentSession.customPath,
-									customArgs: currentSession.customArgs,
-									customEnvVars: currentSession.customEnvVars,
-									customModel: currentSession.customModel,
-									customContextWindow: currentSession.customContextWindow,
-								},
-							};
-						}
-					}
-				}
-
-				// Update state (pure function - no side effects)
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						if (isFromAi) {
-							// Don't process queue if session is in error state - preserve error
-							// Queue will be processed after error is resolved
-							if (s.state === 'error' && s.agentError) {
-								// Set the specific tab to idle but preserve session error state
-								const updatedAiTabs =
-									s.aiTabs?.length > 0
-										? s.aiTabs.map((tab) => {
-												if (tabIdFromSession) {
-													return tab.id === tabIdFromSession
-														? {
-																...tab,
-																state: 'idle' as const,
-																thinkingStartTime: undefined,
-															}
-														: tab;
-												} else {
-													return tab.state === 'busy'
-														? {
-																...tab,
-																state: 'idle' as const,
-																thinkingStartTime: undefined,
-															}
-														: tab;
-												}
-											})
-										: s.aiTabs;
-
-								return {
-									...s,
-									state: 'error' as SessionState, // Preserve error state
-									busySource: undefined,
-									thinkingStartTime: undefined,
-									aiTabs: updatedAiTabs,
-								};
-							}
-
-							// Check if there are queued items in the execution queue
-							if (s.executionQueue.length > 0) {
-								const [nextItem, ...remainingQueue] = s.executionQueue;
-
-								// Determine which tab this item belongs to
-								const targetTab =
-									s.aiTabs.find((tab) => tab.id === nextItem.tabId) || getActiveTab(s);
-
-								if (!targetTab) {
-									// Fallback: no tabs exist, just update the queue
-									return {
-										...s,
-										state: 'busy' as SessionState,
-										busySource: 'ai',
-										executionQueue: remainingQueue,
-										thinkingStartTime: Date.now(),
-										currentCycleTokens: 0,
-										currentCycleBytes: 0,
-									};
-								}
-
-								// IMPORTANT: Set the ORIGINAL tab (that just finished) to idle,
-								// UNLESS it's also the target tab for the next queued item.
-								// Also set target tab to 'busy' so thinking pill can find it via getWriteModeTab()
-								let updatedAiTabs = s.aiTabs.map((tab) => {
-									// If this tab is the target for the next queued item, set it to busy
-									// (takes priority over setting to idle, even if it's the same tab that just finished)
-									if (tab.id === targetTab.id) {
-										return {
-											...tab,
-											state: 'busy' as const,
-											thinkingStartTime: Date.now(),
-										};
-									}
-									// Set the original tab (that just finished) to idle, but only if it's different from target
-									if (tabIdFromSession && tab.id === tabIdFromSession) {
-										return { ...tab, state: 'idle' as const };
-									}
-									return tab;
-								});
-
-								// For message items, add a log entry to the target tab
-								// For command items, the log entry will be added when the command is processed
-								if (nextItem.type === 'message' && nextItem.text) {
-									const logEntry: LogEntry = {
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'user',
-										text: nextItem.text,
-										images: nextItem.images,
-									};
-									updatedAiTabs = updatedAiTabs.map((tab) =>
-										tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, logEntry] } : tab
-									);
-								}
-
-								// NOTE: Do NOT switch activeTabId - let user control tab switching
-								// The queued message processes in the background on its target tab
-								return {
-									...s,
-									state: 'busy' as SessionState,
-									busySource: 'ai',
-									aiTabs: updatedAiTabs,
-									// activeTabId stays unchanged - user controls tab switching
-									executionQueue: remainingQueue,
-									thinkingStartTime: Date.now(),
-									currentCycleTokens: 0,
-									currentCycleBytes: 0,
-								};
-							}
-
-							// Task complete - set the specific tab to 'idle' for write-mode tracking
-							// Use tabIdFromSession if available (new format), otherwise set all busy tabs to idle (legacy)
-							const updatedAiTabs =
-								s.aiTabs?.length > 0
-									? s.aiTabs.map((tab) => {
-											if (tabIdFromSession) {
-												// New format: only update the specific tab
-												return tab.id === tabIdFromSession
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-														}
-													: tab;
-											} else {
-												// Legacy format: update all busy tabs
-												return tab.state === 'busy'
-													? {
-															...tab,
-															state: 'idle' as const,
-															thinkingStartTime: undefined,
-														}
-													: tab;
-											}
-										})
-									: s.aiTabs;
-
-							// Check if ANY other tabs are still busy (for parallel read-only execution)
-							// Only set session to idle if no tabs are busy
-							// IMPORTANT: Preserve 'error' state if session has an active agentError - don't overwrite with 'idle'
-							const anyTabStillBusy = updatedAiTabs.some((tab) => tab.state === 'busy');
-							const newState =
-								s.state === 'error' && s.agentError
-									? ('error' as SessionState) // Preserve error state
-									: anyTabStillBusy
-										? ('busy' as SessionState)
-										: ('idle' as SessionState);
-							const newBusySource = anyTabStillBusy ? s.busySource : undefined;
-
-							// Log state transition for debugging thinking pill issues
-							console.log('[onExit] Session state transition:', {
-								sessionId: s.id.substring(0, 8),
-								tabIdFromSession: tabIdFromSession?.substring(0, 8),
-								previousState: s.state,
-								newState,
-								previousBusySource: s.busySource,
-								newBusySource,
-								anyTabStillBusy,
-								tabStates: updatedAiTabs.map((t) => ({
-									id: t.id.substring(0, 8),
-									state: t.state,
-								})),
-							});
-
-							// Task complete - also clear pending AI command flag
-							return {
-								...s,
-								state: newState,
-								busySource: newBusySource,
-								thinkingStartTime: anyTabStillBusy ? s.thinkingStartTime : undefined,
-								pendingAICommandForSynopsis: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						}
-
-						// Terminal exit - show exit code
-						const exitLog: LogEntry = {
-							id: generateId(),
-							timestamp: Date.now(),
-							source: 'system',
-							text: `Terminal process exited with code ${code}`,
-						};
-
-						// Check if any AI tabs are still busy - don't clear session state if so
-						const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
-
-						return {
-							...s,
-							// Only clear session state if no AI tabs are busy
-							state: anyAiTabBusy ? s.state : ('idle' as SessionState),
-							busySource: anyAiTabBusy ? s.busySource : undefined,
-							shellLogs: [...s.shellLogs, exitLog],
-						};
-					})
-				);
-
-				// Refresh git branches/tags after terminal command completes in git repos
-				// Check if the last command was a git command that might modify refs
-				if (!isFromAi) {
-					const currentSession = sessionsRef.current.find((s) => s.id === actualSessionId);
-					if (currentSession?.isGitRepo) {
-						// Get the last user command from shell logs
-						const userLogs = currentSession.shellLogs.filter((log) => log.source === 'user');
-						const lastCommand = userLogs[userLogs.length - 1]?.text?.trim().toLowerCase() || '';
-
-						// Refresh refs if command might have modified them
-						const gitRefCommands = [
-							'git branch',
-							'git checkout',
-							'git switch',
-							'git fetch',
-							'git pull',
-							'git tag',
-							'git merge',
-							'git rebase',
-							'git reset',
-						];
-						const shouldRefresh = gitRefCommands.some((cmd) => lastCommand.startsWith(cmd));
-
-						if (shouldRefresh) {
-							(async () => {
-								const sshRemoteId =
-									currentSession.sshRemoteId ||
-									currentSession.sessionSshRemoteConfig?.remoteId ||
-									undefined;
-								const [gitBranches, gitTags] = await Promise.all([
-									gitService.getBranches(currentSession.cwd, sshRemoteId),
-									gitService.getTags(currentSession.cwd, sshRemoteId),
-								]);
-								setSessions((prev) =>
-									prev.map((s) =>
-										s.id === actualSessionId
-											? {
-													...s,
-													gitBranches,
-													gitTags,
-													gitRefsCacheTime: Date.now(),
-												}
-											: s
-									)
-								);
-							})();
-						}
-					}
-				}
-
-				// Fire side effects AFTER state update (outside the updater function)
-				// Record stats for any completed query (even if we have queued items to process next)
-				if (toastData?.startTime && toastData?.agentType) {
-					// Determine if this query was part of an Auto Run session
-					const sessionIdForStats = toastData.sessionId || actualSessionId;
-					const isAutoRunQuery = getBatchStateRef.current
-						? getBatchStateRef.current(sessionIdForStats).isRunning
-						: false;
-
-					window.maestro.stats
-						.recordQuery({
-							sessionId: sessionIdForStats,
-							agentType: toastData.agentType,
-							source: isAutoRunQuery ? 'auto' : 'user',
-							startTime: toastData.startTime,
-							duration: toastData.duration,
-							projectPath: toastData.projectPath,
-							tabId: toastData.tabId,
-							isRemote: toastData.isRemote,
-						})
-						.catch((err) => {
-							// Don't fail the completion flow if stats recording fails
-							console.warn('[onProcessExit] Failed to record query stats:', err);
-						});
-				}
-
-				if (queuedItemToProcess) {
-					setTimeout(() => {
-						processQueuedItem(queuedItemToProcess!.sessionId, queuedItemToProcess!.item);
-					}, 0);
-				} else if (toastData) {
-					setTimeout(() => {
-						// Log agent completion for debugging and traceability
-						window.maestro.logger.log('info', 'Agent process completed', 'App', {
-							agentSessionId: toastData!.agentSessionId,
-							group: toastData!.groupName,
-							project: toastData!.projectName,
-							durationMs: toastData!.duration,
-							sessionSizeKB: toastData!.sessionSizeKB,
-							prompt:
-								toastData!.prompt?.substring(0, 200) +
-								(toastData!.prompt && toastData!.prompt.length > 200 ? '...' : ''),
-							response:
-								toastData!.response?.substring(0, 500) +
-								(toastData!.response && toastData!.response.length > 500 ? '...' : ''),
-							inputTokens: toastData!.usageStats?.inputTokens,
-							outputTokens: toastData!.usageStats?.outputTokens,
-							cacheReadTokens: toastData!.usageStats?.cacheReadInputTokens,
-							totalCostUsd: toastData!.usageStats?.totalCostUsd,
-						});
-
-						// Suppress toast if user is already viewing this tab (they'll see the response directly)
-						// Only show toasts for out-of-view completions (different session or different tab)
-						const currentActiveSession = sessionsRef.current.find(
-							(s) => s.id === activeSessionIdRef.current
-						);
-						const isViewingCompletedTab =
-							currentActiveSession?.id === actualSessionId &&
-							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
-
-						if (!isViewingCompletedTab) {
-							addToastRef.current({
-								type: 'success',
-								title: toastData!.title,
-								message: toastData!.summary,
-								group: toastData!.groupName,
-								project: toastData!.projectName,
-								taskDuration: toastData!.duration,
-								agentSessionId: toastData!.agentSessionId,
-								tabName: toastData!.tabName,
-								sessionId: toastData!.sessionId,
-								tabId: toastData!.tabId,
-							});
-						}
-					}, 0);
-				}
-
-				// Run synopsis in parallel if this was a custom AI command (like /commit)
-				// This creates a USER history entry to track the work
-				if (synopsisData && spawnBackgroundSynopsisRef.current && addHistoryEntryRef.current) {
-					// Build dynamic prompt based on whether there's a previous synopsis timestamp
-					// This ensures the AI only summarizes work since the last synopsis
-					let SYNOPSIS_PROMPT: string;
-					if (synopsisData.lastSynopsisTime) {
-						const timeAgo = formatRelativeTime(synopsisData.lastSynopsisTime);
-						SYNOPSIS_PROMPT = `${autorunSynopsisPrompt}\n\nIMPORTANT: Only synopsize work done since the last synopsis (${timeAgo}). Do not repeat previous work.`;
-					} else {
-						SYNOPSIS_PROMPT = autorunSynopsisPrompt;
-					}
-					const startTime = Date.now();
-					const synopsisTime = Date.now(); // Capture time for updating lastSynopsisTime
-
-					spawnBackgroundSynopsisRef
-						.current(
-							synopsisData.sessionId,
-							synopsisData.cwd,
-							synopsisData.agentSessionId,
-							SYNOPSIS_PROMPT,
-							synopsisData.toolType, // Pass tool type for multi-provider support
-							synopsisData.sessionConfig // Pass session config for custom env vars, args, etc.
-						)
-						.then((result) => {
-							const duration = Date.now() - startTime;
-							if (result.success && result.response && addHistoryEntryRef.current) {
-								// Parse the synopsis response to check for NOTHING_TO_REPORT
-								const parsed = parseSynopsis(result.response);
-
-								// Skip history entry and toast if nothing meaningful to report
-								if (parsed.nothingToReport) {
-									console.log(
-										'[onProcessExit] Synopsis returned NOTHING_TO_REPORT - skipping history entry',
-										{
-											sessionId: synopsisData!.sessionId,
-											agentSessionId: synopsisData!.agentSessionId,
-										}
-									);
-									return;
-								}
-
-								// IMPORTANT: Pass explicit sessionId and projectPath to prevent cross-agent bleed
-								// when user switches agents while synopsis is running in background
-								addHistoryEntryRef.current({
-									type: 'USER',
-									summary: parsed.shortSummary,
-									fullResponse: parsed.fullSynopsis,
-									agentSessionId: synopsisData!.agentSessionId,
-									usageStats: result.usageStats,
-									sessionId: synopsisData!.sessionId,
-									projectPath: synopsisData!.cwd,
-									sessionName: synopsisData!.tabName,
-									// Use actual task duration (from thinkingStartTime to completion)
-									elapsedTimeMs: synopsisData!.taskDuration,
-								});
-
-								// Update lastSynopsisTime on the tab so future synopses know the time window
-								setSessions((prev) =>
-									prev.map((s) => {
-										if (s.id !== synopsisData!.sessionId) return s;
-										return {
-											...s,
-											aiTabs: s.aiTabs.map((tab) => {
-												if (tab.id !== synopsisData!.tabId) return tab;
-												return { ...tab, lastSynopsisTime: synopsisTime };
-											}),
-										};
-									})
-								);
-
-								// Show toast for synopsis completion
-								// Skip custom notification - synopsis is not part of regular AI conversation flow
-								addToastRef.current({
-									type: 'info',
-									title: 'Synopsis',
-									message: parsed.shortSummary,
-									group: synopsisData!.groupName,
-									project: synopsisData!.projectName,
-									taskDuration: duration,
-									sessionId: synopsisData!.sessionId,
-									tabId: synopsisData!.tabId,
-									tabName: synopsisData!.tabName,
-									skipCustomNotification: true,
-								});
-
-								// Refresh history panel if available
-								if (rightPanelRef.current) {
-									rightPanelRef.current.refreshHistoryPanel();
-								}
-							} else if (!result.success) {
-								console.warn(
-									'[onProcessExit] Synopsis generation failed - no history entry created',
-									{
-										sessionId: synopsisData!.sessionId,
-										agentSessionId: synopsisData!.agentSessionId,
-										hasResponse: !!result.response,
-									}
-								);
-							}
-						})
-						.catch((err) => {
-							console.error('[onProcessExit] Synopsis failed:', err);
-						});
-				}
-			}
-		);
-
-		// Handle Claude session ID capture for interactive sessions only
-		const unsubscribeSessionId = window.maestro.process.onSessionId(
-			async (sessionId: string, agentSessionId: string) => {
-				// Ignore batch sessions - they have their own isolated session IDs that should NOT
-				// contaminate the interactive session's agentSessionId
-				if (isBatchSession(sessionId)) {
-					return;
-				}
-
-				// Parse sessionId to get actual session ID and tab ID
-				// Uses pre-compiled regex patterns from sessionIdParser
-				const parsed = parseSessionId(sessionId);
-				const actualSessionId = parsed.actualSessionId;
-				const tabId = parsed.tabId ?? undefined;
-
-				// Store Claude session ID in session state
-				// Note: slash commands are now received via onSlashCommands from Claude Code's init message
-				setSessions((prev) => {
-					const session = prev.find((s) => s.id === actualSessionId);
-					if (!session) return prev;
-
-					// Register this as a user-initiated Maestro session (batch sessions are filtered above)
-					// Do NOT pass session name - names should only be set when user explicitly renames
-					// Use projectRoot (not cwd) for consistent session storage access
-					window.maestro.agentSessions
-						.registerSessionOrigin(session.projectRoot, agentSessionId, 'user')
-						.catch((err) => console.error('[onSessionId] Failed to register session origin:', err));
-
-					return prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						// Find the target tab - use explicit tab ID from session ID if available
-						// This ensures each process's session ID goes to the correct tab
-						let targetTab;
-						if (tabId) {
-							// New format: tab ID is encoded in session ID
-							targetTab = s.aiTabs?.find((tab) => tab.id === tabId);
-						}
-
-						// Fallback: find awaiting tab or active tab (for legacy format)
-						if (!targetTab) {
-							const awaitingTab = s.aiTabs?.find(
-								(tab) => tab.awaitingSessionId && !tab.agentSessionId
-							);
-							targetTab = awaitingTab || getActiveTab(s);
-						}
-
-						if (!targetTab) {
-							// No tabs exist - this is a bug, sessions must have aiTabs
-							// Still store at session-level for web API compatibility
-							console.error(
-								'[onSessionId] No target tab found - session has no aiTabs, storing at session level only'
-							);
-							return { ...s, agentSessionId };
-						}
-
-						// Skip if this tab already has a agentSessionId (prevent overwriting)
-						if (targetTab.agentSessionId && targetTab.agentSessionId !== agentSessionId) {
-							return s;
-						}
-
-						// Update the target tab's agentSessionId and clear awaitingSessionId flag
-						// Keep name as null for auto-generated display (derived from agentSessionId)
-						const updatedAiTabs = s.aiTabs.map((tab) => {
-							if (tab.id !== targetTab.id) return tab;
-							// Only preserve existing custom name, don't auto-set to UUID
-							const newName = tab.name && tab.name !== 'New Session' ? tab.name : null;
-							return {
-								...tab,
-								agentSessionId,
-								awaitingSessionId: false,
-								name: newName,
-							};
-						});
-
-						return { ...s, aiTabs: updatedAiTabs, agentSessionId }; // Also keep session-level for backwards compatibility
-					});
-				});
-			}
-		);
-
-		// Handle slash commands from Claude Code init message
-		// These are the authoritative source of available commands (built-in + user + plugin)
-		const unsubscribeSlashCommands = window.maestro.process.onSlashCommands(
-			(sessionId: string, slashCommands: string[]) => {
-				// Parse sessionId to get actual session ID (ignore tab ID suffix)
-				const actualSessionId = parseSessionId(sessionId).baseSessionId;
-
-				// Convert string array to command objects with descriptions
-				// Claude Code returns just command names, we'll need to derive descriptions
-				const commands = slashCommands.map((cmd) => ({
-					command: cmd.startsWith('/') ? cmd : `/${cmd}`,
-					description: getSlashCommandDescription(cmd),
-				}));
-
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						return { ...s, agentCommands: commands };
-					})
-				);
-			}
-		);
-
-		// Handle stderr from processes (BATCHED - separate from stdout)
-		// Supports both AI processes (sessionId format: {id}-ai-{tabId}) and terminal commands (plain sessionId)
-		const unsubscribeStderr = window.maestro.process.onStderr((sessionId: string, data: string) => {
-			// Filter out empty stderr (only whitespace)
-			if (!data.trim()) return;
-
-			// Parse sessionId to determine which process this is from
-			// Same logic as onData handler
-			let actualSessionId: string;
-			let tabIdFromSession: string | undefined;
-			let isFromAi = false;
-
-			const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-			if (aiTabMatch) {
-				actualSessionId = aiTabMatch[1];
-				tabIdFromSession = aiTabMatch[2];
-				isFromAi = true;
-			} else if (sessionId.includes('-batch-')) {
-				// Ignore batch task stderr
-				return;
-			} else {
-				// Plain session ID = runCommand (terminal commands)
-				actualSessionId = sessionId;
-			}
-
-			if (isFromAi && tabIdFromSession) {
-				// AI process stderr - route to the correct tab with stderr flag for red box styling
-				batchedUpdater.appendLog(actualSessionId, tabIdFromSession, true, data, true);
-			} else {
-				// Terminal command stderr - route to shell logs
-				batchedUpdater.appendLog(actualSessionId, null, false, data, true);
-			}
-		});
-
-		// Handle command exit from runCommand
-		const unsubscribeCommandExit = window.maestro.process.onCommandExit(
-			(sessionId: string, code: number) => {
-				// runCommand uses plain session ID (no suffix)
-				const actualSessionId = sessionId;
-
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						// Check if any AI tabs are still busy
-						const anyAiTabBusy = s.aiTabs?.some((tab) => tab.state === 'busy') || false;
-
-						// Determine new state:
-						// - If AI tabs are busy, session stays busy with busySource 'ai'
-						// - Otherwise, session becomes idle
-						const newState = anyAiTabBusy ? ('busy' as SessionState) : ('idle' as SessionState);
-						const newBusySource = anyAiTabBusy ? ('ai' as const) : undefined;
-
-						// Only show exit code if non-zero (error)
-						if (code !== 0) {
-							const exitLog: LogEntry = {
-								id: generateId(),
-								timestamp: Date.now(),
-								source: 'system',
-								text: `Command exited with code ${code}`,
-							};
-							return {
-								...s,
-								state: newState,
-								busySource: newBusySource,
-								shellLogs: [...s.shellLogs, exitLog],
-							};
-						}
-
-						return {
-							...s,
-							state: newState,
-							busySource: newBusySource,
-						};
-					})
-				);
-			}
-		);
-
-		// Handle usage statistics from AI responses (BATCHED for performance)
-		const unsubscribeUsage = window.maestro.process.onUsage((sessionId: string, usageStats) => {
-			// Parse sessionId using centralized parser (pre-compiled regex patterns)
-			// Handles: -ai-tabId, legacy -ai suffix, -synopsis-timestamp, -batch-timestamp
-			const parsed = parseSessionId(sessionId);
-			const { actualSessionId, tabId, baseSessionId } = parsed;
-
-			// Estimate context usage percentage using agent-specific calculation.
-			// estimateContextUsage returns null when values are accumulated across multiple
-			// internal API calls within a complex turn. In that case, we use a conservative
-			// growth estimate so the gauge keeps moving, but cap it below the yellow warning
-			// threshold so estimates never trigger compact warnings — only real measurements can.
-			// Use baseSessionId for lookup to handle synopsis/batch sessions that inherit parent's agent type
-			const sessionForUsage = sessionsRef.current.find((s) => s.id === baseSessionId);
-			const agentToolType = sessionForUsage?.toolType;
-			const contextPercentage = estimateContextUsage(usageStats, agentToolType);
-
-			// Batch the usage stats update, context percentage, and cycle tokens
-			// The batched updater handles the accumulation logic internally
-			batchedUpdater.updateUsage(actualSessionId, tabId, usageStats);
-			batchedUpdater.updateUsage(actualSessionId, null, usageStats); // Session-level accumulation
-			if (contextPercentage !== null) {
-				// Valid measurement from a non-accumulated turn — use directly
-				batchedUpdater.updateContextUsage(actualSessionId, contextPercentage);
-			} else {
-				// Accumulated values from multi-tool turn. Estimate conservative growth
-				// so the gauge doesn't freeze, but cap below the yellow warning threshold
-				// to guarantee estimates never trigger compact warnings.
-				const currentUsage = sessionForUsage?.contextUsage ?? 0;
-				if (currentUsage > 0) {
-					const effectiveWindow =
-						usageStats.contextWindow > 0
-							? usageStats.contextWindow
-							: agentToolType && agentToolType in DEFAULT_CONTEXT_WINDOWS
-								? DEFAULT_CONTEXT_WINDOWS[agentToolType as keyof typeof DEFAULT_CONTEXT_WINDOWS]
-								: 200000;
-					const estimated = estimateAccumulatedGrowth(
-						currentUsage,
-						usageStats.outputTokens,
-						usageStats.cacheReadInputTokens || 0,
-						effectiveWindow
-					);
-					// Hard cap below yellow threshold — estimates must never trigger compact warnings
-					const yellowThreshold = contextManagementSettings.contextWarningYellowThreshold;
-					const maxEstimate = yellowThreshold - 5;
-					batchedUpdater.updateContextUsage(actualSessionId, Math.min(estimated, maxEstimate));
-				}
-			}
-			batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
-
-			// Update persistent global stats (not batched - this is a separate concern)
-			updateGlobalStatsRef.current({
-				totalInputTokens: usageStats.inputTokens,
-				totalOutputTokens: usageStats.outputTokens,
-				totalCacheReadTokens: usageStats.cacheReadInputTokens,
-				totalCacheCreationTokens: usageStats.cacheCreationInputTokens,
-				totalCostUsd: usageStats.totalCostUsd,
-			});
-		});
-
-		// Handle agent errors (auth expired, token exhaustion, rate limits, crashes)
-		const unsubscribeAgentError = window.maestro.process.onAgentError(
-			(sessionId: string, error) => {
-				// Cast error to AgentError type (IPC uses plain object)
-				const agentError: AgentError = {
-					type: error.type as AgentError['type'],
-					message: error.message,
-					recoverable: error.recoverable,
-					agentId: error.agentId,
-					sessionId: error.sessionId,
-					timestamp: error.timestamp,
-					raw: error.raw,
-					parsedJson: error.parsedJson,
-				};
-
-				// Check if this is a group chat error (moderator or participant)
-				// Uses pre-compiled regex patterns from sessionIdParser
-				const groupChatParsed = parseGroupChatSessionId(sessionId);
-				if (groupChatParsed.isGroupChat) {
-					const groupChatId = groupChatParsed.groupChatId!;
-					const isModeratorError = groupChatParsed.isModerator ?? false;
-					const participantOrModerator = isModeratorError
-						? 'moderator'
-						: groupChatParsed.participantName!;
-
-					console.log('[onAgentError] Group chat error received:', {
-						rawSessionId: sessionId,
-						groupChatId,
-						participantName: isModeratorError ? 'Moderator' : participantOrModerator,
-						errorType: error.type,
-						message: error.message,
-						recoverable: error.recoverable,
-					});
-
-					// For session_not_found errors, the exit-listener handles recovery
-					// by respawning the participant with context. Don't show error or
-					// reset state - let the recovery flow handle it silently.
-					if (agentError.type === 'session_not_found') {
-						console.log(
-							'[onAgentError] Suppressing session_not_found for group chat - exit-listener will handle recovery:',
-							{
-								groupChatId,
-								participantName: isModeratorError ? 'Moderator' : participantOrModerator,
-							}
-						);
-						return;
-					}
-
-					// Set the group chat error state - this will show in the group chat UI
-					setGroupChatError({
-						groupChatId,
-						error: agentError,
-						participantName: isModeratorError ? 'Moderator' : participantOrModerator,
-					});
-
-					// Also add an error message to the group chat messages
-					const errorMessage: GroupChatMessage = {
-						timestamp: new Date(agentError.timestamp).toISOString(),
-						from: 'system',
-						content: `⚠️ ${
-							isModeratorError ? 'Moderator' : participantOrModerator
-						} error: ${agentError.message}`,
-					};
-					setGroupChatMessages((prev) => [...prev, errorMessage]);
-
-					// Reset group chat state to idle so user can try again
-					setGroupChatState('idle');
-					setGroupChatStates((prev) => {
-						const next = new Map(prev);
-						next.set(groupChatId, 'idle');
-						return next;
-					});
-					return;
-				}
-
-				// Synopsis processes run in the background - don't show their errors in the main session UI
-				// They have their own error handling in the promise rejection
-				if (isSynopsisSession(sessionId)) {
-					console.log('[onAgentError] Ignoring synopsis process error:', {
-						rawSessionId: sessionId,
-						errorType: error.type,
-						message: error.message,
-					});
-					return;
-				}
-
-				// Parse sessionId to get actual session ID (strip suffixes)
-				// Uses pre-compiled regex patterns from sessionIdParser
-				const parsed = parseSessionId(sessionId);
-				const actualSessionId = parsed.baseSessionId;
-				const tabIdFromSession = parsed.tabId ?? undefined;
-
-				console.log('[onAgentError] Agent error received:', {
-					rawSessionId: sessionId,
-					actualSessionId,
-					errorType: error.type,
-					message: error.message,
-					recoverable: error.recoverable,
-				});
-
-				// session_not_found is informational, not a blocking error.
-				// Claude Code handles this gracefully by starting a fresh conversation,
-				// so we just show an info message without blocking user input or showing a modal.
-				const isSessionNotFound = agentError.type === 'session_not_found';
-
-				// Create a log entry - use 'system' source for informational messages, 'error' for actual errors
-				const errorLogEntry: LogEntry = {
-					id: generateId(),
-					timestamp: agentError.timestamp,
-					source: isSessionNotFound ? 'system' : 'error',
-					text: agentError.message,
-					agentError: isSessionNotFound ? undefined : agentError, // Only include for actual errors
-				};
-
-				// Update session with error state and add log entry to the originating tab
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						// Prefer explicit tab ID from the sessionId; fall back to active tab
-						const targetTab = tabIdFromSession
-							? s.aiTabs.find((tab) => tab.id === tabIdFromSession)
-							: getActiveTab(s);
-						const updatedAiTabs = targetTab
-							? s.aiTabs.map((tab) =>
-									tab.id === targetTab.id
-										? {
-												...tab,
-												logs: [...tab.logs, errorLogEntry],
-												agentError: isSessionNotFound ? undefined : agentError,
-											}
-										: tab
-								)
-							: s.aiTabs;
-
-						// For session_not_found, don't block operations or set error state
-						if (isSessionNotFound) {
-							return {
-								...s,
-								aiTabs: updatedAiTabs,
-							};
-						}
-
-						return {
-							...s,
-							agentError,
-							agentErrorTabId: targetTab?.id,
-							agentErrorPaused: true, // Block new operations until resolved
-							state: 'error' as SessionState,
-							aiTabs: updatedAiTabs,
-						};
-					})
-				);
-
-				// Phase 5.10: Check if there's an active batch run for this session and pause it
-				// Also add history entry and toast for Auto Run errors
-				if (getBatchStateRef.current && pauseBatchOnErrorRef.current) {
-					const batchState = getBatchStateRef.current(actualSessionId);
-					if (batchState.isRunning && !batchState.errorPaused) {
-						console.log('[onAgentError] Pausing active batch run due to error:', actualSessionId);
-						const currentDoc = batchState.documents[batchState.currentDocumentIndex];
-						pauseBatchOnErrorRef.current(
-							actualSessionId,
-							agentError,
-							batchState.currentDocumentIndex,
-							currentDoc ? `Processing ${currentDoc}` : undefined
-						);
-
-						// Get session for history entry
-						const session = sessionsRef.current.find((s) => s.id === actualSessionId);
-
-						// Add history entry for Auto Run error (similar to stalled document entries)
-						if (addHistoryEntryRef.current && session) {
-							const errorTitle = getErrorTitleForType(agentError.type);
-							const errorExplanation = [
-								`**Auto Run Error: ${errorTitle}**`,
-								'',
-								`Auto Run encountered an error while processing:`,
-								currentDoc ? `- Document: ${currentDoc}` : '',
-								`- Error: ${agentError.message}`,
-								'',
-								'**What to do:**',
-								agentError.type === 'auth_expired'
-									? '- Re-authenticate with the provider (e.g., run `claude login` in terminal)'
-									: agentError.type === 'token_exhaustion'
-										? '- Start a new session to reset the context window'
-										: agentError.type === 'rate_limited'
-											? '- Wait a few minutes before retrying'
-											: agentError.type === 'network_error'
-												? '- Check your internet connection and try again'
-												: '- Review the error message and take appropriate action',
-								'',
-								'After resolving the issue, you can resume, skip, or abort the Auto Run.',
-							]
-								.filter(Boolean)
-								.join('\n');
-
-							addHistoryEntryRef.current({
-								type: 'AUTO',
-								summary: `Auto Run error: ${errorTitle}${currentDoc ? ` (${currentDoc})` : ''}`,
-								fullResponse: errorExplanation,
-								projectPath: session.cwd,
-								sessionId: actualSessionId,
-								success: false,
-							});
-						}
-
-						// Show toast notification for Auto Run error
-						if (addToastRef.current) {
-							const errorTitle = getErrorTitleForType(agentError.type);
-							addToastRef.current({
-								type: 'error',
-								title: `Auto Run: ${errorTitle}`,
-								message: agentError.message,
-								sessionId: actualSessionId,
-							});
-						}
-					}
-				}
-
-				// Show the error modal for this session (skip for informational session_not_found)
-				if (!isSessionNotFound) {
-					setAgentErrorModalSessionId(actualSessionId);
-				}
-			}
-		);
-
-		// Handle thinking/streaming content chunks from AI agents
-		// Only appends to logs if the tab has showThinking enabled
-		// THROTTLED: Uses requestAnimationFrame to batch rapid chunk arrivals (Phase 6.4)
-		const unsubscribeThinkingChunk = window.maestro.process.onThinkingChunk?.(
-			(sessionId: string, content: string) => {
-				// Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (!aiTabMatch) return; // Only handle AI tab messages
-
-				const actualSessionId = aiTabMatch[1];
-				const tabId = aiTabMatch[2];
-				const bufferKey = `${actualSessionId}:${tabId}`;
-
-				// Buffer the chunk - accumulate if there's already content for this session+tab
-				const existingContent = thinkingChunkBufferRef.current.get(bufferKey) || '';
-				thinkingChunkBufferRef.current.set(bufferKey, existingContent + content);
-
-				// Schedule a single RAF callback to process all buffered chunks
-				// This naturally throttles to ~60fps (16.67ms) and batches multiple rapid arrivals
-				if (thinkingChunkRafIdRef.current === null) {
-					thinkingChunkRafIdRef.current = requestAnimationFrame(() => {
-						// Process all buffered chunks in a single setSessions call
-						const buffer = thinkingChunkBufferRef.current;
-						if (buffer.size === 0) {
-							thinkingChunkRafIdRef.current = null;
-							return;
-						}
-
-						// Take a snapshot and clear the buffer
-						const chunksToProcess = new Map(buffer);
-						buffer.clear();
-						thinkingChunkRafIdRef.current = null;
-
-						setSessions((prev) =>
-							prev.map((s) => {
-								// Check if any buffered chunks are for this session
-								let hasChanges = false;
-								for (const [key] of chunksToProcess) {
-									if (key.startsWith(s.id + ':')) {
-										hasChanges = true;
-										break;
-									}
-								}
-								if (!hasChanges) return s;
-
-								// Process each chunk for this session
-								let updatedTabs = s.aiTabs;
-								for (const [key, bufferedContent] of chunksToProcess) {
-									const [chunkSessionId, chunkTabId] = key.split(':');
-									if (chunkSessionId !== s.id) continue;
-
-									const targetTab = updatedTabs.find((t) => t.id === chunkTabId);
-									if (!targetTab) continue;
-
-									// Only append if thinking is enabled for this tab (on or sticky)
-									if (!targetTab.showThinking || targetTab.showThinking === 'off') continue;
-
-									// Skip malformed content that looks like concatenated tool names
-									// This can happen if the stream parser receives malformed output
-									if (isLikelyConcatenatedToolNames(bufferedContent)) {
-										console.warn(
-											'[App] Skipping malformed thinking chunk (concatenated tool names):',
-											bufferedContent.substring(0, 100)
-										);
-										continue;
-									}
-
-									// Find the last log entry - if it's a thinking entry, append to it
-									const lastLog = targetTab.logs[targetTab.logs.length - 1];
-									if (lastLog?.source === 'thinking') {
-										// Check if appending would create concatenated tool names
-										const combinedText = lastLog.text + bufferedContent;
-										if (isLikelyConcatenatedToolNames(combinedText)) {
-											console.warn(
-												'[App] Detected malformed thinking content, replacing instead of appending'
-											);
-											// Replace with just the new content (likely the start of real text)
-											updatedTabs = updatedTabs.map((tab) =>
-												tab.id === chunkTabId
-													? {
-															...tab,
-															logs: [
-																...tab.logs.slice(0, -1),
-																{ ...lastLog, text: bufferedContent },
-															],
-														}
-													: tab
-											);
-										} else {
-											// Normal append to existing thinking block
-											updatedTabs = updatedTabs.map((tab) =>
-												tab.id === chunkTabId
-													? {
-															...tab,
-															logs: [...tab.logs.slice(0, -1), { ...lastLog, text: combinedText }],
-														}
-													: tab
-											);
-										}
-									} else {
-										// Create new thinking block
-										const newLog: LogEntry = {
-											id: generateId(),
-											timestamp: Date.now(),
-											source: 'thinking',
-											text: bufferedContent,
-										};
-										updatedTabs = updatedTabs.map((tab) =>
-											tab.id === chunkTabId ? { ...tab, logs: [...tab.logs, newLog] } : tab
-										);
-									}
-								}
-
-								return updatedTabs === s.aiTabs ? s : { ...s, aiTabs: updatedTabs };
-							})
-						);
-					});
-				}
-			}
-		);
-
-		// Handle SSH remote status events - tracks when sessions are executing on remote hosts
-		// Also populates session-wide SSH context (sshRemoteId, remoteCwd) for file explorer, git, auto run, etc.
-		// IMPORTANT: When SSH connection is established, we also recheck isGitRepo since the initial
-		// check may have failed or been done before SSH was ready.
-		const unsubscribeSshRemote = window.maestro.process.onSshRemote?.(
-			(sessionId: string, sshRemote: { id: string; name: string; host: string } | null) => {
-				// Parse sessionId to get actual session ID (format: {id}-ai-{tabId} or {id}-terminal)
-				let actualSessionId: string;
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (aiTabMatch) {
-					actualSessionId = aiTabMatch[1];
-				} else if (sessionId.endsWith('-ai') || sessionId.endsWith('-terminal')) {
-					actualSessionId = sessionId.replace(/-ai$|-terminal$/, '');
-				} else {
-					actualSessionId = sessionId;
-				}
-
-				// Update session with SSH remote info
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-						// Only update if the value actually changed (avoid unnecessary re-renders)
-						const currentRemoteId = s.sshRemote?.id;
-						const newRemoteId = sshRemote?.id;
-						if (currentRemoteId === newRemoteId) return s;
-						return {
-							...s,
-							sshRemote: sshRemote ?? undefined,
-							sshRemoteId: sshRemote?.id,
-						};
-					})
-				);
-
-				// When SSH connection is established, check isGitRepo with the SSH context
-				// For SSH sessions, this is the FIRST git check (deferred from session creation)
-				// since we can't check until SSH is connected
-				if (sshRemote?.id) {
-					const session = sessionsRef.current.find((s) => s.id === actualSessionId);
-					// Only check if session hasn't been detected as git repo yet
-					// (avoids redundant checks if SSH reconnects)
-					if (session && !session.isGitRepo) {
-						const remoteCwd = session.sessionSshRemoteConfig?.workingDirOverride || session.cwd;
-						(async () => {
-							try {
-								const isGitRepo = await gitService.isRepo(remoteCwd, sshRemote.id);
-								if (isGitRepo) {
-									// Fetch git branches and tags now that we know it's a git repo
-									const [gitBranches, gitTags] = await Promise.all([
-										gitService.getBranches(remoteCwd, sshRemote.id),
-										gitService.getTags(remoteCwd, sshRemote.id),
-									]);
-									const gitRefsCacheTime = Date.now();
-
-									setSessions((prev) =>
-										prev.map((s) => {
-											if (s.id !== actualSessionId) return s;
-											// Only update if still not detected as git repo
-											if (s.isGitRepo) return s;
-											return {
-												...s,
-												isGitRepo: true,
-												gitBranches,
-												gitTags,
-												gitRefsCacheTime,
-											};
-										})
-									);
-								}
-							} catch (err) {
-								console.error(`[SSH] Failed to check git repo status for ${actualSessionId}:`, err);
-							}
-						})();
-					}
-				}
-			}
-		);
-
-		// Handle tool execution events from AI agents
-		// Only appends to logs if the tab has showThinking enabled (tools shown alongside thinking)
-		const unsubscribeToolExecution = window.maestro.process.onToolExecution?.(
-			(sessionId: string, toolEvent: { toolName: string; state?: unknown; timestamp: number }) => {
-				// Parse sessionId to get actual session ID and tab ID (format: {id}-ai-{tabId})
-				const aiTabMatch = sessionId.match(/^(.+)-ai-(.+)$/);
-				if (!aiTabMatch) return; // Only handle AI tab messages
-
-				const actualSessionId = aiTabMatch[1];
-				const tabId = aiTabMatch[2];
-
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== actualSessionId) return s;
-
-						const targetTab = s.aiTabs.find((t) => t.id === tabId);
-						// Only show if thinking enabled (on or sticky)
-						if (!targetTab?.showThinking || targetTab.showThinking === 'off') return s;
-
-						const toolLog: LogEntry = {
-							id: `tool-${Date.now()}-${toolEvent.toolName}`,
-							timestamp: toolEvent.timestamp,
-							source: 'tool',
-							text: toolEvent.toolName,
-							metadata: {
-								toolState: toolEvent.state as NonNullable<LogEntry['metadata']>['toolState'],
-							},
-						};
-
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((tab) =>
-								tab.id === tabId ? { ...tab, logs: [...tab.logs, toolLog] } : tab
-							),
-						};
-					})
-				);
-			}
-		);
-
-		// Cleanup listeners on unmount
-		return () => {
-			unsubscribeData();
-			unsubscribeExit();
-			unsubscribeSessionId();
-			unsubscribeSlashCommands();
-			unsubscribeStderr();
-			unsubscribeCommandExit();
-			unsubscribeUsage();
-			unsubscribeAgentError();
-			unsubscribeThinkingChunk?.();
-			unsubscribeSshRemote?.();
-			unsubscribeToolExecution?.();
-			// Cancel any pending thinking chunk RAF and clear buffer (Phase 6.4)
-			if (thinkingChunkRafIdRef.current !== null) {
-				cancelAnimationFrame(thinkingChunkRafIdRef.current);
-				thinkingChunkRafIdRef.current = null;
-			}
-			thinkingChunkBuffer.clear();
-		};
-	}, []);
+	// IPC process event listeners are now in useAgentListeners hook (called after useAgentSessionManagement)
 
 	// --- GROUP CHAT EVENT LISTENERS ---
 	// Listen for real-time updates to group chat messages and state
@@ -3529,7 +1955,17 @@ function MaestroConsoleInner() {
 
 		const unsubModeratorUsage = window.maestro.groupChat.onModeratorUsage?.((id, usage) => {
 			if (id === activeGroupChatId) {
-				setModeratorUsage(usage);
+				// When contextUsage is -1, tokens were accumulated from multi-tool turns.
+				// Preserve previous context/token values; only update cost.
+				if (usage.contextUsage < 0) {
+					setModeratorUsage((prev) =>
+						prev
+							? { ...prev, totalCost: usage.totalCost }
+							: { contextUsage: 0, totalCost: usage.totalCost, tokenCount: 0 }
+					);
+				} else {
+					setModeratorUsage(usage);
+				}
 			}
 		});
 
@@ -3620,7 +2056,7 @@ function MaestroConsoleInner() {
 		}
 	}, [groupChatState, groupChatExecutionQueue, activeGroupChatId]);
 
-	// Refs (groupChatInputRef and groupChatMessagesRef are now in GroupChatContext)
+	// Refs (groupChatInputRef and groupChatMessagesRef are now declared above with groupChatStore state)
 	const logsEndRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const terminalOutputRef = useRef<HTMLDivElement>(null);
@@ -3628,6 +2064,7 @@ function MaestroConsoleInner() {
 	const fileTreeContainerRef = useRef<HTMLDivElement>(null);
 	const fileTreeFilterInputRef = useRef<HTMLInputElement>(null);
 	const fileTreeKeyboardNavRef = useRef(false); // Track if selection change came from keyboard
+	const recentlyCreatedWorktreePathsRef = useRef(new Set<string>()); // Prevent duplicate UI entries from file watcher
 	const rightPanelRef = useRef<RightPanelHandle>(null);
 	const mainPanelRef = useRef<MainPanelHandle>(null);
 
@@ -3652,13 +2089,6 @@ function MaestroConsoleInner() {
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
 
-	// Ref for handling remote commands from web interface
-	// This allows web commands to go through the exact same code path as desktop commands
-	const _pendingRemoteCommandRef = useRef<{
-		sessionId: string;
-		command: string;
-	} | null>(null);
-
 	// Refs for batch processor error handling (Phase 5.10)
 	// These are populated after useBatchProcessor is called and used in the agent error handler
 	const pauseBatchOnErrorRef = useRef<
@@ -3672,10 +2102,7 @@ function MaestroConsoleInner() {
 	>(null);
 	const getBatchStateRef = useRef<((sessionId: string) => BatchRunState) | null>(null);
 
-	// Refs for throttled thinking chunk updates (Phase 6.4)
-	// Buffer chunks per session+tab and use requestAnimationFrame to batch UI updates
-	const thinkingChunkBufferRef = useRef<Map<string, string>>(new Map()); // Key: "sessionId:tabId", Value: accumulated content
-	const thinkingChunkRafIdRef = useRef<number | null>(null);
+	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 
 	// Expose addToast to window for debugging/testing
 	useEffect(() => {
@@ -4051,7 +2478,6 @@ function MaestroConsoleInner() {
 		activeSessionId,
 		setSessions,
 		setActiveFocus,
-		setFilePreviewLoading,
 		setConfirmModalMessage,
 		setConfirmModalOnConfirm,
 		setConfirmModalOpen,
@@ -4107,112 +2533,42 @@ function MaestroConsoleInner() {
 		setAgentErrorModalSessionId(null);
 	}, []);
 
-	// Handler to clear agent error and resume operations
+	// Error recovery handlers — delegate state mutation + IPC to agentStore,
+	// keep UI side-effects (focus input, close modal) here in App.tsx.
 	const handleClearAgentError = useCallback((sessionId: string, tabId?: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== sessionId) return s;
-				const targetTabId = tabId ?? s.agentErrorTabId;
-				const updatedAiTabs = targetTabId
-					? s.aiTabs.map((tab) =>
-							tab.id === targetTabId ? { ...tab, agentError: undefined } : tab
-						)
-					: s.aiTabs;
-				return {
-					...s,
-					agentError: undefined,
-					agentErrorTabId: undefined,
-					agentErrorPaused: false,
-					state: 'idle' as SessionState,
-					aiTabs: updatedAiTabs,
-				};
-			})
-		);
+		useAgentStore.getState().clearAgentError(sessionId, tabId);
 		setAgentErrorModalSessionId(null);
-		// Notify main process to clear error state
-		window.maestro.agentError.clearError(sessionId).catch((err) => {
-			console.error('Failed to clear agent error:', err);
-		});
 	}, []);
 
-	// Handler to start a new session (recovery action)
 	const handleStartNewSessionAfterError = useCallback(
 		(sessionId: string) => {
-			const session = sessions.find((s) => s.id === sessionId);
-			if (!session) return;
-
-			// Clear the error state
-			handleClearAgentError(sessionId);
-
-			// Create a new tab in the session to start fresh
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					const result = createTab(s, {
-						saveToHistory: defaultSaveToHistory,
-						showThinking: defaultShowThinking,
-					});
-					if (!result) return s;
-					return result.session;
-				})
-			);
-
-			// Focus the input after creating new tab
+			useAgentStore.getState().startNewSessionAfterError(sessionId, {
+				saveToHistory: defaultSaveToHistory,
+				showThinking: defaultShowThinking,
+			});
+			setAgentErrorModalSessionId(null);
 			setTimeout(() => inputRef.current?.focus(), 0);
 		},
-		[sessions, handleClearAgentError, defaultSaveToHistory, defaultShowThinking]
+		[defaultSaveToHistory, defaultShowThinking]
 	);
 
-	// Handler to retry after error (recovery action)
-	const handleRetryAfterError = useCallback(
-		(sessionId: string) => {
-			// Clear the error state and let user retry manually
-			handleClearAgentError(sessionId);
+	const handleRetryAfterError = useCallback((sessionId: string) => {
+		useAgentStore.getState().retryAfterError(sessionId);
+		setAgentErrorModalSessionId(null);
+		setTimeout(() => inputRef.current?.focus(), 0);
+	}, []);
 
-			// Focus the input for retry
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[handleClearAgentError]
-	);
+	const handleRestartAgentAfterError = useCallback(async (sessionId: string) => {
+		await useAgentStore.getState().restartAgentAfterError(sessionId);
+		setAgentErrorModalSessionId(null);
+		setTimeout(() => inputRef.current?.focus(), 0);
+	}, []);
 
-	// Handler to restart the agent (recovery action for crashes)
-	const handleRestartAgentAfterError = useCallback(
-		async (sessionId: string) => {
-			const session = sessions.find((s) => s.id === sessionId);
-			if (!session) return;
-
-			// Clear the error state
-			handleClearAgentError(sessionId);
-
-			// Kill any existing processes and respawn
-			try {
-				await window.maestro.process.kill(`${sessionId}-ai`);
-			} catch {
-				// Process may not exist
-			}
-
-			// The agent will be respawned when user sends next message
-			// Focus the input
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[sessions, handleClearAgentError]
-	);
-
-	const handleAuthenticateAfterError = useCallback(
-		(sessionId: string) => {
-			const session = sessions.find((s) => s.id === sessionId);
-			if (!session) return;
-
-			handleClearAgentError(sessionId);
-			setActiveSessionId(sessionId);
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, inputMode: 'terminal' } : s))
-			);
-
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[sessions, handleClearAgentError, setActiveSessionId, setSessions]
-	);
+	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
+		useAgentStore.getState().authenticateAfterError(sessionId);
+		setAgentErrorModalSessionId(null);
+		setTimeout(() => inputRef.current?.focus(), 0);
+	}, []);
 
 	// Use the agent error recovery hook to get recovery actions
 	const { recoveryActions } = useAgentErrorRecovery({
@@ -4266,7 +2622,7 @@ function MaestroConsoleInner() {
 		setSessions,
 	});
 
-	// Quit confirmation handler - shows modal when trying to quit with busy agents
+	// Quit confirmation handler - shows modal when trying to quit with busy agents or active auto-runs
 	useEffect(() => {
 		// Guard against window.maestro not being defined yet (production timing)
 		if (!window.maestro?.app?.onQuitConfirmationRequest) {
@@ -4278,8 +2634,14 @@ function MaestroConsoleInner() {
 				(s) => s.state === 'busy' && s.busySource === 'ai' && s.toolType !== 'terminal'
 			);
 
-			if (busyAgents.length === 0) {
-				// No busy agents, confirm quit immediately
+			// Check for active auto-runs (batch processor may be between tasks with agent idle)
+			const hasActiveAutoRuns = sessions.some((s) => {
+				const batchState = getBatchStateRef.current?.(s.id);
+				return batchState?.isRunning;
+			});
+
+			if (busyAgents.length === 0 && !hasActiveAutoRuns) {
+				// No busy agents and no active auto-runs, confirm quit immediately
 				window.maestro.app.confirmQuit();
 			} else {
 				// Show quit confirmation modal
@@ -5119,70 +3481,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[activeSession]
 	);
 
-	// Helper to add a log entry to a specific tab's logs (or active tab if no tabId provided)
-	// Used for slash commands, system messages, queued items, etc.
-	// This centralizes the logic for routing logs to the correct tab
-	const addLogToTab = useCallback(
-		(
-			sessionId: string,
-			logEntry: Omit<LogEntry, 'id' | 'timestamp'> & {
-				id?: string;
-				timestamp?: number;
-			},
-			tabId?: string // Optional: if not provided, uses active tab
-		) => {
-			const entry: LogEntry = {
-				id: logEntry.id || generateId(),
-				timestamp: logEntry.timestamp || Date.now(),
-				source: logEntry.source,
-				text: logEntry.text,
-				...(logEntry.images && { images: logEntry.images }),
-				...(logEntry.delivered !== undefined && {
-					delivered: logEntry.delivered,
-				}),
-				...('aiCommand' in logEntry && logEntry.aiCommand && { aiCommand: logEntry.aiCommand }),
-			};
-
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-
-					// Use specified tab or fall back to active tab
-					const targetTab = tabId ? s.aiTabs.find((tab) => tab.id === tabId) : getActiveTab(s);
-
-					if (!targetTab) {
-						// No tabs exist - this is a bug, sessions must have aiTabs
-						console.error(
-							'[addLogToTab] No target tab found - session has no aiTabs, this should not happen'
-						);
-						return s;
-					}
-
-					// Update target tab's logs
-					const updatedAiTabs = s.aiTabs.map((tab) =>
-						tab.id === targetTab.id ? { ...tab, logs: [...tab.logs, entry] } : tab
-					);
-
-					return { ...s, aiTabs: updatedAiTabs };
-				})
-			);
-		},
-		[]
-	);
-
-	// Convenience wrapper that always uses active tab (backward compatibility)
-	const addLogToActiveTab = useCallback(
-		(
-			sessionId: string,
-			logEntry: Omit<LogEntry, 'id' | 'timestamp'> & {
-				id?: string;
-				timestamp?: number;
-			}
-		) => {
-			addLogToTab(sessionId, logEntry);
-		},
-		[addLogToTab]
-	);
+	// Log entry helpers - delegates to sessionStore action
+	const addLogToTab = useSessionStore.getState().addLogToTab;
+	const addLogToActiveTab = addLogToTab; // without tabId = active tab (same function)
 
 	// PERF: Extract only the properties we need to avoid re-memoizing on every session change
 	// Note: activeSessionId already exists as state; we just need inputMode
@@ -5311,6 +3612,23 @@ You are taking over this conversation. Based on the context above, provide a bri
 			handleResumeSession(agentSessionId);
 		}
 	}, [activeSession?.id, handleResumeSession]);
+
+	// --- AGENT IPC LISTENERS ---
+	// Extracted hook for all window.maestro.process.onXxx listeners
+	// (onData, onExit, onSessionId, onSlashCommands, onStderr, onCommandExit,
+	// onUsage, onAgentError, onThinkingChunk, onSshRemote, onToolExecution)
+	useAgentListeners({
+		batchedUpdater,
+		addToastRef,
+		addHistoryEntryRef,
+		spawnBackgroundSynopsisRef,
+		getBatchStateRef,
+		pauseBatchOnErrorRef,
+		updateGlobalStatsRef,
+		rightPanelRef,
+		processQueuedItemRef,
+		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
+	});
 
 	// PERFORMANCE: Memoized callback for creating new agent sessions
 	// Extracted from inline function to prevent MainPanel re-renders
@@ -5506,6 +3824,41 @@ You are taking over this conversation. Based on the context above, provide a bri
 				return { ...s, filePreviewTabs: updatedFileTabs };
 			})
 		);
+	}, []);
+
+	/**
+	 * Reload a file tab's content from disk. Called when the user clicks Reload in the file-changed banner.
+	 */
+	const handleReloadFileTab = useCallback(async (tabId: string) => {
+		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
+		if (!currentSession) return;
+
+		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
+		if (!fileTab) return;
+
+		try {
+			const [content, stat] = await Promise.all([
+				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
+				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
+			]);
+			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
+
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionIdRef.current) return s;
+					return {
+						...s,
+						filePreviewTabs: s.filePreviewTabs.map((tab) =>
+							tab.id === tabId
+								? { ...tab, content, lastModified: newMtime, editContent: undefined }
+								: tab
+						),
+					};
+				})
+			);
+		} catch (error) {
+			console.debug('[handleReloadFileTab] Failed to reload:', error);
+		}
 	}, []);
 
 	/**
@@ -6302,25 +4655,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setAboutModalOpen(true);
 	}, []);
 
-	const handleFocusFileInGraph = useCallback((relativePath: string) => {
-		setGraphFocusFilePath(relativePath);
-		setLastGraphFocusFilePath(relativePath);
-		setIsGraphViewOpen(true);
-	}, []);
-
-	const handleOpenLastDocumentGraph = useCallback(() => {
-		// Use ref pattern to access current value without dependency
-		const path = lastGraphFocusFilePathRef.current;
-		if (path) {
-			setGraphFocusFilePath(path);
-			setIsGraphViewOpen(true);
-		}
-	}, []);
-
-	// Sync lastGraphFocusFilePath ref for use in memoized callbacks
-	useEffect(() => {
-		lastGraphFocusFilePathRef.current = lastGraphFocusFilePath;
-	}, [lastGraphFocusFilePath]);
+	const handleFocusFileInGraph = useFileExplorerStore.getState().focusFileInGraph;
+	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
 
 	// PERF: Memoized callbacks for SessionList props - these were inline arrow functions
 	const handleEditAgent = useCallback((session: Session) => {
@@ -6714,6 +5050,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		activeBatchSessionIds,
 		startBatchRun,
 		stopBatchRun,
+		killBatchRun,
 		// Error handling (Phase 5.10)
 		pauseBatchOnError,
 		skipCurrentDocument,
@@ -6746,7 +5083,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const groupName = sessionGroup?.name || 'Ungrouped';
 
 			// Determine toast type and message based on completion status
-			const _isSuccess = info.completedTasks > 0 && !info.wasStopped;
 			const toastType = info.wasStopped
 				? 'warning'
 				: info.completedTasks === info.totalTasks
@@ -7515,15 +5851,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				})
 			);
 		}
-	}, [
-		activeSession,
-		groups,
-		spawnBackgroundSynopsis,
-		addHistoryEntry,
-		addLogToActiveTab,
-		setSessions,
-		addToast,
-	]);
+	}, [activeSession, groups, spawnBackgroundSynopsis, addHistoryEntry, setSessions, addToast]);
 
 	// Handler for the built-in /skills command (Claude Code only)
 	// Lists available skills from .claude/skills/ directories
@@ -7626,7 +5954,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			};
 			addLogToActiveTab(activeSession.id, errorLog);
 		}
-	}, [activeSession, addLogToActiveTab]);
+	}, [activeSession]);
 
 	// Handler for the built-in /wizard command
 	// Starts the inline wizard for creating/iterating on Auto Run documents
@@ -7662,7 +5990,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				activeSession.id, // Session ID for playbook creation
 				activeSession.autoRunFolderPath, // User-configured Auto Run folder path (if set)
 				activeSession.sessionSshRemoteConfig, // SSH remote config for remote execution
-				conductorProfile // Conductor profile (user's About Me from settings)
+				conductorProfile, // Conductor profile (user's About Me from settings)
+				{
+					customPath: activeSession.customPath,
+					customArgs: activeSession.customArgs,
+					customEnvVars: activeSession.customEnvVars,
+					customModel: activeSession.customModel,
+				}
 			);
 
 			// Rename the tab to "Wizard" immediately when wizard starts
@@ -7691,7 +6025,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			};
 			addLogToActiveTab(activeSession.id, wizardLog);
 		},
-		[activeSession, startInlineWizard, addLogToActiveTab, conductorProfile]
+		[activeSession, startInlineWizard, conductorProfile]
 	);
 
 	// Launch wizard in a new tab - triggered from Auto Run panel button
@@ -7746,7 +6080,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				activeSession.id,
 				activeSession.autoRunFolderPath, // User-configured Auto Run folder path (if set)
 				activeSession.sessionSshRemoteConfig, // SSH remote config for remote execution
-				conductorProfile // Conductor profile (user's About Me from settings)
+				conductorProfile, // Conductor profile (user's About Me from settings)
+				{
+					customPath: activeSession.customPath,
+					customArgs: activeSession.customArgs,
+					customEnvVars: activeSession.customEnvVars,
+					customModel: activeSession.customModel,
+				}
 			);
 
 			// Show a system log entry
@@ -7762,7 +6102,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		defaultSaveToHistory,
 		defaultShowThinking,
 		startInlineWizard,
-		addLogToTab,
 		conductorProfile,
 	]);
 
@@ -7942,6 +6281,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Set up listener for discovered worktrees
 		const cleanup = window.maestro.git.onWorktreeDiscovered(async (data) => {
 			const { sessionId, worktree } = data;
+
+			// Skip worktrees that were just manually created (prevents duplicate UI entries)
+			if (recentlyCreatedWorktreePathsRef.current.has(worktree.path)) {
+				return;
+			}
 
 			// Skip main/master/HEAD branches (already filtered by main process, but double-check)
 			if (
@@ -8378,13 +6722,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Handler to stop batch run (with confirmation)
 	// If targetSessionId is provided, stops that specific session's batch run.
-	// Otherwise, stops the first active batch run or falls back to active session.
+	// Otherwise, falls back to active session, then first active batch run.
 	const handleStopBatchRun = useCallback(
 		(targetSessionId?: string) => {
-			// Use provided targetSessionId, or fall back to first active batch, or active session
+			// Use provided targetSessionId, or fall back to active session, or first active batch
 			const sessionId =
 				targetSessionId ??
-				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : activeSession?.id);
+				activeSession?.id ??
+				(activeBatchSessionIds.length > 0 ? activeBatchSessionIds[0] : undefined);
 			console.log(
 				'[App:handleStopBatchRun] targetSessionId:',
 				targetSessionId,
@@ -8406,6 +6751,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 			});
 		},
 		[activeBatchSessionIds, activeSession, sessions, stopBatchRun]
+	);
+
+	// Handler to force kill a batch run (process killed immediately, no waiting)
+	// Confirmation is handled by the calling component's own modal
+	const handleKillBatchRun = useCallback(
+		async (sessionId: string) => {
+			console.log('[App:handleKillBatchRun] Force killing sessionId:', sessionId);
+			await killBatchRun(sessionId);
+		},
+		[killBatchRun]
 	);
 
 	// Error handling callbacks for Auto Run (Phase 5.10)
@@ -9810,104 +8165,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		]
 	);
 
-	/**
-	 * Initialize a merged session with context from groomed logs.
-	 * Spawns the agent process and optionally sends an initial context prompt.
-	 *
-	 * This is the second step after createMergedSession() - it integrates the
-	 * session into app state and spawns the AI process.
-	 *
-	 * @param session - The pre-created session from createMergedSession()
-	 * @param contextSummary - Optional initial prompt to send to establish context
-	 *                         (e.g., "Here's a summary of our previous conversations...")
-	 * @returns Promise that resolves when the session is initialized
-	 */
-	const _initializeMergedSession = useCallback(
-		async (session: Session, contextSummary?: string) => {
-			// Add session to app state
-			setSessions((prev) => [...prev, session]);
-			setActiveSessionId(session.id);
-
-			// Track session creation in global stats
-			updateGlobalStats({ totalSessions: 1 });
-
-			// Get SSH remote ID for remote git operations
-			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
-			const sshRemoteId =
-				session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-
-			// Check if this is a git repo and update git info (via SSH for remote sessions)
-			const isGitRepo = await gitService.isRepo(session.projectRoot, sshRemoteId);
-			if (isGitRepo) {
-				try {
-					const [gitBranches, gitTags] = await Promise.all([
-						gitService.getBranches(session.projectRoot, sshRemoteId),
-						gitService.getTags(session.projectRoot, sshRemoteId),
-					]);
-
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== session.id) return s;
-							return {
-								...s,
-								isGitRepo: true,
-								gitBranches,
-								gitTags,
-								gitRefsCacheTime: Date.now(),
-							};
-						})
-					);
-				} catch {
-					// Ignore git info fetch errors
-				}
-			}
-
-			// If a context summary is provided, queue it as the first message
-			// This will be sent when the agent spawns on first user input
-			if (contextSummary && contextSummary.trim()) {
-				const activeTab = getActiveTab(session);
-				if (activeTab) {
-					// Add context as a system log entry so it appears in conversation history
-					const contextLogEntry: LogEntry = {
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: `[Merged Context]\n\n${contextSummary}`,
-					};
-
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== session.id) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab) => {
-									if (tab.id !== activeTab.id) return tab;
-									return {
-										...tab,
-										logs: [...tab.logs, contextLogEntry],
-									};
-								}),
-							};
-						})
-					);
-				}
-			}
-
-			// Focus the input for immediate user interaction
-			setActiveFocus('main');
-			setTimeout(() => inputRef.current?.focus(), 50);
-
-			// Show success notification
-			addToast({
-				type: 'success',
-				title: 'Session Created',
-				message: `Merged context session "${session.name}" is ready`,
-			});
-		},
-		[setSessions, setActiveSessionId, updateGlobalStats, setActiveFocus, addToast]
-	);
-
 	const toggleInputMode = () => {
 		setSessions((prev) =>
 			prev.map((s) => {
@@ -10020,7 +8277,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (isLiveMode) {
 				// Stop tunnel first (if running), then stop web server
 				await window.maestro.tunnel.stop();
-				const _result = await window.maestro.live.disableAll();
+				await window.maestro.live.disableAll();
 				setIsLiveMode(false);
 				setWebInterfaceUrl(null);
 			} else {
@@ -10481,7 +8738,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		};
 		window.addEventListener('maestro:remoteCommand', handleRemoteCommand);
 		return () => window.removeEventListener('maestro:remoteCommand', handleRemoteCommand);
-	}, [addLogToActiveTab]);
+	}, []);
 
 	// Listen for tour UI actions to control right panel state
 	useEffect(() => {
@@ -10514,295 +8771,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 		return () => window.removeEventListener('tour:action', handleTourAction);
 	}, []);
 
-	// Process a queued item (called from onExit when queue has items)
-	// Handles both 'message' and 'command' types
+	// Process a queued item - delegates to agentStore action
 	const processQueuedItem = async (sessionId: string, item: QueuedItem) => {
-		// Use sessionsRef.current to get the latest session state (avoids stale closure)
-		const session = sessionsRef.current.find((s) => s.id === sessionId);
-		if (!session) {
-			console.error('[processQueuedItem] Session not found:', sessionId);
-			return;
-		}
-
-		// Find the TARGET tab for this queued item (NOT the active tab!)
-		// The item carries its intended tabId from when it was queued
-		const targetTab = session.aiTabs.find((tab) => tab.id === item.tabId) || getActiveTab(session);
-		const targetSessionId = `${sessionId}-ai-${targetTab?.id || 'default'}`;
-
-		try {
-			// Get agent configuration for this session's tool type
-			const agent = await window.maestro.agents.get(session.toolType);
-			if (!agent) throw new Error(`Agent not found for toolType: ${session.toolType}`);
-
-			// Get the TARGET TAB's agentSessionId for session continuity
-			// (not the active tab or deprecated session-level one)
-			const tabAgentSessionId = targetTab?.agentSessionId;
-			const isReadOnly = item.readOnlyMode || targetTab?.readOnlyMode;
-
-			// Filter out YOLO/skip-permissions flags when read-only mode is active
-			// (they would override the read-only mode we're requesting)
-			// - Claude Code: --dangerously-skip-permissions
-			// - Codex: --dangerously-bypass-approvals-and-sandbox
-			const spawnArgs = isReadOnly
-				? (agent.args || []).filter(
-						(arg) =>
-							arg !== '--dangerously-skip-permissions' &&
-							arg !== '--dangerously-bypass-approvals-and-sandbox'
-					)
-				: [...(agent.args || [])];
-
-			// Note: agentSessionId and readOnlyMode are passed to spawn() config below.
-			// The main process uses agent-specific argument builders (resumeArgs, readOnlyArgs)
-			// to construct the correct CLI args for each agent type.
-
-			const commandToUse = agent.path ?? agent.command;
-
-			// Check if this is a message with images but no text
-			const hasImages = item.images && item.images.length > 0;
-			const hasText = item.text && item.text.trim();
-			const isImageOnlyMessage = item.type === 'message' && hasImages && !hasText;
-
-			if (item.type === 'message' && (hasText || isImageOnlyMessage)) {
-				// Process a message - spawn agent with the message text
-				// If user sends only an image without text, inject the default image-only prompt
-				let effectivePrompt = isImageOnlyMessage ? DEFAULT_IMAGE_ONLY_PROMPT : item.text!;
-
-				// For NEW sessions (no agentSessionId), prepend Maestro system prompt
-				// This introduces Maestro and sets directory restrictions for the agent
-				const isNewSession = !tabAgentSessionId;
-				if (isNewSession && maestroSystemPrompt) {
-					// Get git branch for template substitution
-					let gitBranch: string | undefined;
-					if (session.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(session.cwd);
-							gitBranch = status.branch;
-						} catch {
-							// Ignore git errors
-						}
-					}
-
-					// Substitute template variables in the system prompt
-					const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-						session,
-						gitBranch,
-						conductorProfile,
-					});
-
-					// Prepend system prompt to user's message
-					effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
-				}
-
-				console.log('[processQueuedItem] Spawning agent with queued message:', {
-					sessionId: targetSessionId,
-					toolType: session.toolType,
-					prompt: effectivePrompt,
-					promptLength: effectivePrompt?.length,
-					hasAgentSessionId: !!tabAgentSessionId,
-					agentSessionId: tabAgentSessionId,
-					isReadOnly,
-					argsLength: spawnArgs.length,
-					args: spawnArgs,
-				});
-
-				await window.maestro.process.spawn({
-					sessionId: targetSessionId,
-					toolType: session.toolType,
-					cwd: session.cwd,
-					command: commandToUse,
-					args: spawnArgs,
-					prompt: effectivePrompt,
-					images: hasImages ? item.images : undefined,
-					// Generic spawn options - main process builds agent-specific args
-					agentSessionId: tabAgentSessionId ?? undefined,
-					readOnlyMode: isReadOnly,
-					// Per-session config overrides (if set)
-					sessionCustomPath: session.customPath,
-					sessionCustomArgs: session.customArgs,
-					sessionCustomEnvVars: session.customEnvVars,
-					sessionCustomModel: session.customModel,
-					sessionCustomContextWindow: session.customContextWindow,
-					// Per-session SSH remote config (takes precedence over agent-level SSH config)
-					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-				});
-			} else if (item.type === 'command' && item.command) {
-				// Process a slash command - find the matching custom AI command, speckit command, or openspec command
-				// Use refs to get latest values and avoid stale closure
-				const matchingCommand =
-					customAICommandsRef.current.find((cmd) => cmd.command === item.command) ||
-					speckitCommandsRef.current.find((cmd) => cmd.command === item.command) ||
-					openspecCommandsRef.current.find((cmd) => cmd.command === item.command);
-				if (matchingCommand) {
-					// Substitute template variables
-					let gitBranch: string | undefined;
-					if (session.isGitRepo) {
-						try {
-							const status = await gitService.getStatus(session.cwd);
-							gitBranch = status.branch;
-						} catch {
-							// Ignore git errors
-						}
-					}
-
-					// First substitute $ARGUMENTS with the command arguments (spec-kit/openspec style)
-					// This handles prompts like "/speckit.plan Blah blah" where "Blah blah" replaces $ARGUMENTS
-					let promptWithArgs = matchingCommand.prompt;
-					if (item.commandArgs) {
-						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, item.commandArgs);
-					} else {
-						// If no arguments provided, replace $ARGUMENTS with empty string
-						promptWithArgs = promptWithArgs.replace(/\$ARGUMENTS/g, '');
-					}
-
-					// Then substitute {{TEMPLATE_VARIABLES}}
-					const substitutedPrompt = substituteTemplateVariables(promptWithArgs, {
-						session,
-						gitBranch,
-						conductorProfile,
-					});
-
-					// For NEW sessions (no agentSessionId), prepend Maestro system prompt
-					// This introduces Maestro and sets directory restrictions for the agent
-					// Keep original prompt separate for user log (don't show system prompt in chat)
-					const isNewSessionForCommand = !tabAgentSessionId;
-					let promptForAgent = substitutedPrompt;
-					if (isNewSessionForCommand && maestroSystemPrompt) {
-						// Substitute template variables in the system prompt
-						const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
-							session,
-							gitBranch,
-							conductorProfile,
-						});
-
-						// Prepend system prompt to command's prompt (for agent only)
-						promptForAgent = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${substitutedPrompt}`;
-					}
-
-					// Add user log showing the command with its interpolated prompt
-					// Use original substitutedPrompt (without system context) for display
-					addLogToTab(
-						sessionId,
-						{
-							source: 'user',
-							text: substitutedPrompt,
-							aiCommand: {
-								command: matchingCommand.command,
-								description: matchingCommand.description,
-							},
-						},
-						item.tabId
-					);
-
-					// Track this command for automatic synopsis on completion
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							return {
-								...s,
-								pendingAICommandForSynopsis: matchingCommand.command,
-							};
-						})
-					);
-
-					// Spawn agent with the prompt (includes system context for new sessions)
-					await window.maestro.process.spawn({
-						sessionId: targetSessionId,
-						toolType: session.toolType,
-						cwd: session.cwd,
-						command: commandToUse,
-						args: spawnArgs,
-						prompt: promptForAgent,
-						// Generic spawn options - main process builds agent-specific args
-						agentSessionId: tabAgentSessionId ?? undefined,
-						readOnlyMode: isReadOnly,
-						// Per-session config overrides (if set)
-						sessionCustomPath: session.customPath,
-						sessionCustomArgs: session.customArgs,
-						sessionCustomEnvVars: session.customEnvVars,
-						sessionCustomModel: session.customModel,
-						sessionCustomContextWindow: session.customContextWindow,
-						// Per-session SSH remote config (takes precedence over agent-level SSH config)
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-					});
-				} else {
-					// Unknown command - add error log
-					const errorLogEntry: LogEntry = {
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: `Unknown command: ${item.command}`,
-					};
-					addLogToActiveTab(sessionId, errorLogEntry);
-					// Set session back to idle with full state cleanup
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sessionId) return s;
-							// Reset the target tab's state too
-							const updatedAiTabs = s.aiTabs?.map((tab) =>
-								tab.id === item.tabId
-									? {
-											...tab,
-											state: 'idle' as const,
-											thinkingStartTime: undefined,
-										}
-									: tab
-							);
-							return {
-								...s,
-								state: 'idle' as SessionState,
-								busySource: undefined,
-								thinkingStartTime: undefined,
-								aiTabs: updatedAiTabs,
-							};
-						})
-					);
-				}
-			}
-		} catch (error: any) {
-			console.error('[processQueuedItem] Failed to process queued item:', error);
-			const errorLogEntry: LogEntry = {
-				id: generateId(),
-				timestamp: Date.now(),
-				source: 'system',
-				text: `Error: Failed to process queued ${item.type} - ${error.message}`,
-			};
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== sessionId) return s;
-					// Reset active tab's state to 'idle' and add error log
-					const activeTab = getActiveTab(s);
-					const updatedAiTabs =
-						s.aiTabs?.length > 0
-							? s.aiTabs.map((tab) =>
-									tab.id === s.activeTabId
-										? {
-												...tab,
-												state: 'idle' as const,
-												thinkingStartTime: undefined,
-												logs: [...tab.logs, errorLogEntry],
-											}
-										: tab
-								)
-							: s.aiTabs;
-
-					if (!activeTab) {
-						// No tabs exist - this is a bug, sessions must have aiTabs
-						console.error(
-							'[processQueuedItem error] No active tab found - session has no aiTabs, this should not happen'
-						);
-						return s;
-					}
-
-					return {
-						...s,
-						state: 'idle',
-						busySource: undefined,
-						thinkingStartTime: undefined,
-						aiTabs: updatedAiTabs,
-					};
-				})
-			);
-		}
+		await useAgentStore.getState().processQueuedItem(sessionId, item, {
+			conductorProfile,
+			customAICommands: customAICommandsRef.current,
+			speckitCommands: speckitCommandsRef.current,
+			openspecCommands: openspecCommandsRef.current,
+		});
 	};
 
 	// Update ref for processQueuedItem so batch exit handler can use it
@@ -11608,7 +9584,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSessions,
 		activeSessionId,
 		activeSession,
-		fileTreeFilter,
 		rightPanelRef,
 		sshRemoteIgnorePatterns: settings.sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore: settings.sshRemoteHonorGitignore,
@@ -11997,6 +9972,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 					sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
 				};
 
+				// Mark path so the file watcher discovery handler skips it
+				recentlyCreatedWorktreePathsRef.current.add(worktreePath);
+				setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(worktreePath), 10000);
+
 				setSessions((prev) => [...prev, worktreeSession]);
 
 				// Expand parent's worktrees
@@ -12149,6 +10128,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Inherit SSH configuration from parent session
 				sessionSshRemoteConfig: createWorktreeSession.sessionSshRemoteConfig,
 			};
+
+			// Mark path so the file watcher discovery handler skips it
+			recentlyCreatedWorktreePathsRef.current.add(worktreePath);
+			setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(worktreePath), 10000);
 
 			setSessions((prev) => [...prev, worktreeSession]);
 
@@ -13305,6 +11288,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleFileTabEditContentChange,
 		handleFileTabScrollPositionChange,
 		handleFileTabSearchQueryChange,
+		handleReloadFileTab,
 
 		handleScrollPositionChange,
 		handleAtBottomChange,
@@ -13337,10 +11321,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Gist publishing
 		setGistPublishModalOpen,
 
-		// Document Graph
-		setGraphFocusFilePath,
-		setLastGraphFocusFilePath,
-		setIsGraphViewOpen,
+		// Document Graph (from fileExplorerStore)
+		setGraphFocusFilePath: useFileExplorerStore.getState().focusFileInGraph,
+		setLastGraphFocusFilePath: () => {}, // no-op: focusFileInGraph sets both atomically
+		setIsGraphViewOpen: useFileExplorerStore.getState().setIsGraphViewOpen,
 
 		// Wizard callbacks
 		generateInlineWizardDocuments,
@@ -13358,6 +11342,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// File tree refresh
 		refreshFileTree,
+
+		// Open saved file in tab
+		onOpenSavedFileInTab: handleOpenFileTab,
 
 		// Helper functions
 		getActiveTab,
@@ -13553,6 +11540,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Batch processing handlers
 		handleOpenBatchRunner,
 		handleStopBatchRun,
+		handleKillBatchRun,
 		handleSkipCurrentDocument,
 		handleAbortBatchOnError,
 		handleResumeAfterError,
@@ -13723,6 +11711,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					quitConfirmModalOpen={quitConfirmModalOpen}
 					onConfirmQuit={handleConfirmQuit}
 					onCancelQuit={handleCancelQuit}
+					activeBatchSessionIds={activeBatchSessionIds}
 					// AppSessionModals props
 					newInstanceModalOpen={newInstanceModalOpen}
 					onCloseNewInstanceModal={handleCloseNewInstanceModal}
@@ -13851,12 +11840,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					ghCliAvailable={ghCliAvailable}
 					onPublishGist={() => setGistPublishModalOpen(true)}
 					lastGraphFocusFile={lastGraphFocusFilePath}
-					onOpenLastDocumentGraph={() => {
-						if (lastGraphFocusFilePath) {
-							setGraphFocusFilePath(lastGraphFocusFilePath);
-							setIsGraphViewOpen(true);
-						}
-					}}
+					onOpenLastDocumentGraph={handleOpenLastDocumentGraph}
 					lightboxImage={lightboxImage}
 					lightboxImages={lightboxImages}
 					stagedImages={stagedImages}
@@ -13890,6 +11874,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onNamedSessionSelect={handleNamedSessionSelect}
 					fuzzyFileSearchOpen={fuzzyFileSearchOpen}
 					filteredFileTree={filteredFileTree}
+					fileExplorerExpanded={activeSession?.fileExplorerExpanded}
 					onCloseFileSearch={handleCloseFileSearch}
 					onFileSearchSelect={handleFileSearchSelect}
 					promptComposerOpen={promptComposerOpen}
@@ -14301,8 +12286,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 						<DocumentGraphView
 							isOpen={isGraphViewOpen}
 							onClose={() => {
-								setIsGraphViewOpen(false);
-								setGraphFocusFilePath(undefined);
+								useFileExplorerStore.getState().closeGraphView();
 								// Return focus to file preview if it was open
 								requestAnimationFrame(() => {
 									mainPanelRef.current?.focusFilePreview();
@@ -14342,7 +12326,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								} catch (error) {
 									console.error('[DocumentGraph] Failed to open file:', error);
 								}
-								setIsGraphViewOpen(false);
+								useFileExplorerStore.getState().setIsGraphViewOpen(false);
 							}}
 							onExternalLinkOpen={(url) => {
 								// Open external URL in default browser
@@ -14478,8 +12462,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 									)}
 									onRemoveQueuedItem={handleRemoveGroupChatQueueItem}
 									onReorderQueuedItems={handleReorderGroupChatQueueItems}
-									markdownEditMode={markdownEditMode}
-									onToggleMarkdownEditMode={() => setMarkdownEditMode(!markdownEditMode)}
+									markdownEditMode={chatRawTextMode}
+									onToggleMarkdownEditMode={() => setChatRawTextMode(!chatRawTextMode)}
 									maxOutputLines={maxOutputLines}
 									enterToSendAI={enterToSendAI}
 									setEnterToSendAI={setEnterToSendAI}
@@ -14762,22 +12746,18 @@ You are taking over this conversation. Based on the context above, provide a bri
  *
  * Wraps MaestroConsoleInner with context providers for centralized state management.
  * Phase 3: InputProvider - centralized input state management
- * Phase 4: GroupChatProvider - centralized group chat state management
- * Phase 5: AutoRunProvider - centralized Auto Run and batch processing state management
+ * Phase 4: Group chat state now lives in groupChatStore (Zustand) — no context wrapper needed
+ * Phase 5: Auto Run state now lives in batchStore (Zustand) — no context wrapper needed
  * Phase 6: Session state now lives in sessionStore (Zustand) — no context wrapper needed
  * Phase 7: InlineWizardProvider - inline /wizard command state management
  * See refactor-details-2.md for full plan.
  */
 export default function MaestroConsole() {
 	return (
-		<AutoRunProvider>
-			<GroupChatProvider>
-				<InlineWizardProvider>
-					<InputProvider>
-						<MaestroConsoleInner />
-					</InputProvider>
-				</InlineWizardProvider>
-			</GroupChatProvider>
-		</AutoRunProvider>
+		<InlineWizardProvider>
+			<InputProvider>
+				<MaestroConsoleInner />
+			</InputProvider>
+		</InlineWizardProvider>
 	);
 }

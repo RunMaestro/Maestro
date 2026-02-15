@@ -97,7 +97,7 @@ By default, Maestro only notifies you about stable releases. If you want to try 
 **Reverting to stable:** Toggle the setting off and download the latest stable release from GitHub. Pre-releases won't auto-downgrade to stable versions.
 
 <Warning>
-Pre-release versions may contain experimental features and bugs. Use at your own risk. If you encounter issues, you can always download the latest stable release from [GitHub Releases](https://github.com/pedramamini/maestro/releases).
+Pre-release versions may contain experimental features and bugs. Use at your own risk. If you encounter issues, you can always download the latest stable release from [GitHub Releases](https://github.com/RunMaestro/Maestro/releases).
 </Warning>
 
 ## Notifications & Sound

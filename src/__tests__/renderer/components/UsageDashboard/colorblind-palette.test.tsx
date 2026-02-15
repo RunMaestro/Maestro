@@ -15,7 +15,7 @@ import { AgentComparisonChart } from '../../../../renderer/components/UsageDashb
 import { SourceDistributionChart } from '../../../../renderer/components/UsageDashboard/SourceDistributionChart';
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
-import type { StatsAggregation } from '../../../../renderer/hooks/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
 import {
 	COLORBLIND_AGENT_PALETTE,

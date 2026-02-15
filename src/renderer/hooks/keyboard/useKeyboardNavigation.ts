@@ -232,13 +232,6 @@ export function useKeyboardNavigation(
 			if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
 				const totalSessions = sessions.length;
 
-				// Helper to check if a session is in a collapsed group
-				const _isInCollapsedGroup = (session: Session) => {
-					if (!session.groupId) return false;
-					const group = currentGroups.find((g) => g.id === session.groupId);
-					return group?.collapsed ?? false;
-				};
-
 				// Helper to get all sessions in a group
 				const getGroupSessions = (groupId: string) => {
 					return sessions.filter((s) => s.groupId === groupId);

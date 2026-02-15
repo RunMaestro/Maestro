@@ -176,7 +176,7 @@ describe('WindowsWarningModal', () => {
 
 			fireEvent.click(screen.getByText('Report Issues'));
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro/issues'
+				'https://github.com/RunMaestro/Maestro/issues'
 			);
 		});
 

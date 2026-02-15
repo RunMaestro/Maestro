@@ -3401,4 +3401,108 @@ describe('Reset Tasks Flash Notification', () => {
 
 		expect(ref.current?.getCompletedTaskCount()).toBe(0);
 	});
+
+	describe('Error Banner (Phase 5.10)', () => {
+		it('should show Resume button for recoverable errors', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const batchRunState = createBatchRunState({
+				errorPaused: true,
+				error: {
+					type: 'rate_limited',
+					message: 'Rate limit exceeded',
+					recoverable: true,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+				errorDocumentIndex: 0,
+			});
+			const props = createDefaultProps({
+				batchRunState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			expect(screen.getByText('Auto Run Paused')).toBeInTheDocument();
+			expect(screen.getByTitle('Retry and resume Auto Run')).toBeInTheDocument();
+			expect(screen.getByTitle('Stop Auto Run completely')).toBeInTheDocument();
+		});
+
+		it('should hide Resume button for non-recoverable errors', () => {
+			const onResumeAfterError = vi.fn();
+			const onAbortBatchOnError = vi.fn();
+			const batchRunState = createBatchRunState({
+				errorPaused: true,
+				error: {
+					type: 'auth_expired',
+					message: 'Authentication expired',
+					recoverable: false,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+				errorDocumentIndex: 0,
+			});
+			const props = createDefaultProps({
+				batchRunState,
+				onResumeAfterError,
+				onAbortBatchOnError,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			// Error banner should show
+			expect(screen.getByText('Auto Run Paused')).toBeInTheDocument();
+			expect(screen.getByText('Authentication expired')).toBeInTheDocument();
+			// Resume should NOT be present for non-recoverable errors
+			expect(screen.queryByTitle('Retry and resume Auto Run')).not.toBeInTheDocument();
+			// Abort should still be visible
+			expect(screen.getByTitle('Stop Auto Run completely')).toBeInTheDocument();
+		});
+
+		it('should call onAbortBatchOnError when Abort Run is clicked', () => {
+			const onAbortBatchOnError = vi.fn();
+			const batchRunState = createBatchRunState({
+				errorPaused: true,
+				error: {
+					type: 'token_exhaustion',
+					message: 'Prompt is too long',
+					recoverable: true,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+				errorDocumentIndex: 0,
+			});
+			const props = createDefaultProps({
+				batchRunState,
+				onAbortBatchOnError,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.click(screen.getByTitle('Stop Auto Run completely'));
+			expect(onAbortBatchOnError).toHaveBeenCalledTimes(1);
+		});
+
+		it('should call onResumeAfterError when Resume is clicked', () => {
+			const onResumeAfterError = vi.fn();
+			const batchRunState = createBatchRunState({
+				errorPaused: true,
+				error: {
+					type: 'rate_limited',
+					message: 'Rate limited',
+					recoverable: true,
+					timestamp: Date.now(),
+					agentId: 'test',
+				},
+				errorDocumentIndex: 0,
+			});
+			const props = createDefaultProps({
+				batchRunState,
+				onResumeAfterError,
+			});
+			renderWithProvider(<AutoRun {...props} />);
+
+			fireEvent.click(screen.getByTitle('Retry and resume Auto Run'));
+			expect(onResumeAfterError).toHaveBeenCalledTimes(1);
+		});
+	});
 });

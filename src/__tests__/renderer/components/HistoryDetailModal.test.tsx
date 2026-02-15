@@ -700,6 +700,29 @@ describe('HistoryDetailModal', () => {
 			// Should cap at 100%
 			expect(screen.getByText('100%')).toBeInTheDocument();
 		});
+
+		it('should handle usageStats with undefined token values without crashing', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						usageStats: {
+							inputTokens: undefined as any,
+							outputTokens: undefined as any,
+							cacheReadInputTokens: 0,
+							cacheCreationInputTokens: 0,
+							contextWindow: 100000,
+							totalCostUsd: 0,
+						},
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			// Should render 0 for undefined token values instead of crashing
+			const inLabels = screen.getAllByText('In:');
+			expect(inLabels.length).toBeGreaterThan(0);
+		});
 	});
 
 	describe('Close Actions', () => {

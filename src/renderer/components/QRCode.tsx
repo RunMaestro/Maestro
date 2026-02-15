@@ -5,7 +5,7 @@
  * No cloud services - all generation happens locally.
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import QRCodeLib from 'qrcode';
 
 interface QRCodeProps {

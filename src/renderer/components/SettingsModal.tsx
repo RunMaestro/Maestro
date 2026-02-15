@@ -949,7 +949,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			aria-label="Settings"
 		>
 			<div
-				className="w-[650px] h-[600px] rounded-xl border shadow-2xl overflow-hidden flex flex-col"
+				className="w-[780px] h-[720px] rounded-xl border shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 			>
 				<div className="flex border-b" style={{ borderColor: theme.colors.border }}>

@@ -58,7 +58,7 @@ function shouldLog(level: LogLevel): boolean {
 /**
  * Format the log message with prefix and context
  */
-function formatMessage(level: LogLevel, message: string, context?: string): string {
+function formatMessage(_level: LogLevel, message: string, context?: string): string {
 	const contextStr = context ? ` [${context}]` : '';
 	return `${config.prefix}${contextStr} ${message}`;
 }

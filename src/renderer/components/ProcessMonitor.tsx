@@ -326,7 +326,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 
 	// Extract tab ID from process session ID (format: {sessionId}-ai-{tabId})
 	const parseTabId = (processSessionId: string): string | null => {
-		const match = processSessionId.match(/-ai-([^-]+)$/);
+		const match = processSessionId.match(/-ai-(.+)$/);
 		return match ? match[1] : null;
 	};
 

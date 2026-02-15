@@ -37,7 +37,7 @@ import { gitService } from '../services/git';
 import { remoteUrlToBrowserUrl } from '../../shared/gitUtils';
 import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitStatusContext';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { calculateContextTokens } from '../utils/contextUsage';
+import { calculateContextDisplay } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
 import type {
 	Session,
@@ -234,6 +234,8 @@ interface MainPanelProps {
 	onFileTabScrollPositionChange?: (tabId: string, scrollTop: number) => void;
 	/** Handler to update file tab searchQuery when searching in FilePreview */
 	onFileTabSearchQueryChange?: (tabId: string, searchQuery: string) => void;
+	/** Handler to reload file tab content from disk */
+	onReloadFileTab?: (tabId: string) => void;
 
 	// Scroll position persistence
 	onScrollPositionChange?: (scrollTop: number) => void;
@@ -254,6 +256,8 @@ interface MainPanelProps {
 	refreshFileTree?: (
 		sessionId: string
 	) => Promise<import('../utils/fileExplorer').FileTreeChanges | undefined>;
+	// Callback to open a saved file in a tab
+	onOpenSavedFileInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void;
 	// File preview navigation
 	canGoBack?: boolean;
 	canGoForward?: boolean;
@@ -590,46 +594,27 @@ export const MainPanel = React.memo(
 			return configured > 0 ? configured : reported;
 		}, [configuredContextWindow, activeTab?.usageStats?.contextWindow]);
 
-		// Compute context tokens using agent-specific calculation.
-		// Claude: input + cacheRead + cacheCreation (total input for the request)
-		// Codex: input + output (combined limit)
-		// When values are accumulated from multi-tool turns, total may exceed contextWindow.
-		// In that case, derive tokens from session.contextUsage (preserved last valid percentage).
-		const activeTabContextTokens = useMemo(() => {
-			if (!activeTab?.usageStats) return 0;
-			const raw = calculateContextTokens(
+		// Compute context tokens and percentage using the shared helper.
+		// Handles accumulated multi-tool turns by falling back to session.contextUsage.
+		const { tokens: activeTabContextTokens, percentage: activeTabContextUsage } = useMemo(() => {
+			if (!activeTab?.usageStats) return { tokens: 0, percentage: 0 };
+			return calculateContextDisplay(
 				{
 					inputTokens: activeTab.usageStats.inputTokens,
 					outputTokens: activeTab.usageStats.outputTokens,
 					cacheCreationInputTokens: activeTab.usageStats.cacheCreationInputTokens ?? 0,
 					cacheReadInputTokens: activeTab.usageStats.cacheReadInputTokens ?? 0,
 				},
-				activeSession?.toolType
+				activeTabContextWindow,
+				activeSession?.toolType,
+				activeSession?.contextUsage
 			);
-
-			// If raw exceeds window, values are accumulated from multi-tool turns.
-			// Fall back to deriving from the preserved contextUsage percentage.
-			const effectiveWindow = activeTabContextWindow || 200000;
-			if (raw > effectiveWindow && activeSession?.contextUsage != null) {
-				return Math.round((activeSession.contextUsage / 100) * effectiveWindow);
-			}
-
-			return raw;
 		}, [
 			activeTab?.usageStats,
 			activeSession?.toolType,
 			activeTabContextWindow,
 			activeSession?.contextUsage,
 		]);
-
-		// Compute context usage percentage from context tokens and window size.
-		// Since we already handle accumulated values in activeTabContextTokens,
-		// we just calculate the percentage directly.
-		const activeTabContextUsage = useMemo(() => {
-			if (!activeTabContextWindow || activeTabContextWindow === 0) return 0;
-			if (activeTabContextTokens === 0) return 0;
-			return Math.round((activeTabContextTokens / activeTabContextWindow) * 100);
-		}, [activeTabContextTokens, activeTabContextWindow]);
 
 		// PERF: Track panel width for responsive widget hiding with threshold-based updates
 		// Only update state when width crosses a meaningful threshold (20px) to prevent
@@ -841,6 +826,12 @@ export const MainPanel = React.memo(
 			},
 			[activeFileTabId, onFileTabSearchQueryChange]
 		);
+
+		const handleFilePreviewReload = useCallback(() => {
+			if (activeFileTabId) {
+				props.onReloadFileTab?.(activeFileTabId);
+			}
+		}, [activeFileTabId, props.onReloadFileTab]);
 
 		// Memoize sshRemoteId to prevent object recreation
 		const filePreviewSshRemoteId = useMemo(
@@ -1688,6 +1679,9 @@ export const MainPanel = React.memo(
 									// Pass search query props for persistence across tab switches
 									initialSearchQuery={activeFileTab.searchQuery}
 									onSearchQueryChange={handleFilePreviewSearchQueryChange}
+									// File change detection
+									lastModified={activeFileTab.lastModified}
+									onReloadFile={handleFilePreviewReload}
 								/>
 							</div>
 						) : (
@@ -1784,6 +1778,7 @@ export const MainPanel = React.memo(
 													? () => props.refreshFileTree?.(activeSession.id)
 													: undefined
 											}
+											onOpenInTab={props.onOpenSavedFileInTab}
 										/>
 									)}
 								</div>
@@ -1847,7 +1842,7 @@ export const MainPanel = React.memo(
 											thinkingSessions={thinkingSessions}
 											onSessionClick={handleSessionClick}
 											autoRunState={currentSessionBatchState || undefined}
-											onStopAutoRun={onStopBatchRun}
+											onStopAutoRun={() => onStopBatchRun?.(activeSession.id)}
 											onOpenQueueBrowser={onOpenQueueBrowser}
 											tabReadOnlyMode={activeTab?.readOnlyMode ?? false}
 											onToggleTabReadOnlyMode={props.onToggleTabReadOnlyMode}

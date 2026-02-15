@@ -10,7 +10,7 @@
  */
 
 import type { ToolType, ProcessConfig } from '../types';
-import type { InlineWizardMessage } from '../hooks/useInlineWizard';
+import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
 import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
@@ -100,6 +100,14 @@ export interface InlineWizardConversationConfig {
 	conductorProfile?: string;
 	/** History file path for task recall (optional, enables AI to recall recent work) */
 	historyFilePath?: string;
+	/** Custom path to agent binary (overrides agent-level) */
+	sessionCustomPath?: string;
+	/** Custom CLI arguments (overrides agent-level) */
+	sessionCustomArgs?: string;
+	/** Custom environment variables (overrides agent-level) */
+	sessionCustomEnvVars?: Record<string, string>;
+	/** Custom model ID (overrides agent-level) */
+	sessionCustomModel?: string;
 }
 
 /**
@@ -124,6 +132,14 @@ export interface InlineWizardConversationSession {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Custom path to agent binary */
+	sessionCustomPath?: string;
+	/** Custom CLI arguments */
+	sessionCustomArgs?: string;
+	/** Custom environment variables */
+	sessionCustomEnvVars?: Record<string, string>;
+	/** Custom model ID */
+	sessionCustomModel?: string;
 }
 
 /**
@@ -273,6 +289,10 @@ export function startInlineWizardConversation(
 		sessionSshRemoteConfig: config.sessionSshRemoteConfig?.enabled
 			? config.sessionSshRemoteConfig
 			: undefined,
+		sessionCustomPath: config.sessionCustomPath,
+		sessionCustomArgs: config.sessionCustomArgs,
+		sessionCustomEnvVars: config.sessionCustomEnvVars,
+		sessionCustomModel: config.sessionCustomModel,
 	};
 }
 
@@ -469,51 +489,22 @@ function buildArgsForAgent(agent: any): string[] {
 		}
 
 		case 'codex': {
-			// Codex requires exec batch mode with JSON output for wizard conversations
-			// Must include these explicitly since wizard pre-builds args before IPC handler
-			const args = [];
-
-			// Add batch mode prefix: 'exec'
-			if (agent.batchModePrefix) {
-				args.push(...agent.batchModePrefix);
-			}
-
-			// Add base args (if any)
-			args.push(...(agent.args || []));
-
-			// Add batch mode args: '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'
-			if (agent.batchModeArgs) {
-				args.push(...agent.batchModeArgs);
-			}
-
-			// Add JSON output: '--json'
-			if (agent.jsonOutputArgs) {
-				args.push(...agent.jsonOutputArgs);
-			}
-
-			return args;
+			// Return only base args — the IPC handler's buildAgentArgs() adds
+			// batchModePrefix, batchModeArgs, jsonOutputArgs, and workingDirArgs
+			// automatically when a prompt is present. Adding them here would
+			// duplicate flags and cause "unexpected argument" exit code 2.
+			return [...(agent.args || [])];
 		}
 
 		case 'opencode': {
-			// OpenCode requires 'run' batch mode with JSON output for wizard conversations
-			const args = [];
-
-			// Add batch mode prefix: 'run'
-			if (agent.batchModePrefix) {
-				args.push(...agent.batchModePrefix);
-			}
-
-			// Add base args (if any)
-			args.push(...(agent.args || []));
+			// Return base args plus read-only restriction for wizard conversations.
+			// The IPC handler's buildAgentArgs() adds batchModePrefix, jsonOutputArgs,
+			// and workingDirArgs automatically when a prompt is present.
+			const args = [...(agent.args || [])];
 
 			// Add read-only mode: '--agent plan'
 			if (agent.readOnlyArgs) {
 				args.push(...agent.readOnlyArgs);
-			}
-
-			// Add JSON output: '--format json'
-			if (agent.jsonOutputArgs) {
-				args.push(...agent.jsonOutputArgs);
 			}
 
 			return args;
@@ -795,6 +786,11 @@ export async function sendWizardMessage(
 					sendPromptViaStdinRaw: sendViaStdinRaw,
 					// Pass SSH config for remote execution
 					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+					// Pass session-level overrides
+					sessionCustomPath: session.sessionCustomPath,
+					sessionCustomArgs: session.sessionCustomArgs,
+					sessionCustomEnvVars: session.sessionCustomEnvVars,
+					sessionCustomModel: session.sessionCustomModel,
 				} as ProcessConfig)
 				.then(() => {
 					callbacks?.onReceiving?.();

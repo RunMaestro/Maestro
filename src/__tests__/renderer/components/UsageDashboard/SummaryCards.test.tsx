@@ -2,7 +2,7 @@
  * Tests for SummaryCards component
  *
  * Verifies:
- * - Renders all nine metric cards correctly
+ * - Renders all ten metric cards correctly
  * - Displays formatted values (numbers, durations)
  * - Shows correct icons for each metric
  * - Applies theme colors properly
@@ -14,7 +14,8 @@ import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import React from 'react';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
-import type { StatsAggregation } from '../../../../renderer/hooks/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
+import type { Session } from '../../../../renderer/types';
 import { THEMES } from '../../../../shared/themes';
 
 // Test theme
@@ -123,6 +124,28 @@ const onlyAutoData: StatsAggregation = {
 	bySessionByDay: {},
 };
 
+// Mock sessions with tabs for open tab count testing
+const mockSessions = [
+	{
+		id: 's1',
+		toolType: 'claude-code',
+		aiTabs: [{ id: 'tab1' }, { id: 'tab2' }, { id: 'tab3' }],
+		filePreviewTabs: [{ id: 'file1' }],
+	},
+	{
+		id: 's2',
+		toolType: 'codex',
+		aiTabs: [{ id: 'tab4' }],
+		filePreviewTabs: [{ id: 'file2' }, { id: 'file3' }],
+	},
+	{
+		id: 's3',
+		toolType: 'terminal',
+		aiTabs: [{ id: 'tab5' }],
+		filePreviewTabs: [],
+	},
+] as unknown as Session[];
+
 describe('SummaryCards', () => {
 	describe('Rendering', () => {
 		it('renders the summary cards container', () => {
@@ -131,11 +154,11 @@ describe('SummaryCards', () => {
 			expect(screen.getByTestId('summary-cards')).toBeInTheDocument();
 		});
 
-		it('renders all nine metric cards', () => {
-			render(<SummaryCards data={mockData} theme={theme} />);
+		it('renders all ten metric cards', () => {
+			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
 			const cards = screen.getAllByTestId('metric-card');
-			expect(cards).toHaveLength(9);
+			expect(cards).toHaveLength(10);
 		});
 
 		it('renders Total Queries metric', () => {
@@ -174,6 +197,23 @@ describe('SummaryCards', () => {
 			// Use aria-label to find the specific card since Local % may also show 80%
 			const interactiveCard = screen.getByRole('group', { name: /Interactive %: 80%/i });
 			expect(interactiveCard).toBeInTheDocument();
+		});
+
+		it('renders Open Tabs metric with correct count', () => {
+			// mockSessions has 3+1+1+2+1+0 = 8 total tabs (AI + file preview across all sessions)
+			render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
+
+			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
+			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 8/i });
+			expect(tabsCard).toBeInTheDocument();
+		});
+
+		it('renders Open Tabs as 0 when no sessions provided', () => {
+			render(<SummaryCards data={mockData} theme={theme} />);
+
+			expect(screen.getByText('Open Tabs')).toBeInTheDocument();
+			const tabsCard = screen.getByRole('group', { name: /Open Tabs: 0/i });
+			expect(tabsCard).toBeInTheDocument();
 		});
 	});
 
@@ -336,11 +376,11 @@ describe('SummaryCards', () => {
 
 	describe('Icons', () => {
 		it('renders SVG icons for each metric', () => {
-			const { container } = render(<SummaryCards data={mockData} theme={theme} />);
+			const { container } = render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
 
-			// Each card should have an SVG icon (9 cards = 9 icons)
+			// Each card should have an SVG icon (10 cards = 10 icons)
 			const svgElements = container.querySelectorAll('svg');
-			expect(svgElements.length).toBe(9);
+			expect(svgElements.length).toBe(10);
 		});
 	});
 

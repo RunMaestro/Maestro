@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Session, FocusArea } from '../../types';
 import { shouldOpenExternally, getAllFolderPaths } from '../../utils/fileExplorer';
 import { useModalStore } from '../../stores/modalStore';
+import { useFileExplorerStore } from '../../stores/fileExplorerStore';
 
 /** Loading state for file preview (shown while fetching remote files) */
 export interface FilePreviewLoading {
@@ -29,8 +30,6 @@ export interface UseAppHandlersDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Focus area setter */
 	setActiveFocus: React.Dispatch<React.SetStateAction<FocusArea>>;
-	/** File preview loading state setter (for remote file loading indicator) */
-	setFilePreviewLoading?: (loading: FilePreviewLoading | null) => void;
 	/** Confirmation modal message setter */
 	setConfirmModalMessage: (message: string) => void;
 	/** Confirmation modal callback setter */
@@ -106,7 +105,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 		activeSessionId,
 		setSessions,
 		setActiveFocus,
-		setFilePreviewLoading,
 		setConfirmModalMessage,
 		setConfirmModalOnConfirm,
 		setConfirmModalOpen,
@@ -208,8 +206,10 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 				}
 
 				// Show loading state for remote files (SSH sessions may be slow)
-				if (sshRemoteId && setFilePreviewLoading) {
-					setFilePreviewLoading({ name: node.name, path: fullPath });
+				if (sshRemoteId) {
+					useFileExplorerStore
+						.getState()
+						.setFilePreviewLoading({ name: node.name, path: fullPath });
 				}
 
 				try {
@@ -234,9 +234,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 					console.error('Failed to read file:', error);
 				} finally {
 					// Clear loading state
-					if (setFilePreviewLoading) {
-						setFilePreviewLoading(null);
-					}
+					useFileExplorerStore.getState().setFilePreviewLoading(null);
 				}
 			}
 		},
@@ -246,7 +244,6 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 			setConfirmModalOnConfirm,
 			setConfirmModalOpen,
 			setActiveFocus,
-			setFilePreviewLoading,
 			onOpenFileTab,
 		]
 	);
@@ -306,7 +303,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 	const expandAllFolders = useCallback(
 		(
 			sessionId: string,
-			session: Session,
+			_session: Session,
 			setSessionsFn: React.Dispatch<React.SetStateAction<Session[]>>
 		) => {
 			setSessionsFn((prev) =>

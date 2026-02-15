@@ -87,9 +87,6 @@ function getDefaultThemeForScheme(colorScheme: ColorSchemePreference): Theme {
 	return colorScheme === 'light' ? defaultLightTheme : defaultDarkTheme;
 }
 
-// Keep backwards compatibility - export defaultTheme as alias for defaultDarkTheme
-const _defaultTheme = defaultDarkTheme;
-
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export interface ThemeProviderProps {

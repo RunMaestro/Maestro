@@ -945,6 +945,37 @@ describe('MobileHistoryPanel', () => {
 			expect(costElements.length).toBeGreaterThanOrEqual(1);
 		});
 
+		it('handles usageStats with undefined token values without crashing', async () => {
+			const entries = [
+				createAutoEntry({
+					usageStats: {
+						inputTokens: undefined as any,
+						outputTokens: undefined as any,
+						cacheReadInputTokens: 0,
+						cacheCreationInputTokens: 0,
+						totalCostUsd: 0,
+						contextWindow: 128000,
+					},
+				}),
+			];
+			global.fetch = vi.fn().mockResolvedValue({
+				ok: true,
+				json: () => Promise.resolve({ entries }),
+			});
+
+			render(<MobileHistoryPanel onClose={vi.fn()} />);
+
+			await act(async () => {
+				await vi.runAllTimersAsync();
+			});
+
+			fireEvent.click(screen.getByRole('button', { name: /AUTO entry from/i }));
+
+			// Should render 0 for undefined token values instead of crashing
+			expect(screen.getByText('In: 0')).toBeInTheDocument();
+			expect(screen.getByText('Out: 0')).toBeInTheDocument();
+		});
+
 		it('shows Claude session ID in detail view', async () => {
 			const entries = [
 				createMockEntry({

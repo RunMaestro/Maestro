@@ -283,7 +283,7 @@ describe('Debug Package Packager', () => {
 				expect(readme).toContain('settings.json');
 				expect(readme).toContain('does NOT contain');
 				expect(readme).toContain('GitHub issue');
-				expect(readme).toContain('https://github.com/pedramamini/Maestro/issues');
+				expect(readme).toContain('https://github.com/RunMaestro/Maestro/issues');
 			}
 		});
 

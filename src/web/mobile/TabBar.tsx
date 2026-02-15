@@ -5,7 +5,7 @@
  * Styled like browser tabs (Safari/Chrome) where active tab connects to content.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import type { AITabData } from '../hooks/useWebSocket';
 

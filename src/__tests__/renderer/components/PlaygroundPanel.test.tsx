@@ -3,12 +3,13 @@
  *
  * Tests the PlaygroundPanel component, including:
  * - Initial render and modal structure
- * - Tab navigation (achievements, confetti)
+ * - Tab navigation (achievements, confetti, baton)
  * - Tab keyboard shortcuts
  * - Layer stack integration
  * - Close functionality
  * - Achievements tab: badge level buttons, time controls, standing ovation
  * - Confetti tab: origin grid, parameters, shapes, physics, colors
+ * - Baton tab: sparkle animation preview, controls, copy settings
  * - Helper functions: formatMs, sliderToTime, timeToSlider
  */
 
@@ -207,11 +208,12 @@ describe('PlaygroundPanel', () => {
 	});
 
 	describe('Tab Navigation', () => {
-		it('displays both tabs', () => {
+		it('displays all tabs', () => {
 			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
 
 			expect(screen.getByText('Achievements')).toBeInTheDocument();
 			expect(screen.getByText('Confetti')).toBeInTheDocument();
+			expect(screen.getByText('Baton')).toBeInTheDocument();
 		});
 
 		it('clicking confetti tab switches to confetti view', () => {
@@ -266,8 +268,8 @@ describe('PlaygroundPanel', () => {
 		it('Cmd+Shift+] wraps from last to first tab', () => {
 			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
 
-			// Switch to confetti (last tab)
-			fireEvent.click(screen.getByText('Confetti'));
+			// Switch to baton (last tab)
+			fireEvent.click(screen.getByText('Baton'));
 
 			// Press Cmd+Shift+]
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
@@ -284,8 +286,8 @@ describe('PlaygroundPanel', () => {
 			// Press Cmd+Shift+[
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
-			// Should wrap to confetti (last tab)
-			expect(screen.getByText('Fire Confetti!')).toBeInTheDocument();
+			// Should wrap to baton (last tab)
+			expect(screen.getByText('Large Preview (4x)')).toBeInTheDocument();
 		});
 
 		it('Cmd+Shift+{ (shifted [) also switches tabs', () => {
@@ -849,6 +851,296 @@ describe('PlaygroundPanel', () => {
 
 			// Should be back to 1 origin
 			expect(screen.getByText('1 origin selected')).toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Preview', () => {
+		beforeEach(() => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		it('displays large preview section', () => {
+			expect(screen.getByText('Large Preview (4x)')).toBeInTheDocument();
+		});
+
+		it('displays real size preview section', () => {
+			expect(screen.getByText('Real Size Preview')).toBeInTheDocument();
+		});
+
+		it('displays expanded and collapsed labels', () => {
+			expect(screen.getByText('Expanded:')).toBeInTheDocument();
+			expect(screen.getByText('Collapsed:')).toBeInTheDocument();
+		});
+
+		it('displays MAESTRO text in large preview', () => {
+			const elements = screen.getAllByText('MAESTRO');
+			expect(elements.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('shows animation active status by default', () => {
+			expect(screen.getByText('Animation active')).toBeInTheDocument();
+		});
+
+		it('displays size comparison row', () => {
+			expect(screen.getByText('Sizes:')).toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Animation Toggle', () => {
+		beforeEach(() => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		it('displays active toggle button', () => {
+			expect(screen.getByRole('button', { name: 'Active' })).toBeInTheDocument();
+		});
+
+		it('clicking toggle pauses animation', () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Active' }));
+
+			expect(screen.getByRole('button', { name: 'Paused' })).toBeInTheDocument();
+			expect(screen.getByText('Animation paused')).toBeInTheDocument();
+		});
+
+		it('clicking toggle again resumes animation', () => {
+			fireEvent.click(screen.getByRole('button', { name: 'Active' }));
+			fireEvent.click(screen.getByRole('button', { name: 'Paused' }));
+
+			expect(screen.getByRole('button', { name: 'Active' })).toBeInTheDocument();
+			expect(screen.getByText('Animation active')).toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Timing Controls', () => {
+		beforeEach(() => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		it('displays timing section', () => {
+			expect(screen.getByText('Timing')).toBeInTheDocument();
+		});
+
+		it('displays duration control', () => {
+			expect(screen.getByText('Duration (cycle)')).toBeInTheDocument();
+			expect(screen.getByText('3.0s')).toBeInTheDocument();
+		});
+
+		it('displays fade-out start control', () => {
+			expect(screen.getByText('Fade-out start')).toBeInTheDocument();
+			expect(screen.getByText('35%')).toBeInTheDocument();
+		});
+
+		it('displays fade-in start control', () => {
+			expect(screen.getByText('Fade-in start')).toBeInTheDocument();
+			expect(screen.getByText('65%')).toBeInTheDocument();
+		});
+
+		it('displays stagger offset control', () => {
+			expect(screen.getByText('Stagger offset')).toBeInTheDocument();
+			expect(screen.getByText('0.50s')).toBeInTheDocument();
+		});
+
+		it('changing duration updates display', () => {
+			const sliders = screen.getAllByRole('slider');
+			const durationSlider = sliders.find((slider) => {
+				const label = slider.closest('div')?.querySelector('label');
+				return label?.textContent?.includes('Duration');
+			});
+
+			if (durationSlider) {
+				fireEvent.change(durationSlider, { target: { value: '5' } });
+				expect(screen.getByText('5.0s')).toBeInTheDocument();
+			}
+		});
+	});
+
+	describe('Baton Tab - Movement Controls', () => {
+		beforeEach(() => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		it('displays movement section', () => {
+			expect(screen.getByText('Movement')).toBeInTheDocument();
+		});
+
+		it('displays translate amount control', () => {
+			expect(screen.getByText('Translate amount')).toBeInTheDocument();
+			expect(screen.getByText('0.5px')).toBeInTheDocument();
+		});
+
+		it('displays easing options', () => {
+			expect(screen.getByText('Easing')).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'ease-in-out' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'ease-in' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'ease-out' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'linear' })).toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'material' })).toBeInTheDocument();
+		});
+
+		it('clicking easing option changes selection', () => {
+			fireEvent.click(screen.getByRole('button', { name: 'linear' }));
+			// The button should now be highlighted (accent color)
+			const linearBtn = screen.getByRole('button', { name: 'linear' });
+			expect(linearBtn).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		});
+	});
+
+	describe('Baton Tab - Copy Settings', () => {
+		beforeEach(() => {
+			vi.useFakeTimers();
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('copy button renders', () => {
+			expect(screen.getByRole('button', { name: /Copy CSS Settings/ })).toBeInTheDocument();
+		});
+
+		it('clicking copy writes CSS to clipboard', async () => {
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
+			});
+
+			expect(navigator.clipboard.writeText).toHaveBeenCalled();
+			const copiedText = (navigator.clipboard.writeText as ReturnType<typeof vi.fn>).mock
+				.calls[0][0] as string;
+			expect(copiedText).toContain('@keyframes wand-sparkle');
+			expect(copiedText).toContain('wand-sparkle-active');
+			expect(copiedText).toContain('prefers-reduced-motion');
+		});
+
+		it('copy success shows Copied CSS! text', async () => {
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
+			});
+
+			expect(screen.getByText('Copied CSS!')).toBeInTheDocument();
+		});
+
+		it('success resets after timeout', async () => {
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
+			});
+
+			expect(screen.getByText('Copied CSS!')).toBeInTheDocument();
+
+			await act(async () => {
+				vi.advanceTimersByTime(2000);
+			});
+
+			expect(screen.queryByText('Copied CSS!')).not.toBeInTheDocument();
+			expect(screen.getByText('Copy CSS Settings')).toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Reset', () => {
+		beforeEach(() => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+		});
+
+		it('reset button renders', () => {
+			const resetButtons = screen.getAllByRole('button', { name: /Reset to Defaults/ });
+			expect(resetButtons.length).toBeGreaterThan(0);
+		});
+
+		it('clicking reset restores default duration', () => {
+			// Change duration
+			const sliders = screen.getAllByRole('slider');
+			const durationSlider = sliders.find((slider) => {
+				const label = slider.closest('div')?.querySelector('label');
+				return label?.textContent?.includes('Duration');
+			});
+
+			if (durationSlider) {
+				fireEvent.change(durationSlider, { target: { value: '6' } });
+				expect(screen.getByText('6.0s')).toBeInTheDocument();
+			}
+
+			// Reset
+			const resetButtons = screen.getAllByRole('button', { name: /Reset to Defaults/ });
+			fireEvent.click(resetButtons[resetButtons.length - 1]);
+
+			// Default duration is 3.0s
+			expect(screen.getByText('3.0s')).toBeInTheDocument();
+		});
+
+		it('clicking reset re-enables animation if paused', () => {
+			// Pause
+			fireEvent.click(screen.getByRole('button', { name: 'Active' }));
+			expect(screen.getByText('Animation paused')).toBeInTheDocument();
+
+			// Reset
+			const resetButtons = screen.getAllByRole('button', { name: /Reset to Defaults/ });
+			fireEvent.click(resetButtons[resetButtons.length - 1]);
+
+			// Should be active again
+			expect(screen.getByText('Animation active')).toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Dynamic Style Injection', () => {
+		it('injects style element on mount', () => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+
+			const styleEl = document.querySelector('style[data-baton-playground]');
+			expect(styleEl).toBeInTheDocument();
+		});
+
+		it('style contains animation keyframes', () => {
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+
+			const styleEl = document.querySelector('style[data-baton-playground]');
+			expect(styleEl?.textContent).toContain('playground-wand-sparkle');
+			expect(styleEl?.textContent).toContain('baton-sparkle-active');
+		});
+
+		it('cleans up style element on unmount', () => {
+			const { unmount } = render(
+				<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />
+			);
+			fireEvent.click(screen.getByText('Baton'));
+
+			expect(document.querySelector('style[data-baton-playground]')).toBeInTheDocument();
+
+			unmount();
+
+			expect(document.querySelector('style[data-baton-playground]')).not.toBeInTheDocument();
+		});
+	});
+
+	describe('Baton Tab - Copy Failure Handling', () => {
+		it('handles clipboard write failure gracefully', async () => {
+			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+			Object.assign(navigator, {
+				clipboard: {
+					writeText: vi.fn().mockRejectedValue(new Error('Clipboard error')),
+				},
+			});
+
+			render(<PlaygroundPanel theme={mockTheme} themeMode="dark" onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Baton'));
+
+			await act(async () => {
+				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
+			});
+
+			expect(consoleError).toHaveBeenCalledWith(
+				'Failed to copy baton settings:',
+				expect.any(Error)
+			);
+
+			consoleError.mockRestore();
 		});
 	});
 

@@ -19,7 +19,7 @@ Create organization-specific playbooks that aren't suitable for public sharing:
 - Company-specific security policies
 
 ### 2. Playbook Development
-Iterate on new playbooks locally before submitting them to the [Maestro-Playbooks repository](https://github.com/pedramamini/Maestro-Playbooks):
+Iterate on new playbooks locally before submitting them to the [Maestro-Playbooks repository](https://github.com/RunMaestro/Maestro-Playbooks):
 - Test playbook structure and documents
 - Refine prompts and loop behavior
 - Validate asset bundling
@@ -186,7 +186,7 @@ Local playbooks are visually distinguished in the Playbook Exchange with a blue 
 2. Add to `local-manifest.json`
 3. Test import and execution in Maestro
 4. Refine documents and prompts
-5. When ready, submit a PR to [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks)
+5. When ready, submit a PR to [Maestro-Playbooks](https://github.com/RunMaestro/Maestro-Playbooks)
 6. Remove from local manifest once published
 
 ### Overriding Official Playbooks

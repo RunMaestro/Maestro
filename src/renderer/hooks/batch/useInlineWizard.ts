@@ -10,9 +10,9 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { logger } from '../utils/logger';
-import { parseWizardIntent } from '../services/wizardIntentParser';
-import { getAutoRunFolderPath, type ExistingDocument } from '../utils/existingDocsDetector';
+import { logger } from '../../utils/logger';
+import { parseWizardIntent } from '../../services/wizardIntentParser';
+import { getAutoRunFolderPath, type ExistingDocument } from '../../utils/existingDocsDetector';
 import {
 	startInlineWizardConversation,
 	sendWizardMessage,
@@ -21,13 +21,13 @@ import {
 	type InlineWizardConversationSession,
 	type ExistingDocumentWithContent,
 	type ConversationCallbacks,
-} from '../services/inlineWizardConversation';
+} from '../../services/inlineWizardConversation';
 import {
 	generateInlineDocuments,
 	extractDisplayTextFromChunk,
 	type DocumentGenerationCallbacks,
-} from '../services/inlineWizardDocumentGeneration';
-import type { ToolType } from '../types';
+} from '../../services/inlineWizardDocumentGeneration';
+import type { ToolType } from '../../types';
 
 /**
  * Wizard mode determines whether the user wants to create new documents
@@ -50,7 +50,7 @@ export interface InlineWizardMessage {
 	ready?: boolean;
 }
 
-import type { ThinkingMode } from '../types';
+import type { ThinkingMode } from '../../types';
 
 /**
  * UI state to restore when wizard ends.
@@ -146,6 +146,14 @@ export interface InlineWizardState {
 		remoteId: string | null;
 		workingDirOverride?: string;
 	};
+	/** Custom path to agent binary */
+	sessionCustomPath?: string;
+	/** Custom CLI arguments */
+	sessionCustomArgs?: string;
+	/** Custom environment variables */
+	sessionCustomEnvVars?: Record<string, string>;
+	/** Custom model ID */
+	sessionCustomModel?: string;
 	/** Conductor profile (user's About Me from settings) */
 	conductorProfile?: string;
 	/** History file path for task recall (fetched once during startWizard) */
@@ -223,7 +231,13 @@ export interface UseInlineWizardReturn {
 			remoteId: string | null;
 			workingDirOverride?: string;
 		},
-		conductorProfile?: string
+		conductorProfile?: string,
+		sessionOverrides?: {
+			customPath?: string;
+			customArgs?: string;
+			customEnvVars?: Record<string, string>;
+			customModel?: string;
+		}
 	) => Promise<void>;
 	/** End the wizard and restore previous UI state */
 	endWizard: () => Promise<PreviousUIState | null>;
@@ -471,7 +485,13 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				remoteId: string | null;
 				workingDirOverride?: string;
 			},
-			conductorProfile?: string
+			conductorProfile?: string,
+			sessionOverrides?: {
+				customPath?: string;
+				customArgs?: string;
+				customEnvVars?: Record<string, string>;
+				customModel?: string;
+			}
 		): Promise<void> => {
 			// Tab ID is required for per-tab wizard management
 			const effectiveTabId = tabId || 'default';
@@ -528,6 +548,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 				subfolderPath: null,
 				autoRunFolderPath: effectiveAutoRunFolderPath,
 				sessionSshRemoteConfig,
+				sessionCustomPath: sessionOverrides?.customPath,
+				sessionCustomArgs: sessionOverrides?.customArgs,
+				sessionCustomEnvVars: sessionOverrides?.customEnvVars,
+				sessionCustomModel: sessionOverrides?.customModel,
 				conductorProfile,
 			}));
 
@@ -620,6 +644,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: docsWithContent.length > 0 ? docsWithContent : undefined,
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig,
+						sessionCustomPath: sessionOverrides?.customPath,
+						sessionCustomArgs: sessionOverrides?.customArgs,
+						sessionCustomEnvVars: sessionOverrides?.customEnvVars,
+						sessionCustomModel: sessionOverrides?.customModel,
 						conductorProfile,
 						historyFilePath,
 					});
@@ -781,6 +809,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: undefined,
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+						sessionCustomPath: currentState.sessionCustomPath,
+						sessionCustomArgs: currentState.sessionCustomArgs,
+						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
+						sessionCustomModel: currentState.sessionCustomModel,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});
@@ -965,6 +997,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 						existingDocs: undefined, // Will be loaded separately if needed
 						autoRunFolderPath: effectiveAutoRunFolderPath,
 						sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+						sessionCustomPath: currentState.sessionCustomPath,
+						sessionCustomArgs: currentState.sessionCustomArgs,
+						sessionCustomEnvVars: currentState.sessionCustomEnvVars,
+						sessionCustomModel: currentState.sessionCustomModel,
 						conductorProfile: currentState.conductorProfile,
 						historyFilePath: currentState.historyFilePath,
 					});
@@ -1221,6 +1257,10 @@ export function useInlineWizard(): UseInlineWizardReturn {
 					autoRunFolderPath: effectiveAutoRunFolderPath,
 					sessionId: currentState.sessionId || undefined,
 					sessionSshRemoteConfig: currentState.sessionSshRemoteConfig,
+					sessionCustomPath: currentState.sessionCustomPath,
+					sessionCustomArgs: currentState.sessionCustomArgs,
+					sessionCustomEnvVars: currentState.sessionCustomEnvVars,
+					sessionCustomModel: currentState.sessionCustomModel,
 					conductorProfile: currentState.conductorProfile,
 					callbacks: {
 						onStart: () => {

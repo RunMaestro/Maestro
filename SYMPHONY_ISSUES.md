@@ -105,11 +105,30 @@ The authentication module at `src/auth/` needs test coverage.
 4. **Verification steps**: Include test commands, linting checks
 5. **Independence**: Each document should be self-contained
 
+## Blocking Dependencies
+
+Add the `blocking` label to any issue that has unmet prerequisites. Blocked issues are visible to contributors but grayed out and cannot be started. This lets maintainers create dependency trees across issues.
+
+**How it works:**
+1. Add the `blocking` label to an issue that depends on other work being completed first
+2. Contributors see the issue in a separate "Blocked" section, grayed out with a lock icon
+3. When the prerequisite is met, remove the `blocking` label to make the issue available
+
+**Example workflow:**
+```
+Issue #1: Set up database schema           → available (no blocking label)
+Issue #2: Add API endpoints (needs #1)     → blocking label applied
+Issue #3: Add frontend (needs #2)          → blocking label applied
+```
+
+When #1 is completed, remove `blocking` from #2. When #2 is completed, remove `blocking` from #3.
+
 ## Issue Availability
 
 An issue is **available** for contribution when:
 - It has the `runmaestro.ai` label
 - It is **open** (not closed)
+- It does **not** have the `blocking` label
 - There is **no open PR** with "Closes #N" in the body
 
 When a contributor starts working on an issue, a draft PR is immediately created with "Closes #N" in the body. This claims the issue and prevents duplicate work.

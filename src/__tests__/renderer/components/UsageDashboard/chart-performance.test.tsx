@@ -21,7 +21,7 @@ import { DurationTrendsChart } from '../../../../renderer/components/UsageDashbo
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
 import { AgentComparisonChart } from '../../../../renderer/components/UsageDashboard/AgentComparisonChart';
 import { SourceDistributionChart } from '../../../../renderer/components/UsageDashboard/SourceDistributionChart';
-import type { StatsAggregation } from '../../../../renderer/hooks/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import { THEMES } from '../../../../shared/themes';
 
 // Test theme

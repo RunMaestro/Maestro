@@ -11,9 +11,9 @@
  * - Theme-aware styling
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/useStats';
+import type { StatsTimeRange } from '../../hooks/stats/useStats';
 
 /**
  * Auto Run task data shape from the API
@@ -232,11 +232,7 @@ export function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
 				)}
 
 				{/* Bars */}
-				<div
-					className="flex items-end gap-0.5 h-24"
-					role="img"
-					aria-label="Tasks by hour of day"
-				>
+				<div className="flex items-end gap-0.5 h-24" role="img" aria-label="Tasks by hour of day">
 					{hourlyData.map((hourData) => {
 						const height = maxCount > 0 ? (hourData.count / maxCount) * 100 : 0;
 						const isPeak = peakHours.includes(hourData.hour);

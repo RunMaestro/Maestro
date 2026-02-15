@@ -26,6 +26,7 @@ vi.mock('../../../../main/agents', () => ({
 	AGENT_DEFINITIONS: [
 		{ id: 'claude-code', name: 'Claude Code', binaryName: 'claude', configOptions: [] },
 		{ id: 'codex', name: 'Codex', binaryName: 'codex', configOptions: [] },
+		{ id: 'opencode', name: 'OpenCode', binaryName: 'opencode', configOptions: [] },
 		{ id: 'terminal', name: 'Terminal', binaryName: 'bash', configOptions: [] },
 	],
 	DEFAULT_CAPABILITIES: {
@@ -68,7 +69,19 @@ vi.mock('fs', () => ({
 	existsSync: vi.fn(),
 }));
 
+// Mock ssh-command-builder for remote model discovery tests
+vi.mock('../../../../main/utils/ssh-command-builder', () => ({
+	buildSshCommand: vi.fn().mockResolvedValue({ command: 'ssh', args: ['mock'] }),
+	buildSshCommandWithStdin: vi.fn(),
+}));
+
+// Mock stripAnsi (pass through by default)
+vi.mock('../../../../main/utils/stripAnsi', () => ({
+	stripAnsi: vi.fn((str: string) => str),
+}));
+
 import { execFileNoThrow } from '../../../../main/utils/execFile';
+import { buildSshCommand } from '../../../../main/utils/ssh-command-builder';
 import * as fs from 'fs';
 
 describe('agents IPC handlers', () => {
@@ -908,6 +921,84 @@ describe('agents IPC handlers', () => {
 			const result = await handler!({} as any, 'claude-code');
 
 			expect(result).toEqual([]);
+		});
+
+		describe('SSH remote model discovery', () => {
+			let mockSettingsStore: {
+				get: ReturnType<typeof vi.fn>;
+				set: ReturnType<typeof vi.fn>;
+			};
+
+			beforeEach(() => {
+				mockSettingsStore = {
+					get: vi.fn().mockReturnValue([]),
+					set: vi.fn(),
+				};
+
+				// Re-register handlers with settingsStore
+				handlers.clear();
+				registerAgentsHandlers({
+					...deps,
+					settingsStore: mockSettingsStore as any,
+				});
+			});
+
+			it('should discover models on SSH remote when sshRemoteId is provided', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{
+						id: 'remote-1',
+						host: 'dev.example.com',
+						user: 'dev',
+						enabled: true,
+					},
+				]);
+
+				vi.mocked(buildSshCommand).mockResolvedValue({
+					command: 'ssh',
+					args: ['-o', 'BatchMode=yes', 'dev@dev.example.com', 'opencode models'],
+				});
+
+				vi.mocked(execFileNoThrow).mockResolvedValue({
+					exitCode: 0,
+					stdout: 'opencode/gpt-5-nano\nollama/qwen3:8b\n',
+					stderr: '',
+				});
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'opencode', false, 'remote-1');
+
+				expect(buildSshCommand).toHaveBeenCalledWith(
+					expect.objectContaining({ id: 'remote-1', host: 'dev.example.com' }),
+					expect.objectContaining({ command: 'opencode', args: ['models'] })
+				);
+				expect(result).toEqual(['opencode/gpt-5-nano', 'ollama/qwen3:8b']);
+				expect(mockAgentDetector.discoverModels).not.toHaveBeenCalled();
+			});
+
+			it('should throw when SSH remote not found', async () => {
+				mockSettingsStore.get.mockReturnValue([
+					{ id: 'remote-1', host: 'dev.example.com', enabled: true },
+				]);
+
+				const handler = handlers.get('agents:getModels');
+				await expect(
+					handler!({} as any, 'opencode', false, 'nonexistent-remote')
+				).rejects.toThrow('SSH remote not found: nonexistent-remote');
+				expect(buildSshCommand).not.toHaveBeenCalled();
+				expect(mockAgentDetector.discoverModels).not.toHaveBeenCalled();
+			});
+
+			it('should fall through to local discovery when no sshRemoteId', async () => {
+				const mockModels = ['model-a', 'model-b'];
+				mockAgentDetector.discoverModels.mockResolvedValue(mockModels);
+
+				const handler = handlers.get('agents:getModels');
+				const result = await handler!({} as any, 'opencode', false);
+
+				expect(mockAgentDetector.discoverModels).toHaveBeenCalledWith('opencode', false);
+				expect(result).toEqual(mockModels);
+				expect(buildSshCommand).not.toHaveBeenCalled();
+			});
 		});
 	});
 

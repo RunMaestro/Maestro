@@ -16,7 +16,7 @@
  * - Cancel functionality with confirmation
  */
 
-import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { X, Check, Loader2, AlertTriangle, TrendingDown, Wand2 } from 'lucide-react';
 import type { Theme } from '../types';
 import type { SummarizeProgress, SummarizeResult } from '../types/contextMerge';
@@ -191,13 +191,13 @@ function TokenReductionStats({ result, theme }: { result: SummarizeResult; theme
 				<div>
 					<span className="text-[10px] uppercase">Before</span>
 					<div className="font-mono" style={{ color: theme.colors.textMain }}>
-						~{result.originalTokens.toLocaleString()} tokens
+						~{(result.originalTokens ?? 0).toLocaleString()} tokens
 					</div>
 				</div>
 				<div>
 					<span className="text-[10px] uppercase">After</span>
 					<div className="font-mono" style={{ color: theme.colors.textMain }}>
-						~{result.compactedTokens.toLocaleString()} tokens
+						~{(result.compactedTokens ?? 0).toLocaleString()} tokens
 					</div>
 				</div>
 			</div>

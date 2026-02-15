@@ -12,7 +12,6 @@
  * - Reusable component with customizable message
  */
 
-import React from 'react';
 import { BarChart3 } from 'lucide-react';
 import type { Theme } from '../../types';
 

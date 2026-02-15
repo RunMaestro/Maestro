@@ -9,7 +9,7 @@
  * Styled with theme colors and supports selection/hover states.
  */
 
-import React, { memo, useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Handle, Position, NodeProps } from 'reactflow';
 import { FileText, Hash, AlignLeft, HardDrive, AlertTriangle, FileWarning } from 'lucide-react';
 import type { Theme } from '../../types';

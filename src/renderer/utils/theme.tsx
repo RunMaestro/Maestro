@@ -1,4 +1,3 @@
-import React from 'react';
 import { FilePlus, Trash2, FileCode, FileText } from 'lucide-react';
 import type { Theme, SessionState, FileChangeType } from '../types';
 

@@ -1,6 +1,6 @@
 # Maestro
 
-[![Made with Maestro](docs/assets/made-with-maestro.svg)](https://github.com/pedramamini/Maestro)
+[![Made with Maestro](docs/assets/made-with-maestro.svg)](https://github.com/RunMaestro/Maestro)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Us-5865F2?logo=discord&logoColor=white)](https://runmaestro.ai/discord)
 [![User Docs](https://img.shields.io/badge/Docs-Usage%20%26%20Documentation-blue?logo=readthedocs&logoColor=white)](https://docs.runmaestro.ai/)
 
@@ -87,12 +87,12 @@ Additional interactions: Drag nodes to reposition, scroll to zoom, use mini-map 
 
 ### Installation
 
-Download the latest release for your platform from the [Releases page](https://github.com/pedramamini/Maestro/releases).
+Download the latest release for your platform from the [Releases page](https://github.com/RunMaestro/Maestro/releases).
 
 Or build from source:
 
 ```bash
-git clone https://github.com/pedramamini/Maestro.git
+git clone https://github.com/RunMaestro/Maestro.git
 cd Maestro
 npm install
 npm run dev
@@ -166,7 +166,7 @@ Full documentation and usage guide available at **[docs.runmaestro.ai](https://d
 ## Community
 
 - **Discord**: [Join Us](https://runmaestro.ai/discord)
-- **GitHub Issues**: [Report bugs & request features](https://github.com/pedramamini/Maestro/issues)
+- **GitHub Issues**: [Report bugs & request features](https://github.com/RunMaestro/Maestro/issues)
 
 ## Contributors
 

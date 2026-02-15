@@ -12,9 +12,9 @@
  * - Colorblind-friendly palette option
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import type { Theme } from '../../types';
-import type { StatsAggregation } from '../../hooks/useStats';
+import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 
 interface AgentEfficiencyChartProps {
@@ -136,10 +136,7 @@ export function AgentEfficiencyChart({
 		>
 			<h3 className="text-sm font-medium mb-4" style={{ color: theme.colors.textMain }}>
 				Agent Efficiency
-				<span
-					className="text-xs font-normal ml-2"
-					style={{ color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-normal ml-2" style={{ color: theme.colors.textDim }}>
 					(avg response time per query)
 				</span>
 			</h3>

@@ -14,7 +14,7 @@
 
 import React, { useMemo, useCallback, useState } from 'react';
 import type { Theme } from '../../types';
-import type { StatsAggregation } from '../../hooks/useStats';
+import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
 
 interface AgentData {
@@ -39,7 +39,7 @@ interface AgentComparisonChartProps {
  * Uses the theme's accent color as primary, with additional colors for multiple agents
  */
 function getAgentColor(
-	agentName: string,
+	_agentName: string,
 	index: number,
 	theme: Theme,
 	colorBlindMode?: boolean

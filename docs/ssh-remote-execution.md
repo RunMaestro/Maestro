@@ -235,6 +235,14 @@ This is especially useful for:
 - **Import from SSH config** — Use the dropdown when adding remotes to import from `~/.ssh/config`; saves time and keeps configuration consistent
 - **Bastion hosts** — Use `ProxyJump` in your SSH config for multi-hop connections; Maestro inherits this automatically
 - **Key management** — Use `ssh-agent` to avoid passphrase prompts
+- **Connection multiplexing** — Maestro respects `ControlMaster`, `ControlPath`, and `ControlPersist` from your `~/.ssh/config`. This is highly recommended if you use hardware security keys (e.g., YubiKey) to avoid repeated touches per connection. Example config:
+  ```
+  Host dev-server
+      ControlMaster auto
+      ControlPath ~/.ssh/sockets/%r@%h-%p
+      ControlPersist 600
+  ```
+  Make sure the socket directory exists (`mkdir -p ~/.ssh/sockets`). Use `%h`, `%p`, and `%r` tokens in `ControlPath` to keep sockets unique per host/port/user.
 - **Keep-alive** — Configure `ServerAliveInterval` in SSH config for long sessions
 - **Test manually first** — Verify `ssh host 'claude --version'` works before configuring in Maestro
 

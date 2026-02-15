@@ -23,7 +23,7 @@ export interface SessionValidationResult {
 export function validateNewSession(
 	name: string,
 	directory: string,
-	toolType: ToolType,
+	_toolType: ToolType,
 	existingSessions: Session[]
 ): SessionValidationResult {
 	const trimmedName = name.trim();

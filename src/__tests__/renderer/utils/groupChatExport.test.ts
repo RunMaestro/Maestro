@@ -177,7 +177,7 @@ describe('groupChatExport', () => {
 
 				const html = generateGroupChatExportHtml(groupChat, messages, [], {}, mockTheme);
 
-				expect(html).toContain('href="https://github.com/pedramamini/Maestro"');
+				expect(html).toContain('href="https://github.com/RunMaestro/Maestro"');
 				expect(html).toContain('GitHub');
 			});
 

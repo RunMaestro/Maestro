@@ -15,7 +15,7 @@
  * - Tab character insertion
  */
 
-import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
@@ -242,7 +242,6 @@ export function DocumentEditor({
 	isDropdownOpen,
 	onDropdownOpenChange,
 }: DocumentEditorProps): JSX.Element {
-	const _fileInputRef = useRef<HTMLInputElement>(null);
 	const [attachmentsExpanded, setAttachmentsExpanded] = useState(true);
 
 	// Handle paste (images and text with whitespace trimming)
@@ -345,42 +344,6 @@ export function DocumentEditor({
 			}
 		},
 		[content, folderPath, selectedFile, isLocked, onContentChange, onAddAttachment, textareaRef]
-	);
-
-	// Handle file input for manual image upload
-	const _handleFileSelect = useCallback(
-		async (e: React.ChangeEvent<HTMLInputElement>) => {
-			const file = e.target.files?.[0];
-			if (!file || !folderPath || !selectedFile) return;
-
-			const reader = new FileReader();
-			reader.onload = async (event) => {
-				const base64Data = event.target?.result as string;
-				if (!base64Data) return;
-
-				const base64Content = base64Data.replace(/^data:image\/\w+;base64,/, '');
-				const extension = file.name.split('.').pop() || 'png';
-
-				const result = await window.maestro.autorun.saveImage(
-					folderPath,
-					selectedFile,
-					base64Content,
-					extension
-				);
-
-				if (result.success && result.relativePath) {
-					const filename = result.relativePath.split('/').pop() || result.relativePath;
-					onAddAttachment(result.relativePath, base64Data);
-
-					const imageMarkdown = `\n![${filename}](${result.relativePath})\n`;
-					const newContent = content + imageMarkdown;
-					onContentChange(newContent);
-				}
-			};
-			reader.readAsDataURL(file);
-			e.target.value = '';
-		},
-		[content, folderPath, selectedFile, onContentChange, onAddAttachment]
 	);
 
 	// Handle key events

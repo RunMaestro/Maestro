@@ -74,6 +74,18 @@ vi.mock('../../../renderer/components/ExecutionQueueIndicator', () => ({
 	)),
 }));
 
+vi.mock('../../../renderer/components/ContextWarningSash', () => ({
+	ContextWarningSash: vi.fn(({ enabled }) =>
+		enabled ? <div data-testid="context-warning-sash">ContextWarningSash</div> : null
+	),
+}));
+
+vi.mock('../../../renderer/components/SummarizeProgressOverlay', () => ({
+	SummarizeProgressOverlay: vi.fn(() => (
+		<div data-testid="summarize-progress-overlay">SummarizeProgressOverlay</div>
+	)),
+}));
+
 vi.mock('../../../renderer/components/InlineWizard', () => ({
 	WizardInputPanel: vi.fn(({ theme, confidence, onExitWizard }) => (
 		<div data-testid="wizard-input-panel">
@@ -2186,6 +2198,61 @@ describe('InputArea', () => {
 			expect(screen.getByPlaceholderText('Run shell command...')).toBeInTheDocument();
 			// Terminal $ prefix should be visible
 			expect(screen.getByText('$')).toBeInTheDocument();
+		});
+	});
+
+	describe('Context Warning Sash', () => {
+		it('should not render ContextWarningSash when contextWarningsEnabled is false', () => {
+			const props = createDefaultProps({
+				contextWarningsEnabled: false,
+				contextUsage: 80,
+				contextWarningYellowThreshold: 55,
+				contextWarningRedThreshold: 70,
+				onSummarizeAndContinue: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
+		});
+
+		it('should render ContextWarningSash when contextWarningsEnabled is true', () => {
+			const props = createDefaultProps({
+				contextWarningsEnabled: true,
+				contextUsage: 80,
+				contextWarningYellowThreshold: 55,
+				contextWarningRedThreshold: 70,
+				onSummarizeAndContinue: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.getByTestId('context-warning-sash')).toBeInTheDocument();
+		});
+
+		it('should not render ContextWarningSash in terminal mode even when enabled', () => {
+			const props = createDefaultProps({
+				session: createMockSession({ inputMode: 'terminal' }),
+				contextWarningsEnabled: true,
+				contextUsage: 80,
+				contextWarningYellowThreshold: 55,
+				contextWarningRedThreshold: 70,
+				onSummarizeAndContinue: vi.fn(),
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
+		});
+
+		it('should not render ContextWarningSash when onSummarizeAndContinue is not provided', () => {
+			const props = createDefaultProps({
+				contextWarningsEnabled: true,
+				contextUsage: 80,
+				contextWarningYellowThreshold: 55,
+				contextWarningRedThreshold: 70,
+				// onSummarizeAndContinue intentionally omitted
+			});
+			render(<InputArea {...props} />);
+
+			expect(screen.queryByTestId('context-warning-sash')).not.toBeInTheDocument();
 		});
 	});
 });

@@ -69,7 +69,7 @@ For SSH remote sessions, playbooks can be imported directly to the remote host. 
 
 ## Exchange Data
 
-Playbooks are fetched from the [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks) GitHub repository. The manifest is cached locally for 6 hours to minimize API calls.
+Playbooks are fetched from the [Maestro-Playbooks](https://github.com/RunMaestro/Maestro-Playbooks) GitHub repository. The manifest is cached locally for 6 hours to minimize API calls.
 
 - **Cache indicator** — Shows whether data is from cache and how old it is (e.g., "Cached 2h ago" or "Live")
 - **Refresh button** — Forces a fresh fetch from GitHub, bypassing the cache
@@ -79,7 +79,7 @@ Playbooks are fetched from the [Maestro-Playbooks](https://github.com/pedramamin
 Want to share your playbooks with the community? You can contribute in two ways:
 
 1. **From the Exchange** — Click the "Submit Playbook via GitHub" link in the header
-2. **Directly on GitHub** — Submit a pull request to the [Maestro-Playbooks repository](https://github.com/pedramamini/Maestro-Playbooks)
+2. **Directly on GitHub** — Submit a pull request to the [Maestro-Playbooks repository](https://github.com/RunMaestro/Maestro-Playbooks)
 
 Click the **?** help button in the Exchange header for more information about contributing.
 

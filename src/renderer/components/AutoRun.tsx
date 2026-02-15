@@ -969,22 +969,6 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		}
 	}, [selectedFile, mode]);
 
-	// Save cursor position and scroll position when they change
-	const _handleCursorOrScrollChange = () => {
-		if (textareaRef.current) {
-			// Save to ref for persistence across re-renders
-			editScrollPosRef.current = textareaRef.current.scrollTop;
-			if (onStateChange) {
-				onStateChange({
-					mode,
-					cursorPosition: textareaRef.current.selectionStart,
-					editScrollPos: textareaRef.current.scrollTop,
-					previewScrollPos: previewRef.current?.scrollTop || 0,
-				});
-			}
-		}
-	};
-
 	// Debounced preview scroll handler to avoid triggering re-renders on every scroll event
 	// We only save scroll position to ref immediately (for local use), but delay parent notification
 	const previewScrollDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1961,9 +1945,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 					className="flex-1 min-h-0 overflow-y-auto mx-2 rounded-lg transition-colors"
 					style={{
 						backgroundColor: isDirty && !isLocked ? `${theme.colors.warning}08` : 'transparent',
-						border: isDirty && !isLocked ? `2px solid ${theme.colors.warning}40` : '2px solid transparent',
-					}}>
-
+						border:
+							isDirty && !isLocked
+								? `2px solid ${theme.colors.warning}40`
+								: '2px solid transparent',
+					}}
+				>
 					{/* Empty folder state - show when folder is configured but has no documents */}
 					{documentList.length === 0 && !isLoadingDocuments ? (
 						<div
@@ -1983,7 +1970,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								The selected folder doesn't contain any markdown (.md) files.
 							</p>
 							<p className="mb-6 max-w-xs text-xs" style={{ color: theme.colors.textDim }}>
-								Create a markdown file in the folder to get started, or change to a different folder.
+								Create a markdown file in the folder to get started, or change to a different
+								folder.
 							</p>
 							<div className="flex gap-3">
 								<button
@@ -2093,116 +2081,106 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			)}
 
 			{/* Bottom Panel - shown when folder selected AND (there are tasks, unsaved changes, or content with token count) */}
-			{folderPath &&
-				(taskCounts.total > 0 ||
-					(isDirty && !isLocked) ||
-					tokenCount !== null) && (
-					<div
-						ref={bottomPanelRef}
-						className="flex-shrink-0 px-3 py-1.5 mt-[5px] text-xs border-t flex items-center justify-between"
-						style={{
-							backgroundColor: theme.colors.bgActivity,
-							borderColor: theme.colors.border,
-						}}
-					>
-						{/* Revert button - left side (visible in both edit and preview when dirty) */}
-						{isDirty && !isLocked ? (
+			{folderPath && (taskCounts.total > 0 || (isDirty && !isLocked) || tokenCount !== null) && (
+				<div
+					ref={bottomPanelRef}
+					className="flex-shrink-0 px-3 py-1.5 mt-[5px] text-xs border-t flex items-center justify-between"
+					style={{
+						backgroundColor: theme.colors.bgActivity,
+						borderColor: theme.colors.border,
+					}}
+				>
+					{/* Revert button - left side (visible in both edit and preview when dirty) */}
+					{isDirty && !isLocked ? (
+						<button
+							onClick={handleRevert}
+							className={`${isCompact ? 'p-1.5' : 'px-2 py-0.5'} rounded text-xs transition-colors hover:opacity-80 flex items-center gap-1`}
+							style={{
+								backgroundColor: 'transparent',
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title="Discard changes"
+						>
+							{isCompact ? <RotateCcw className="w-3.5 h-3.5" /> : 'Revert'}
+						</button>
+					) : (
+						<div />
+					)}
+
+					{/* Center info: Reset button, Task count, and/or Token count */}
+					<div className="flex items-center gap-3">
+						{/* Reset button - only show when there are completed tasks */}
+						{taskCounts.completed > 0 && !isLocked && (
 							<button
-								onClick={handleRevert}
-								className={`${isCompact ? 'p-1.5' : 'px-2 py-0.5'} rounded text-xs transition-colors hover:opacity-80 flex items-center gap-1`}
-								style={{
-									backgroundColor: 'transparent',
-									color: theme.colors.textDim,
-									border: `1px solid ${theme.colors.border}`,
-								}}
-								title="Discard changes"
+								onClick={() => setResetTasksModalOpen(true)}
+								className="p-0.5 rounded transition-colors hover:bg-white/10"
+								style={{ color: theme.colors.textDim }}
+								title={`Reset ${taskCounts.completed} completed task${taskCounts.completed !== 1 ? 's' : ''}`}
 							>
-								{isCompact ? (
-									<RotateCcw className="w-3.5 h-3.5" />
-								) : (
-									'Revert'
-								)}
+								<RotateCcw className="w-3.5 h-3.5" />
 							</button>
-						) : (
-							<div />
 						)}
-
-						{/* Center info: Reset button, Task count, and/or Token count */}
-						<div className="flex items-center gap-3">
-							{/* Reset button - only show when there are completed tasks */}
-							{taskCounts.completed > 0 && !isLocked && (
-								<button
-									onClick={() => setResetTasksModalOpen(true)}
-									className="p-0.5 rounded transition-colors hover:bg-white/10"
-									style={{ color: theme.colors.textDim }}
-									title={`Reset ${taskCounts.completed} completed task${taskCounts.completed !== 1 ? 's' : ''}`}
+						{taskCounts.total > 0 && (
+							<span style={{ color: theme.colors.textDim }}>
+								<span
+									style={{
+										color:
+											taskCounts.completed === taskCounts.total
+												? theme.colors.success
+												: theme.colors.accent,
+									}}
 								>
-									<RotateCcw className="w-3.5 h-3.5" />
-								</button>
-							)}
-							{taskCounts.total > 0 && (
-								<span style={{ color: theme.colors.textDim }}>
-									<span
-										style={{
-											color:
-												taskCounts.completed === taskCounts.total
-													? theme.colors.success
-													: theme.colors.accent,
-										}}
-									>
-										{taskCounts.completed}
-									</span>{' '}
-									of <span style={{ color: theme.colors.accent }}>{taskCounts.total}</span> task
-									{taskCounts.total !== 1 ? 's' : ''}{!isCompact && ' completed'}
-								</span>
-							)}
-							{tokenCount !== null && (
-								<span style={{ color: theme.colors.textDim }}>
-									<span className="opacity-60">Tokens:</span>{' '}
-									<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
-								</span>
-							)}
-							{taskCounts.total === 0 && tokenCount === null && isDirty && !isLocked && (
-								<span style={{ color: theme.colors.textDim }}>Unsaved changes</span>
-							)}
-						</div>
-
-						{/* Save button - right side (visible in both edit and preview when dirty) */}
-						{isDirty && !isLocked ? (
-							<button
-								onClick={handleSave}
-								className={`group relative ${isCompact ? 'p-1.5' : 'px-2 py-0.5'} rounded text-xs transition-colors hover:opacity-80 flex items-center gap-1`}
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
-									border: `1px solid ${theme.colors.accent}`,
-								}}
-								title={`Save changes (${formatShortcutKeys(['Meta', 's'])})`}
-							>
-								{isCompact ? (
-									<Save className="w-3.5 h-3.5" />
-								) : (
-									'Save'
-								)}
-								{/* Keyboard shortcut overlay on hover - only show in non-compact mode */}
-								{!isCompact && (
-									<span
-										className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
-										style={{
-											backgroundColor: theme.colors.bgMain,
-											color: theme.colors.textDim,
-											border: `1px solid ${theme.colors.border}`,
-										}}
-									>
-										{formatShortcutKeys(['Meta', 's'])}
-									</span>
-								)}
-							</button>
-						) : (
-							<div />
+									{taskCounts.completed}
+								</span>{' '}
+								of <span style={{ color: theme.colors.accent }}>{taskCounts.total}</span> task
+								{taskCounts.total !== 1 ? 's' : ''}
+								{!isCompact && ' completed'}
+							</span>
+						)}
+						{tokenCount !== null && (
+							<span style={{ color: theme.colors.textDim }}>
+								<span className="opacity-60">Tokens:</span>{' '}
+								<span style={{ color: theme.colors.accent }}>{formatTokenCount(tokenCount)}</span>
+							</span>
+						)}
+						{taskCounts.total === 0 && tokenCount === null && isDirty && !isLocked && (
+							<span style={{ color: theme.colors.textDim }}>Unsaved changes</span>
 						)}
 					</div>
-				)}
+
+					{/* Save button - right side (visible in both edit and preview when dirty) */}
+					{isDirty && !isLocked ? (
+						<button
+							onClick={handleSave}
+							className={`group relative ${isCompact ? 'p-1.5' : 'px-2 py-0.5'} rounded text-xs transition-colors hover:opacity-80 flex items-center gap-1`}
+							style={{
+								backgroundColor: theme.colors.accent,
+								color: theme.colors.accentForeground,
+								border: `1px solid ${theme.colors.accent}`,
+							}}
+							title={`Save changes (${formatShortcutKeys(['Meta', 's'])})`}
+						>
+							{isCompact ? <Save className="w-3.5 h-3.5" /> : 'Save'}
+							{/* Keyboard shortcut overlay on hover - only show in non-compact mode */}
+							{!isCompact && (
+								<span
+									className="absolute -top-7 left-1/2 -translate-x-1/2 px-1.5 py-0.5 rounded text-[10px] whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none"
+									style={{
+										backgroundColor: theme.colors.bgMain,
+										color: theme.colors.textDim,
+										border: `1px solid ${theme.colors.border}`,
+									}}
+								>
+									{formatShortcutKeys(['Meta', 's'])}
+								</span>
+							)}
+						</button>
+					) : (
+						<div />
+					)}
+				</div>
+			)}
 
 			{/* Help Modal */}
 			{helpModalOpen && (

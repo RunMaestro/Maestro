@@ -40,12 +40,21 @@ vi.mock('electron-store', () => {
 	};
 });
 
+// Mock wrapSpawnWithSsh so we can verify it's called for SSH sessions
+const mockWrapSpawnWithSsh = vi.fn();
+vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
+}));
+
 import {
 	extractMentions,
 	routeUserMessage,
 	routeModeratorResponse,
 	routeAgentResponse,
 	getGroupChatReadOnlyState,
+	setGetSessionsCallback,
+	setSshStore,
+	type SessionInfo,
 } from '../../../main/group-chat/group-chat-router';
 import {
 	spawnModerator,
@@ -749,6 +758,147 @@ describe('group-chat-router', () => {
 
 			const messages = await readLog(chat.logPath);
 			expect(messages.filter((m) => m.from === 'Agent1' || m.from === 'Agent2')).toHaveLength(2);
+		});
+	});
+
+	// ===========================================================================
+	// Test 5.7: SSH remote execution for group chat participants
+	// ===========================================================================
+	describe('SSH remote participant support', () => {
+		const sshRemoteConfig = {
+			enabled: true,
+			remoteId: 'remote-1',
+			workingDirOverride: '/home/user/project',
+		};
+
+		const mockSshStore = {
+			getSshRemotes: vi.fn().mockReturnValue([
+				{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
+			]),
+		};
+
+		beforeEach(() => {
+			// Configure the SSH wrapping mock to return transformed spawn config
+			mockWrapSpawnWithSsh.mockResolvedValue({
+				command: 'ssh',
+				args: ['-t', 'user@pedtome.local', 'claude', '--print'],
+				cwd: '/home/user/project',
+				prompt: 'test prompt',
+				customEnvVars: {},
+				sshRemoteUsed: { name: 'PedTome' },
+			});
+		});
+
+		afterEach(() => {
+			// Clear the module-level callbacks after SSH tests
+			setGetSessionsCallback(() => []);
+			mockWrapSpawnWithSsh.mockReset();
+		});
+
+		it('user-mention auto-add passes sshRemoteConfig and sshStore to addParticipant', async () => {
+			const chat = await createTestChatWithModerator('SSH User Mention Test');
+
+			// Set up a session with SSH config that the router can discover
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-1',
+				name: 'RemoteAgent',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+
+			// User mentions @RemoteAgent — this should auto-add with SSH config
+			await routeUserMessage(
+				chat.id,
+				'@RemoteAgent: please help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// The SSH wrapper should have been called when addParticipant spawned the agent
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: expect.any(String),
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+		});
+
+		it('moderator-mention participant spawn applies SSH wrapping', async () => {
+			const chat = await createTestChatWithModerator('SSH Moderator Mention Test');
+
+			// Set up session with SSH config
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-2',
+				name: 'SSHWorker',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+
+			// Add the participant (this triggers SSH wrapping during spawn)
+			await addParticipant(
+				chat.id,
+				'SSHWorker',
+				'claude-code',
+				mockProcessManager,
+				'/home/user/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+
+			mockWrapSpawnWithSsh.mockClear();
+
+			// Moderator mentions the SSH participant — batch spawn should use SSH wrapping
+			await routeModeratorResponse(
+				chat.id,
+				'@SSHWorker: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: expect.any(String),
+					agentBinaryName: 'claude',
+				}),
+				sshRemoteConfig,
+				mockSshStore
+			);
+		});
+
+		it('does not apply SSH wrapping for non-SSH sessions', async () => {
+			const chat = await createTestChatWithModerator('No SSH Test');
+
+			// Session without SSH config
+			const localSession: SessionInfo = {
+				id: 'ses-local-1',
+				name: 'LocalAgent',
+				toolType: 'claude-code',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [localSession]);
+			setSshStore(mockSshStore);
+
+			await routeUserMessage(
+				chat.id,
+				'@LocalAgent: help please',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// SSH wrapper should NOT be called for local sessions
+			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
 		});
 	});
 });

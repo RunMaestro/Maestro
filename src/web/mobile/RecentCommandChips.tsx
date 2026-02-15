@@ -13,7 +13,7 @@
  * - Fades out for long commands with ellipsis
  */
 
-import React, { useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useThemeColors } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
 import type { CommandHistoryEntry } from '../hooks/useCommandHistory';

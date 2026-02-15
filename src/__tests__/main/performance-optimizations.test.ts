@@ -29,8 +29,8 @@ describe('Group Chat Session ID Patterns', () => {
 	const REGEX_PARTICIPANT_FALLBACK = /^group-chat-(.+)-participant-([^-]+)-/;
 
 	// Web broadcast patterns
-	const REGEX_AI_SUFFIX = /-ai-[^-]+$/;
-	const REGEX_AI_TAB_ID = /-ai-([^-]+)$/;
+	const REGEX_AI_SUFFIX = /-ai-.+$/;
+	const REGEX_AI_TAB_ID = /-ai-(.+)$/;
 
 	describe('REGEX_MODERATOR_SESSION', () => {
 		it('should match moderator session IDs', () => {
@@ -163,40 +163,39 @@ describe('Group Chat Session ID Patterns', () => {
 
 	describe('REGEX_AI_SUFFIX', () => {
 		it('should match session IDs with -ai- suffix', () => {
-			const sessionId = 'session-123-ai-tab1';
-			expect(REGEX_AI_SUFFIX.test(sessionId)).toBe(true);
+			expect(REGEX_AI_SUFFIX.test('session-123-ai-tab1')).toBe(true);
 		});
 
-		it('should remove -ai- suffix correctly', () => {
-			const sessionId = 'session-123-ai-tab1';
+		it('should match session IDs with UUID tab IDs', () => {
+			expect(REGEX_AI_SUFFIX.test('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb')).toBe(true);
+		});
+
+		it('should remove -ai- suffix correctly with UUID tab IDs', () => {
+			const sessionId = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
 			const baseSessionId = sessionId.replace(REGEX_AI_SUFFIX, '');
-			expect(baseSessionId).toBe('session-123');
+			expect(baseSessionId).toBe('51cee651-6629-4de8-abdd-1c1540555f2d');
 		});
 
 		it('should not match session IDs without -ai- suffix', () => {
-			const sessionId = 'session-123-terminal';
-			expect(REGEX_AI_SUFFIX.test(sessionId)).toBe(false);
+			expect(REGEX_AI_SUFFIX.test('session-123-terminal')).toBe(false);
 		});
 	});
 
 	describe('REGEX_AI_TAB_ID', () => {
-		it('should extract tab ID from session ID', () => {
-			const sessionId = 'session-123-ai-tab1';
-			const match = sessionId.match(REGEX_AI_TAB_ID);
+		it('should extract simple tab ID from session ID', () => {
+			const match = 'session-123-ai-tab1'.match(REGEX_AI_TAB_ID);
 			expect(match).not.toBeNull();
 			expect(match![1]).toBe('tab1');
 		});
 
-		it('should handle complex tab IDs', () => {
-			const sessionId = 'session-123-ai-abc123xyz';
-			const match = sessionId.match(REGEX_AI_TAB_ID);
+		it('should extract UUID tab ID from session ID', () => {
+			const match = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_TAB_ID);
 			expect(match).not.toBeNull();
-			expect(match![1]).toBe('abc123xyz');
+			expect(match![1]).toBe('73aaeb23-6673-45a4-8fdf-c769802f79bb');
 		});
 
 		it('should return null for non-AI sessions', () => {
-			const sessionId = 'session-123-terminal';
-			const match = sessionId.match(REGEX_AI_TAB_ID);
+			const match = 'session-123-terminal'.match(REGEX_AI_TAB_ID);
 			expect(match).toBeNull();
 		});
 	});

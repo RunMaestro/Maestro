@@ -8,7 +8,7 @@
  * - Allow users to suppress this message for future sessions
  */
 
-import React, { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback } from 'react';
 import {
 	AlertTriangle,
 	Bug,
@@ -157,7 +157,7 @@ export function WindowsWarningModal({
 					<button
 						type="button"
 						onClick={() =>
-							window.maestro.shell.openExternal('https://github.com/pedramamini/Maestro/issues')
+							window.maestro.shell.openExternal('https://github.com/RunMaestro/Maestro/issues')
 						}
 						className="w-full flex items-start gap-3 p-3 rounded-lg border hover:bg-white/5 transition-colors text-left"
 						style={{ borderColor: theme.colors.border }}

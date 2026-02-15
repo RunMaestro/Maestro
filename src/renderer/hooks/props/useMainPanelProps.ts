@@ -231,6 +231,7 @@ export interface UseMainPanelPropsDeps {
 	handleFileTabEditContentChange: (tabId: string, editContent: string | undefined, savedContent?: string) => void;
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;
+	handleReloadFileTab: (tabId: string) => void;
 
 	handleScrollPositionChange: (scrollTop: number) => void;
 	handleAtBottomChange: (isAtBottom: boolean) => void;
@@ -284,6 +285,9 @@ export interface UseMainPanelPropsDeps {
 
 	// File tree refresh
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
+
+	// Open saved file in tab
+	onOpenSavedFileInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void;
 
 	// Complex wizard handlers (passed through from App.tsx)
 	onWizardComplete?: () => void;
@@ -427,6 +431,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onFileTabEditContentChange: deps.handleFileTabEditContentChange,
 			onFileTabScrollPositionChange: deps.handleFileTabScrollPositionChange,
 			onFileTabSearchQueryChange: deps.handleFileTabSearchQueryChange,
+			onReloadFileTab: deps.handleReloadFileTab,
 			onToggleTabSaveToHistory: deps.handleToggleTabSaveToHistory,
 			onToggleTabShowThinking: deps.handleToggleTabShowThinking,
 			onScrollPositionChange: deps.handleScrollPositionChange,
@@ -517,6 +522,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onToggleWizardShowThinking: deps.onToggleWizardShowThinking,
 			// File tree refresh
 			refreshFileTree: deps.refreshFileTree,
+			// Open saved file in tab
+			onOpenSavedFileInTab: deps.onOpenSavedFileInTab,
 		}),
 		[
 			// Primitive dependencies for minimal re-computation
@@ -664,6 +671,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleFileTabEditContentChange,
 			deps.handleFileTabScrollPositionChange,
 			deps.handleFileTabSearchQueryChange,
+			deps.handleReloadFileTab,
 			deps.handleScrollPositionChange,
 			deps.handleAtBottomChange,
 			deps.handleMainPanelInputBlur,
@@ -703,6 +711,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.onToggleWizardShowThinking,
 			// File tree refresh
 			deps.refreshFileTree,
+			// Open saved file in tab
+			deps.onOpenSavedFileInTab,
 			// Refs (stable, but included for completeness)
 			deps.inputRef,
 			deps.logsEndRef,

@@ -96,7 +96,7 @@ If you encounter deep-seated issues that are difficult to diagnose, Maestro can 
 1. Press `Cmd+K` (Mac) or `Ctrl+K` (Windows/Linux) to open Quick Actions
 2. Search for "Create Debug Package"
 3. Choose a save location for the `.zip` file
-4. Attach the file to your [GitHub issue](https://github.com/pedramamini/Maestro/issues)
+4. Attach the file to your [GitHub issue](https://github.com/RunMaestro/Maestro/issues)
 
 ### What's Included
 
@@ -174,7 +174,7 @@ Cross-filesystem operations between WSL and Windows are unreliable for npm's fil
 **Solution:** Clone and install from the Linux filesystem:
 ```bash
 cd ~
-git clone https://github.com/pedramamini/maestro.git
+git clone https://github.com/RunMaestro/Maestro.git
 cd maestro
 npm install
 ```
@@ -202,6 +202,6 @@ For new projects, always clone to the Linux filesystem from the start.
 
 ## Getting Help
 
-- **GitHub Issues**: [Report bugs or request features](https://github.com/pedramamini/Maestro/issues)
+- **GitHub Issues**: [Report bugs or request features](https://github.com/RunMaestro/Maestro/issues)
 - **Discord**: [Join the community](https://runmaestro.ai/discord)
-- **Documentation**: [Docs site](https://docs.runmaestro.ai), [CONTRIBUTING.md](https://github.com/pedramamini/Maestro/blob/main/CONTRIBUTING.md), and [ARCHITECTURE.md](https://github.com/pedramamini/Maestro/blob/main/ARCHITECTURE.md)
+- **Documentation**: [Docs site](https://docs.runmaestro.ai), [CONTRIBUTING.md](https://github.com/RunMaestro/Maestro/blob/main/CONTRIBUTING.md), and [ARCHITECTURE.md](https://github.com/RunMaestro/Maestro/blob/main/ARCHITECTURE.md)

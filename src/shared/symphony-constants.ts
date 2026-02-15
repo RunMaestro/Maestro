@@ -6,13 +6,16 @@ import type { ContributorStats } from './symphony-types';
 
 // Registry URL (hosted in Maestro repo)
 export const SYMPHONY_REGISTRY_URL =
-  'https://raw.githubusercontent.com/pedramamini/Maestro/main/symphony-registry.json';
+  'https://raw.githubusercontent.com/RunMaestro/Maestro/main/symphony-registry.json';
 
 // GitHub API base
 export const GITHUB_API_BASE = 'https://api.github.com';
 
 // Issue label to look for
 export const SYMPHONY_ISSUE_LABEL = 'runmaestro.ai';
+
+// Label that marks an issue as blocked (grayed out in UI)
+export const SYMPHONY_BLOCKING_LABEL = 'blocking';
 
 // Cache settings
 export const REGISTRY_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours

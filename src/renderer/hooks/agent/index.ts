@@ -91,3 +91,7 @@ export type {
 	TabSummarizeState,
 	UseSummarizeAndContinueResult,
 } from './useSummarizeAndContinue';
+
+// Agent IPC listeners (process event routing)
+export { useAgentListeners, getErrorTitleForType } from './useAgentListeners';
+export type { UseAgentListenersDeps } from './useAgentListeners';

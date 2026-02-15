@@ -1,9 +1,11 @@
 /**
  * uiStore - Zustand store for centralized UI layout state management
  *
- * Replaces UILayoutContext. All sidebar, focus, file explorer, notification,
- * and editing states live here. Components subscribe to individual slices
- * via selectors to avoid unnecessary re-renders.
+ * Replaces UILayoutContext. All sidebar, focus, notification, and editing
+ * states live here. Components subscribe to individual slices via selectors
+ * to avoid unnecessary re-renders.
+ *
+ * File explorer UI state has been moved to fileExplorerStore.
  *
  * Can be used outside React via useUIStore.getState() / useUIStore.setState().
  */
@@ -32,11 +34,6 @@ export interface UIStoreState {
 	// Session sidebar selection
 	selectedSidebarIndex: number;
 
-	// File explorer
-	selectedFileIndex: number;
-	fileTreeFilter: string;
-	fileTreeFilterOpen: boolean;
-
 	// Flash notifications
 	flashNotification: string | null;
 	successFlashNotification: string | null;
@@ -44,6 +41,15 @@ export interface UIStoreState {
 	// Output search
 	outputSearchOpen: boolean;
 	outputSearchQuery: string;
+
+	// Session filter (sidebar agent search)
+	sessionFilterOpen: boolean;
+
+	// History panel search
+	historySearchFilterOpen: boolean;
+
+	// Group chat history panel search
+	groupChatHistorySearchFilterOpen: boolean;
 
 	// Drag and drop (session dragging in sidebar)
 	draggingSessionId: string | null;
@@ -79,11 +85,6 @@ export interface UIStoreActions {
 	// Session sidebar selection
 	setSelectedSidebarIndex: (index: number | ((prev: number) => number)) => void;
 
-	// File explorer
-	setSelectedFileIndex: (index: number | ((prev: number) => number)) => void;
-	setFileTreeFilter: (filter: string | ((prev: string) => string)) => void;
-	setFileTreeFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
-
 	// Flash notifications
 	setFlashNotification: (msg: string | null | ((prev: string | null) => string | null)) => void;
 	setSuccessFlashNotification: (
@@ -93,6 +94,15 @@ export interface UIStoreActions {
 	// Output search
 	setOutputSearchOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 	setOutputSearchQuery: (query: string | ((prev: string) => string)) => void;
+
+	// Session filter (sidebar agent search)
+	setSessionFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+
+	// History panel search
+	setHistorySearchFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+
+	// Group chat history panel search
+	setGroupChatHistorySearchFilterOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 
 	// Drag and drop
 	setDraggingSessionId: (id: string | null | ((prev: string | null) => string | null)) => void;
@@ -123,13 +133,13 @@ export const useUIStore = create<UIStore>()((set) => ({
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
 	selectedSidebarIndex: 0,
-	selectedFileIndex: 0,
-	fileTreeFilter: '',
-	fileTreeFilterOpen: false,
 	flashNotification: null,
 	successFlashNotification: null,
 	outputSearchOpen: false,
 	outputSearchQuery: '',
+	sessionFilterOpen: false,
+	historySearchFilterOpen: false,
+	groupChatHistorySearchFilterOpen: false,
 	draggingSessionId: null,
 	editingGroupId: null,
 	editingSessionId: null,
@@ -158,17 +168,20 @@ export const useUIStore = create<UIStore>()((set) => ({
 	setSelectedSidebarIndex: (v) =>
 		set((s) => ({ selectedSidebarIndex: resolve(v, s.selectedSidebarIndex) })),
 
-	setSelectedFileIndex: (v) => set((s) => ({ selectedFileIndex: resolve(v, s.selectedFileIndex) })),
-	setFileTreeFilter: (v) => set((s) => ({ fileTreeFilter: resolve(v, s.fileTreeFilter) })),
-	setFileTreeFilterOpen: (v) =>
-		set((s) => ({ fileTreeFilterOpen: resolve(v, s.fileTreeFilterOpen) })),
-
 	setFlashNotification: (v) => set((s) => ({ flashNotification: resolve(v, s.flashNotification) })),
 	setSuccessFlashNotification: (v) =>
 		set((s) => ({ successFlashNotification: resolve(v, s.successFlashNotification) })),
 
 	setOutputSearchOpen: (v) => set((s) => ({ outputSearchOpen: resolve(v, s.outputSearchOpen) })),
 	setOutputSearchQuery: (v) => set((s) => ({ outputSearchQuery: resolve(v, s.outputSearchQuery) })),
+
+	setSessionFilterOpen: (v) => set((s) => ({ sessionFilterOpen: resolve(v, s.sessionFilterOpen) })),
+	setHistorySearchFilterOpen: (v) =>
+		set((s) => ({ historySearchFilterOpen: resolve(v, s.historySearchFilterOpen) })),
+	setGroupChatHistorySearchFilterOpen: (v) =>
+		set((s) => ({
+			groupChatHistorySearchFilterOpen: resolve(v, s.groupChatHistorySearchFilterOpen),
+		})),
 
 	setDraggingSessionId: (v) => set((s) => ({ draggingSessionId: resolve(v, s.draggingSessionId) })),
 

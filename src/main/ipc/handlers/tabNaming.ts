@@ -92,7 +92,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				// Generate a unique session ID for this ephemeral request
 				const sessionId = `tab-naming-${uuidv4()}`;
 
-				logger.debug('Starting tab naming request', LOG_CONTEXT, {
+				logger.info('Starting tab naming request', LOG_CONTEXT, {
 					sessionId,
 					agentType: config.agentType,
 					messageLength: config.userMessage.length,
@@ -216,7 +216,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						};
 
 						// Listen for process exit
-						const onExit = (exitSessionId: string) => {
+						const onExit = (exitSessionId: string, code?: number) => {
 							if (exitSessionId !== sessionId) return;
 
 							// Clean up
@@ -230,8 +230,9 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							// Extract the tab name from the output
 							// The agent should return just the tab name, but we clean up any extra whitespace/formatting
 							const tabName = extractTabName(output);
-							logger.debug('Tab naming completed', LOG_CONTEXT, {
+							logger.info('Tab naming completed', LOG_CONTEXT, {
 								sessionId,
+								exitCode: code,
 								outputLength: output.length,
 								tabName,
 							});

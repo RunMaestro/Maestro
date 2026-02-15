@@ -23,7 +23,7 @@ vi.mock('../../main/utils/pricing', () => ({
 }));
 
 vi.mock('../../main/utils/statsCache', () => ({
-	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/\//g, '-')),
+	encodeClaudeProjectPath: vi.fn((p: string) => p.replace(/[^a-zA-Z0-9]/g, '-')),
 }));
 
 vi.mock('../../main/utils/remote-fs', () => ({

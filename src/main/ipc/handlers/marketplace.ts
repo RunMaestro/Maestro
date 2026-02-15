@@ -33,7 +33,7 @@ import type { MaestroSettings } from './persistence';
 // Constants
 // ============================================================================
 
-const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/pedramamini/Maestro-Playbooks/main';
+const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main';
 const MANIFEST_URL = `${GITHUB_RAW_BASE}/manifest.json`;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const LOG_CONTEXT = '[Marketplace]';

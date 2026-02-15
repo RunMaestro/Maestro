@@ -10,7 +10,7 @@
   "license": "AGPL 3.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pedramamini/maestro.git"
+    "url": "https://github.com/RunMaestro/Maestro.git"
   },
   "bin": {
     "maestro-cli": "./dist/cli/maestro-cli.js"
@@ -61,7 +61,7 @@
     "productName": "Maestro",
     "publish": {
       "provider": "github",
-      "owner": "pedramamini",
+      "owner": "RunMaestro",
       "repo": "Maestro"
     },
     "directories": {

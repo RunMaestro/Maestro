@@ -27,7 +27,7 @@ const createMockRelease = (
 	tag_name: 'v1.0.0',
 	name: 'Version 1.0.0',
 	body: 'Release notes',
-	html_url: 'https://github.com/pedramamini/Maestro/releases/tag/v1.0.0',
+	html_url: 'https://github.com/RunMaestro/Maestro/releases/tag/v1.0.0',
 	published_at: '2024-01-15T12:00:00Z',
 	prerelease: false,
 	draft: false,

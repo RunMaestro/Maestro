@@ -1070,6 +1070,27 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 								return null; // Not a git repo
 							}
 
+							// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
+							// Without this check, subdirectories like "build/" or "src/" inside a worktree
+							// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
+							const toplevelResult = await execGit(
+								['rev-parse', '--show-toplevel'],
+								subdirPath,
+								sshRemote
+							);
+							if (toplevelResult.exitCode !== 0) {
+								return null; // Git command failed — treat as invalid
+							}
+							const toplevel = toplevelResult.stdout.trim();
+							// For SSH, compare as-is; for local, resolve to handle symlinks
+							const normalizedSubdir = sshRemote
+								? subdirPath
+								: path.resolve(subdirPath);
+							const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
+							if (normalizedSubdir !== normalizedToplevel) {
+								return null; // Subdirectory inside a repo, not a repo/worktree root
+							}
+
 							// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
 							const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
 								execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
@@ -1203,6 +1224,19 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							);
 							if (isInsideWorkTree.exitCode !== 0) {
 								return; // Not a git repo
+							}
+
+							// Verify this IS a worktree/repo root, not a subdirectory inside one
+							const toplevelResult = await execFileNoThrow(
+								'git',
+								['rev-parse', '--show-toplevel'],
+								dirPath
+							);
+							if (toplevelResult.exitCode !== 0) {
+								return; // Git command failed — skip
+							}
+							if (path.resolve(dirPath) !== path.resolve(toplevelResult.stdout.trim())) {
+								return; // Subdirectory inside a repo, not a worktree root
 							}
 
 							// Get branch name

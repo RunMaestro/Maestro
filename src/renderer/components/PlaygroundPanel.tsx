@@ -9,6 +9,7 @@ import {
 	Copy,
 	Check,
 	Music,
+	Wand2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import type { Theme, AutoRunStats, ThemeMode } from '../types';
@@ -26,7 +27,7 @@ interface PlaygroundPanelProps {
 	onClose: () => void;
 }
 
-type TabId = 'achievements' | 'confetti';
+type TabId = 'achievements' | 'confetti' | 'baton';
 
 interface Tab {
 	id: TabId;
@@ -37,7 +38,22 @@ interface Tab {
 const TABS: Tab[] = [
 	{ id: 'achievements', label: 'Achievements', icon: <Trophy className="w-4 h-4" /> },
 	{ id: 'confetti', label: 'Confetti', icon: <Sparkles className="w-4 h-4" /> },
+	{ id: 'baton', label: 'Baton', icon: <Wand2 className="w-4 h-4" /> },
 ];
+
+// Baton sparkle animation defaults
+const BATON_DEFAULTS = {
+	duration: 3,
+	fadeOutStart: 35,
+	fadeInStart: 65,
+	translateAmount: 0.5,
+	staggerOffset: 0.5,
+	easing: 'ease-in-out' as const,
+};
+
+// Easing options for the sparkle animation
+const EASING_OPTIONS = ['ease-in-out', 'ease-in', 'ease-out', 'linear', 'cubic-bezier(0.4, 0, 0.2, 1)'] as const;
+type EasingOption = typeof EASING_OPTIONS[number];
 
 // Available confetti shapes
 type ConfettiShape = 'square' | 'circle' | 'star';
@@ -122,6 +138,17 @@ export function PlaygroundPanel({ theme, themeMode, onClose }: PlaygroundPanelPr
 	const [confettiColors, setConfettiColors] = useState<string[]>(DEFAULT_CONFETTI_COLORS);
 	const [selectedOrigins, setSelectedOrigins] = useState<Set<string>>(new Set(['2-1'])); // Default: bottom center
 	const [copySuccess, setCopySuccess] = useState(false);
+
+	// Baton sparkle playground state
+	const [batonDuration, setBatonDuration] = useState(BATON_DEFAULTS.duration);
+	const [batonFadeOutStart, setBatonFadeOutStart] = useState(BATON_DEFAULTS.fadeOutStart);
+	const [batonFadeInStart, setBatonFadeInStart] = useState(BATON_DEFAULTS.fadeInStart);
+	const [batonTranslate, setBatonTranslate] = useState(BATON_DEFAULTS.translateAmount);
+	const [batonStagger, setBatonStagger] = useState(BATON_DEFAULTS.staggerOffset);
+	const [batonEasing, setBatonEasing] = useState<EasingOption>(BATON_DEFAULTS.easing);
+	const [batonActive, setBatonActive] = useState(true);
+	const [batonCopySuccess, setBatonCopySuccess] = useState(false);
+	const batonStyleRef = useRef<HTMLStyleElement | null>(null);
 
 	// Handle keyboard shortcuts for tab switching
 	useEffect(() => {
@@ -416,6 +443,115 @@ confetti({
 		confettiShapes,
 		confettiColors,
 	]);
+
+	// Generate dynamic CSS for baton sparkle animation
+	// Stagger delays are non-uniform for organic feel
+	const batonAnimationCSS = useCallback(() => {
+		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map(
+			(multiplier) => (multiplier * batonStagger).toFixed(2)
+		);
+
+		return `
+@keyframes playground-wand-sparkle {
+	0%, 100% {
+		opacity: 1;
+		transform: translate(0, 0);
+	}
+	${batonFadeOutStart}% {
+		opacity: 0;
+		transform: translate(${batonTranslate}px, ${-batonTranslate}px);
+	}
+	${batonFadeInStart}% {
+		opacity: 0;
+		transform: translate(${-batonTranslate}px, ${batonTranslate}px);
+	}
+}
+
+/* Target sparkle paths (3rd through 8th children are sparkle decorations) */
+svg.baton-sparkle-active path:nth-child(n+3) {
+	animation: playground-wand-sparkle ${batonDuration}s ${batonEasing} infinite;
+}
+
+${staggerDelays.map((delay, i) => `svg.baton-sparkle-active path:nth-child(${i + 3}) { animation-delay: ${delay}s; }`).join('\n')}
+
+@media (prefers-reduced-motion: reduce) {
+	svg.baton-sparkle-active path:nth-child(n+3) {
+		animation: none;
+	}
+}`;
+	}, [batonDuration, batonFadeOutStart, batonFadeInStart, batonTranslate, batonStagger, batonEasing]);
+
+	// Inject/update dynamic style element for baton preview
+	useEffect(() => {
+		if (!batonStyleRef.current) {
+			batonStyleRef.current = document.createElement('style');
+			batonStyleRef.current.setAttribute('data-baton-playground', 'true');
+			document.head.appendChild(batonStyleRef.current);
+		}
+		batonStyleRef.current.textContent = batonAnimationCSS();
+
+		return () => {
+			if (batonStyleRef.current) {
+				document.head.removeChild(batonStyleRef.current);
+				batonStyleRef.current = null;
+			}
+		};
+	}, [batonAnimationCSS]);
+
+	// Reset baton to defaults
+	const resetBatonDefaults = () => {
+		setBatonDuration(BATON_DEFAULTS.duration);
+		setBatonFadeOutStart(BATON_DEFAULTS.fadeOutStart);
+		setBatonFadeInStart(BATON_DEFAULTS.fadeInStart);
+		setBatonTranslate(BATON_DEFAULTS.translateAmount);
+		setBatonStagger(BATON_DEFAULTS.staggerOffset);
+		setBatonEasing(BATON_DEFAULTS.easing);
+		setBatonActive(true);
+	};
+
+	// Copy baton CSS settings to clipboard
+	const copyBatonSettings = useCallback(async () => {
+		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map(
+			(multiplier) => (multiplier * batonStagger).toFixed(2)
+		);
+
+		const cssSnippet = `/* Wand sparkle animation - sparkle paths vanish/reappear with subtle movement */
+@keyframes wand-sparkle {
+  0%, 100% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  ${batonFadeOutStart}% {
+    opacity: 0;
+    transform: translate(${batonTranslate}px, ${-batonTranslate}px);
+  }
+  ${batonFadeInStart}% {
+    opacity: 0;
+    transform: translate(${-batonTranslate}px, ${batonTranslate}px);
+  }
+}
+
+svg.wand-sparkle-active path:nth-child(n+3) {
+  animation: wand-sparkle ${batonDuration}s ${batonEasing} infinite;
+}
+
+/* Stagger each sparkle for organic feel */
+${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 3}) { animation-delay: ${delay}s; }`).join('\n')}
+
+@media (prefers-reduced-motion: reduce) {
+  svg.wand-sparkle-active path:nth-child(n+3) {
+    animation: none;
+  }
+}`;
+
+		try {
+			await navigator.clipboard.writeText(cssSnippet);
+			setBatonCopySuccess(true);
+			setTimeout(() => setBatonCopySuccess(false), 2000);
+		} catch (err) {
+			console.error('Failed to copy baton settings:', err);
+		}
+	}, [batonDuration, batonFadeOutStart, batonFadeInStart, batonTranslate, batonStagger, batonEasing]);
 
 	return (
 		<>
@@ -1085,6 +1221,311 @@ confetti({
 										<RotateCcw className="w-4 h-4" />
 										Reset to Defaults
 									</button>
+								</div>
+							</div>
+						)}
+
+						{activeTab === 'baton' && (
+							<div className="grid grid-cols-2 gap-6">
+								{/* Left column - Preview */}
+								<div className="space-y-6">
+									{/* Large zoomed-in preview */}
+									<div
+										className="p-6 rounded-lg border flex flex-col items-center gap-4"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										<h3 className="text-sm font-bold self-start" style={{ color: theme.colors.textMain }}>
+											Large Preview (4x)
+										</h3>
+										<div
+											className="flex items-center gap-4 p-6 rounded-lg"
+											style={{ backgroundColor: theme.colors.bgSidebar }}
+										>
+											<Wand2
+												className={`w-20 h-20${batonActive ? ' baton-sparkle-active' : ''}`}
+												style={{ color: theme.colors.accent }}
+											/>
+											<div className="flex flex-col gap-1">
+												<span
+													className="font-bold tracking-widest text-3xl"
+													style={{ color: theme.colors.textMain }}
+												>
+													MAESTRO
+												</span>
+												<span className="text-xs" style={{ color: theme.colors.textDim }}>
+													{batonActive ? 'Animation active' : 'Animation paused'}
+												</span>
+											</div>
+										</div>
+									</div>
+
+									{/* Real-size previews */}
+									<div
+										className="p-6 rounded-lg border"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										<h3 className="text-sm font-bold mb-4" style={{ color: theme.colors.textMain }}>
+											Real Size Preview
+										</h3>
+										<div className="flex flex-col gap-4">
+											{/* Expanded sidebar version */}
+											<div className="flex items-center gap-3">
+												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+													Expanded:
+												</span>
+												<div
+													className="flex items-center gap-2 px-4 py-3 rounded-lg"
+													style={{ backgroundColor: theme.colors.bgSidebar }}
+												>
+													<Wand2
+														className={`w-5 h-5${batonActive ? ' baton-sparkle-active' : ''}`}
+														style={{ color: theme.colors.accent }}
+													/>
+													<span
+														className="font-bold tracking-widest text-lg"
+														style={{ color: theme.colors.textMain }}
+													>
+														MAESTRO
+													</span>
+												</div>
+											</div>
+											{/* Collapsed sidebar version */}
+											<div className="flex items-center gap-3">
+												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+													Collapsed:
+												</span>
+												<div
+													className="p-2 rounded-lg"
+													style={{ backgroundColor: theme.colors.bgSidebar }}
+												>
+													<Wand2
+														className={`w-6 h-6${batonActive ? ' baton-sparkle-active' : ''}`}
+														style={{ color: theme.colors.accent }}
+													/>
+												</div>
+											</div>
+											{/* Solo icon at various sizes */}
+											<div className="flex items-center gap-3">
+												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+													Sizes:
+												</span>
+												<div className="flex items-center gap-4">
+													{[3, 4, 5, 6, 8].map((size) => (
+														<div
+															key={size}
+															className="flex flex-col items-center gap-1"
+														>
+															<Wand2
+																className={`w-${size} h-${size}${batonActive ? ' baton-sparkle-active' : ''}`}
+																style={{ color: theme.colors.accent }}
+															/>
+															<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+																{size * 4}px
+															</span>
+														</div>
+													))}
+												</div>
+											</div>
+										</div>
+									</div>
+								</div>
+
+								{/* Right column - Controls */}
+								<div className="space-y-4">
+									{/* Animation toggle */}
+									<div
+										className="p-4 rounded-lg border"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										<div className="flex items-center justify-between mb-3">
+											<h3 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Animation
+											</h3>
+											<button
+												onClick={() => setBatonActive(!batonActive)}
+												className="px-3 py-1 rounded text-sm font-medium transition-colors"
+												style={{
+													backgroundColor: batonActive ? theme.colors.accent : theme.colors.bgMain,
+													color: batonActive ? '#fff' : theme.colors.textMain,
+												}}
+											>
+												{batonActive ? 'Active' : 'Paused'}
+											</button>
+										</div>
+									</div>
+
+									{/* Timing Parameters */}
+									<div
+										className="p-4 rounded-lg border"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										<h3 className="text-sm font-bold mb-3" style={{ color: theme.colors.textMain }}>
+											Timing
+										</h3>
+										<div className="space-y-3">
+											<div>
+												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+													<span>Duration (cycle)</span>
+													<span>{batonDuration.toFixed(1)}s</span>
+												</label>
+												<input
+													type="range"
+													min={0.5}
+													max={8}
+													step={0.1}
+													value={batonDuration}
+													onChange={(e) => setBatonDuration(Number(e.target.value))}
+													className="w-full"
+												/>
+											</div>
+											<div>
+												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+													<span>Fade-out start</span>
+													<span>{batonFadeOutStart}%</span>
+												</label>
+												<input
+													type="range"
+													min={10}
+													max={49}
+													step={1}
+													value={batonFadeOutStart}
+													onChange={(e) => setBatonFadeOutStart(Number(e.target.value))}
+													className="w-full"
+												/>
+											</div>
+											<div>
+												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+													<span>Fade-in start</span>
+													<span>{batonFadeInStart}%</span>
+												</label>
+												<input
+													type="range"
+													min={51}
+													max={90}
+													step={1}
+													value={batonFadeInStart}
+													onChange={(e) => setBatonFadeInStart(Number(e.target.value))}
+													className="w-full"
+												/>
+											</div>
+											<div>
+												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+													<span>Stagger offset</span>
+													<span>{batonStagger.toFixed(2)}s</span>
+												</label>
+												<input
+													type="range"
+													min={0}
+													max={2}
+													step={0.05}
+													value={batonStagger}
+													onChange={(e) => setBatonStagger(Number(e.target.value))}
+													className="w-full"
+												/>
+											</div>
+										</div>
+									</div>
+
+									{/* Movement Parameters */}
+									<div
+										className="p-4 rounded-lg border"
+										style={{
+											borderColor: theme.colors.border,
+											backgroundColor: theme.colors.bgActivity,
+										}}
+									>
+										<h3 className="text-sm font-bold mb-3" style={{ color: theme.colors.textMain }}>
+											Movement
+										</h3>
+										<div className="space-y-3">
+											<div>
+												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+													<span>Translate amount</span>
+													<span>{batonTranslate.toFixed(1)}px</span>
+												</label>
+												<input
+													type="range"
+													min={0}
+													max={3}
+													step={0.1}
+													value={batonTranslate}
+													onChange={(e) => setBatonTranslate(Number(e.target.value))}
+													className="w-full"
+												/>
+											</div>
+											<div>
+												<label className="text-xs mb-1 block" style={{ color: theme.colors.textDim }}>
+													Easing
+												</label>
+												<div className="flex flex-wrap gap-1">
+													{EASING_OPTIONS.map((easing) => (
+														<button
+															key={easing}
+															onClick={() => setBatonEasing(easing)}
+															className="px-2 py-1 rounded text-xs font-medium transition-colors"
+															style={{
+																backgroundColor: batonEasing === easing
+																	? theme.colors.accent
+																	: theme.colors.bgMain,
+																color: batonEasing === easing ? '#fff' : theme.colors.textMain,
+															}}
+														>
+															{easing.startsWith('cubic') ? 'material' : easing}
+														</button>
+													))}
+												</div>
+											</div>
+										</div>
+									</div>
+
+									{/* Action buttons */}
+									<div className="space-y-2">
+										<button
+											onClick={copyBatonSettings}
+											className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
+											style={{
+												backgroundColor: batonCopySuccess ? theme.colors.success : theme.colors.bgMain,
+												color: batonCopySuccess ? '#fff' : theme.colors.textMain,
+												border: `1px solid ${batonCopySuccess ? theme.colors.success : theme.colors.border}`,
+											}}
+										>
+											{batonCopySuccess ? (
+												<>
+													<Check className="w-4 h-4" />
+													Copied CSS!
+												</>
+											) : (
+												<>
+													<Copy className="w-4 h-4" />
+													Copy CSS Settings
+												</>
+											)}
+										</button>
+
+										<button
+											onClick={resetBatonDefaults}
+											className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors border"
+											style={{
+												borderColor: theme.colors.border,
+												color: theme.colors.textDim,
+											}}
+										>
+											<RotateCcw className="w-4 h-4" />
+											Reset to Defaults
+										</button>
+									</div>
 								</div>
 							</div>
 						)}

@@ -841,8 +841,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							)}
 							<textarea
 								ref={inputRef}
-								className={`flex-1 bg-transparent text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[2.5rem] scrollbar-thin`}
-								style={{ color: theme.colors.textMain, maxHeight: '7rem' }}
+								className={`flex-1 bg-transparent text-sm outline-none ${isTerminalMode ? 'pl-1.5' : 'pl-3'} pt-3 pr-3 resize-none min-h-[3.5rem] scrollbar-thin`}
+								style={{ color: theme.colors.textMain, maxHeight: '11rem' }}
 								placeholder={
 									isTerminalMode
 										? 'Run shell command...'
@@ -907,7 +907,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									const textarea = e.target;
 									requestAnimationFrame(() => {
 										textarea.style.height = 'auto';
-										textarea.style.height = `${Math.min(textarea.scrollHeight, 112)}px`;
+										textarea.style.height = `${Math.min(textarea.scrollHeight, 176)}px`;
 									});
 								}}
 								onKeyDown={handleInputKeyDown}
@@ -917,7 +917,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									handleDrop(e);
 								}}
 								onDragOver={(e) => e.preventDefault()}
-								rows={1}
+								rows={2}
 							/>
 						</div>
 
@@ -1099,7 +1099,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 						</div>
 					</div>
 					{/* Context Warning Sash - AI mode only, appears below input when context usage is high */}
-					{session.inputMode === 'ai' && onSummarizeAndContinue && (
+					{session.inputMode === 'ai' && contextWarningsEnabled && onSummarizeAndContinue && (
 						<ContextWarningSash
 							theme={theme}
 							contextUsage={contextUsage}

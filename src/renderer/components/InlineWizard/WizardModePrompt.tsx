@@ -15,7 +15,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Wand2, FileText, RefreshCw } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { InlineWizardMode } from '../../hooks/useInlineWizard';
+import type { InlineWizardMode } from '../../hooks/batch/useInlineWizard';
 import { Modal } from '../ui/Modal';
 import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
 

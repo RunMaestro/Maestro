@@ -12,7 +12,7 @@ import { SourceDistributionChart } from '../../../../renderer/components/UsageDa
 import { ActivityHeatmap } from '../../../../renderer/components/UsageDashboard/ActivityHeatmap';
 import { DurationTrendsChart } from '../../../../renderer/components/UsageDashboard/DurationTrendsChart';
 import { SummaryCards } from '../../../../renderer/components/UsageDashboard/SummaryCards';
-import type { StatsAggregation } from '../../../../renderer/hooks/useStats';
+import type { StatsAggregation } from '../../../../renderer/hooks/stats/useStats';
 import type { Theme } from '../../../../renderer/types';
 
 // Mock theme for testing
@@ -316,7 +316,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 	it('each metric card has role="group"', () => {
 		render(<SummaryCards data={mockStatsData} theme={mockTheme} />);
 		const groups = screen.getAllByRole('group');
-		expect(groups).toHaveLength(9); // 9 metric cards
+		expect(groups).toHaveLength(10); // 10 metric cards
 	});
 
 	it('metric cards have descriptive aria-labels', () => {
@@ -325,6 +325,7 @@ describe('Chart Accessibility - SummaryCards', () => {
 
 		const expectedLabels = [
 			/Agents/i,
+			/Open Tabs/i,
 			/Total Queries/i,
 			/Queries\/Session/i,
 			/Total Time/i,

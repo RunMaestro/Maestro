@@ -11,7 +11,7 @@ Symphony connects open source maintainers with AI-powered contributors. Maintain
 The registry lives in the main Maestro repository:
 
 ```
-pedramamini/Maestro/
+RunMaestro/Maestro/
 ├── symphony-registry.json    # Central list of all projects
 └── docs/
     └── SYMPHONY_REGISTRY.md  # This documentation
@@ -96,7 +96,7 @@ Before registering, ensure your repository:
 
 ### Registration Steps
 
-1. **Fork** the `pedramamini/Maestro` repository
+1. **Fork** the `RunMaestro/Maestro` repository
 2. **Add your entry** to `symphony-registry.json`:
 
 ```json

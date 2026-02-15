@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Trash2 } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';

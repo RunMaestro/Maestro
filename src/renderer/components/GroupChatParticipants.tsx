@@ -12,6 +12,7 @@ import type { Theme, GroupChatParticipant, SessionState, Shortcut } from '../typ
 import { ParticipantCard } from './ParticipantCard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { buildParticipantColorMap } from '../utils/participantColors';
+import { useResizablePanel } from '../hooks';
 
 interface GroupChatParticipantsProps {
 	theme: Theme;
@@ -52,6 +53,15 @@ export function GroupChatParticipants({
 	moderatorState,
 	moderatorUsage,
 }: GroupChatParticipantsProps): JSX.Element | null {
+	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
+		width,
+		minWidth: 200,
+		maxWidth: 600,
+		settingsKey: 'rightPanelWidth',
+		setWidth: setWidthState,
+		side: 'right',
+	});
+
 	// Generate consistent colors for all participants (including "Moderator" for the moderator card)
 	const participantColors = useMemo(() => {
 		return buildParticipantColorMap(['Moderator', ...participants.map((p) => p.name)], theme);
@@ -96,7 +106,8 @@ export function GroupChatParticipants({
 
 	return (
 		<div
-			className="relative border-l flex flex-col transition-all duration-300"
+			ref={panelRef}
+			className={`relative border-l flex flex-col ${transitionClass}`}
 			style={{
 				width: `${width}px`,
 				backgroundColor: theme.colors.bgSidebar,
@@ -106,27 +117,7 @@ export function GroupChatParticipants({
 			{/* Resize Handle */}
 			<div
 				className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-blue-500 transition-colors z-20"
-				onMouseDown={(e) => {
-					e.preventDefault();
-					const startX = e.clientX;
-					const startWidth = width;
-					let currentWidth = startWidth;
-
-					const handleMouseMove = (moveEvent: MouseEvent) => {
-						const delta = startX - moveEvent.clientX; // Reversed for right panel
-						currentWidth = Math.max(200, Math.min(600, startWidth + delta));
-						setWidthState(currentWidth);
-					};
-
-					const handleMouseUp = () => {
-						window.maestro.settings.set('rightPanelWidth', currentWidth);
-						document.removeEventListener('mousemove', handleMouseMove);
-						document.removeEventListener('mouseup', handleMouseUp);
-					};
-
-					document.addEventListener('mousemove', handleMouseMove);
-					document.addEventListener('mouseup', handleMouseUp);
-				}}
+				onMouseDown={onResizeStart}
 			/>
 			{/* Header with collapse button - h-16 matches GroupChatHeader height */}
 			<div

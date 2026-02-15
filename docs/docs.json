@@ -116,7 +116,7 @@
       },
       {
         "label": "GitHub",
-        "href": "https://github.com/pedramamini/Maestro"
+        "href": "https://github.com/RunMaestro/Maestro"
       },
       {
         "label": "Homepage",
@@ -126,13 +126,13 @@
     "primary": {
       "type": "button",
       "label": "Download",
-      "href": "https://github.com/pedramamini/maestro/releases"
+      "href": "https://github.com/RunMaestro/Maestro/releases"
     }
   },
   "footer": {
     "socials": {
       "discord": "https://runmaestro.ai/discord",
-      "github": "https://github.com/pedramamini/Maestro"
+      "github": "https://github.com/RunMaestro/Maestro"
     }
   }
 }

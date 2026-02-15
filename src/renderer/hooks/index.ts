@@ -75,8 +75,7 @@ export * from './props';
 // ============================================================================
 // Stats Module - Usage statistics and dashboard data
 // ============================================================================
-export { useStats, useComputedStats } from './useStats';
-export type { StatsTimeRange, StatsAggregation, UseStatsReturn, ComputedStats } from './useStats';
+export * from './stats';
 
 // ============================================================================
 // Re-export TransferError types from component for convenience

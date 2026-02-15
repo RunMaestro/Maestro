@@ -7,7 +7,7 @@
  * - Focus: Centers the view on the selected node
  */
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { FileText, ExternalLink, Copy, Focus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';

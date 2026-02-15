@@ -13,9 +13,9 @@
  * - Tooltip on hover with exact values
  */
 
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { Theme } from '../../types';
-import type { StatsAggregation } from '../../hooks/useStats';
+import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
 
 // Metric display mode

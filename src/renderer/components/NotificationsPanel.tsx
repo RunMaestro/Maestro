@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Bell, Volume2, Clock, Square, Check, AlertCircle, Loader2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { SettingCheckbox } from './SettingCheckbox';

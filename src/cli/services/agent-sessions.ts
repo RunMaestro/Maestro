@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { encodeClaudeProjectPath } from '../../shared/pathUtils';
 
 // ============================================================================
 // Constants (inlined from main/constants.ts to avoid Electron dependencies)
@@ -130,10 +131,6 @@ function getSessionOriginInfo(
 // Session Parsing
 // ============================================================================
 
-/** Encode project path the same way Claude Code does: replace / and . with - */
-function encodeClaudeProjectPath(projectPath: string): string {
-	return projectPath.replace(/[/.]/g, '-');
-}
 
 function calculateCost(
 	inputTokens: number,

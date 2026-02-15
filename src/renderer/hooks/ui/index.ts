@@ -39,6 +39,10 @@ export { useHoverTooltip } from './useHoverTooltip';
 export { useThemeStyles } from './useThemeStyles';
 export type { UseThemeStylesDeps, UseThemeStylesReturn, ThemeColors } from './useThemeStyles';
 
+// Resizable panel drag behavior
+export { useResizablePanel } from './useResizablePanel';
+export type { UseResizablePanelOptions, UseResizablePanelReturn } from './useResizablePanel';
+
 // App-level handlers (drag, file, folder operations)
 export { useAppHandlers } from './useAppHandlers';
 export type { UseAppHandlersDeps, UseAppHandlersReturn } from './useAppHandlers';

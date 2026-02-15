@@ -3,10 +3,10 @@
   "lastUpdated": "2025-01-01T00:00:00Z",
   "repositories": [
     {
-      "slug": "pedramamini/Maestro",
+      "slug": "RunMaestro/Maestro",
       "name": "Maestro",
       "description": "Desktop app for managing multiple AI agents with a keyboard-first interface.",
-      "url": "https://github.com/pedramamini/Maestro",
+      "url": "https://github.com/RunMaestro/Maestro",
       "category": "ai-ml",
       "tags": ["electron", "ai", "productivity", "typescript"],
       "maintainer": {

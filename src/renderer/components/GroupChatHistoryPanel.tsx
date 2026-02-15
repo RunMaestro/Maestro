@@ -6,11 +6,12 @@
  * History entries are logged by the moderator when agents complete tasks.
  */
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Check } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
+import { Check, Send, MessageSquare, Layers, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
-import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
+import type { GroupChatHistoryEntry, GroupChatHistoryEntryType } from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
+import { useUIStore } from '../stores/uiStore';
 
 // Lookback period options for the activity graph
 type LookbackPeriod = {
@@ -213,7 +214,7 @@ function GroupChatActivityGraph({
 
 	return (
 		<div
-			className="flex-1 min-w-0 flex flex-col relative mt-0.5"
+			className="w-full flex flex-col relative"
 			title={`${lookbackConfig.label} (right-click to change)`}
 			onContextMenu={handleContextMenu}
 		>
@@ -405,6 +406,26 @@ interface GroupChatHistoryPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 }
 
+// Type filter configuration for group chat history entry types
+const TYPE_FILTER_CONFIG: {
+	type: GroupChatHistoryEntryType;
+	label: string;
+	icon: typeof Send;
+}[] = [
+	{ type: 'delegation', label: 'Delegation', icon: Send },
+	{ type: 'response', label: 'Response', icon: MessageSquare },
+	{ type: 'synthesis', label: 'Synthesis', icon: Layers },
+	{ type: 'error', label: 'Error', icon: AlertTriangle },
+];
+
+// All entry types for default filter state
+const ALL_ENTRY_TYPES = new Set<GroupChatHistoryEntryType>([
+	'delegation',
+	'response',
+	'synthesis',
+	'error',
+]);
+
 export function GroupChatHistoryPanel({
 	theme,
 	groupChatId,
@@ -414,7 +435,19 @@ export function GroupChatHistoryPanel({
 	onJumpToMessage,
 }: GroupChatHistoryPanelProps): JSX.Element {
 	const [lookbackHours, setLookbackHours] = useState<number | null>(24);
+	const [searchFilter, setSearchFilter] = useState('');
+	const [activeFilters, setActiveFilters] = useState<Set<GroupChatHistoryEntryType>>(
+		new Set(ALL_ENTRY_TYPES)
+	);
+	const searchFilterOpen = useUIStore((s) => s.groupChatHistorySearchFilterOpen);
+	const setSearchFilterOpen = useUIStore((s) => s.setGroupChatHistorySearchFilterOpen);
 	const listRef = useRef<HTMLDivElement>(null);
+	const searchInputRef = useRef<HTMLInputElement>(null);
+
+	// Reset search filter state when unmounting
+	useEffect(() => {
+		return () => setSearchFilterOpen(false);
+	}, [setSearchFilterOpen]);
 
 	// Load lookback preference
 	useEffect(() => {
@@ -435,18 +468,91 @@ export function GroupChatHistoryPanel({
 		window.maestro.settings.set(settingsKey, hours);
 	};
 
+	// Toggle a type filter
+	const toggleFilter = useCallback((type: GroupChatHistoryEntryType) => {
+		setActiveFilters((prev) => {
+			const next = new Set(prev);
+			if (next.has(type)) {
+				next.delete(type);
+			} else {
+				next.add(type);
+			}
+			return next;
+		});
+	}, []);
+
+	// Filter entries based on active type filters and search text
+	const filteredEntries = useMemo(
+		() =>
+			entries.filter((entry) => {
+				if (!activeFilters.has(entry.type)) return false;
+
+				if (searchFilter) {
+					const q = searchFilter.toLowerCase();
+					const summaryMatch = entry.summary?.toLowerCase().includes(q);
+					const responseMatch = entry.fullResponse?.toLowerCase().includes(q);
+					const participantMatch = entry.participantName?.toLowerCase().includes(q);
+					if (!summaryMatch && !responseMatch && !participantMatch) return false;
+				}
+
+				return true;
+			}),
+		[entries, activeFilters, searchFilter]
+	);
+
 	// Handle bar click - scroll to entries in that time range
 	const handleBarClick = (bucketStart: number, bucketEnd: number) => {
-		const entriesInBucket = entries.filter(
+		const entriesInBucket = filteredEntries.filter(
 			(e) => e.timestamp >= bucketStart && e.timestamp < bucketEnd
 		);
 		if (entriesInBucket.length > 0 && listRef.current) {
-			// Find first entry element and scroll to it
 			const firstEntryId = entriesInBucket[0].id;
 			const element = listRef.current.querySelector(`[data-entry-id="${firstEntryId}"]`);
 			if (element) {
 				element.scrollIntoView({ block: 'center', behavior: 'smooth' });
 			}
+		}
+	};
+
+	// Keyboard handler for Cmd+F search toggle
+	const handleKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !searchFilterOpen) {
+				e.preventDefault();
+				setSearchFilterOpen(true);
+				setTimeout(() => searchInputRef.current?.focus(), 0);
+			}
+		},
+		[searchFilterOpen, setSearchFilterOpen]
+	);
+
+	// Get pill color for entry type
+	const getTypePillColor = (type: GroupChatHistoryEntryType) => {
+		switch (type) {
+			case 'delegation':
+				return {
+					bg: theme.colors.accent + '20',
+					text: theme.colors.accent,
+					border: theme.colors.accent + '40',
+				};
+			case 'response':
+				return {
+					bg: theme.colors.success + '20',
+					text: theme.colors.success,
+					border: theme.colors.success + '40',
+				};
+			case 'synthesis':
+				return {
+					bg: theme.colors.warning + '20',
+					text: theme.colors.warning,
+					border: theme.colors.warning + '40',
+				};
+			case 'error':
+				return {
+					bg: theme.colors.error + '20',
+					text: theme.colors.error,
+					border: theme.colors.error + '40',
+				};
 		}
 	};
 
@@ -468,11 +574,37 @@ export function GroupChatHistoryPanel({
 	};
 
 	return (
-		<div className="flex-1 flex flex-col overflow-hidden p-3">
+		<div className="flex-1 flex flex-col overflow-hidden p-3" tabIndex={0} onKeyDown={handleKeyDown}>
+			{/* Type Filter Pills */}
+			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
+				{TYPE_FILTER_CONFIG.map(({ type, label, icon: Icon }) => {
+					const isActive = activeFilters.has(type);
+					const colors = getTypePillColor(type);
+					return (
+						<button
+							key={type}
+							onClick={() => toggleFilter(type)}
+							className={`flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-bold uppercase transition-all ${
+								isActive ? 'opacity-100' : 'opacity-40'
+							}`}
+							style={{
+								backgroundColor: isActive ? colors.bg : 'transparent',
+								color: isActive ? colors.text : theme.colors.textDim,
+								border: `1px solid ${isActive ? colors.border : theme.colors.border}`,
+							}}
+							title={`${isActive ? 'Hide' : 'Show'} ${label} entries`}
+						>
+							<Icon className="w-2.5 h-2.5" />
+							{label}
+						</button>
+					);
+				})}
+			</div>
+
 			{/* Activity Graph */}
 			<div className="mb-3">
 				<GroupChatActivityGraph
-					entries={entries}
+					entries={filteredEntries}
 					theme={theme}
 					participantColors={participantColors}
 					lookbackHours={lookbackHours}
@@ -481,20 +613,54 @@ export function GroupChatHistoryPanel({
 				/>
 			</div>
 
+			{/* Search Filter */}
+			{searchFilterOpen && (
+				<div className="mb-3">
+					<input
+						ref={searchInputRef}
+						autoFocus
+						type="text"
+						placeholder="Filter group chat history..."
+						value={searchFilter}
+						onChange={(e) => setSearchFilter(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === 'Escape') {
+								setSearchFilterOpen(false);
+								setSearchFilter('');
+								listRef.current?.focus();
+							}
+						}}
+						className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
+						style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+					/>
+					{searchFilter && (
+						<div className="text-[10px] mt-1 text-right" style={{ color: theme.colors.textDim }}>
+							{filteredEntries.length} result{filteredEntries.length !== 1 ? 's' : ''}
+						</div>
+					)}
+				</div>
+			)}
+
 			{/* History List */}
 			<div ref={listRef} className="flex-1 overflow-y-auto space-y-2 scrollbar-thin">
 				{isLoading ? (
 					<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
-				) : entries.length === 0 ? (
+				) : filteredEntries.length === 0 ? (
 					<div className="text-center py-8 text-xs opacity-50">
-						No task history yet.
-						<br />
-						Entries will appear when agents complete tasks.
+						{entries.length === 0 ? (
+							<>
+								No task history yet.
+								<br />
+								Entries will appear when agents complete tasks.
+							</>
+						) : searchFilter ? (
+							`No entries match "${searchFilter}"`
+						) : (
+							'No entries match the selected filters.'
+						)}
 					</div>
 				) : (
-					entries.map((entry) => {
-						// Prioritize the runtime-generated color map over the stored color
-						// The stored color might be a default gray, but we want consistent colors from buildParticipantColorMap
+					filteredEntries.map((entry) => {
 						const participantColor =
 							participantColors[entry.participantName] ||
 							entry.participantColor ||

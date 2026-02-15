@@ -203,14 +203,6 @@ export interface GroomingConfig {
 }
 
 /**
- * Default configuration for grooming operations.
- */
-const DEFAULT_CONFIG: Required<GroomingConfig> = {
-	timeoutMs: 120000, // 2 minutes
-	defaultAgentType: 'claude-code',
-};
-
-/**
  * Service for grooming and consolidating multiple conversation contexts.
  *
  * @example
@@ -221,11 +213,10 @@ const DEFAULT_CONFIG: Required<GroomingConfig> = {
  * );
  */
 export class ContextGroomingService {
-	private config: Required<GroomingConfig>;
 	private activeGroomingSessionId: string | null = null;
 
-	constructor(config: GroomingConfig = {}) {
-		this.config = { ...DEFAULT_CONFIG, ...config };
+	constructor(_config: GroomingConfig = {}) {
+		// Config reserved for future use (e.g., custom grooming parameters)
 	}
 
 	/**
@@ -399,62 +390,6 @@ Please consolidate the above contexts into a single, coherent summary following 
 		}
 		// Use same 4 chars per token heuristic as contextExtractor
 		return Math.ceil(totalChars / 4);
-	}
-
-	/**
-	 * Create a temporary session for the grooming process.
-	 * This session will be used to send the combined contexts and receive
-	 * the consolidated output.
-	 *
-	 * @param projectRoot - The project root path for the grooming session
-	 * @returns Promise resolving to the temporary session ID
-	 */
-	private async createGroomingSession(projectRoot: string): Promise<string> {
-		// Generate a unique session ID for grooming
-		const groomingSessionId = `grooming-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-		// Store the active session ID for cleanup purposes
-		this.activeGroomingSessionId = groomingSessionId;
-
-		// Call the IPC handler to create the grooming session
-		// This will spawn a headless agent process for context processing
-		try {
-			const result = await window.maestro.context.createGroomingSession(
-				projectRoot,
-				this.config.defaultAgentType
-			);
-
-			if (result) {
-				this.activeGroomingSessionId = result;
-				return result;
-			}
-
-			return groomingSessionId;
-		} catch {
-			// If IPC is not available, return the generated ID
-			// This allows the service to be tested without full IPC integration
-			return groomingSessionId;
-		}
-	}
-
-	/**
-	 * Send the grooming prompt to the temporary session and receive the response.
-	 *
-	 * @param sessionId - The grooming session ID
-	 * @param prompt - The complete grooming prompt
-	 * @returns Promise resolving to the groomed output text
-	 */
-	private async sendGroomingPrompt(sessionId: string, prompt: string): Promise<string> {
-		try {
-			// Call the IPC handler to send the prompt and get the response
-			const response = await window.maestro.context.sendGroomingPrompt(sessionId, prompt);
-			return response || '';
-		} catch {
-			// If IPC is not available, return an empty result
-			// This allows the service to be tested without full IPC integration
-			// In production, this would trigger the error handling path
-			throw new Error('Context grooming IPC not available. IPC handlers must be configured.');
-		}
 	}
 
 	/**

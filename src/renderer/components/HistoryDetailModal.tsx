@@ -24,7 +24,7 @@ import { formatElapsedTime } from '../utils/formatters';
 import { stripAnsiCodes } from '../../shared/stringUtils';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
-import { calculateContextTokens } from '../utils/contextUsage';
+import { calculateContextDisplay } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
 
@@ -413,20 +413,18 @@ export function HistoryDetailModal({
 										</span>
 									</div>
 									{(() => {
-										// Context usage using agent-specific calculation
-										// Note: History entries don't store agent type, defaults to Claude behavior
-										// SYNC: Uses calculateContextTokens() from shared/contextUsage.ts
-										// See that file for the canonical formula and all locations that must stay in sync.
-										const contextTokens = calculateContextTokens({
-											inputTokens: entry.usageStats!.inputTokens,
-											outputTokens: entry.usageStats!.outputTokens,
-											cacheCreationInputTokens: entry.usageStats!.cacheCreationInputTokens ?? 0,
-											cacheReadInputTokens: entry.usageStats!.cacheReadInputTokens ?? 0,
-										});
-										const contextUsage = Math.min(
-											100,
-											Math.round((contextTokens / entry.usageStats!.contextWindow) * 100)
-										);
+										const { tokens: contextTokens, percentage: contextUsage } =
+											calculateContextDisplay(
+												{
+													inputTokens: entry.usageStats!.inputTokens,
+													outputTokens: entry.usageStats!.outputTokens,
+													cacheCreationInputTokens: entry.usageStats!.cacheCreationInputTokens ?? 0,
+													cacheReadInputTokens: entry.usageStats!.cacheReadInputTokens ?? 0,
+												},
+												entry.usageStats!.contextWindow,
+												undefined,
+												entry.contextUsage
+											);
 										return (
 											<div className="flex flex-col gap-1">
 												<div className="flex items-center gap-2">
@@ -477,11 +475,11 @@ export function HistoryDetailModal({
 									<div className="flex items-center gap-3 text-xs font-mono">
 										<span style={{ color: theme.colors.accent }}>
 											<span style={{ color: theme.colors.textDim }}>In:</span>{' '}
-											{entry.usageStats.inputTokens.toLocaleString('en-US')}
+											{(entry.usageStats.inputTokens ?? 0).toLocaleString('en-US')}
 										</span>
 										<span style={{ color: theme.colors.success }}>
 											<span style={{ color: theme.colors.textDim }}>Out:</span>{' '}
-											{entry.usageStats.outputTokens.toLocaleString('en-US')}
+											{(entry.usageStats.outputTokens ?? 0).toLocaleString('en-US')}
 										</span>
 									</div>
 								</div>

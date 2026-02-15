@@ -95,6 +95,33 @@ export class ExitHandler {
 			this.handleBatchModeExit(sessionId, managedProcess);
 		}
 
+		// Handle stream-json mode: process any remaining jsonBuffer content
+		// The jsonBuffer may contain the last line if it didn't end with \n.
+		// Without this, short-lived processes (tab-naming, batch ops) can lose
+		// their result message if it's the last line without a trailing newline.
+		if (isStreamJsonMode && managedProcess.jsonBuffer?.trim() && outputParser) {
+			const remainingLine = managedProcess.jsonBuffer.trim();
+			managedProcess.jsonBuffer = '';
+			logger.debug('[ProcessManager] Processing remaining jsonBuffer at exit', 'ProcessManager', {
+				sessionId,
+				remainingLineLength: remainingLine.length,
+				remainingLinePreview: remainingLine.substring(0, 200),
+			});
+			try {
+				const event = outputParser.parseJsonLine(remainingLine);
+				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+					managedProcess.resultEmitted = true;
+					const resultText = event.text || managedProcess.streamedText || '';
+					if (resultText) {
+						this.bufferManager.emitDataBuffered(sessionId, resultText);
+					}
+				}
+			} catch {
+				// If parsing fails, emit the raw line as data
+				this.bufferManager.emitDataBuffered(sessionId, remainingLine);
+			}
+		}
+
 		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
 		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
 		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
@@ -209,6 +236,11 @@ export class ExitHandler {
 				source: managedProcess.querySource,
 			});
 		}
+
+		// Final flush: ensure any data buffered during exit processing
+		// (e.g., from jsonBuffer remainder or streamedText fallback) is emitted
+		// before the exit event, so listeners see all data before exit fires.
+		this.bufferManager.flushDataBuffer(sessionId);
 
 		this.emitter.emit('exit', sessionId, code);
 		this.processes.delete(sessionId);

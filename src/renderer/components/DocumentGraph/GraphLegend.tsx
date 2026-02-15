@@ -11,7 +11,7 @@
  * The legend is theme-aware and uses the same colors as the actual mind map elements.
  */
 
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { X, AlertTriangle, ExternalLink } from 'lucide-react';
 import type { Theme } from '../../types';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';

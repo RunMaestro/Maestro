@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
 	X,
 	Download,
@@ -104,7 +104,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 				assetsReady: false,
 				versionsBehind: 0,
 				releases: [],
-				releasesUrl: 'https://github.com/pedramamini/Maestro/releases',
+				releasesUrl: 'https://github.com/RunMaestro/Maestro/releases',
 				error: error instanceof Error ? error.message : 'Failed to check for updates',
 			});
 		} finally {
@@ -551,7 +551,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 						<button
 							onClick={() =>
 								window.maestro.shell.openExternal(
-									result?.releasesUrl || 'https://github.com/pedramamini/Maestro/releases'
+									result?.releasesUrl || 'https://github.com/RunMaestro/Maestro/releases'
 								)
 							}
 							className="flex items-center gap-2 text-xs hover:underline mt-2"

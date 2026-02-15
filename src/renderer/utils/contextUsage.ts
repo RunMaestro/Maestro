@@ -139,6 +139,60 @@ export function estimateContextUsage(
 }
 
 /**
+ * Result of a context display calculation.
+ * Contains everything needed to render a context gauge in any UI component.
+ */
+export interface ContextDisplayResult {
+	/** Context tokens to display (capped to window when accumulated) */
+	tokens: number;
+	/** Context usage percentage (0-100) */
+	percentage: number;
+	/** Effective context window size used for the calculation */
+	contextWindow: number;
+}
+
+/**
+ * Calculate context tokens and percentage for display, handling accumulated-token overflow.
+ *
+ * This is the single source of truth for context gauge rendering. When raw token counts
+ * exceed the context window (accumulated multi-tool turns), falls back to the preserved
+ * contextUsage percentage to derive a sane token count.
+ *
+ * @param usageStats - Token counts from the agent
+ * @param contextWindow - Effective context window size (0 = unknown)
+ * @param agentId - Agent type for agent-specific calculation
+ * @param fallbackPercentage - Preserved contextUsage % to use when tokens overflow
+ * @returns Display-ready tokens, percentage, and window size
+ */
+export function calculateContextDisplay(
+	usageStats: {
+		inputTokens?: number;
+		outputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+	},
+	contextWindow: number,
+	agentId?: ToolType | string,
+	fallbackPercentage?: number | null
+): ContextDisplayResult {
+	if (!contextWindow || contextWindow <= 0) {
+		return { tokens: 0, percentage: 0, contextWindow: 0 };
+	}
+
+	const raw = calculateContextTokens(usageStats, agentId);
+
+	let tokens = raw;
+	if (raw > contextWindow && fallbackPercentage != null && fallbackPercentage >= 0) {
+		// Accumulated multi-tool turn: derive tokens from preserved percentage
+		tokens = Math.round((fallbackPercentage / 100) * contextWindow);
+	}
+
+	const percentage = tokens <= 0 ? 0 : Math.min(100, Math.round((tokens / contextWindow) * 100));
+
+	return { tokens, percentage, contextWindow };
+}
+
+/**
  * Estimate context growth during accumulated (multi-tool) turns.
  *
  * When estimateContextUsage returns null (accumulated values), the percentage

@@ -119,4 +119,4 @@ The MCP server only indexes pages included in the documentation navigation. Hidd
 
 - [Model Context Protocol Documentation](https://modelcontextprotocol.io/)
 - [Maestro Documentation](https://docs.runmaestro.ai)
-- [GitHub Repository](https://github.com/pedramamini/Maestro)
+- [GitHub Repository](https://github.com/RunMaestro/Maestro)

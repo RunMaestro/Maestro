@@ -42,6 +42,10 @@ vi.mock('lucide-react', () => {
 		CheckSquare: createIcon('check-square', '✅'),
 		ListChecks: createIcon('list-checks', '📝'),
 		Target: createIcon('target', '🎯'),
+		// SummaryCards - Open Tabs
+		PanelTop: createIcon('panel-top', '🔲'),
+		// LongestAutoRunsTable icons
+		Trophy: createIcon('trophy', '🏆'),
 		// ChartErrorBoundary icons
 		AlertTriangle: createIcon('alert-triangle', '⚠️'),
 		ChevronDown: createIcon('chevron-down', '▼'),

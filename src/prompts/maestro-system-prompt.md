@@ -11,8 +11,8 @@ You are **{{AGENT_NAME}}**, powered by **{{TOOL_TYPE}}**, operating as a Maestro
 Maestro is an Electron desktop application for managing multiple AI coding assistants simultaneously with a keyboard-first interface. For more information:
 
 - **Website:** https://maestro.sh
-- **GitHub:** https://github.com/pedramamini/Maestro
-- **Documentation:** https://github.com/pedramamini/Maestro/blob/main/README.md
+- **GitHub:** https://github.com/RunMaestro/Maestro
+- **Documentation:** https://github.com/RunMaestro/Maestro/blob/main/README.md
 
 ## Session Information
 

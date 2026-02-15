@@ -364,7 +364,7 @@ describe('AboutModal', () => {
 			fireEvent.click(githubLinks[0]);
 
 			expect(window.maestro.shell.openExternal).toHaveBeenCalledWith(
-				'https://github.com/pedramamini/Maestro'
+				'https://github.com/RunMaestro/Maestro'
 			);
 		});
 
@@ -987,6 +987,31 @@ describe('AboutModal', () => {
 
 			const costElement = screen.getByText('$25.50');
 			expect(costElement).not.toHaveClass('animate-pulse');
+		});
+
+		it('should handle undefined totalCostUsd without crashing', async () => {
+			render(
+				<AboutModal
+					theme={theme}
+					handsOnTimeMs={0}
+					autoRunStats={createAutoRunStats()}
+					onClose={onClose}
+				/>
+			);
+
+			await act(async () => {
+				if (statsCallback) {
+					statsCallback(
+						createGlobalStats({ totalCostUsd: undefined as any, hasCostData: true })
+					);
+				}
+			});
+
+			// Should render $0.00 instead of crashing ($ and 0.00 in same span)
+			const costSpan = screen.getByText((_content, element) => {
+				return element?.tagName === 'SPAN' && element?.textContent?.includes('0.00') || false;
+			});
+			expect(costSpan).toBeInTheDocument();
 		});
 	});
 

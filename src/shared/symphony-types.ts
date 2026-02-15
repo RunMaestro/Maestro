@@ -11,7 +11,7 @@
 
 /**
  * The Symphony registry listing all registered repositories.
- * Hosted at: https://raw.githubusercontent.com/pedramamini/Maestro/main/symphony-registry.json
+ * Hosted at: https://raw.githubusercontent.com/RunMaestro/Maestro/main/symphony-registry.json
  */
 export interface SymphonyRegistry {
   /** Schema version for forward compatibility */
@@ -86,6 +86,16 @@ export interface DocumentReference {
 }
 
 /**
+ * A GitHub label on an issue.
+ */
+export interface SymphonyLabel {
+  /** Label name */
+  name: string;
+  /** Label hex color (without #) */
+  color: string;
+}
+
+/**
  * A GitHub issue with the `runmaestro.ai` label.
  * Represents a contribution opportunity.
  */
@@ -108,6 +118,8 @@ export interface SymphonyIssue {
   updatedAt: string;
   /** Parsed Auto Run document references from issue body */
   documentPaths: DocumentReference[];
+  /** GitHub labels on this issue (excluding runmaestro.ai) */
+  labels: SymphonyLabel[];
   /** Availability status */
   status: IssueStatus;
   /** If in progress, the PR working on it */

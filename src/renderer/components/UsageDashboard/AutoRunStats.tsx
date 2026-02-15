@@ -15,7 +15,7 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsTimeRange } from '../../hooks/useStats';
+import type { StatsTimeRange } from '../../hooks/stats/useStats';
 
 /**
  * Auto Run session data shape from the API

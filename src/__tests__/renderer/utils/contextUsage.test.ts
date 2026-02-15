@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	estimateContextUsage,
 	calculateContextTokens,
+	calculateContextDisplay,
 	estimateAccumulatedGrowth,
 	DEFAULT_CONTEXT_WINDOWS,
 } from '../../../renderer/utils/contextUsage';
@@ -345,6 +346,104 @@ describe('estimateAccumulatedGrowth', () => {
 		// estCalls = max(1, round(100000/10000)) = 10
 		// singleTurnGrowth = 50000/10 = 5000, growthPercent = round(5000/200000*100) = 3 → cap 3%
 		expect(result).toBe(4); // 1 + 3%
+	});
+});
+
+describe('calculateContextDisplay', () => {
+	it('should calculate tokens and percentage for normal usage', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 50000, cacheReadInputTokens: 30000, cacheCreationInputTokens: 20000 },
+			200000,
+			'claude-code'
+		);
+		// (50000 + 30000 + 20000) / 200000 = 50%
+		expect(result.tokens).toBe(100000);
+		expect(result.percentage).toBe(50);
+		expect(result.contextWindow).toBe(200000);
+	});
+
+	it('should fall back to fallbackPercentage when tokens exceed context window', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code',
+			75 // preserved contextUsage from session
+		);
+		// Raw = 1008000 > 200000, so falls back: tokens = round(75/100 * 200000) = 150000
+		expect(result.tokens).toBe(150000);
+		expect(result.percentage).toBe(75);
+	});
+
+	it('should cap percentage at 100 when tokens are close to window', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 190000, cacheReadInputTokens: 15000, cacheCreationInputTokens: 0 },
+			200000,
+			'claude-code'
+		);
+		// (190000 + 15000) / 200000 = 102.5% -> capped at 100%
+		expect(result.percentage).toBe(100);
+	});
+
+	it('should return zeros when context window is 0', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 50000 },
+			0,
+			'claude-code'
+		);
+		expect(result.tokens).toBe(0);
+		expect(result.percentage).toBe(0);
+		expect(result.contextWindow).toBe(0);
+	});
+
+	it('should not fall back when no fallbackPercentage is provided', () => {
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 50000,
+				cacheReadInputTokens: 758000,
+				cacheCreationInputTokens: 200000,
+			},
+			200000,
+			'claude-code'
+			// no fallback
+		);
+		// Raw = 1008000 > 200000, but no fallback, so tokens stay at raw value
+		// Percentage is capped at 100%
+		expect(result.tokens).toBe(1008000);
+		expect(result.percentage).toBe(100);
+	});
+
+	it('should use Codex semantics (includes output tokens)', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 50000, outputTokens: 30000, cacheCreationInputTokens: 20000 },
+			200000,
+			'codex'
+		);
+		// Codex: (50000 + 20000 + 30000) / 200000 = 50%
+		expect(result.tokens).toBe(100000);
+		expect(result.percentage).toBe(50);
+	});
+
+	it('should handle history entries with accumulated tokens and preserved contextUsage', () => {
+		// Simulates what HistoryDetailModal sees: accumulated stats + entry.contextUsage
+		const result = calculateContextDisplay(
+			{
+				inputTokens: 5676,
+				outputTokens: 8522,
+				cacheReadInputTokens: 1128700,
+				cacheCreationInputTokens: 0,
+			},
+			200000,
+			undefined, // history entries don't have agent type
+			100 // the screenshot showed 100% context
+		);
+		// Raw = 5676 + 1128700 + 0 = 1134376 > 200000
+		// Falls back to: round(100/100 * 200000) = 200000
+		expect(result.tokens).toBe(200000);
+		expect(result.percentage).toBe(100);
 	});
 });
 

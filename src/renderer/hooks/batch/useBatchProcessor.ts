@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useReducer, useEffect, useMemo } from 'react';
+import { useCallback, useRef, useEffect, useMemo } from 'react';
 import type {
 	BatchRunState,
 	BatchRunConfig,
@@ -19,7 +19,8 @@ import { gitService } from '../../services/git';
 // Extracted batch processing modules
 import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useSessionDebounce } from './useSessionDebounce';
-import { batchReducer, DEFAULT_BATCH_STATE } from './batchReducer';
+import { DEFAULT_BATCH_STATE, type BatchAction } from './batchReducer';
+import { useBatchStore, selectHasAnyActiveBatch } from '../../stores/batchStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -91,6 +92,8 @@ interface UseBatchProcessorReturn {
 	startBatchRun: (sessionId: string, config: BatchRunConfig, folderPath: string) => Promise<void>;
 	// Stop batch run for a specific session
 	stopBatchRun: (sessionId: string) => void;
+	// Force kill the running process and immediately end the batch run
+	killBatchRun: (sessionId: string) => Promise<void>;
 	// Custom prompts per session
 	customPrompts: Record<string, string>;
 	setCustomPrompt: (sessionId: string, prompt: string) => void;
@@ -211,18 +214,15 @@ export function useBatchProcessor({
 	autoRunStats,
 	onProcessQueueAfterCompletion,
 }: UseBatchProcessorProps): UseBatchProcessorReturn {
-	// Batch states per session using reducer pattern for predictable state transitions
-	const [batchRunStates, dispatchRaw] = useReducer(batchReducer, {});
+	// Batch states per session — lives in batchStore, read reactively for re-renders
+	const batchRunStates = useBatchStore((s) => s.batchRunStates);
 
-	// Wrap dispatch to update ref synchronously, fixing race condition where
-	// debounced callbacks read stale ref state before React re-renders
-	const dispatch = useCallback((action: Parameters<typeof batchReducer>[1]) => {
-		const prevRef = batchRunStatesRef.current;
-		dispatchRaw(action);
-		// Synchronously update ref with the new state so debounced callbacks see it
-		// This must happen after dispatch since the reducer computes the new state
-		// Note: We apply the reducer directly to compute what the new state will be
-		batchRunStatesRef.current = batchReducer(batchRunStatesRef.current, action);
+	// Dispatch batch actions through the store. The store applies batchReducer
+	// synchronously, eliminating the need for manual ref syncing.
+	const dispatch = useCallback((action: BatchAction) => {
+		const prevStates = useBatchStore.getState().batchRunStates;
+		useBatchStore.getState().dispatchBatch(action);
+		const newStates = useBatchStore.getState().batchRunStates;
 
 		// DEBUG: Log dispatch to trace state updates
 		if (
@@ -234,18 +234,18 @@ export function useBatchProcessor({
 			const sessionId = action.sessionId;
 			console.log('[BatchProcessor:dispatch]', action.type, {
 				sessionId,
-				prevIsRunning: prevRef[sessionId]?.isRunning,
-				newIsRunning: batchRunStatesRef.current[sessionId]?.isRunning,
-				prevIsStopping: prevRef[sessionId]?.isStopping,
-				newIsStopping: batchRunStatesRef.current[sessionId]?.isStopping,
-				prevCompleted: prevRef[sessionId]?.completedTasksAcrossAllDocs,
-				newCompleted: batchRunStatesRef.current[sessionId]?.completedTasksAcrossAllDocs,
+				prevIsRunning: prevStates[sessionId]?.isRunning,
+				newIsRunning: newStates[sessionId]?.isRunning,
+				prevIsStopping: prevStates[sessionId]?.isStopping,
+				newIsStopping: newStates[sessionId]?.isStopping,
+				prevCompleted: prevStates[sessionId]?.completedTasksAcrossAllDocs,
+				newCompleted: newStates[sessionId]?.completedTasksAcrossAllDocs,
 			});
 		}
 	}, []);
 
-	// Custom prompts per session
-	const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
+	// Custom prompts per session — lives in batchStore
+	const customPrompts = useBatchStore((s) => s.customPrompts);
 
 	// Refs for tracking stop requests per session
 	const stopRequestedRefs = useRef<Record<string, boolean>>({});
@@ -260,13 +260,6 @@ export function useBatchProcessor({
 	audioFeedbackEnabledRef.current = audioFeedbackEnabled;
 	const audioFeedbackCommandRef = useRef(audioFeedbackCommand);
 	audioFeedbackCommandRef.current = audioFeedbackCommand;
-
-	// Ref to track latest batchRunStates for time tracking callback
-	// NOTE: Do NOT auto-sync with batchRunStates on every render!
-	// The dispatch wrapper updates this ref synchronously after each action.
-	// Auto-syncing can reset the ref to stale React state when batches are pending,
-	// causing the "0 of N tasks completed" regression. See commit 01eca193.
-	const batchRunStatesRef = useRef<Record<string, BatchRunState>>(batchRunStates);
 
 	// Ref to track latest updateBatchStateAndBroadcast for async callbacks (fixes HMR stale closure)
 	const updateBatchStateAndBroadcastRef = useRef<typeof updateBatchStateAndBroadcast | null>(null);
@@ -344,7 +337,7 @@ export function useBatchProcessor({
 						// For reducer, we need to convert the updater to an action
 						// Since the updater pattern doesn't map directly to actions, we wrap it
 						// by reading current state and computing the new state
-						const currentState = batchRunStatesRef.current;
+						const currentState = useBatchStore.getState().batchRunStates;
 						const newState = updater(currentState);
 						newStateForSession = newState[sessionId] || null;
 
@@ -436,7 +429,7 @@ export function useBatchProcessor({
 	// Use extracted time tracking hook (replaces manual visibility-based time tracking)
 	const timeTracking = useTimeTracking({
 		getActiveSessionIds: useCallback(() => {
-			return Object.entries(batchRunStatesRef.current)
+			return Object.entries(useBatchStore.getState().batchRunStates)
 				.filter(([_, state]) => state.isRunning)
 				.map(([sessionId]) => sessionId);
 		}, []),
@@ -473,13 +466,11 @@ export function useBatchProcessor({
 		[batchRunStates]
 	);
 
-	// Check if any session has an active batch (memoized to prevent re-renders on unrelated state changes)
-	const hasAnyActiveBatch = useMemo(
-		() => Object.values(batchRunStates).some((state) => state.isRunning),
-		[batchRunStates]
-	);
+	// Boolean selector is stable with Object.is comparison
+	const hasAnyActiveBatch = useBatchStore(selectHasAnyActiveBatch);
 
-	// Get list of session IDs with active batches (memoized to prevent new array references)
+	// Array selectors use useMemo to avoid infinite re-renders
+	// (Zustand's Object.is comparison treats new arrays as changed → re-render loop)
 	const activeBatchSessionIds = useMemo(
 		() =>
 			Object.entries(batchRunStates)
@@ -487,8 +478,6 @@ export function useBatchProcessor({
 				.map(([sessionId]) => sessionId),
 		[batchRunStates]
 	);
-
-	// Get list of session IDs that are in stopping state (memoized to prevent new array references)
 	const stoppingBatchSessionIds = useMemo(
 		() =>
 			Object.entries(batchRunStates)
@@ -497,9 +486,9 @@ export function useBatchProcessor({
 		[batchRunStates]
 	);
 
-	// Set custom prompt for a session
+	// Set custom prompt for a session (delegates to store)
 	const setCustomPrompt = useCallback((sessionId: string, prompt: string) => {
-		setCustomPrompts((prev) => ({ ...prev, [sessionId]: prompt }));
+		useBatchStore.getState().setCustomPrompt(sessionId, prompt);
 	}, []);
 
 	/**
@@ -518,7 +507,7 @@ export function useBatchProcessor({
 		) => {
 			// DEBUG: Bypass debouncing entirely to test if that's the issue
 			// Apply update directly without debouncing
-			const currentState = batchRunStatesRef.current;
+			const currentState = useBatchStore.getState().batchRunStates;
 			const newState = updater(currentState);
 			const newStateForSession = newState[sessionId] || null;
 
@@ -787,7 +776,7 @@ export function useBatchProcessor({
 			}
 
 			// Store custom prompt for persistence
-			setCustomPrompts((prev) => ({ ...prev, [sessionId]: prompt }));
+			useBatchStore.getState().setCustomPrompt(sessionId, prompt);
 
 			// State machine: INITIALIZING -> RUNNING (initialization complete)
 			dispatch({ type: 'SET_RUNNING', sessionId });
@@ -1160,7 +1149,11 @@ export function useBatchProcessor({
 
 							// Speak the synopsis via TTS if audio feedback is enabled
 							// Use refs to get latest setting values (user may toggle mid-run)
-							if (audioFeedbackEnabledRef.current && audioFeedbackCommandRef.current && shortSummary) {
+							if (
+								audioFeedbackEnabledRef.current &&
+								audioFeedbackCommandRef.current &&
+								shortSummary
+							) {
 								window.maestro.notification
 									.speak(shortSummary, audioFeedbackCommandRef.current)
 									.catch((err) => {
@@ -1231,7 +1224,38 @@ export function useBatchProcessor({
 								`[BatchProcessor] Error running task in ${docEntry.filename} for session ${sessionId}:`,
 								error
 							);
-							// Continue to next task on error
+
+							// Check if an error resolution promise was created (e.g., by onAgentError → pauseBatchOnError)
+							// This handles the case where the agent error (e.g., context limit) triggered a pause,
+							// but processTask threw before the next loop iteration could check for it.
+							const postTaskErrorResolution = errorResolutionRefs.current[sessionId];
+							if (postTaskErrorResolution) {
+								const action = await postTaskErrorResolution.promise;
+								delete errorResolutionRefs.current[sessionId];
+
+								if (action === 'abort') {
+									stopRequestedRefs.current[sessionId] = true;
+									break;
+								}
+
+								if (action === 'skip-document') {
+									skipCurrentDocumentAfterError = true;
+									break;
+								}
+
+								// 'resume' — re-read document to get accurate task count before continuing
+								const { taskCount, checkedCount, content: freshContent } = await readDocAndCountTasks(
+									folderPath,
+									effectiveFilename,
+									sshRemoteId
+								);
+								remainingTasks = taskCount;
+								docCheckedCount = checkedCount;
+								docContent = freshContent;
+								continue;
+							}
+
+							// No error resolution pending — continue to next task on error
 							remainingTasks--;
 						}
 					}
@@ -1680,12 +1704,61 @@ export function useBatchProcessor({
 			// Use SET_STOPPING action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 			dispatch({ type: 'SET_STOPPING', sessionId });
 			// Broadcast state change
-			const newState = batchRunStatesRef.current[sessionId];
+			const newState = useBatchStore.getState().batchRunStates[sessionId];
 			if (newState) {
 				broadcastAutoRunState(sessionId, { ...newState, isStopping: true });
 			}
 		},
 		[broadcastAutoRunState]
+	);
+
+	/**
+	 * Force kill the running process and immediately end the batch run.
+	 * Unlike stopBatchRun (which waits for the current task to complete),
+	 * this terminates the agent process immediately and resets all batch state.
+	 */
+	const killBatchRun = useCallback(
+		async (sessionId: string) => {
+			console.log('[BatchProcessor:killBatchRun] Force killing session:', sessionId);
+
+			// 1. Kill the agent process and wait for termination before cleaning up state
+			try {
+				await window.maestro.process.kill(sessionId);
+			} catch (error) {
+				console.error('[BatchProcessor:killBatchRun] Failed to kill process:', error);
+			}
+
+			// 2. Set stop flag so the processing loop exits if it's still running
+			stopRequestedRefs.current[sessionId] = true;
+
+			// 3. Resolve any pending error state
+			const errorResolution = errorResolutionRefs.current[sessionId];
+			if (errorResolution) {
+				errorResolution.resolve('abort');
+				delete errorResolutionRefs.current[sessionId];
+			}
+
+			// 4. Flush any debounced state updates
+			flushDebouncedUpdate(sessionId);
+
+			// 5. Immediately reset batch state
+			dispatch({
+				type: 'COMPLETE_BATCH',
+				sessionId,
+				finalSessionIds: [],
+			});
+
+			// 6. Broadcast cleared state to web clients
+			broadcastAutoRunState(sessionId, null);
+
+			// 7. Clean up tracking
+			timeTracking.stopTracking(sessionId);
+			delete stopRequestedRefs.current[sessionId];
+
+			// 8. Allow system to sleep
+			window.maestro.power.removeReason(`autorun:${sessionId}`);
+		},
+		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking]
 	);
 
 	/**
@@ -1717,7 +1790,7 @@ export function useBatchProcessor({
 				payload: { error, documentIndex, taskDescription },
 			});
 			// Broadcast state change
-			const currentState = batchRunStatesRef.current[sessionId];
+			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
 				broadcastAutoRunState(sessionId, {
 					...currentState,
@@ -1754,7 +1827,7 @@ export function useBatchProcessor({
 			// Use CLEAR_ERROR action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			// Broadcast state change
-			const currentState = batchRunStatesRef.current[sessionId];
+			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
 				broadcastAutoRunState(sessionId, {
 					...currentState,
@@ -1789,7 +1862,7 @@ export function useBatchProcessor({
 			// Use CLEAR_ERROR action directly (not updateBatchStateAndBroadcast which only supports UPDATE_PROGRESS)
 			dispatch({ type: 'CLEAR_ERROR', sessionId });
 			// Broadcast state change
-			const currentState = batchRunStatesRef.current[sessionId];
+			const currentState = useBatchStore.getState().batchRunStates[sessionId];
 			if (currentState) {
 				broadcastAutoRunState(sessionId, {
 					...currentState,
@@ -1852,6 +1925,7 @@ export function useBatchProcessor({
 		stoppingBatchSessionIds,
 		startBatchRun,
 		stopBatchRun,
+		killBatchRun,
 		customPrompts,
 		setCustomPrompt,
 		// Error handling (Phase 5.10)

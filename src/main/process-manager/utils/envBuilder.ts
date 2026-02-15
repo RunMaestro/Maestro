@@ -52,6 +52,27 @@ export function buildPtyTerminalEnv(shellEnvVars?: Record<string, string>): Node
 }
 
 /**
+ * Environment variables to strip from child processes (agents).
+ * These are set by Electron or IDE extensions and can interfere with agent
+ * authentication or behavior when inherited by spawned CLI tools.
+ */
+const STRIPPED_ENV_VARS = [
+	// Electron internals — can cause Electron-based CLIs (e.g. Claude Code) to
+	// misidentify their execution context
+	'ELECTRON_RUN_AS_NODE',
+	'ELECTRON_NO_ASAR',
+	'ELECTRON_EXTRA_LAUNCH_ARGS',
+	// VSCode / Claude Code extension markers — when inherited, agents may use
+	// IDE-specific credentials or API paths instead of their own CLI auth
+	'CLAUDECODE',
+	'CLAUDE_CODE_ENTRYPOINT',
+	'CLAUDE_AGENT_SDK_VERSION',
+	'CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING',
+	// Maestro's own NODE_ENV should not leak to agents
+	'NODE_ENV',
+];
+
+/**
  * Build environment for child process (non-PTY) spawning
  */
 export function buildChildProcessEnv(
@@ -59,6 +80,13 @@ export function buildChildProcessEnv(
 	isResuming?: boolean
 ): NodeJS.ProcessEnv {
 	const env = { ...process.env };
+
+	// Strip environment variables that could interfere with agent behaviour.
+	// Electron and IDE extension vars can cause agents to misidentify their
+	// execution context, leading to auth failures or incorrect API paths.
+	for (const key of STRIPPED_ENV_VARS) {
+		delete env[key];
+	}
 
 	// Use the shared expanded PATH
 	env.PATH = buildExpandedPath();

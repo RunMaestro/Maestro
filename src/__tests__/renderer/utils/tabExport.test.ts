@@ -741,7 +741,7 @@ describe('tabExport', () => {
 				const tab = createMockTab();
 				const html = generateTabExportHtml(tab, mockSession, mockTheme);
 
-				expect(html).toContain('href="https://github.com/pedramamini/Maestro"');
+				expect(html).toContain('href="https://github.com/RunMaestro/Maestro"');
 				expect(html).toContain('GitHub');
 			});
 

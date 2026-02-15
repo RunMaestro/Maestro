@@ -463,13 +463,6 @@ export function DirectorySelectionScreen({ theme }: DirectorySelectionScreenProp
 		}
 	}, [canProceedToNext, attemptNextStep]);
 
-	/**
-	 * Handle back button click
-	 */
-	const _handleBack = useCallback(() => {
-		previousStep();
-	}, [previousStep]);
-
 	// Loading state while detecting agent path
 	if (isDetecting) {
 		return (

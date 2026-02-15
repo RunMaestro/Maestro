@@ -18,7 +18,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import React from 'react';
 
 // Import hook and components under test
-import { useInlineWizard, type InlineWizardMode } from '../../renderer/hooks/useInlineWizard';
+import { useInlineWizard, type InlineWizardMode } from '../../renderer/hooks/batch/useInlineWizard';
 import {
 	InlineWizardProvider,
 	useInlineWizardContext,

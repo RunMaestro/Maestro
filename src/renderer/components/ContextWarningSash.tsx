@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useEffect, useCallback } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../types';
 

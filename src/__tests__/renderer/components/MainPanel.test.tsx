@@ -1088,8 +1088,9 @@ describe('MainPanel', () => {
 			expect(screen.getByText('Stopping')).toBeInTheDocument();
 		});
 
-		it('should call onStopBatchRun directly when Auto button is clicked', () => {
+		it('should call onStopBatchRun with active session ID when Auto button is clicked', () => {
 			const onStopBatchRun = vi.fn();
+			const session = createSession({ id: 'session-abc', name: 'My Agent' });
 			const currentSessionBatchState: BatchRunState = {
 				isRunning: true,
 				isStopping: false,
@@ -1113,6 +1114,7 @@ describe('MainPanel', () => {
 			render(
 				<MainPanel
 					{...defaultProps}
+					activeSession={session}
 					currentSessionBatchState={currentSessionBatchState}
 					onStopBatchRun={onStopBatchRun}
 				/>
@@ -1120,8 +1122,8 @@ describe('MainPanel', () => {
 
 			fireEvent.click(screen.getByText('Auto'));
 
-			// onStopBatchRun handles its own confirmation modal, so it should be called directly
-			expect(onStopBatchRun).toHaveBeenCalled();
+			// onStopBatchRun should be called with the active session's ID
+			expect(onStopBatchRun).toHaveBeenCalledWith('session-abc');
 		});
 
 		it('should not call onStopBatchRun when Auto button is clicked while stopping', () => {

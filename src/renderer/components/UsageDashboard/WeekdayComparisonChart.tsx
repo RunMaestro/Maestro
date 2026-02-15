@@ -11,10 +11,10 @@
  * - Colorblind-friendly palette option
  */
 
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { Briefcase, Coffee } from 'lucide-react';
 import type { Theme } from '../../types';
-import type { StatsAggregation } from '../../hooks/useStats';
+import type { StatsAggregation } from '../../hooks/stats/useStats';
 
 interface WeekdayComparisonChartProps {
 	/** Aggregated stats data from the API */
@@ -147,15 +147,9 @@ export function WeekdayComparisonChart({
 
 			<div className="grid grid-cols-2 gap-6">
 				{/* Weekday Card */}
-				<div
-					className="p-4 rounded-lg"
-					style={{ backgroundColor: theme.colors.bgActivity }}
-				>
+				<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgActivity }}>
 					<div className="flex items-center gap-2 mb-3">
-						<div
-							className="p-2 rounded-md"
-							style={{ backgroundColor: `${weekdayColor}20` }}
-						>
+						<div className="p-2 rounded-md" style={{ backgroundColor: `${weekdayColor}20` }}>
 							<Briefcase className="w-4 h-4" style={{ color: weekdayColor }} />
 						</div>
 						<div>
@@ -211,15 +205,9 @@ export function WeekdayComparisonChart({
 				</div>
 
 				{/* Weekend Card */}
-				<div
-					className="p-4 rounded-lg"
-					style={{ backgroundColor: theme.colors.bgActivity }}
-				>
+				<div className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgActivity }}>
 					<div className="flex items-center gap-2 mb-3">
-						<div
-							className="p-2 rounded-md"
-							style={{ backgroundColor: `${weekendColor}20` }}
-						>
+						<div className="p-2 rounded-md" style={{ backgroundColor: `${weekendColor}20` }}>
 							<Coffee className="w-4 h-4" style={{ color: weekendColor }} />
 						</div>
 						<div>

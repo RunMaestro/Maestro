@@ -13,7 +13,7 @@
  * - Elapsed time tracking
  */
 
-import React, { useState, useEffect, memo, useCallback } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { X, Check, Loader2, AlertTriangle, GitMerge } from 'lucide-react';
 import type { Theme } from '../types';
 import type { GroomingProgress, MergeResult } from '../types/contextMerge';

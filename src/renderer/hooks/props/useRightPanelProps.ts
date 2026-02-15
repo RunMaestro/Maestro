@@ -119,6 +119,7 @@ export interface UseRightPanelPropsDeps {
 	// Batch processing handlers
 	handleOpenBatchRunner: () => void;
 	handleStopBatchRun: (sessionId?: string) => void;
+	handleKillBatchRun: (sessionId: string) => void;
 	handleSkipCurrentDocument: () => void;
 	handleAbortBatchOnError: () => void;
 	handleResumeAfterError: () => void;
@@ -210,6 +211,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			currentSessionBatchState: deps.currentSessionBatchState,
 			onOpenBatchRunner: deps.handleOpenBatchRunner,
 			onStopBatchRun: deps.handleStopBatchRun,
+			onKillBatchRun: deps.handleKillBatchRun,
 			onSkipCurrentDocument: deps.handleSkipCurrentDocument,
 			onAbortBatchOnError: deps.handleAbortBatchOnError,
 			onResumeAfterError: deps.handleResumeAfterError,
@@ -280,6 +282,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 			deps.handleAutoRunOpenSetup,
 			deps.handleOpenBatchRunner,
 			deps.handleStopBatchRun,
+			deps.handleKillBatchRun,
 			deps.handleSkipCurrentDocument,
 			deps.handleAbortBatchOnError,
 			deps.handleResumeAfterError,

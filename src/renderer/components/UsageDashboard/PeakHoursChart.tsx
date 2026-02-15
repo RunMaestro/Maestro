@@ -12,9 +12,9 @@
  * - Hover tooltips
  */
 
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { Theme } from '../../types';
-import type { StatsAggregation } from '../../hooks/useStats';
+import type { StatsAggregation } from '../../hooks/stats/useStats';
 
 type MetricMode = 'count' | 'duration';
 

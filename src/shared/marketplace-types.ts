@@ -12,7 +12,7 @@
 
 /**
  * Root manifest structure fetched from the GitHub repository.
- * URL: https://raw.githubusercontent.com/pedramamini/Maestro-Playbooks/main/manifest.json
+ * URL: https://raw.githubusercontent.com/RunMaestro/Maestro-Playbooks/main/manifest.json
  */
 export interface MarketplaceManifest {
 	/** Last update date in YYYY-MM-DD format */

@@ -18,7 +18,7 @@
  * Based on MergeProgressModal patterns, adapted for cross-agent transfer workflow.
  */
 
-import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { X, Check, Loader2, AlertTriangle, ArrowRight, Wand2 } from 'lucide-react';
 import type { Theme, ToolType } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';

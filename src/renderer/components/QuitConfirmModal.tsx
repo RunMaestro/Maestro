@@ -84,6 +84,7 @@ export function QuitConfirmModal({
 	};
 
 	const agentText = busyAgentCount === 1 ? 'agent is' : 'agents are';
+	const hasAutoRun = busyAgentNames.some((n) => n.includes('(Auto Run)'));
 	const displayNames = busyAgentNames.slice(0, 3);
 	const remainingCount = busyAgentNames.length - 3;
 
@@ -128,7 +129,7 @@ export function QuitConfirmModal({
 						className="text-sm leading-relaxed"
 						style={{ color: theme.colors.textMain }}
 					>
-						{busyAgentCount} {agentText} currently thinking. Quitting now will interrupt their work.
+						{busyAgentCount} {agentText} currently {hasAutoRun ? 'active' : 'thinking'}. Quitting now will interrupt their work.
 					</p>
 
 					{/* List of busy agents */}

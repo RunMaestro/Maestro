@@ -784,24 +784,6 @@ export default function MobileApp() {
 		);
 	}, [sessions]);
 
-	// Handle expanding response to full-screen viewer
-	const _handleExpandResponse = useCallback(
-		(response: LastResponsePreview) => {
-			setSelectedResponse(response);
-
-			// Find the index of this response in allResponses
-			const index = allResponses.findIndex(
-				(item) => item.response.timestamp === response.timestamp
-			);
-			setResponseIndex(index >= 0 ? index : 0);
-
-			setShowResponseViewer(true);
-			triggerHaptic(HAPTIC_PATTERNS.tap);
-			webLogger.debug(`Opening response viewer at index: ${index}`, 'Mobile');
-		},
-		[allResponses]
-	);
-
 	// Handle navigating between responses in the viewer
 	const handleNavigateResponse = useCallback(
 		(index: number) => {

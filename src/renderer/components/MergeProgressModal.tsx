@@ -15,7 +15,7 @@
  * - Cancel functionality with confirmation
  */
 
-import React, { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from 'react';
 import { X, Check, Loader2, AlertTriangle, Wand2 } from 'lucide-react';
 import type { Theme } from '../types';
 import type { GroomingProgress } from '../types/contextMerge';
@@ -373,7 +373,6 @@ export function MergeProgressModal({
 						{STAGES.map((stage, index) => {
 							const isActive = index === currentStageIndex;
 							const isCompleted = index < currentStageIndex;
-							const _isPending = index > currentStageIndex;
 
 							return (
 								<div key={stage.id} className="flex items-center gap-3">

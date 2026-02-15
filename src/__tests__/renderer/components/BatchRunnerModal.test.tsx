@@ -986,6 +986,26 @@ describe('BatchRunnerModal', () => {
 				expect(props.onClose).toHaveBeenCalled();
 			}
 		});
+
+		it('closes without confirmation after saving a modified prompt', async () => {
+			const props = createDefaultProps();
+			// Override so showConfirmation does NOT auto-invoke onConfirm
+			props.showConfirmation = vi.fn();
+			render(<BatchRunnerModal {...props} />);
+
+			// Modify the prompt
+			const textarea = screen.getByPlaceholderText('Enter the system prompt for auto-run...');
+			fireEvent.change(textarea, { target: { value: 'Modified prompt text' } });
+
+			// Save
+			fireEvent.click(screen.getByRole('button', { name: /Save/ }));
+			expect(props.onSave).toHaveBeenCalledWith('Modified prompt text');
+
+			// Cancel should close directly without showConfirmation
+			fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			expect(props.onClose).toHaveBeenCalled();
+			expect(props.showConfirmation).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('Edge Cases', () => {

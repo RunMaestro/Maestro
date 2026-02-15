@@ -7,7 +7,7 @@ import { compareVersions } from '../shared/pathUtils';
 import { logger } from './utils/logger';
 
 // GitHub repository information
-const GITHUB_OWNER = 'pedramamini';
+const GITHUB_OWNER = 'RunMaestro';
 const GITHUB_REPO = 'Maestro';
 const RELEASES_URL = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases`;
 

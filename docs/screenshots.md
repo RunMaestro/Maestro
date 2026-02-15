@@ -7,7 +7,7 @@ icon: palette
 Maestro ships with 18 carefully crafted themes across three categories, plus a Custom theme builder. Screenshots below show each theme in action.
 
 ## Available Themes
-For a screenshot example of every option, see [THEMES.md](https://github.com/pedramamini/Maestro/blob/main/THEMES.md) on GitHub. You can also flip through the available themes at [RunMaestro.ai](https://runmaestro.ai).
+For a screenshot example of every option, see [THEMES.md](https://github.com/RunMaestro/Maestro/blob/main/THEMES.md) on GitHub. You can also flip through the available themes at [RunMaestro.ai](https://runmaestro.ai).
 
 ![Themes](./screenshots/themes.png)
 

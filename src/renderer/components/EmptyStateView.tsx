@@ -1,5 +1,17 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Wand2, Bot, Menu, Settings, HelpCircle, Info, RefreshCw, Compass, Globe, BookOpen, ExternalLink } from 'lucide-react';
+import { useState, useRef, useEffect } from 'react';
+import {
+	Wand2,
+	Bot,
+	Menu,
+	Settings,
+	HelpCircle,
+	Info,
+	RefreshCw,
+	Compass,
+	Globe,
+	BookOpen,
+	ExternalLink,
+} from 'lucide-react';
 import type { Theme, Shortcut } from '../types';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useClickOutside } from '../hooks';

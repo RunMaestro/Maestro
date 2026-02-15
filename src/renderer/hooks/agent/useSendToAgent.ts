@@ -16,9 +16,11 @@
  * - Provides structured TransferError with type classification
  * - Supports retry with different options (with or without grooming)
  * - Tracks last request for easy retry functionality
+ *
+ * State lives in operationStore (Zustand); this hook owns orchestration only.
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import type { Session, AITab, LogEntry, ToolType } from '../../types';
 import type { MergeResult, GroomingProgress, MergeRequest } from '../../types/contextMerge';
 import type { SendToAgentOptions } from '../../components/SendToAgentModal';
@@ -33,6 +35,11 @@ import { extractTabContext } from '../../utils/contextExtractor';
 import { createMergedSession } from '../../utils/tabHelpers';
 import { classifyTransferError } from '../../components/TransferErrorModal';
 import { generateId } from '../../utils/ids';
+import { useOperationStore } from '../../stores/operationStore';
+import type { TransferState, TransferLastRequest } from '../../stores/operationStore';
+
+// Re-export types from the canonical store location
+export type { TransferState } from '../../stores/operationStore';
 
 /**
  * Maximum recommended context tokens before warning the user
@@ -48,17 +55,6 @@ function estimateTokensFromLogs(logs: { text: string }[]): number {
 	const totalChars = logs.reduce((sum, log) => sum + (log.text?.length || 0), 0);
 	return Math.round(totalChars / 4);
 }
-
-/**
- * Global flag to track if a transfer is in progress.
- * Only one transfer operation should run at a time.
- */
-let globalTransferInProgress = false;
-
-/**
- * State of the transfer operation
- */
-export type TransferState = 'idle' | 'grooming' | 'creating' | 'complete' | 'error';
 
 /**
  * Request to transfer context to another agent
@@ -119,22 +115,11 @@ function getSessionDisplayName(session: Session): string {
 }
 
 /**
- * Get the display name for a tab
- */
-function _getTabDisplayName(tab: AITab): string {
-	if (tab.name) return tab.name;
-	if (tab.agentSessionId) {
-		return tab.agentSessionId.split('-')[0].toUpperCase();
-	}
-	return 'New Tab';
-}
-
-/**
  * Generate a name for the transferred session
  */
 function generateTransferredSessionName(
 	sourceSession: Session,
-	sourceTab: AITab,
+	_sourceTab: AITab,
 	targetAgent: ToolType
 ): string {
 	const sourceName = getSessionDisplayName(sourceSession);
@@ -172,12 +157,15 @@ function generateTransferredSessionName(
  * }
  */
 export function useSendToAgent(): UseSendToAgentResult {
-	// State
-	const [transferState, setTransferState] = useState<TransferState>('idle');
-	const [progress, setProgress] = useState<GroomingProgress | null>(null);
-	const [error, setError] = useState<string | null>(null);
-	const [transferError, setTransferError] = useState<TransferError | null>(null);
-	const [lastRequest, setLastRequest] = useState<TransferRequest | null>(null);
+	// State from operationStore
+	const transferState = useOperationStore((s) => s.transferState);
+	const progress = useOperationStore((s) => s.transferProgress);
+	const error = useOperationStore((s) => s.transferError);
+	const transferError = useOperationStore((s) => s.transferStructuredError);
+	const globalTransferInProgress = useOperationStore((s) => s.globalTransferInProgress);
+
+	// Full request kept in ref (contains Session objects, not suitable for store)
+	const lastRequestRef = useRef<TransferRequest | null>(null);
 
 	// Refs for cancellation and timing
 	const cancelledRef = useRef(false);
@@ -188,10 +176,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 	 * Reset the hook state to idle
 	 */
 	const reset = useCallback(() => {
-		setTransferState('idle');
-		setProgress(null);
-		setError(null);
-		setTransferError(null);
+		useOperationStore.getState().resetTransferState();
 		cancelledRef.current = false;
 	}, []);
 
@@ -205,10 +190,12 @@ export function useSendToAgent(): UseSendToAgentResult {
 		groomingServiceRef.current.cancelGrooming();
 
 		// Update state
-		setTransferState('idle');
-		setProgress(null);
-		setError('Transfer cancelled by user');
-		setTransferError(null);
+		useOperationStore.getState().setTransferState({
+			state: 'idle',
+			progress: null,
+			error: 'Transfer cancelled by user',
+			transferError: null,
+		});
 	}, []);
 
 	/**
@@ -217,8 +204,10 @@ export function useSendToAgent(): UseSendToAgentResult {
 	const startTransfer = useCallback(async (request: TransferRequest): Promise<MergeResult> => {
 		const { sourceSession, sourceTabId, targetAgent, options } = request;
 
+		const store = useOperationStore.getState();
+
 		// Edge case: Check for concurrent transfer operations
-		if (globalTransferInProgress) {
+		if (store.globalTransferInProgress) {
 			return {
 				success: false,
 				error: 'A transfer operation is already in progress. Please wait for it to complete.',
@@ -226,18 +215,29 @@ export function useSendToAgent(): UseSendToAgentResult {
 		}
 
 		// Set global transfer flag
-		globalTransferInProgress = true;
+		store.setGlobalTransferInProgress(true);
 
 		// Store the request for retry purposes
-		setLastRequest(request);
+		lastRequestRef.current = request;
 
-		// Reset state
+		// Store minimal request info in the store for non-React consumers
+		const minimalRequest: TransferLastRequest = {
+			sourceSessionId: sourceSession.id,
+			sourceTabId,
+			targetAgent,
+			skipGrooming: !options.groomContext,
+		};
+
+		// Reset state and start
 		cancelledRef.current = false;
-		setError(null);
-		setTransferError(null);
-		setTransferState('grooming');
-		setProgress(INITIAL_PROGRESS);
 		transferStartTimeRef.current = Date.now();
+		store.setTransferState({
+			state: 'grooming',
+			progress: INITIAL_PROGRESS,
+			error: null,
+			transferError: null,
+			lastRequest: minimalRequest,
+		});
 
 		try {
 			// Step 1: Validate inputs and get source tab
@@ -282,10 +282,12 @@ export function useSendToAgent(): UseSendToAgentResult {
 			}
 
 			// Step 2: Extract context from source tab
-			setProgress({
-				stage: 'collecting',
-				progress: 10,
-				message: 'Extracting source context...',
+			useOperationStore.getState().setTransferState({
+				progress: {
+					stage: 'collecting',
+					progress: 10,
+					message: 'Extracting source context...',
+				},
 			});
 
 			const sourceContext = extractTabContext(
@@ -305,10 +307,12 @@ export function useSendToAgent(): UseSendToAgentResult {
 
 			if (options.groomContext) {
 				// Use AI grooming to prepare context for target agent
-				setProgress({
-					stage: 'grooming',
-					progress: 20,
-					message: `Grooming context for ${getAgentDisplayName(targetAgent)}...`,
+				useOperationStore.getState().setTransferState({
+					progress: {
+						stage: 'grooming',
+						progress: 20,
+						message: `Grooming context for ${getAgentDisplayName(targetAgent)}...`,
+					},
 				});
 
 				// Build agent-specific transfer prompt
@@ -325,12 +329,14 @@ export function useSendToAgent(): UseSendToAgentResult {
 					groomingRequest,
 					(groomProgress) => {
 						// Transform progress to our format with agent-specific messaging
-						setProgress({
-							...groomProgress,
-							message:
-								groomProgress.stage === 'grooming'
-									? `Grooming for ${getAgentDisplayName(targetAgent)}: ${groomProgress.message}`
-									: groomProgress.message,
+						useOperationStore.getState().setTransferState({
+							progress: {
+								...groomProgress,
+								message:
+									groomProgress.stage === 'grooming'
+										? `Grooming for ${getAgentDisplayName(targetAgent)}: ${groomProgress.message}`
+										: groomProgress.message,
+							},
 						});
 					}
 				);
@@ -348,10 +354,12 @@ export function useSendToAgent(): UseSendToAgentResult {
 				tokensSaved = groomingResult.tokensSaved;
 			} else {
 				// Use raw logs without grooming
-				setProgress({
-					stage: 'grooming',
-					progress: 50,
-					message: 'Preparing context without grooming...',
+				useOperationStore.getState().setTransferState({
+					progress: {
+						stage: 'grooming',
+						progress: 50,
+						message: 'Preparing context without grooming...',
+					},
 				});
 
 				contextLogs = [...sourceContext.logs];
@@ -363,11 +371,13 @@ export function useSendToAgent(): UseSendToAgentResult {
 			}
 
 			// Step 4: Create new session with target agent
-			setTransferState('creating');
-			setProgress({
-				stage: 'creating',
-				progress: 80,
-				message: `Creating ${getAgentDisplayName(targetAgent)} session...`,
+			useOperationStore.getState().setTransferState({
+				state: 'creating',
+				progress: {
+					stage: 'creating',
+					progress: 80,
+					message: `Creating ${getAgentDisplayName(targetAgent)} session...`,
+				},
 			});
 
 			// Generate name for the transferred session
@@ -402,12 +412,14 @@ export function useSendToAgent(): UseSendToAgentResult {
 			}
 
 			// Step 5: Complete!
-			setProgress({
-				stage: 'complete',
-				progress: 100,
-				message: `Transfer complete! ${tokensSaved > 0 ? `Saved ~${tokensSaved} tokens` : ''}`,
+			useOperationStore.getState().setTransferState({
+				state: 'complete',
+				progress: {
+					stage: 'complete',
+					progress: 100,
+					message: `Transfer complete! ${tokensSaved > 0 ? `Saved ~${tokensSaved} tokens` : ''}`,
+				},
 			});
-			setTransferState('complete');
 
 			return {
 				success: true,
@@ -427,13 +439,15 @@ export function useSendToAgent(): UseSendToAgentResult {
 				elapsedTimeMs,
 			});
 
-			setError(errorMessage);
-			setTransferError(classifiedError);
-			setTransferState('error');
-			setProgress({
-				stage: 'complete',
-				progress: 100,
-				message: `Transfer failed: ${errorMessage}`,
+			useOperationStore.getState().setTransferState({
+				state: 'error',
+				error: errorMessage,
+				transferError: classifiedError,
+				progress: {
+					stage: 'complete',
+					progress: 100,
+					message: `Transfer failed: ${errorMessage}`,
+				},
 			});
 
 			return {
@@ -442,7 +456,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 			};
 		} finally {
 			// Always clear the global transfer flag when done
-			globalTransferInProgress = false;
+			useOperationStore.getState().setGlobalTransferInProgress(false);
 		}
 	}, []);
 
@@ -450,22 +464,22 @@ export function useSendToAgent(): UseSendToAgentResult {
 	 * Retry the last failed transfer with the same options
 	 */
 	const retryTransfer = useCallback(async (): Promise<MergeResult> => {
-		if (!lastRequest) {
+		if (!lastRequestRef.current) {
 			return {
 				success: false,
 				error: 'No previous transfer to retry',
 			};
 		}
 
-		return startTransfer(lastRequest);
-	}, [lastRequest, startTransfer]);
+		return startTransfer(lastRequestRef.current);
+	}, [startTransfer]);
 
 	/**
 	 * Retry the last failed transfer without grooming
 	 * (useful when grooming failed or timed out)
 	 */
 	const retryWithoutGrooming = useCallback(async (): Promise<MergeResult> => {
-		if (!lastRequest) {
+		if (!lastRequestRef.current) {
 			return {
 				success: false,
 				error: 'No previous transfer to retry',
@@ -474,15 +488,15 @@ export function useSendToAgent(): UseSendToAgentResult {
 
 		// Create a modified request with grooming disabled
 		const modifiedRequest: TransferRequest = {
-			...lastRequest,
+			...lastRequestRef.current,
 			options: {
-				...lastRequest.options,
+				...lastRequestRef.current.options,
 				groomContext: false,
 			},
 		};
 
 		return startTransfer(modifiedRequest);
-	}, [lastRequest, startTransfer]);
+	}, [startTransfer]);
 
 	return {
 		transferState,
@@ -495,7 +509,7 @@ export function useSendToAgent(): UseSendToAgentResult {
 		reset,
 		retryTransfer,
 		retryWithoutGrooming,
-		lastRequest,
+		lastRequest: lastRequestRef.current,
 	};
 }
 

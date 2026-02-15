@@ -193,6 +193,108 @@ async function detectAgentsRemote(sshRemote: SshRemoteConfig): Promise<any[]> {
 	return agents;
 }
 
+// Remote model discovery cache
+const remoteModelCache = new Map<string, { models: string[]; timestamp: number }>();
+const REMOTE_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const SSH_MODEL_TIMEOUT_MS = 10000;
+
+/**
+ * Discover available models for an agent on a remote SSH host.
+ * Uses the agent's `models` subcommand over SSH.
+ * Returns an empty array on timeout, non-zero exit, or unknown agent.
+ * Throws on unexpected errors (e.g., SSH config issues, parsing bugs).
+ */
+async function discoverModelsRemote(
+	agentId: string,
+	sshRemote: SshRemoteConfig,
+	forceRefresh: boolean
+): Promise<string[]> {
+	const cacheKey = `${agentId}:${sshRemote.id}`;
+
+	// Check cache unless force refresh
+	if (!forceRefresh) {
+		const cached = remoteModelCache.get(cacheKey);
+		if (cached && Date.now() - cached.timestamp < REMOTE_MODEL_CACHE_TTL_MS) {
+			logger.info(`Using cached remote models for ${agentId} on ${sshRemote.host}`, LOG_CONTEXT);
+			return cached.models;
+		}
+	}
+
+	// Look up the agent's binary name
+	const agentDef = AGENT_DEFINITIONS.find((a) => a.id === agentId);
+	if (!agentDef) {
+		logger.warn(`Unknown agent for remote model discovery: ${agentId}`, LOG_CONTEXT);
+		return [];
+	}
+
+	const remoteOptions: RemoteCommandOptions = {
+		command: agentDef.binaryName,
+		args: ['models'],
+		env: sshRemote.remoteEnv,
+	};
+
+	try {
+		const sshCommand = await buildSshCommand(sshRemote, remoteOptions);
+		logger.info(
+			`Discovering models for "${agentDef.name}" on remote ${sshRemote.host}`,
+			LOG_CONTEXT
+		);
+
+		// Execute with timeout matching detectAgentsRemote pattern
+		const resultPromise = execFileNoThrow(sshCommand.command, sshCommand.args);
+		const timeoutPromise = new Promise<{ exitCode: number; stdout: string; stderr: string }>(
+			(_, reject) => {
+				setTimeout(
+					() =>
+						reject(
+							new Error(
+								`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`
+							)
+						),
+					SSH_MODEL_TIMEOUT_MS
+				);
+			}
+		);
+
+		const result = await Promise.race([resultPromise, timeoutPromise]);
+
+		if (result.exitCode !== 0) {
+			logger.warn(
+				`Remote model discovery for "${agentDef.name}" exited with code ${result.exitCode}`,
+				LOG_CONTEXT,
+				{ stderr: result.stderr }
+			);
+			return [];
+		}
+
+		const models = stripAnsi(result.stdout)
+			.split('\n')
+			.map((l) => l.trim())
+			.filter((l) => l.length > 0);
+
+		logger.info(
+			`Discovered ${models.length} models for "${agentDef.name}" on remote ${sshRemote.host}`,
+			LOG_CONTEXT
+		);
+
+		// Cache the result
+		remoteModelCache.set(cacheKey, { models, timestamp: Date.now() });
+
+		return models;
+	} catch (error) {
+		// Timeout is an expected SSH failure — return empty gracefully
+		if (error instanceof Error && error.message.includes('SSH model discovery timed out')) {
+			logger.warn(
+				`Timed out discovering models for "${agentDef.name}" on ${sshRemote.host}`,
+				LOG_CONTEXT
+			);
+			return [];
+		}
+		// Unexpected errors should propagate to withIpcErrorLogging / Sentry
+		throw error;
+	}
+}
+
 /**
  * Register all Agent-related IPC handlers.
  *
@@ -705,13 +807,28 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 	);
 
 	// Discover available models for an agent that supports model selection
+	// Supports SSH remote discovery via optional sshRemoteId parameter
 	ipcMain.handle(
 		'agents:getModels',
 		withIpcErrorLogging(
 			handlerOpts('getModels'),
-			async (agentId: string, forceRefresh?: boolean) => {
+			async (agentId: string, forceRefresh?: boolean, sshRemoteId?: string) => {
+				logger.info(`Discovering models for agent: ${agentId}`, LOG_CONTEXT, {
+					forceRefresh,
+					sshRemoteId,
+				});
+
+				// If SSH remote ID provided, discover models on remote host
+				if (sshRemoteId) {
+					const sshConfig = getSshRemoteById(settingsStore, sshRemoteId);
+					if (!sshConfig) {
+						throw new Error(`SSH remote not found: ${sshRemoteId}`);
+					}
+					return discoverModelsRemote(agentId, sshConfig, forceRefresh ?? false);
+				}
+
+				// Local discovery
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
-				logger.info(`Discovering models for agent: ${agentId}`, LOG_CONTEXT, { forceRefresh });
 				const models = await agentDetector.discoverModels(agentId, forceRefresh ?? false);
 				return models;
 			}

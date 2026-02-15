@@ -5519,4 +5519,162 @@ This is a Symphony task document.
 			});
 		});
 	});
+
+	// ==========================================================================
+	// Label Capture and Blocking Label Tests
+	// ==========================================================================
+
+	describe('GitHub label capture (via symphony:getIssues)', () => {
+		const getIssuesHandler = () => handlers.get('symphony:getIssues');
+
+		beforeEach(() => {
+			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+		});
+
+		it('should capture labels from GitHub API response', async () => {
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								number: 1,
+								title: 'Test Issue',
+								body: 'docs/task.md',
+								url: 'https://api.github.com/repos/owner/repo/issues/1',
+								html_url: 'https://github.com/owner/repo/issues/1',
+								user: { login: 'user' },
+								created_at: '2024-01-01',
+								updated_at: '2024-01-01',
+								labels: [
+									{ name: 'runmaestro.ai', color: '0075ca' },
+									{ name: 'enhancement', color: 'a2eeef' },
+									{ name: 'good first issue', color: '7057ff' },
+								],
+							},
+						]),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				});
+
+			const handler = getIssuesHandler();
+			const result = await handler!({} as any, 'owner/repo');
+
+			// Should exclude the runmaestro.ai label
+			expect(result.issues[0].labels).toHaveLength(2);
+			expect(result.issues[0].labels).toContainEqual({ name: 'enhancement', color: 'a2eeef' });
+			expect(result.issues[0].labels).toContainEqual({ name: 'good first issue', color: '7057ff' });
+		});
+
+		it('should filter out the runmaestro.ai label from the labels list', async () => {
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								number: 1,
+								title: 'Test',
+								body: 'task.md',
+								url: 'https://api.github.com/repos/owner/repo/issues/1',
+								html_url: 'https://github.com/owner/repo/issues/1',
+								user: { login: 'user' },
+								created_at: '2024-01-01',
+								updated_at: '2024-01-01',
+								labels: [{ name: 'runmaestro.ai', color: '0075ca' }],
+							},
+						]),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				});
+
+			const handler = getIssuesHandler();
+			const result = await handler!({} as any, 'owner/repo');
+
+			expect(result.issues[0].labels).toHaveLength(0);
+		});
+
+		it('should handle issues with no labels array gracefully', async () => {
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								number: 1,
+								title: 'Test',
+								body: 'task.md',
+								url: 'https://api.github.com/repos/owner/repo/issues/1',
+								html_url: 'https://github.com/owner/repo/issues/1',
+								user: { login: 'user' },
+								created_at: '2024-01-01',
+								updated_at: '2024-01-01',
+							},
+						]),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				});
+
+			const handler = getIssuesHandler();
+			const result = await handler!({} as any, 'owner/repo');
+
+			expect(result.issues[0].labels).toEqual([]);
+		});
+
+		it('should capture blocking label on issues', async () => {
+			mockFetch
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () =>
+						Promise.resolve([
+							{
+								number: 1,
+								title: 'Blocked Issue',
+								body: 'task.md',
+								url: 'https://api.github.com/repos/owner/repo/issues/1',
+								html_url: 'https://github.com/owner/repo/issues/1',
+								user: { login: 'user' },
+								created_at: '2024-01-01',
+								updated_at: '2024-01-01',
+								labels: [
+									{ name: 'runmaestro.ai', color: '0075ca' },
+									{ name: 'blocking', color: 'e4e669' },
+								],
+							},
+							{
+								number: 2,
+								title: 'Available Issue',
+								body: 'task2.md',
+								url: 'https://api.github.com/repos/owner/repo/issues/2',
+								html_url: 'https://github.com/owner/repo/issues/2',
+								user: { login: 'user' },
+								created_at: '2024-01-01',
+								updated_at: '2024-01-01',
+								labels: [{ name: 'runmaestro.ai', color: '0075ca' }],
+							},
+						]),
+				})
+				.mockResolvedValueOnce({
+					ok: true,
+					json: () => Promise.resolve([]),
+				});
+
+			const handler = getIssuesHandler();
+			const result = await handler!({} as any, 'owner/repo');
+
+			// Issue 1 should have the blocking label
+			const blockedIssue = result.issues.find((i: any) => i.number === 1);
+			expect(blockedIssue.labels).toContainEqual({ name: 'blocking', color: 'e4e669' });
+
+			// Issue 2 should have no labels (runmaestro.ai filtered out)
+			const availableIssue = result.issues.find((i: any) => i.number === 2);
+			expect(availableIssue.labels).toHaveLength(0);
+		});
+	});
 });

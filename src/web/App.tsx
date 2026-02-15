@@ -5,7 +5,7 @@
  * Provides session monitoring and command input from anywhere on your network.
  */
 
-import React, {
+import {
 	StrictMode,
 	lazy,
 	Suspense,

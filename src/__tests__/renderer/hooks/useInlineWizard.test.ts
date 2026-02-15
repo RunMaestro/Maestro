@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useInlineWizard } from '../../../renderer/hooks/useInlineWizard';
+import { useInlineWizard } from '../../../renderer/hooks/batch/useInlineWizard';
 
 // Mock the dependencies
 vi.mock('../../../renderer/services/wizardIntentParser', () => ({

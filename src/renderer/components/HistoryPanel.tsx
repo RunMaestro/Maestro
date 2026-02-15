@@ -21,6 +21,7 @@ import {
 	ESTIMATED_ROW_HEIGHT,
 	ESTIMATED_ROW_HEIGHT_SIMPLE,
 } from './History';
+import { useUIStore } from '../stores/uiStore';
 
 interface HistoryPanelProps {
 	session: Session;
@@ -63,7 +64,8 @@ export const HistoryPanel = React.memo(
 		const [isLoading, setIsLoading] = useState(true);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [searchFilter, setSearchFilter] = useState('');
-		const [searchFilterOpen, setSearchFilterOpen] = useState(false);
+		const searchFilterOpen = useUIStore((s) => s.historySearchFilterOpen);
+		const setSearchFilterOpen = useUIStore((s) => s.setHistorySearchFilterOpen);
 		const [graphReferenceTime, setGraphReferenceTime] = useState<number | undefined>(undefined);
 		const [helpModalOpen, setHelpModalOpen] = useState(false);
 		const [graphLookbackHours, setGraphLookbackHours] = useState<number | null>(null); // default to "All time"
@@ -71,6 +73,11 @@ export const HistoryPanel = React.memo(
 		const listRef = useRef<HTMLDivElement>(null);
 		const searchInputRef = useRef<HTMLInputElement>(null);
 		const hasRestoredScroll = useRef<boolean>(false);
+
+		// Reset search filter state when unmounting (e.g., tab switch) to prevent stale store state
+		useEffect(() => {
+			return () => setSearchFilterOpen(false);
+		}, [setSearchFilterOpen]);
 
 		// Load history entries function - reusable for initial load and refresh
 		// When isRefresh=true, preserve scroll position

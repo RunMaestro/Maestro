@@ -13,7 +13,7 @@
  * - Elapsed time tracking
  */
 
-import React, { useState, useEffect, memo, useCallback } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 import { X, Check, Loader2, AlertTriangle, Wand2 } from 'lucide-react';
 import type { Theme } from '../types';
 import type { SummarizeProgress, SummarizeResult } from '../types/contextMerge';
@@ -311,8 +311,8 @@ export const SummarizeProgressOverlay = memo(function SummarizeProgressOverlay({
 						{isComplete && result && result.success && (
 							<div className="mt-2 text-xs" style={{ color: theme.colors.success }}>
 								Reduced context by {result.reductionPercent}% (~
-								{result.originalTokens.toLocaleString()} → ~
-								{result.compactedTokens.toLocaleString()} tokens)
+								{(result.originalTokens ?? 0).toLocaleString()} → ~
+								{(result.compactedTokens ?? 0).toLocaleString()} tokens)
 							</div>
 						)}
 					</div>
