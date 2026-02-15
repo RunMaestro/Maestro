@@ -68,7 +68,8 @@ This phase sets up the infrastructure: TypeScript types, modal registration, key
 
 ## Modal Store
 
-- [ ] **Register the AgentInbox modal in the modal store.** Open `src/renderer/stores/modalStore.ts`. Add `'agentInbox'` to the `ModalId` type union (near where `'processMonitor'` is defined). Add an action `setAgentInboxOpen: (open: boolean) => void` that calls `openModal('agentInbox')` / `closeModal('agentInbox')`, following the exact pattern of `setProcessMonitorOpen`. No modal data needed.
+- [x] **Register the AgentInbox modal in the modal store.** Open `src/renderer/stores/modalStore.ts`. Add `'agentInbox'` to the `ModalId` type union (near where `'processMonitor'` is defined). Add an action `setAgentInboxOpen: (open: boolean) => void` that calls `openModal('agentInbox')` / `closeModal('agentInbox')`, following the exact pattern of `setProcessMonitorOpen`. No modal data needed.
+  > ✅ Added `'agentInbox'` to ModalId union, `setAgentInboxOpen` action in `getModalActions()`, and `agentInboxOpen` reactive selector in `useModalActions()`. TypeScript compiles cleanly.
 
 ---
 
