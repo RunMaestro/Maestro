@@ -15,7 +15,7 @@
  * @module components/SessionListItem
  */
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import {
 	Star,
 	Play,
@@ -85,7 +85,7 @@ export interface SessionListItemProps {
 /**
  * SessionListItem component for rendering a single session row
  */
-export function SessionListItem({
+export const SessionListItem = memo(function SessionListItem({
 	session,
 	index,
 	selectedIndex,
@@ -109,16 +109,55 @@ export function SessionListItem({
 	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
+	const containerStyle = useMemo(
+		() => ({
+			backgroundColor: isSelected ? theme.colors.accent + '15' : 'transparent',
+			borderColor: theme.colors.border + '50',
+		}),
+		[isSelected, theme.colors.accent, theme.colors.border],
+	);
+	const maestroOriginStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.accent + '30',
+			color: theme.colors.accent,
+		}),
+		[theme.colors.accent],
+	);
+	const autoOriginStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.warning + '30',
+			color: theme.colors.warning,
+		}),
+		[theme.colors.warning],
+	);
+	const sessionIdStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.border + '60',
+			color: theme.colors.textDim,
+		}),
+		[theme.colors.border, theme.colors.textDim],
+	);
+	const matchCountStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.accent + '20',
+			color: theme.colors.accent,
+		}),
+		[theme.colors.accent],
+	);
+	const activeIndicatorStyle = useMemo(
+		() => ({
+			backgroundColor: theme.colors.success + '20',
+			color: theme.colors.success,
+		}),
+		[theme.colors.success],
+	);
 
 	return (
 		<div
 			ref={isSelected ? (selectedItemRef as React.RefObject<HTMLDivElement>) : null}
 			onClick={() => onSessionClick(session)}
 			className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-white/5 transition-colors border-b group cursor-pointer"
-			style={{
-				backgroundColor: isSelected ? theme.colors.accent + '15' : 'transparent',
-				borderColor: theme.colors.border + '50',
-			}}
+			style={containerStyle}
 		>
 			{/* Star button */}
 			<button
@@ -217,7 +256,7 @@ export function SessionListItem({
 					{session.origin === 'user' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '30', color: theme.colors.accent }}
+							style={maestroOriginStyle}
 							title="User-initiated through Maestro"
 						>
 							MAESTRO
@@ -226,7 +265,7 @@ export function SessionListItem({
 					{session.origin === 'auto' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
+							style={autoOriginStyle}
 							title="Auto-run session"
 						>
 							AUTO
@@ -245,7 +284,7 @@ export function SessionListItem({
 					{/* Session ID pill */}
 					<span
 						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-						style={{ backgroundColor: theme.colors.border + '60', color: theme.colors.textDim }}
+						style={sessionIdStyle}
 					>
 						{session.sessionId.startsWith('agent-')
 							? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
@@ -281,7 +320,7 @@ export function SessionListItem({
 					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
 						<span
 							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+							style={matchCountStyle}
 						>
 							<Search className="w-3 h-3" />
 							{searchResultInfo.matchCount}
@@ -301,11 +340,11 @@ export function SessionListItem({
 			{isActive && (
 				<span
 					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-					style={{ backgroundColor: theme.colors.success + '20', color: theme.colors.success }}
+					style={activeIndicatorStyle}
 				>
 					ACTIVE
 				</span>
 			)}
 		</div>
 	);
-}
+});
