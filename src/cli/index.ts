@@ -113,6 +113,7 @@ import {
 	campaignShow,
 } from './commands/agent-run';
 import { mcpServe } from './commands/mcp';
+import { listAccounts } from './commands/accounts';
 
 // Injected at build time by scripts/build-cli.mjs via esbuild `define`.
 // The typeof guard keeps non-esbuild execution paths (ts-node, plain tsc output) from
@@ -260,6 +261,8 @@ program
 	.option('--verbose', 'Show full prompt sent to agent on each iteration')
 	.option('--no-synopsis', 'Skip synopsis generation after each task (reduces overhead)')
 	.option('--wait', 'Wait for agent to become available if busy')
+	.option('--account <name>', 'Claude account name or ID to use for all spawned agents')
+	.option('--account-rotation', 'Rotate through available accounts for parallel tasks')
 	.action(async (playbookId: string, options: Record<string, unknown>) => {
 		const { runPlaybook } = await import('./commands/run-playbook');
 		return runPlaybook(playbookId, options);
@@ -1488,6 +1491,14 @@ mcp
 // Commander auto-switches to from: 'electron' when process.versions.electron is
 // set, which is still true under ELECTRON_RUN_AS_NODE=1. In that mode Commander
 // only strips argv[0] and treats the script path as the first user command.
+// Accounts command
+program
+	.command('accounts')
+	.description('List configured Claude accounts')
+	.action(async () => {
+		await listAccounts();
+	});
+
 // Force node-style argv parsing so the shim that spawns us via Electron-as-Node
 // (see MaestroCliManager.writeUnixShim / writeWindowsShim) works correctly.
 program.parse(process.argv, { from: 'node' });

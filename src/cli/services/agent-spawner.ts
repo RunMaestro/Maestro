@@ -405,10 +405,16 @@ async function spawnClaudeAgent(
 	readOnlyMode?: boolean,
 	sshRemoteConfig?: AgentSshRemoteConfig,
 	overrides: SpawnOverrides = {},
-	tokenSource: ClaudeTokenSourceFields = {}
+	tokenSource: ClaudeTokenSourceFields = {},
+	configDir?: string
 ): Promise<AgentResult> {
 	const env = buildExpandedEnv();
 	const def = getAgentDefinition('claude-code');
+
+	// Inject account config dir if provided (account multiplexing)
+	if (configDir) {
+		env.CLAUDE_CONFIG_DIR = configDir;
+	}
 
 	// Build args WITHOUT the prompt — the prompt is appended below for local
 	// execution or embedded into the SSH wrapper for remote execution.
@@ -1063,6 +1069,11 @@ export interface SpawnAgentOptions {
 	enableMaestroP?: boolean;
 	maestroPMode?: 'interactive' | 'dynamic';
 	maestroPPath?: string;
+	/**
+	 * Claude account config dir (account multiplexing). When set, exported as
+	 * CLAUDE_CONFIG_DIR for the spawned Claude Code process.
+	 */
+	configDir?: string;
 }
 
 /**
@@ -1095,7 +1106,8 @@ export async function spawnAgent(
 			readOnly,
 			sshRemoteConfig,
 			overrides,
-			tokenSource
+			tokenSource,
+			options?.configDir
 		);
 	}
 

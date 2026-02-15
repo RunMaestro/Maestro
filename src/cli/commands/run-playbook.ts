@@ -18,6 +18,8 @@ interface RunPlaybookOptions {
 	verbose?: boolean;
 	synopsis?: boolean; // commander uses --no-synopsis which becomes synopsis: false
 	wait?: boolean;
+	account?: string;
+	accountRotation?: boolean;
 }
 
 export async function runPlaybook(playbookId: string, options: RunPlaybookOptions): Promise<void> {
@@ -121,6 +123,8 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 			debug: options.debug,
 			verbose: options.verbose,
 			skipSynopsis: options.synopsis === false, // --no-synopsis sets synopsis to false
+			account: options.account,
+			accountRotation: options.accountRotation,
 		});
 
 		for await (const event of generator) {
