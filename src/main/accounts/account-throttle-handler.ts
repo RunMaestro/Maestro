@@ -12,6 +12,7 @@
 import type { AccountRegistry } from './account-registry';
 import type { StatsDB } from '../stats';
 import { DEFAULT_TOKEN_WINDOW_MS } from '../../shared/account-types';
+import { getWindowBounds } from './account-utils';
 
 const LOG_CONTEXT = 'account-throttle';
 
@@ -20,20 +21,6 @@ export interface ThrottleContext {
 	accountId: string;
 	errorType: string;
 	errorMessage: string;
-}
-
-/**
- * Calculate the window boundaries for a given timestamp and window size.
- * Windows are aligned to fixed intervals from midnight.
- */
-function getWindowBounds(timestamp: number, windowMs: number): { start: number; end: number } {
-	const dayStart = new Date(timestamp);
-	dayStart.setHours(0, 0, 0, 0);
-	const dayStartMs = dayStart.getTime();
-	const windowsSinceDayStart = Math.floor((timestamp - dayStartMs) / windowMs);
-	const start = dayStartMs + windowsSinceDayStart * windowMs;
-	const end = start + windowMs;
-	return { start, end };
 }
 
 export class AccountThrottleHandler {
