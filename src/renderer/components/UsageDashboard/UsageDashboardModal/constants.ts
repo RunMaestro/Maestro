@@ -16,6 +16,6 @@ export const BASE_VIEW_MODE_TABS: UsageDashboardTab[] = [
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
-	{ value: 'accounts', label: 'Accounts' },
+	{ value: 'accounts', label: 'Virtuosos' },
 	{ value: 'shortcuts', label: 'Shortcuts' },
 ];

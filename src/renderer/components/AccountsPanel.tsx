@@ -54,6 +54,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
 	const [conflictingSessions, setConflictingSessions] = useState<ConflictingSession[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
 	const refreshAccounts = useCallback(async () => {
 		try {
@@ -99,6 +100,15 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 			setLoading(false);
 		};
 		init();
+
+		// Auto-refresh when account status changes (e.g., marked expired during spawn)
+		const cleanupStatusChanged = window.maestro.accounts.onStatusChanged(() => {
+			refreshAccounts();
+		});
+
+		return () => {
+			cleanupStatusChanged();
+		};
 	}, [refreshAccounts, refreshSwitchConfig]);
 
 	const handleDiscover = async () => {
@@ -135,10 +145,11 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	const handleCreateAndLogin = async () => {
 		if (!newAccountName.trim()) return;
 		setIsCreating(true);
+		setErrorMessage(null);
 		try {
 			const result = await window.maestro.accounts.createDirectory(newAccountName.trim());
 			if (!result.success) {
-				console.error('Failed to create directory:', result.error);
+				setErrorMessage(`Failed to create account directory: ${result.error}`);
 				return;
 			}
 			setCreatedConfigDir(result.configDir);
@@ -151,7 +162,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 				setCreateStep('created');
 			}
 		} catch (err) {
-			console.error('Failed to create account:', err);
+			setErrorMessage(`Failed to create account: ${err}`);
 		} finally {
 			setIsCreating(false);
 		}
@@ -238,6 +249,20 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 			await refreshAccounts();
 		} catch (err) {
 			console.error('Failed to repair symlinks:', err);
+		}
+	};
+
+	const handleSyncCredentials = async (configDir: string) => {
+		try {
+			const result = await window.maestro.accounts.syncCredentials(configDir);
+			if (result.success) {
+				setErrorMessage(null);
+				alert('Credentials synced from base ~/.claude directory.');
+			} else {
+				setErrorMessage(`Sync failed: ${result.error}`);
+			}
+		} catch (err) {
+			setErrorMessage(`Failed to sync credentials: ${err}`);
 		}
 	};
 
@@ -328,9 +353,14 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 					className="flex items-center justify-between mb-3"
 					style={{ color: theme.colors.textMain }}
 				>
-					<label className="block text-xs font-bold opacity-70 uppercase flex items-center gap-2">
-						Registered Accounts
-					</label>
+					<div>
+						<label className="block text-xs font-bold opacity-70 uppercase flex items-center gap-2">
+							Registered Virtuosos
+						</label>
+						<p className="text-xs mt-1" style={{ color: theme.colors.textDim }}>
+							AI Account Providers
+						</p>
+					</div>
 					<button
 						onClick={refreshAccounts}
 						className="p-1 rounded hover:bg-white/10 transition-colors"
@@ -353,7 +383,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 							border: `1px solid ${theme.colors.border}`,
 						}}
 					>
-						No accounts registered. Use &quot;Discover Existing&quot; or &quot;Create
+						No virtuosos registered. Use &quot;Discover Existing&quot; or &quot;Create
 						New&quot; below.
 					</div>
 				) : (
@@ -387,6 +417,24 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 												)}
 												{statusBadge(account.status)}
 											</div>
+											{account.status === 'expired' && (
+												<div
+													className="text-xs mt-1 flex items-center gap-1"
+													style={{ color: theme.colors.error }}
+												>
+													<AlertTriangle className="w-3 h-3" />
+													OAuth token expired — run:{' '}
+													<code
+														className="font-mono select-all px-1 py-0.5 rounded"
+														style={{
+															backgroundColor: theme.colors.bgSidebar,
+															fontSize: '10px',
+														}}
+													>
+														CLAUDE_CONFIG_DIR=&quot;{account.configDir}&quot; claude login
+													</code>
+												</div>
+											)}
 											<div
 												className="text-xs mt-1"
 												style={{ color: theme.colors.textDim }}
@@ -422,6 +470,23 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 												<ChevronRight className="w-3 h-3" />
 											)}
 										</button>
+										{account.status === 'expired' && (
+											<button
+												onClick={() =>
+													handleUpdateAccount(account.id, {
+														status: 'active',
+													})
+												}
+												className="px-2 py-1 rounded text-xs font-bold transition-colors hover:bg-white/10"
+												title="Mark as active after re-login"
+												style={{
+													color: theme.colors.success,
+													border: `1px solid ${theme.colors.success}`,
+												}}
+											>
+												Reactivate
+											</button>
+										)}
 										{!account.isDefault && (
 											<button
 												onClick={() => handleSetDefault(account.id)}
@@ -535,7 +600,20 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 											</button>
 										</div>
 
-										<div className="flex gap-2">
+										<div className="flex gap-2 flex-wrap">
+											<button
+												onClick={() =>
+													handleSyncCredentials(account.configDir)
+												}
+												className="flex items-center gap-1 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+												style={{
+													color: theme.colors.accent,
+													border: `1px solid ${theme.colors.accent}`,
+												}}
+											>
+												<RefreshCw className="w-3 h-3" />
+												Sync Auth
+											</button>
 											<button
 												onClick={() =>
 													handleValidateSymlinks(account.configDir)
@@ -571,13 +649,13 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 				)}
 			</div>
 
-			{/* Add Account Section */}
+			{/* Add Virtuoso Section */}
 			<div>
 				<label
 					className="block text-xs font-bold opacity-70 uppercase mb-3 flex items-center gap-2"
 					style={{ color: theme.colors.textMain }}
 				>
-					Add Account
+					Add Virtuoso
 				</label>
 
 				<div className="flex gap-2 mb-3">
@@ -662,6 +740,37 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 					</div>
 				)}
 
+				{/* Error message */}
+				{errorMessage && (
+					<div
+						className="p-3 rounded mb-3 flex items-start gap-2"
+						style={{
+							backgroundColor: theme.colors.error + '15',
+							border: `1px solid ${theme.colors.error}`,
+						}}
+					>
+						<AlertTriangle
+							className="w-4 h-4 flex-shrink-0 mt-0.5"
+							style={{ color: theme.colors.error }}
+						/>
+						<div className="flex-1">
+							<div
+								className="text-xs"
+								style={{ color: theme.colors.error }}
+							>
+								{errorMessage}
+							</div>
+							<button
+								onClick={() => setErrorMessage(null)}
+								className="text-xs mt-1 underline"
+								style={{ color: theme.colors.textDim }}
+							>
+								Dismiss
+							</button>
+						</div>
+					</div>
+				)}
+
 				{/* Create new account */}
 				<div
 					className="p-3 rounded"
@@ -674,7 +783,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 						className="block text-xs mb-2"
 						style={{ color: theme.colors.textDim }}
 					>
-						Create New Account
+						Create New Virtuoso
 					</label>
 
 					{createStep === 'idle' && (
@@ -683,7 +792,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 								type="text"
 								value={newAccountName}
 								onChange={(e) => setNewAccountName(e.target.value)}
-								placeholder="Account name (e.g., work, personal)"
+								placeholder="Virtuoso name (e.g., work, personal)"
 								className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 								style={{
 									borderColor: theme.colors.border,

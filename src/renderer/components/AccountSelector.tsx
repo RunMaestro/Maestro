@@ -16,6 +16,7 @@ export interface AccountSelectorProps {
 	theme: Theme;
 	sessionId: string;
 	currentAccountId?: string;
+	currentAccountName?: string;
 	onSwitchAccount: (toAccountId: string) => void;
 	onManageAccounts?: () => void;
 	compact?: boolean;
@@ -39,6 +40,7 @@ export function AccountSelector({
 	theme,
 	sessionId: _sessionId,
 	currentAccountId,
+	currentAccountName,
 	onSwitchAccount,
 	onManageAccounts,
 	compact = false,
@@ -47,9 +49,8 @@ export function AccountSelector({
 	const [isOpen, setIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
 
-	// Fetch accounts when dropdown opens
+	// Fetch accounts on mount and when dropdown opens (refresh)
 	useEffect(() => {
-		if (!isOpen) return;
 		let cancelled = false;
 		(async () => {
 			try {
@@ -60,7 +61,7 @@ export function AccountSelector({
 			}
 		})();
 		return () => { cancelled = true; };
-	}, [isOpen]);
+	}, [isOpen, currentAccountId]);
 
 	// Close dropdown on outside click
 	useEffect(() => {
@@ -88,7 +89,7 @@ export function AccountSelector({
 	}, [isOpen]);
 
 	const currentAccount = accounts.find((a) => a.id === currentAccountId);
-	const displayName = currentAccount?.name ?? currentAccount?.email ?? 'No Account';
+	const displayName = currentAccount?.name ?? currentAccount?.email ?? currentAccountName ?? 'No Virtuoso';
 
 	const handleSelect = useCallback(
 		(accountId: string) => {
@@ -107,20 +108,21 @@ export function AccountSelector({
 				<button
 					type="button"
 					onClick={() => setIsOpen((v) => !v)}
-					className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all opacity-50 hover:opacity-100"
+					className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all hover:brightness-125"
 					style={{
-						color: currentAccountId ? theme.colors.accent : theme.colors.textDim,
-						backgroundColor: currentAccountId ? `${theme.colors.accent}15` : 'transparent',
+						color: currentAccountId ? theme.colors.textMain : theme.colors.textDim,
+						backgroundColor: currentAccountId ? `${theme.colors.accent}20` : `${theme.colors.border}30`,
 						border: currentAccountId
-							? `1px solid ${theme.colors.accent}40`
-							: '1px solid transparent',
+							? `1px solid ${theme.colors.accent}50`
+							: `1px solid ${theme.colors.border}60`,
 					}}
-					title={currentAccountId ? `Account: ${displayName}` : 'Select account'}
+					title={currentAccountId ? `Virtuoso: ${displayName}` : 'Select virtuoso'}
 				>
-					<User className="w-3 h-3" />
-					{currentAccountId && (
-						<span className="max-w-[80px] truncate">{displayName.split('@')[0]}</span>
-					)}
+					<User className="w-3 h-3" style={{ color: theme.colors.accent }} />
+					<span className="max-w-[100px] truncate">
+						{currentAccountId ? displayName.split('@')[0] : 'No Virtuoso'}
+					</span>
+					<ChevronDown className="w-2.5 h-2.5" style={{ color: theme.colors.textDim }} />
 				</button>
 			) : (
 				<button
@@ -153,7 +155,7 @@ export function AccountSelector({
 					<div className="py-1 max-h-[240px] overflow-y-auto">
 						{accounts.length === 0 && (
 							<div className="px-3 py-2 text-xs" style={{ color: theme.colors.textDim }}>
-								No accounts configured
+								No virtuosos configured
 							</div>
 						)}
 						{accounts.map((account) => {
@@ -234,7 +236,7 @@ export function AccountSelector({
 								style={{ color: theme.colors.textDim }}
 							>
 								<Settings className="w-3 h-3" />
-								Manage Accounts
+								Manage Virtuosos
 							</button>
 						</div>
 					)}

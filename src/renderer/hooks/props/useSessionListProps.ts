@@ -109,6 +109,34 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			// Domain handlers
 			toggleGlobalLive: deps.toggleGlobalLive,
 			restartWebServer: deps.restartWebServer,
+=======
+
+			// Folder states
+			bookmarksCollapsed: deps.bookmarksCollapsed,
+			setBookmarksCollapsed: deps.setBookmarksCollapsed,
+			ungroupedCollapsed: deps.ungroupedCollapsed,
+			setUngroupedCollapsed: deps.setUngroupedCollapsed,
+
+			// Setters
+			setActiveFocus: deps.setActiveFocus,
+			setActiveSessionId: deps.setActiveSessionId,
+			setLeftSidebarOpen: deps.setLeftSidebarOpen,
+			setLeftSidebarWidthState: deps.setLeftSidebarWidth,
+			setShortcutsHelpOpen: deps.setShortcutsHelpOpen,
+			setSettingsModalOpen: deps.setSettingsModalOpen,
+			setSettingsTab: deps.setSettingsTab,
+			setAboutModalOpen: deps.setAboutModalOpen,
+			setUpdateCheckModalOpen: deps.setUpdateCheckModalOpen,
+			setLogViewerOpen: deps.setLogViewerOpen,
+			setProcessMonitorOpen: deps.setProcessMonitorOpen,
+			setUsageDashboardOpen: deps.setUsageDashboardOpen,
+			setSymphonyModalOpen: deps.setSymphonyModalOpen,
+			setDirectorNotesOpen: deps.setDirectorNotesOpen,
+			setQuickActionOpen: deps.setQuickActionOpen,
+			setVirtuososOpen: deps.setVirtuososOpen,
+
+			// Handlers
+>>>>>>> b07d938e9 (MAESTRO: feat: rename "Accounts" to "Virtuosos" across all UX surfaces and promote to own modal)
 			toggleGroup: deps.toggleGroup,
 			handleDragStart: deps.handleDragStart,
 			handleDragOver: deps.handleDragOver,
@@ -158,6 +186,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.webInterfaceUrl,
 			deps.showSessionJumpNumbers,
 			deps.visibleSessions,
+<<<<<<< HEAD
 			deps.starredItems,
 			deps.activateStarredItem,
 			deps.sidebarContainerRef,

@@ -192,7 +192,7 @@ export function ProcessDetailView({
 									className="text-xs font-medium uppercase tracking-wide"
 									style={{ color: theme.colors.textDim }}
 								>
-									Account
+									Virtuoso
 								</span>
 							</div>
 							<span className="text-sm" style={{ color: theme.colors.textMain }}>

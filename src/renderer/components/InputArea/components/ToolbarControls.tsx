@@ -30,6 +30,7 @@ import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ModelEffortPills } from './ModelEffortPills';
 import { AccountSelector } from '../../AccountSelector';
+import { getModalActions } from '../../../stores/modalStore';
 
 interface ToolbarControlsProps {
 	session: Session;
@@ -269,6 +270,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 						theme={theme}
 						sessionId={session.id}
 						currentAccountId={session.accountId}
+						currentAccountName={session.accountName}
 						onSwitchAccount={async (toAccountId) => {
 							const currentAccountId = session.accountId;
 							if (currentAccountId && currentAccountId !== toAccountId) {
@@ -283,6 +285,7 @@ export const ToolbarControls = memo(function ToolbarControls({
 								await window.maestro.accounts.assign(session.id, toAccountId);
 							}
 						}}
+						onManageAccounts={() => getModalActions().setVirtuososOpen(true)}
 						compact
 					/>
 				)}

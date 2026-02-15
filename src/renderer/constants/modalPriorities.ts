@@ -280,6 +280,9 @@ export const MODAL_PRIORITIES = {
 	 * the dropdown first, leaving the Settings modal open for a second Esc). */
 	CUSTOM_THEME_BASE_SELECTOR: 451,
 
+	/** Virtuosos (account management) modal */
+	VIRTUOSOS: 455,
+
 	/** Settings modal */
 	SETTINGS: 450,
 

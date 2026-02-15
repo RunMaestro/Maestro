@@ -307,7 +307,9 @@ export type ModalId =
 	| 'cueModal'
 	| 'cueYamlEditor'
 	// Pianola (autonomous manager)
-	| 'pianolaModal';
+	| 'pianolaModal'
+	// Virtuosos (Account Management)
+	| 'virtuosos';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -948,6 +950,9 @@ export function getModalActions() {
 		// Pianola Modal (autonomous manager: rules + decision log)
 		setPianolaModalOpen: (open: boolean) =>
 			open ? openModal('pianolaModal') : closeModal('pianolaModal'),
+		// Virtuosos Modal
+		setVirtuososOpen: (open: boolean) =>
+			open ? openModal('virtuosos') : closeModal('virtuosos'),
 
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
@@ -1048,6 +1053,7 @@ export function useModalActions() {
 	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
 	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 	const pianolaModalOpen = useModalStore(selectModalOpen('pianolaModal'));
+	const virtuososOpen = useModalStore(selectModalOpen('virtuosos'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1247,6 +1253,8 @@ export function useModalActions() {
 
 		// Pianola Modal (autonomous manager)
 		pianolaModalOpen,
+		// Virtuosos Modal
+		virtuososOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

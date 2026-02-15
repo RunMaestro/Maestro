@@ -629,7 +629,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			{isErrorPaused &&
 				batchError &&
 				batchError.type === 'rate_limited' &&
-				batchError.message?.includes('All accounts') && (
+				batchError.message?.includes('All virtuosos') && (
 					<div
 						className="mx-2 mb-2 p-3 rounded-lg border"
 						style={{
@@ -649,7 +649,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 								/>
 							</span>
 							<span className="text-xs" style={{ color: theme.colors.accent }}>
-								Waiting for account recovery — will auto-resume
+								Waiting for virtuoso recovery — will auto-resume
 							</span>
 							<button
 								onClick={() => window.maestro.accounts.checkRecovery()}
@@ -679,7 +679,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			{/* Error Banner (Phase 5.10) - shown when batch is paused due to agent error */}
 			{isErrorPaused &&
 				batchError &&
-				!(batchError.type === 'rate_limited' && batchError.message?.includes('All accounts')) && (
+				!(batchError.type === 'rate_limited' && batchError.message?.includes('All virtuosos')) && (
 					<AutoRunErrorBanner
 						theme={theme}
 						errorMessage={batchError.message}

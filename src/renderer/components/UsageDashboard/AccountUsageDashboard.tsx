@@ -205,7 +205,7 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 	if (loading) {
 		return (
 			<div className="flex items-center justify-center py-20" style={{ color: theme.colors.textDim }}>
-				Loading account usage data...
+				Loading virtuoso usage data...
 			</div>
 		);
 	}
@@ -213,7 +213,7 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 	if (error) {
 		return (
 			<div className="flex flex-col items-center justify-center py-20 gap-4" style={{ color: theme.colors.textDim }}>
-				<p>Failed to load account data: {error}</p>
+				<p>Failed to load virtuoso data: {error}</p>
 				<button
 					onClick={fetchData}
 					className="px-4 py-2 rounded text-sm"
@@ -229,9 +229,9 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 		return (
 			<div className="flex flex-col items-center justify-center py-20 gap-3" style={{ color: theme.colors.textDim }}>
 				<Users className="w-10 h-10" style={{ opacity: 0.3 }} />
-				<p className="text-sm">No accounts registered</p>
+				<p className="text-sm">No virtuosos registered</p>
 				<p className="text-xs" style={{ opacity: 0.6 }}>
-					Add accounts in Settings &gt; Accounts to start tracking usage
+					Add virtuosos via the Virtuosos menu to start tracking usage
 				</p>
 			</div>
 		);
@@ -239,14 +239,14 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 
 	return (
 		<div className="space-y-6">
-			{/* Section 1: Account Overview Cards */}
+			{/* Section 1: Virtuoso Overview Cards */}
 			<div>
 				<h3
 					className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
 					style={{ color: theme.colors.textDim }}
 				>
 					<Activity className="w-3.5 h-3.5" />
-					Account Overview
+					Virtuoso Overview
 				</h3>
 				<div className="grid gap-4" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))' }}>
 					{accounts.map((account) => {

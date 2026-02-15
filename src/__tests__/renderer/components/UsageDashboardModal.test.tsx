@@ -285,7 +285,7 @@ describe('UsageDashboardModal', () => {
 				expect(tabs[2]).toHaveTextContent('Agents');
 				expect(tabs[3]).toHaveTextContent('Activity');
 				expect(tabs[4]).toHaveTextContent('Auto Run');
-				expect(tabs[5]).toHaveTextContent('Accounts');
+				expect(tabs[5]).toHaveTextContent('Virtuosos');
 			});
 		});
 
