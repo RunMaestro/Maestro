@@ -336,7 +336,7 @@ describe('AgentInbox', () => {
 			expect(badge).toBeTruthy();
 		});
 
-		it('renders git branch badge when available', () => {
+		it('renders git branch badge when available with icon prefix', () => {
 			const sessions = [
 				createInboxSession('s1', 't1', { worktreeBranch: 'feature/test' }),
 			];
@@ -348,7 +348,10 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			expect(screen.getByText('feature/test')).toBeTruthy();
+			const badge = screen.getByTestId('git-branch-badge');
+			expect(badge).toBeTruthy();
+			expect(badge.textContent).toContain('⎇');
+			expect(badge.textContent).toContain('feature/test');
 		});
 
 		it('renders context usage when available with colored text', () => {
@@ -1036,7 +1039,7 @@ describe('AgentInbox', () => {
 			expect(lastMsg.style.color).toBeTruthy();
 		});
 
-		it('card row 3 git branch has monospace font', () => {
+		it('card row 3 git branch has SF Mono/Menlo/monospace font stack', () => {
 			const sessions = [
 				createInboxSession('s1', 't1', { worktreeBranch: 'main' }),
 			];
@@ -1048,8 +1051,9 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			const branchBadge = screen.getByText('main');
-			expect(branchBadge.style.fontFamily).toBe('monospace');
+			const branchBadge = screen.getByTestId('git-branch-badge');
+			// JSDOM normalizes single quotes to double quotes in CSS values
+			expect(branchBadge.style.fontFamily).toBe('"SF Mono", "Menlo", monospace');
 		});
 
 		it('card row 3 status badge renders as colored pill', () => {
@@ -1313,10 +1317,62 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			// No monospace badge should be rendered
-			const option = screen.getByRole('option');
-			const spans = option.querySelectorAll('span[style*="monospace"]');
-			expect(spans.length).toBe(0);
+			expect(screen.queryByTestId('git-branch-badge')).toBeNull();
+		});
+
+		it('truncates git branch name to 25 chars with ellipsis', () => {
+			const longBranch = 'feature/very-long-branch-name-that-exceeds-limit';
+			const sessions = [
+				createInboxSession('s1', 't1', { worktreeBranch: longBranch }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const badge = screen.getByTestId('git-branch-badge');
+			// Should contain the ⎇ icon prefix
+			expect(badge.textContent).toContain('⎇');
+			// Should truncate to 25 chars + "..."
+			expect(badge.textContent).toContain(longBranch.slice(0, 25) + '...');
+			// Should NOT contain the full branch name
+			expect(badge.textContent).not.toContain(longBranch);
+		});
+
+		it('does not truncate git branch name at exactly 25 chars', () => {
+			const exactBranch = 'feature/exactly-25-chars!'; // 25 chars
+			const sessions = [
+				createInboxSession('s1', 't1', { worktreeBranch: exactBranch }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const badge = screen.getByTestId('git-branch-badge');
+			expect(badge.textContent).toContain(exactBranch);
+			expect(badge.textContent).not.toContain('...');
+		});
+
+		it('does not render git branch badge for empty string branch', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { worktreeBranch: '' }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			expect(screen.queryByTestId('git-branch-badge')).toBeNull();
 		});
 
 		it('renders context placeholder text when undefined (not hidden)', () => {

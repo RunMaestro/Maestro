@@ -26,7 +26,8 @@ This phase enriches each inbox item with context usage data, git branch info, an
 
 ## Git Branch Display
 
-- [ ] **Add git branch display with null guards.** Search the codebase for git branch tracking: `grep -rn 'gitBranch\|branch\|git' src/renderer/types/index.ts src/renderer/hooks/git/`. If branch is at session level, pass through to `InboxItem.gitBranch`.
+- [x] **Add git branch display with null guards.** Search the codebase for git branch tracking: `grep -rn 'gitBranch\|branch\|git' src/renderer/types/index.ts src/renderer/hooks/git/`. If branch is at session level, pass through to `InboxItem.gitBranch`.
+  > ✅ Completed: Updated InboxItemCard git branch badge with `'SF Mono', 'Menlo', monospace` font stack, `⎇` icon prefix, and 25-char truncation with `...` ellipsis. Null guard via `{item.gitBranch && ...}` omits badge entirely for undefined/null/empty. Added `data-testid="git-branch-badge"` for test targeting. 3 new tests added (truncation at 25 chars, exact-25 no-truncation, empty string guard). All 66 component tests + 31 hook tests pass. TSC clean.
 
   **In InboxItemCard:**
   - Render as a small monospace badge: `font-family: 'SF Mono', 'Menlo', monospace; font-size: 11px`
