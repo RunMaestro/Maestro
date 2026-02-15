@@ -111,6 +111,9 @@ export interface SessionData {
 	activeTabId?: string;
 	/** Whether session is bookmarked (shows in Bookmarks group) */
 	bookmarked?: boolean;
+	/** Worktree subagent support */
+	parentSessionId?: string | null;
+	worktreeBranch?: string | null;
 }
 
 /**
