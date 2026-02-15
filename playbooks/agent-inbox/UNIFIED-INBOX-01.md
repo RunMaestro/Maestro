@@ -75,13 +75,14 @@ This phase sets up the infrastructure: TypeScript types, modal registration, key
 
 ## Keyboard Shortcut + Zero-Items Guard
 
-- [ ] **Add the keyboard shortcut `Alt+Cmd+I` with zero-items guard.** Open `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`. Near the Process Monitor shortcut (`Alt+Cmd+P`), add a new shortcut `Alt+Cmd+I`. **IMPORTANT:** Before opening the modal, check if there are any actionable items. The handler should:
+- [x] **Add the keyboard shortcut `Alt+Cmd+I` with zero-items guard.** Open `src/renderer/hooks/keyboard/useMainKeyboardHandler.ts`. Near the Process Monitor shortcut (`Alt+Cmd+P`), add a new shortcut `Alt+Cmd+I`. **IMPORTANT:** Before opening the modal, check if there are any actionable items. The handler should:
 
   1. Count sessions where `state === 'waiting_input'` OR any tab has `hasUnread === true`
   2. If count === 0 → show a toast notification "No pending items" (1.5s auto-dismiss) and **do NOT open the modal**. Use the existing toast/notification system in the codebase (search for `toast`, `notification`, or `addNotification`).
   3. If count > 0 → call `ctx.setAgentInboxOpen(true)`
 
   Make sure `setAgentInboxOpen` is available in the keyboard handler context — add it to the context type and pass it through from the store. Return `true` to prevent default browser behavior.
+  > ✅ Added `agentInbox` shortcut (`Alt+Cmd+I`) to `DEFAULT_SHORTCUTS`. Handler in `useMainKeyboardHandler.ts` counts sessions with `state === 'waiting_input'` or any tab with `hasUnread`. Shows toast "No pending items" (1.5s) when count === 0, opens modal otherwise. Added `setAgentInboxOpen` and `addToast` to keyboard handler context in App.tsx. Also added `codeKeyLower === 'i'` to `isSystemUtilShortcut` allowlist so shortcut works when modals are open. TypeScript compiles clean, all 19185 tests pass.
 
 ---
 
