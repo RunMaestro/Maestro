@@ -32,26 +32,28 @@ export interface StorageInfo {
 /**
  * Get the size of a directory recursively.
  */
-function getDirectorySize(dirPath: string): number {
+async function getDirectorySize(dirPath: string): Promise<number> {
 	try {
-		if (!fs.existsSync(dirPath)) {
+		try {
+			await fs.promises.access(dirPath);
+		} catch {
 			return 0;
 		}
 
-		const stats = fs.statSync(dirPath);
+		const stats = await fs.promises.stat(dirPath);
 		if (!stats.isDirectory()) {
 			return stats.size;
 		}
 
 		let totalSize = 0;
-		const files = fs.readdirSync(dirPath);
+		const files = await fs.promises.readdir(dirPath);
 
 		for (const file of files) {
 			const filePath = path.join(dirPath, file);
 			try {
-				const fileStats = fs.statSync(filePath);
+				const fileStats = await fs.promises.stat(filePath);
 				if (fileStats.isDirectory()) {
-					totalSize += getDirectorySize(filePath);
+					totalSize += await getDirectorySize(filePath);
 				} else {
 					totalSize += fileStats.size;
 				}
@@ -69,12 +71,9 @@ function getDirectorySize(dirPath: string): number {
 /**
  * Get the size of a file.
  */
-function getFileSize(filePath: string): number {
+async function getFileSize(filePath: string): Promise<number> {
 	try {
-		if (!fs.existsSync(filePath)) {
-			return 0;
-		}
-		const stats = fs.statSync(filePath);
+		const stats = await fs.promises.stat(filePath);
 		return stats.size;
 	} catch {
 		return 0;
@@ -106,10 +105,10 @@ export async function collectStorage(bootstrapStore?: Store<any>): Promise<Stora
 			customSyncPath: customSyncPath ? '[SET]' : undefined,
 		},
 		sizes: {
-			sessionsBytes: getFileSize(sessionsFile),
-			historyBytes: getDirectorySize(historyPath),
+			sessionsBytes: await getFileSize(sessionsFile),
+			historyBytes: await getDirectorySize(historyPath),
 			logsBytes: 0, // We don't store logs to disk by default
-			groupChatsBytes: getDirectorySize(groupChatsPath),
+			groupChatsBytes: await getDirectorySize(groupChatsPath),
 			totalBytes: 0,
 		},
 	};

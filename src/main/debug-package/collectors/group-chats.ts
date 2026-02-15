@@ -23,12 +23,9 @@ export interface GroupChatInfo {
 /**
  * Count messages in a group chat log file without loading content.
  */
-function countMessages(logPath: string): number {
+async function countMessages(logPath: string): Promise<number> {
 	try {
-		if (!fs.existsSync(logPath)) {
-			return 0;
-		}
-		const content = fs.readFileSync(logPath, 'utf-8');
+		const content = await fs.promises.readFile(logPath, 'utf-8');
 		// Each line is a JSON message
 		return content.split('\n').filter((line) => line.trim()).length;
 	} catch {
@@ -44,12 +41,14 @@ export async function collectGroupChats(): Promise<GroupChatInfo[]> {
 
 	const groupChatsPath = path.join(app.getPath('userData'), 'group-chats');
 
-	if (!fs.existsSync(groupChatsPath)) {
+	try {
+		await fs.promises.access(groupChatsPath);
+	} catch {
 		return groupChats;
 	}
 
 	try {
-		const files = fs.readdirSync(groupChatsPath);
+		const files = await fs.promises.readdir(groupChatsPath);
 
 		for (const file of files) {
 			if (!file.endsWith('.json') || file.endsWith('.log.json')) {
@@ -59,12 +58,12 @@ export async function collectGroupChats(): Promise<GroupChatInfo[]> {
 			const filePath = path.join(groupChatsPath, file);
 
 			try {
-				const content = fs.readFileSync(filePath, 'utf-8');
+				const content = await fs.promises.readFile(filePath, 'utf-8');
 				const chat = JSON.parse(content);
 
 				// Get corresponding log file for message count
 				const logPath = path.join(groupChatsPath, `${path.basename(file, '.json')}.log.json`);
-				const messageCount = countMessages(logPath);
+				const messageCount = await countMessages(logPath);
 
 				const chatInfo: GroupChatInfo = {
 					id: chat.id || path.basename(file, '.json'),

@@ -38,6 +38,12 @@ vi.mock('fs', () => ({
 	statSync: vi.fn(() => ({ size: 0, isDirectory: () => false })),
 	readdirSync: vi.fn(() => []),
 	readFileSync: vi.fn(() => ''),
+	promises: {
+		access: vi.fn(() => Promise.reject(new Error('ENOENT'))),
+		stat: vi.fn(() => Promise.resolve({ size: 0, isDirectory: () => false })),
+		readdir: vi.fn(() => Promise.resolve([])),
+		readFile: vi.fn(() => Promise.resolve('')),
+	},
 }));
 
 // Mock cliDetection
@@ -815,14 +821,14 @@ describe('Debug Package Collectors', () => {
 			const { app } = await import('electron');
 
 			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.statSync).mockImplementation((path: any) => {
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			vi.mocked(fs.promises.stat).mockImplementation(async (path: any) => {
 				if (path.includes('maestro-sessions.json')) {
 					return { size: 1024, isDirectory: () => false } as any;
 				}
 				return { size: 0, isDirectory: () => true } as any;
 			});
-			vi.mocked(fs.readdirSync).mockReturnValue([]);
+			vi.mocked(fs.promises.readdir).mockResolvedValue([]);
 
 			const { collectStorage } = await import('../../../main/debug-package/collectors/storage');
 
@@ -865,13 +871,13 @@ describe('Debug Package Collectors', () => {
 			const { app } = await import('electron');
 
 			vi.mocked(app.getPath).mockReturnValue('/mock/userData');
-			vi.mocked(fs.existsSync).mockReturnValue(true);
-			vi.mocked(fs.readdirSync).mockReturnValue([
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+			vi.mocked(fs.promises.readdir).mockResolvedValue([
 				'chat-1.json',
 				'chat-1.log.json',
 				'chat-2.json',
 			] as any);
-			vi.mocked(fs.readFileSync).mockImplementation((path: any) => {
+			vi.mocked(fs.promises.readFile).mockImplementation(async (path: any) => {
 				if (path.includes('chat-1.json') && !path.includes('.log')) {
 					return JSON.stringify({
 						id: 'chat-1',
@@ -928,7 +934,7 @@ describe('Debug Package Collectors', () => {
 		it('should handle missing group chats directory', async () => {
 			const fs = await import('fs');
 
-			vi.mocked(fs.existsSync).mockReturnValue(false);
+			vi.mocked(fs.promises.access).mockRejectedValue(new Error('ENOENT'));
 
 			const { collectGroupChats } =
 				await import('../../../main/debug-package/collectors/group-chats');
