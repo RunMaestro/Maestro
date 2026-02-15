@@ -64,6 +64,15 @@ function resolveStatusColor(state: SessionState, theme: Theme): string {
 }
 
 // ============================================================================
+// Context usage color resolver — green/orange/red thresholds
+// ============================================================================
+function resolveContextUsageColor(percentage: number, theme: Theme): string {
+	if (percentage >= 80) return theme.colors.error;
+	if (percentage >= 60) return '#f59e0b'; // orange warning — NOT red, accessibility decision
+	return theme.colors.success;
+}
+
+// ============================================================================
 // InboxItemCard — rendered inside each row
 // ============================================================================
 function InboxItemCardContent({
@@ -78,6 +87,8 @@ function InboxItemCardContent({
 	onClick: () => void;
 }) {
 	const statusColor = resolveStatusColor(item.state, theme);
+	const hasValidContext = item.contextUsage !== undefined && !isNaN(item.contextUsage);
+	const contextColor = hasValidContext ? resolveContextUsageColor(item.contextUsage!, theme) : undefined;
 
 	return (
 		<div
@@ -88,14 +99,14 @@ function InboxItemCardContent({
 			onClick={onClick}
 			style={{
 				height: ITEM_HEIGHT - 12,
-				padding: '8px 12px',
 				borderRadius: 8,
 				cursor: 'pointer',
 				backgroundColor: isSelected ? `${theme.colors.accent}15` : 'transparent',
 				display: 'flex',
 				flexDirection: 'column',
-				justifyContent: 'center',
-				gap: 4,
+				justifyContent: 'space-between',
+				overflow: 'hidden',
+				position: 'relative',
 			}}
 			onFocus={(e) => {
 				e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
@@ -105,85 +116,115 @@ function InboxItemCardContent({
 				e.currentTarget.style.outline = 'none';
 			}}
 		>
-			{/* Row 1: group / session name + timestamp */}
-			<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-				{item.groupName && (
-					<>
-						<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap' }}>
-							{item.groupName}
-						</span>
-						<span style={{ fontSize: 12, color: theme.colors.textDim }}>/</span>
-					</>
-				)}
-				<span
+			{/* Card content */}
+			<div style={{ padding: '8px 12px', display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 4, flex: 1 }}>
+				{/* Row 1: group / session name + timestamp */}
+				<div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+					{item.groupName && (
+						<>
+							<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap' }}>
+								{item.groupName}
+							</span>
+							<span style={{ fontSize: 12, color: theme.colors.textDim }}>/</span>
+						</>
+					)}
+					<span
+						style={{
+							fontSize: 14,
+							fontWeight: 600,
+							color: theme.colors.textMain,
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							whiteSpace: 'nowrap',
+							flex: 1,
+						}}
+					>
+						{item.sessionName}
+					</span>
+					<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap', flexShrink: 0 }}>
+						{formatRelativeTime(item.timestamp)}
+					</span>
+				</div>
+
+				{/* Row 2: last message */}
+				<div
 					style={{
-						fontSize: 14,
-						fontWeight: 600,
-						color: theme.colors.textMain,
+						fontSize: 13,
+						color: theme.colors.textDim,
 						overflow: 'hidden',
 						textOverflow: 'ellipsis',
 						whiteSpace: 'nowrap',
-						flex: 1,
 					}}
 				>
-					{item.sessionName}
-				</span>
-				<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap', flexShrink: 0 }}>
-					{formatRelativeTime(item.timestamp)}
-				</span>
-			</div>
+					{item.lastMessage}
+				</div>
 
-			{/* Row 2: last message */}
-			<div
-				style={{
-					fontSize: 13,
-					color: theme.colors.textDim,
-					overflow: 'hidden',
-					textOverflow: 'ellipsis',
-					whiteSpace: 'nowrap',
-				}}
-			>
-				{item.lastMessage}
-			</div>
-
-			{/* Row 3: badges */}
-			<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-				{item.gitBranch && (
+				{/* Row 3: badges */}
+				<div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+					{item.gitBranch && (
+						<span
+							style={{
+								fontSize: 11,
+								fontFamily: 'monospace',
+								padding: '1px 6px',
+								borderRadius: 4,
+								backgroundColor: `${theme.colors.accent}15`,
+								color: theme.colors.accent,
+								whiteSpace: 'nowrap',
+								overflow: 'hidden',
+								textOverflow: 'ellipsis',
+								maxWidth: 160,
+							}}
+						>
+							{item.gitBranch}
+						</span>
+					)}
+					<span
+						data-testid="context-usage-text"
+						style={{
+							fontSize: 11,
+							color: hasValidContext ? contextColor : theme.colors.textDim,
+						}}
+					>
+						{hasValidContext ? `Context: ${item.contextUsage}%` : 'Context: \u2014'}
+					</span>
 					<span
 						style={{
 							fontSize: 11,
-							fontFamily: 'monospace',
-							padding: '1px 6px',
-							borderRadius: 4,
-							backgroundColor: `${theme.colors.accent}15`,
-							color: theme.colors.accent,
+							padding: '1px 8px',
+							borderRadius: 10,
+							backgroundColor: `${statusColor}20`,
+							color: statusColor,
 							whiteSpace: 'nowrap',
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
-							maxWidth: 160,
 						}}
 					>
-						{item.gitBranch}
+						{STATUS_LABELS[item.state]}
 					</span>
-				)}
-				{item.contextUsage !== undefined && (
-					<span style={{ fontSize: 11, color: theme.colors.textDim }}>
-						Context: {item.contextUsage}%
-					</span>
-				)}
-				<span
+				</div>
+			</div>
+
+			{/* Context usage bar — 4px at bottom of card */}
+			{hasValidContext && (
+				<div
+					data-testid="context-usage-bar"
 					style={{
-						fontSize: 11,
-						padding: '1px 8px',
-						borderRadius: 10,
-						backgroundColor: `${statusColor}20`,
-						color: statusColor,
-						whiteSpace: 'nowrap',
+						height: 4,
+						width: '100%',
+						backgroundColor: `${theme.colors.border}40`,
+						flexShrink: 0,
 					}}
 				>
-					{STATUS_LABELS[item.state]}
-				</span>
-			</div>
+					<div
+						style={{
+							height: '100%',
+							width: `${Math.min(Math.max(item.contextUsage!, 0), 100)}%`,
+							backgroundColor: contextColor,
+							borderRadius: item.contextUsage! >= 100 ? 0 : '0 2px 2px 0',
+							transition: 'width 0.3s ease',
+						}}
+					/>
+				</div>
+			)}
 		</div>
 	);
 }

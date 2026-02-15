@@ -351,7 +351,7 @@ describe('AgentInbox', () => {
 			expect(screen.getByText('feature/test')).toBeTruthy();
 		});
 
-		it('renders context usage when available', () => {
+		it('renders context usage when available with colored text', () => {
 			const sessions = [
 				createInboxSession('s1', 't1', { contextUsage: 45 }),
 			];
@@ -364,6 +364,8 @@ describe('AgentInbox', () => {
 				/>
 			);
 			expect(screen.getByText('Context: 45%')).toBeTruthy();
+			// Should render context usage bar
+			expect(screen.getByTestId('context-usage-bar')).toBeTruthy();
 		});
 
 		it('renders relative timestamp', () => {
@@ -1158,6 +1160,147 @@ describe('AgentInbox', () => {
 			expect(ctx.style.fontSize).toBe('11px');
 		});
 
+		it('context usage bar uses green color for 0-59%', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 30 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const bar = screen.getByTestId('context-usage-bar');
+			const fill = bar.firstElementChild as HTMLElement;
+			// JSDOM converts hex to rgb — #50fa7b → rgb(80, 250, 123)
+			expect(fill.style.backgroundColor).toBe('rgb(80, 250, 123)');
+			expect(fill.style.width).toBe('30%');
+		});
+
+		it('context usage bar uses orange color for 60-79%', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 65 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const bar = screen.getByTestId('context-usage-bar');
+			const fill = bar.firstElementChild as HTMLElement;
+			// JSDOM converts hex to rgb — #f59e0b → rgb(245, 158, 11)
+			expect(fill.style.backgroundColor).toBe('rgb(245, 158, 11)');
+			expect(fill.style.width).toBe('65%');
+		});
+
+		it('context usage bar uses red color for 80-100%', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 90 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const bar = screen.getByTestId('context-usage-bar');
+			const fill = bar.firstElementChild as HTMLElement;
+			// JSDOM converts hex to rgb — #ff5555 → rgb(255, 85, 85)
+			expect(fill.style.backgroundColor).toBe('rgb(255, 85, 85)');
+			expect(fill.style.width).toBe('90%');
+		});
+
+		it('context usage text color matches bar color', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 75 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const text = screen.getByTestId('context-usage-text');
+			// JSDOM converts hex to rgb — #f59e0b (orange) → rgb(245, 158, 11)
+			expect(text.style.color).toBe('rgb(245, 158, 11)');
+		});
+
+		it('shows placeholder "Context: \u2014" when contextUsage is undefined', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: undefined }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			expect(screen.getByText('Context: \u2014')).toBeTruthy();
+			// No bar should render
+			expect(screen.queryByTestId('context-usage-bar')).toBeNull();
+		});
+
+		it('shows placeholder "Context: \u2014" when contextUsage is NaN', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: NaN }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			expect(screen.getByText('Context: \u2014')).toBeTruthy();
+			expect(screen.queryByTestId('context-usage-bar')).toBeNull();
+		});
+
+		it('context usage bar is 4px tall and full width', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 50 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const bar = screen.getByTestId('context-usage-bar');
+			expect(bar.style.height).toBe('4px');
+			expect(bar.style.width).toBe('100%');
+		});
+
+		it('context usage bar clamps percentage between 0 and 100', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 150 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const bar = screen.getByTestId('context-usage-bar');
+			const fill = bar.firstElementChild as HTMLElement;
+			expect(fill.style.width).toBe('100%');
+		});
+
 		it('does not render git branch badge when not available', () => {
 			const sessions = [
 				createInboxSession('s1', 't1'), // no worktreeBranch
@@ -1176,7 +1319,7 @@ describe('AgentInbox', () => {
 			expect(spans.length).toBe(0);
 		});
 
-		it('does not render context usage when undefined', () => {
+		it('renders context placeholder text when undefined (not hidden)', () => {
 			const sessions = [
 				createInboxSession('s1', 't1', { contextUsage: undefined }),
 			];
@@ -1188,7 +1331,8 @@ describe('AgentInbox', () => {
 					onClose={onClose}
 				/>
 			);
-			expect(screen.queryByText(/Context:/)).toBeNull();
+			// Now shows "Context: —" placeholder instead of hiding
+			expect(screen.getByText('Context: \u2014')).toBeTruthy();
 		});
 
 		it('selected card has tabIndex=0, non-selected has tabIndex=-1', () => {
