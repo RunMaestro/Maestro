@@ -369,7 +369,7 @@ export const DashboardSkeleton = memo(function DashboardSkeleton({
 	summaryCardsCols = 5,
 	autoRunStatsCols = 6,
 }: SkeletonProps & {
-	viewMode?: 'overview' | 'agents' | 'activity' | 'autorun';
+	viewMode?: 'overview' | 'agents' | 'activity' | 'autorun' | 'accounts';
 	chartGridCols?: number;
 	summaryCardsCols?: number;
 	autoRunStatsCols?: number;
