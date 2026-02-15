@@ -585,6 +585,102 @@ describe('AgentInbox', () => {
 			fireEvent.keyDown(dialog, { key: 'ArrowUp' });
 			fireEvent.keyDown(dialog, { key: 'Enter' });
 		});
+
+		it('Tab moves focus from list to first header control', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const dialog = screen.getByRole('dialog');
+			// Focus the dialog (list area)
+			dialog.focus();
+			expect(document.activeElement).toBe(dialog);
+
+			// Press Tab — should move to first header button
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			// Active element should be a button inside the header
+			expect(document.activeElement?.tagName).toBe('BUTTON');
+		});
+
+		it('Tab cycles through header controls and wraps back to list', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const dialog = screen.getByRole('dialog');
+			dialog.focus();
+
+			// Count all header buttons (3 sort + 3 filter + 1 close = 7)
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			const firstButton = document.activeElement;
+			expect(firstButton?.tagName).toBe('BUTTON');
+
+			// Tab through all header buttons
+			for (let i = 0; i < 6; i++) {
+				fireEvent.keyDown(dialog, { key: 'Tab' });
+			}
+			// After 7 total Tabs (1 + 6), should be at the last header button
+			expect(document.activeElement?.tagName).toBe('BUTTON');
+
+			// One more Tab should wrap back to list container
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		it('Shift+Tab wraps from list to list (when at first header or list)', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const dialog = screen.getByRole('dialog');
+			dialog.focus();
+
+			// Shift+Tab from list area: focusIdx is -1, which is <= 0, so wraps to list container
+			fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+			expect(document.activeElement).toBe(dialog);
+		});
+
+		it('Shift+Tab from second header control goes to first', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const dialog = screen.getByRole('dialog');
+			dialog.focus();
+
+			// Tab to first header control
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			const firstButton = document.activeElement;
+
+			// Tab to second header control
+			fireEvent.keyDown(dialog, { key: 'Tab' });
+			const secondButton = document.activeElement;
+			expect(secondButton).not.toBe(firstButton);
+
+			// Shift+Tab should go back to first
+			fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+			expect(document.activeElement).toBe(firstButton);
+		});
 	});
 
 	// ==========================================================================

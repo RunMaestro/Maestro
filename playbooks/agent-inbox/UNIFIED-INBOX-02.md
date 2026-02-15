@@ -100,7 +100,8 @@ This phase builds the main AgentInbox component, replacing the placeholder from 
 
 ## Keyboard Navigation
 
-- [ ] **Implement keyboard navigation with ARIA and scroll management.** Follow ProcessMonitor pattern (lines 671-781).
+- [x] **Implement keyboard navigation with ARIA and scroll management.** Follow ProcessMonitor pattern (lines 671-781).
+  > **Completed:** Keyboard navigation fully implemented with ArrowUp/ArrowDown (wrap), Enter (navigate+close), Escape (close via layer stack), Tab/Shift+Tab (cycle between header controls and list). `selectedIndex` uses `useState`. Scroll management via `listRef.scrollToRow({ index, align: 'smart' })` with `findRowIndexForItem` mapping for grouped mode. ARIA: `role="listbox"` + `aria-activedescendant` on list container, `role="option"` + `aria-selected` on cards. 4 new Tab cycling tests added (54 total component tests). All 10,392 renderer tests pass. TypeScript lint clean.
 
   **State:** `selectedIndex: number` starting at 0 (via `useState`, NOT `useRef`).
 

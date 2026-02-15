@@ -357,6 +357,7 @@ export default function AgentInbox({
 	// Ref to the virtualized list
 	const listRef = useRef<ListImperativeAPI | null>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
+	const headerRef = useRef<HTMLDivElement>(null);
 
 	// Reset selection when items change
 	useEffect(() => {
@@ -408,29 +409,71 @@ export default function AgentInbox({
 		[onNavigateToSession, handleClose]
 	);
 
+	// Collect focusable header elements for Tab cycling
+	const getHeaderFocusables = useCallback((): HTMLElement[] => {
+		if (!headerRef.current) return [];
+		return Array.from(
+			headerRef.current.querySelectorAll<HTMLElement>('button, [tabindex="0"]')
+		);
+	}, []);
+
 	// Keyboard navigation
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
-			if (items.length === 0) return;
-
 			switch (e.key) {
 				case 'ArrowUp':
 					e.preventDefault();
+					if (items.length === 0) return;
 					setSelectedIndex((prev) => (prev <= 0 ? items.length - 1 : prev - 1));
 					break;
 				case 'ArrowDown':
 					e.preventDefault();
+					if (items.length === 0) return;
 					setSelectedIndex((prev) => (prev >= items.length - 1 ? 0 : prev + 1));
 					break;
 				case 'Enter':
 					e.preventDefault();
+					if (items.length === 0) return;
 					if (items[selectedIndex]) {
 						handleNavigate(items[selectedIndex]);
 					}
 					break;
+				case 'Tab': {
+					const focusables = getHeaderFocusables();
+					if (focusables.length === 0) break;
+					const active = document.activeElement;
+					const focusIdx = focusables.indexOf(active as HTMLElement);
+
+					if (e.shiftKey) {
+						// Shift+Tab: go backwards
+						if (focusIdx <= 0) {
+							// From first header control (or list), wrap to list container
+							e.preventDefault();
+							containerRef.current?.focus();
+						} else {
+							e.preventDefault();
+							focusables[focusIdx - 1].focus();
+						}
+					} else {
+						// Tab: go forwards
+						if (focusIdx === -1) {
+							// Currently in list area — move to first header control
+							e.preventDefault();
+							focusables[0].focus();
+						} else if (focusIdx >= focusables.length - 1) {
+							// At last header control — wrap back to list
+							e.preventDefault();
+							containerRef.current?.focus();
+						} else {
+							e.preventDefault();
+							focusables[focusIdx + 1].focus();
+						}
+					}
+					break;
+				}
 			}
 		},
-		[items, selectedIndex, handleNavigate]
+		[items, selectedIndex, handleNavigate, getHeaderFocusables]
 	);
 
 	// Row height getter for variable-size rows
@@ -487,6 +530,7 @@ export default function AgentInbox({
 			>
 				{/* Header — 48px */}
 				<div
+					ref={headerRef}
 					className="flex items-center justify-between px-4 border-b"
 					style={{
 						height: MODAL_HEADER_HEIGHT,
