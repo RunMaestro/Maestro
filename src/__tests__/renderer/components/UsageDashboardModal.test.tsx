@@ -67,6 +67,9 @@ vi.mock('lucide-react', () => {
 		// KeyboardStats icons
 		Keyboard: createIcon('keyboard', '⌨️'),
 		Sparkles: createIcon('sparkles', '✨'),
+		// AccountUsageDashboard icons
+		ArrowRightLeft: createIcon('arrow-right-left', '↔️'),
+		TrendingUp: createIcon('trending-up', '📈'),
 	};
 });
 
@@ -128,6 +131,13 @@ const mockMaestro = {
 	agentSessions: {
 		getGlobalStats: vi.fn().mockResolvedValue(null),
 		onGlobalStatsUpdate: vi.fn().mockReturnValue(() => {}),
+	},
+	accounts: {
+		list: vi.fn(() => Promise.resolve([])),
+		getAllUsage: vi.fn(() => Promise.resolve({})),
+		getAllAssignments: vi.fn(() => Promise.resolve([])),
+		getThrottleEvents: vi.fn(() => Promise.resolve([])),
+		onUsageUpdate: vi.fn(() => vi.fn()),
 	},
 };
 
