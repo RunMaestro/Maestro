@@ -88,7 +88,8 @@ This phase sets up the infrastructure: TypeScript types, modal registration, key
 
 ## Modal Registration
 
-- [ ] **Register AgentInbox in AppModals.** Open `src/renderer/components/AppModals.tsx`. Add a lazy import: `const AgentInbox = lazy(() => import('./AgentInbox'))`. Near where ProcessMonitor is rendered, add an analogous block rendering `<AgentInbox>` wrapped in `<Suspense>` when `agentInboxOpen` is true. Use `useModalStore(selectModalOpen('agentInbox'))` for the selector. Props to pass: `theme`, `sessions`, `groups`, `onClose`, `onNavigateToSession`.
+- [x] **Register AgentInbox in AppModals.** Open `src/renderer/components/AppModals.tsx`. Add a lazy import: `const AgentInbox = lazy(() => import('./AgentInbox'))`. Near where ProcessMonitor is rendered, add an analogous block rendering `<AgentInbox>` wrapped in `<Suspense>` when `agentInboxOpen` is true. Use `useModalStore(selectModalOpen('agentInbox'))` for the selector. Props to pass: `theme`, `sessions`, `groups`, `onClose`, `onNavigateToSession`.
+  > ✅ Added lazy import for AgentInbox, added `agentInboxOpen`/`onCloseAgentInbox` props to `AppInfoModalsProps` and `AppModalsProps`, rendered `<AgentInbox>` in `<Suspense>` after ProcessMonitor. Wired `agentInboxOpen` and `handleCloseAgentInbox` through App.tsx. TypeScript compiles clean, all 19185 tests pass.
 
 ---
 

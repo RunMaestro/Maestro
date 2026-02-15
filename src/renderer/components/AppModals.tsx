@@ -62,6 +62,7 @@ const GitDiffViewer = lazy(() =>
 const GitLogViewer = lazy(() =>
 	import('./GitLogViewer').then((m) => ({ default: m.GitLogViewer }))
 );
+const AgentInbox = lazy(() => import('./AgentInbox'));
 
 // Confirmation Modal Components
 import { ConfirmModal } from './ConfirmModal';
@@ -151,6 +152,10 @@ export interface AppInfoModalsProps {
 	onNavigateToSession: (sessionId: string, tabId?: string) => void;
 	onNavigateToGroupChat: (groupChatId: string) => void;
 
+	// Agent Inbox
+	agentInboxOpen: boolean;
+	onCloseAgentInbox: () => void;
+
 	// Usage Dashboard Modal
 	usageDashboardOpen: boolean;
 	onCloseUsageDashboard: () => void;
@@ -202,6 +207,9 @@ export function AppInfoModals({
 	groupChats,
 	onNavigateToSession,
 	onNavigateToGroupChat,
+	// Agent Inbox
+	agentInboxOpen,
+	onCloseAgentInbox,
 	// Usage Dashboard Modal
 	usageDashboardOpen,
 	onCloseUsageDashboard,
@@ -250,6 +258,19 @@ export function AppInfoModals({
 						onClose={onCloseProcessMonitor}
 						onNavigateToSession={onNavigateToSession}
 						onNavigateToGroupChat={onNavigateToGroupChat}
+					/>
+				</Suspense>
+			)}
+
+			{/* --- AGENT INBOX (lazy-loaded) --- */}
+			{agentInboxOpen && (
+				<Suspense fallback={null}>
+					<AgentInbox
+						theme={theme}
+						sessions={sessions}
+						groups={groups}
+						onClose={onCloseAgentInbox}
+						onNavigateToSession={onNavigateToSession}
 					/>
 				</Suspense>
 			)}
@@ -1753,6 +1774,8 @@ export interface AppModalsProps {
 	onCloseProcessMonitor: () => void;
 	onNavigateToSession: (sessionId: string, tabId?: string) => void;
 	onNavigateToGroupChat: (groupChatId: string) => void;
+	agentInboxOpen: boolean;
+	onCloseAgentInbox: () => void;
 	usageDashboardOpen: boolean;
 	onCloseUsageDashboard: () => void;
 	/** Default time range for the Usage Dashboard from settings */
@@ -2116,6 +2139,8 @@ export function AppModals(props: AppModalsProps) {
 		onCloseProcessMonitor,
 		onNavigateToSession,
 		onNavigateToGroupChat,
+		agentInboxOpen,
+		onCloseAgentInbox,
 		usageDashboardOpen,
 		onCloseUsageDashboard,
 		defaultStatsTimeRange,
@@ -2387,6 +2412,8 @@ export function AppModals(props: AppModalsProps) {
 				groupChats={groupChats}
 				onNavigateToSession={onNavigateToSession}
 				onNavigateToGroupChat={onNavigateToGroupChat}
+				agentInboxOpen={agentInboxOpen}
+				onCloseAgentInbox={onCloseAgentInbox}
 				usageDashboardOpen={usageDashboardOpen}
 				onCloseUsageDashboard={onCloseUsageDashboard}
 				defaultStatsTimeRange={defaultStatsTimeRange}
