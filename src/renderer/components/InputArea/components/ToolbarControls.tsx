@@ -29,6 +29,7 @@ import { useViewportBreakpoint } from '../../../hooks/ui';
 import { addStagedImageIfUnique } from '../utils/stagedImages';
 import { formatTerminalCwd } from '../utils/terminalPath';
 import { ModelEffortPills } from './ModelEffortPills';
+import { AccountSelector } from '../../AccountSelector';
 
 interface ToolbarControlsProps {
 	session: Session;
@@ -262,6 +263,29 @@ export const ToolbarControls = memo(function ToolbarControls({
 				className={`flex items-center gap-2 ${isNarrowViewport ? '' : 'ml-auto'} ${showToggleGroup ? '' : 'hidden'}`}
 				data-tour="toolbar-toggles"
 			>
+				{/* Account selector - AI mode + claude-code only */}
+				{isAiMode && session.toolType === 'claude-code' && (
+					<AccountSelector
+						theme={theme}
+						sessionId={session.id}
+						currentAccountId={session.accountId}
+						onSwitchAccount={async (toAccountId) => {
+							const currentAccountId = session.accountId;
+							if (currentAccountId && currentAccountId !== toAccountId) {
+								await window.maestro.accounts.executeSwitch({
+									sessionId: session.id,
+									fromAccountId: currentAccountId,
+									toAccountId,
+									reason: 'manual',
+									automatic: false,
+								});
+							} else {
+								await window.maestro.accounts.assign(session.id, toAccountId);
+							}
+						}}
+						compact
+					/>
+				)}
 				{isAiMode && onToggleTabSaveToHistory && (
 					<button
 						onClick={onToggleTabSaveToHistory}

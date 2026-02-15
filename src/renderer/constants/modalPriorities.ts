@@ -35,6 +35,9 @@ export const MODAL_PRIORITIES = {
 	/** Forced parallel execution warning - one-time acknowledgment */
 	FORCED_PARALLEL_WARNING: 1005,
 
+	/** Account switch confirmation modal - triggered by throttle/limit events */
+	ACCOUNT_SWITCH: 1004,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 

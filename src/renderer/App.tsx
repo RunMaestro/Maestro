@@ -19,6 +19,7 @@ import { initializeRendererPrompts } from './services/promptInit';
 import { useWizard, type SerializableWizardState, type WizardStep } from './components/Wizard';
 import type { MainPanelHandle } from './components/MainPanel';
 import type { RightPanelHandle } from './components/RightPanel';
+import { AccountSwitchModal } from './components/AccountSwitchModal';
 
 // Lazy-loaded components for performance (rarely-used heavy views)
 const LogViewer = lazy(() =>
@@ -802,6 +803,18 @@ function MaestroConsoleInner() {
 
 	// Note: Delete Agent Modal State is now self-sourced in AppStandaloneModals
 
+	// Account Switch Prompt Modal State
+	const [switchPromptData, setSwitchPromptData] = useState<{
+		sessionId: string;
+		fromAccountId: string;
+		fromAccountName: string;
+		toAccountId: string;
+		toAccountName: string;
+		reason: string;
+		tokensAtThrottle?: number;
+		usagePercent?: number;
+	} | null>(null);
+
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
 
 	// Note: Renaming state (editingGroupId/editingSessionId) and drag state (draggingSessionId)
@@ -1060,6 +1073,36 @@ function MaestroConsoleInner() {
 			unsubRespawn();
 			unsubSwitchFailed();
 			unsubSwitchExecute();
+		};
+	}, []);
+
+	// Subscribe to account switch prompt events (user confirmation needed)
+	useEffect(() => {
+		const unsubSwitchPrompt = window.maestro.accounts.onSwitchPrompt((data: any) => {
+			setSwitchPromptData({
+				sessionId: data.sessionId,
+				fromAccountId: data.fromAccountId,
+				fromAccountName: data.fromAccountName ?? data.fromAccountId,
+				toAccountId: data.toAccountId,
+				toAccountName: data.toAccountName ?? data.toAccountId,
+				reason: data.reason ?? 'throttled',
+				tokensAtThrottle: data.tokensAtThrottle,
+				usagePercent: data.usagePercent,
+			});
+		});
+
+		const unsubSwitchCompleted = window.maestro.accounts.onSwitchCompleted((data: any) => {
+			addToastRef.current({
+				type: 'success',
+				title: 'Account Switched',
+				message: `Switched from ${data.fromAccountName ?? data.fromAccountId} to ${data.toAccountName ?? data.toAccountId}`,
+				duration: 5_000,
+			});
+		});
+
+		return () => {
+			unsubSwitchPrompt();
+			unsubSwitchCompleted();
 		};
 	}, []);
 
@@ -3124,6 +3167,7 @@ function MaestroConsoleInner() {
 	}, [setLeftSidebarOpen, setRightPanelOpen]);
 
 	return (
+		<>
 		<AppShell
 			theme={theme}
 			fontFamily={fontFamily}
@@ -3688,6 +3732,31 @@ function MaestroConsoleInner() {
 				/>
 			}
 		/>
+		{/* Account Switch Confirmation Modal */}
+		{switchPromptData && (
+			<AccountSwitchModal
+				theme={theme}
+				isOpen={true}
+				onClose={() => setSwitchPromptData(null)}
+				switchData={switchPromptData}
+				onConfirmSwitch={async () => {
+					await window.maestro.accounts.executeSwitch({
+						sessionId: switchPromptData.sessionId,
+						fromAccountId: switchPromptData.fromAccountId,
+						toAccountId: switchPromptData.toAccountId,
+						reason: switchPromptData.reason,
+						automatic: false,
+					});
+					setSwitchPromptData(null);
+				}}
+				onViewDashboard={() => {
+					setSwitchPromptData(null);
+					setSettingsModalOpen(true);
+					setSettingsTab('accounts');
+				}}
+			/>
+		)}
+		</>
 	);
 }
 

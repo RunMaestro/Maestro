@@ -82,7 +82,8 @@ export type SettingsTab =
 	| 'theme'
 	| 'notifications'
 	| 'aicommands'
-	| 'prompts';
+	| 'prompts'
+	| 'accounts';
 // Note: ScratchPadMode was removed as part of the Scratchpad → Auto Run migration
 export type FocusArea = 'sidebar' | 'main' | 'right';
 export type LLMProvider = 'openrouter' | 'anthropic' | 'ollama';
