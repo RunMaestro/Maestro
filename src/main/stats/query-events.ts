@@ -14,8 +14,8 @@ import { logger } from '../utils/logger';
 const stmtCache = new StatementCache();
 
 const INSERT_SQL = `
-  INSERT INTO query_events (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote, is_worktree)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO query_events (id, session_id, agent_type, source, start_time, duration, project_path, tab_id, is_remote, is_worktree, account_id, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, cost_usd)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 /**
@@ -35,7 +35,13 @@ export function insertQueryEvent(db: Database.Database, event: Omit<QueryEvent, 
 		normalizePath(event.projectPath),
 		event.tabId ?? null,
 		event.isRemote !== undefined ? (event.isRemote ? 1 : 0) : null,
-		event.isWorktree !== undefined ? (event.isWorktree ? 1 : 0) : null
+		event.isWorktree !== undefined ? (event.isWorktree ? 1 : 0) : null,
+		event.accountId ?? null,
+		event.inputTokens ?? 0,
+		event.outputTokens ?? 0,
+		event.cacheReadTokens ?? 0,
+		event.cacheCreationTokens ?? 0,
+		event.costUsd ?? 0
 	);
 
 	logger.debug(`Inserted query event ${id}`, LOG_CONTEXT);

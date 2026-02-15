@@ -22,6 +22,18 @@ export interface QueryEvent {
 	isRemote?: boolean;
 	/** Whether this query came from a worktree session (child of a parent agent) */
 	isWorktree?: boolean;
+	/** Account ID for per-account usage tracking */
+	accountId?: string;
+	/** Input tokens consumed by this query */
+	inputTokens?: number;
+	/** Output tokens produced by this query */
+	outputTokens?: number;
+	/** Cache read tokens for this query */
+	cacheReadTokens?: number;
+	/** Cache creation tokens for this query */
+	cacheCreationTokens?: number;
+	/** Estimated cost in USD for this query */
+	costUsd?: number;
 }
 
 /**
@@ -159,4 +171,4 @@ export interface MultiWindowUsage {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 8;
+export const STATS_DB_VERSION = 9;

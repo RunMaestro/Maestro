@@ -72,6 +72,16 @@ import {
 } from './multi-window-usage';
 import type { ShortcutUsageDay, MultiWindowUsage } from '../../shared/stats-types';
 import { captureException } from '../utils/sentry';
+import {
+	upsertAccountUsageWindow,
+	getAccountUsageInWindow,
+	insertThrottleEvent,
+	getThrottleEvents,
+	clearAccountUsageCache,
+	type AccountUsageTokens,
+	type AccountUsageSummary,
+	type ThrottleEvent,
+} from './account-usage';
 
 /**
  * StatsDB manages the SQLite database for usage statistics.
@@ -172,6 +182,7 @@ export class StatsDB {
 			clearImageAnnotationCache();
 			clearShortcutUsageCache();
 			clearMultiWindowUsageCache();
+			clearAccountUsageCache();
 
 			logger.info('Stats database closed', LOG_CONTEXT);
 		}
@@ -855,6 +866,26 @@ export class StatsDB {
 
 	exportToCsv(range: StatsTimeRange): string {
 		return exportToCsv(this.database, range);
+	}
+
+	// ============================================================================
+	// Account Usage (delegated)
+	// ============================================================================
+
+	upsertAccountUsageWindow(accountId: string, windowStart: number, windowEnd: number, tokens: AccountUsageTokens): void {
+		return upsertAccountUsageWindow(this.database, accountId, windowStart, windowEnd, tokens);
+	}
+
+	getAccountUsageInWindow(accountId: string, windowStart: number, windowEnd: number): AccountUsageSummary {
+		return getAccountUsageInWindow(this.database, accountId, windowStart, windowEnd);
+	}
+
+	insertThrottleEvent(accountId: string, sessionId: string | null, reason: string, tokensAtThrottle: number, windowStart?: number, windowEnd?: number): string {
+		return insertThrottleEvent(this.database, accountId, sessionId, reason, tokensAtThrottle, windowStart, windowEnd);
+	}
+
+	getThrottleEvents(accountId?: string, since?: number): ThrottleEvent[] {
+		return getThrottleEvents(this.database, accountId, since);
 	}
 
 	// ============================================================================
