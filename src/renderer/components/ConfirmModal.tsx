@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { memo, useRef, useCallback, useMemo } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -16,7 +16,7 @@ interface ConfirmModalProps {
 	confirmLabel?: string;
 }
 
-export function ConfirmModal({
+export const ConfirmModal = memo(function ConfirmModal({
 	theme,
 	message,
 	onConfirm,
@@ -38,13 +38,25 @@ export function ConfirmModal({
 
 	const iconColor = destructive ? theme.colors.error : theme.colors.warning;
 
+	const iconBgStyle = useMemo(() => ({
+		backgroundColor: `${iconColor}20`,
+	}), [iconColor]);
+
+	const iconStyle = useMemo(() => ({
+		color: iconColor,
+	}), [iconColor]);
+
+	const messageStyle = useMemo(() => ({
+		color: theme.colors.textMain,
+	}), [theme.colors.textMain]);
+
 	return (
 		<Modal
 			theme={theme}
 			title={title}
 			priority={MODAL_PRIORITIES.CONFIRM}
 			onClose={onClose}
-			headerIcon={headerIcon ?? <Trash2 className="w-4 h-4" style={{ color: iconColor }} />}
+			headerIcon={headerIcon ?? <Trash2 className="w-4 h-4" style={iconStyle} />}
 			width={450}
 			zIndex={10000}
 			initialFocusRef={confirmButtonRef}
@@ -62,14 +74,14 @@ export function ConfirmModal({
 			<div className="flex gap-4">
 				<div
 					className="flex-shrink-0 p-2 rounded-full h-fit"
-					style={{ backgroundColor: `${iconColor}20` }}
+					style={iconBgStyle}
 				>
-					{icon ?? <AlertTriangle className="w-5 h-5" style={{ color: iconColor }} />}
+					{icon ?? <AlertTriangle className="w-5 h-5" style={iconStyle} />}
 				</div>
-				<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
+				<p className="leading-relaxed" style={messageStyle}>
 					{message}
 				</p>
 			</div>
 		</Modal>
 	);
-}
+});

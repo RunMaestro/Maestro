@@ -201,6 +201,16 @@ describe('ConfirmModal', () => {
 		});
 	});
 
+	describe('memoization', () => {
+		it('is wrapped with React.memo', () => {
+			expect((ConfirmModal as any).$$typeof).toBe(Symbol.for('react.memo'));
+		});
+
+		it('preserves display name', () => {
+			expect((ConfirmModal as any).type?.name || (ConfirmModal as any).displayName || ConfirmModal.name).toMatch(/ConfirmModal/);
+		});
+	});
+
 	describe('accessibility', () => {
 		it('has tabIndex on dialog for focus', () => {
 			renderWithLayerStack(

@@ -473,6 +473,16 @@ describe('RenameTabModal', () => {
 		});
 	});
 
+	describe('Memoization', () => {
+		it('is wrapped with React.memo', () => {
+			expect((RenameTabModal as any).$$typeof).toBe(Symbol.for('react.memo'));
+		});
+
+		it('preserves display name', () => {
+			expect((RenameTabModal as any).type?.name || (RenameTabModal as any).displayName || RenameTabModal.name).toMatch(/RenameTabModal/);
+		});
+	});
+
 	describe('Edge Cases', () => {
 		it('handles empty initial name', () => {
 			render(

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { memo, useRef, useState, useMemo } from 'react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
@@ -12,15 +12,15 @@ interface RenameTabModalProps {
 	onRename: (newName: string) => void;
 }
 
-export function RenameTabModal(props: RenameTabModalProps) {
+export const RenameTabModal = memo(function RenameTabModal(props: RenameTabModalProps) {
 	const { theme, initialName, agentSessionId, onClose, onRename } = props;
 	const inputRef = useRef<HTMLInputElement>(null);
 	const [value, setValue] = useState(initialName);
 
 	// Generate placeholder with UUID octet if available
-	const placeholder = agentSessionId
+	const placeholder = useMemo(() => agentSessionId
 		? `Rename ${agentSessionId.split('-')[0].toUpperCase()}...`
-		: 'Enter tab name...';
+		: 'Enter tab name...', [agentSessionId]);
 
 	const handleRename = () => {
 		onRename(value.trim());
@@ -54,4 +54,4 @@ export function RenameTabModal(props: RenameTabModalProps) {
 			/>
 		</Modal>
 	);
-}
+});
