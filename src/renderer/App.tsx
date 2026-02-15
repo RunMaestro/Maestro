@@ -9370,7 +9370,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				// Check if command is only available in AI mode
 				if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
 				// Check if command matches input
-				return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
+				const inputLower = inputValue.toLowerCase();
+				return cmd.command.toLowerCase().includes(inputLower) || (cmd.description && cmd.description.toLowerCase().includes(inputLower));
 			});
 
 			if (e.key === 'ArrowDown') {

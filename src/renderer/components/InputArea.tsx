@@ -314,7 +314,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			// Check if command is only available in AI mode
 			if (cmd.aiOnly && isTerminalMode) return false;
 			// Check if command matches input
-			return cmd.command.toLowerCase().startsWith(inputValueLower);
+			return cmd.command.toLowerCase().includes(inputValueLower) || (cmd.description && cmd.description.toLowerCase().includes(inputValueLower));
 		});
 	}, [slashCommands, isTerminalMode, inputValueLower]);
 
