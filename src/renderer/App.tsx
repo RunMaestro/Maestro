@@ -2129,6 +2129,152 @@ function MaestroConsoleInner() {
 		};
 	}, []);
 
+	// Subscribe to account limit warning/reached events for toast notifications
+	useEffect(() => {
+		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
+			addToastRef.current({
+				type: 'warning',
+				title: 'Account Limit Warning',
+				message: `Account ${data.accountName} is at ${Math.round(data.usagePercent)}% of its token limit`,
+				duration: 10_000,
+			});
+		});
+
+		const unsubReached = window.maestro.accounts.onLimitReached((data) => {
+			addToastRef.current({
+				type: 'error',
+				title: 'Account Limit Reached',
+				message: `Account ${data.accountName} has reached its token limit (${Math.round(data.usagePercent)}%)`,
+				duration: 0, // Do NOT auto-dismiss
+			});
+		});
+
+		return () => {
+			unsubWarning();
+			unsubReached();
+		};
+	}, []);
+
+	// Subscribe to account switch events (respawn agent with new account after switch)
+	useEffect(() => {
+		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
+			const { sessionId: switchSessionId, toAccountId, toAccountName, configDir, lastPrompt, reason } = data;
+
+			// Find the session that needs respawning (match by base session ID)
+			const session = sessionsRef.current.find(s => switchSessionId.startsWith(s.id));
+			if (!session) {
+				console.error('[AccountSwitch] Session not found for respawn:', switchSessionId);
+				return;
+			}
+
+			// Update session with new account info and CLAUDE_CONFIG_DIR
+			setSessions((prev) =>
+				prev.map(s => {
+					if (s.id !== session.id) return s;
+					return {
+						...s,
+						accountId: toAccountId,
+						accountName: toAccountName,
+						customEnvVars: {
+							...s.customEnvVars,
+							CLAUDE_CONFIG_DIR: configDir,
+						},
+					};
+				})
+			);
+
+			try {
+				// Get agent config for respawn
+				const agent = await window.maestro.agents.get(session.toolType);
+				if (!agent) {
+					console.error('[AccountSwitch] Agent not found for respawn:', session.toolType);
+					return;
+				}
+
+				// Get the active tab's agent session ID for --resume
+				const tab = getActiveTab(session);
+				const tabAgentSessionId = tab?.agentSessionId;
+				const commandToUse = agent.path ?? agent.command;
+				const agentArgs = agent.args ?? [];
+
+				// Determine the target session ID (with tab suffix)
+				const targetSessionId = `${session.id}-ai-${tab?.id || 'default'}`;
+
+				// Spawn with --resume and updated env vars
+				await window.maestro.process.spawn({
+					sessionId: targetSessionId,
+					toolType: session.toolType,
+					cwd: session.cwd,
+					command: commandToUse,
+					args: agentArgs,
+					agentSessionId: tabAgentSessionId ?? undefined,
+					sessionCustomPath: session.customPath,
+					sessionCustomArgs: session.customArgs,
+					sessionCustomEnvVars: {
+						...session.customEnvVars,
+						CLAUDE_CONFIG_DIR: configDir,
+					},
+					sessionCustomModel: session.customModel,
+					sessionCustomContextWindow: session.customContextWindow,
+					sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+				});
+
+				// Re-send the last prompt after a delay to allow the agent to initialize
+				if (lastPrompt) {
+					setTimeout(() => {
+						window.maestro.process.write(targetSessionId, lastPrompt);
+					}, 2000);
+				}
+
+				addToastRef.current({
+					type: 'info',
+					title: 'Account Switched',
+					message: `Switched to account ${toAccountName} (${reason})`,
+					duration: 5_000,
+				});
+			} catch (error) {
+				console.error('[AccountSwitch] Failed to respawn agent:', error);
+				addToastRef.current({
+					type: 'error',
+					title: 'Account Switch Failed',
+					message: `Failed to respawn agent after account switch: ${String(error)}`,
+					duration: 0,
+				});
+			}
+		});
+
+		const unsubSwitchFailed = window.maestro.accounts.onSwitchFailed((data) => {
+			addToastRef.current({
+				type: 'error',
+				title: 'Account Switch Failed',
+				message: `Failed to switch account: ${data.error || 'Unknown error'}`,
+				duration: 0,
+			});
+		});
+
+		const unsubSwitchExecute = window.maestro.accounts.onSwitchExecute(async (data) => {
+			// Auto-switch mode: execute the switch immediately
+			const { sessionId: switchSessionId, fromAccountId, toAccountId, reason } = data as any;
+			try {
+				await window.maestro.accounts.executeSwitch({
+					sessionId: switchSessionId,
+					fromAccountId,
+					toAccountId,
+					reason: reason ?? 'throttled',
+					automatic: true,
+				});
+			} catch (error) {
+				console.error('[AccountSwitch] Auto-switch execution failed:', error);
+			}
+		});
+
+		return () => {
+			unsubRespawn();
+			unsubSwitchFailed();
+			unsubSwitchExecute();
+		};
+	}, []);
+
 	// Keyboard navigation state
 	// Note: selectedSidebarIndex/setSelectedSidebarIndex are destructured from useUIStore() above
 	// Note: activeTab is memoized later at line ~3795 - use that for all tab operations
@@ -7656,6 +7802,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 				await window.maestro.playbooks.deleteAll(id);
 			} catch (error) {
 				console.error('Failed to delete playbooks:', error);
+			}
+
+			// Clean up account assignment and switcher tracking
+			try {
+				await window.maestro.accounts.cleanupSession(id);
+			} catch (error) {
+				console.error('Failed to clean up account session:', error);
 			}
 
 			// If this is a worktree session, track its path to prevent re-discovery

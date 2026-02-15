@@ -3,6 +3,7 @@ import Store from 'electron-store';
 import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
+import type { AccountSwitcher } from '../../accounts/account-switcher';
 import { logger } from '../../utils/logger';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -57,6 +58,7 @@ export interface ProcessHandlerDependencies {
 	settingsStore: Store<MaestroSettings>;
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<{ sessions: any[] }>;
+	getAccountSwitcher?: () => AccountSwitcher | null;
 }
 
 /**
@@ -72,7 +74,7 @@ export interface ProcessHandlerDependencies {
  * - runCommand: Execute a single command and capture output
  */
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
+	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow, getAccountSwitcher } =
 		deps;
 
 	// Spawn a new process for a session
@@ -531,7 +533,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				sessionId,
 				dataLength: data.length,
 			});
-			return processManager.write(sessionId, data);
+			const result = processManager.write(sessionId, data);
+
+			// Record the last prompt for account switching resume
+			const accountSwitcher = getAccountSwitcher?.();
+			if (accountSwitcher) {
+				accountSwitcher.recordLastPrompt(sessionId, data);
+			}
+
+			return result;
 		})
 	);
 

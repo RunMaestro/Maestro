@@ -176,6 +176,21 @@ export const SessionItem = memo(function SessionItem({
 						)}
 						<Activity className="w-3 h-3" /> {session.toolType}
 						{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
+						{/* Account assignment badge */}
+						{session.accountId && session.accountName && (
+							<span
+								className="text-[9px] px-1 py-0.5 rounded font-bold"
+								style={{
+									backgroundColor: theme.colors.accentDim
+										? theme.colors.accentDim + '30'
+										: theme.colors.accent + '15',
+									color: theme.colors.accentDim || theme.colors.accent,
+								}}
+								title={`Account: ${session.accountName}`}
+							>
+								{session.accountName.split('@')[0]?.slice(0, 3)?.toUpperCase() || 'ACC'}
+							</span>
+						)}
 						{/* Group badge (only in bookmark variant when session belongs to a group) */}
 						{variant === 'bookmark' && group && (
 							<span

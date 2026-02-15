@@ -2637,6 +2637,16 @@ interface MaestroAPI {
 		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number; totalTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
 		onLimitWarning: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
 		onLimitReached: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
+		onThrottled: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onSwitchPrompt: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onSwitchExecute: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onStatusChanged: (handler: (data: Record<string, unknown>) => void) => () => void;
+		cleanupSession: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+		executeSwitch: (params: { sessionId: string; fromAccountId: string; toAccountId: string; reason: string; automatic: boolean }) => Promise<{ success: boolean; event?: unknown; error?: string }>;
+		onSwitchStarted: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onSwitchRespawn: (handler: (data: { sessionId: string; toAccountId: string; toAccountName: string; configDir: string; lastPrompt: string | null; reason: string }) => void) => () => void;
+		onSwitchCompleted: (handler: (data: Record<string, unknown>) => void) => () => void;
+		onSwitchFailed: (handler: (data: Record<string, unknown>) => void) => () => void;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

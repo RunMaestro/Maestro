@@ -29,6 +29,7 @@ import { AgentEfficiencyChart } from './AgentEfficiencyChart';
 import { WeekdayComparisonChart } from './WeekdayComparisonChart';
 import { TasksByHourChart } from './TasksByHourChart';
 import { LongestAutoRunsTable } from './LongestAutoRunsTable';
+import { AccountUsageDashboard } from './AccountUsageDashboard';
 import { EmptyState } from './EmptyState';
 import { DashboardSkeleton } from './ChartSkeletons';
 import { ChartErrorBoundary } from './ChartErrorBoundary';
@@ -86,7 +87,7 @@ interface StatsAggregation {
 }
 
 // View mode options for the dashboard
-type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun';
+type ViewMode = 'overview' | 'agents' | 'activity' | 'autorun' | 'accounts';
 
 interface UsageDashboardModalProps {
 	isOpen: boolean;
@@ -133,6 +134,7 @@ const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'agents', label: 'Agents' },
 	{ value: 'activity', label: 'Activity' },
 	{ value: 'autorun', label: 'Auto Run' },
+	{ value: 'accounts', label: 'Accounts' },
 ];
 
 export function UsageDashboardModal({
@@ -1179,6 +1181,14 @@ export function UsageDashboardModal({
 										</ChartErrorBoundary>
 									</div>
 								</>
+							)}
+
+							{viewMode === 'accounts' && (
+								<AccountUsageDashboard
+									theme={theme}
+									sessions={sessions}
+									onClose={onClose}
+								/>
 							)}
 						</div>
 					)}
