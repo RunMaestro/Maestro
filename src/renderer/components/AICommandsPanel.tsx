@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import {
 	Plus,
 	Trash2,
@@ -44,6 +44,12 @@ export function AICommandsPanel({
 		description: '',
 		prompt: '',
 	});
+
+	// Memoize sorted commands to avoid re-sorting on every render
+	const sortedCommands = useMemo(
+		() => [...customAICommands].sort((a, b) => a.command.localeCompare(b.command)),
+		[customAICommands]
+	);
 
 	// Refs for textareas
 	const newCommandTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -329,10 +335,8 @@ export function AICommandsPanel({
 
 			{/* Existing commands list - collapsible style */}
 			<div className="space-y-2 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
-				{[...customAICommands]
-					.sort((a, b) => a.command.localeCompare(b.command))
-					.map((cmd) => (
-						<div
+				{sortedCommands.map((cmd) => (
+					<div
 							key={cmd.id}
 							className="rounded-lg border overflow-hidden"
 							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}

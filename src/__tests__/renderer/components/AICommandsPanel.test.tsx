@@ -972,6 +972,29 @@ describe('AICommandsPanel', () => {
 	});
 
 	describe('Command display', () => {
+		it('should display commands sorted alphabetically', () => {
+			const commands = [
+				createMockCommand({ id: 'cmd-z', command: '/zebra', description: 'Last alphabetically' }),
+				createMockCommand({ id: 'cmd-a', command: '/apple', description: 'First alphabetically' }),
+				createMockCommand({ id: 'cmd-m', command: '/mango', description: 'Middle alphabetically' }),
+			];
+
+			render(
+				<AICommandsPanel
+					theme={mockTheme}
+					customAICommands={commands}
+					setCustomAICommands={mockSetCustomAICommands}
+				/>
+			);
+
+			// Get all command name elements (they are rendered with font-mono font-bold)
+			const commandElements = screen.getAllByText(/^\/(apple|mango|zebra)$/);
+			expect(commandElements).toHaveLength(3);
+			expect(commandElements[0]).toHaveTextContent('/apple');
+			expect(commandElements[1]).toHaveTextContent('/mango');
+			expect(commandElements[2]).toHaveTextContent('/zebra');
+		});
+
 		it('should display command name with accent color', () => {
 			const commands = [createMockCommand({ command: '/highlighted' })];
 
