@@ -48,3 +48,35 @@ related:
 - Both tests exercise the `findRowIndexForItem` callback (lines 446–455) which maps item indices to row indices accounting for group headers
 - The fallback `return 0` path is a safety net for when no matching row is found — tested indirectly via grouped mode rendering where headers interleave items
 - All 19,338 tests pass with zero regressions
+
+---
+
+## Entry 2: Candidate 2 — Close button hover handlers
+
+| Field | Value |
+|-------|-------|
+| **Test File** | `src/__tests__/renderer/components/AgentInbox.test.tsx` |
+| **Test Cases Added** | 2 |
+| **Suite Total** | 90 → 92 tests |
+| **Full Suite** | 19,338 → 19,340 tests |
+| **Coverage Before** | ~94.5% (Agent Inbox overall, estimated) |
+| **Coverage After** | ~95.5% (estimated, +1.0% gain) |
+| **Gain** | +1.0% (AgentInbox.tsx lines 637–641) |
+
+### Test Cases
+
+1. **`mouseEnter sets background to accent color at 12.5% opacity`**
+   - Renders AgentInbox and finds close button via `getByTitle('Close (Esc)')`
+   - Fires `mouseEnter` event on the close button
+   - Asserts `backgroundColor` is `rgba(189, 147, 249, 0.125)` (JSDOM-normalized form of `#bd93f920`)
+
+2. **`mouseLeave resets background to transparent`**
+   - Renders AgentInbox and finds close button
+   - Fires `mouseEnter` then `mouseLeave` in sequence
+   - Asserts hover sets accent background, then leave resets to `transparent`
+
+### Notes
+
+- JSDOM converts 8-digit hex colors (e.g., `#bd93f920`) to `rgba()` format — assertions use the normalized form
+- Both tests exercise the inline `onMouseEnter`/`onMouseLeave` handlers on lines 637–641
+- All 19,340 tests pass with zero regressions

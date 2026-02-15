@@ -1902,4 +1902,41 @@ describe('AgentInbox', () => {
 			expect(dialog.style.borderColor).toBe('rgb(68, 71, 90)');
 		});
 	});
+
+	// ==========================================================================
+	// Close button hover handlers
+	// ==========================================================================
+	describe('close button hover handlers', () => {
+		it('mouseEnter sets background to accent color at 12.5% opacity', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const closeBtn = screen.getByTitle('Close (Esc)');
+			fireEvent.mouseEnter(closeBtn);
+			// `${theme.colors.accent}20` = #bd93f920 → JSDOM converts to rgba(189, 147, 249, 0.125)
+			expect(closeBtn.style.backgroundColor).toBe('rgba(189, 147, 249, 0.125)');
+		});
+
+		it('mouseLeave resets background to transparent', () => {
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={[]}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const closeBtn = screen.getByTitle('Close (Esc)');
+			// First hover, then leave
+			fireEvent.mouseEnter(closeBtn);
+			expect(closeBtn.style.backgroundColor).toBe('rgba(189, 147, 249, 0.125)');
+			fireEvent.mouseLeave(closeBtn);
+			expect(closeBtn.style.backgroundColor).toBe('transparent');
+		});
+	});
 });

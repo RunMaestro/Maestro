@@ -23,8 +23,8 @@ related:
 | Metric | Value |
 |--------|-------|
 | **Total Candidates** | 6 |
-| **Auto-Implement (PENDING)** | 2 |
-| **Implemented** | 1 |
+| **Auto-Implement (PENDING)** | 1 |
+| **Implemented** | 2 |
 | **Manual Review (PENDING - MANUAL REVIEW)** | 0 |
 | **Won't Do** | 3 |
 | **Current Coverage (Agent Inbox Overall)** | ~93% |
@@ -57,7 +57,7 @@ related:
 
 | Field | Value |
 |-------|-------|
-| **Status** | `PENDING` |
+| **Status** | `IMPLEMENTED` |
 | **File** | `src/renderer/components/AgentInbox.tsx` (lines 637–641) |
 | **Importance** | **MEDIUM** — Visual hover effect; low runtime risk but covers the last untested lines in the component |
 | **Testability** | **EASY** — `fireEvent.mouseEnter`/`mouseLeave` on a button, assert `style.backgroundColor` |
