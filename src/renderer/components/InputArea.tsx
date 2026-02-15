@@ -309,15 +309,18 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const searchTerm = useMemo(() => inputValueLower.replace(/^\//, ''), [inputValueLower]);
 	const filteredSlashCommands = useMemo(() => {
-		return slashCommands.filter((cmd) => {
-			// Check if command is only available in terminal mode
-			if (cmd.terminalOnly && !isTerminalMode) return false;
-			// Check if command is only available in AI mode
-			if (cmd.aiOnly && isTerminalMode) return false;
-			// Check if command matches input (strip leading / from both for substring matching)
+		const scored: { cmd: SlashCommand; score: number }[] = [];
+		for (const cmd of slashCommands) {
+			if (cmd.terminalOnly && !isTerminalMode) continue;
+			if (cmd.aiOnly && isTerminalMode) continue;
+			if (!searchTerm) { scored.push({ cmd, score: 0 }); continue; }
 			const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
-			return cmdName.includes(searchTerm) || (cmd.description && cmd.description.toLowerCase().includes(searchTerm));
-		});
+			if (cmdName.startsWith(searchTerm)) { scored.push({ cmd, score: 3 }); continue; }
+			if (cmdName.includes(searchTerm)) { scored.push({ cmd, score: 2 }); continue; }
+			if (cmd.description && cmd.description.toLowerCase().includes(searchTerm)) { scored.push({ cmd, score: 1 }); continue; }
+		}
+		scored.sort((a, b) => b.score - a.score);
+		return scored.map((s) => s.cmd);
 	}, [slashCommands, isTerminalMode, searchTerm]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list

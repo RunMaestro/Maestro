@@ -9368,16 +9368,19 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Handle slash command autocomplete
 		if (slashCommandOpen) {
 			const isTerminalMode = activeSession?.inputMode === 'terminal';
-			const filteredCommands = allSlashCommands.filter((cmd) => {
-				// Check if command is only available in terminal mode
-				if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
-				// Check if command is only available in AI mode
-				if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-				// Check if command matches input (strip leading / from both for substring matching)
-				const searchTerm = inputValue.toLowerCase().replace(/^\//, '');
+			const searchTerm = inputValue.toLowerCase().replace(/^\//, '');
+			const scored: { cmd: typeof allSlashCommands[number]; score: number }[] = [];
+			for (const cmd of allSlashCommands) {
+				if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) continue;
+				if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) continue;
+				if (!searchTerm) { scored.push({ cmd, score: 0 }); continue; }
 				const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
-				return cmdName.includes(searchTerm) || (cmd.description && cmd.description.toLowerCase().includes(searchTerm));
-			});
+				if (cmdName.startsWith(searchTerm)) { scored.push({ cmd, score: 3 }); continue; }
+				if (cmdName.includes(searchTerm)) { scored.push({ cmd, score: 2 }); continue; }
+				if (cmd.description && cmd.description.toLowerCase().includes(searchTerm)) { scored.push({ cmd, score: 1 }); continue; }
+			}
+			scored.sort((a, b) => b.score - a.score);
+			const filteredCommands = scored.map((s) => s.cmd);
 
 			if (e.key === 'ArrowDown') {
 				e.preventDefault();
