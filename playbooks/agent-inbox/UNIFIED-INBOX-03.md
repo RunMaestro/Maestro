@@ -59,7 +59,8 @@ This phase enriches each inbox item with context usage data, git branch info, an
 
 ## Relative Timestamp
 
-- [ ] **Add `formatRelativeTime` helper with edge case handling.** Create the helper either in the AgentInbox file or in a shared utils file (check if `src/renderer/utils/` has a time formatting file already).
+- [x] **Add `formatRelativeTime` helper with edge case handling.** Create the helper either in the AgentInbox file or in a shared utils file (check if `src/renderer/utils/` has a time formatting file already).
+  > ✅ Completed: Enhanced existing `formatRelativeTime` in `src/shared/formatters.ts` (already imported by AgentInbox) with all specified edge case guards: invalid timestamps (0, NaN, negative) return `'—'`, future timestamps (clock skew) return `'just now'`, 1-day returns `'yesterday'`, 2-29 days return `'Xd ago'`, 30+ days return `'Xmo ago'`. Added 3 new edge case tests in `src/__tests__/shared/formatters.test.ts`. Updated 4 dependent test files (CommandHistoryDrawer, OfflineQueueBanner, TabSwitcherModal, AgentSessionsModal) to match new output formats. All 19,292 tests pass (451 test files). TSC clean.
 
   ```ts
   export function formatRelativeTime(timestamp: number): string {
