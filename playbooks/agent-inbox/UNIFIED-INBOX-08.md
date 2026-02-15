@@ -178,7 +178,7 @@ The Agent Inbox is a modal (`AgentInbox.tsx`) displaying a virtualized list of s
 
     **Verify:** `npm run test -- --testPathPattern="AgentInbox|useAgentInbox" --no-coverage` — all tests pass.
 
-- [ ] **TASK 5 — Full verification and lint gate.** Run complete Agent Inbox test suite with coverage:
+- [x] **TASK 5 — Full verification and lint gate.** ✅ 3 test files, 153 tests all passing. Zero TypeScript errors. Zero ESLint errors. No stale filter references ("Needs Input"/"Ready" appear only in status badge assertions, not filter buttons). Run complete Agent Inbox test suite with coverage:
     ```bash
     npm run test -- --testPathPattern="AgentInbox|useAgentInbox|agentInboxHelpers" --no-coverage
     ```
