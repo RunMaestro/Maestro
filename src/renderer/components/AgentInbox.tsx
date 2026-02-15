@@ -84,6 +84,7 @@ function InboxItemCardContent({
 			role="option"
 			aria-selected={isSelected}
 			id={`inbox-item-${item.sessionId}-${item.tabId}`}
+			tabIndex={isSelected ? 0 : -1}
 			onClick={onClick}
 			style={{
 				height: ITEM_HEIGHT - 12,
@@ -95,8 +96,13 @@ function InboxItemCardContent({
 				flexDirection: 'column',
 				justifyContent: 'center',
 				gap: 4,
-				outline: isSelected ? `2px solid ${theme.colors.accent}` : 'none',
-				outlineOffset: -2,
+			}}
+			onFocus={(e) => {
+				e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
+				e.currentTarget.style.outlineOffset = '-2px';
+			}}
+			onBlur={(e) => {
+				e.currentTarget.style.outline = 'none';
 			}}
 		>
 			{/* Row 1: group / session name + timestamp */}

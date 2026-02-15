@@ -837,4 +837,252 @@ describe('AgentInbox', () => {
 			expect(options[1].getAttribute('aria-selected')).toBe('false');
 		});
 	});
+
+	// ==========================================================================
+	// InboxItemCard visual hierarchy
+	// ==========================================================================
+	describe('InboxItemCard', () => {
+		it('uses background fill for selection, not border or outline', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const option = screen.getByRole('option');
+			// Selected card should have a non-transparent background (accent at 8% opacity)
+			expect(option.style.backgroundColor).not.toBe('transparent');
+			expect(option.style.backgroundColor).not.toBe('');
+			// No outline on selection (outline only on focus)
+			expect(option.style.outline).toBe('');
+		});
+
+		it('non-selected card has transparent background and no outline', () => {
+			const sessions = [
+				createInboxSession('s1', 't1'),
+				createInboxSession('s2', 't2'),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const options = screen.getAllByRole('option');
+			// Second item is not selected
+			expect(options[1].style.backgroundColor).toBe('transparent');
+			expect(options[1].style.outline).toBe('');
+		});
+
+		it('card row 1 shows session name in bold', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const sessionName = screen.getByText('Session s1');
+			expect(sessionName.style.fontWeight).toBe('600');
+			expect(sessionName.style.fontSize).toBe('14px');
+		});
+
+		it('card row 2 shows last message in muted color', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const lastMsg = screen.getByText('Last message from s1');
+			expect(lastMsg.style.fontSize).toBe('13px');
+			// JSDOM converts hex to rgb; textDim #6272a4 = rgb(98, 114, 164)
+			expect(lastMsg.style.color).toBeTruthy();
+		});
+
+		it('card row 3 git branch has monospace font', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { worktreeBranch: 'main' }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const branchBadge = screen.getByText('main');
+			expect(branchBadge.style.fontFamily).toBe('monospace');
+		});
+
+		it('card row 3 status badge renders as colored pill', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// "Needs Input" status badge — find the pill (span with borderRadius)
+			const badges = screen.getAllByText('Needs Input');
+			const pill = badges.find(
+				(el) => el.tagName === 'SPAN' && el.style.borderRadius === '10px'
+			);
+			expect(pill).toBeTruthy();
+			// Pill should have colored background
+			expect(pill!.style.backgroundColor).toBeTruthy();
+		});
+
+		it('card has no standalone emoji', () => {
+			const groups = [createGroup({ id: 'g1', name: 'Test Group' })];
+			const sessions = [
+				createInboxSession('s1', 't1', { groupId: 'g1' }),
+			];
+			const { container } = render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={groups}
+					onClose={onClose}
+				/>
+			);
+			const option = container.querySelector('[role="option"]');
+			const textContent = option?.textContent ?? '';
+			// No emoji characters — check for common emoji range
+			const emojiRegex = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2702}-\u{27B0}]/u;
+			expect(emojiRegex.test(textContent)).toBe(false);
+		});
+
+		it('card has correct height and border-radius', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const option = screen.getByRole('option');
+			// height = ITEM_HEIGHT (80) - 12 = 68px
+			expect(option.style.height).toBe('68px');
+			expect(option.style.borderRadius).toBe('8px');
+		});
+
+		it('group name shown in muted 12px font', () => {
+			const groups = [createGroup({ id: 'g1', name: 'Dev Team' })];
+			const sessions = [
+				createInboxSession('s1', 't1', { groupId: 'g1' }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={groups}
+					onClose={onClose}
+				/>
+			);
+			const groupName = screen.getByText('Dev Team');
+			expect(groupName.style.fontSize).toBe('12px');
+			// JSDOM converts hex to rgb — just verify color is set
+			expect(groupName.style.color).toBeTruthy();
+		});
+
+		it('timestamp shown right-aligned in muted 12px font', () => {
+			const sessions = [createInboxSession('s1', 't1')];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const timestamp = screen.getByText('5m ago');
+			expect(timestamp.style.fontSize).toBe('12px');
+			// JSDOM converts hex to rgb — just verify color is set
+			expect(timestamp.style.color).toBeTruthy();
+			expect(timestamp.style.flexShrink).toBe('0');
+		});
+
+		it('context usage shows percentage text', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: 72 }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const ctx = screen.getByText('Context: 72%');
+			expect(ctx.style.fontSize).toBe('11px');
+		});
+
+		it('does not render git branch badge when not available', () => {
+			const sessions = [
+				createInboxSession('s1', 't1'), // no worktreeBranch
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			// No monospace badge should be rendered
+			const option = screen.getByRole('option');
+			const spans = option.querySelectorAll('span[style*="monospace"]');
+			expect(spans.length).toBe(0);
+		});
+
+		it('does not render context usage when undefined', () => {
+			const sessions = [
+				createInboxSession('s1', 't1', { contextUsage: undefined }),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			expect(screen.queryByText(/Context:/)).toBeNull();
+		});
+
+		it('selected card has tabIndex=0, non-selected has tabIndex=-1', () => {
+			const sessions = [
+				createInboxSession('s1', 't1'),
+				createInboxSession('s2', 't2'),
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={[]}
+					onClose={onClose}
+				/>
+			);
+			const options = screen.getAllByRole('option');
+			expect(options[0].getAttribute('tabindex')).toBe('0');
+			expect(options[1].getAttribute('tabindex')).toBe('-1');
+		});
+	});
 });

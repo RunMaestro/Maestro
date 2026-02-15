@@ -80,7 +80,8 @@ This phase builds the main AgentInbox component, replacing the placeholder from 
 
 ## Item Card
 
-- [ ] **Build the InboxItemCard sub-component with correct visual hierarchy.** Create within the AgentInbox file (or as separate file if > 100 lines).
+- [x] **Build the InboxItemCard sub-component with correct visual hierarchy.** Create within the AgentInbox file (or as separate file if > 100 lines).
+  > **Completed:** `InboxItemCardContent` component implemented inline in `AgentInbox.tsx` (lines 69-183). Three-row layout: Row 1 = group name (muted 12px) / session name (bold 14px) + relative timestamp; Row 2 = last message (muted 13px, 90 char truncation); Row 3 = git branch badge (monospace), context usage text, status pill (colored via `STATUS_COLORS`/`STATUS_LABELS`). Selection = background fill only (`accent` at 8% opacity), no outline on selection — outline only on focus for accessibility. No standalone emojis. 12px effective gap between cards via 6px top/bottom padding. Click handler guarded against undefined `onNavigateToSession`. 14 dedicated InboxItemCard tests added (50 total component tests pass). TypeScript lint clean.
 
   **Layout per card (80px height, 12px gap between cards):**
   - **Row 1:** Group name (muted, 12px) + " / " + **session name (bold, 14px, primary text)** + spacer + relative timestamp (muted, 12px, right-aligned)
