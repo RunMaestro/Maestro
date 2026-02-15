@@ -78,6 +78,11 @@ export * from './props';
 export * from './stats';
 
 // ============================================================================
+// Agent Inbox - Data aggregation for Agent Inbox modal
+// ============================================================================
+export { useAgentInbox } from './useAgentInbox';
+
+// ============================================================================
 // Re-export TransferError types from component for convenience
 // ============================================================================
 export type {
