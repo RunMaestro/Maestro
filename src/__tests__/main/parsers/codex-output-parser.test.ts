@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { CodexOutputParser, preloadCodexConfig, clearCodexConfigCache } from '../../../main/parsers/codex-output-parser';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -475,6 +475,57 @@ describe('CodexOutputParser', () => {
 				stderr: 'error stderr',
 				stdout: 'output stdout',
 			});
+		});
+	});
+
+	describe('config caching', () => {
+		beforeEach(() => {
+			clearCodexConfigCache();
+		});
+
+		it('should preload config without error', async () => {
+			await expect(preloadCodexConfig()).resolves.not.toThrow();
+		});
+
+		it('should use default context window when no config file exists', () => {
+			clearCodexConfigCache();
+			const freshParser = new CodexOutputParser();
+			const event = freshParser.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			// Default model is gpt-5.2-codex-max with 400000 context window
+			expect(event?.usage?.contextWindow).toBe(400000);
+		});
+
+		it('should clear cache and allow re-reading', async () => {
+			await preloadCodexConfig();
+			clearCodexConfigCache();
+			// After clearing, next construction should re-read (sync fallback)
+			const freshParser = new CodexOutputParser();
+			expect(freshParser.agentId).toBe('codex');
+		});
+
+		it('should reuse cached config across multiple parser instances', async () => {
+			await preloadCodexConfig();
+			const parser1 = new CodexOutputParser();
+			const parser2 = new CodexOutputParser();
+			// Both should have the same context window from cache
+			const event1 = parser1.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			const event2 = parser2.parseJsonLine(
+				JSON.stringify({
+					type: 'turn.completed',
+					usage: { input_tokens: 100, output_tokens: 50 },
+				})
+			);
+			expect(event1?.usage?.contextWindow).toBe(event2?.usage?.contextWindow);
 		});
 	});
 });

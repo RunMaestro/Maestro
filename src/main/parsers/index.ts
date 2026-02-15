@@ -64,7 +64,7 @@ import { logger } from '../utils/logger';
 // Export parser classes for direct use if needed
 export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
-export { CodexOutputParser } from './codex-output-parser';
+export { CodexOutputParser, preloadCodexConfig, clearCodexConfigCache } from './codex-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
@@ -72,6 +72,8 @@ const LOG_CONTEXT = '[OutputParsers]';
 /**
  * Initialize all output parser implementations.
  * Call this at application startup to register all available parsers.
+ * If the Codex config hasn't been preloaded, the constructor uses a sync fallback
+ * with module-level caching to avoid repeated file reads.
  */
 export function initializeOutputParsers(): void {
 	// Clear any existing registrations (for testing/reloading)

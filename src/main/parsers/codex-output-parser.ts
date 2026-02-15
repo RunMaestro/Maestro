@@ -28,6 +28,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 
+/** Cache TTL for Codex config file reads (5 minutes) */
+const CONFIG_CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** Module-level cache for Codex config */
+let cachedConfig: { model?: string; contextWindow?: number } | null = null;
+let configCacheTimestamp = 0;
+
 /**
  * Known OpenAI model context window sizes (in tokens)
  * Source: https://platform.openai.com/docs/models
@@ -81,39 +88,97 @@ function getModelContextWindow(model: string): number {
 }
 
 /**
- * Read Codex configuration from ~/.codex/config.toml
- * Returns the model name and context window override if set
+ * Parse Codex config TOML content and extract model/contextWindow fields
  */
-function readCodexConfig(): { model?: string; contextWindow?: number } {
+function parseCodexConfigContent(content: string): { model?: string; contextWindow?: number } {
+	const result: { model?: string; contextWindow?: number } = {};
+
+	// Simple TOML parsing for the fields we care about
+	// model = "gpt-5.1"
+	const modelMatch = content.match(/^\s*model\s*=\s*"([^"]+)"/m);
+	if (modelMatch) {
+		result.model = modelMatch[1];
+	}
+
+	// model_context_window = 128000
+	const windowMatch = content.match(/^\s*model_context_window\s*=\s*(\d+)/m);
+	if (windowMatch) {
+		result.contextWindow = parseInt(windowMatch[1], 10);
+	}
+
+	return result;
+}
+
+/**
+ * Read Codex configuration from ~/.codex/config.toml asynchronously.
+ * Results are cached at module level with a TTL to avoid repeated file reads.
+ */
+async function readCodexConfigAsync(): Promise<{ model?: string; contextWindow?: number }> {
+	const now = Date.now();
+	if (cachedConfig !== null && now - configCacheTimestamp < CONFIG_CACHE_TTL_MS) {
+		return cachedConfig;
+	}
+
+	try {
+		const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
+		const configPath = path.join(codexHome, 'config.toml');
+
+		await fs.promises.access(configPath);
+		const content = await fs.promises.readFile(configPath, 'utf8');
+		cachedConfig = parseCodexConfigContent(content);
+	} catch {
+		// Config file doesn't exist or can't be read - use defaults
+		cachedConfig = {};
+	}
+
+	configCacheTimestamp = now;
+	return cachedConfig;
+}
+
+/**
+ * Read Codex config synchronously (used only as fallback during construction).
+ * Populates the module-level cache so subsequent async reads are instant.
+ */
+function readCodexConfigSync(): { model?: string; contextWindow?: number } {
+	if (cachedConfig !== null && Date.now() - configCacheTimestamp < CONFIG_CACHE_TTL_MS) {
+		return cachedConfig;
+	}
+
 	try {
 		const codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex');
 		const configPath = path.join(codexHome, 'config.toml');
 
 		if (!fs.existsSync(configPath)) {
-			return {};
+			cachedConfig = {};
+			configCacheTimestamp = Date.now();
+			return cachedConfig;
 		}
 
 		const content = fs.readFileSync(configPath, 'utf8');
-		const result: { model?: string; contextWindow?: number } = {};
-
-		// Simple TOML parsing for the fields we care about
-		// model = "gpt-5.1"
-		const modelMatch = content.match(/^\s*model\s*=\s*"([^"]+)"/m);
-		if (modelMatch) {
-			result.model = modelMatch[1];
-		}
-
-		// model_context_window = 128000
-		const windowMatch = content.match(/^\s*model_context_window\s*=\s*(\d+)/m);
-		if (windowMatch) {
-			result.contextWindow = parseInt(windowMatch[1], 10);
-		}
-
-		return result;
+		cachedConfig = parseCodexConfigContent(content);
 	} catch {
-		// Config file doesn't exist or can't be read - use defaults
-		return {};
+		cachedConfig = {};
 	}
+
+	configCacheTimestamp = Date.now();
+	return cachedConfig;
+}
+
+/**
+ * Preload the Codex config asynchronously.
+ * Call at app startup to avoid sync file reads during parser construction.
+ */
+export async function preloadCodexConfig(): Promise<void> {
+	await readCodexConfigAsync();
+}
+
+/**
+ * Clear the cached Codex config.
+ * @internal Exposed for testing only.
+ */
+export function clearCodexConfigCache(): void {
+	cachedConfig = null;
+	configCacheTimestamp = 0;
 }
 
 /**
@@ -164,8 +229,8 @@ export class CodexOutputParser implements AgentOutputParser {
 	private model: string;
 
 	constructor() {
-		// Read config once at initialization
-		const config = readCodexConfig();
+		// Use cached config (sync fallback if not preloaded)
+		const config = readCodexConfigSync();
 		this.model = config.model || 'gpt-5.2-codex-max';
 
 		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
