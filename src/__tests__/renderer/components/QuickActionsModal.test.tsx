@@ -1564,4 +1564,16 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Context: Send to Agent')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('memoization', () => {
+		it('is wrapped with React.memo', () => {
+			const memoType = QuickActionsModal as unknown as { $$typeof: symbol; type: { name: string } };
+			expect(memoType.$$typeof).toBe(Symbol.for('react.memo'));
+		});
+
+		it('preserves display name', () => {
+			const memoType = QuickActionsModal as unknown as { type: { name: string } };
+			expect(memoType.type.name).toMatch(/^QuickActionsModal/);
+		});
+	});
 });

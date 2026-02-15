@@ -847,4 +847,16 @@ describe('HistoryHelpModal', () => {
 			expect(contentArea).toBeInTheDocument();
 		});
 	});
+
+	describe('memoization', () => {
+		it('is wrapped with React.memo', () => {
+			const memoType = HistoryHelpModal as unknown as { $$typeof: symbol; type: { name: string } };
+			expect(memoType.$$typeof).toBe(Symbol.for('react.memo'));
+		});
+
+		it('preserves display name', () => {
+			const memoType = HistoryHelpModal as unknown as { type: { name: string } };
+			expect(memoType.type.name).toMatch(/^HistoryHelpModal/);
+		});
+	});
 });

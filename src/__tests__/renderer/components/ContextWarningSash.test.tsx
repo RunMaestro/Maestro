@@ -544,4 +544,16 @@ describe('ContextWarningSash', () => {
 			expect(container.firstChild).toBeNull();
 		});
 	});
+
+	describe('memoization', () => {
+		it('is wrapped with React.memo', () => {
+			const memoType = ContextWarningSash as unknown as { $$typeof: symbol; type: { name: string } };
+			expect(memoType.$$typeof).toBe(Symbol.for('react.memo'));
+		});
+
+		it('preserves display name', () => {
+			const memoType = ContextWarningSash as unknown as { type: { name: string } };
+			expect(memoType.type.name).toMatch(/^ContextWarningSash/);
+		});
+	});
 });
