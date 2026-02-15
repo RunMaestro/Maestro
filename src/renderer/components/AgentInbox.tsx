@@ -150,6 +150,11 @@ function InboxItemCardContent({
 						}}
 					>
 						{item.sessionName}
+						{item.tabName && (
+							<span style={{ fontWeight: 400, color: theme.colors.textDim }}>
+								{' / '}{item.tabName}
+							</span>
+						)}
 					</span>
 					<span style={{ fontSize: 12, color: theme.colors.textDim, whiteSpace: 'nowrap', flexShrink: 0 }}>
 						{formatRelativeTime(item.timestamp)}

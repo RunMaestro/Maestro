@@ -769,6 +769,44 @@ describe('useAgentInbox', () => {
 			expect(result.current).toHaveLength(2);
 			expect(result.current.map(i => i.tabId).sort()).toEqual(['t1', 't2']);
 		});
+
+		it('should include tabName when session has 2+ tabs', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({ id: 't1', hasUnread: true, name: 'My Tab' }),
+						makeTab({ id: 't2', hasUnread: true, name: null }),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current).toHaveLength(2);
+			// First tab has explicit name
+			expect(result.current.find(i => i.tabId === 't1')?.tabName).toBe('My Tab');
+			// Second tab falls back to "Tab 2"
+			expect(result.current.find(i => i.tabId === 't2')?.tabName).toBe('Tab 2');
+		});
+
+		it('should not include tabName when session has only 1 tab', () => {
+			const sessions = [
+				makeSession({
+					id: 's1',
+					state: 'idle',
+					aiTabs: [
+						makeTab({ id: 't1', hasUnread: true, name: 'My Tab' }),
+					],
+				}),
+			];
+			const { result } = renderHook(() =>
+				useAgentInbox(sessions, [], 'all', 'newest')
+			);
+			expect(result.current).toHaveLength(1);
+			expect(result.current[0].tabName).toBeUndefined();
+		});
 	});
 
 	describe('git branch mapping', () => {
