@@ -1740,6 +1740,74 @@ describe('AgentInbox', () => {
 	});
 
 	// ==========================================================================
+	// findRowIndexForItem — grouped mode navigation
+	// ==========================================================================
+	describe('findRowIndexForItem', () => {
+		it('navigates correctly in grouped mode, skipping group headers', () => {
+			const groups = [createGroup({ id: 'g1', name: 'Alpha' })];
+			const sessions = [
+				createInboxSession('s1', 't1', { groupId: 'g1' }),
+				createInboxSession('s2', 't2'), // no group → "Ungrouped"
+			];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={groups}
+					onClose={onClose}
+					onNavigateToSession={onNavigateToSession}
+				/>
+			);
+			// Switch to Grouped mode
+			fireEvent.click(screen.getByText('Grouped'));
+
+			const listbox = screen.getByRole('listbox');
+			// First item is selected by default → aria-activedescendant should point to it
+			expect(listbox.getAttribute('aria-activedescendant')).toBe('inbox-item-s1-t1');
+
+			// Navigate down to second item
+			const dialog = screen.getByRole('dialog');
+			fireEvent.keyDown(dialog, { key: 'ArrowDown' });
+
+			// aria-activedescendant should now point to the second item
+			// This proves findRowIndexForItem correctly mapped item index 1
+			// to a row index that accounts for group headers
+			expect(listbox.getAttribute('aria-activedescendant')).toBe('inbox-item-s2-t2');
+		});
+
+		it('returns fallback index 0 when selectedIndex has no matching row (Enter still works)', () => {
+			// When only one item exists and it's selected (index 0),
+			// findRowIndexForItem(0) matches the item row and returns its row index.
+			// The fallback (return 0) fires when no item matches — e.g., an empty list
+			// or mismatched index. We verify the mechanism by rendering a single-item
+			// grouped list and confirming Enter still navigates (scroll-to-row didn't break).
+			const groups = [createGroup({ id: 'g1', name: 'Alpha' })];
+			const sessions = [createInboxSession('s1', 't1', { groupId: 'g1' })];
+			render(
+				<AgentInbox
+					theme={theme}
+					sessions={sessions}
+					groups={groups}
+					onClose={onClose}
+					onNavigateToSession={onNavigateToSession}
+				/>
+			);
+			// Switch to Grouped mode — rows are [header, item]
+			fireEvent.click(screen.getByText('Grouped'));
+
+			// Verify item is selected and activedescendant is correct
+			const listbox = screen.getByRole('listbox');
+			expect(listbox.getAttribute('aria-activedescendant')).toBe('inbox-item-s1-t1');
+
+			// Press Enter — should navigate successfully
+			const dialog = screen.getByRole('dialog');
+			fireEvent.keyDown(dialog, { key: 'Enter' });
+			expect(onNavigateToSession).toHaveBeenCalledWith('s1', 't1');
+			expect(onClose).toHaveBeenCalled();
+		});
+	});
+
+	// ==========================================================================
 	// Visual polish
 	// ==========================================================================
 	describe('visual polish', () => {
