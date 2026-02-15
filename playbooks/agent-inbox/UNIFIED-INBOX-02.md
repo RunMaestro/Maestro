@@ -41,7 +41,8 @@ This phase builds the main AgentInbox component, replacing the placeholder from 
 
 ## Component Shell with Virtualization
 
-- [ ] **Build the AgentInbox component with virtual scrolling.** Replace the placeholder in `src/renderer/components/AgentInbox.tsx`.
+- [x] **Build the AgentInbox component with virtual scrolling.** Replace the placeholder in `src/renderer/components/AgentInbox.tsx`.
+  > **Completed:** Component built with react-window v2 `List` (variable-size rows via `rowHeight` function). Includes `VariableSizeList` equivalent with group headers (36px) and item cards (80px). `useModalLayer` for layer stack registration with `MODAL_PRIORITIES.AGENT_INBOX = 555`. Focus trap, ARIA (`role="dialog"`, `aria-modal`, `aria-live="polite"`, `role="listbox"`, `role="option"`, `aria-activedescendant`), keyboard nav (↑↓ wrap, Enter navigate, Esc close via layer stack), focus restoration on close. Segmented controls for sort (Newest/Oldest/Grouped) and filter (All/Needs Input/Ready). 36 component tests pass. All 19,252 existing tests pass. TypeScript lint clean.
 
   **Props:**
   ```ts
