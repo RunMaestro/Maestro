@@ -340,6 +340,7 @@ export class StdoutHandler {
 		// Handle result
 		if (outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 			managedProcess.resultEmitted = true;
+			const usedStreamedTextFallback = !event.text && !!managedProcess.streamedText;
 			const resultText = event.text || managedProcess.streamedText || '';
 
 			// Log synopsis result processing (for debugging empty synopsis issue)
@@ -361,7 +362,9 @@ export class StdoutHandler {
 					hasEventText: !!event.text,
 					hasStreamedText: !!managedProcess.streamedText,
 				});
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				// Skip buffer retention when result text is sourced from streamedText
+				// to avoid double-appending already-captured output
+				this.bufferManager.emitDataBuffered(sessionId, resultText, usedStreamedTextFallback);
 			} else if (sessionId.includes('-synopsis-')) {
 				logger.warn(
 					'[ProcessManager] Synopsis result is empty - no text to emit',

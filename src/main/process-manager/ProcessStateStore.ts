@@ -16,10 +16,9 @@ export interface ProcessSnapshot {
 	command?: string;
 	args?: string[];
 	isBatchMode?: boolean;
-	agentSessionId?: string;
 	/** The tab within the session that owns this process */
 	tabId?: string;
-	/** Process type for group chat, wizard, etc. */
+	/** Process type for VIBES attribution (group chat, wizard, etc.). Currently derived renderer-side from sessionId patterns; reserved for future main-process population. */
 	processType?: string;
 }
 
@@ -31,37 +30,31 @@ export interface ProcessStateSnapshot {
 /**
  * Persist active process state to disk for recovery after reload/restart.
  * The snapshot is a lightweight JSON file in the app's userData directory.
+ *
+ * Uses a getter callback so the snapshot always reflects live state at
+ * write time, not stale data captured when the debounce was triggered.
  */
 export class ProcessStateStore {
 	private snapshotPath: string;
 	private writeTimer: ReturnType<typeof setTimeout> | null = null;
+	private snapshotGetter: (() => ProcessSnapshot[]) | null = null;
 
 	constructor() {
 		this.snapshotPath = path.join(app.getPath('userData'), SNAPSHOT_FILENAME);
 	}
 
 	/**
-	 * Save the current process list to disk.
+	 * Schedule a snapshot write to disk.
 	 * Debounced — call frequently, writes at most every 2 seconds.
+	 * The getter is called at write time so the snapshot reflects current state.
 	 */
-	saveSnapshot(processes: ProcessSnapshot[]): void {
+	saveSnapshot(getProcesses: () => ProcessSnapshot[]): void {
+		this.snapshotGetter = getProcesses;
 		if (this.writeTimer) return; // Already scheduled
 
-		this.writeTimer = setTimeout(async () => {
+		this.writeTimer = setTimeout(() => {
 			this.writeTimer = null;
-			try {
-				const snapshot: ProcessStateSnapshot = {
-					timestamp: Date.now(),
-					processes,
-				};
-				await fs.writeFile(
-					this.snapshotPath,
-					JSON.stringify(snapshot, null, '\t'),
-					'utf-8',
-				);
-			} catch (err) {
-				logger.warn('Failed to save process state snapshot', LOG_CONTEXT, { error: String(err) });
-			}
+			this.writeSnapshotToDisk();
 		}, 2000);
 	}
 
@@ -91,6 +84,10 @@ export class ProcessStateStore {
 	 * Clear the snapshot file (called on clean shutdown).
 	 */
 	async clear(): Promise<void> {
+		if (this.writeTimer) {
+			clearTimeout(this.writeTimer);
+			this.writeTimer = null;
+		}
 		try {
 			await fs.unlink(this.snapshotPath);
 		} catch {
@@ -99,12 +96,30 @@ export class ProcessStateStore {
 	}
 
 	/**
-	 * Flush any pending write immediately.
+	 * Flush any pending write immediately to disk.
 	 */
 	async flush(): Promise<void> {
 		if (this.writeTimer) {
 			clearTimeout(this.writeTimer);
 			this.writeTimer = null;
+		}
+		await this.writeSnapshotToDisk();
+	}
+
+	private async writeSnapshotToDisk(): Promise<void> {
+		if (!this.snapshotGetter) return;
+		try {
+			const snapshot: ProcessStateSnapshot = {
+				timestamp: Date.now(),
+				processes: this.snapshotGetter(),
+			};
+			await fs.writeFile(
+				this.snapshotPath,
+				JSON.stringify(snapshot, null, '\t'),
+				'utf-8',
+			);
+		} catch (err) {
+			logger.warn('Failed to save process state snapshot', LOG_CONTEXT, { error: String(err) });
 		}
 	}
 }
