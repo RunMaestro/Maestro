@@ -337,7 +337,7 @@ export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDash
 
 								{/* Sparkline */}
 								<div className="mb-2">
-									<AccountTrendChart accountId={account.id} theme={theme} days={7} compact={true} />
+									<AccountTrendChart accountId={account.id} theme={theme} defaultRange="7d" compact={true} />
 								</div>
 
 								{/* Stats grid */}

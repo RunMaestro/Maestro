@@ -345,7 +345,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 										{/* 7-day sparkline */}
 										{usage && (
 											<div className="mt-2 pt-1.5 border-t" style={{ borderColor: theme.colors.border + '40' }}>
-												<AccountTrendChart accountId={account.id} theme={theme} days={7} compact={true} />
+												<AccountTrendChart accountId={account.id} theme={theme} defaultRange="7d" compact={true} />
 											</div>
 										)}
 									</>
@@ -515,7 +515,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 									>
 										{account.name || account.email}
 									</div>
-									<AccountTrendChart accountId={account.id} theme={theme} days={30} />
+									<AccountTrendChart accountId={account.id} theme={theme} defaultRange="30d" />
 									{usage.rateMetrics && (
 										<div className="mt-3">
 											<AccountRateMetrics rateMetrics={usage.rateMetrics} theme={theme} />
