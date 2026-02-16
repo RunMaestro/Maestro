@@ -20,6 +20,7 @@ export const SYMPHONY_BLOCKING_LABEL = 'blocking';
 // Cache settings
 export const REGISTRY_CACHE_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 export const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;        // 5 minutes (issues change frequently)
+export const STARS_CACHE_TTL_MS = 24 * 60 * 60 * 1000;   // 24 hours (star counts change slowly)
 
 // Local storage paths (relative to app data dir)
 export const SYMPHONY_STATE_PATH = 'symphony-state.json';

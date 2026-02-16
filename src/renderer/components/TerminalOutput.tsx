@@ -474,8 +474,20 @@ const LogItemComponent = memo(
 									thinking
 								</span>
 							</div>
-							<div className="whitespace-pre-wrap">
-								{log.text}
+							<div className="whitespace-pre-wrap text-sm break-words">
+								{isAIMode && !markdownEditMode ? (
+									<MarkdownRenderer
+										content={log.text}
+										theme={theme}
+										onCopy={copyToClipboard}
+										fileTree={fileTree}
+										cwd={cwd}
+										projectRoot={projectRoot}
+										onFileClick={onFileClick}
+									/>
+								) : (
+									log.text
+								)}
 							</div>
 						</div>
 					)}

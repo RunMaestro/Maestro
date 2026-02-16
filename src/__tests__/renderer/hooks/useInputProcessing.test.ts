@@ -1205,6 +1205,59 @@ describe('useInputProcessing', () => {
 			});
 		});
 
+		it('uses quick-path naming for GitHub PR URLs without spawning agent', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'https://github.com/RunMaestro/Maestro/pull/380 review this PR',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should NOT call generateTabName (quick-path handles it)
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
+
+			// Should have called setSessions to set the name directly
+			expect(mockSetSessions).toHaveBeenCalled();
+		});
+
+		it('uses quick-path naming for GitHub issue URLs without spawning agent', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'thoughts on this issue? https://github.com/RunMaestro/Maestro/issues/381',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should NOT call generateTabName (quick-path handles it)
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
+		});
+
 		it('handles tab naming failure gracefully', async () => {
 			mockGenerateTabName.mockRejectedValue(new Error('Tab naming failed'));
 

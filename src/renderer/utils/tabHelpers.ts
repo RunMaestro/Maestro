@@ -14,6 +14,7 @@ import {
 	ThinkingMode,
 } from '../types';
 import { generateId } from './ids';
+import { getAutoRunFolderPath } from './existingDocsDetector';
 
 /**
  * Get the initial name to show in the rename modal.
@@ -25,6 +26,57 @@ import { generateId } from './ids';
  */
 export function getInitialRenameValue(tab: AITab): string {
 	return tab.name || '';
+}
+
+/**
+ * Attempt to extract a tab name from the user's message using fast client-side
+ * pattern matching. This avoids spawning an expensive ephemeral agent for messages
+ * that clearly reference a GitHub PR, issue, or similar identifiable resource.
+ *
+ * @param message - The user's input message
+ * @returns A short tab name if a pattern matched, or null to fall back to agent naming
+ */
+export function extractQuickTabName(message: string): string | null {
+	// GitHub PR URL: https://github.com/org/repo/pull/123
+	const ghPrUrl = message.match(/github\.com\/[^/]+\/([^/]+)\/pull\/(\d+)/);
+	if (ghPrUrl) {
+		return `PR #${ghPrUrl[2]}`;
+	}
+
+	// GitHub issue URL: https://github.com/org/repo/issues/123
+	const ghIssueUrl = message.match(/github\.com\/[^/]+\/([^/]+)\/issues\/(\d+)/);
+	if (ghIssueUrl) {
+		return `Issue #${ghIssueUrl[2]}`;
+	}
+
+	// GitHub discussion URL: https://github.com/org/repo/discussions/123
+	const ghDiscussionUrl = message.match(/github\.com\/[^/]+\/([^/]+)\/discussions\/(\d+)/);
+	if (ghDiscussionUrl) {
+		return `Discussion #${ghDiscussionUrl[2]}`;
+	}
+
+	// Jira-style ticket: PROJ-1234
+	const jiraTicket = message.match(/\b([A-Z][A-Z0-9]+-\d+)\b/);
+	if (jiraTicket) {
+		return jiraTicket[1];
+	}
+
+	// Linear-style ticket: PROJ-123 (shorter numbers)
+	// Already covered by the Jira pattern above
+
+	// Inline "PR #123" or "pull request #123" (not in a URL)
+	const prRef = message.match(/\b(?:PR|pull request)\s*#(\d+)\b/i);
+	if (prRef) {
+		return `PR #${prRef[1]}`;
+	}
+
+	// Inline "issue #123"
+	const issueRef = message.match(/\bissue\s*#(\d+)\b/i);
+	if (issueRef) {
+		return `Issue #${issueRef[1]}`;
+	}
+
+	return null;
 }
 
 // Maximum number of closed tabs to keep in history
@@ -1520,6 +1572,8 @@ export function createMergedSession(
 		activeFileTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: tabId }],
 		unifiedClosedTabHistory: [],
+		// Default Auto Run folder path (user can change later)
+		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
 	};
 
 	return { session, tabId };

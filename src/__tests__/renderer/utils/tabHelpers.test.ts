@@ -23,6 +23,7 @@
  * - navigateToPrevUnifiedTab
  * - createMergedSession
  * - hasActiveWizard
+ * - extractQuickTabName
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -48,6 +49,7 @@ import {
 	navigateToPrevUnifiedTab,
 	createMergedSession,
 	hasActiveWizard,
+	extractQuickTabName,
 } from '../../../renderer/utils/tabHelpers';
 import type { LogEntry } from '../../../renderer/types';
 import type { Session, AITab, ClosedTab, ClosedTabEntry, FilePreviewTab } from '../../../renderer/types';
@@ -1459,6 +1461,7 @@ describe('tabHelpers', () => {
 			expect(session.aiTabs).toHaveLength(1);
 			expect(session.activeTabId).toBe(tabId);
 			expect(tabId).toBe('mock-generated-id'); // Uses mocked generateId
+			expect(session.autoRunFolderPath).toBe('/path/to/project/Auto Run Docs');
 		});
 
 		it('creates a session with merged logs in the tab', () => {
@@ -1629,6 +1632,7 @@ describe('tabHelpers', () => {
 			expect(session.closedTabHistory).toEqual([]);
 			expect(session.shellCwd).toBe('/project');
 			expect(session.fileTreeAutoRefreshInterval).toBe(180);
+			expect(session.autoRunFolderPath).toBe('/project/Auto Run Docs');
 		});
 
 		it('creates shell log with merged context message', () => {
@@ -2375,6 +2379,54 @@ describe('tabHelpers', () => {
 			const result3 = navigateToPrevUnifiedTab(result2!.session);
 			expect(result3!.type).toBe('ai');
 			expect(result3!.id).toBe('ai-2');
+		});
+	});
+
+	describe('extractQuickTabName', () => {
+		it('extracts PR number from GitHub PR URL', () => {
+			expect(extractQuickTabName('https://github.com/RunMaestro/Maestro/pull/380 review this PR')).toBe('PR #380');
+		});
+
+		it('extracts issue number from GitHub issue URL', () => {
+			expect(extractQuickTabName('thoughts on this issue? https://github.com/RunMaestro/Maestro/issues/381')).toBe('Issue #381');
+		});
+
+		it('extracts discussion number from GitHub discussion URL', () => {
+			expect(extractQuickTabName('https://github.com/org/repo/discussions/42')).toBe('Discussion #42');
+		});
+
+		it('extracts Jira-style ticket ID', () => {
+			expect(extractQuickTabName('fix JIRA-1234 memory leak')).toBe('JIRA-1234');
+			expect(extractQuickTabName('implement PROJ-99')).toBe('PROJ-99');
+		});
+
+		it('extracts inline PR reference', () => {
+			expect(extractQuickTabName('review PR #256')).toBe('PR #256');
+			expect(extractQuickTabName('look at pull request #100')).toBe('PR #100');
+		});
+
+		it('extracts inline issue reference', () => {
+			expect(extractQuickTabName('fix issue #42')).toBe('Issue #42');
+		});
+
+		it('returns null for plain text messages', () => {
+			expect(extractQuickTabName('help me implement dark mode')).toBeNull();
+			expect(extractQuickTabName('refactor the auth module')).toBeNull();
+		});
+
+		it('returns null for empty or whitespace-only messages', () => {
+			expect(extractQuickTabName('')).toBeNull();
+			expect(extractQuickTabName('   ')).toBeNull();
+		});
+
+		it('prefers GitHub URL over inline reference when both present', () => {
+			// URL pattern matches first
+			expect(extractQuickTabName('review PR #999 at https://github.com/org/repo/pull/123')).toBe('PR #123');
+		});
+
+		it('handles URLs with query params and fragments', () => {
+			expect(extractQuickTabName('https://github.com/org/repo/pull/456?diff=split#review')).toBe('PR #456');
+			expect(extractQuickTabName('https://github.com/org/repo/issues/789?q=is%3Aopen')).toBe('Issue #789');
 		});
 	});
 });

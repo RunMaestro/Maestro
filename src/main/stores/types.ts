@@ -69,6 +69,9 @@ export interface MaestroSettings {
 	sshRemoteHonorGitignore: boolean;
 	// Unique installation identifier (generated once on first run)
 	installationId: string | null;
+	// WakaTime integration
+	wakatimeEnabled: boolean;
+	wakatimeApiKey: string;
 }
 
 // ============================================================================

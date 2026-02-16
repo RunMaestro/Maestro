@@ -268,6 +268,7 @@ const initMermaid = (theme: Theme) => {
 		theme: 'base', // Use 'base' theme to fully customize with themeVariables
 		themeVariables,
 		securityLevel: 'strict',
+		suppressErrorRendering: true,
 		fontFamily:
 			'ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, Liberation Mono, monospace',
 		flowchart: {
@@ -340,11 +341,22 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 			}
 
 			try {
+				// Pre-validate chart syntax before render to prevent DOM pollution.
+				const trimmed = chart.trim();
+				try {
+					await mermaid.parse(trimmed);
+				} catch (parseErr) {
+					if (cancelled) return;
+					const detail = parseErr instanceof Error ? parseErr.message : 'Invalid mermaid syntax';
+					setError(detail);
+					return;
+				}
+
 				// Generate a unique ID for this diagram
 				const id = `mermaid-${Math.random().toString(36).substring(2, 11)}`;
 
 				// Render the diagram - mermaid.render returns { svg: string }
-				const result = await mermaid.render(id, chart.trim());
+				const result = await mermaid.render(id, trimmed);
 
 				if (cancelled) return;
 
@@ -364,6 +376,9 @@ export function MermaidRenderer({ chart, theme }: MermaidRendererProps) {
 				if (cancelled) return;
 				console.error('Mermaid rendering error:', err);
 				setError(err instanceof Error ? err.message : 'Failed to render diagram');
+
+				// Clean up any orphaned mermaid error elements injected into the DOM
+				document.querySelectorAll('[id^="dmermaid-"]').forEach((el) => el.remove());
 			} finally {
 				if (!cancelled) {
 					setIsLoading(false);

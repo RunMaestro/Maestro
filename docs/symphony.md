@@ -6,8 +6,16 @@ icon: music
 
 Maestro Symphony is a community-driven program that connects Maestro users with open source repository maintainers seeking contributions. Think of it like distributed computing for AI-assisted development — instead of donating CPU cycles, users donate LLM tokens to advance open source.
 
+## Prerequisites
+
+Before starting a Symphony contribution, ensure you have:
+
 <Warning>
-**Build tools required.** Symphony clones repositories and runs Auto Run documents that may compile code, run tests, and make changes. Before starting a contribution, make sure you have the project's build tools and dependencies installed (e.g., Node.js, Python, Rust toolchain). Consider cloning the project first and verifying you can build it successfully — without the right toolchain, the contribution will likely fail.
+**GitHub CLI required.** Symphony uses the [GitHub CLI (`gh`)](https://cli.github.com/) to create draft PRs, manage contributions, and claim issues. Install it and run `gh auth login` to authenticate. Symphony will verify this before allowing you to proceed.
+</Warning>
+
+<Warning>
+**Build tools required.** Symphony clones repositories and runs Auto Run documents that may compile code, run tests, and make changes. Make sure you have the project's build tools and dependencies installed (e.g., Node.js, Python, Rust toolchain). Consider cloning the project first and verifying you can build it successfully — without the right toolchain, the contribution will likely fail.
 </Warning>
 
 ## How It Works

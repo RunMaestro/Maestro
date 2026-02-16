@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { Theme, Session, Shortcut, FocusArea, BatchRunState } from '../../../renderer/types';
-import { clearCapabilitiesCache, setCapabilitiesCache } from '../../../renderer/hooks';
+import { gitService } from '../../../renderer/services/git';
+import {
+	clearCapabilitiesCache,
+	setCapabilitiesCache,
+} from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 // Mock child components to simplify testing - must be before MainPanel import
 vi.mock('../../../renderer/components/LogViewer', () => ({
@@ -70,7 +74,7 @@ vi.mock('../../../renderer/components/AgentSessionsBrowser', () => ({
 }));
 
 vi.mock('../../../renderer/components/GitStatusWidget', () => ({
-	GitStatusWidget: (props: { onViewDiff: () => void }) => {
+	GitStatusWidget: (props: { onViewDiff: () => void; onViewLog?: () => void }) => {
 		return React.createElement(
 			'div',
 			{ 'data-testid': 'git-status-widget' },
@@ -78,7 +82,13 @@ vi.mock('../../../renderer/components/GitStatusWidget', () => ({
 				'button',
 				{ onClick: props.onViewDiff, 'data-testid': 'view-diff-btn' },
 				'View Diff'
-			)
+			),
+			props.onViewLog &&
+				React.createElement(
+					'button',
+					{ onClick: props.onViewLog, 'data-testid': 'view-log-btn' },
+					'View Git Log'
+				)
 		);
 	},
 }));
@@ -1637,17 +1647,82 @@ describe('MainPanel', () => {
 			expect(writeText).toHaveBeenCalledWith('main');
 		});
 
-		it('should open git log when clicking on git badge', async () => {
+		it('should open git log when clicking on SSH remote git badge', async () => {
+			const setGitLogOpen = vi.fn();
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			// Mock SSH remote name resolution
+			const mockGetConfigs = vi.fn().mockResolvedValue({
+				success: true,
+				configs: [{ id: 'ssh-remote-123', name: 'my-ssh-remote' }],
+			});
+			vi.mocked(window.maestro.sshRemote.getConfigs).mockImplementation(mockGetConfigs);
+
+			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('my-ssh-remote')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByText('my-ssh-remote'));
+
+			expect(setGitLogOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should call gitService.getDiff with SSH remote ID when session has SSH remote config enabled', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, 'ssh-remote-123');
+			});
+		});
+
+		it('should call gitService.getDiff without SSH remote ID when session has SSH remote config disabled', async () => {
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'ssh-remote-123' },
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, undefined);
+			});
+		});
+
+		it('should call setGitLogOpen when View Git Log button is clicked in SSH sessions', async () => {
+			const setGitLogOpen = vi.fn();
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
+
+			fireEvent.click(screen.getByTestId('view-log-btn'));
+
+			expect(setGitLogOpen).toHaveBeenCalledWith(true);
+		});
+
+		it('should call setGitLogOpen when View Git Log button is clicked in non-SSH sessions', async () => {
 			const setGitLogOpen = vi.fn();
 			const session = createSession({ isGitRepo: true });
 
 			render(<MainPanel {...defaultProps} activeSession={session} setGitLogOpen={setGitLogOpen} />);
 
-			await waitFor(() => {
-				expect(screen.getByText(/main|GIT/)).toBeInTheDocument();
-			});
-
-			fireEvent.click(screen.getByText(/main|GIT/));
+			fireEvent.click(screen.getByTestId('view-log-btn'));
 
 			expect(setGitLogOpen).toHaveBeenCalledWith(true);
 		});
@@ -1794,6 +1869,47 @@ describe('MainPanel', () => {
 
 			await waitFor(() => {
 				expect(setGitDiffPreview).toHaveBeenCalledWith('mock diff content');
+			});
+		});
+
+		it('should pass sshRemoteId to gitService.getDiff when session has SSH remote config enabled', async () => {
+			const setGitDiffPreview = vi.fn();
+			const session = createSession({
+				isGitRepo: true,
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-123' },
+			});
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					setGitDiffPreview={setGitDiffPreview}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, 'ssh-remote-123');
+			});
+		});
+
+		it('should pass undefined sshRemoteId to gitService.getDiff when session has no SSH remote config', async () => {
+			const setGitDiffPreview = vi.fn();
+			const session = createSession({ isGitRepo: true });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					setGitDiffPreview={setGitDiffPreview}
+				/>
+			);
+
+			fireEvent.click(screen.getByTestId('view-diff-btn'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(session.cwd, undefined, undefined);
 			});
 		});
 	});

@@ -169,7 +169,7 @@ describe('Git Preload API', () => {
 			expect(mockInvoke).toHaveBeenCalledWith('git:log', '/home/user/project', {
 				limit: 10,
 				search: 'fix',
-			});
+			}, undefined);
 			expect(result.entries).toEqual(mockEntries);
 		});
 	});

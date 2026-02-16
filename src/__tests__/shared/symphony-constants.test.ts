@@ -11,6 +11,7 @@ import {
   SYMPHONY_BLOCKING_LABEL,
   REGISTRY_CACHE_TTL_MS,
   ISSUES_CACHE_TTL_MS,
+  STARS_CACHE_TTL_MS,
   BRANCH_TEMPLATE,
   SYMPHONY_CATEGORIES,
   DOCUMENT_PATH_PATTERNS,
@@ -67,6 +68,13 @@ describe('shared/symphony-constants', () => {
     it('should be 5 minutes in milliseconds', () => {
       const fiveMinutesMs = 5 * 60 * 1000;
       expect(ISSUES_CACHE_TTL_MS).toBe(fiveMinutesMs);
+    });
+  });
+
+  describe('STARS_CACHE_TTL_MS', () => {
+    it('should be 24 hours in milliseconds', () => {
+      const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+      expect(STARS_CACHE_TTL_MS).toBe(twentyFourHoursMs);
     });
   });
 

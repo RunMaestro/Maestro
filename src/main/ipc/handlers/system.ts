@@ -200,7 +200,17 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		} catch {
 			throw new Error(`Invalid URL: ${url}`);
 		}
-		await shell.openExternal(url);
+		try {
+			await shell.openExternal(url);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			if (message.includes('Launch Services') || message.includes('No application')) {
+				// Fixes MAESTRO-3Q: macOS has no handler for this URL scheme/file type.
+				logger.warn(`No application found to open "${url}"`, 'Shell', { error: message });
+				return;
+			}
+			throw err;
+		}
 	});
 
 	// Shell operations - move item to system trash

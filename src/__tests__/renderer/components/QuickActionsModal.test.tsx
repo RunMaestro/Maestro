@@ -285,7 +285,9 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))
+			).toBeInTheDocument();
 		});
 
 		it('renders Settings action', () => {
@@ -621,9 +623,55 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project');
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
 				expect(props.setGitDiffPreview).toHaveBeenCalledWith('mock diff content');
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			});
+		});
+
+		it('handles View Git Diff with SSH remote ID when session has SSH remote config enabled', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const session = createMockSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-456' },
+			});
+			const props = createDefaultProps({ sessions: [session] });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(
+					'/home/user/project',
+					undefined,
+					'ssh-remote-456'
+				);
+			});
+		});
+
+		it('handles View Git Diff with undefined SSH remote ID when session has no SSH remote config', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
+			});
+		});
+
+		it('handles View Git Diff with undefined SSH remote ID when session has SSH remote config disabled', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const session = createMockSession({
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'ssh-remote-456' },
+			});
+			const props = createDefaultProps({ sessions: [session] });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
 			});
 		});
 
@@ -637,7 +685,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/different/path');
+				expect(gitService.getDiff).toHaveBeenCalledWith('/different/path', undefined, undefined);
 			});
 		});
 

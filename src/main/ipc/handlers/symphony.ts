@@ -24,6 +24,7 @@ import {
 	SYMPHONY_REGISTRY_URL,
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
+	STARS_CACHE_TTL_MS,
 	SYMPHONY_STATE_PATH,
 	SYMPHONY_CACHE_PATH,
 	SYMPHONY_REPOS_DIR,
@@ -409,6 +410,39 @@ async function fetchRegistry(): Promise<SymphonyRegistry> {
 			error
 		);
 	}
+}
+
+/**
+ * Fetch GitHub star counts for multiple repositories.
+ * Uses concurrent requests with a concurrency limit to stay within rate limits.
+ */
+async function fetchStarCounts(repoSlugs: string[]): Promise<Record<string, number>> {
+	const CONCURRENCY = 5;
+	const counts: Record<string, number> = {};
+
+	for (let i = 0; i < repoSlugs.length; i += CONCURRENCY) {
+		const batch = repoSlugs.slice(i, i + CONCURRENCY);
+		const results = await Promise.allSettled(
+			batch.map(async (slug) => {
+				const response = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
+					headers: {
+						Accept: 'application/vnd.github.v3+json',
+						'User-Agent': 'Maestro-Symphony',
+					},
+				});
+				if (!response.ok) return { slug, stars: 0 };
+				const data = (await response.json()) as { stargazers_count?: number };
+				return { slug, stars: data.stargazers_count ?? 0 };
+			})
+		);
+		for (const result of results) {
+			if (result.status === 'fulfilled') {
+				counts[result.value.slug] = result.value.stars;
+			}
+		}
+	}
+
+	return counts;
 }
 
 /**
@@ -929,6 +963,69 @@ export function registerSymphonyHandlers({
 	// ─────────────────────────────────────────────────────────────────────────
 
 	/**
+	 * Enrich registry repositories with star counts.
+	 * Uses a 24-hour cache; fetches fresh counts only when cache is expired.
+	 */
+	async function enrichWithStars(
+		registry: SymphonyRegistry,
+		cache: SymphonyCache | null,
+		forceRefresh: boolean
+	): Promise<SymphonyRegistry> {
+		const slugs = registry.repositories.filter((r) => r.isActive).map((r) => r.slug);
+		if (slugs.length === 0) return registry;
+
+		// Use cached star counts if valid
+		if (
+			!forceRefresh &&
+			cache?.stars &&
+			isCacheValid(cache.stars.fetchedAt, STARS_CACHE_TTL_MS)
+		) {
+			return {
+				...registry,
+				repositories: registry.repositories.map((r) => ({
+					...r,
+					stars: cache.stars!.data[r.slug],
+				})),
+			};
+		}
+
+		// Fetch fresh star counts (non-critical — fall back to stale cache or undefined)
+		try {
+			const counts = await fetchStarCounts(slugs);
+
+			// Persist to cache
+			const updatedCache: SymphonyCache = {
+				...cache,
+				issues: cache?.issues ?? {},
+				stars: { data: counts, fetchedAt: Date.now() },
+			};
+			await writeCache(app, updatedCache);
+
+			return {
+				...registry,
+				repositories: registry.repositories.map((r) => ({
+					...r,
+					stars: counts[r.slug],
+				})),
+			};
+		} catch (error) {
+			logger.warn('Failed to fetch star counts', LOG_CONTEXT, { error });
+
+			// Fall back to stale cache if available
+			if (cache?.stars) {
+				return {
+					...registry,
+					repositories: registry.repositories.map((r) => ({
+						...r,
+						stars: cache.stars!.data[r.slug],
+					})),
+				};
+			}
+			return registry;
+		}
+	}
+
+	/**
 	 * Get the symphony registry (with caching).
 	 */
 	ipcMain.handle(
@@ -944,8 +1041,9 @@ export function registerSymphonyHandlers({
 					cache?.registry &&
 					isCacheValid(cache.registry.fetchedAt, REGISTRY_CACHE_TTL_MS)
 				) {
+					const enriched = await enrichWithStars(cache.registry.data, cache, false);
 					return {
-						registry: cache.registry.data,
+						registry: enriched,
 						fromCache: true,
 						cacheAge: Date.now() - cache.registry.fetchedAt,
 					};
@@ -954,12 +1052,14 @@ export function registerSymphonyHandlers({
 				// Fetch fresh data
 				try {
 					const registry = await fetchRegistry();
+					const enriched = await enrichWithStars(registry, cache, !!forceRefresh);
 
-					// Update cache
+					// Update cache (enriched registry includes stars on repo objects,
+					// but the canonical star data lives in cache.stars)
 					const newCache: SymphonyCache = {
-						...cache,
+						...(await readCache(app)), // Re-read to get stars written by enrichWithStars
 						registry: {
-							data: registry,
+							data: registry, // Store unenriched registry (stars are in cache.stars)
 							fetchedAt: Date.now(),
 						},
 						issues: cache?.issues ?? {},
@@ -967,7 +1067,7 @@ export function registerSymphonyHandlers({
 					await writeCache(app, newCache);
 
 					return {
-						registry,
+						registry: enriched,
 						fromCache: false,
 					};
 				} catch (error) {
@@ -980,8 +1080,9 @@ export function registerSymphonyHandlers({
 							`Using expired cache as fallback (age: ${Math.round(cacheAge / 1000)}s)`,
 							LOG_CONTEXT
 						);
+						const enriched = await enrichWithStars(cache.registry.data, cache, false);
 						return {
-							registry: cache.registry.data,
+							registry: enriched,
 							fromCache: true,
 							cacheAge,
 						};

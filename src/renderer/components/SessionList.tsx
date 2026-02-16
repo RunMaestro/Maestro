@@ -1257,8 +1257,11 @@ function SessionListInner(props: SessionListProps) {
 		contextWarningRedThreshold = 80,
 	} = props;
 
-	// Derive whether any session is busy (for wand sparkle animation)
-	const isAnyBusy = useMemo(() => sessions.some((s) => s.state === 'busy'), [sessions]);
+	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
+	const isAnyBusy = useMemo(
+		() => sessions.some((s) => s.state === 'busy') || activeBatchSessionIds.length > 0,
+		[sessions, activeBatchSessionIds],
+	);
 
 	const [sessionFilter, setSessionFilter] = useState('');
 	const { onResizeStart: onSidebarResizeStart, transitionClass: sidebarTransitionClass } = useResizablePanel({

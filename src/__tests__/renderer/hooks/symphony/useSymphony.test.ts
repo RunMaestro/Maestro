@@ -399,6 +399,7 @@ describe('useSymphony', () => {
       const sortedNames = [...names].sort();
       expect(names).toEqual(sortedNames);
     });
+
   });
 
   // ──────────────────────────────────────────────────────────────────────────

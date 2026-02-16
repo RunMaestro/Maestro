@@ -326,11 +326,11 @@ describe('error-patterns', () => {
 				expect(result?.type).toBe('rate_limited');
 			});
 
-			it('should mark quota exceeded as not recoverable', () => {
+			it('should mark quota exceeded as recoverable', () => {
 				const result = matchErrorPattern(CLAUDE_ERROR_PATTERNS, 'quota exceeded');
 				expect(result).not.toBeNull();
 				expect(result?.type).toBe('rate_limited');
-				expect(result?.recoverable).toBe(false);
+				expect(result?.recoverable).toBe(true);
 			});
 		});
 
@@ -467,7 +467,7 @@ describe('error-patterns', () => {
 					const result = matchErrorPattern(CODEX_ERROR_PATTERNS, 'quota exceeded');
 					expect(result).not.toBeNull();
 					expect(result?.type).toBe('rate_limited');
-					expect(result?.recoverable).toBe(false);
+					expect(result?.recoverable).toBe(true);
 				});
 			});
 

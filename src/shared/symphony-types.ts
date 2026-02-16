@@ -49,6 +49,8 @@ export interface RegisteredRepository {
   featured?: boolean;
   /** Date added to registry (ISO 8601) */
   addedAt: string;
+  /** GitHub star count (enriched at fetch time, not in registry JSON) */
+  stars?: number;
 }
 
 /**
@@ -374,6 +376,11 @@ export interface SymphonyCache {
     data: SymphonyIssue[];
     fetchedAt: number;
   }>;
+  /** Cached star counts by repo slug */
+  stars?: {
+    data: Record<string, number>;
+    fetchedAt: number;
+  };
 }
 
 // ============================================================================

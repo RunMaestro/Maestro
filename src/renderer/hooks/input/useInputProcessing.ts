@@ -7,7 +7,7 @@ import type {
 	CustomAICommand,
 	BatchRunState,
 } from '../../types';
-import { getActiveTab } from '../../utils/tabHelpers';
+import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
@@ -658,73 +658,124 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 			const hasNoCustomName = !activeTabForNaming?.name;
 
 			if (automaticTabNamingEnabled && isNewAiSession && hasTextMessage && hasNoCustomName) {
-				// Set isGeneratingName to show spinner in tab
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== activeSessionId) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) =>
-								t.id === activeTabForNaming.id ? { ...t, isGeneratingName: true } : t
-							),
-						};
-					})
-				);
-
-				// Call the tab naming API (async, fire and forget)
-				window.maestro.tabNaming
-					.generateTabName({
-						userMessage: effectiveInputValue,
-						agentType: activeSession.toolType,
-						cwd: activeSession.cwd,
-						sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-					})
-					.then((generatedName) => {
-						// Clear the generating indicator
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) =>
-										t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-									),
-								};
-							})
-						);
-
-						if (!generatedName) return;
-
-						// Update the tab name only if it's still null (user hasn't manually renamed it)
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
-								const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
-								if (!tab || tab.name !== null) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) =>
-										t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
-									),
-								};
-							})
-						);
-					})
-					.catch((error) => {
-						console.error('[processInput] Tab naming failed:', error);
-						// Clear the generating indicator on error
-						setSessions((prev) =>
-							prev.map((s) => {
-								if (s.id !== activeSessionId) return s;
-								return {
-									...s,
-									aiTabs: s.aiTabs.map((t) =>
-										t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
-									),
-								};
-							})
-						);
+				// Fast-path: extract tab name from known patterns (GitHub URLs, PR/issue refs, Jira tickets)
+				// This avoids spawning an ephemeral agent for messages with obvious identifiers
+				const quickName = extractQuickTabName(effectiveInputValue);
+				if (quickName) {
+					window.maestro.logger.log('info', `Quick tab named: "${quickName}"`, 'TabNaming', {
+						tabId: activeTabForNaming.id,
+						sessionId: activeSessionId,
+						quickName,
 					});
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== activeSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTabForNaming.id ? { ...t, name: quickName } : t
+								),
+							};
+						})
+					);
+				} else {
+					// Set isGeneratingName to show spinner in tab
+					setSessions((prev) =>
+						prev.map((s) => {
+							if (s.id !== activeSessionId) return s;
+							return {
+								...s,
+								aiTabs: s.aiTabs.map((t) =>
+									t.id === activeTabForNaming.id ? { ...t, isGeneratingName: true } : t
+								),
+							};
+						})
+					);
+
+					window.maestro.logger.log('info', 'Auto tab naming started', 'TabNaming', {
+						tabId: activeTabForNaming.id,
+						sessionId: activeSessionId,
+						agentType: activeSession.toolType,
+						messageLength: effectiveInputValue.length,
+					});
+
+					// Call the tab naming API (async, fire and forget)
+					window.maestro.tabNaming
+						.generateTabName({
+							userMessage: effectiveInputValue,
+							agentType: activeSession.toolType,
+							cwd: activeSession.cwd,
+							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
+						})
+						.then((generatedName) => {
+							// Clear the generating indicator
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== activeSessionId) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
+										),
+									};
+								})
+							);
+
+							if (!generatedName) {
+								window.maestro.logger.log('warn', 'Auto tab naming returned null', 'TabNaming', {
+									tabId: activeTabForNaming.id,
+									sessionId: activeSessionId,
+								});
+								return;
+							}
+
+							// Update the tab name only if it's still null (user hasn't manually renamed it)
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== activeSessionId) return s;
+									const tab = s.aiTabs.find((t) => t.id === activeTabForNaming.id);
+									if (!tab || tab.name !== null) {
+										window.maestro.logger.log('info', 'Auto tab naming skipped (tab already named)', 'TabNaming', {
+											tabId: activeTabForNaming.id,
+											generatedName,
+											existingName: tab?.name,
+										});
+										return s;
+									}
+									window.maestro.logger.log('info', `Auto tab named: "${generatedName}"`, 'TabNaming', {
+										tabId: activeTabForNaming.id,
+										sessionId: activeSessionId,
+										generatedName,
+									});
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, name: generatedName } : t
+										),
+									};
+								})
+							);
+						})
+						.catch((error) => {
+							window.maestro.logger.log('error', 'Auto tab naming failed', 'TabNaming', {
+								tabId: activeTabForNaming.id,
+								sessionId: activeSessionId,
+								error: String(error),
+							});
+							// Clear the generating indicator on error
+							setSessions((prev) =>
+								prev.map((s) => {
+									if (s.id !== activeSessionId) return s;
+									return {
+										...s,
+										aiTabs: s.aiTabs.map((t) =>
+											t.id === activeTabForNaming.id ? { ...t, isGeneratingName: false } : t
+										),
+									};
+								})
+							);
+						});
+				}
 			}
 
 			// If directory changed, check if new directory is a Git repository

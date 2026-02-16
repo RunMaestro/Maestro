@@ -1231,7 +1231,18 @@ export function AppUtilityModals({
 			{/* --- GIT LOG VIEWER (lazy-loaded) --- */}
 			{gitLogOpen && activeSession && (
 				<Suspense fallback={null}>
-					<GitLogViewer cwd={gitViewerCwd} theme={theme} onClose={onCloseGitLog} />
+					<GitLogViewer
+						cwd={gitViewerCwd}
+						theme={theme}
+						onClose={onCloseGitLog}
+						sshRemoteId={
+							activeSession?.sshRemoteId ||
+							(activeSession?.sessionSshRemoteConfig?.enabled
+								? activeSession.sessionSshRemoteConfig.remoteId
+								: undefined) ||
+							undefined
+						}
+					/>
 				</Suspense>
 			)}
 
@@ -1245,7 +1256,9 @@ export function AppUtilityModals({
 					sessionName={activeSession?.name}
 					sshRemoteId={
 						activeSession?.sshRemoteId ||
-						activeSession?.sessionSshRemoteConfig?.remoteId ||
+						(activeSession?.sessionSshRemoteConfig?.enabled
+							? activeSession.sessionSshRemoteConfig.remoteId
+							: undefined) ||
 						undefined
 					}
 					sshRemoteHost={activeSession?.sshRemote?.host}

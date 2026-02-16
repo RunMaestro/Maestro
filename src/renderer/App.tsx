@@ -195,7 +195,7 @@ import {
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
-import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
+import { validateNewSession } from './utils/sessionValidation';
 import { formatLogsForClipboard } from './utils/contextExtractor';
 import { getSlashCommandDescription } from './constants/app';
 import { useUIStore } from './stores/uiStore';
@@ -1161,9 +1161,16 @@ function MaestroConsoleInner() {
 				session = { ...session, projectRoot: session.cwd };
 			}
 
+			// Migration: default autoRunFolderPath for sessions that don't have one
+			if (!session.autoRunFolderPath && session.projectRoot) {
+				session = { ...session, autoRunFolderPath: `${session.projectRoot}/${AUTO_RUN_FOLDER_NAME}` };
+			}
+
 			// Migration: ensure fileTreeAutoRefreshInterval is set (default 180s for legacy sessions)
 			if (session.fileTreeAutoRefreshInterval == null) {
-				console.warn(`[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s`);
+				console.warn(
+					`[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s`
+				);
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
 			}
 
@@ -1270,7 +1277,9 @@ function MaestroConsoleInner() {
 				// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
 				const sshRemoteId =
 					correctedSession.sshRemoteId ||
-					correctedSession.sessionSshRemoteConfig?.remoteId ||
+					(correctedSession.sessionSshRemoteConfig?.enabled
+						? correctedSession.sessionSshRemoteConfig.remoteId
+						: undefined) ||
 					undefined;
 
 				// For SSH remote sessions, defer git operations to background to avoid blocking
@@ -1398,7 +1407,11 @@ function MaestroConsoleInner() {
 					// For remote (SSH) sessions, fetch git info in background to avoid blocking
 					// startup on SSH connection timeouts. This runs after UI is shown.
 					for (const session of restoredSessions) {
-						const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
+						const sshRemoteId =
+							session.sshRemoteId ||
+							(session.sessionSshRemoteConfig?.enabled
+								? session.sessionSshRemoteConfig.remoteId
+								: undefined);
 						if (sshRemoteId) {
 							// Fire and forget - don't await, let it update sessions when done
 							fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
@@ -1668,7 +1681,9 @@ function MaestroConsoleInner() {
 					// Get SSH remote ID for remote git operations
 					const sshRemoteId =
 						parentSession.sshRemoteId ||
-						parentSession.sessionSshRemoteConfig?.remoteId ||
+						(parentSession.sessionSshRemoteConfig?.enabled
+							? parentSession.sessionSshRemoteConfig.remoteId
+							: undefined) ||
 						undefined;
 					const scanResult = await window.maestro.git.scanWorktreeDirectory(
 						parentSession.worktreeConfig!.basePath,
@@ -3329,12 +3344,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			? hasActiveSessionCapability('supportsImageInputOnResume')
 			: hasActiveSessionCapability('supportsImageInput');
 	}, [activeSession, isResumingSession, hasActiveSessionCapability]);
-	const blockCodexResumeImages =
-		!!activeSession &&
-		activeSession.toolType === 'codex' &&
-		isResumingSession &&
-		!hasActiveSessionCapability('supportsImageInputOnResume');
-
 	// Track previous active tab to detect tab switches
 	const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
 
@@ -3612,7 +3621,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Effect: process pending resume after agent switch completes
 	useEffect(() => {
-		if (pendingResumeRef.current && activeSession?.id === pendingResumeRef.current.targetSessionId) {
+		if (
+			pendingResumeRef.current &&
+			activeSession?.id === pendingResumeRef.current.targetSessionId
+		) {
 			const { agentSessionId } = pendingResumeRef.current;
 			pendingResumeRef.current = null;
 			handleResumeSession(agentSessionId);
@@ -6965,12 +6977,28 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customModel?: string;
 			}
 		) => {
-			const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
-			setGroupChats((prev) => [chat, ...prev]);
-			setShowNewGroupChatModal(false);
-			handleOpenGroupChat(chat.id);
+			try {
+				const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
+				setGroupChats((prev) => [chat, ...prev]);
+				setShowNewGroupChatModal(false);
+				handleOpenGroupChat(chat.id);
+			} catch (err) {
+				setShowNewGroupChatModal(false);
+				const message = err instanceof Error ? err.message : '';
+				const isValidationError = message.includes('Invalid moderator agent ID');
+				addToast({
+					type: 'error',
+					title: 'Group Chat',
+					message: isValidationError
+						? message.replace(/^Error invoking remote method '[^']+': /, '')
+						: 'Failed to create group chat',
+				});
+				if (!isValidationError) {
+					throw err; // Unexpected — let Sentry capture via unhandledrejection
+				}
+			}
 		},
-		[handleOpenGroupChat]
+		[handleOpenGroupChat, addToast]
 	);
 
 	const handleDeleteGroupChat = useCallback(
@@ -7178,6 +7206,16 @@ You are taking over this conversation. Based on the context above, provide a bri
 					if (s.id !== activeSession.id) return s;
 					// Find the tab to get its agentSessionId for persistence
 					const tab = s.aiTabs.find((t) => t.id === renameTabId);
+					const oldName = tab?.name;
+
+					window.maestro.logger.log('info', `Tab renamed: "${oldName || '(auto)'}" → "${newName || '(cleared)'}"`, 'TabNaming', {
+						tabId: renameTabId,
+						sessionId: activeSession.id,
+						agentSessionId: tab?.agentSessionId,
+						oldName,
+						newName: newName || null,
+					});
+
 					if (tab?.agentSessionId) {
 						// Persist name to agent session metadata (async, fire and forget)
 						// Use projectRoot (not cwd) for consistent session storage access
@@ -7185,16 +7223,38 @@ You are taking over this conversation. Based on the context above, provide a bri
 						if (agentId === 'claude-code') {
 							window.maestro.claude
 								.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-								.catch((err) => console.error('Failed to persist tab name:', err));
+								.catch((err) => {
+									window.maestro.logger.log('error', 'Failed to persist tab name to Claude session storage', 'TabNaming', {
+										tabId: renameTabId,
+										agentSessionId: tab.agentSessionId,
+										error: String(err),
+									});
+								});
 						} else {
 							window.maestro.agentSessions
 								.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-								.catch((err) => console.error('Failed to persist tab name:', err));
+								.catch((err) => {
+									window.maestro.logger.log('error', 'Failed to persist tab name to agent session storage', 'TabNaming', {
+										tabId: renameTabId,
+										agentSessionId: tab.agentSessionId,
+										agentType: agentId,
+										error: String(err),
+									});
+								});
 						}
 						// Also update past history entries with this agentSessionId
 						window.maestro.history
 							.updateSessionName(tab.agentSessionId, newName || '')
-							.catch((err) => console.error('Failed to update history session names:', err));
+							.catch((err) => {
+								window.maestro.logger.log('warn', 'Failed to update history session names', 'TabNaming', {
+									agentSessionId: tab.agentSessionId,
+									error: String(err),
+								});
+							});
+					} else {
+						window.maestro.logger.log('info', 'Tab renamed (no agentSessionId, skipping persistence)', 'TabNaming', {
+							tabId: renameTabId,
+						});
 					}
 					return {
 						...s,
@@ -7921,6 +7981,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customProviderPath,
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
 				sessionSshRemoteConfig,
+				// Default Auto Run folder path (user can change later)
+				autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
 			};
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
@@ -8328,7 +8390,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			activeSession.inputMode === 'terminal'
 				? activeSession.shellCwd || activeSession.cwd
 				: activeSession.cwd;
-		const diff = await gitService.getDiff(cwd);
+		const sshRemoteId =
+			activeSession.sshRemoteId ||
+			(activeSession.sessionSshRemoteConfig?.enabled
+				? activeSession.sessionSshRemoteConfig.remoteId
+				: undefined) ||
+			undefined;
+		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
 
 		if (diff.diff) {
 			setGitDiffPreview(diff.diff);
@@ -9446,15 +9514,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 	};
 
 	// Image Handlers
-	const showImageAttachBlockedNotice = useCallback(() => {
-		const agentName = activeSession?.toolType
-			? getProviderDisplayName(activeSession.toolType)
-			: 'the agent';
-		const message = `Images are only available in the initial message to ${agentName}. Please start a new session if you want to include an image.`;
-		setSuccessFlashNotification(message);
-		setTimeout(() => setSuccessFlashNotification(null), 4000);
-	}, [setSuccessFlashNotification, activeSession?.toolType]);
-
 	const handlePaste = (e: React.ClipboardEvent) => {
 		// Allow image pasting in group chat or direct AI mode
 		const isGroupChatActive = !!activeGroupChatId;
@@ -9488,12 +9547,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Image handling requires AI mode or group chat
 		if (!isGroupChatActive && !isDirectAIMode) return;
-
-		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
-			e.preventDefault();
-			showImageAttachBlockedNotice();
-			return;
-		}
 
 		for (let i = 0; i < items.length; i++) {
 			if (items[i].type.indexOf('image') !== -1) {
@@ -9543,12 +9596,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!isGroupChatActive && !isDirectAIMode) return;
 
 		const files = e.dataTransfer.files;
-		const hasImage = Array.from(files).some((file) => file.type.startsWith('image/'));
-
-		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
-			showImageAttachBlockedNotice();
-			return;
-		}
 
 		for (let i = 0; i < files.length; i++) {
 			if (files[i].type.startsWith('image/')) {
@@ -11907,9 +11954,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 								? setStagedImages
 								: undefined
 					}
-					onPromptImageAttachBlocked={
-						activeGroupChatId || !blockCodexResumeImages ? undefined : showImageAttachBlockedNotice
-					}
 					onPromptOpenLightbox={handleSetLightboxImage}
 					promptTabSaveToHistory={activeGroupChatId ? false : (activeTab?.saveToHistory ?? false)}
 					onPromptToggleTabSaveToHistory={
@@ -12263,7 +12307,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 							onClose={() => setDirectorNotesOpen(false)}
 							onResumeSession={handleDirectorNotesResumeSession}
 							fileTree={activeSession?.fileTree}
-							onFileClick={(path: string) => handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)}
+							onFileClick={(path: string) =>
+								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
+							}
 						/>
 					</Suspense>
 				)}

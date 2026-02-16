@@ -24,7 +24,7 @@ vi.mock('qrcode.react', () => ({
 
 // Mock lucide-react icons
 vi.mock('lucide-react', () => ({
-	Wand2: () => <span data-testid="icon-wand" />,
+	Wand2: ({ className }: { className?: string }) => <span data-testid="icon-wand" className={className} />,
 	Plus: () => <span data-testid="icon-plus" />,
 	Settings: () => <span data-testid="icon-settings" />,
 	ChevronRight: () => <span data-testid="icon-chevron-right" />,
@@ -1173,6 +1173,49 @@ describe('SessionList', () => {
 			render(<SessionList {...props} />);
 
 			expect(screen.getByText('AUTO')).toBeInTheDocument();
+		});
+
+		it('activates wand sparkle animation when a session is busy', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Busy Session', state: 'busy' })];
+			const props = createDefaultProps({
+				sessions,
+				sortedSessions: sessions,
+				leftSidebarOpen: true,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(true);
+		});
+
+		it('activates wand sparkle animation when auto-run is active', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Auto Session', state: 'idle' })];
+			const props = createDefaultProps({
+				sessions,
+				sortedSessions: sessions,
+				leftSidebarOpen: true,
+				activeBatchSessionIds: ['s1'],
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(true);
+		});
+
+		it('does not activate wand sparkle when no sessions are busy or in auto-run', () => {
+			const sessions = [createMockSession({ id: 's1', name: 'Idle Session', state: 'idle' })];
+			const props = createDefaultProps({
+				sessions,
+				sortedSessions: sessions,
+				leftSidebarOpen: true,
+			});
+			render(<SessionList {...props} />);
+
+			const wandIcons = screen.getAllByTestId('icon-wand');
+			const hasSparkle = wandIcons.some((el) => el.className.includes('wand-sparkle-active'));
+			expect(hasSparkle).toBe(false);
 		});
 
 		it('shows GIT badge for git repos', () => {

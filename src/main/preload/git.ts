@@ -161,23 +161,31 @@ export function createGitApi() {
 		 */
 		log: (
 			cwd: string,
-			options?: { limit?: number; search?: string }
+			options?: { limit?: number; search?: string },
+			sshRemoteId?: string
 		): Promise<{
 			entries: GitLogEntry[];
 			error: string | null;
-		}> => ipcRenderer.invoke('git:log', cwd, options),
+		}> => ipcRenderer.invoke('git:log', cwd, options, sshRemoteId),
 
 		/**
 		 * Get commit count
 		 */
-		commitCount: (cwd: string): Promise<{ count: number; error: string | null }> =>
-			ipcRenderer.invoke('git:commitCount', cwd),
+		commitCount: (
+			cwd: string,
+			sshRemoteId?: string
+		): Promise<{ count: number; error: string | null }> =>
+			ipcRenderer.invoke('git:commitCount', cwd, sshRemoteId),
 
 		/**
 		 * Show a specific commit
 		 */
-		show: (cwd: string, hash: string): Promise<{ stdout: string; stderr: string }> =>
-			ipcRenderer.invoke('git:show', cwd, hash),
+		show: (
+			cwd: string,
+			hash: string,
+			sshRemoteId?: string
+		): Promise<{ stdout: string; stderr: string }> =>
+			ipcRenderer.invoke('git:show', cwd, hash, sshRemoteId),
 
 		/**
 		 * Show file content at a specific ref

@@ -257,7 +257,12 @@ interface MainPanelProps {
 		sessionId: string
 	) => Promise<import('../utils/fileExplorer').FileTreeChanges | undefined>;
 	// Callback to open a saved file in a tab
-	onOpenSavedFileInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void;
+	onOpenSavedFileInTab?: (file: {
+		path: string;
+		name: string;
+		content: string;
+		sshRemoteId?: string;
+	}) => void;
 	// File preview navigation
 	canGoBack?: boolean;
 	canGoForward?: boolean;
@@ -836,8 +841,16 @@ export const MainPanel = React.memo(
 		// Memoize sshRemoteId to prevent object recreation
 		const filePreviewSshRemoteId = useMemo(
 			() =>
-				activeSession?.sshRemoteId || activeSession?.sessionSshRemoteConfig?.remoteId || undefined,
-			[activeSession?.sshRemoteId, activeSession?.sessionSshRemoteConfig?.remoteId]
+				activeSession?.sshRemoteId ||
+				(activeSession?.sessionSshRemoteConfig?.enabled
+					? activeSession.sessionSshRemoteConfig.remoteId
+					: undefined) ||
+				undefined,
+			[
+				activeSession?.sshRemoteId,
+				activeSession?.sessionSshRemoteConfig?.enabled,
+				activeSession?.sessionSshRemoteConfig?.remoteId,
+			]
 		);
 
 		// Handler to view git diff
@@ -848,7 +861,7 @@ export const MainPanel = React.memo(
 				activeSession.inputMode === 'terminal'
 					? activeSession.shellCwd || activeSession.cwd
 					: activeSession.cwd;
-			const diff = await gitService.getDiff(cwd);
+			const diff = await gitService.getDiff(cwd, undefined, filePreviewSshRemoteId);
 
 			if (diff.diff) {
 				setGitDiffPreview(diff.diff);
@@ -964,8 +977,17 @@ export const MainPanel = React.memo(
 											{/* SSH Host Pill - show SSH remote name when running remotely (replaces GIT/LOCAL badge) */}
 											{activeSession.sessionSshRemoteConfig?.enabled && sshRemoteName ? (
 												<span
-													className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px]"
-													title={`SSH Remote: ${sshRemoteName}`}
+													className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full border border-purple-500/30 text-purple-500 bg-purple-500/10 max-w-[120px] ${
+														activeSession.isGitRepo ? 'cursor-pointer hover:bg-purple-500/20' : ''
+													}`}
+													title={`SSH Remote: ${sshRemoteName}${activeSession.isGitRepo && gitInfo?.branch ? ` (${gitInfo.branch})` : ''}`}
+													onClick={(e) => {
+														e.stopPropagation();
+														if (activeSession.isGitRepo) {
+															refreshGitStatus(); // Refresh git info immediately on click
+															setGitLogOpen?.(true);
+														}
+													}}
 												>
 													<Server className="w-3 h-3 shrink-0" />
 													<span className="truncate uppercase">{sshRemoteName}</span>

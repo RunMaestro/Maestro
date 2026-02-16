@@ -31,6 +31,7 @@ import {
 	Monitor,
 	PartyPopper,
 	Tag,
+	Timer,
 	User,
 	Clapperboard,
 } from 'lucide-react';
@@ -331,6 +332,11 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// Director's Notes settings
 		directorNotesSettings,
 		setDirectorNotesSettings,
+		// WakaTime integration settings
+		wakatimeApiKey,
+		setWakatimeApiKey,
+		wakatimeEnabled,
+		setWakatimeEnabled,
 	} = useSettings();
 
 	const [activeTab, setActiveTab] = useState<
@@ -385,6 +391,54 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 	const [dnLoadingModels, setDnLoadingModels] = useState(false);
 	const [dnRefreshingAgent, setDnRefreshingAgent] = useState(false);
 	const dnAgentConfigRef = useRef<Record<string, any>>({});
+
+	// WakaTime CLI check and API key validation state
+	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{ available: boolean; version?: string } | null>(null);
+	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
+	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+
+	// Check WakaTime CLI availability when section renders or toggle is enabled
+	// Retries after a delay to allow auto-installer time to complete
+	useEffect(() => {
+		if (!isOpen || !wakatimeEnabled) return;
+		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+		window.maestro.wakatime.checkCli()
+			.then((status) => {
+				if (cancelled) return;
+				setWakatimeCliStatus(status);
+				// Retry after 3 seconds if CLI wasn't found (auto-install may be in progress)
+				if (!status.available) {
+					retryTimer = setTimeout(() => {
+						if (!cancelled) {
+							window.maestro.wakatime.checkCli()
+								.then((retryStatus) => { if (!cancelled) setWakatimeCliStatus(retryStatus); })
+								.catch(() => { if (!cancelled) setWakatimeCliStatus({ available: false }); });
+						}
+					}, 3000);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setWakatimeCliStatus({ available: false });
+				// Also retry on error, in case CLI is being installed
+				retryTimer = setTimeout(() => {
+					if (!cancelled) {
+						window.maestro.wakatime.checkCli()
+							.then((retryStatus) => { if (!cancelled) setWakatimeCliStatus(retryStatus); })
+							.catch(() => { if (!cancelled) setWakatimeCliStatus({ available: false }); });
+					}
+				}, 3000);
+			});
+
+		return () => { cancelled = true; if (retryTimer) clearTimeout(retryTimer); };
+	}, [isOpen, wakatimeEnabled]);
+
+	// Reset validation state when API key changes
+	useEffect(() => {
+		setWakatimeKeyValid(null);
+	}, [wakatimeApiKey]);
 
 	// Layer stack integration
 	const { registerLayer, unregisterLayer, updateLayerHandler } = useLayerStack();
@@ -1919,6 +1973,101 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 													<span>{statsClearResult.error || 'Failed to clear stats data'}</span>
 												</>
 											)}
+										</div>
+									)}
+
+									{/* Divider */}
+									<div className="border-t" style={{ borderColor: theme.colors.border }} />
+
+									{/* WakaTime Integration */}
+									<div className="flex items-center justify-between">
+										<div>
+											<p className="text-sm flex items-center gap-2" style={{ color: theme.colors.textMain }}>
+												<Timer className="w-3.5 h-3.5 opacity-60" />
+												Enable WakaTime tracking
+											</p>
+											<p className="text-xs opacity-50 mt-0.5">
+												Track coding activity in Maestro sessions via WakaTime.
+											</p>
+										</div>
+										<button
+											onClick={() => setWakatimeEnabled(!wakatimeEnabled)}
+											className="relative w-10 h-5 rounded-full transition-colors"
+											style={{
+												backgroundColor: wakatimeEnabled
+													? theme.colors.accent
+													: theme.colors.bgActivity,
+											}}
+											role="switch"
+											aria-checked={wakatimeEnabled}
+										>
+											<span
+												className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+													wakatimeEnabled ? 'translate-x-5' : 'translate-x-0.5'
+												}`}
+											/>
+										</button>
+									</div>
+
+									{/* CLI not found warning */}
+									{wakatimeEnabled && wakatimeCliStatus && !wakatimeCliStatus.available && (
+										<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
+											WakaTime CLI is being installed automatically...
+										</p>
+									)}
+
+									{/* API Key Input (only shown when enabled) */}
+									{wakatimeEnabled && (
+										<div>
+											<label className="block text-xs opacity-60 mb-1">API Key</label>
+											<div
+												className="flex items-center border rounded px-3 py-2"
+												style={{
+													backgroundColor: theme.colors.bgMain,
+													borderColor: theme.colors.border,
+												}}
+											>
+												<Key className="w-4 h-4 mr-2 opacity-50" />
+												<input
+													type="password"
+													value={wakatimeApiKey}
+													onChange={(e) => setWakatimeApiKey(e.target.value)}
+													onBlur={() => {
+														if (wakatimeApiKey) {
+															setWakatimeKeyValidating(true);
+															setWakatimeKeyValid(null);
+															window.maestro.wakatime.validateApiKey(wakatimeApiKey)
+																.then((result) => setWakatimeKeyValid(result.valid))
+																.catch(() => setWakatimeKeyValid(false))
+																.finally(() => setWakatimeKeyValidating(false));
+														}
+													}}
+													className="bg-transparent flex-1 text-sm outline-none"
+													style={{ color: theme.colors.textMain }}
+													placeholder="waka_..."
+												/>
+												{wakatimeKeyValidating && (
+													<span className="ml-2 text-xs opacity-50">...</span>
+												)}
+												{!wakatimeKeyValidating && wakatimeKeyValid === true && (
+													<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
+												)}
+												{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
+													<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
+												)}
+												{wakatimeApiKey && (
+													<button
+														onClick={() => setWakatimeApiKey('')}
+														className="ml-2 opacity-50 hover:opacity-100"
+														title="Clear API key"
+													>
+														<X className="w-3 h-3" />
+													</button>
+												)}
+											</div>
+											<p className="text-[10px] mt-1.5 opacity-50">
+												Get your API key from wakatime.com/settings/api-key. Keys are stored locally in ~/.maestro/settings.json.
+											</p>
 										</div>
 									)}
 								</div>

@@ -369,6 +369,12 @@ export interface UseSettingsReturn {
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
+
+	// WakaTime integration settings
+	wakatimeApiKey: string;
+	setWakatimeApiKey: (value: string) => void;
+	wakatimeEnabled: boolean;
+	setWakatimeEnabled: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {
@@ -537,6 +543,10 @@ export function useSettings(): UseSettingsReturn {
 	const [directorNotesSettings, setDirectorNotesSettingsState] = useState<DirectorNotesSettings>(
 		DEFAULT_DIRECTOR_NOTES_SETTINGS
 	);
+
+	// WakaTime integration settings
+	const [wakatimeApiKey, setWakatimeApiKeyState] = useState('');
+	const [wakatimeEnabled, setWakatimeEnabledState] = useState(false);
 
 	// Wrapper functions that persist to electron-store
 	// PERF: All wrapped in useCallback to prevent re-renders
@@ -1373,6 +1383,17 @@ export function useSettings(): UseSettingsReturn {
 		window.maestro.settings.set('directorNotesSettings', value);
 	}, []);
 
+	// WakaTime integration setters
+	const setWakatimeApiKey = useCallback((value: string) => {
+		setWakatimeApiKeyState(value);
+		window.maestro.settings.set('wakatimeApiKey', value);
+	}, []);
+
+	const setWakatimeEnabled = useCallback((value: boolean) => {
+		setWakatimeEnabledState(value);
+		window.maestro.settings.set('wakatimeEnabled', value);
+	}, []);
+
 	// Load settings from electron-store
 	// This function is called on mount and on system resume (after sleep/suspend)
 	// PERF: Use batch loading to reduce IPC calls from ~60 to 3
@@ -1450,6 +1471,8 @@ export function useSettings(): UseSettingsReturn {
 			const savedFileTabAutoRefreshEnabled = allSettings['fileTabAutoRefreshEnabled'];
 			const savedSuppressWindowsWarning = allSettings['suppressWindowsWarning'];
 			const savedDirectorNotesSettings = allSettings['directorNotesSettings'];
+			const savedWakatimeApiKey = allSettings['wakatimeApiKey'];
+			const savedWakatimeEnabled = allSettings['wakatimeEnabled'];
 
 			// Conductor Profile (About Me)
 			if (savedConductorProfile !== undefined)
@@ -1851,6 +1874,14 @@ export function useSettings(): UseSettingsReturn {
 					...(savedDirectorNotesSettings as Partial<DirectorNotesSettings>),
 				});
 			}
+
+			// WakaTime integration settings
+			if (savedWakatimeApiKey !== undefined) {
+				setWakatimeApiKeyState(savedWakatimeApiKey as string);
+			}
+			if (savedWakatimeEnabled !== undefined) {
+				setWakatimeEnabledState(savedWakatimeEnabled as boolean);
+			}
 		} catch (error) {
 			console.error('[Settings] Failed to load settings:', error);
 		} finally {
@@ -2039,6 +2070,10 @@ export function useSettings(): UseSettingsReturn {
 			setSuppressWindowsWarning,
 			directorNotesSettings,
 			setDirectorNotesSettings,
+			wakatimeApiKey,
+			setWakatimeApiKey,
+			wakatimeEnabled,
+			setWakatimeEnabled,
 		}),
 		[
 			// State values
@@ -2191,6 +2226,10 @@ export function useSettings(): UseSettingsReturn {
 			setSuppressWindowsWarning,
 			directorNotesSettings,
 			setDirectorNotesSettings,
+			wakatimeApiKey,
+			setWakatimeApiKey,
+			wakatimeEnabled,
+			setWakatimeEnabled,
 		]
 	);
 }

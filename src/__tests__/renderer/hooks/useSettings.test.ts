@@ -1817,4 +1817,67 @@ describe('useSettings', () => {
 			});
 		});
 	});
+
+	describe('WakaTime integration settings', () => {
+		it('should have correct default values for WakaTime settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.wakatimeApiKey).toBe('');
+			expect(result.current.wakatimeEnabled).toBe(false);
+		});
+
+		it('should update wakatimeApiKey and persist to settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeApiKey('waka_test_12345');
+			});
+
+			expect(result.current.wakatimeApiKey).toBe('waka_test_12345');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeApiKey', 'waka_test_12345');
+		});
+
+		it('should update wakatimeEnabled and persist to settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeEnabled(true);
+			});
+
+			expect(result.current.wakatimeEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeEnabled', true);
+		});
+
+		it('should load saved WakaTime settings from store', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				wakatimeApiKey: 'waka_saved_key',
+				wakatimeEnabled: true,
+			});
+
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.wakatimeApiKey).toBe('waka_saved_key');
+			expect(result.current.wakatimeEnabled).toBe(true);
+		});
+
+		it('should clear wakatimeApiKey when set to empty string', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeApiKey('waka_test_key');
+			});
+			expect(result.current.wakatimeApiKey).toBe('waka_test_key');
+
+			act(() => {
+				result.current.setWakatimeApiKey('');
+			});
+			expect(result.current.wakatimeApiKey).toBe('');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeApiKey', '');
+		});
+	});
 });

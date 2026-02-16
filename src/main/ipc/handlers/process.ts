@@ -391,6 +391,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							});
 						}
 
+						// Determine if this is a resume with prompt-embed images
+						// agentSessionId presence indicates resume; imageResumeMode tells us to embed paths in prompt
+						const isResumeWithImages = hasImages
+							&& agent?.capabilities?.imageResumeMode === 'prompt-embed'
+							&& config.agentSessionId;
+
 						const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 							command: remoteCommand,
 							args: sshArgs,
@@ -399,6 +405,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							// prompt is not passed as CLI arg - it goes via stdinInput
 							stdinInput,
 							// File-based image agents (Codex, OpenCode): pass images for remote temp file creation
+							// Also needed for resume-with-prompt-embed (still creates temp files, just no -i args)
 							images:
 								hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
 									? config.images
@@ -407,6 +414,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 								hasImages && agent?.imageArgs && !agent?.capabilities?.supportsStreamJsonInput
 									? agent.imageArgs
 									: undefined,
+							// Signal resume mode for prompt embedding instead of -i CLI args
+							imageResumeMode: isResumeWithImages ? 'prompt-embed' : undefined,
 						});
 
 						commandToSpawn = sshCommand.command;

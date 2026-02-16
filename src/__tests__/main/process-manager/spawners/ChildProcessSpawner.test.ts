@@ -74,6 +74,10 @@ vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 
 vi.mock('../../../../main/process-manager/utils/imageUtils', () => ({
 	saveImageToTempFile: vi.fn(),
+	buildImagePromptPrefix: vi.fn((paths: string[]) => {
+		if (paths.length === 0) return '';
+		return `[Attached images: ${paths.join(', ')}]\n\n`;
+	}),
 }));
 
 vi.mock('../../../../main/process-manager/utils/streamJsonBuilder', () => ({
@@ -91,7 +95,7 @@ import { ChildProcessSpawner } from '../../../../main/process-manager/spawners/C
 import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
 import { getAgentCapabilities } from '../../../../main/agents';
 import { buildStreamJsonMessage } from '../../../../main/process-manager/utils/streamJsonBuilder';
-import { saveImageToTempFile } from '../../../../main/process-manager/utils/imageUtils';
+import { saveImageToTempFile, buildImagePromptPrefix } from '../../../../main/process-manager/utils/imageUtils';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -566,6 +570,157 @@ describe('ChildProcessSpawner', () => {
 			expect(spawnArgs).toContain('/tmp/maestro-image-0.png');
 			// Should NOT have --input-format since this agent doesn't support it
 			expect(spawnArgs).not.toContain('--input-format');
+		});
+	});
+
+	describe('resume mode with prompt-embed image handling', () => {
+		it('should embed image paths in prompt when resuming with imageResumeMode=prompt-embed', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				imageResumeMode: 'prompt-embed',
+			} as any);
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex',
+					args: ['exec', 'resume', 'thread-123', '--json'],
+					images: ['data:image/png;base64,abc123'],
+					prompt: 'describe this image',
+					imageArgs: (path: string) => ['-i', path],
+				})
+			);
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			// Should NOT have -i flag (resume mode skips it)
+			expect(spawnArgs).not.toContain('-i');
+			// Should have the modified prompt with image paths embedded
+			expect(spawnArgs).toContain('--');
+			const promptArg = spawnArgs[spawnArgs.indexOf('--') + 1];
+			expect(promptArg).toContain('[Attached images:');
+			expect(promptArg).toContain('/tmp/maestro-image-0.png');
+			expect(promptArg).toContain('describe this image');
+		});
+
+		it('should use -i flag for initial spawn even when imageResumeMode=prompt-embed', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				imageResumeMode: 'prompt-embed',
+			} as any);
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+
+			const { spawner } = createTestContext();
+
+			// Args do NOT contain 'resume' — this is an initial spawn
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex',
+					args: ['exec', '--json'],
+					images: ['data:image/png;base64,abc123'],
+					prompt: 'describe this image',
+					imageArgs: (path: string) => ['-i', path],
+				})
+			);
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			// Should have -i flag (initial spawn uses it)
+			expect(spawnArgs).toContain('-i');
+			expect(spawnArgs).toContain('/tmp/maestro-image-0.png');
+		});
+
+		it('should send modified prompt via stdin in resume mode when promptViaStdin is true', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				imageResumeMode: 'prompt-embed',
+			} as any);
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex',
+					args: ['exec', 'resume', 'thread-123', '--json'],
+					images: ['data:image/png;base64,abc123'],
+					prompt: 'describe this image',
+					imageArgs: (path: string) => ['-i', path],
+					sendPromptViaStdinRaw: true,
+				})
+			);
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			// Should NOT have -i flag
+			expect(spawnArgs).not.toContain('-i');
+			// Prompt should NOT be in args (sent via stdin instead)
+			expect(spawnArgs).not.toContain('--');
+
+			// The modified prompt with image prefix should be sent via stdin
+			const writtenData = mockChildProcess.stdin.write.mock.calls[0][0];
+			expect(writtenData).toContain('[Attached images:');
+			expect(writtenData).toContain('/tmp/maestro-image-0.png');
+			expect(writtenData).toContain('describe this image');
+		});
+
+		it('should handle multiple images in resume mode', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				imageResumeMode: 'prompt-embed',
+			} as any);
+			vi.mocked(saveImageToTempFile)
+				.mockReturnValueOnce('/tmp/maestro-image-0.png')
+				.mockReturnValueOnce('/tmp/maestro-image-1.jpg');
+
+			const { spawner } = createTestContext();
+
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'codex',
+					command: 'codex',
+					args: ['exec', 'resume', 'thread-123', '--json'],
+					images: ['data:image/png;base64,abc123', 'data:image/jpeg;base64,def456'],
+					prompt: 'compare these images',
+					imageArgs: (path: string) => ['-i', path],
+				})
+			);
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			expect(spawnArgs).not.toContain('-i');
+			const promptArg = spawnArgs[spawnArgs.indexOf('--') + 1];
+			expect(promptArg).toContain('/tmp/maestro-image-0.png');
+			expect(promptArg).toContain('/tmp/maestro-image-1.jpg');
+			expect(promptArg).toContain('compare these images');
+		});
+
+		it('should NOT use prompt-embed when imageResumeMode is undefined', () => {
+			vi.mocked(getAgentCapabilities).mockReturnValueOnce({
+				supportsStreamJsonInput: false,
+				imageResumeMode: undefined,
+			} as any);
+			vi.mocked(saveImageToTempFile).mockReturnValueOnce('/tmp/maestro-image-0.png');
+
+			const { spawner } = createTestContext();
+
+			// Even with 'resume' in args, if imageResumeMode is undefined, use -i flag
+			spawner.spawn(
+				createBaseConfig({
+					toolType: 'opencode',
+					command: 'opencode',
+					args: ['run', '--session', 'sess-123', '--format', 'json'],
+					images: ['data:image/png;base64,abc123'],
+					prompt: 'describe this image',
+					imageArgs: (path: string) => ['-f', path],
+				})
+			);
+
+			const spawnArgs = mockSpawn.mock.calls[0][1] as string[];
+			// Should have -f flag (uses default file-based args)
+			expect(spawnArgs).toContain('-f');
+			expect(spawnArgs).toContain('/tmp/maestro-image-0.png');
 		});
 	});
 });

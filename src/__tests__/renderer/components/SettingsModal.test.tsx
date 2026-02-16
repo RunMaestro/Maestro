@@ -73,7 +73,8 @@ vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 // Shared mock fns so tests can assert on useSettings setters
 const mockSetDirectorNotesSettings = vi.fn();
 
-// Mock useSettings hook (used for context management settings and SSH remote ignore settings)
+// Mock useSettings hook (used for context management settings, SSH remote ignore settings, and WakaTime)
+let mockUseSettingsOverrides: Record<string, any> = {};
 vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
 		// Conductor profile settings
@@ -102,6 +103,12 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
+		// WakaTime integration settings
+		wakatimeEnabled: false,
+		setWakatimeEnabled: vi.fn(),
+		wakatimeApiKey: '',
+		setWakatimeApiKey: vi.fn(),
+		...mockUseSettingsOverrides,
 	}),
 }));
 
@@ -292,6 +299,7 @@ describe('SettingsModal', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		mockUseSettingsOverrides = {};
 	});
 
 	describe('render conditions', () => {
@@ -1964,6 +1972,126 @@ describe('SettingsModal', () => {
 			// JetBrains Mono is in the list, so it should be available
 			const options = fontSelect.querySelectorAll('option');
 			expect(options.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('WakaTime CLI status', () => {
+		it('should not check CLI when WakaTime is disabled', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).not.toHaveBeenCalled();
+		});
+
+		it('should check CLI when WakaTime is enabled', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalled();
+		});
+
+		it('should show auto-install message when CLI is not available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.getByText('WakaTime CLI is being installed automatically...')).toBeInTheDocument();
+		});
+
+		it('should retry CLI check after 3 seconds when first check returns unavailable', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli)
+				.mockResolvedValueOnce({ available: false })
+				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// First check should have been called
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+
+			// Advance to trigger retry
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// Second check should have been called
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(2);
+		});
+
+		it('should not retry CLI check when first check returns available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+
+			// Advance past retry timeout
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// Should still be 1 — no retry needed
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+		});
+
+		it('should not show auto-install message when CLI is available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(screen.queryByText('WakaTime CLI is being installed automatically...')).not.toBeInTheDocument();
+		});
+
+		it('should retry on error and update status after retry succeeds', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli)
+				.mockRejectedValueOnce(new Error('Network error'))
+				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// Should show the auto-install message after error
+			expect(screen.getByText('WakaTime CLI is being installed automatically...')).toBeInTheDocument();
+
+			// Advance to trigger retry
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// After retry succeeds, message should disappear
+			expect(screen.queryByText('WakaTime CLI is being installed automatically...')).not.toBeInTheDocument();
 		});
 	});
 
