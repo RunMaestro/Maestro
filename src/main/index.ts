@@ -189,6 +189,7 @@ import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { AccountAuthRecovery } from './accounts/account-auth-recovery';
 import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
+import { AccountSwitcher } from './accounts/account-switcher';
 import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -514,6 +515,7 @@ let accountThrottleHandler: AccountThrottleHandler | null = null;
 let accountThrottleHandler: AccountThrottleHandler | null = null;
 let accountAuthRecovery: AccountAuthRecovery | null = null;
 let accountRecoveryPoller: AccountRecoveryPoller | null = null;
+let accountSwitcher: AccountSwitcher | null = null;
 
 /** Cap on decision pairs the scheduled re-learn pulls from the CLI per run. */
 const RELEARN_MAX_PAIRS = 100_000;
@@ -2736,6 +2738,17 @@ app
 			}
 		}
 
+		// Initialize account switcher for manual account switching from renderer
+		if (accountRegistry && processManager) {
+			try {
+				accountSwitcher = new AccountSwitcher(processManager, accountRegistry, safeSend);
+				logger.info('Account switcher initialized', 'Startup');
+			} catch (error) {
+				void captureException(error);
+				logger.error(`Failed to initialize account switcher: ${error}`, 'Startup');
+			}
+		}
+
 		// Set up IPC handlers
 		logger.debug('Setting up IPC handlers', 'Startup');
 		setupIpcHandlers();
@@ -3172,6 +3185,7 @@ function setupIpcHandlers() {
 		settingsStore: store,
 		getMainWindow: () => mainWindow,
 		getAccountAuthRecovery: () => accountAuthRecovery,
+		getAccountSwitcher: () => accountSwitcher,
 		safeSend,
 		sessionsStore,
 		interactiveReplayController: interactiveReplayController ?? undefined,
@@ -3393,6 +3407,7 @@ function setupIpcHandlers() {
 		getAccountRegistry: () => accountRegistry,
 		getAccountAuthRecovery: () => accountAuthRecovery,
 		getRecoveryPoller: () => accountRecoveryPoller,
+		getAccountSwitcher: () => accountSwitcher,
 	});
 
 	// Register Document Graph handlers for file watching
