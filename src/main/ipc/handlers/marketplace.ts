@@ -830,9 +830,50 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					}
 				}
 
+				// Build effective asset list:
+				// - Local filesystem playbooks: auto-discover files in assets/ and union with manifest assets
+				// - Remote/GitHub playbooks: use manifest assets only
+				const manifestAssets = marketplacePlaybook.assets ?? [];
+				let effectiveAssets = manifestAssets;
+
+				if (isLocalPath(marketplacePlaybook.path)) {
+					const discoveredAssets: string[] = [];
+					const resolvedPlaybookPath = resolveTildePath(marketplacePlaybook.path);
+					const localAssetsPath = path.join(resolvedPlaybookPath, 'assets');
+
+					try {
+						const entries = await fs.readdir(localAssetsPath);
+						for (const entry of entries) {
+							const entryPath = path.join(localAssetsPath, entry);
+							try {
+								const stat = await fs.stat(entryPath);
+								if (stat.isFile()) {
+									discoveredAssets.push(entry);
+								}
+							} catch (error) {
+								logger.warn(`Failed to stat local asset candidate: ${entryPath}`, LOG_CONTEXT, {
+									error,
+								});
+							}
+						}
+					} catch (error) {
+						if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+							logger.warn(`Failed to read local assets directory: ${localAssetsPath}`, LOG_CONTEXT, {
+								error,
+							});
+						}
+					}
+
+					effectiveAssets = Array.from(new Set([...manifestAssets, ...discoveredAssets]));
+					logger.info(
+						`Local asset discovery for "${marketplacePlaybook.id}": discovered=${discoveredAssets.length}, manifest=${manifestAssets.length}, effective=${effectiveAssets.length}`,
+						LOG_CONTEXT
+					);
+				}
+
 				// Fetch and write all assets from assets/ subfolder (if any)
 				const importedAssets: string[] = [];
-				if (marketplacePlaybook.assets && marketplacePlaybook.assets.length > 0) {
+				if (effectiveAssets.length > 0) {
 					// Create assets subdirectory
 					const assetsPath = isRemote ? `${targetPath}/assets` : path.join(targetPath, 'assets');
 
@@ -848,7 +889,7 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 						await fs.mkdir(assetsPath, { recursive: true });
 					}
 
-					for (const assetFilename of marketplacePlaybook.assets) {
+					for (const assetFilename of effectiveAssets) {
 						try {
 							const content = await fetchAsset(marketplacePlaybook.path, assetFilename);
 							const assetPath = isRemote

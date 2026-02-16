@@ -40,6 +40,8 @@ vi.mock('fs/promises', () => ({
 		readFile: vi.fn(),
 		writeFile: vi.fn(),
 		mkdir: vi.fn(),
+		readdir: vi.fn(),
+		stat: vi.fn(),
 	},
 }));
 
@@ -189,6 +191,9 @@ describe('marketplace IPC handlers', () => {
 		// Reset remote-fs mocks
 		mockWriteFileRemote.mockReset();
 		mockMkdirRemote.mockReset();
+		vi.mocked(fs.readdir).mockReset();
+		vi.mocked(fs.stat).mockReset();
+		vi.mocked(fs.readdir).mockRejectedValue({ code: 'ENOENT' });
 
 		// Register handlers
 		registerMarketplaceHandlers(mockDeps);
@@ -1466,6 +1471,133 @@ describe('marketplace IPC handlers', () => {
 
 				// importedAssets should be empty or undefined
 				expect(result.importedAssets || []).toEqual([]);
+			});
+
+			it('should auto-discover local assets from assets/ directory when manifest assets are absent', async () => {
+				const localPlaybookNoManifestAssets = {
+					id: 'local-assets-no-manifest',
+					title: 'Local Assets Without Manifest',
+					description: 'Assets should be discovered from disk',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-01-20',
+					path: '/Users/test/local-playbooks/no-manifest-assets',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+				};
+
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-01-20',
+					playbooks: [localPlaybookNoManifestAssets],
+				};
+
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockResolvedValueOnce(Buffer.from('asset-one'))
+					.mockResolvedValueOnce(Buffer.from('asset-two'))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockResolvedValue(['settings.yaml', 'logo.png']);
+				vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true } as any);
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-no-manifest',
+					'Imported Local Assets',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(fs.readdir).toHaveBeenCalledWith(
+					path.normalize('/Users/test/local-playbooks/no-manifest-assets/assets')
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Imported Local Assets', 'assets', 'settings.yaml'),
+					expect.any(Buffer)
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Imported Local Assets', 'assets', 'logo.png'),
+					expect.any(Buffer)
+				);
+				expect(result.importedAssets).toEqual(['settings.yaml', 'logo.png']);
+				expect(mockFetch).not.toHaveBeenCalled();
+			});
+
+			it('should merge local discovered assets with manifest assets without duplicates', async () => {
+				const localPlaybookWithManifestAssets = {
+					id: 'local-assets-with-manifest',
+					title: 'Local Assets With Manifest',
+					description: 'Manifest and discovered assets should be merged',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-01-20',
+					path: '/Users/test/local-playbooks/with-manifest-assets',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+					assets: ['config.yaml', 'logo.png'],
+				};
+
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-01-20',
+					playbooks: [localPlaybookWithManifestAssets],
+				};
+
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockResolvedValueOnce(Buffer.from('config'))
+					.mockResolvedValueOnce(Buffer.from('logo'))
+					.mockResolvedValueOnce(Buffer.from('dockerignore'))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockResolvedValue(['logo.png', '.dockerignore']);
+				vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true } as any);
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-assets-with-manifest',
+					'Merged Assets',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png', '.dockerignore']);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Merged Assets', 'assets', 'config.yaml'),
+					expect.any(Buffer)
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Merged Assets', 'assets', 'logo.png'),
+					expect.any(Buffer)
+				);
+				expect(fs.writeFile).toHaveBeenCalledWith(
+					path.join('/autorun/folder', 'Merged Assets', 'assets', '.dockerignore'),
+					expect.any(Buffer)
+				);
+				expect(mockFetch).not.toHaveBeenCalled();
 			});
 		});
 	});
