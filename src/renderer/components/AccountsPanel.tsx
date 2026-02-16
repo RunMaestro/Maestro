@@ -15,6 +15,7 @@ import {
 import type { Theme } from '../types';
 import type { AccountProfile, AccountSwitchConfig } from '../../shared/account-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
+import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 
 interface AccountsPanelProps {
 	theme: Theme;
@@ -55,6 +56,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	const [conflictingSessions, setConflictingSessions] = useState<ConflictingSession[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
+	const { metrics: usageMetrics } = useAccountUsage();
 
 	const refreshAccounts = useCallback(async () => {
 		try {
@@ -451,6 +453,84 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 											</div>
 										</div>
 									</div>
+								{/* Inline usage metrics */}
+								{(() => {
+									const usage = usageMetrics[account.id];
+									if (!usage) return null;
+									return (
+										<div className="mt-2 space-y-1.5">
+											{/* Usage bar */}
+											{usage.usagePercent !== null && (
+												<div className="flex items-center gap-2">
+													<div
+														className="flex-1 h-1.5 rounded-full overflow-hidden"
+														style={{ backgroundColor: theme.colors.bgActivity }}
+													>
+														<div
+															className="h-full rounded-full transition-all duration-500"
+															style={{
+																width: `${Math.min(100, usage.usagePercent)}%`,
+																backgroundColor: usage.usagePercent >= 95
+																	? '#ef4444'
+																	: usage.usagePercent >= 80
+																		? '#f59e0b'
+																		: theme.colors.accent,
+															}}
+														/>
+													</div>
+													<span className="text-xs tabular-nums" style={{ color: theme.colors.textDim }}>
+														{Math.round(usage.usagePercent)}%
+													</span>
+												</div>
+											)}
+
+											{/* Metrics grid */}
+											<div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-xs">
+												<div style={{ color: theme.colors.textDim }}>
+													Tokens: <span style={{ color: theme.colors.textMain }}>
+														{formatTokenCount(usage.totalTokens)}
+														{usage.limitTokens > 0 && ` / ${formatTokenCount(usage.limitTokens)}`}
+													</span>
+												</div>
+												<div style={{ color: theme.colors.textDim }}>
+													Cost: <span style={{ color: theme.colors.textMain }}>
+														${usage.costUsd.toFixed(2)}
+													</span>
+												</div>
+												<div style={{ color: theme.colors.textDim }}>
+													Queries: <span style={{ color: theme.colors.textMain }}>
+														{usage.queryCount}
+													</span>
+												</div>
+												<div style={{ color: theme.colors.textDim }}>
+													Resets in: <span style={{ color: theme.colors.textMain }}>
+														{formatTimeRemaining(usage.timeRemainingMs)}
+													</span>
+												</div>
+												{usage.burnRatePerHour > 0 && (
+													<div style={{ color: theme.colors.textDim }}>
+														Burn rate: <span style={{ color: theme.colors.textMain }}>
+															~{formatTokenCount(Math.round(usage.burnRatePerHour))}/hr
+														</span>
+													</div>
+												)}
+												{usage.estimatedTimeToLimitMs !== null && (
+													<div style={{ color: theme.colors.textDim }}>
+														To limit: <span style={{
+															color: usage.estimatedTimeToLimitMs < 30 * 60 * 1000
+																? '#ef4444'
+																: usage.estimatedTimeToLimitMs < 60 * 60 * 1000
+																	? '#f59e0b'
+																	: theme.colors.textMain,
+														}}>
+															~{formatTimeRemaining(usage.estimatedTimeToLimitMs)}
+														</span>
+													</div>
+												)}
+											</div>
+										</div>
+									);
+								})()}
 									<div className="flex items-center gap-1">
 										<button
 											onClick={() =>

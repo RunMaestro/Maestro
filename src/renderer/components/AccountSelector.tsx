@@ -11,6 +11,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User, ChevronDown, Settings } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AccountProfile } from '../../shared/account-types';
+import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 
 export interface AccountSelectorProps {
 	theme: Theme;
@@ -48,6 +49,7 @@ export function AccountSelector({
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [isOpen, setIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
+	const { metrics: usageMetrics } = useAccountUsage();
 
 	// Fetch accounts on mount and when dropdown opens (refresh)
 	useEffect(() => {
@@ -188,21 +190,35 @@ export function AccountSelector({
 										>
 											{account.name || account.email}
 										</div>
-										{/* Usage bar if limit configured */}
-										{account.tokenLimitPerWindow > 0 && (
-											<div
-												className="mt-1 h-1 rounded-full overflow-hidden"
-												style={{ backgroundColor: `${theme.colors.border}80` }}
-											>
-												<div
-													className="h-full rounded-full transition-all"
-													style={{
-														width: '0%', // Usage percent would be populated by real-time data
-														backgroundColor: statusColor,
-													}}
-												/>
-											</div>
-										)}
+										{/* Usage bar with real-time data */}
+										{(() => {
+											const usage = usageMetrics[account.id];
+											if (!usage || usage.usagePercent === null) return null;
+											return (
+												<div className="mt-1">
+													<div
+														className="h-1 rounded-full overflow-hidden"
+														style={{ backgroundColor: `${theme.colors.border}80` }}
+													>
+														<div
+															className="h-full rounded-full transition-all"
+															style={{
+																width: `${Math.min(100, usage.usagePercent)}%`,
+																backgroundColor: usage.usagePercent >= 95
+																	? '#ef4444'
+																	: usage.usagePercent >= 80
+																		? '#f59e0b'
+																		: theme.colors.accent,
+															}}
+														/>
+													</div>
+													<div className="flex justify-between mt-0.5 text-[10px]" style={{ color: theme.colors.textDim }}>
+														<span>{formatTokenCount(usage.totalTokens)} / {formatTokenCount(usage.limitTokens)}</span>
+														<span>{formatTimeRemaining(usage.timeRemainingMs)}</span>
+													</div>
+												</div>
+											);
+										})()}
 									</div>
 									{/* Current indicator */}
 									{isCurrent && (

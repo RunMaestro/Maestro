@@ -36,6 +36,7 @@ export interface SessionItemProps {
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
 	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
+	accountUsagePercent?: number | null; // Usage % for assigned account (passed from parent to avoid N hook instances)
 
 	// Handlers
 	onSelect: () => void;
@@ -77,6 +78,7 @@ export const SessionItem = memo(function SessionItem({
 	isInBatch = false,
 	jumpNumber,
 	cueSubscriptionCount,
+	accountUsagePercent,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -194,7 +196,7 @@ export const SessionItem = memo(function SessionItem({
 									backgroundColor: `${theme.colors.accent}25`,
 									color: theme.colors.accentText || theme.colors.accent,
 								}}
-								title={`Virtuoso: ${session.accountName}`}
+								title={`Virtuoso: ${session.accountName}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
 							>
 								{session.accountName.split('@')[0]?.slice(0, 10)?.toUpperCase() || 'ACC'}
 							</span>
