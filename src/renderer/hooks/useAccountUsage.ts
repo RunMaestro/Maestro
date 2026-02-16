@@ -26,6 +26,10 @@ export interface UsagePrediction {
 export interface AccountUsageMetrics {
 	accountId: string;
 	totalTokens: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	limitTokens: number;
 	usagePercent: number | null;
 	costUsd: number;
@@ -170,6 +174,10 @@ export function useAccountUsage(): {
 	const calculateDerivedMetrics = useCallback((raw: {
 		accountId: string;
 		totalTokens: number;
+		inputTokens: number;
+		outputTokens: number;
+		cacheReadTokens: number;
+		cacheCreationTokens: number;
 		limitTokens: number;
 		usagePercent: number | null;
 		costUsd: number;
@@ -243,6 +251,10 @@ export function useAccountUsage(): {
 				newMetrics[accountId] = calculateDerivedMetrics({
 					accountId,
 					totalTokens: usage.totalTokens || 0,
+					inputTokens: usage.inputTokens || 0,
+					outputTokens: usage.outputTokens || 0,
+					cacheReadTokens: usage.cacheReadTokens || 0,
+					cacheCreationTokens: usage.cacheCreationTokens || 0,
 					limitTokens: usage.account?.tokenLimitPerWindow || 0,
 					usagePercent: usage.usagePercent ?? null,
 					costUsd: usage.costUsd || 0,
@@ -299,6 +311,10 @@ export function useAccountUsage(): {
 				[accountId]: calculateDerivedMetrics({
 					accountId,
 					totalTokens: data.totalTokens || 0,
+					inputTokens: data.inputTokens || 0,
+					outputTokens: data.outputTokens || 0,
+					cacheReadTokens: data.cacheReadTokens || 0,
+					cacheCreationTokens: data.cacheCreationTokens || 0,
 					limitTokens: data.limitTokens || 0,
 					usagePercent: data.usagePercent ?? null,
 					costUsd: data.costUsd || 0,

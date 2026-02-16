@@ -237,33 +237,33 @@ export interface AccountMonthlyUsage {
 
 const DAILY_USAGE_SQL = `
   SELECT
-    date(start_time / 1000, 'unixepoch', 'localtime') as date,
+    date(window_start / 1000, 'unixepoch', 'localtime') as date,
     COALESCE(SUM(input_tokens), 0) as inputTokens,
     COALESCE(SUM(output_tokens), 0) as outputTokens,
     COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
     COALESCE(SUM(cache_creation_tokens), 0) as cacheCreationTokens,
     COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as totalTokens,
     COALESCE(SUM(cost_usd), 0) as costUsd,
-    COUNT(*) as queryCount
-  FROM query_events
-  WHERE account_id = ? AND start_time >= ? AND start_time < ?
+    COALESCE(SUM(query_count), 0) as queryCount
+  FROM account_usage_windows
+  WHERE account_id = ? AND window_start >= ? AND window_start < ?
   GROUP BY date
   ORDER BY date ASC
 `;
 
 const MONTHLY_USAGE_SQL = `
   SELECT
-    strftime('%Y-%m', start_time / 1000, 'unixepoch', 'localtime') as month,
+    strftime('%Y-%m', window_start / 1000, 'unixepoch', 'localtime') as month,
     COALESCE(SUM(input_tokens), 0) as inputTokens,
     COALESCE(SUM(output_tokens), 0) as outputTokens,
     COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
     COALESCE(SUM(cache_creation_tokens), 0) as cacheCreationTokens,
     COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as totalTokens,
     COALESCE(SUM(cost_usd), 0) as costUsd,
-    COUNT(*) as queryCount,
-    COUNT(DISTINCT date(start_time / 1000, 'unixepoch', 'localtime')) as daysActive
-  FROM query_events
-  WHERE account_id = ? AND start_time >= ? AND start_time < ?
+    COALESCE(SUM(query_count), 0) as queryCount,
+    COUNT(DISTINCT date(window_start / 1000, 'unixepoch', 'localtime')) as daysActive
+  FROM account_usage_windows
+  WHERE account_id = ? AND window_start >= ? AND window_start < ?
   GROUP BY month
   ORDER BY month ASC
 `;

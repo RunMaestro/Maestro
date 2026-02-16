@@ -63,26 +63,33 @@ export function setupAccountUsageListener(
 				costUsd: usageStats.totalCostUsd || 0,
 			});
 
-			// Calculate usage percentage if limit is configured
-			if (account.tokenLimitPerWindow > 0) {
-				const windowUsage = statsDb.getAccountUsageInWindow(account.id, start, end);
-				const totalTokens = windowUsage.inputTokens + windowUsage.outputTokens
-					+ windowUsage.cacheReadTokens + windowUsage.cacheCreationTokens;
-				const usagePercent = Math.min(100, (totalTokens / account.tokenLimitPerWindow) * 100);
+			// Read back aggregated window usage and broadcast to renderer
+			const windowUsage = statsDb.getAccountUsageInWindow(account.id, start, end);
+			const totalTokens = windowUsage.inputTokens + windowUsage.outputTokens
+				+ windowUsage.cacheReadTokens + windowUsage.cacheCreationTokens;
+			const limitTokens = account.tokenLimitPerWindow || 0;
+			const usagePercent = limitTokens > 0
+				? Math.min(100, (totalTokens / limitTokens) * 100)
+				: null;
 
-				// Broadcast usage update to renderer for real-time dashboard
-				safeSend('account:usage-update', {
-					accountId: account.id,
-					usagePercent,
-					totalTokens,
-					limitTokens: account.tokenLimitPerWindow,
-					windowStart: start,
-					windowEnd: end,
-					queryCount: windowUsage.queryCount,
-					costUsd: windowUsage.costUsd,
-				});
+			// Broadcast usage update to renderer for real-time dashboard
+			safeSend('account:usage-update', {
+				accountId: account.id,
+				usagePercent,
+				totalTokens,
+				inputTokens: windowUsage.inputTokens,
+				outputTokens: windowUsage.outputTokens,
+				cacheReadTokens: windowUsage.cacheReadTokens,
+				cacheCreationTokens: windowUsage.cacheCreationTokens,
+				limitTokens,
+				windowStart: start,
+				windowEnd: end,
+				queryCount: windowUsage.queryCount,
+				costUsd: windowUsage.costUsd,
+			});
 
-				// Check warning threshold
+			// Check warning/auto-switch thresholds (only if limit is configured)
+			if (limitTokens > 0 && usagePercent !== null) {
 				const switchConfig = accountRegistry.getSwitchConfig();
 				if (usagePercent >= switchConfig.warningThresholdPercent && usagePercent < switchConfig.autoSwitchThresholdPercent) {
 					safeSend('account:limit-warning', {
@@ -93,7 +100,6 @@ export function setupAccountUsageListener(
 					});
 				}
 
-				// Check auto-switch threshold
 				if (usagePercent >= switchConfig.autoSwitchThresholdPercent) {
 					safeSend('account:limit-reached', {
 						accountId: account.id,

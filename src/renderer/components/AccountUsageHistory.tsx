@@ -4,6 +4,10 @@ import { formatTokenCount } from '../hooks/useAccountUsage';
 
 interface AccountDailyUsage {
 	date: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	totalTokens: number;
 	costUsd: number;
 	queryCount: number;
@@ -11,6 +15,10 @@ interface AccountDailyUsage {
 
 interface AccountMonthlyUsage {
 	month: string;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	totalTokens: number;
 	costUsd: number;
 	queryCount: number;
@@ -64,7 +72,7 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 		load();
 	}, [accountId, view]);
 
-	const data: Array<{ totalTokens: number; costUsd: number; queryCount: number }> & Array<AccountDailyUsage | AccountMonthlyUsage> =
+	const data: Array<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; totalTokens: number; costUsd: number; queryCount: number }> & Array<AccountDailyUsage | AccountMonthlyUsage> =
 		view === 'monthly' ? monthlyData : dailyData;
 	const totalTokens = data.reduce((sum, d) => sum + d.totalTokens, 0);
 	const avgTokens = data.length > 0 ? totalTokens / data.length : 0;
@@ -90,6 +98,22 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 				))}
 			</div>
 
+			{/* Bar legend */}
+			<div className="flex gap-3 mb-2 text-[10px]" style={{ color: theme.colors.textDim }}>
+				<span className="flex items-center gap-1">
+					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.accent }} /> In
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.success }} /> Out
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.warning }} /> Cache R
+				</span>
+				<span className="flex items-center gap-1">
+					<span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: theme.colors.textDim + '80' }} /> Cache W
+				</span>
+			</div>
+
 			{/* Data rows */}
 			{loading ? (
 				<div className="text-xs py-4 text-center" style={{ color: theme.colors.textDim }}>Loading...</div>
@@ -100,22 +124,26 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 					{data.map((row, i) => {
 						const label = 'date' in row ? (row as AccountDailyUsage).date : (row as AccountMonthlyUsage).month;
 						const barWidth = maxTokens > 0 ? (row.totalTokens / maxTokens) * 100 : 0;
+						const total = row.totalTokens || 1;
+						const inPct = (row.inputTokens / total) * barWidth;
+						const outPct = (row.outputTokens / total) * barWidth;
+						const cacheRPct = (row.cacheReadTokens / total) * barWidth;
+						const cacheWPct = (row.cacheCreationTokens / total) * barWidth;
+						const tooltip = `In: ${formatTokenCount(row.inputTokens)} | Out: ${formatTokenCount(row.outputTokens)} | Cache R: ${formatTokenCount(row.cacheReadTokens)} | Cache W: ${formatTokenCount(row.cacheCreationTokens)}`;
 						return (
 							<div key={i} className="flex items-center gap-2 text-xs">
 								<span className="w-16 tabular-nums" style={{ color: theme.colors.textDim }}>
 									{formatDateLabel(label, view)}
 								</span>
 								<div
-									className="flex-1 h-3 rounded-sm overflow-hidden"
+									className="flex-1 h-3 rounded-sm overflow-hidden flex"
 									style={{ backgroundColor: theme.colors.bgActivity }}
+									title={tooltip}
 								>
-									<div
-										className="h-full rounded-sm"
-										style={{
-											width: `${barWidth}%`,
-											backgroundColor: theme.colors.accent,
-										}}
-									/>
+									<div className="h-full" style={{ width: `${inPct}%`, backgroundColor: theme.colors.accent }} />
+									<div className="h-full" style={{ width: `${outPct}%`, backgroundColor: theme.colors.success }} />
+									<div className="h-full" style={{ width: `${cacheRPct}%`, backgroundColor: theme.colors.warning }} />
+									<div className="h-full" style={{ width: `${cacheWPct}%`, backgroundColor: theme.colors.textDim + '80' }} />
 								</div>
 								<span className="w-12 text-right tabular-nums" style={{ color: theme.colors.textMain }}>
 									{formatTokenCount(row.totalTokens)}

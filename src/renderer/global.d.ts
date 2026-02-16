@@ -2642,7 +2642,7 @@ interface MaestroAPI {
 		removeDirectory: (configDir: string) => Promise<{ success: boolean; error?: string }>;
 		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
 		syncCredentials: (configDir: string) => Promise<{ success: boolean; error?: string }>;
-		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number; totalTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
+		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number | null; totalTokens: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
 		onLimitWarning: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
 		onLimitReached: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
 		onThrottled: (handler: (data: { accountId: string; accountName: string; sessionId: string; reason: string; message: string; tokensAtThrottle: number; autoSwitchAvailable: boolean; noAlternatives?: boolean }) => void) => () => void;

@@ -249,6 +249,37 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 											</div>
 										)}
 
+										{/* Token breakdown */}
+										<div
+											className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] mb-1.5"
+											style={{ color: theme.colors.textDim }}
+										>
+											<div>
+												In:{' '}
+												<span style={{ color: theme.colors.textMain }}>
+													{formatTokenCount(usage.inputTokens)}
+												</span>
+											</div>
+											<div>
+												Out:{' '}
+												<span style={{ color: theme.colors.textMain }}>
+													{formatTokenCount(usage.outputTokens)}
+												</span>
+											</div>
+											<div>
+												Cache R:{' '}
+												<span style={{ color: theme.colors.textMain }}>
+													{formatTokenCount(usage.cacheReadTokens)}
+												</span>
+											</div>
+											<div>
+												Cache W:{' '}
+												<span style={{ color: theme.colors.textMain }}>
+													{formatTokenCount(usage.cacheCreationTokens)}
+												</span>
+											</div>
+										</div>
+
 										{/* Metrics grid */}
 										<div
 											className="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]"
@@ -256,7 +287,7 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 										>
 											{usage.limitTokens === 0 && (
 												<div>
-													Tokens:{' '}
+													Total:{' '}
 													<span style={{ color: theme.colors.textMain }}>
 														{formatTokenCount(usage.totalTokens)}
 													</span>

@@ -19,8 +19,12 @@ import { ipcRenderer } from 'electron';
  */
 export interface AccountUsageUpdate {
 	accountId: string;
-	usagePercent: number;
+	usagePercent: number | null;
 	totalTokens: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
 	limitTokens: number;
 	windowStart: number;
 	windowEnd: number;
