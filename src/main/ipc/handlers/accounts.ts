@@ -212,6 +212,43 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 		}
 	});
 
+	ipcMain.handle('accounts:get-daily-usage', async (_event, accountId: string, days: number = 30) => {
+		try {
+			const db = getStatsDB();
+			if (!db?.isReady()) return [];
+			const now = Date.now();
+			const sinceMs = now - days * 24 * 60 * 60 * 1000;
+			return db.getAccountDailyUsage(accountId, sinceMs, now);
+		} catch (error) {
+			logger.error('get daily usage error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	ipcMain.handle('accounts:get-monthly-usage', async (_event, accountId: string, months: number = 6) => {
+		try {
+			const db = getStatsDB();
+			if (!db?.isReady()) return [];
+			const now = Date.now();
+			const sinceMs = now - months * 30 * 24 * 60 * 60 * 1000;
+			return db.getAccountMonthlyUsage(accountId, sinceMs, now);
+		} catch (error) {
+			logger.error('get monthly usage error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
+	ipcMain.handle('accounts:get-window-history', async (_event, accountId: string, windowCount: number = 40) => {
+		try {
+			const db = getStatsDB();
+			if (!db?.isReady()) return [];
+			return db.getAccountWindowHistory(accountId, windowCount);
+		} catch (error) {
+			logger.error('get window history error', LOG_CONTEXT, { error: String(error) });
+			return [];
+		}
+	});
+
 	// --- Switch Configuration ---
 
 	ipcMain.handle('accounts:get-switch-config', async () => {

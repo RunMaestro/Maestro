@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../../../renderer/hooks/useAccountUsage';
+import { useAccountUsage, formatTimeRemaining, formatTokenCount, calculatePrediction } from '../../../renderer/hooks/useAccountUsage';
 
 describe('useAccountUsage', () => {
 	beforeEach(() => {
@@ -186,6 +186,115 @@ describe('useAccountUsage', () => {
 		});
 
 		expect(typeof result.current.refresh).toBe('function');
+	});
+});
+
+describe('calculatePrediction', () => {
+	const FIVE_HOURS_MS = 5 * 60 * 60 * 1000;
+
+	it('returns empty prediction with no window history', () => {
+		const result = calculatePrediction([], 0, 100_000, FIVE_HOURS_MS);
+		expect(result.confidence).toBe('low');
+		expect(result.linearTimeToLimitMs).toBeNull();
+		expect(result.weightedTimeToLimitMs).toBeNull();
+		expect(result.p90TokensPerWindow).toBe(0);
+		expect(result.avgTokensPerWindow).toBe(0);
+		expect(result.windowsRemainingP90).toBeNull();
+	});
+
+	it('returns low confidence with fewer than 5 windows', () => {
+		const history = [
+			{ totalTokens: 10_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
+			{ totalTokens: 12_000, windowStart: FIVE_HOURS_MS, windowEnd: 2 * FIVE_HOURS_MS },
+		];
+		const result = calculatePrediction(history, 5_000, 100_000, FIVE_HOURS_MS);
+		expect(result.confidence).toBe('low');
+	});
+
+	it('returns medium confidence with 5-15 windows', () => {
+		const history = Array.from({ length: 8 }, (_, i) => ({
+			totalTokens: 10_000 + i * 1000,
+			windowStart: i * FIVE_HOURS_MS,
+			windowEnd: (i + 1) * FIVE_HOURS_MS,
+		}));
+		const result = calculatePrediction(history, 5_000, 100_000, FIVE_HOURS_MS);
+		expect(result.confidence).toBe('medium');
+	});
+
+	it('returns high confidence with more than 15 windows', () => {
+		const history = Array.from({ length: 20 }, (_, i) => ({
+			totalTokens: 10_000,
+			windowStart: i * FIVE_HOURS_MS,
+			windowEnd: (i + 1) * FIVE_HOURS_MS,
+		}));
+		const result = calculatePrediction(history, 5_000, 100_000, FIVE_HOURS_MS);
+		expect(result.confidence).toBe('high');
+	});
+
+	it('calculates correct average', () => {
+		const history = [
+			{ totalTokens: 10_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
+			{ totalTokens: 20_000, windowStart: FIVE_HOURS_MS, windowEnd: 2 * FIVE_HOURS_MS },
+			{ totalTokens: 30_000, windowStart: 2 * FIVE_HOURS_MS, windowEnd: 3 * FIVE_HOURS_MS },
+		];
+		const result = calculatePrediction(history, 0, 100_000, FIVE_HOURS_MS);
+		expect(result.avgTokensPerWindow).toBe(20_000);
+	});
+
+	it('calculates P90 as the 90th percentile', () => {
+		const history = Array.from({ length: 10 }, (_, i) => ({
+			totalTokens: (i + 1) * 1000,
+			windowStart: i * FIVE_HOURS_MS,
+			windowEnd: (i + 1) * FIVE_HOURS_MS,
+		}));
+		const result = calculatePrediction(history, 0, 100_000, FIVE_HOURS_MS);
+		// sorted: [1K, 2K, ..., 10K], p90Index = floor(10*0.9) = 9 => 10K
+		expect(result.p90TokensPerWindow).toBe(10_000);
+	});
+
+	it('P90 prediction is more conservative than linear', () => {
+		const history = [
+			{ totalTokens: 5_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
+			{ totalTokens: 5_000, windowStart: FIVE_HOURS_MS, windowEnd: 2 * FIVE_HOURS_MS },
+			{ totalTokens: 5_000, windowStart: 2 * FIVE_HOURS_MS, windowEnd: 3 * FIVE_HOURS_MS },
+			{ totalTokens: 5_000, windowStart: 3 * FIVE_HOURS_MS, windowEnd: 4 * FIVE_HOURS_MS },
+			{ totalTokens: 50_000, windowStart: 4 * FIVE_HOURS_MS, windowEnd: 5 * FIVE_HOURS_MS },
+		];
+		const result = calculatePrediction(history, 10_000, 100_000, FIVE_HOURS_MS);
+		expect(result.windowsRemainingP90).not.toBeNull();
+		expect(result.linearTimeToLimitMs).not.toBeNull();
+		if (result.windowsRemainingP90 !== null && result.linearTimeToLimitMs !== null) {
+			const linearWindows = result.linearTimeToLimitMs / FIVE_HOURS_MS;
+			expect(result.windowsRemainingP90).toBeLessThanOrEqual(linearWindows);
+		}
+	});
+
+	it('returns null predictions when no limit is configured', () => {
+		const history = [
+			{ totalTokens: 10_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
+		];
+		const result = calculatePrediction(history, 5_000, 0, FIVE_HOURS_MS);
+		expect(result.linearTimeToLimitMs).toBeNull();
+		expect(result.weightedTimeToLimitMs).toBeNull();
+		expect(result.windowsRemainingP90).toBeNull();
+		expect(result.avgTokensPerWindow).toBe(10_000);
+	});
+
+	it('recent windows weigh more heavily in weighted average', () => {
+		const history = [
+			{ totalTokens: 1_000, windowStart: 0, windowEnd: FIVE_HOURS_MS },
+			{ totalTokens: 1_000, windowStart: FIVE_HOURS_MS, windowEnd: 2 * FIVE_HOURS_MS },
+			{ totalTokens: 1_000, windowStart: 2 * FIVE_HOURS_MS, windowEnd: 3 * FIVE_HOURS_MS },
+			{ totalTokens: 50_000, windowStart: 3 * FIVE_HOURS_MS, windowEnd: 4 * FIVE_HOURS_MS },
+			{ totalTokens: 50_000, windowStart: 4 * FIVE_HOURS_MS, windowEnd: 5 * FIVE_HOURS_MS },
+		];
+		const result = calculatePrediction(history, 10_000, 200_000, FIVE_HOURS_MS);
+		// Weighted time should be shorter than linear (recent high usage pushes prediction down)
+		expect(result.weightedTimeToLimitMs).not.toBeNull();
+		expect(result.linearTimeToLimitMs).not.toBeNull();
+		if (result.weightedTimeToLimitMs !== null && result.linearTimeToLimitMs !== null) {
+			expect(result.weightedTimeToLimitMs).toBeLessThan(result.linearTimeToLimitMs);
+		}
 	});
 });
 

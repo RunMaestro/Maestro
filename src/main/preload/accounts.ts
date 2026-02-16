@@ -91,6 +91,18 @@ export function createAccountsApi() {
 		getThrottleEvents: (accountId?: string, since?: number): Promise<unknown[]> =>
 			ipcRenderer.invoke('accounts:get-throttle-events', accountId, since),
 
+		/** Get daily usage aggregation for an account */
+		getDailyUsage: (accountId: string, days?: number): Promise<unknown[]> =>
+			ipcRenderer.invoke('accounts:get-daily-usage', accountId, days),
+
+		/** Get monthly usage aggregation for an account */
+		getMonthlyUsage: (accountId: string, months?: number): Promise<unknown[]> =>
+			ipcRenderer.invoke('accounts:get-monthly-usage', accountId, months),
+
+		/** Get billing window history for an account (for P90 predictions) */
+		getWindowHistory: (accountId: string, windowCount?: number): Promise<unknown[]> =>
+			ipcRenderer.invoke('accounts:get-window-history', accountId, windowCount),
+
 		// --- Switch Configuration ---
 
 		/** Get the current account switching configuration */
@@ -146,6 +158,10 @@ export function createAccountsApi() {
 		/** Validate an account directory on a remote SSH host */
 		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }): Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }> =>
 			ipcRenderer.invoke('accounts:validate-remote-dir', params),
+
+		/** Sync credentials from base ~/.claude to an account directory */
+		syncCredentials: (configDir: string): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('accounts:sync-credentials', configDir),
 
 		// --- Event Listeners ---
 
@@ -318,6 +334,68 @@ export function createAccountsApi() {
 			ipcRenderer.on('account:switch-failed', wrappedHandler);
 			return () => ipcRenderer.removeListener('account:switch-failed', wrappedHandler);
 		},
+
+		// --- Auth Recovery ---
+
+		/** Manually trigger auth recovery for a session */
+		triggerAuthRecovery: (sessionId: string): Promise<{ success: boolean; error?: string }> =>
+			ipcRenderer.invoke('accounts:trigger-auth-recovery', sessionId),
+
+		/** Subscribe to auth recovery started events */
+		onAuthRecoveryStarted: (handler: (data: {
+			sessionId: string;
+			accountId: string;
+			accountName: string;
+		}) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
+				handler(data);
+			ipcRenderer.on('account:auth-recovery-started', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:auth-recovery-started', wrappedHandler);
+		},
+
+		/** Subscribe to auth recovery completed events */
+		onAuthRecoveryCompleted: (handler: (data: {
+			sessionId: string;
+			accountId: string;
+			accountName: string;
+		}) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
+				handler(data);
+			ipcRenderer.on('account:auth-recovery-completed', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:auth-recovery-completed', wrappedHandler);
+		},
+
+		/** Subscribe to auth recovery failed events */
+		onAuthRecoveryFailed: (handler: (data: {
+			sessionId: string;
+			accountId: string;
+			accountName?: string;
+			error: string;
+		}) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
+				handler(data);
+			ipcRenderer.on('account:auth-recovery-failed', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:auth-recovery-failed', wrappedHandler);
+		},
+
+		// --- Recovery Poller ---
+
+		/** Subscribe to account recovery available events (throttled accounts recovered by timer) */
+		onRecoveryAvailable: (handler: (data: {
+			recoveredAccountIds: string[];
+			recoveredCount: number;
+			stillThrottledCount: number;
+			totalAccounts: number;
+		}) => void): (() => void) => {
+			const wrappedHandler = (_event: Electron.IpcRendererEvent, data: any) =>
+				handler(data);
+			ipcRenderer.on('account:recovery-available', wrappedHandler);
+			return () => ipcRenderer.removeListener('account:recovery-available', wrappedHandler);
+		},
+
+		/** Manually trigger a recovery check (e.g., from a "Check Now" button) */
+		checkRecovery: (): Promise<{ recovered: string[] }> =>
+			ipcRenderer.invoke('accounts:check-recovery'),
 	};
 }
 

@@ -77,9 +77,14 @@ import {
 	getAccountUsageInWindow,
 	insertThrottleEvent,
 	getThrottleEvents,
+	getAccountDailyUsage,
+	getAccountMonthlyUsage,
+	getAccountWindowHistory,
 	clearAccountUsageCache,
 	type AccountUsageTokens,
 	type AccountUsageSummary,
+	type AccountDailyUsage,
+	type AccountMonthlyUsage,
 	type ThrottleEvent,
 } from './account-usage';
 
@@ -886,6 +891,18 @@ export class StatsDB {
 
 	getThrottleEvents(accountId?: string, since?: number): ThrottleEvent[] {
 		return getThrottleEvents(this.database, accountId, since);
+	}
+
+	getAccountDailyUsage(accountId: string, sinceMs: number, untilMs: number): AccountDailyUsage[] {
+		return getAccountDailyUsage(this.database, accountId, sinceMs, untilMs);
+	}
+
+	getAccountMonthlyUsage(accountId: string, sinceMs: number, untilMs: number): AccountMonthlyUsage[] {
+		return getAccountMonthlyUsage(this.database, accountId, sinceMs, untilMs);
+	}
+
+	getAccountWindowHistory(accountId: string, windowCount?: number) {
+		return getAccountWindowHistory(this.database, accountId, windowCount);
 	}
 
 	// ============================================================================

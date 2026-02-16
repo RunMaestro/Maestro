@@ -11,11 +11,25 @@ import {
 	Check,
 	Wrench,
 	Download,
+	History,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AccountProfile, AccountSwitchConfig } from '../../shared/account-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
+import { AccountUsageHistory } from './AccountUsageHistory';
+
+const PLAN_PRESETS = [
+	{ label: 'Custom', tokens: 0, cost: null },
+	{ label: 'Claude Pro', tokens: 19_000, cost: 18.00 },
+	{ label: 'Claude Max 5', tokens: 88_000, cost: 35.00 },
+	{ label: 'Claude Max 20', tokens: 220_000, cost: 140.00 },
+] as const;
+
+function renderConfidenceDots(confidence: 'low' | 'medium' | 'high'): string {
+	const filled = confidence === 'high' ? 3 : confidence === 'medium' ? 2 : 1;
+	return '\u25CF'.repeat(filled) + '\u25CB'.repeat(3 - filled);
+}
 
 interface AccountsPanelProps {
 	theme: Theme;
@@ -53,6 +67,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	const [createdConfigDir, setCreatedConfigDir] = useState('');
 	const [loginCommand, setLoginCommand] = useState('');
 	const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
+	const [historyExpandedId, setHistoryExpandedId] = useState<string | null>(null);
 	const [conflictingSessions, setConflictingSessions] = useState<ConflictingSession[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -528,6 +543,77 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 													</div>
 												)}
 											</div>
+
+											{/* Prediction section */}
+											{usage.prediction && usage.limitTokens > 0 && (
+												<div className="mt-2 p-2 rounded text-xs" style={{ backgroundColor: theme.colors.bgActivity }}>
+													<div className="font-medium mb-1" style={{ color: theme.colors.textMain }}>Prediction</div>
+													<div className="grid grid-cols-2 gap-x-4 gap-y-0.5">
+														<div style={{ color: theme.colors.textDim }}>
+															Current rate:{' '}
+															<span style={{
+																color: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 60 * 60 * 1000
+																	? '#ef4444'
+																	: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 2 * 60 * 60 * 1000
+																		? '#f59e0b'
+																		: theme.colors.textMain,
+															}}>
+																{usage.prediction.linearTimeToLimitMs !== null
+																	? `~${formatTimeRemaining(usage.prediction.linearTimeToLimitMs)} to limit`
+																	: '\u2014'}
+															</span>
+														</div>
+														<div style={{ color: theme.colors.textDim }}>
+															Conservative (P90):{' '}
+															<span style={{
+																color: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 2
+																	? '#ef4444'
+																	: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 5
+																		? '#f59e0b'
+																		: theme.colors.textMain,
+															}}>
+																{usage.prediction.windowsRemainingP90 !== null
+																	? `~${usage.prediction.windowsRemainingP90.toFixed(1)} windows`
+																	: '\u2014'}
+															</span>
+														</div>
+														<div style={{ color: theme.colors.textDim }}>
+															Confidence:{' '}
+															<span style={{ color: theme.colors.accent }}>
+																{renderConfidenceDots(usage.prediction.confidence)}
+															</span>
+															<span className="ml-1">
+																{usage.prediction.confidence === 'high' ? 'High' : usage.prediction.confidence === 'medium' ? 'Medium' : 'Low'}
+															</span>
+														</div>
+														<div style={{ color: theme.colors.textDim }}>
+															Avg/window:{' '}
+															<span style={{ color: theme.colors.textMain }}>
+																{formatTokenCount(Math.round(usage.prediction.avgTokensPerWindow))}
+															</span>
+														</div>
+													</div>
+												</div>
+											)}
+
+											{/* Usage History toggle */}
+											<button
+												onClick={() => setHistoryExpandedId(
+													historyExpandedId === account.id ? null : account.id
+												)}
+												className="mt-2 flex items-center gap-1.5 text-xs hover:underline"
+												style={{ color: theme.colors.textDim }}
+											>
+												<History className="w-3 h-3" />
+												{historyExpandedId === account.id ? 'Hide' : 'Usage'} History
+												{historyExpandedId === account.id
+													? <ChevronDown className="w-3 h-3" />
+													: <ChevronRight className="w-3 h-3" />
+												}
+											</button>
+											{historyExpandedId === account.id && (
+												<AccountUsageHistory accountId={account.id} theme={theme} />
+											)}
 										</div>
 									);
 								})()}
@@ -594,24 +680,47 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 										className="mt-3 pt-3 space-y-3"
 										style={{ borderTop: `1px solid ${theme.colors.border}` }}
 									>
-										<div className="flex items-center gap-4">
-											<div className="flex-1">
-												<label
-													className="block text-xs mb-1"
-													style={{ color: theme.colors.textDim }}
+										{/* Plan preset + token limit */}
+										<div>
+											<label
+												className="block text-xs mb-1"
+												style={{ color: theme.colors.textDim }}
+											>
+												Plan preset / Token limit per window
+											</label>
+											<div className="flex items-center gap-2">
+												<select
+													value={PLAN_PRESETS.find(p => p.tokens === account.tokenLimitPerWindow)?.label ?? 'Custom'}
+													onChange={(e) => {
+														const preset = PLAN_PRESETS.find(p => p.label === e.target.value);
+														if (preset && preset.tokens > 0) {
+															handleUpdateAccount(account.id, { tokenLimitPerWindow: preset.tokens });
+														}
+													}}
+													className="flex-1 p-2 rounded border bg-transparent outline-none text-xs"
+													style={{
+														borderColor: theme.colors.border,
+														color: theme.colors.textMain,
+														backgroundColor: theme.colors.bgMain,
+													}}
 												>
-													Token limit per window (0 = no limit)
-												</label>
+													{PLAN_PRESETS.map(p => (
+														<option key={p.label} value={p.label}>
+															{p.label}{p.tokens > 0 ? ` (${formatTokenCount(p.tokens)})` : ''}
+														</option>
+													))}
+												</select>
 												<input
 													type="number"
-													value={account.tokenLimitPerWindow}
+													value={account.tokenLimitPerWindow || ''}
 													onChange={(e) =>
 														handleUpdateAccount(account.id, {
 															tokenLimitPerWindow:
 																parseInt(e.target.value) || 0,
 														})
 													}
-													className="w-full p-2 rounded border bg-transparent outline-none text-xs font-mono"
+													placeholder="Custom limit"
+													className="w-28 p-2 rounded border bg-transparent outline-none text-xs font-mono"
 													style={{
 														borderColor: theme.colors.border,
 														color: theme.colors.textMain,
@@ -619,6 +728,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 													min={0}
 												/>
 											</div>
+										</div>
+
+										<div className="flex items-center gap-4">
 											<div className="flex-1">
 												<label
 													className="block text-xs mb-1"

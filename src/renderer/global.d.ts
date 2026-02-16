@@ -3619,6 +3619,9 @@ interface MaestroAPI {
 		getUsage: (accountId: string, windowStart: number, windowEnd: number) => Promise<unknown>;
 		getAllUsage: () => Promise<unknown>;
 		getThrottleEvents: (accountId?: string, since?: number) => Promise<unknown[]>;
+		getDailyUsage: (accountId: string, days?: number) => Promise<unknown[]>;
+		getMonthlyUsage: (accountId: string, months?: number) => Promise<unknown[]>;
+		getWindowHistory: (accountId: string, windowCount?: number) => Promise<unknown[]>;
 		getSwitchConfig: () => Promise<unknown>;
 		updateSwitchConfig: (updates: Record<string, unknown>) => Promise<unknown>;
 		getDefault: () => Promise<unknown>;
@@ -3632,6 +3635,7 @@ interface MaestroAPI {
 		getLoginCommand: (configDir: string) => Promise<string | null>;
 		removeDirectory: (configDir: string) => Promise<{ success: boolean; error?: string }>;
 		validateRemoteDir: (params: { sshConfig: { host: string; user?: string; port?: number }; configDir: string }) => Promise<{ exists: boolean; hasAuth: boolean; symlinksValid: boolean; error?: string }>;
+		syncCredentials: (configDir: string) => Promise<{ success: boolean; error?: string }>;
 		onUsageUpdate: (handler: (data: { accountId: string; usagePercent: number; totalTokens: number; limitTokens: number; windowStart: number; windowEnd: number; queryCount: number; costUsd: number }) => void) => () => void;
 		onLimitWarning: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
 		onLimitReached: (handler: (data: { accountId: string; accountName: string; usagePercent: number; sessionId: string }) => void) => () => void;
@@ -3647,6 +3651,12 @@ interface MaestroAPI {
 		onSwitchRespawn: (handler: (data: { sessionId: string; toAccountId: string; toAccountName: string; configDir: string; lastPrompt: string | null; reason: string }) => void) => () => void;
 		onSwitchCompleted: (handler: (data: Record<string, unknown>) => void) => () => void;
 		onSwitchFailed: (handler: (data: Record<string, unknown>) => void) => () => void;
+		triggerAuthRecovery: (sessionId: string) => Promise<{ success: boolean; error?: string }>;
+		onAuthRecoveryStarted: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
+		onAuthRecoveryCompleted: (handler: (data: { sessionId: string; accountId: string; accountName: string }) => void) => () => void;
+		onAuthRecoveryFailed: (handler: (data: { sessionId: string; accountId: string; accountName?: string; error: string }) => void) => () => void;
+		onRecoveryAvailable: (handler: (data: { recoveredAccountIds: string[]; recoveredCount: number; stillThrottledCount: number; totalAccounts: number }) => void) => () => void;
+		checkRecovery: () => Promise<{ recovered: string[] }>;
 	};
 
 	// Director's Notes API (unified history + synopsis generation)

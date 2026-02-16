@@ -1,5 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
+// ============================================================================
+// Prediction Types
+// ============================================================================
+
+export interface UsagePrediction {
+	/** Linear estimate: remaining tokens / current burn rate */
+	linearTimeToLimitMs: number | null;
+	/** Weighted estimate using recent window patterns */
+	weightedTimeToLimitMs: number | null;
+	/** P90 tokens per window (90th percentile of recent windows) */
+	p90TokensPerWindow: number;
+	/** Average tokens per window */
+	avgTokensPerWindow: number;
+	/** Confidence: 'low' (<5 windows), 'medium' (5-15), 'high' (>15) */
+	confidence: 'low' | 'medium' | 'high';
+	/** Predicted number of windows remaining before limit (at P90 rate) */
+	windowsRemainingP90: number | null;
+}
+
+// ============================================================================
+// Metrics Types
+// ============================================================================
+
 export interface AccountUsageMetrics {
 	accountId: string;
 	totalTokens: number;
@@ -13,17 +36,125 @@ export interface AccountUsageMetrics {
 	burnRatePerHour: number;
 	estimatedTimeToLimitMs: number | null; // null if no limit or burn rate is 0
 	status: string;
+	prediction: UsagePrediction;
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
 const URGENT_INTERVAL_MS = 5_000;
 const URGENT_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 
+const EMPTY_PREDICTION: UsagePrediction = {
+	linearTimeToLimitMs: null,
+	weightedTimeToLimitMs: null,
+	p90TokensPerWindow: 0,
+	avgTokensPerWindow: 0,
+	confidence: 'low',
+	windowsRemainingP90: null,
+};
+
+// ============================================================================
+// P90 Prediction Calculator
+// ============================================================================
+
+/**
+ * Calculate P90-weighted prediction from billing window history.
+ * Uses exponential weighting so recent windows count more than older ones.
+ *
+ * Inspired by Claude-Code-Usage-Monitor's P90 approach but adapted for
+ * Maestro's multi-account context.
+ */
+export function calculatePrediction(
+	windowHistory: Array<{ totalTokens: number; windowStart: number; windowEnd: number }>,
+	currentWindowTokens: number,
+	limitTokens: number,
+	windowMs: number,
+): UsagePrediction {
+	const windowCount = windowHistory.length;
+	const confidence = windowCount < 5 ? 'low' : windowCount < 15 ? 'medium' : 'high';
+
+	if (windowCount === 0) {
+		return {
+			linearTimeToLimitMs: null,
+			weightedTimeToLimitMs: null,
+			p90TokensPerWindow: 0,
+			avgTokensPerWindow: 0,
+			confidence,
+			windowsRemainingP90: null,
+		};
+	}
+
+	// Extract token totals per window
+	const totals = windowHistory.map(w => w.totalTokens);
+
+	// Calculate average
+	const avgTokensPerWindow = totals.reduce((a, b) => a + b, 0) / totals.length;
+
+	// Calculate P90 (90th percentile)
+	const sorted = [...totals].sort((a, b) => a - b);
+	const p90Index = Math.floor(sorted.length * 0.9);
+	const p90TokensPerWindow = sorted[Math.min(p90Index, sorted.length - 1)];
+
+	// Weighted average: exponential decay, most recent windows weighted highest
+	// Weight = 0.85^(age), so most recent window = 1.0, one back = 0.85, etc.
+	const DECAY = 0.85;
+	let weightedSum = 0;
+	let weightTotal = 0;
+	for (let i = 0; i < totals.length; i++) {
+		const age = totals.length - 1 - i; // 0 = most recent
+		const weight = Math.pow(DECAY, age);
+		weightedSum += totals[i] * weight;
+		weightTotal += weight;
+	}
+	const weightedAvg = weightedSum / weightTotal;
+
+	// Predictions (only if limit is configured)
+	let linearTimeToLimitMs: number | null = null;
+	let weightedTimeToLimitMs: number | null = null;
+	let windowsRemainingP90: number | null = null;
+
+	if (limitTokens > 0) {
+		const remaining = Math.max(0, limitTokens - currentWindowTokens);
+
+		// Linear: remaining / (average tokens per window) * window duration
+		if (avgTokensPerWindow > 0) {
+			const windowsRemaining = remaining / avgTokensPerWindow;
+			linearTimeToLimitMs = windowsRemaining * windowMs;
+		}
+
+		// Weighted: use weighted average for more responsive prediction
+		if (weightedAvg > 0) {
+			const windowsRemaining = remaining / weightedAvg;
+			weightedTimeToLimitMs = windowsRemaining * windowMs;
+		}
+
+		// P90: conservative estimate
+		if (p90TokensPerWindow > 0) {
+			windowsRemainingP90 = remaining / p90TokensPerWindow;
+		}
+	}
+
+	return {
+		linearTimeToLimitMs,
+		weightedTimeToLimitMs,
+		p90TokensPerWindow,
+		avgTokensPerWindow,
+		confidence,
+		windowsRemainingP90,
+	};
+}
+
+// ============================================================================
+// Hook
+// ============================================================================
+
 /**
  * Hook that provides real-time per-account usage metrics.
  * Fetches on mount, subscribes to real-time updates, and recalculates
  * derived metrics (burn rate, time to limit) every 30 seconds.
  * Switches to 5-second updates when any account is within 5 minutes of reset.
+ *
+ * Also fetches billing window history once on mount for P90 prediction
+ * and recalculates predictions when the current window's usage changes.
  */
 export function useAccountUsage(): {
 	metrics: Record<string, AccountUsageMetrics>;
@@ -34,6 +165,7 @@ export function useAccountUsage(): {
 	const [loading, setLoading] = useState(true);
 	const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 	const currentIntervalMs = useRef(DEFAULT_INTERVAL_MS);
+	const windowHistoriesRef = useRef<Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>>>({});
 
 	const calculateDerivedMetrics = useCallback((raw: {
 		accountId: string;
@@ -62,11 +194,20 @@ export function useAccountUsage(): {
 			estimatedTimeToLimitMs = hoursToLimit * 60 * 60 * 1000;
 		}
 
+		// P90 prediction from window history
+		const prediction = calculatePrediction(
+			windowHistoriesRef.current[raw.accountId] || [],
+			raw.totalTokens,
+			raw.limitTokens,
+			raw.windowEnd - raw.windowStart,
+		);
+
 		return {
 			...raw,
 			timeRemainingMs,
 			burnRatePerHour,
 			estimatedTimeToLimitMs,
+			prediction,
 		};
 	}, []);
 
@@ -117,6 +258,32 @@ export function useAccountUsage(): {
 			setLoading(false);
 		}
 	}, [calculateDerivedMetrics]);
+
+	// Load window histories once on mount for P90 predictions
+	useEffect(() => {
+		async function loadHistories() {
+			try {
+				const accounts = await window.maestro.accounts.list();
+				const histories: Record<string, Array<{ totalTokens: number; windowStart: number; windowEnd: number }>> = {};
+				for (const account of (accounts || []) as Array<{ id: string }>) {
+					try {
+						const history = await window.maestro.accounts.getWindowHistory(account.id, 40) as Array<{
+							inputTokens: number; outputTokens: number;
+							cacheReadTokens: number; cacheCreationTokens: number;
+							windowStart: number; windowEnd: number;
+						}>;
+						histories[account.id] = history.map(w => ({
+							totalTokens: w.inputTokens + w.outputTokens + w.cacheReadTokens + w.cacheCreationTokens,
+							windowStart: w.windowStart,
+							windowEnd: w.windowEnd,
+						}));
+					} catch { /* skip individual account errors */ }
+				}
+				windowHistoriesRef.current = histories;
+			} catch { /* non-fatal */ }
+		}
+		loadHistories();
+	}, []);
 
 	useEffect(() => {
 		fetchUsage();

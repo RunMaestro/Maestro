@@ -208,6 +208,129 @@ export function getThrottleEvents(
 	}));
 }
 
+// ============================================================================
+// Historical Aggregations
+// ============================================================================
+
+export interface AccountDailyUsage {
+	date: string; // YYYY-MM-DD
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	totalTokens: number;
+	costUsd: number;
+	queryCount: number;
+}
+
+export interface AccountMonthlyUsage {
+	month: string; // YYYY-MM
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	totalTokens: number;
+	costUsd: number;
+	queryCount: number;
+	daysActive: number;
+}
+
+const DAILY_USAGE_SQL = `
+  SELECT
+    date(start_time / 1000, 'unixepoch', 'localtime') as date,
+    COALESCE(SUM(input_tokens), 0) as inputTokens,
+    COALESCE(SUM(output_tokens), 0) as outputTokens,
+    COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
+    COALESCE(SUM(cache_creation_tokens), 0) as cacheCreationTokens,
+    COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as totalTokens,
+    COALESCE(SUM(cost_usd), 0) as costUsd,
+    COUNT(*) as queryCount
+  FROM query_events
+  WHERE account_id = ? AND start_time >= ? AND start_time < ?
+  GROUP BY date
+  ORDER BY date ASC
+`;
+
+const MONTHLY_USAGE_SQL = `
+  SELECT
+    strftime('%Y-%m', start_time / 1000, 'unixepoch', 'localtime') as month,
+    COALESCE(SUM(input_tokens), 0) as inputTokens,
+    COALESCE(SUM(output_tokens), 0) as outputTokens,
+    COALESCE(SUM(cache_read_tokens), 0) as cacheReadTokens,
+    COALESCE(SUM(cache_creation_tokens), 0) as cacheCreationTokens,
+    COALESCE(SUM(input_tokens + output_tokens + cache_read_tokens + cache_creation_tokens), 0) as totalTokens,
+    COALESCE(SUM(cost_usd), 0) as costUsd,
+    COUNT(*) as queryCount,
+    COUNT(DISTINCT date(start_time / 1000, 'unixepoch', 'localtime')) as daysActive
+  FROM query_events
+  WHERE account_id = ? AND start_time >= ? AND start_time < ?
+  GROUP BY month
+  ORDER BY month ASC
+`;
+
+/**
+ * Get daily token usage for an account over a date range.
+ * Returns one row per day with non-zero usage.
+ */
+export function getAccountDailyUsage(
+	db: Database.Database,
+	accountId: string,
+	sinceMs: number,
+	untilMs: number
+): AccountDailyUsage[] {
+	return stmtCache.get(db, DAILY_USAGE_SQL).all(accountId, sinceMs, untilMs) as AccountDailyUsage[];
+}
+
+/**
+ * Get monthly token usage for an account over a date range.
+ * Returns one row per month with non-zero usage.
+ */
+export function getAccountMonthlyUsage(
+	db: Database.Database,
+	accountId: string,
+	sinceMs: number,
+	untilMs: number
+): AccountMonthlyUsage[] {
+	return stmtCache.get(db, MONTHLY_USAGE_SQL).all(accountId, sinceMs, untilMs) as AccountMonthlyUsage[];
+}
+
+/**
+ * Get the 5-hour window usage history for an account (last N windows).
+ * Used for billing-window analysis and P90 prediction.
+ */
+export function getAccountWindowHistory(
+	db: Database.Database,
+	accountId: string,
+	windowCount: number = 40 // ~8 days of 5-hour windows
+): Array<{
+	windowStart: number;
+	windowEnd: number;
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	cacheCreationTokens: number;
+	costUsd: number;
+	queryCount: number;
+}> {
+	const sql = `
+		SELECT window_start as windowStart, window_end as windowEnd,
+			input_tokens as inputTokens, output_tokens as outputTokens,
+			cache_read_tokens as cacheReadTokens, cache_creation_tokens as cacheCreationTokens,
+			cost_usd as costUsd, query_count as queryCount
+		FROM account_usage_windows
+		WHERE account_id = ?
+		ORDER BY window_start DESC
+		LIMIT ?
+	`;
+	const rows = db.prepare(sql).all(accountId, windowCount) as Array<{
+		windowStart: number; windowEnd: number;
+		inputTokens: number; outputTokens: number;
+		cacheReadTokens: number; cacheCreationTokens: number;
+		costUsd: number; queryCount: number;
+	}>;
+	return rows.reverse(); // Return chronological order
+}
+
 /**
  * Clear the statement cache (call when database is closed)
  */
