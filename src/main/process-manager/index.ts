@@ -1,5 +1,7 @@
 // Main class
 export { ProcessManager } from './ProcessManager';
+export { ProcessStateStore } from './ProcessStateStore';
+export type { ProcessSnapshot, ProcessStateSnapshot } from './ProcessStateStore';
 
 // Types - all exported for consumers
 export type {

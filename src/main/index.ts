@@ -4,7 +4,8 @@ import os from 'os';
 import crypto from 'crypto';
 // Sentry is imported dynamically below to avoid module-load-time access to electron.app
 // which causes "Cannot read properties of undefined (reading 'getAppPath')" errors
-import { ProcessManager } from './process-manager';
+import { ProcessManager, ProcessStateStore } from './process-manager';
+import type { ProcessSnapshot } from './process-manager';
 import { WebServer } from './web-server';
 import { AgentDetector } from './agents';
 import { logger } from './utils/logger';
@@ -221,6 +222,7 @@ const agentSessionOriginsStore = getAgentSessionOriginsStore();
 
 let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
+const processStateStore = new ProcessStateStore();
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
 
