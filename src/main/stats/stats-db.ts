@@ -62,6 +62,7 @@ export class StatsDB {
 	private db: Database.Database | null = null;
 	private dbPath: string;
 	private initialized = false;
+	private static readonly fsPromises = fs.promises;
 
 	constructor() {
 		this.dbPath = path.join(app.getPath('userData'), 'stats.db');
@@ -92,18 +93,16 @@ export class StatsDB {
 	 * 2. Delete the corrupted file and any associated WAL/SHM files
 	 * 3. Create a fresh database
 	 */
-	initialize(): void {
+	async initialize(): Promise<void> {
 		if (this.initialized) {
 			return;
 		}
 
 		try {
 			const dir = path.dirname(this.dbPath);
-			if (!fs.existsSync(dir)) {
-				fs.mkdirSync(dir, { recursive: true });
-			}
+			await StatsDB.fsPromises.mkdir(dir, { recursive: true });
 
-			const dbExists = fs.existsSync(this.dbPath);
+			const dbExists = await this.pathExists(this.dbPath);
 
 			if (dbExists) {
 				const db = this.openWithCorruptionHandling();
@@ -128,10 +127,10 @@ export class StatsDB {
 			logger.info(`Stats database initialized at ${this.dbPath}`, LOG_CONTEXT);
 
 			// Create daily backup (keeps last 7 days)
-			this.createDailyBackupIfNeeded();
+			await this.createDailyBackupIfNeeded();
 
 			// Schedule VACUUM to run weekly instead of on every startup
-			this.vacuumIfNeededWeekly();
+			await this.vacuumIfNeededWeekly();
 		} catch (error) {
 			logger.error(`Failed to initialize stats database: ${error}`, LOG_CONTEXT);
 			throw error;
@@ -173,9 +172,9 @@ export class StatsDB {
 	/**
 	 * Get the database file size in bytes.
 	 */
-	getDatabaseSize(): number {
+	async getDatabaseSize(): Promise<number> {
 		try {
-			const stats = fs.statSync(this.dbPath);
+			const stats = await StatsDB.fsPromises.stat(this.dbPath);
 			return stats.size;
 		} catch {
 			return 0;
@@ -189,13 +188,13 @@ export class StatsDB {
 	/**
 	 * Run VACUUM on the database to reclaim unused space and optimize structure.
 	 */
-	vacuum(): { success: boolean; bytesFreed: number; error?: string } {
+	async vacuum(): Promise<{ success: boolean; bytesFreed: number; error?: string }> {
 		if (!this.db) {
 			return { success: false, bytesFreed: 0, error: 'Database not initialized' };
 		}
 
 		try {
-			const sizeBefore = this.getDatabaseSize();
+			const sizeBefore = await this.getDatabaseSize();
 			logger.info(
 				`Starting VACUUM (current size: ${(sizeBefore / 1024 / 1024).toFixed(2)} MB)`,
 				LOG_CONTEXT
@@ -203,7 +202,7 @@ export class StatsDB {
 
 			this.db.prepare('VACUUM').run();
 
-			const sizeAfter = this.getDatabaseSize();
+			const sizeAfter = await this.getDatabaseSize();
 			const bytesFreed = sizeBefore - sizeAfter;
 
 			logger.info(
@@ -224,12 +223,12 @@ export class StatsDB {
 	 *
 	 * @param thresholdBytes - Size threshold in bytes (default: 100MB)
 	 */
-	vacuumIfNeeded(thresholdBytes: number = 100 * 1024 * 1024): {
+	async vacuumIfNeeded(thresholdBytes: number = 100 * 1024 * 1024): Promise<{
 		vacuumed: boolean;
 		databaseSize: number;
 		result?: { success: boolean; bytesFreed: number; error?: string };
-	} {
-		const databaseSize = this.getDatabaseSize();
+	}> {
+		const databaseSize = await this.getDatabaseSize();
 
 		if (databaseSize < thresholdBytes) {
 			logger.debug(
@@ -244,7 +243,7 @@ export class StatsDB {
 			LOG_CONTEXT
 		);
 
-		const result = this.vacuum();
+		const result = await this.vacuum();
 		return { vacuumed: true, databaseSize, result };
 	}
 
@@ -256,7 +255,7 @@ export class StatsDB {
 	 *
 	 * @param intervalMs - Minimum time between vacuums (default: 7 days)
 	 */
-	private vacuumIfNeededWeekly(intervalMs: number = 7 * 24 * 60 * 60 * 1000): void {
+	private async vacuumIfNeededWeekly(intervalMs: number = 7 * 24 * 60 * 60 * 1000): Promise<void> {
 		try {
 			// Read last vacuum timestamp from _meta table
 			const row = this.database
@@ -279,7 +278,7 @@ export class StatsDB {
 			}
 
 			// Run VACUUM if database is large enough
-			const result = this.vacuumIfNeeded();
+			const result = await this.vacuumIfNeeded();
 
 			if (result.vacuumed) {
 				// Update timestamp in _meta table
@@ -368,9 +367,9 @@ export class StatsDB {
 	 * Create a daily backup if one hasn't been created today.
 	 * Automatically rotates old backups to keep only the last 7 days.
 	 */
-	private createDailyBackupIfNeeded(): void {
+	private async createDailyBackupIfNeeded(): Promise<void> {
 		try {
-			if (!fs.existsSync(this.dbPath)) {
+			if (!(await this.pathExists(this.dbPath))) {
 				return;
 			}
 
@@ -378,7 +377,7 @@ export class StatsDB {
 			const dailyBackupPath = `${this.dbPath}.daily.${today}`;
 
 			// Check if today's backup already exists
-			if (fs.existsSync(dailyBackupPath)) {
+			if (await this.pathExists(dailyBackupPath)) {
 				logger.debug(`Daily backup already exists for ${today}`, LOG_CONTEXT);
 				return;
 			}
@@ -388,7 +387,7 @@ export class StatsDB {
 			logger.info(`Created daily backup: ${dailyBackupPath}`, LOG_CONTEXT);
 
 			// Rotate old backups (keep last 7 days)
-			this.rotateOldBackups(7);
+			await this.rotateOldBackups(7);
 		} catch (error) {
 			logger.warn(`Failed to create daily backup: ${error}`, LOG_CONTEXT);
 		}
@@ -397,11 +396,11 @@ export class StatsDB {
 	/**
 	 * Remove daily backups older than the specified number of days.
 	 */
-	private rotateOldBackups(keepDays: number): void {
+	private async rotateOldBackups(keepDays: number): Promise<void> {
 		try {
 			const dir = path.dirname(this.dbPath);
 			const baseName = path.basename(this.dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const files = fs.readdirSync(dir);
+			const files = await StatsDB.fsPromises.readdir(dir);
 
 			const cutoffDate = new Date();
 			cutoffDate.setDate(cutoffDate.getDate() - keepDays);
@@ -415,7 +414,7 @@ export class StatsDB {
 					const backupDate = dailyMatch[1];
 					if (backupDate < cutoffStr) {
 						const fullPath = path.join(dir, file);
-						fs.unlinkSync(fullPath);
+						await StatsDB.fsPromises.unlink(fullPath);
 						removedCount++;
 						logger.debug(`Removed old daily backup: ${file}`, LOG_CONTEXT);
 					}
@@ -827,6 +826,15 @@ export class StatsDB {
 		} catch (error) {
 			logger.error(`Failed to get earliest timestamp: ${error}`, LOG_CONTEXT);
 			return null;
+		}
+	}
+
+	private async pathExists(targetPath: string): Promise<boolean> {
+		try {
+			await StatsDB.fsPromises.access(targetPath, fs.constants.F_OK);
+			return true;
+		} catch {
+			return false;
 		}
 	}
 }

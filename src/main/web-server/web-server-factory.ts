@@ -191,12 +191,12 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 		// Set up callback for web server to fetch history entries
 		// Uses HistoryManager for per-session storage
-		server.setGetHistoryCallback((projectPath?: string, sessionId?: string) => {
+		server.setGetHistoryCallback(async (projectPath?: string, sessionId?: string) => {
 			const historyManager = getHistoryManager();
 
 			if (sessionId) {
 				// Get entries for specific session
-				const entries = historyManager.getEntries(sessionId);
+				const entries = await historyManager.getEntries(sessionId);
 				// Sort by timestamp descending
 				entries.sort((a, b) => b.timestamp - a.timestamp);
 				return entries;
@@ -204,11 +204,11 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 
 			if (projectPath) {
 				// Get all entries for sessions in this project
-				return historyManager.getEntriesByProjectPath(projectPath);
+				return await historyManager.getEntriesByProjectPath(projectPath);
 			}
 
 			// Return all entries (for global view)
-			return historyManager.getAllEntries();
+			return await historyManager.getAllEntries();
 		});
 
 		// Set up callback for web server to write commands to sessions

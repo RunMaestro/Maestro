@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import type { Theme } from '../types';
 import { useToast, Toast as ToastType } from '../contexts/ToastContext';
 
@@ -26,7 +26,7 @@ function formatDuration(ms: number): string {
 	return parts.join(' ') || '0s';
 }
 
-function ToastItem({
+const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
 	onRemove,
@@ -34,7 +34,7 @@ function ToastItem({
 }: {
 	toast: ToastType;
 	theme: Theme;
-	onRemove: () => void;
+	onRemove: (toastId: string) => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
@@ -59,7 +59,7 @@ function ToastItem({
 	const handleClose = (e?: React.MouseEvent) => {
 		e?.stopPropagation();
 		setIsExiting(true);
-		setTimeout(onRemove, 300);
+		setTimeout(() => onRemove(toast.id), 300);
 	};
 
 	// Handle click on toast to navigate to session
@@ -296,9 +296,9 @@ function ToastItem({
       `}</style>
 		</div>
 	);
-}
+});
 
-export function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
+export const ToastContainer = memo(function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
 	const { toasts, removeToast } = useToast();
 
 	if (toasts.length === 0) return null;
@@ -314,11 +314,11 @@ export function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
 						key={toast.id}
 						toast={toast}
 						theme={theme}
-						onRemove={() => removeToast(toast.id)}
+						onRemove={removeToast}
 						onSessionClick={onSessionClick}
 					/>
 				))}
 			</div>
 		</div>
 	);
-}
+});

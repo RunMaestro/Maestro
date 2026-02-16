@@ -294,7 +294,7 @@ export type GetCustomCommandsCallback = () => CustomAICommand[];
 export type GetHistoryCallback = (
 	projectPath?: string,
 	sessionId?: string
-) => import('../../shared/types').HistoryEntry[];
+) => Promise<import('../../shared/types').HistoryEntry[]>;
 
 /**
  * Callback to get all connected web clients.

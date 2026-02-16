@@ -138,7 +138,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					: 0;
 
 				// Get all session IDs from history manager
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 
 				// Resolve Maestro session names (the names shown in the left bar)
 				const sessionNameMap = buildSessionNameMap();
@@ -150,7 +150,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				let userCount = 0;
 
 				for (const sessionId of sessionIds) {
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					const maestroSessionName = sessionNameMap.get(sessionId);
 
 					for (const entry of entries) {
@@ -223,7 +223,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 
 				// Build file-path manifest so the agent reads history files directly
 				const cutoffTime = Date.now() - options.lookbackDays * 24 * 60 * 60 * 1000;
-				const sessionIds = historyManager.listSessionsWithHistory();
+				const sessionIds = await historyManager.listSessionsWithHistory();
 				const sessionNameMap = buildSessionNameMap();
 
 				const sessionManifest: Array<{
@@ -243,7 +243,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 					sessionManifest.push({ sessionId, displayName, historyFilePath: filePath });
 
 					// Count entries in lookback window and track which agents contributed
-					const entries = historyManager.getEntries(sessionId);
+					const entries = await historyManager.getEntries(sessionId);
 					let agentHasEntries = false;
 					for (const entry of entries) {
 						if (entry.timestamp >= cutoffTime) {

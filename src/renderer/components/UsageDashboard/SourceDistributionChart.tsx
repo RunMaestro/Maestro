@@ -13,7 +13,7 @@
  * - Tooltip on hover with exact values
  */
 
-import { useState, useMemo } from 'react';
+import { memo, useState, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_BINARY_PALETTE } from '../../constants/colorblindPalettes';
@@ -160,7 +160,7 @@ function describeArc(
   `;
 }
 
-export function SourceDistributionChart({
+export const SourceDistributionChart = memo(function SourceDistributionChart({
 	data,
 	theme,
 	colorBlindMode = false,
@@ -395,6 +395,6 @@ export function SourceDistributionChart({
 			</div>
 		</div>
 	);
-}
+});
 
 export default SourceDistributionChart;

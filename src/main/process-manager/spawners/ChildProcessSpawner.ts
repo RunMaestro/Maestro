@@ -50,7 +50,7 @@ export class ChildProcessSpawner {
 	/**
 	 * Spawn a child process for a session
 	 */
-	spawn(config: ProcessConfig): SpawnResult {
+	async spawn(config: ProcessConfig): Promise<SpawnResult> {
 		const {
 			sessionId,
 			toolType,
@@ -109,7 +109,7 @@ export class ChildProcessSpawner {
 			finalArgs = [...args];
 			tempImageFiles = [];
 			for (let i = 0; i < images.length; i++) {
-				const tempPath = saveImageToTempFile(images[i], i);
+				const tempPath = await saveImageToTempFile(images[i], i);
 				if (tempPath) {
 					tempImageFiles.push(tempPath);
 					finalArgs = [...finalArgs, ...imageArgs(tempPath)];

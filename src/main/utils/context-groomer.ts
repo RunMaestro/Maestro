@@ -317,59 +317,74 @@ export async function groomContext(
 		processManager.on('exit', onExit);
 		processManager.on('agent-error', onError);
 
-		// Spawn the process in batch mode
-		const spawnResult = processManager.spawn({
-			sessionId: groomerSessionId,
-			toolType: agentType,
-			cwd: projectRoot,
-			command: agent.command,
-			args: finalArgs,
-			prompt: prompt, // Triggers batch mode (no PTY)
-			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
-			noPromptSeparator: agent.noPromptSeparator,
-			// Pass SSH config for remote execution support
-			sessionSshRemoteConfig,
-			sessionCustomPath,
-			sessionCustomArgs,
-			sessionCustomEnvVars,
-		});
+		const spawnProcess = async () => {
+			const spawnResult = await processManager.spawn({
+				sessionId: groomerSessionId,
+				toolType: agentType,
+				cwd: projectRoot,
+				command: agent.command,
+				args: finalArgs,
+				prompt: prompt, // Triggers batch mode (no PTY)
+				promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
+				noPromptSeparator: agent.noPromptSeparator,
+				// Pass SSH config for remote execution support
+				sessionSshRemoteConfig,
+				sessionCustomPath,
+				sessionCustomArgs,
+				sessionCustomEnvVars,
+			});
 
-		if (!spawnResult || spawnResult.pid <= 0) {
-			cleanup();
-			reject(new Error(`Failed to spawn grooming process for ${agentType}`));
-			return;
-		}
-
-		logger.debug('Spawned grooming batch process', LOG_CONTEXT, {
-			groomerSessionId,
-			pid: spawnResult.pid,
-		});
-
-		// Set up idle check
-		idleCheckInterval = setInterval(() => {
-			const idleTime = Date.now() - lastDataTime;
-			if (idleTime > IDLE_TIMEOUT_MS && responseBuffer.length >= MIN_RESPONSE_LENGTH) {
-				finishWithResponse('idle timeout with content');
+			if (!spawnResult || spawnResult.pid <= 0) {
+				cleanup();
+				resolved = true;
+				reject(new Error(`Failed to spawn grooming process for ${agentType}`));
+				return;
 			}
-		}, 1000);
 
-		// Overall timeout
-		setTimeout(() => {
-			if (!resolved) {
-				logger.warn('Grooming timeout', LOG_CONTEXT, {
-					groomerSessionId,
-					responseLength: responseBuffer.length,
-				});
+			logger.debug('Spawned grooming batch process', LOG_CONTEXT, {
+				groomerSessionId,
+				pid: spawnResult.pid,
+			});
 
-				if (responseBuffer.length > 0) {
-					finishWithResponse('overall timeout with content');
-				} else {
-					cleanup();
-					resolved = true;
-					reject(new Error('Grooming timed out with no response'));
+			// Set up idle check
+			idleCheckInterval = setInterval(() => {
+				const idleTime = Date.now() - lastDataTime;
+				if (idleTime > IDLE_TIMEOUT_MS && responseBuffer.length >= MIN_RESPONSE_LENGTH) {
+					finishWithResponse('idle timeout with content');
 				}
+			}, 1000);
+
+			// Overall timeout
+			setTimeout(() => {
+				if (!resolved) {
+					logger.warn('Grooming timeout', LOG_CONTEXT, {
+						groomerSessionId,
+						responseLength: responseBuffer.length,
+					});
+
+					if (responseBuffer.length > 0) {
+						finishWithResponse('overall timeout with content');
+					} else {
+						cleanup();
+						resolved = true;
+						reject(new Error('Grooming timed out with no response'));
+					}
+				}
+			}, timeoutMs);
+		};
+
+		spawnProcess().catch((error) => {
+			cleanup();
+			if (!resolved) {
+				resolved = true;
+				const err = error instanceof Error ? error : new Error(String(error));
+				logger.error('Failed to spawn grooming process', LOG_CONTEXT, {
+					groomerSessionId,
+					error: err.message,
+				});
+				reject(err);
 			}
-		}, timeoutMs);
+		});
 	});
 }
 

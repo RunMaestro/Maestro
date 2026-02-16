@@ -12,7 +12,7 @@
  * - Tooltip on hover for the bar chart
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
@@ -156,7 +156,11 @@ function groupSessionsByDate(
 		.sort((a, b) => a.date.localeCompare(b.date));
 }
 
-export function AutoRunStats({ timeRange, theme, columns = 6 }: AutoRunStatsProps) {
+export const AutoRunStats = memo(function AutoRunStats({
+	timeRange,
+	theme,
+	columns = 6,
+}: AutoRunStatsProps) {
 	const [sessions, setSessions] = useState<AutoRunSession[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -485,7 +489,7 @@ export function AutoRunStats({ timeRange, theme, columns = 6 }: AutoRunStatsProp
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Parse a local YYYY-MM-DD date string without UTC shift.

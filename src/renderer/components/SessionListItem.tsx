@@ -15,7 +15,7 @@
  * @module components/SessionListItem
  */
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import {
 	Star,
 	Play,
@@ -85,7 +85,7 @@ export interface SessionListItemProps {
 /**
  * SessionListItem component for rendering a single session row
  */
-export function SessionListItem({
+export const SessionListItem = memo(function SessionListItem({
 	session,
 	index,
 	selectedIndex,
@@ -109,16 +109,90 @@ export function SessionListItem({
 	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
+	const styles = useMemo(
+		() => ({
+			container: {
+				backgroundColor: isSelected ? theme.colors.accent + '15' : 'transparent',
+				borderColor: theme.colors.border + '50',
+			},
+			starIcon: {
+				color: isStarred ? theme.colors.warning : theme.colors.textDim,
+				fill: isStarred ? theme.colors.warning : 'transparent',
+			},
+			quickResumeIcon: {
+				color: theme.colors.success,
+			},
+			renameInput: {
+				color: theme.colors.accent,
+				borderColor: theme.colors.accent,
+				backgroundColor: theme.colors.bgActivity,
+			},
+			sessionName: {
+				color: theme.colors.accent,
+			},
+			renameIcon: {
+				color: theme.colors.accent,
+			},
+			renameIconMuted: {
+				color: theme.colors.textDim,
+			},
+			title: {
+				color: session.sessionName ? theme.colors.textDim : theme.colors.textMain,
+			},
+			statsRow: {
+				color: theme.colors.textDim,
+			},
+			maestroOrigin: {
+				backgroundColor: theme.colors.accent + '30',
+				color: theme.colors.accent,
+			},
+			autoOrigin: {
+				backgroundColor: theme.colors.warning + '30',
+				color: theme.colors.warning,
+			},
+			cliOrigin: {
+				backgroundColor: theme.colors.border,
+				color: theme.colors.textDim,
+			},
+			sessionId: {
+				backgroundColor: theme.colors.border + '60',
+				color: theme.colors.textDim,
+			},
+			cost: {
+				color: theme.colors.success,
+			},
+			matchCount: {
+				backgroundColor: theme.colors.accent + '20',
+				color: theme.colors.accent,
+			},
+			matchPreview: {
+				color: theme.colors.accent,
+			},
+			activeIndicator: {
+				backgroundColor: theme.colors.success + '20',
+				color: theme.colors.success,
+			},
+		}),
+		[
+			isSelected,
+			isStarred,
+			session.sessionName,
+			theme.colors.accent,
+			theme.colors.border,
+			theme.colors.warning,
+			theme.colors.success,
+			theme.colors.textDim,
+			theme.colors.textMain,
+			theme.colors.bgActivity,
+		],
+	);
 
 	return (
 		<div
 			ref={isSelected ? (selectedItemRef as React.RefObject<HTMLDivElement>) : null}
 			onClick={() => onSessionClick(session)}
 			className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-white/5 transition-colors border-b group cursor-pointer"
-			style={{
-				backgroundColor: isSelected ? theme.colors.accent + '15' : 'transparent',
-				borderColor: theme.colors.border + '50',
-			}}
+			style={styles.container}
 		>
 			{/* Star button */}
 			<button
@@ -126,13 +200,7 @@ export function SessionListItem({
 				className="p-1 -ml-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				title={isStarred ? 'Remove from favorites' : 'Add to favorites'}
 			>
-				<Star
-					className="w-4 h-4"
-					style={{
-						color: isStarred ? theme.colors.warning : theme.colors.textDim,
-						fill: isStarred ? theme.colors.warning : 'transparent',
-					}}
-				/>
+				<Star className="w-4 h-4" style={styles.starIcon} />
 			</button>
 
 			{/* Quick Resume button */}
@@ -141,7 +209,7 @@ export function SessionListItem({
 				className="p-1 rounded hover:bg-white/10 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
 				title="Resume session in new tab"
 			>
-				<Play className="w-4 h-4" style={{ color: theme.colors.success }} />
+				<Play className="w-4 h-4" style={styles.quickResumeIcon} />
 			</button>
 
 			<div className="flex-1 min-w-0">
@@ -167,16 +235,12 @@ export function SessionListItem({
 							onBlur={() => onSubmitRename(session.sessionId)}
 							placeholder="Enter session name..."
 							className="flex-1 bg-transparent outline-none text-sm font-semibold px-2 py-0.5 rounded border min-w-0"
-							style={{
-								color: theme.colors.accent,
-								borderColor: theme.colors.accent,
-								backgroundColor: theme.colors.bgActivity,
-							}}
+							style={styles.renameInput}
 						/>
 					</div>
 				) : session.sessionName ? (
 					<div className="flex items-center gap-1.5 mb-1 group/name">
-						<span className="font-semibold text-sm truncate" style={{ color: theme.colors.accent }}>
+						<span className="font-semibold text-sm truncate" style={styles.sessionName}>
 							{session.sessionName}
 						</span>
 						<button
@@ -184,7 +248,7 @@ export function SessionListItem({
 							className="p-0.5 rounded opacity-0 group-hover/name:opacity-100 hover:bg-white/10 transition-all"
 							title="Rename session"
 						>
-							<Edit3 className="w-3 h-3" style={{ color: theme.colors.accent }} />
+							<Edit3 className="w-3 h-3" style={styles.renameIcon} />
 						</button>
 					</div>
 				) : null}
@@ -195,7 +259,7 @@ export function SessionListItem({
 				>
 					<span
 						className="font-medium truncate text-sm flex-1 min-w-0"
-						style={{ color: session.sessionName ? theme.colors.textDim : theme.colors.textMain }}
+						style={styles.title}
 					>
 						{session.firstMessage || `Session ${session.sessionId.slice(0, 8)}...`}
 					</span>
@@ -206,18 +270,18 @@ export function SessionListItem({
 							className="p-0.5 rounded opacity-0 group-hover/title:opacity-100 hover:bg-white/10 transition-all shrink-0"
 							title="Add session name"
 						>
-							<Edit3 className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+							<Edit3 className="w-3 h-3" style={styles.renameIconMuted} />
 						</button>
 					)}
 				</div>
 
 				{/* Stats row: origin pill + session ID + stats + match info */}
-				<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
+				<div className="flex items-center gap-3 text-xs" style={styles.statsRow}>
 					{/* Session origin pill */}
 					{session.origin === 'user' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '30', color: theme.colors.accent }}
+							style={styles.maestroOrigin}
 							title="User-initiated through Maestro"
 						>
 							MAESTRO
@@ -226,7 +290,7 @@ export function SessionListItem({
 					{session.origin === 'auto' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.warning + '30', color: theme.colors.warning }}
+							style={styles.autoOrigin}
 							title="Auto-run session"
 						>
 							AUTO
@@ -235,7 +299,7 @@ export function SessionListItem({
 					{!session.origin && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
+							style={styles.cliOrigin}
 							title="Claude Code CLI session"
 						>
 							CLI
@@ -245,7 +309,7 @@ export function SessionListItem({
 					{/* Session ID pill */}
 					<span
 						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-						style={{ backgroundColor: theme.colors.border + '60', color: theme.colors.textDim }}
+						style={styles.sessionId}
 					>
 						{session.sessionId.startsWith('agent-')
 							? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
@@ -270,7 +334,7 @@ export function SessionListItem({
 					{(session.costUsd ?? 0) > 0 && (
 						<span
 							className="flex items-center gap-1 font-mono"
-							style={{ color: theme.colors.success }}
+							style={styles.cost}
 						>
 							<DollarSign className="w-3 h-3" />
 							{(session.costUsd ?? 0).toFixed(2)}
@@ -281,7 +345,7 @@ export function SessionListItem({
 					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
 						<span
 							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+							style={styles.matchCount}
 						>
 							<Search className="w-3 h-3" />
 							{searchResultInfo.matchCount}
@@ -290,7 +354,7 @@ export function SessionListItem({
 
 					{/* Show match preview for content searches */}
 					{searchResultInfo && searchResultInfo.matchPreview && searchMode !== 'title' && (
-						<span className="truncate italic max-w-[400px]" style={{ color: theme.colors.accent }}>
+						<span className="truncate italic max-w-[400px]" style={styles.matchPreview}>
 							"{searchResultInfo.matchPreview}"
 						</span>
 					)}
@@ -301,11 +365,11 @@ export function SessionListItem({
 			{isActive && (
 				<span
 					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-					style={{ backgroundColor: theme.colors.success + '20', color: theme.colors.success }}
+					style={styles.activeIndicator}
 				>
 					ACTIVE
 				</span>
 			)}
 		</div>
 	);
-}
+});

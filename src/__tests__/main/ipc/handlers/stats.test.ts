@@ -77,7 +77,7 @@ describe('stats IPC handlers', () => {
 			}),
 			exportToCsv: vi.fn().mockReturnValue('id,sessionId,...'),
 			clearOldData: vi.fn().mockReturnValue({ success: true, deletedCount: 0 }),
-			getDatabaseSize: vi.fn().mockReturnValue({ sizeBytes: 1024, sizeFormatted: '1 KB' }),
+			getDatabaseSize: vi.fn().mockResolvedValue(1024),
 			recordSessionCreated: vi.fn().mockReturnValue('session-lifecycle-id'),
 			recordSessionClosed: vi.fn().mockReturnValue(true),
 			getSessionLifecycleEvents: vi.fn().mockReturnValue([]),

@@ -22,6 +22,7 @@ import type {
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
 } from '../types';
+import type { HistoryEntry } from '../../shared/types';
 
 const LOG_CONTEXT = 'CallbackRegistry';
 
@@ -128,8 +129,11 @@ export class CallbackRegistry {
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
 
-	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
-		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
+	async getHistory(projectPath?: string, sessionId?: string): Promise<HistoryEntry[]> {
+		if (!this.callbacks.getHistory) {
+			return [];
+		}
+		return this.callbacks.getHistory(projectPath, sessionId);
 	}
 
 	// ============ Setter Methods ============

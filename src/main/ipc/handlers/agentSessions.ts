@@ -108,6 +108,34 @@ interface SessionFileInfo {
 	mtimeMs: number;
 }
 
+const CLAUDE_SCAN_BATCH_SIZE = 10;
+const CODEX_DAY_SCAN_BATCH_SIZE = 10;
+const SESSION_DISCOVERY_CACHE_TTL_MS = 30 * 1000;
+
+type SessionDiscoveryProvider = 'claude-code' | 'codex';
+
+interface SessionDiscoveryCacheEntry {
+	files: SessionFileInfo[];
+	expiresAt: number;
+}
+
+const sessionDiscoveryCache: Partial<Record<SessionDiscoveryProvider, SessionDiscoveryCacheEntry>> = {};
+
+function getCachedSessionFiles(provider: SessionDiscoveryProvider): SessionFileInfo[] | null {
+	const cached = sessionDiscoveryCache[provider];
+	if (cached && cached.expiresAt > Date.now()) {
+		return cached.files;
+	}
+	return null;
+}
+
+function setCachedSessionFiles(provider: SessionDiscoveryProvider, files: SessionFileInfo[]): void {
+	sessionDiscoveryCache[provider] = {
+		files,
+		expiresAt: Date.now() + SESSION_DISCOVERY_CACHE_TTL_MS,
+	};
+}
+
 /**
  * Parse a Claude Code session file and extract stats
  */
@@ -203,6 +231,9 @@ function parseCodexSessionContent(
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
+	const cached = getCachedSessionFiles('claude-code');
+	if (cached) return cached;
+
 	const homeDir = os.homedir();
 	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
 	const files: SessionFileInfo[] = [];
@@ -210,36 +241,55 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
 	try {
 		await fs.access(claudeProjectsDir);
 	} catch {
+		setCachedSessionFiles('claude-code', files);
 		return files;
 	}
 
 	const projectDirs = await fs.readdir(claudeProjectsDir);
 
-	for (const projectDir of projectDirs) {
+	const processProjectDir = async (projectDir: string): Promise<SessionFileInfo[]> => {
+		const collected: SessionFileInfo[] = [];
 		const projectPath = path.join(claudeProjectsDir, projectDir);
 		try {
 			const stat = await fs.stat(projectPath);
-			if (!stat.isDirectory()) continue;
-
-			const dirFiles = await fs.readdir(projectPath);
-			const sessionFiles = dirFiles.filter((f) => f.endsWith('.jsonl'));
-
-			for (const filename of sessionFiles) {
-				const filePath = path.join(projectPath, filename);
-				try {
-					const fileStat = await fs.stat(filePath);
-					// Skip 0-byte sessions (created but abandoned before any content was written)
-					if (fileStat.size === 0) continue;
-					const sessionKey = `${projectDir}/${filename.replace('.jsonl', '')}`;
-					files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
-				} catch {
-					// Skip files we can't stat
-				}
-			}
+			if (!stat.isDirectory()) return collected;
 		} catch {
-			// Skip directories we can't access
+			return collected;
+		}
+
+		let dirFiles: string[];
+		try {
+			dirFiles = await fs.readdir(projectPath);
+		} catch {
+			return collected;
+		}
+
+		for (const filename of dirFiles) {
+			if (!filename.endsWith('.jsonl')) continue;
+			const filePath = path.join(projectPath, filename);
+			try {
+				const fileStat = await fs.stat(filePath);
+				// Skip 0-byte sessions (created but abandoned before any content was written)
+				if (fileStat.size === 0) continue;
+				const sessionKey = `${projectDir}/${filename.replace('.jsonl', '')}`;
+				collected.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
+			} catch {
+				// Skip files we can't stat
+			}
+		}
+
+		return collected;
+	};
+
+	for (let i = 0; i < projectDirs.length; i += CLAUDE_SCAN_BATCH_SIZE) {
+		const batch = projectDirs.slice(i, i + CLAUDE_SCAN_BATCH_SIZE);
+		const batchResults = await Promise.all(batch.map((projectDir) => processProjectDir(projectDir)));
+		for (const batchFiles of batchResults) {
+			files.push(...batchFiles);
 		}
 	}
+
+	setCachedSessionFiles('claude-code', files);
 
 	return files;
 }
@@ -249,6 +299,9 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
  * Returns list of files with their mtime for cache comparison
  */
 async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
+	const cached = getCachedSessionFiles('codex');
+	if (cached) return cached;
+
 	const homeDir = os.homedir();
 	const codexSessionsDir = path.join(homeDir, '.codex', 'sessions');
 	const files: SessionFileInfo[] = [];
@@ -256,9 +309,16 @@ async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
 	try {
 		await fs.access(codexSessionsDir);
 	} catch {
+		setCachedSessionFiles('codex', files);
 		return files;
 	}
 
+	interface DayDirectoryInfo {
+		dayDir: string;
+		prefix: string;
+	}
+
+	const dayDirectories: DayDirectoryInfo[] = [];
 	const years = await fs.readdir(codexSessionsDir);
 	for (const year of years) {
 		if (!/^\d{4}$/.test(year)) continue;
@@ -267,52 +327,86 @@ async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
 		try {
 			const yearStat = await fs.stat(yearDir);
 			if (!yearStat.isDirectory()) continue;
-
-			const months = await fs.readdir(yearDir);
-			for (const month of months) {
-				if (!/^\d{2}$/.test(month)) continue;
-				const monthDir = path.join(yearDir, month);
-
-				try {
-					const monthStat = await fs.stat(monthDir);
-					if (!monthStat.isDirectory()) continue;
-
-					const days = await fs.readdir(monthDir);
-					for (const day of days) {
-						if (!/^\d{2}$/.test(day)) continue;
-						const dayDir = path.join(monthDir, day);
-
-						try {
-							const dayStat = await fs.stat(dayDir);
-							if (!dayStat.isDirectory()) continue;
-
-							const dirFiles = await fs.readdir(dayDir);
-							for (const file of dirFiles) {
-								if (!file.endsWith('.jsonl')) continue;
-								const filePath = path.join(dayDir, file);
-
-								try {
-									const fileStat = await fs.stat(filePath);
-									// Skip 0-byte sessions (created but abandoned before any content was written)
-									if (fileStat.size === 0) continue;
-									const sessionKey = `${year}/${month}/${day}/${file.replace('.jsonl', '')}`;
-									files.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
-								} catch {
-									// Skip files we can't stat
-								}
-							}
-						} catch {
-							continue;
-						}
-					}
-				} catch {
-					continue;
-				}
-			}
 		} catch {
 			continue;
 		}
+
+		let months: string[];
+		try {
+			months = await fs.readdir(yearDir);
+		} catch {
+			continue;
+		}
+
+		for (const month of months) {
+			if (!/^\d{2}$/.test(month)) continue;
+			const monthDir = path.join(yearDir, month);
+
+			try {
+				const monthStat = await fs.stat(monthDir);
+				if (!monthStat.isDirectory()) continue;
+			} catch {
+				continue;
+			}
+
+			let days: string[];
+			try {
+				days = await fs.readdir(monthDir);
+			} catch {
+				continue;
+			}
+
+			for (const day of days) {
+				if (!/^\d{2}$/.test(day)) continue;
+				const dayDir = path.join(monthDir, day);
+				dayDirectories.push({ dayDir, prefix: `${year}/${month}/${day}` });
+			}
+		}
 	}
+
+	const processDayDir = async ({ dayDir, prefix }: DayDirectoryInfo): Promise<SessionFileInfo[]> => {
+		const collected: SessionFileInfo[] = [];
+		try {
+			const dayStat = await fs.stat(dayDir);
+			if (!dayStat.isDirectory()) return collected;
+		} catch {
+			return collected;
+		}
+
+		let dirFiles: string[];
+		try {
+			dirFiles = await fs.readdir(dayDir);
+		} catch {
+			return collected;
+		}
+
+		for (const file of dirFiles) {
+			if (!file.endsWith('.jsonl')) continue;
+			const filePath = path.join(dayDir, file);
+
+			try {
+				const fileStat = await fs.stat(filePath);
+				// Skip 0-byte sessions (created but abandoned before any content was written)
+				if (fileStat.size === 0) continue;
+				const sessionKey = `${prefix}/${file.replace('.jsonl', '')}`;
+				collected.push({ filePath, sessionKey, mtimeMs: fileStat.mtimeMs });
+			} catch {
+				// Skip files we can't stat
+			}
+		}
+
+		return collected;
+	};
+
+	for (let i = 0; i < dayDirectories.length; i += CODEX_DAY_SCAN_BATCH_SIZE) {
+		const batch = dayDirectories.slice(i, i + CODEX_DAY_SCAN_BATCH_SIZE);
+		const batchResults = await Promise.all(batch.map((info) => processDayDir(info)));
+		for (const batchFiles of batchResults) {
+			files.push(...batchFiles);
+		}
+	}
+
+	setCachedSessionFiles('codex', files);
 
 	return files;
 }

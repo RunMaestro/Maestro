@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
 	History,
 	Play,
@@ -19,7 +20,10 @@ interface HistoryHelpModalProps {
 	onClose: () => void;
 }
 
-export function HistoryHelpModal({ theme, onClose }: HistoryHelpModalProps) {
+export const HistoryHelpModal = memo(function HistoryHelpModal({
+	theme,
+	onClose,
+}: HistoryHelpModalProps) {
 	return (
 		<Modal
 			theme={theme}
@@ -303,4 +307,4 @@ export function HistoryHelpModal({ theme, onClose }: HistoryHelpModalProps) {
 			</div>
 		</Modal>
 	);
-}
+});

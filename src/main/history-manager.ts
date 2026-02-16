@@ -30,6 +30,7 @@ import {
 } from '../shared/history';
 
 const LOG_CONTEXT = '[HistoryManager]';
+const fsPromises = fs.promises;
 
 /**
  * HistoryManager handles per-session history storage with automatic migration
@@ -54,13 +55,13 @@ export class HistoryManager {
 	 */
 	async initialize(): Promise<void> {
 		// Ensure history directory exists
-		if (!fs.existsSync(this.historyDir)) {
-			fs.mkdirSync(this.historyDir, { recursive: true });
+		if (!(await this.fileExists(this.historyDir))) {
+			await fsPromises.mkdir(this.historyDir, { recursive: true });
 			logger.debug('Created history directory', LOG_CONTEXT);
 		}
 
 		// Check if migration is needed
-		if (this.needsMigration()) {
+		if (await this.needsMigration()) {
 			await this.migrateFromLegacy();
 		}
 	}
@@ -68,16 +69,16 @@ export class HistoryManager {
 	/**
 	 * Check if migration from legacy format is needed
 	 */
-	private needsMigration(): boolean {
+	private async needsMigration(): Promise<boolean> {
 		// If marker exists, migration was already done
-		if (fs.existsSync(this.migrationMarkerPath)) {
+		if (await this.fileExists(this.migrationMarkerPath)) {
 			return false;
 		}
 
 		// If legacy file exists with entries, need to migrate
-		if (fs.existsSync(this.legacyFilePath)) {
+		if (await this.fileExists(this.legacyFilePath)) {
 			try {
-				const data = JSON.parse(fs.readFileSync(this.legacyFilePath, 'utf-8'));
+				const data = JSON.parse(await fsPromises.readFile(this.legacyFilePath, 'utf-8'));
 				return data.entries && data.entries.length > 0;
 			} catch {
 				return false;
@@ -101,7 +102,7 @@ export class HistoryManager {
 		logger.info('Starting history migration from legacy format', LOG_CONTEXT);
 
 		try {
-			const legacyData = JSON.parse(fs.readFileSync(this.legacyFilePath, 'utf-8'));
+			const legacyData = JSON.parse(await fsPromises.readFile(this.legacyFilePath, 'utf-8'));
 			const entries: HistoryEntry[] = legacyData.entries || [];
 
 			// Group entries by sessionId (skip entries without sessionId)
@@ -136,7 +137,7 @@ export class HistoryManager {
 					entries: sessionEntries.slice(0, MAX_ENTRIES_PER_SESSION),
 				};
 				const filePath = this.getSessionFilePath(sessionId);
-				fs.writeFileSync(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
+				await fsPromises.writeFile(filePath, JSON.stringify(fileData, null, 2), 'utf-8');
 				sessionsMigrated++;
 				logger.debug(
 					`Migrated ${sessionEntries.length} entries for session ${sessionId}`,
@@ -151,7 +152,11 @@ export class HistoryManager {
 				legacyEntryCount: entries.length,
 				sessionsMigrated,
 			};
-			fs.writeFileSync(this.migrationMarkerPath, JSON.stringify(marker, null, 2), 'utf-8');
+			await fsPromises.writeFile(
+				this.migrationMarkerPath,
+				JSON.stringify(marker, null, 2),
+				'utf-8'
+			);
 
 			logger.info(
 				`History migration complete: ${entries.length} entries -> ${sessionsMigrated} session files`,
@@ -171,16 +176,25 @@ export class HistoryManager {
 		return path.join(this.historyDir, `${safeId}.json`);
 	}
 
+	private async fileExists(filePath: string): Promise<boolean> {
+		try {
+			await fsPromises.access(filePath, fs.constants.F_OK);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	/**
 	 * Read history for a specific session
 	 */
-	getEntries(sessionId: string): HistoryEntry[] {
+	async getEntries(sessionId: string): Promise<HistoryEntry[]> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
+		if (!(await this.fileExists(filePath))) {
 			return [];
 		}
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const data: HistoryFileData = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
 			return data.entries || [];
 		} catch (error) {
 			logger.warn(`Failed to read history for session ${sessionId}: ${error}`, LOG_CONTEXT);
@@ -192,13 +206,13 @@ export class HistoryManager {
 	/**
 	 * Add an entry to a session's history
 	 */
-	addEntry(sessionId: string, projectPath: string, entry: HistoryEntry): void {
+	async addEntry(sessionId: string, projectPath: string, entry: HistoryEntry): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
 		let data: HistoryFileData;
 
-		if (fs.existsSync(filePath)) {
+		if (await this.fileExists(filePath)) {
 			try {
-				data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+				data = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
 			} catch {
 				data = { version: HISTORY_VERSION, sessionId, projectPath, entries: [] };
 			}
@@ -218,7 +232,7 @@ export class HistoryManager {
 		data.projectPath = projectPath;
 
 		try {
-			fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+			await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 			logger.debug(`Added history entry for session ${sessionId}`, LOG_CONTEXT);
 		} catch (error) {
 			logger.error(`Failed to write history for session ${sessionId}: ${error}`, LOG_CONTEXT);
@@ -229,14 +243,14 @@ export class HistoryManager {
 	/**
 	 * Delete a specific entry from a session's history
 	 */
-	deleteEntry(sessionId: string, entryId: string): boolean {
+	async deleteEntry(sessionId: string, entryId: string): Promise<boolean> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
+		if (!(await this.fileExists(filePath))) {
 			return false;
 		}
 
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const data: HistoryFileData = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
 			const originalLength = data.entries.length;
 			data.entries = data.entries.filter((e) => e.id !== entryId);
 
@@ -245,7 +259,7 @@ export class HistoryManager {
 			}
 
 			try {
-				fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+				await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 				return true;
 			} catch (writeError) {
 				logger.error(
@@ -263,14 +277,18 @@ export class HistoryManager {
 	/**
 	 * Update a specific entry in a session's history
 	 */
-	updateEntry(sessionId: string, entryId: string, updates: Partial<HistoryEntry>): boolean {
+	async updateEntry(
+		sessionId: string,
+		entryId: string,
+		updates: Partial<HistoryEntry>
+	): Promise<boolean> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (!fs.existsSync(filePath)) {
+		if (!(await this.fileExists(filePath))) {
 			return false;
 		}
 
 		try {
-			const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+			const data: HistoryFileData = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
 			const index = data.entries.findIndex((e) => e.id === entryId);
 
 			if (index === -1) {
@@ -279,7 +297,7 @@ export class HistoryManager {
 
 			data.entries[index] = { ...data.entries[index], ...updates };
 			try {
-				fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+				await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 				return true;
 			} catch (writeError) {
 				logger.error(
@@ -297,30 +315,35 @@ export class HistoryManager {
 	/**
 	 * Clear all history for a session
 	 */
-	clearSession(sessionId: string): void {
+	async clearSession(sessionId: string): Promise<void> {
 		const filePath = this.getSessionFilePath(sessionId);
-		if (fs.existsSync(filePath)) {
-			try {
-				fs.unlinkSync(filePath);
-				logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
-			} catch (error) {
-				logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
-				captureException(error, { operation: 'history:clear', sessionId });
-			}
+		if (!(await this.fileExists(filePath))) {
+			return;
+		}
+		try {
+			await fsPromises.unlink(filePath);
+			logger.info(`Cleared history for session ${sessionId}`, LOG_CONTEXT);
+		} catch (error) {
+			logger.error(`Failed to clear history for session ${sessionId}: ${error}`, LOG_CONTEXT);
+			captureException(error, { operation: 'history:clear', sessionId });
 		}
 	}
 
 	/**
 	 * List all sessions that have history files
 	 */
-	listSessionsWithHistory(): string[] {
-		if (!fs.existsSync(this.historyDir)) {
+	async listSessionsWithHistory(): Promise<string[]> {
+		try {
+			if (!(await this.fileExists(this.historyDir))) {
+				return [];
+			}
+			return (await fsPromises.readdir(this.historyDir))
+				.filter((f) => f.endsWith('.json'))
+				.map((f) => f.replace('.json', ''));
+		} catch (error) {
+			logger.warn(`Failed to list sessions with history: ${error}`, LOG_CONTEXT);
 			return [];
 		}
-		return fs
-			.readdirSync(this.historyDir)
-			.filter((f) => f.endsWith('.json'))
-			.map((f) => f.replace('.json', ''));
 	}
 
 	/**
@@ -336,14 +359,13 @@ export class HistoryManager {
 	 * Returns entries sorted by timestamp (most recent first)
 	 * @deprecated Use getAllEntriesPaginated for large datasets
 	 */
-	getAllEntries(limit?: number): HistoryEntry[] {
-		const sessions = this.listSessionsWithHistory();
-		const allEntries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
-			allEntries.push(...entries);
-		}
+	async getAllEntries(limit?: number): Promise<HistoryEntry[]> {
+		const sessions = await this.listSessionsWithHistory();
+		const allEntriesArrays = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
+		const allEntries = allEntriesArrays.reduce<HistoryEntry[]>((acc, entries) => {
+			acc.push(...entries);
+			return acc;
+		}, []);
 
 		const sorted = sortEntriesByTimestamp(allEntries);
 		return limit ? sorted.slice(0, limit) : sorted;
@@ -353,14 +375,15 @@ export class HistoryManager {
 	 * Get all entries across all sessions with pagination support
 	 * Returns entries sorted by timestamp (most recent first)
 	 */
-	getAllEntriesPaginated(options?: PaginationOptions): PaginatedResult<HistoryEntry> {
-		const sessions = this.listSessionsWithHistory();
-		const allEntries: HistoryEntry[] = [];
-
-		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
-			allEntries.push(...entries);
-		}
+	async getAllEntriesPaginated(
+		options?: PaginationOptions
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const sessions = await this.listSessionsWithHistory();
+		const allEntriesArrays = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
+		const allEntries = allEntriesArrays.reduce<HistoryEntry[]>((acc, entries) => {
+			acc.push(...entries);
+			return acc;
+		}, []);
 
 		const sorted = sortEntriesByTimestamp(allEntries);
 		return paginateEntries(sorted, options);
@@ -370,12 +393,12 @@ export class HistoryManager {
 	 * Get entries filtered by project path
 	 * @deprecated Use getEntriesByProjectPathPaginated for large datasets
 	 */
-	getEntriesByProjectPath(projectPath: string): HistoryEntry[] {
-		const sessions = this.listSessionsWithHistory();
+	async getEntriesByProjectPath(projectPath: string): Promise<HistoryEntry[]> {
+		const sessions = await this.listSessionsWithHistory();
+		const sessionEntriesList = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
 		const entries: HistoryEntry[] = [];
 
-		for (const sessionId of sessions) {
-			const sessionEntries = this.getEntries(sessionId);
+		for (const sessionEntries of sessionEntriesList) {
 			if (sessionEntries.length > 0 && sessionEntries[0].projectPath === projectPath) {
 				entries.push(...sessionEntries);
 			}
@@ -387,15 +410,15 @@ export class HistoryManager {
 	/**
 	 * Get entries filtered by project path with pagination support
 	 */
-	getEntriesByProjectPathPaginated(
+	async getEntriesByProjectPathPaginated(
 		projectPath: string,
 		options?: PaginationOptions
-	): PaginatedResult<HistoryEntry> {
-		const sessions = this.listSessionsWithHistory();
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const sessions = await this.listSessionsWithHistory();
+		const sessionEntriesList = await Promise.all(sessions.map((sessionId) => this.getEntries(sessionId)));
 		const entries: HistoryEntry[] = [];
 
-		for (const sessionId of sessions) {
-			const sessionEntries = this.getEntries(sessionId);
+		for (const sessionEntries of sessionEntriesList) {
 			if (sessionEntries.length > 0 && sessionEntries[0].projectPath === projectPath) {
 				entries.push(...sessionEntries);
 			}
@@ -408,11 +431,11 @@ export class HistoryManager {
 	/**
 	 * Get entries for a specific session with pagination support
 	 */
-	getEntriesPaginated(
+	async getEntriesPaginated(
 		sessionId: string,
 		options?: PaginationOptions
-	): PaginatedResult<HistoryEntry> {
-		const entries = this.getEntries(sessionId);
+	): Promise<PaginatedResult<HistoryEntry>> {
+		const entries = await this.getEntries(sessionId);
 		return paginateEntries(entries, options);
 	}
 
@@ -420,36 +443,49 @@ export class HistoryManager {
 	 * Update sessionName for all entries matching a given agentSessionId.
 	 * This is used when a tab is renamed to retroactively update past history entries.
 	 */
-	updateSessionNameByClaudeSessionId(agentSessionId: string, sessionName: string): number {
-		const sessions = this.listSessionsWithHistory();
-		let updatedCount = 0;
-
-		for (const sessionId of sessions) {
-			const filePath = this.getSessionFilePath(sessionId);
-			if (!fs.existsSync(filePath)) continue;
-
-			try {
-				const data: HistoryFileData = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-				let modified = false;
-
-				for (const entry of data.entries) {
-					if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
-						entry.sessionName = sessionName;
-						modified = true;
-						updatedCount++;
-					}
+	async updateSessionNameByClaudeSessionId(
+		agentSessionId: string,
+		sessionName: string
+	): Promise<number> {
+		const sessions = await this.listSessionsWithHistory();
+		const sessionDataList = await Promise.all(
+			sessions.map(async (sessionId) => {
+				const filePath = this.getSessionFilePath(sessionId);
+				try {
+					const data: HistoryFileData = JSON.parse(await fsPromises.readFile(filePath, 'utf-8'));
+					return { sessionId, filePath, data };
+				} catch (error) {
+					logger.warn(`Failed to read session ${sessionId} while updating names: ${error}`, LOG_CONTEXT);
+					captureException(error, { operation: 'history:updateSessionNameRead', sessionId });
+					return null;
 				}
+			})
+		);
 
-				if (modified) {
-					fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
+		let updatedCount = 0;
+		for (const sessionData of sessionDataList) {
+			if (!sessionData) continue;
+			const { sessionId, filePath, data } = sessionData;
+			let modified = false;
+			for (const entry of data.entries) {
+				if (entry.agentSessionId === agentSessionId && entry.sessionName !== sessionName) {
+					entry.sessionName = sessionName;
+					modified = true;
+					updatedCount++;
+				}
+			}
+			if (modified) {
+				try {
+					await fsPromises.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
 					logger.debug(
 						`Updated ${updatedCount} entries for agentSessionId ${agentSessionId} in session ${sessionId}`,
 						LOG_CONTEXT
 					);
+				} catch (error) {
+					logger.warn(`Failed to write updates for session ${sessionId}: ${error}`, LOG_CONTEXT);
+					captureException(error, { operation: 'history:updateSessionNameWrite', sessionId });
 				}
-			} catch (error) {
-				logger.warn(`Failed to update sessionName in session ${sessionId}: ${error}`, LOG_CONTEXT);
-				captureException(error, { operation: 'history:updateSessionName', sessionId });
+				break; // Stop scanning once the target session is updated
 			}
 		}
 
@@ -459,12 +495,12 @@ export class HistoryManager {
 	/**
 	 * Clear all sessions for a specific project
 	 */
-	clearByProjectPath(projectPath: string): void {
-		const sessions = this.listSessionsWithHistory();
+	async clearByProjectPath(projectPath: string): Promise<void> {
+		const sessions = await this.listSessionsWithHistory();
 		for (const sessionId of sessions) {
-			const entries = this.getEntries(sessionId);
+			const entries = await this.getEntries(sessionId);
 			if (entries.length > 0 && entries[0].projectPath === projectPath) {
-				this.clearSession(sessionId);
+				await this.clearSession(sessionId);
 			}
 		}
 	}
@@ -472,10 +508,10 @@ export class HistoryManager {
 	/**
 	 * Clear all history (all session files)
 	 */
-	clearAll(): void {
-		const sessions = this.listSessionsWithHistory();
+	async clearAll(): Promise<void> {
+		const sessions = await this.listSessionsWithHistory();
 		for (const sessionId of sessions) {
-			this.clearSession(sessionId);
+			await this.clearSession(sessionId);
 		}
 		logger.info('Cleared all history', LOG_CONTEXT);
 	}

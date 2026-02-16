@@ -69,6 +69,7 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsReaddirSync = vi.fn(() => [] as string[]);
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -80,6 +81,21 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
+	promises: {
+		access: async (pathArg: unknown) => {
+			if (!mockFsExistsSync(pathArg)) {
+				const error = new Error('ENOENT');
+				(error as NodeJS.ErrnoException).code = 'ENOENT';
+				throw error;
+			}
+		},
+		mkdir: async (...args: unknown[]) => mockFsMkdirSync(...args),
+		stat: async (...args: unknown[]) => mockFsStatSync(...args),
+		readdir: async (...args: unknown[]) => mockFsReaddirSync(...args),
+		unlink: async (...args: unknown[]) => mockFsUnlinkSync(...args),
+	},
+	constants: { F_OK: 0 },
 }));
 
 // Mock logger
@@ -127,12 +143,12 @@ describe('Database VACUUM functionality', () => {
 			// so getDatabaseSize will catch the error and return 0
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Since mockFsExistsSync.mockReturnValue(true) is set but statSync is not mocked,
 			// getDatabaseSize will try to call the real statSync on a non-existent path
 			// and catch the error, returning 0
-			const size = db.getDatabaseSize();
+			const size = await db.getDatabaseSize();
 
 			// The mock environment doesn't have actual file, so expect 0
 			expect(size).toBe(0);
@@ -141,10 +157,10 @@ describe('Database VACUUM functionality', () => {
 		it('should handle statSync gracefully when file does not exist', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// getDatabaseSize should not throw
-			expect(() => db.getDatabaseSize()).not.toThrow();
+			await expect(db.getDatabaseSize()).resolves.toBe(0);
 		});
 	});
 
@@ -152,13 +168,13 @@ describe('Database VACUUM functionality', () => {
 		it('should execute VACUUM SQL command', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks from initialization
 			mockStatement.run.mockClear();
 			mockDb.prepare.mockClear();
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			expect(result.success).toBe(true);
 			expect(mockDb.prepare).toHaveBeenCalledWith('VACUUM');
@@ -168,9 +184,9 @@ describe('Database VACUUM functionality', () => {
 		it('should return success true when vacuum completes', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			expect(result.success).toBe(true);
 			expect(result.error).toBeUndefined();
@@ -179,9 +195,9 @@ describe('Database VACUUM functionality', () => {
 		it('should return bytesFreed of 0 when sizes are equal (mocked)', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			// With mock fs, both before and after sizes will be 0
 			expect(result.bytesFreed).toBe(0);
@@ -192,7 +208,7 @@ describe('Database VACUUM functionality', () => {
 			const db = new StatsDB();
 			// Don't initialize
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			expect(result.success).toBe(false);
 			expect(result.bytesFreed).toBe(0);
@@ -202,7 +218,7 @@ describe('Database VACUUM functionality', () => {
 		it('should handle VACUUM failure gracefully', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Make VACUUM fail
 			mockDb.prepare.mockImplementation((sql: string) => {
@@ -216,7 +232,7 @@ describe('Database VACUUM functionality', () => {
 				return mockStatement;
 			});
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			expect(result.success).toBe(false);
 			expect(result.error).toContain('database is locked');
@@ -226,12 +242,12 @@ describe('Database VACUUM functionality', () => {
 			const { logger } = await import('../../../main/utils/logger');
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear logger mocks from initialization
 			vi.mocked(logger.info).mockClear();
 
-			db.vacuum();
+			await db.vacuum();
 
 			// Check that logger was called with vacuum-related messages
 			expect(logger.info).toHaveBeenCalledWith(
@@ -249,13 +265,13 @@ describe('Database VACUUM functionality', () => {
 		it('should skip vacuum if database size is 0 (below threshold)', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks from initialization
 			mockStatement.run.mockClear();
 			mockDb.prepare.mockClear();
 
-			const result = db.vacuumIfNeeded();
+			const result = await db.vacuumIfNeeded();
 
 			// Size is 0 (mock fs), which is below 100MB threshold
 			expect(result.vacuumed).toBe(false);
@@ -266,9 +282,9 @@ describe('Database VACUUM functionality', () => {
 		it('should return correct databaseSize in result', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			const result = db.vacuumIfNeeded();
+			const result = await db.vacuumIfNeeded();
 
 			// Size property should be present
 			expect(typeof result.databaseSize).toBe('number');
@@ -277,10 +293,10 @@ describe('Database VACUUM functionality', () => {
 		it('should use default 100MB threshold when not specified', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// With 0 byte size (mocked), should skip vacuum
-			const result = db.vacuumIfNeeded();
+			const result = await db.vacuumIfNeeded();
 
 			expect(result.vacuumed).toBe(false);
 		});
@@ -288,14 +304,14 @@ describe('Database VACUUM functionality', () => {
 		it('should not vacuum with threshold 0 and size 0 since 0 is not > 0', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks from initialization
 			mockStatement.run.mockClear();
 			mockDb.prepare.mockClear();
 
 			// With 0 threshold and 0 byte file: 0 is NOT greater than 0
-			const result = db.vacuumIfNeeded(0);
+			const result = await db.vacuumIfNeeded(0);
 
 			// The condition is: databaseSize < thresholdBytes
 			// 0 < 0 is false, so vacuumed should be true (it tries to vacuum)
@@ -308,12 +324,12 @@ describe('Database VACUUM functionality', () => {
 			const { logger } = await import('../../../main/utils/logger');
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear logger mocks from initialization
 			vi.mocked(logger.debug).mockClear();
 
-			db.vacuumIfNeeded();
+			await db.vacuumIfNeeded();
 
 			expect(logger.debug).toHaveBeenCalledWith(
 				expect.stringContaining('below vacuum threshold'),
@@ -326,14 +342,14 @@ describe('Database VACUUM functionality', () => {
 		it('should respect custom threshold parameter (threshold = -1 means always vacuum)', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks from initialization
 			mockStatement.run.mockClear();
 			mockDb.prepare.mockClear();
 
 			// With -1 threshold, 0 > -1 is true, so should vacuum
-			const result = db.vacuumIfNeeded(-1);
+			const result = await db.vacuumIfNeeded(-1);
 
 			expect(result.vacuumed).toBe(true);
 			expect(mockDb.prepare).toHaveBeenCalledWith('VACUUM');
@@ -342,14 +358,14 @@ describe('Database VACUUM functionality', () => {
 		it('should not vacuum with very large threshold', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks from initialization
 			mockStatement.run.mockClear();
 			mockDb.prepare.mockClear();
 
 			// With 1TB threshold, should NOT trigger vacuum
-			const result = db.vacuumIfNeeded(1024 * 1024 * 1024 * 1024);
+			const result = await db.vacuumIfNeeded(1024 * 1024 * 1024 * 1024);
 
 			expect(result.vacuumed).toBe(false);
 			expect(mockDb.prepare).not.toHaveBeenCalledWith('VACUUM');
@@ -369,7 +385,7 @@ describe('Database VACUUM functionality', () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
 
-			db.initialize();
+			await db.initialize();
 
 			// With old timestamp, vacuumIfNeededWeekly should proceed to call vacuumIfNeeded
 			// which logs "below vacuum threshold" for small databases (mocked as 1024 bytes)
@@ -396,7 +412,7 @@ describe('Database VACUUM functionality', () => {
 			const db = new StatsDB();
 
 			// Initialize should not throw (vacuum is skipped due to 0 size anyway)
-			expect(() => db.initialize()).not.toThrow();
+			await expect(db.initialize()).resolves.toBeUndefined();
 
 			// Database should still be ready
 			expect(db.isReady()).toBe(true);
@@ -408,7 +424,7 @@ describe('Database VACUUM functionality', () => {
 
 			// Time the initialization (should be fast for mock)
 			const start = Date.now();
-			db.initialize();
+			await db.initialize();
 			const elapsed = Date.now() - start;
 
 			expect(db.isReady()).toBe(true);
@@ -420,9 +436,9 @@ describe('Database VACUUM functionality', () => {
 		it('vacuum should return object with success, bytesFreed, and optional error', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			const result = db.vacuum();
+			const result = await db.vacuum();
 
 			expect(typeof result.success).toBe('boolean');
 			expect(typeof result.bytesFreed).toBe('number');
@@ -432,9 +448,9 @@ describe('Database VACUUM functionality', () => {
 		it('vacuumIfNeeded should return object with vacuumed, databaseSize, and optional result', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
-			const result = db.vacuumIfNeeded();
+			const result = await db.vacuumIfNeeded();
 
 			expect(typeof result.vacuumed).toBe('boolean');
 			expect(typeof result.databaseSize).toBe('number');
@@ -444,10 +460,10 @@ describe('Database VACUUM functionality', () => {
 		it('vacuumIfNeeded should include result when vacuum is performed', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Use -1 threshold to force vacuum
-			const result = db.vacuumIfNeeded(-1);
+			const result = await db.vacuumIfNeeded(-1);
 
 			expect(result.vacuumed).toBe(true);
 			expect(result.result).toBeDefined();
@@ -478,7 +494,7 @@ describe('Database VACUUM functionality', () => {
 		it('should return error when olderThanDays is 0 or negative', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const resultZero = db.clearOldData(0);
 			expect(resultZero.success).toBe(false);
@@ -496,7 +512,7 @@ describe('Database VACUUM functionality', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const result = db.clearOldData(30);
 
@@ -513,7 +529,7 @@ describe('Database VACUUM functionality', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const result = db.clearOldData(365);
 
@@ -542,7 +558,7 @@ describe('Database VACUUM functionality', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const beforeCall = Date.now();
 			db.clearOldData(7);
@@ -569,7 +585,7 @@ describe('Database VACUUM functionality', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const result = db.clearOldData(30);
 
@@ -586,7 +602,7 @@ describe('Database VACUUM functionality', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Test common time periods from Settings UI
 			const periods = [7, 30, 90, 180, 365];

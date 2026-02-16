@@ -197,6 +197,14 @@ function getInitialImageState(src: string | undefined, folderPath: string | null
 	return { dataUrl: null, loading: true, filename: src.split('/').pop() || null };
 }
 
+const COMPLETED_TASK_REGEX = /^[\s]*[-*]\s*\[x\]/gim;
+const COMPLETED_TASK_REPLACE_REGEX = /^([\s]*[-*]\s*)\[x\]/gim;
+const UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s\]/gim;
+const SEARCH_SPECIAL_CHARS_REGEX = /[.*+?^${}()|[\]\\]/g;
+const TASK_LIST_REGEX = /^(\s*)- \[([ x])\]\s+/;
+const UNORDERED_LIST_REGEX = /^(\s*)([-*])\s+/;
+const ORDERED_LIST_REGEX = /^(\s*)(\d+)\.\s+/;
+
 // Custom image component that loads images from the Auto Run folder or external URLs
 // Memoized to prevent re-renders and image reloading when parent updates
 const AttachmentImage = memo(function AttachmentImage({
@@ -608,6 +616,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Dirty state: true when localContent differs from savedContent
 	const isDirty = localContent !== savedContent;
 
+	const completedTaskMatches = useMemo(() => localContent.match(COMPLETED_TASK_REGEX) || [], [localContent]);
+	const completedTaskCount = completedTaskMatches.length;
+	const savedCompletedTaskMatches = useMemo(
+		() => savedContent.match(COMPLETED_TASK_REGEX) || [],
+		[savedContent]
+	);
+	const savedUncheckedTaskMatches = useMemo(
+		() => savedContent.match(UNCHECKED_TASK_REGEX) || [],
+		[savedContent]
+	);
+
 	// Track previous session/document to detect switches
 	const prevSessionIdRef = useRef(sessionId);
 	const prevSelectedFileRef = useRef(selectedFile);
@@ -667,6 +686,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 	const [totalMatches, setTotalMatches] = useState(0);
 	const matchElementsRef = useRef<HTMLElement[]>([]);
+	const escapedSearchQuery = useMemo(
+		() => (searchQuery ? searchQuery.replace(SEARCH_SPECIAL_CHARS_REGEX, '\\$&') : ''),
+		[searchQuery]
+	);
+	const searchRegex = useMemo(() => {
+		if (!searchQuery.trim()) {
+			return null;
+		}
+		return new RegExp(escapedSearchQuery, 'gi');
+	}, [escapedSearchQuery, searchQuery]);
 	// Refresh animation state for empty state button
 	const [isRefreshingEmpty, setIsRefreshingEmpty] = useState(false);
 	// Compact mode for responsive bottom panel (icons only when narrow)
@@ -719,15 +748,13 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if (!folderPath || !selectedFile) return;
 
 		// Count how many completed tasks we're resetting
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		const resetCount = completedMatches.length;
+		const resetCount = completedTaskCount;
 
 		// Push undo state before resetting
 		pushUndoState();
 
 		// Replace all completed checkboxes with unchecked ones
-		const resetContent = localContent.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const resetContent = localContent.replace(COMPLETED_TASK_REPLACE_REGEX, '$1[ ]');
 		setLocalContent(resetContent);
 		lastUndoSnapshotRef.current = resetContent;
 
@@ -758,6 +785,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		lastUndoSnapshotRef,
 		sshRemoteId,
 		onShowFlash,
+		completedTaskCount,
 	]);
 
 	// Image handling hook (attachments, paste, upload, lightbox)
@@ -844,10 +872,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Helper function to count completed tasks (used by useImperativeHandle before taskCounts is defined)
 	const getCompletedTaskCountFromContent = useCallback(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		return completedMatches.length;
-	}, [localContent]);
+		return completedTaskCount;
+	}, [completedTaskCount]);
 
 	// Expose methods to parent via ref
 	useImperativeHandle(
@@ -1059,12 +1085,12 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			clearTimeout(searchCountTimeoutRef.current);
 		}
 
-		if (searchQuery.trim()) {
+		if (searchRegex) {
 			// Debounce the match counting for large documents
 			searchCountTimeoutRef.current = setTimeout(() => {
-				const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-				const regex = new RegExp(escapedQuery, 'gi');
-				const matches = localContent.match(regex);
+				searchRegex.lastIndex = 0;
+				const matches = localContent.match(searchRegex);
+				searchRegex.lastIndex = 0;
 				const count = matches ? matches.length : 0;
 				setTotalMatches(count);
 				if (count > 0 && currentMatchIndex >= count) {
@@ -1081,7 +1107,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				clearTimeout(searchCountTimeoutRef.current);
 			}
 		};
-	}, [searchQuery, localContent]);
+	}, [searchRegex, localContent, currentMatchIndex]);
 
 	// Navigate to next search match
 	const goToNextMatch = useCallback(() => {
@@ -1121,12 +1147,13 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if (mode !== 'edit' || !textareaRef.current) return;
 
 		// For edit mode, find the match position in the text and scroll
-		const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		const regex = new RegExp(escapedQuery, 'gi');
 		let matchPosition = -1;
 
 		// Find the nth match position using matchAll
-		const matches = Array.from(localContent.matchAll(regex));
+		if (!searchRegex) return;
+		searchRegex.lastIndex = 0;
+		const matches = Array.from(localContent.matchAll(searchRegex));
+		searchRegex.lastIndex = 0;
 		if (currentMatchIndex < matches.length) {
 			matchPosition = matches[currentMatchIndex].index!;
 		}
@@ -1169,7 +1196,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			textarea.setSelectionRange(matchPosition, matchPosition + searchQuery.length);
 			userNavigatedToMatchRef.current = false;
 		}
-	}, [currentMatchIndex, searchOpen, searchQuery, totalMatches, mode, localContent]);
+	}, [currentMatchIndex, searchOpen, searchQuery, totalMatches, mode, localContent, searchRegex]);
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// Let template autocomplete handle keys first
@@ -1292,9 +1319,9 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			const currentLine = textBeforeCursor.substring(currentLineStart);
 
 			// Check for list patterns
-			const unorderedListMatch = currentLine.match(/^(\s*)([-*])\s+/);
-			const orderedListMatch = currentLine.match(/^(\s*)(\d+)\.\s+/);
-			const taskListMatch = currentLine.match(/^(\s*)- \[([ x])\]\s+/);
+			const unorderedListMatch = currentLine.match(UNORDERED_LIST_REGEX);
+			const orderedListMatch = currentLine.match(ORDERED_LIST_REGEX);
+			const taskListMatch = currentLine.match(TASK_LIST_REGEX);
 
 			if (taskListMatch) {
 				// Task list: continue with unchecked checkbox
@@ -1354,14 +1381,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Parse task counts from saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes
 	const taskCounts = useMemo(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-		const completedMatches = savedContent.match(completedRegex) || [];
-		const uncheckedMatches = savedContent.match(uncheckedRegex) || [];
-		const completed = completedMatches.length;
-		const total = completed + uncheckedMatches.length;
+		const completed = savedCompletedTaskMatches.length;
+		const total = completed + savedUncheckedTaskMatches.length;
 		return { completed, total };
-	}, [savedContent]);
+	}, [savedCompletedTaskMatches, savedUncheckedTaskMatches]);
 
 	// Token counting based on saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes

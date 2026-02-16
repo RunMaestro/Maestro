@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import {
 	Plus,
 	Trash2,
@@ -154,6 +154,43 @@ export function AICommandsPanel({
 		setIsCreating(false);
 	};
 
+	const styles = useMemo(() => {
+		const { colors } = theme;
+		const borderStyle = `1px solid ${colors.border}`;
+		return {
+			dimText: { color: colors.textDim },
+			card: { backgroundColor: colors.bgMain, borderColor: colors.border },
+			accentIcon: { color: colors.accent },
+			accentText: { color: colors.accent },
+			dimIcon: { color: colors.textDim },
+			borderOnly: { borderColor: colors.border },
+			variableCode: { backgroundColor: colors.bgActivity, color: colors.accent },
+			addCommandButton: {
+				backgroundColor: colors.accent,
+				color: colors.accentForeground,
+			},
+			newCommandCard: {
+				backgroundColor: colors.bgMain,
+				borderColor: colors.accent,
+			},
+			input: { borderColor: colors.border, color: colors.textMain },
+			secondaryButton: {
+				backgroundColor: colors.bgActivity,
+				color: colors.textMain,
+				border: borderStyle,
+			},
+			successButton: { backgroundColor: colors.success, color: '#000000' },
+			badge: { backgroundColor: colors.bgActivity, color: colors.textDim },
+			promptPreview: { backgroundColor: colors.bgActivity, color: colors.textMain },
+			errorText: { color: colors.error },
+		};
+	}, [theme]);
+
+	const sortedCommands = useMemo(
+		() => [...customAICommands].sort((a, b) => a.command.localeCompare(b.command)),
+		[customAICommands]
+	);
+
 	return (
 		<div className="space-y-4">
 			<div>
@@ -161,36 +198,33 @@ export function AICommandsPanel({
 					<Terminal className="w-3 h-3" />
 					Custom AI Commands
 				</label>
-				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
+				<p className="text-xs opacity-50" style={styles.dimText}>
 					Slash commands available in AI terminal mode. Built-in commands can be edited but not
 					deleted.
 				</p>
 			</div>
 
 			{/* Template Variables Documentation */}
-			<div
-				className="rounded-lg border overflow-hidden"
-				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-			>
+			<div className="rounded-lg border overflow-hidden" style={styles.card}>
 				<button
 					onClick={() => setVariablesExpanded(!variablesExpanded)}
 					className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
 				>
 					<div className="flex items-center gap-2">
-						<Variable className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+						<Variable className="w-3.5 h-3.5" style={styles.accentIcon} />
+						<span className="text-xs font-bold uppercase" style={styles.dimText}>
 							Template Variables
 						</span>
 					</div>
 					{variablesExpanded ? (
-						<ChevronDown className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<ChevronDown className="w-3.5 h-3.5" style={styles.dimIcon} />
 					) : (
-						<ChevronRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<ChevronRight className="w-3.5 h-3.5" style={styles.dimIcon} />
 					)}
 				</button>
 				{variablesExpanded && (
-					<div className="px-3 pb-3 pt-1 border-t" style={{ borderColor: theme.colors.border }}>
-						<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="px-3 pb-3 pt-1 border-t" style={styles.borderOnly}>
+						<p className="text-[10px] mb-2" style={styles.dimText}>
 							Use these variables in your command prompts. They will be replaced with actual values
 							at runtime.
 						</p>
@@ -199,11 +233,11 @@ export function AICommandsPanel({
 								<div key={variable} className="flex items-center gap-2 py-0.5">
 									<code
 										className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
-										style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.accent }}
+										style={styles.variableCode}
 									>
 										{variable}
-									</code>
-									<span className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
+										</code>
+										<span className="text-[10px] truncate" style={styles.dimText}>
 										{description}
 									</span>
 								</div>
@@ -218,10 +252,7 @@ export function AICommandsPanel({
 					<button
 						onClick={() => setIsCreating(true)}
 						className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-all"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
+						style={styles.addCommandButton}
 					>
 						<Plus className="w-4 h-4" />
 						Add Command
@@ -231,11 +262,8 @@ export function AICommandsPanel({
 
 			{/* Create new command form */}
 			{isCreating && (
-				<div
-					className="p-4 rounded-lg border space-y-3"
-					style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.accent }}
-				>
-					<div className="text-xs font-bold uppercase" style={{ color: theme.colors.accent }}>
+				<div className="p-4 rounded-lg border space-y-3" style={styles.newCommandCard}>
+					<div className="text-xs font-bold uppercase" style={styles.accentText}>
 						New Command
 					</div>
 					<div className="grid grid-cols-2 gap-3">
@@ -247,7 +275,7 @@ export function AICommandsPanel({
 								onChange={(e) => setNewCommand({ ...newCommand, command: e.target.value })}
 								placeholder="/mycommand"
 								className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								style={styles.input}
 							/>
 						</div>
 						<div>
@@ -258,7 +286,7 @@ export function AICommandsPanel({
 								onChange={(e) => setNewCommand({ ...newCommand, description: e.target.value })}
 								placeholder="Short description for autocomplete"
 								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								style={styles.input}
 							/>
 						</div>
 					</div>
@@ -289,7 +317,7 @@ export function AICommandsPanel({
 							placeholder="The actual prompt sent to the AI agent when this command is invoked... (type {{ for variables)"
 							rows={10}
 							className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[150px]"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							style={styles.input}
 						/>
 						<TemplateAutocompleteDropdown
 							ref={newAutocompleteRef}
@@ -302,11 +330,7 @@ export function AICommandsPanel({
 						<button
 							onClick={handleCancelCreate}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
+							style={styles.secondaryButton}
 						>
 							<X className="w-3 h-3" />
 							Cancel
@@ -315,10 +339,7 @@ export function AICommandsPanel({
 							onClick={handleCreate}
 							disabled={!newCommand.command || !newCommand.description || !newCommand.prompt}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-50"
-							style={{
-								backgroundColor: theme.colors.success,
-								color: '#000000',
-							}}
+							style={styles.successButton}
 						>
 							<Save className="w-3 h-3" />
 							Create
@@ -329,33 +350,20 @@ export function AICommandsPanel({
 
 			{/* Existing commands list - collapsible style */}
 			<div className="space-y-2 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
-				{[...customAICommands]
-					.sort((a, b) => a.command.localeCompare(b.command))
-					.map((cmd) => (
-						<div
-							key={cmd.id}
-							className="rounded-lg border overflow-hidden"
-							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-						>
+				{sortedCommands.map((cmd) => (
+						<div key={cmd.id} className="rounded-lg border overflow-hidden" style={styles.card}>
 							{editingCommand?.id === cmd.id ? (
 								// Editing mode
 								<div className="p-3 space-y-3">
 									<div className="flex items-center justify-between">
-										<span
-											className="font-mono font-bold text-sm"
-											style={{ color: theme.colors.accent }}
-										>
+										<span className="font-mono font-bold text-sm" style={styles.accentText}>
 											{cmd.command}
 										</span>
 										<div className="flex items-center gap-1">
 											<button
 												onClick={handleCancelEdit}
 												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-												style={{
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.textMain,
-													border: `1px solid ${theme.colors.border}`,
-												}}
+												style={styles.secondaryButton}
 											>
 												<X className="w-3 h-3" />
 												Cancel
@@ -363,10 +371,7 @@ export function AICommandsPanel({
 											<button
 												onClick={handleSaveEdit}
 												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-												style={{
-													backgroundColor: theme.colors.success,
-													color: '#000000',
-												}}
+												style={styles.successButton}
 											>
 												<Save className="w-3 h-3" />
 												Save
@@ -383,7 +388,7 @@ export function AICommandsPanel({
 													setEditingCommand({ ...editingCommand, command: e.target.value })
 												}
 												className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+												style={styles.input}
 											/>
 										</div>
 										<div>
@@ -397,7 +402,7 @@ export function AICommandsPanel({
 													setEditingCommand({ ...editingCommand, description: e.target.value })
 												}
 												className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+												style={styles.input}
 											/>
 										</div>
 									</div>
@@ -425,7 +430,7 @@ export function AICommandsPanel({
 											}}
 											rows={15}
 											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+											style={styles.input}
 										/>
 										<TemplateAutocompleteDropdown
 											ref={editAutocompleteRef}
@@ -444,47 +449,29 @@ export function AICommandsPanel({
 									>
 										<div className="flex items-center gap-2">
 											{expandedCommands.has(cmd.id) ? (
-												<ChevronDown
-													className="w-3.5 h-3.5"
-													style={{ color: theme.colors.textDim }}
-												/>
+												<ChevronDown className="w-3.5 h-3.5" style={styles.dimIcon} />
 											) : (
-												<ChevronRight
-													className="w-3.5 h-3.5"
-													style={{ color: theme.colors.textDim }}
-												/>
+												<ChevronRight className="w-3.5 h-3.5" style={styles.dimIcon} />
 											)}
-											<span
-												className="font-mono font-bold text-sm"
-												style={{ color: theme.colors.accent }}
-											>
+											<span className="font-mono font-bold text-sm" style={styles.accentText}>
 												{cmd.command}
 											</span>
 											{cmd.isBuiltIn && (
 												<span
 													className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-													style={{
-														backgroundColor: theme.colors.bgActivity,
-														color: theme.colors.textDim,
-													}}
+													style={styles.badge}
 												>
 													<Lock className="w-2.5 h-2.5" />
 													Built-in
 												</span>
 											)}
 										</div>
-										<span
-											className="text-xs truncate max-w-[300px]"
-											style={{ color: theme.colors.textDim }}
-										>
+											<span className="text-xs truncate max-w-[300px]" style={styles.dimText}>
 											{cmd.description}
 										</span>
 									</button>
-									{expandedCommands.has(cmd.id) && (
-										<div
-											className="px-3 pb-3 pt-1 border-t"
-											style={{ borderColor: theme.colors.border }}
-										>
+										{expandedCommands.has(cmd.id) && (
+											<div className="px-3 pb-3 pt-1 border-t" style={styles.borderOnly}>
 											<div className="flex items-center justify-end gap-1 mb-2">
 												<button
 													onClick={() =>
@@ -496,7 +483,7 @@ export function AICommandsPanel({
 														})
 													}
 													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-													style={{ color: theme.colors.textDim }}
+													style={styles.dimText}
 													title="Edit command"
 												>
 													<Edit2 className="w-3 h-3" />
@@ -506,7 +493,7 @@ export function AICommandsPanel({
 													<button
 														onClick={() => handleDelete(cmd.id)}
 														className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-														style={{ color: theme.colors.error }}
+														style={styles.errorText}
 														title="Delete command"
 													>
 														<Trash2 className="w-3 h-3" />
@@ -516,10 +503,7 @@ export function AICommandsPanel({
 											</div>
 											<div
 												className="text-xs p-2 rounded font-mono overflow-y-auto max-h-48 scrollbar-thin whitespace-pre-wrap"
-												style={{
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.textMain,
-												}}
+												style={styles.promptPreview}
 											>
 												{cmd.prompt.length > 500
 													? cmd.prompt.substring(0, 500) + '...'
@@ -534,18 +518,15 @@ export function AICommandsPanel({
 			</div>
 
 			{customAICommands.length === 0 && !isCreating && (
-				<div
-					className="p-6 rounded-lg border border-dashed text-center"
-					style={{ borderColor: theme.colors.border }}
-				>
+				<div className="p-6 rounded-lg border border-dashed text-center" style={styles.borderOnly}>
 					<Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
-					<p className="text-sm opacity-50" style={{ color: theme.colors.textDim }}>
+					<p className="text-sm opacity-50" style={styles.dimText}>
 						No custom AI commands configured
 					</p>
 					<button
 						onClick={() => setIsCreating(true)}
 						className="mt-2 text-xs font-medium"
-						style={{ color: theme.colors.accent }}
+						style={styles.accentText}
 					>
 						Create your first command
 					</button>

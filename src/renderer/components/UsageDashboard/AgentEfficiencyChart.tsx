@@ -12,7 +12,7 @@
  * - Colorblind-friendly palette option
  */
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
@@ -86,7 +86,7 @@ function getAgentColor(index: number, theme: Theme, colorBlindMode?: boolean): s
 	return additionalColors[(index - 1) % additionalColors.length];
 }
 
-export function AgentEfficiencyChart({
+export const AgentEfficiencyChart = memo(function AgentEfficiencyChart({
 	data,
 	theme,
 	colorBlindMode = false,
@@ -210,6 +210,6 @@ export function AgentEfficiencyChart({
 			</div>
 		</div>
 	);
-}
+});
 
 export default AgentEfficiencyChart;

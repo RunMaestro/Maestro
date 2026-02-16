@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { CodexOutputParser } from '../../../main/parsers/codex-output-parser';
+import { promises as fs } from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { CodexOutputParser, __codexConfigTestUtils } from '../../../main/parsers/codex-output-parser';
 
 describe('CodexOutputParser', () => {
 	const parser = new CodexOutputParser();
@@ -477,4 +480,49 @@ describe('CodexOutputParser', () => {
 			});
 		});
 	});
-});
+
+		describe('config caching', () => {
+			it('should apply overrides from config without blocking parse loop', async () => {
+				const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-config-'));
+				const configPath = path.join(tempDir, 'config.toml');
+				await fs.writeFile(
+					configPath,
+					['model = "gpt-4"', 'model_context_window = 64000'].join('\n')
+				);
+
+				const originalCodexHome = process.env.CODEX_HOME;
+				process.env.CODEX_HOME = tempDir;
+
+				try {
+					__codexConfigTestUtils.resetCache();
+					expect(__codexConfigTestUtils.getCachedConfig()).toBeNull();
+					const parserWithConfig = new CodexOutputParser();
+					await __codexConfigTestUtils.waitForLoad();
+					await new Promise((resolve) => setTimeout(resolve, 0));
+					const cachedConfig = __codexConfigTestUtils.getCachedConfig();
+					expect(cachedConfig?.contextWindow).toBe(64000);
+					expect((parserWithConfig as unknown as { contextWindow: number }).contextWindow).toBe(64000);
+
+					const event = parserWithConfig.parseJsonLine(
+						JSON.stringify({
+							type: 'turn.completed',
+							usage: {
+								input_tokens: 10,
+								output_tokens: 5,
+							},
+						})
+					);
+
+					expect(event?.usage?.contextWindow).toBe(64000);
+				} finally {
+					await fs.rm(tempDir, { recursive: true, force: true });
+					if (originalCodexHome === undefined) {
+						delete process.env.CODEX_HOME;
+					} else {
+						process.env.CODEX_HOME = originalCodexHome;
+					}
+					__codexConfigTestUtils.resetCache();
+				}
+			});
+		});
+	});

@@ -541,6 +541,11 @@ export function AgentSessionsBrowser({
 		};
 	}, [aggregateStats]);
 
+	const viewingSessionTimestamp = useMemo(() => {
+		if (!viewingSession) return null;
+		return new Date(viewingSession.timestamp).toLocaleString();
+	}, [viewingSession?.timestamp, viewingSession?.sessionId]);
+
 	// Reset selected index when search changes
 	useEffect(() => {
 		setSelectedIndex(0);
@@ -837,7 +842,7 @@ export function AgentSessionsBrowser({
 									<span>•</span>
 									<span
 										className="relative group cursor-default"
-										title={new Date(viewingSession.timestamp).toLocaleString()}
+												title={viewingSessionTimestamp ?? undefined}
 									>
 										{formatRelativeTime(viewingSession.modifiedAt)}
 										<span
@@ -847,7 +852,7 @@ export function AgentSessionsBrowser({
 												color: theme.colors.textMain,
 											}}
 										>
-											{new Date(viewingSession.timestamp).toLocaleString()}
+											{viewingSessionTimestamp}
 										</span>
 									</span>
 								</div>

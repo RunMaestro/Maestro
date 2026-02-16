@@ -76,6 +76,14 @@ export function useFilteredAndSortedSessions(
 		namedOnly,
 	} = deps;
 
+	const sessionModifiedTimestamps = useMemo(() => {
+		const timestamps = new Map<string, number>();
+		for (const session of sessions) {
+			timestamps.set(session.sessionId, new Date(session.modifiedAt).getTime());
+		}
+		return timestamps;
+	}, [sessions]);
+
 	// Helper to check if a session should be visible based on filters
 	const isSessionVisible = useCallback(
 		(session: ClaudeSession) => {
@@ -111,7 +119,11 @@ export function useFilteredAndSortedSessions(
 				if (aStarred && !bStarred) return -1;
 				if (!aStarred && bStarred) return 1;
 				// Within same starred status, sort by most recent
-				return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+				const aModifiedAt =
+					sessionModifiedTimestamps.get(a.sessionId) ?? new Date(a.modifiedAt).getTime();
+				const bModifiedAt =
+					sessionModifiedTimestamps.get(b.sessionId) ?? new Date(b.modifiedAt).getTime();
+				return bModifiedAt - aModifiedAt;
 			});
 		};
 
@@ -164,7 +176,16 @@ export function useFilteredAndSortedSessions(
 
 		// If searching but no results yet, return empty (or all if still loading)
 		return isSearching ? sortWithStarred(visibleSessions) : [];
-	}, [sessions, search, searchMode, searchResults, isSearching, isSessionVisible, starredSessions]);
+	}, [
+		sessions,
+		search,
+		searchMode,
+		searchResults,
+		isSearching,
+		isSessionVisible,
+		starredSessions,
+		sessionModifiedTimestamps,
+	]);
 
 	return {
 		filteredSessions,

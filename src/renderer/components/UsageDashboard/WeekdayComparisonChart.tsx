@@ -11,7 +11,7 @@
  * - Colorblind-friendly palette option
  */
 
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import { Briefcase, Coffee } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -45,7 +45,7 @@ function formatDuration(ms: number): string {
 	return `${seconds}s`;
 }
 
-export function WeekdayComparisonChart({
+export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 	data,
 	theme,
 	colorBlindMode = false,
@@ -304,6 +304,6 @@ export function WeekdayComparisonChart({
 			)}
 		</div>
 	);
-}
+});
 
 export default WeekdayComparisonChart;

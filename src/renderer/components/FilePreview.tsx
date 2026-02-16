@@ -286,16 +286,15 @@ const formatDateTime = (isoString: string): string => {
 	});
 };
 
-// Count markdown tasks (checkboxes)
-const countMarkdownTasks = (content: string): { open: number; closed: number } => {
-	// Match markdown checkboxes: - [ ] or - [x] (also * [ ] and * [x])
-	const openMatches = content.match(/^[\s]*[-*]\s*\[\s*\]/gm);
-	const closedMatches = content.match(/^[\s]*[-*]\s*\[[xX]\]/gm);
-	return {
-		open: openMatches?.length || 0,
-		closed: closedMatches?.length || 0,
-	};
-};
+const MARKDOWN_OPEN_TASK_REGEX = /^[\s]*[-*]\s*\[\s*\]/gm;
+const MARKDOWN_CLOSED_TASK_REGEX = /^[\s]*[-*]\s*\[[xX]\]/gm;
+const CODE_FENCE_BOUNDARY_REGEX = /^(`{3,}|~{3,})/;
+const HEADING_CAPTURE_REGEX = /^(#{1,6})\s+(.+)$/;
+const MARKDOWN_HIGHLIGHT_REGEX = /==([^=]+)==/g;
+const INLINE_CODE_LANGUAGE_REGEX = /language-(\w+)/;
+const REGEX_SPECIAL_CHARS = /[.*+?^${}()|[\]\\]/g;
+
+const escapeRegexCharacters = (value: string): string => value.replace(REGEX_SPECIAL_CHARS, '\\$&');
 
 // Interface for table of contents entries
 interface TocEntry {
@@ -313,7 +312,7 @@ const extractHeadings = (content: string): TocEntry[] => {
 
 	for (const line of lines) {
 		// Track code fence boundaries (``` or ~~~, optionally with language specifier)
-		if (/^(`{3,}|~{3,})/.test(line)) {
+		if (CODE_FENCE_BOUNDARY_REGEX.test(line)) {
 			inCodeFence = !inCodeFence;
 			continue;
 		}
@@ -324,7 +323,7 @@ const extractHeadings = (content: string): TocEntry[] => {
 		}
 
 		// Match ATX-style headings (# H1, ## H2, etc.)
-		const match = line.match(/^(#{1,6})\s+(.+)$/);
+		const match = line.match(HEADING_CAPTURE_REGEX);
 		if (match) {
 			const level = match[1].length;
 			const text = match[2].trim();
@@ -571,16 +570,18 @@ function remarkHighlight() {
 	return (tree: any) => {
 		visit(tree, 'text', (node: any, index: number | null | undefined, parent: any) => {
 			const text = node.value;
-			const regex = /==([^=]+)==/g;
-
-			if (!regex.test(text)) return;
+			if (typeof text !== 'string') {
+				return;
+			}
+			MARKDOWN_HIGHLIGHT_REGEX.lastIndex = 0;
+			if (!MARKDOWN_HIGHLIGHT_REGEX.test(text)) return;
 			if (index === null || index === undefined || !parent) return;
 
 			const parts: any[] = [];
 			let lastIndex = 0;
-			const matches = text.matchAll(/==([^=]+)==/g);
+			MARKDOWN_HIGHLIGHT_REGEX.lastIndex = 0;
 
-			for (const match of matches) {
+			for (const match of text.matchAll(MARKDOWN_HIGHLIGHT_REGEX)) {
 				const matchIndex = match.index!;
 
 				// Add text before match
@@ -599,6 +600,7 @@ function remarkHighlight() {
 
 				lastIndex = matchIndex + match[0].length;
 			}
+			MARKDOWN_HIGHLIGHT_REGEX.lastIndex = 0;
 
 			// Add remaining text
 			if (lastIndex < text.length) {
@@ -668,6 +670,14 @@ export const FilePreview = React.memo(
 		);
 		// Expose the current search query value
 		const searchQuery = internalSearchQuery;
+		const trimmedSearchQuery = searchQuery.trim();
+		const hasSearchQuery = trimmedSearchQuery.length > 0;
+		const searchRegex = useMemo(() => {
+			if (!hasSearchQuery) {
+				return null;
+			}
+			return new RegExp(escapeRegexCharacters(searchQuery), 'gi');
+		}, [hasSearchQuery, searchQuery]);
 		// If initialSearchQuery is provided and non-empty, auto-open search
 		const [searchOpen, setSearchOpen] = useState(Boolean(initialSearchQuery));
 		const [showCopyNotification, setShowCopyNotification] = useState(false);
@@ -679,6 +689,16 @@ export const FilePreview = React.memo(
 		const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 		const [totalMatches, setTotalMatches] = useState(0);
 		const [fileStats, setFileStats] = useState<FileStats | null>(null);
+		const modifiedAtValue = fileStats?.modifiedAt;
+		const createdAtValue = fileStats?.createdAt;
+		const formattedModifiedAt = useMemo(
+			() => (modifiedAtValue ? formatDateTime(modifiedAtValue) : null),
+			[modifiedAtValue]
+		);
+		const formattedCreatedAt = useMemo(
+			() => (createdAtValue ? formatDateTime(createdAtValue) : null),
+			[createdAtValue]
+		);
 		const [showStatsBar, setShowStatsBar] = useState(true);
 		const [tokenCount, setTokenCount] = useState<number | null>(null);
 		const [showRemoteImages, setShowRemoteImages] = useState(false);
@@ -802,10 +822,14 @@ export const FilePreview = React.memo(
 		// Calculate task counts for markdown files
 		const taskCounts = useMemo(() => {
 			if (!isMarkdown || !file?.content) return null;
-			const counts = countMarkdownTasks(file.content);
-			// Only return if there are any tasks
-			if (counts.open === 0 && counts.closed === 0) return null;
-			return counts;
+			MARKDOWN_OPEN_TASK_REGEX.lastIndex = 0;
+			MARKDOWN_CLOSED_TASK_REGEX.lastIndex = 0;
+			const openMatches = file.content.match(MARKDOWN_OPEN_TASK_REGEX);
+			const closedMatches = file.content.match(MARKDOWN_CLOSED_TASK_REGEX);
+			const openCount = openMatches?.length ?? 0;
+			const closedCount = closedMatches?.length ?? 0;
+			if (openCount === 0 && closedCount === 0) return null;
+			return { open: openCount, closed: closedCount };
 		}, [isMarkdown, file?.content]);
 
 		// Extract table of contents entries for markdown files
@@ -903,7 +927,7 @@ export const FilePreview = React.memo(
 
 					if (codeElement?.props) {
 						const { className, children: codeChildren } = codeElement.props;
-						const match = (className || '').match(/language-(\w+)/);
+						const match = (className || '').match(INLINE_CODE_LANGUAGE_REGEX);
 						const lang = match ? match[1] : 'text';
 						const codeContent = String(codeChildren).replace(/\n$/, '');
 
@@ -1244,7 +1268,14 @@ export const FilePreview = React.memo(
 
 		// Highlight search matches in syntax-highlighted code
 		useEffect(() => {
-			if (!searchQuery.trim() || !codeContainerRef.current || isMarkdown || isImage || isCsv) {
+			if (
+				!hasSearchQuery ||
+				!searchRegex ||
+				!codeContainerRef.current ||
+				isMarkdown ||
+				isImage ||
+				isCsv
+			) {
 				setTotalMatches(0);
 				setCurrentMatchIndex(0);
 				matchElementsRef.current = [];
@@ -1255,33 +1286,32 @@ export const FilePreview = React.memo(
 			const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
 			const textNodes: Text[] = [];
 
-			// Collect all text nodes
 			let node;
 			while ((node = walker.nextNode())) {
 				textNodes.push(node as Text);
 			}
 
-			// Escape regex special characters
-			const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const regex = new RegExp(escapedQuery, 'gi');
+			const regex = searchRegex;
 			const matchElements: HTMLElement[] = [];
 
-			// Highlight matches using safe DOM methods
 			textNodes.forEach((textNode) => {
-				const text = textNode.textContent || '';
-				const matches = text.match(regex);
+				const textNodeContent = textNode.textContent || '';
+
+				regex.lastIndex = 0;
+				const matches = textNodeContent.match(regex);
 
 				if (matches) {
 					const fragment = document.createDocumentFragment();
 					let lastIndex = 0;
 
-					text.replace(regex, (match, offset) => {
-						// Add text before match
+					regex.lastIndex = 0;
+					textNodeContent.replace(regex, (match, offset) => {
 						if (offset > lastIndex) {
-							fragment.appendChild(document.createTextNode(text.substring(lastIndex, offset)));
+							fragment.appendChild(
+								document.createTextNode(textNodeContent.substring(lastIndex, offset))
+							);
 						}
 
-						// Add highlighted match
 						const mark = document.createElement('mark');
 						mark.style.backgroundColor = '#ffd700';
 						mark.style.color = '#000';
@@ -1296,28 +1326,26 @@ export const FilePreview = React.memo(
 						return match;
 					});
 
-					// Add remaining text
-					if (lastIndex < text.length) {
-						fragment.appendChild(document.createTextNode(text.substring(lastIndex)));
+					if (lastIndex < textNodeContent.length) {
+						fragment.appendChild(
+							document.createTextNode(textNodeContent.substring(lastIndex))
+						);
 					}
 
 					textNode.parentNode?.replaceChild(fragment, textNode);
 				}
 			});
 
-			// Store match elements and update count
 			matchElementsRef.current = matchElements;
 			setTotalMatches(matchElements.length);
 			setCurrentMatchIndex(matchElements.length > 0 ? 0 : -1);
 
-			// Highlight first match with different color and scroll to it
 			if (matchElements.length > 0) {
 				matchElements[0].style.backgroundColor = theme.colors.accent;
 				matchElements[0].style.color = '#fff';
 				matchElements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
 			}
 
-			// Cleanup function to remove highlights
 			return () => {
 				container.querySelectorAll('mark.search-match').forEach((mark) => {
 					const parent = mark.parentNode;
@@ -1327,17 +1355,23 @@ export const FilePreview = React.memo(
 					}
 				});
 				matchElementsRef.current = [];
+				regex.lastIndex = 0;
 			};
-		}, [searchQuery, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
+		}, [hasSearchQuery, searchRegex, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
-			if (!isMarkdown || markdownEditMode || !searchQuery.trim() || !markdownContainerRef.current) {
+			if (
+				!isMarkdown ||
+				markdownEditMode ||
+				!hasSearchQuery ||
+				!markdownContainerRef.current ||
+				!searchRegex
+			) {
 				if (isMarkdown && !markdownEditMode) {
 					setTotalMatches(0);
 					setCurrentMatchIndex(0);
 					matchElementsRef.current = [];
-					// Clear any existing highlights
 					if ('highlights' in CSS) {
 						(CSS as any).highlights.delete('search-results');
 						(CSS as any).highlights.delete('search-current');
@@ -1347,56 +1381,45 @@ export const FilePreview = React.memo(
 			}
 
 			const container = markdownContainerRef.current;
-			const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const searchRegex = new RegExp(escapedQuery, 'gi');
+			const regex = searchRegex;
 
-			// Check if CSS Custom Highlight API is available
 			if ('highlights' in CSS) {
 				const allRanges: Range[] = [];
 				const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
 
-				// Find all text nodes and create ranges for matches
 				let textNode;
 				while ((textNode = walker.nextNode())) {
-					const text = textNode.textContent || '';
+					const textNodeContent = textNode.textContent || '';
+					regex.lastIndex = 0;
 					let match;
-					const localRegex = new RegExp(escapedQuery, 'gi');
-					while ((match = localRegex.exec(text)) !== null) {
+					while ((match = regex.exec(textNodeContent)) !== null) {
 						const range = document.createRange();
 						range.setStart(textNode, match.index);
 						range.setEnd(textNode, match.index + match[0].length);
 						allRanges.push(range);
 					}
 				}
+				regex.lastIndex = 0;
 
-				// Update match count
 				setTotalMatches(allRanges.length);
 
-				// Create highlights
 				if (allRanges.length > 0) {
 					const targetIndex = Math.max(0, Math.min(currentMatchIndex, allRanges.length - 1));
 
-					// Create highlight for all matches (yellow)
 					const allHighlight = new (window as any).Highlight(...allRanges);
 					(CSS as any).highlights.set('search-results', allHighlight);
 
-					// Create highlight for current match (accent color)
 					const currentHighlight = new (window as any).Highlight(allRanges[targetIndex]);
 					(CSS as any).highlights.set('search-current', currentHighlight);
 
-					// Scroll to current match
 					const currentRange = allRanges[targetIndex];
 					const rect = currentRange.getBoundingClientRect();
 					const scrollParent = contentRef.current;
 
 					if (scrollParent && rect) {
-						// Calculate position of the match relative to the scroll container's top
-						// rect.top is viewport-relative, so we need to account for current scroll
-						// and the scroll container's viewport position
 						const scrollContainerRect = scrollParent.getBoundingClientRect();
 						const matchOffsetInScrollContainer =
 							rect.top - scrollContainerRect.top + scrollParent.scrollTop;
-						// Calculate scroll position to center the match vertically
 						const scrollTop =
 							matchOffsetInScrollContainer - scrollParent.clientHeight / 2 + rect.height / 2;
 						scrollParent.scrollTo({ top: Math.max(0, scrollTop), behavior: 'smooth' });
@@ -1406,45 +1429,50 @@ export const FilePreview = React.memo(
 					(CSS as any).highlights.delete('search-current');
 				}
 
-				// Cleanup function
 				return () => {
 					(CSS as any).highlights.delete('search-results');
 					(CSS as any).highlights.delete('search-current');
+					regex.lastIndex = 0;
 				};
-			} else {
-				// Fallback: count matches and scroll to location (no highlighting)
-				const matches = file?.content?.match(searchRegex);
-				const count = matches ? matches.length : 0;
-				setTotalMatches(count);
+			}
 
-				if (count > 0) {
-					const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-					let matchCount = 0;
-					const targetIndex = Math.max(0, Math.min(currentMatchIndex, count - 1));
+			regex.lastIndex = 0;
+			const matches = file?.content?.match(regex);
+			const count = matches ? matches.length : 0;
+			setTotalMatches(count);
+			regex.lastIndex = 0;
 
-					let textNode;
-					while ((textNode = walker.nextNode())) {
-						const text = textNode.textContent || '';
-						const nodeMatches = text.match(searchRegex);
-						if (nodeMatches) {
-							for (const _ of nodeMatches) {
-								if (matchCount === targetIndex) {
-									const parentElement = (textNode as Text).parentElement;
-									if (parentElement) {
-										parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-									}
-									return;
+			if (count > 0) {
+				const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+				let matchCount = 0;
+				const targetIndex = Math.max(0, Math.min(currentMatchIndex, count - 1));
+
+				let textNode;
+				while ((textNode = walker.nextNode())) {
+					const textNodeContent = textNode.textContent || '';
+					regex.lastIndex = 0;
+					const nodeMatches = textNodeContent.match(regex);
+					if (nodeMatches) {
+						for (const _ of nodeMatches) {
+							if (matchCount === targetIndex) {
+								const parentElement = (textNode as Text).parentElement;
+								if (parentElement) {
+									parentElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
 								}
-								matchCount++;
+								regex.lastIndex = 0;
+								return;
 							}
+							matchCount++;
 						}
 					}
 				}
 			}
 
 			matchElementsRef.current = [];
+			regex.lastIndex = 0;
 		}, [
-			searchQuery,
+			hasSearchQuery,
+			searchRegex,
 			file?.content,
 			isMarkdown,
 			markdownEditMode,
@@ -1549,7 +1577,13 @@ export const FilePreview = React.memo(
 		// Handle search in edit mode - count matches and update state
 		// Note: We separate counting from selection to avoid stealing focus while typing
 		useEffect(() => {
-			if (!isEditableText || !markdownEditMode || !searchQuery.trim() || !textareaRef.current) {
+			if (
+				!isEditableText ||
+				!markdownEditMode ||
+				!hasSearchQuery ||
+				!textareaRef.current ||
+				!searchRegex
+			) {
 				if (isEditableText && markdownEditMode) {
 					setTotalMatches(0);
 					setCurrentMatchIndex(0);
@@ -1558,15 +1592,15 @@ export const FilePreview = React.memo(
 			}
 
 			const content = editContent;
-			const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const regex = new RegExp(escapedQuery, 'gi');
+			const regex = searchRegex;
 
-			// Find all matches and their positions
+			regex.lastIndex = 0;
 			const matches: { start: number; end: number }[] = [];
 			let matchResult;
 			while ((matchResult = regex.exec(content)) !== null) {
 				matches.push({ start: matchResult.index, end: matchResult.index + matchResult[0].length });
 			}
+			regex.lastIndex = 0;
 
 			setTotalMatches(matches.length);
 			if (matches.length === 0) {
@@ -1574,40 +1608,40 @@ export const FilePreview = React.memo(
 				return;
 			}
 
-			// Clamp current match index
 			const validIndex = Math.min(currentMatchIndex, matches.length - 1);
 			if (validIndex !== currentMatchIndex) {
 				setCurrentMatchIndex(validIndex);
 				return;
 			}
 
-			// Only scroll and select when navigating between matches (Enter/Shift+Enter)
-			// or when search query is complete (user stopped typing)
-			// We detect navigation by checking if currentMatchIndex changed without searchQuery changing
 			const isNavigating =
 				prevSearchQueryRef.current === searchQuery &&
 				prevMatchIndexRef.current !== currentMatchIndex;
 			prevSearchQueryRef.current = searchQuery;
 			prevMatchIndexRef.current = currentMatchIndex;
 
-			// Select the current match in the textarea only when navigating
 			if (isNavigating) {
 				const currentMatch = matches[validIndex];
+
 				if (currentMatch) {
 					const textarea = textareaRef.current;
 					textarea.focus();
 					textarea.setSelectionRange(currentMatch.start, currentMatch.end);
-
-					// Scroll to make the selection visible
-					// Calculate approximate line number and scroll to it
-					const textBeforeMatch = content.substring(0, currentMatch.start);
-					const lineNumber = textBeforeMatch.split('\n').length;
-					const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 24;
-					const targetScroll = (lineNumber - 5) * lineHeight; // Leave some lines above
-					textarea.scrollTop = Math.max(0, targetScroll);
+					textarea.scrollTo({
+						top: textarea.scrollHeight * (currentMatch.start / content.length) - textarea.clientHeight / 2,
+						behavior: 'smooth',
+					});
 				}
 			}
-		}, [searchQuery, currentMatchIndex, isEditableText, markdownEditMode, editContent]);
+		}, [
+			searchQuery,
+			currentMatchIndex,
+			isEditableText,
+			markdownEditMode,
+			editContent,
+			hasSearchQuery,
+			searchRegex,
+		]);
 
 		// Helper to check if a shortcut matches
 		const isShortcut = (e: React.KeyboardEvent, shortcutId: string) => {
@@ -1930,13 +1964,13 @@ export const FilePreview = React.memo(
 										<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
 											<span className="opacity-60">Modified:</span>{' '}
 											<span style={{ color: theme.colors.textMain }}>
-												{formatDateTime(fileStats.modifiedAt)}
+												{formattedModifiedAt}
 											</span>
 										</div>
 										<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
 											<span className="opacity-60">Created:</span>{' '}
 											<span style={{ color: theme.colors.textMain }}>
-												{formatDateTime(fileStats.createdAt)}
+												{formattedCreatedAt}
 											</span>
 										</div>
 									</>
@@ -2149,7 +2183,7 @@ export const FilePreview = React.memo(
 									}}
 									autoFocus
 								/>
-								{searchQuery.trim() && (
+								{hasSearchQuery && (
 									<>
 										<span
 											className="text-xs whitespace-nowrap"

@@ -69,6 +69,7 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsReaddirSync = vi.fn(() => [] as string[]);
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -80,6 +81,21 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
+	promises: {
+		access: async (pathArg: unknown) => {
+			if (!mockFsExistsSync(pathArg)) {
+				const error = new Error('ENOENT');
+				(error as NodeJS.ErrnoException).code = 'ENOENT';
+				throw error;
+			}
+		},
+		mkdir: async (...args: unknown[]) => mockFsMkdirSync(...args),
+		stat: async (...args: unknown[]) => mockFsStatSync(...args),
+		readdir: async (...args: unknown[]) => mockFsReaddirSync(...args),
+		unlink: async (...args: unknown[]) => mockFsUnlinkSync(...args),
+	},
+	constants: { F_OK: 0 },
 }));
 
 // Mock logger
