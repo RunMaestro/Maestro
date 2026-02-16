@@ -67,6 +67,7 @@ import { AccountRegistry } from './accounts/account-registry';
 import { AccountThrottleHandler } from './accounts/account-throttle-handler';
 import { AccountAuthRecovery } from './accounts/account-auth-recovery';
 import { AccountRecoveryPoller } from './accounts/account-recovery-poller';
+import { AccountSwitcher } from './accounts/account-switcher';
 import { getAccountStore } from './stores';
 import { groupChatEmitters } from './ipc/handlers/groupChat';
 import {
@@ -259,6 +260,7 @@ let accountRegistry: AccountRegistry | null = null;
 let accountThrottleHandler: AccountThrottleHandler | null = null;
 let accountAuthRecovery: AccountAuthRecovery | null = null;
 let accountRecoveryPoller: AccountRecoveryPoller | null = null;
+let accountSwitcher: AccountSwitcher | null = null;
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -511,6 +513,20 @@ app.whenReady().then(async () => {
 		}
 	}
 
+	// Initialize account switcher for manual account switching from renderer
+	if (accountRegistry && processManager) {
+		try {
+			accountSwitcher = new AccountSwitcher(
+				processManager,
+				accountRegistry,
+				safeSend,
+			);
+			logger.info('Account switcher initialized', 'Startup');
+		} catch (error) {
+			logger.error(`Failed to initialize account switcher: ${error}`, 'Startup');
+		}
+	}
+
 	// Set up IPC handlers
 	logger.debug('Setting up IPC handlers', 'Startup');
 	setupIpcHandlers();
@@ -675,6 +691,7 @@ function setupIpcHandlers() {
 		sessionsStore,
 		getAccountRegistry: () => accountRegistry,
 		getAccountAuthRecovery: () => accountAuthRecovery,
+		getAccountSwitcher: () => accountSwitcher,
 		safeSend,
 	});
 
@@ -776,6 +793,7 @@ function setupIpcHandlers() {
 		getAccountRegistry: () => accountRegistry,
 		getAccountAuthRecovery: () => accountAuthRecovery,
 		getRecoveryPoller: () => accountRecoveryPoller,
+		getAccountSwitcher: () => accountSwitcher,
 	});
 
 	// Register Document Graph handlers for file watching
