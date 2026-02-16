@@ -140,6 +140,7 @@ export interface SessionItemProps {
 	 * would be meaningless (and dropping fell through to "ungroup").
 	 */
 	dragDisabled?: boolean;
+	accountUsagePercent?: number | null; // Usage % for assigned account (passed from parent to avoid N hook instances)
 
 	// Handlers
 	onSelect: () => void;
@@ -189,6 +190,7 @@ export const SessionItem = memo(function SessionItem({
 	worktreeChildCount,
 	otherWindowNumber,
 	dragDisabled = false,
+	accountUsagePercent,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -434,7 +436,7 @@ export const SessionItem = memo(function SessionItem({
 									backgroundColor: `${theme.colors.accent}25`,
 									color: theme.colors.accentText || theme.colors.accent,
 								}}
-								title={`Virtuoso: ${session.accountName}`}
+								title={`Virtuoso: ${session.accountName}${accountUsagePercent != null ? ` (${Math.round(accountUsagePercent)}%)` : ''}`}
 							>
 								{session.accountName.split('@')[0]?.slice(0, 10)?.toUpperCase() || 'ACC'}
 							</span>

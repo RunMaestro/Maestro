@@ -992,6 +992,9 @@ function SessionListInner(props: SessionListProps) {
 					session={session}
 					variant={effectiveVariant}
 					theme={theme}
+					accountUsagePercent={
+						session.accountId ? accountUsageMetrics[session.accountId]?.usagePercent : undefined
+					}
 					navDomKey={globalIdx >= 0 ? `idx:${globalIdx}` : undefined}
 					isActive={
 						activeSessionId === session.id &&
@@ -1060,6 +1063,11 @@ function SessionListInner(props: SessionListProps) {
 										session={child}
 										variant="worktree"
 										theme={theme}
+										accountUsagePercent={
+											child.accountId
+												? accountUsageMetrics[child.accountId]?.usagePercent
+												: undefined
+										}
 										navDomKey={childGlobalIdx >= 0 ? `idx:${childGlobalIdx}` : undefined}
 										isActive={
 											activeSessionId === child.id &&
