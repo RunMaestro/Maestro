@@ -254,7 +254,8 @@ export function useAccountUsage(): {
 			}
 			setMetrics(newMetrics);
 			setLoading(false);
-		} catch {
+		} catch (err) {
+			console.warn('[useAccountUsage] Failed to fetch usage data:', err);
 			setLoading(false);
 		}
 	}, [calculateDerivedMetrics]);
@@ -277,10 +278,10 @@ export function useAccountUsage(): {
 							windowStart: w.windowStart,
 							windowEnd: w.windowEnd,
 						}));
-					} catch { /* skip individual account errors */ }
+					} catch (err) { console.warn(`[useAccountUsage] Failed to load history for account ${account.id}:`, err); }
 				}
 				windowHistoriesRef.current = histories;
-			} catch { /* non-fatal */ }
+			} catch (err) { console.warn('[useAccountUsage] Failed to load window histories:', err); }
 		}
 		loadHistories();
 	}, []);

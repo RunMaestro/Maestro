@@ -58,8 +58,8 @@ export function AccountSelector({
 			try {
 				const list = (await window.maestro.accounts.list()) as AccountProfile[];
 				if (!cancelled) setAccounts(list);
-			} catch {
-				// Silently fail - dropdown will show empty
+			} catch (err) {
+				console.warn('[AccountSelector] Failed to fetch accounts:', err);
 			}
 		})();
 		return () => { cancelled = true; };
@@ -205,9 +205,9 @@ export function AccountSelector({
 															style={{
 																width: `${Math.min(100, usage.usagePercent)}%`,
 																backgroundColor: usage.usagePercent >= 95
-																	? '#ef4444'
+																	? theme.colors.error
 																	: usage.usagePercent >= 80
-																		? '#f59e0b'
+																		? theme.colors.warning
 																		: theme.colors.accent,
 															}}
 														/>

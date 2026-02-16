@@ -18,6 +18,7 @@ import type { AccountProfile, AccountSwitchConfig } from '../../shared/account-t
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 import { AccountUsageHistory } from './AccountUsageHistory';
+import { useToast } from '../contexts/ToastContext';
 
 const PLAN_PRESETS = [
 	{ label: 'Custom', tokens: 0, cost: null },
@@ -57,6 +58,7 @@ const WINDOW_DURATION_OPTIONS = [
 ];
 
 export function AccountsPanel({ theme }: AccountsPanelProps) {
+	const { addToast } = useToast();
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [switchConfig, setSwitchConfig] = useState<AccountSwitchConfig>(ACCOUNT_SWITCH_DEFAULTS);
 	const [discoveredAccounts, setDiscoveredAccounts] = useState<DiscoveredAccount[] | null>(null);
@@ -244,11 +246,13 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 		try {
 			const result = await window.maestro.accounts.validateSymlinks(configDir);
 			if (result.valid) {
-				alert('All symlinks are valid.');
+				addToast({ type: 'success', title: 'Symlinks Valid', message: 'All symlinks are valid' });
 			} else {
-				alert(
-					`Symlink issues found:\nBroken: ${result.broken.join(', ') || 'none'}\nMissing: ${result.missing.join(', ') || 'none'}`
-				);
+				addToast({
+					type: 'warning',
+					title: 'Symlink Issues Found',
+					message: `Broken: ${result.broken.join(', ') || 'none'} · Missing: ${result.missing.join(', ') || 'none'}`,
+				});
 			}
 		} catch (err) {
 			console.error('Failed to validate symlinks:', err);
@@ -259,9 +263,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 		try {
 			const result = await window.maestro.accounts.repairSymlinks(configDir);
 			if (result.errors.length === 0) {
-				alert(`Repaired: ${result.repaired.join(', ') || 'none needed'}`);
+				addToast({ type: 'success', title: 'Symlinks Repaired', message: `Repaired: ${result.repaired.join(', ') || 'none needed'}` });
 			} else {
-				alert(`Repair errors: ${result.errors.join(', ')}`);
+				addToast({ type: 'error', title: 'Repair Failed', message: `Repair errors: ${result.errors.join(', ')}` });
 			}
 			await refreshAccounts();
 		} catch (err) {
@@ -274,7 +278,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 			const result = await window.maestro.accounts.syncCredentials(configDir);
 			if (result.success) {
 				setErrorMessage(null);
-				alert('Credentials synced from base ~/.claude directory.');
+				addToast({ type: 'success', title: 'Credentials Synced', message: 'Credentials synced from base ~/.claude directory' });
 			} else {
 				setErrorMessage(`Sync failed: ${result.error}`);
 			}
@@ -486,9 +490,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 															style={{
 																width: `${Math.min(100, usage.usagePercent)}%`,
 																backgroundColor: usage.usagePercent >= 95
-																	? '#ef4444'
+																	? theme.colors.error
 																	: usage.usagePercent >= 80
-																		? '#f59e0b'
+																		? theme.colors.warning
 																		: theme.colors.accent,
 															}}
 														/>
@@ -533,9 +537,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 													<div style={{ color: theme.colors.textDim }}>
 														To limit: <span style={{
 															color: usage.estimatedTimeToLimitMs < 30 * 60 * 1000
-																? '#ef4444'
+																? theme.colors.error
 																: usage.estimatedTimeToLimitMs < 60 * 60 * 1000
-																	? '#f59e0b'
+																	? theme.colors.warning
 																	: theme.colors.textMain,
 														}}>
 															~{formatTimeRemaining(usage.estimatedTimeToLimitMs)}
@@ -553,9 +557,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 															Current rate:{' '}
 															<span style={{
 																color: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 60 * 60 * 1000
-																	? '#ef4444'
+																	? theme.colors.error
 																	: usage.prediction.linearTimeToLimitMs !== null && usage.prediction.linearTimeToLimitMs < 2 * 60 * 60 * 1000
-																		? '#f59e0b'
+																		? theme.colors.warning
 																		: theme.colors.textMain,
 															}}>
 																{usage.prediction.linearTimeToLimitMs !== null
@@ -567,9 +571,9 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 															Conservative (P90):{' '}
 															<span style={{
 																color: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 2
-																	? '#ef4444'
+																	? theme.colors.error
 																	: usage.prediction.windowsRemainingP90 !== null && usage.prediction.windowsRemainingP90 < 5
-																		? '#f59e0b'
+																		? theme.colors.warning
 																		: theme.colors.textMain,
 															}}>
 																{usage.prediction.windowsRemainingP90 !== null

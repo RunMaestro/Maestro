@@ -2276,7 +2276,7 @@ function MaestroConsoleInner() {
 					type: 'rate_limited',
 					message: 'All virtuosos have been rate-limited. Waiting for automatic recovery...',
 					recoverable: true,
-					agentId: (data.agentId as string) || 'claude-code',
+					agentId: 'claude-code',
 					timestamp: Date.now(),
 				},
 				batchState.currentDocumentIndex,
