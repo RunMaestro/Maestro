@@ -9,6 +9,7 @@
  * The `query-complete` event fires only for batch/auto-run processes.
  */
 
+import path from 'path';
 import type { ProcessManager } from '../process-manager';
 import type { QueryCompleteData } from '../process-manager/types';
 import type { WakaTimeManager } from '../wakatime-manager';
@@ -21,7 +22,8 @@ function heartbeatForSession(
 ): void {
 	const managedProcess = processManager.get(sessionId);
 	if (!managedProcess || managedProcess.isTerminal) return;
-	const projectName = managedProcess.projectPath || managedProcess.cwd || sessionId;
+	const projectDir = managedProcess.projectPath || managedProcess.cwd;
+	const projectName = projectDir ? path.basename(projectDir) : sessionId;
 	void wakaTimeManager.sendHeartbeat(sessionId, projectName, managedProcess.cwd);
 }
 
@@ -48,7 +50,7 @@ export function setupWakaTimeListener(
 
 	// Also send heartbeat on query-complete for batch/auto-run processes
 	processManager.on('query-complete', (_sessionId: string, queryData: QueryCompleteData) => {
-		const projectName = queryData.projectPath || queryData.sessionId;
+		const projectName = queryData.projectPath ? path.basename(queryData.projectPath) : queryData.sessionId;
 		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath);
 	});
 

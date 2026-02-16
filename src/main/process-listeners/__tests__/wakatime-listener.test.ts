@@ -62,7 +62,7 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-abc',
-			'/home/user/project',
+			'project',
 			'/home/user/project',
 		);
 	});
@@ -85,7 +85,7 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-thinking',
-			'/home/user/project',
+			'project',
 			'/home/user/project',
 		);
 	});
@@ -136,7 +136,7 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-no-path',
-			'/home/user/fallback',
+			'fallback',
 			'/home/user/fallback',
 		);
 	});
@@ -159,7 +159,7 @@ describe('WakaTime Listener', () => {
 
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-abc',
-			'/home/user/project',
+			'project',
 			'/home/user/project',
 		);
 	});
