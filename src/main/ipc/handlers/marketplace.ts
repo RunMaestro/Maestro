@@ -844,6 +844,10 @@ export function registerMarketplaceHandlers(deps: MarketplaceHandlerDependencies
 					try {
 						const entries = await fs.readdir(localAssetsPath);
 						for (const entry of entries) {
+							// Skip dotfiles (.DS_Store, .gitkeep, etc.) and entries with path separators
+							if (entry.startsWith('.') || entry.includes('/') || entry.includes('\\')) {
+								continue;
+							}
 							const entryPath = path.join(localAssetsPath, entry);
 							try {
 								const stat = await fs.stat(entryPath);

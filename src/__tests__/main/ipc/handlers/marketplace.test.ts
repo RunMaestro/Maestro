@@ -1567,11 +1567,11 @@ describe('marketplace IPC handlers', () => {
 					.mockResolvedValueOnce('# Main local doc')
 					.mockResolvedValueOnce(Buffer.from('config'))
 					.mockResolvedValueOnce(Buffer.from('logo'))
-					.mockResolvedValueOnce(Buffer.from('dockerignore'))
+					.mockResolvedValueOnce(Buffer.from('extra'))
 					.mockRejectedValueOnce({ code: 'ENOENT' });
 				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
-				vi.mocked(fs.readdir).mockResolvedValue(['logo.png', '.dockerignore']);
+				vi.mocked(fs.readdir).mockResolvedValue(['logo.png', 'extra-asset.txt']);
 				vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true } as any);
 
 				const handler = handlers.get('marketplace:importPlaybook');
@@ -1584,7 +1584,8 @@ describe('marketplace IPC handlers', () => {
 				);
 
 				expect(result.success).toBe(true);
-				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png', '.dockerignore']);
+				// logo.png is in both manifest and readdir — deduplicated; extra-asset.txt is discovered
+				expect(result.importedAssets).toEqual(['config.yaml', 'logo.png', 'extra-asset.txt']);
 				expect(fs.writeFile).toHaveBeenCalledWith(
 					path.join('/autorun/folder', 'Merged Assets', 'assets', 'config.yaml'),
 					expect.any(Buffer)
@@ -1594,10 +1595,68 @@ describe('marketplace IPC handlers', () => {
 					expect.any(Buffer)
 				);
 				expect(fs.writeFile).toHaveBeenCalledWith(
-					path.join('/autorun/folder', 'Merged Assets', 'assets', '.dockerignore'),
+					path.join('/autorun/folder', 'Merged Assets', 'assets', 'extra-asset.txt'),
 					expect.any(Buffer)
 				);
 				expect(mockFetch).not.toHaveBeenCalled();
+			});
+
+			it('should skip dotfiles and path-traversal entries during auto-discovery', async () => {
+				const localPlaybook = {
+					id: 'local-dotfile-test',
+					title: 'Dotfile Filter Test',
+					description: 'Dotfiles and path traversal entries should be skipped',
+					category: 'Custom',
+					author: 'Local Author',
+					lastUpdated: '2024-01-20',
+					path: '/Users/test/local-playbooks/dotfile-test',
+					documents: [{ filename: 'main-doc', resetOnCompletion: false }],
+					loopEnabled: false,
+					maxLoops: null,
+					prompt: null,
+				};
+
+				const localManifest: MarketplaceManifest = {
+					lastUpdated: '2024-01-20',
+					playbooks: [localPlaybook],
+				};
+
+				const validCache: MarketplaceCache = {
+					fetchedAt: Date.now(),
+					manifest: sampleManifest,
+				};
+
+				vi.mocked(fs.readFile)
+					.mockResolvedValueOnce(JSON.stringify(validCache))
+					.mockResolvedValueOnce(JSON.stringify(localManifest))
+					.mockResolvedValueOnce('# Main local doc')
+					.mockResolvedValueOnce(Buffer.from('good-asset'))
+					.mockRejectedValueOnce({ code: 'ENOENT' });
+				vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+				vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+				vi.mocked(fs.readdir).mockResolvedValue([
+					'good-asset.yaml',
+					'.DS_Store',
+					'.gitkeep',
+					'../../etc/passwd',
+					'normal/subdir',
+				]);
+				vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true } as any);
+
+				const handler = handlers.get('marketplace:importPlaybook');
+				const result = await handler!(
+					{} as any,
+					'local-dotfile-test',
+					'Dotfile Test',
+					'/autorun/folder',
+					'session-123'
+				);
+
+				expect(result.success).toBe(true);
+				// Only good-asset.yaml should survive filtering
+				expect(result.importedAssets).toEqual(['good-asset.yaml']);
+				// stat should only be called for the non-dotfile, non-traversal entry
+				expect(fs.stat).toHaveBeenCalledTimes(1);
 			});
 		});
 	});
