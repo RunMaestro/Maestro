@@ -74,6 +74,8 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	/** When true, DataBufferManager skips appending to streamedText on next flush */
+	skipNextRetention?: boolean;
 }
 
 export interface UsageTotals {
@@ -107,6 +109,7 @@ export interface CommandResult {
  * Events emitted by ProcessManager
  */
 export interface ProcessManagerEvents {
+	spawn: (sessionId: string) => void;
 	data: (sessionId: string, data: string) => void;
 	stderr: (sessionId: string, data: string) => void;
 	exit: (sessionId: string, code: number) => void;

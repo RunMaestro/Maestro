@@ -111,9 +111,11 @@ export class ExitHandler {
 				const event = outputParser.parseJsonLine(remainingLine);
 				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 					managedProcess.resultEmitted = true;
+					const usedStreamedTextFallback = !event.text && !!managedProcess.streamedText;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
+						// Skip buffer retention when sourced from streamedText to avoid double-append
+						this.bufferManager.emitDataBuffered(sessionId, resultText, usedStreamedTextFallback);
 					}
 				}
 			} catch {
@@ -130,7 +132,8 @@ export class ExitHandler {
 				sessionId,
 				streamedTextLength: managedProcess.streamedText.length,
 			});
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			// Skip buffer retention — this data is already in streamedText
+			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText, true);
 		}
 
 		// Check for errors using the parser (if not already emitted)

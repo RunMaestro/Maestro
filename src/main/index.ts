@@ -696,11 +696,12 @@ function setupProcessListeners() {
 			logger,
 		});
 
-		// Hook spawn/exit events to update process state snapshot for renderer reconnection
-		const updateProcessSnapshot = () => {
-			if (!processManager) return;
-			const processes = processManager.getAll();
-			const snapshots: ProcessSnapshot[] = processes.map((p) => ({
+		// Hook spawn/exit events to update process state snapshot for renderer reconnection.
+		// The getter is called at write time so the snapshot reflects current state,
+		// not stale data from when the debounce was triggered.
+		const getProcessSnapshots = (): ProcessSnapshot[] => {
+			if (!processManager) return [];
+			return processManager.getAll().map((p) => ({
 				sessionId: p.sessionId,
 				pid: p.pid,
 				toolType: p.toolType,
@@ -712,11 +713,11 @@ function setupProcessListeners() {
 				isBatchMode: p.isBatchMode || false,
 				tabId: p.tabId,
 			}));
-			processStateStore.saveSnapshot(snapshots);
 		};
 
-		processManager.on('spawn', () => updateProcessSnapshot());
-		processManager.on('exit', () => updateProcessSnapshot());
+		const scheduleSnapshotUpdate = () => processStateStore.saveSnapshot(getProcessSnapshots);
+		processManager.on('spawn', scheduleSnapshotUpdate);
+		processManager.on('exit', scheduleSnapshotUpdate);
 
 		// Clear snapshot on clean shutdown so stale data isn't used on next launch
 		app.on('will-quit', () => {
