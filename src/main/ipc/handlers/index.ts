@@ -50,6 +50,7 @@ import { registerLeaderboardHandlers, LeaderboardHandlerDependencies } from './l
 import { registerNotificationsHandlers } from './notifications';
 import { registerSymphonyHandlers, SymphonyHandlerDependencies } from './symphony';
 import { registerAgentErrorHandlers } from './agent-error';
+import { registerBatchStateHandlers } from './batch-state';
 import { registerTabNamingHandlers, TabNamingHandlerDependencies } from './tabNaming';
 import { registerDirectorNotesHandlers, DirectorNotesHandlerDependencies } from './director-notes';
 import { AgentDetector } from '../../agents';
@@ -91,6 +92,7 @@ export type { LeaderboardHandlerDependencies };
 export { registerNotificationsHandlers };
 export { registerSymphonyHandlers };
 export { registerAgentErrorHandlers };
+export { registerBatchStateHandlers };
 export { registerTabNamingHandlers };
 export type { TabNamingHandlerDependencies };
 export { registerDirectorNotesHandlers };
@@ -266,6 +268,8 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 	});
 	// Register agent error handlers (error state management)
 	registerAgentErrorHandlers();
+	// Register batch state persistence handlers (Auto Run reload recovery)
+	registerBatchStateHandlers();
 	// Register tab naming handlers for automatic tab naming
 	registerTabNamingHandlers({
 		getProcessManager: deps.getProcessManager,
