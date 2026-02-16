@@ -8,6 +8,7 @@ import type {
 	BatchRunState,
 } from '../../types';
 import { getActiveTab, extractQuickTabName } from '../../utils/tabHelpers';
+import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 import { substituteTemplateVariables } from '../../utils/templateVariables';
 import { gitService } from '../../services/git';
@@ -969,15 +970,10 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							effectivePrompt = `${substitutedSystemPrompt}\n\n---\n\n# User Request\n\n${effectivePrompt}`;
 						}
 
-						// On Windows, use stdin to bypass cmd.exe ~8KB command line length limit
-						// and avoid shell escaping issues with special characters like "-"
-						const isWindows = navigator.platform.toLowerCase().includes('win');
-						// Use agent capabilities to determine stdin mode
-						// Agents that support --input-format stream-json use sendPromptViaStdin (JSON format)
-						// Agents that don't support stream-json use sendPromptViaStdinRaw (raw text)
-						const supportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-						const sendPromptViaStdin = isWindows && supportsStreamJson;
-						const sendPromptViaStdinRaw = isWindows && !supportsStreamJson;
+						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+							isSshSession: !!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
+							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+						});
 
 						// Spawn agent with generic config - the main process will use agent-specific
 						// argument builders (resumeArgs, readOnlyArgs, etc.) to construct the final args

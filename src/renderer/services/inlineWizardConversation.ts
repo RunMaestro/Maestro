@@ -13,6 +13,7 @@ import type { ToolType, ProcessConfig } from '../types';
 import type { InlineWizardMessage } from '../hooks/batch/useInlineWizard';
 import type { ExistingDocument as BaseExistingDocument } from '../utils/existingDocsDetector';
 import { logger } from '../utils/logger';
+import { getStdinFlags } from '../utils/spawnHelpers';
 import { wizardInlineIteratePrompt, wizardInlineNewPrompt } from '../../prompts';
 import {
 	parseStructuredOutput,
@@ -579,15 +580,10 @@ export async function sendWizardMessage(
 		// Build args for the agent
 		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
 
-		// On Windows, use stdin to bypass cmd.exe ~8KB command line length limit
-		// Note: Use navigator.platform in renderer (process.platform is not available in browser context)
-		const isWindows = navigator.platform.toLowerCase().includes('win');
-		// Use agent capabilities to determine stdin mode
-		// Agents that support --input-format stream-json use sendPromptViaStdin (JSON format)
-		// Agents that don't support stream-json use sendPromptViaStdinRaw (raw text)
-		const supportsStreamJson = agent?.capabilities?.supportsStreamJsonInput ?? false;
-		const sendViaStdin = isWindows && supportsStreamJson;
-		const sendViaStdinRaw = isWindows && !supportsStreamJson;
+		const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } = getStdinFlags({
+			isSshSession: !!session.sessionSshRemoteConfig?.enabled,
+			supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
+		});
 		if (sendViaStdin && !argsForSpawn.includes('--input-format')) {
 			// Add --input-format stream-json when using stdin with stream-json compatible agents
 			argsForSpawn.push('--input-format', 'stream-json');
@@ -599,7 +595,6 @@ export async function sendWizardMessage(
 			promptLength: fullPrompt.length,
 			sendViaStdin,
 			sendViaStdinRaw,
-			supportsStreamJson,
 		});
 
 		// Spawn agent and collect output
