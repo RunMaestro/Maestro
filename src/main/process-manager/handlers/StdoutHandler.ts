@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger';
 import { appendToBuffer } from '../utils/bufferUtils';
 import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggregator';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
+import { MAX_RECONNECT_OUTPUT_BUFFER } from '../constants';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
 
@@ -306,6 +307,9 @@ export class StdoutHandler {
 			});
 			this.emitter.emit('thinking-chunk', sessionId, event.text);
 			managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+			if (managedProcess.streamedText.length > MAX_RECONNECT_OUTPUT_BUFFER) {
+				managedProcess.streamedText = managedProcess.streamedText.slice(-MAX_RECONNECT_OUTPUT_BUFFER);
+			}
 		}
 
 		// Handle tool execution events (OpenCode, Codex)

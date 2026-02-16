@@ -228,6 +228,21 @@ interface MaestroAPI {
 				isBatchMode: boolean;
 			}>
 		>;
+		reconcileAfterReload: () => Promise<
+			Array<{
+				sessionId: string;
+				toolType: string;
+				pid: number;
+				cwd: string;
+				isTerminal: boolean;
+				isBatchMode: boolean;
+				startTime: number;
+				command?: string;
+				args?: string[];
+				tabId?: string;
+				recentOutput?: string;
+			}>
+		>;
 		onData: (callback: (sessionId: string, data: string) => void) => () => void;
 		onExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onSessionId: (callback: (sessionId: string, agentSessionId: string) => void) => () => void;

@@ -590,6 +590,31 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
+	// Returns running processes with extra metadata for renderer reconnection after reload.
+	// Includes recent output buffer so the renderer can replay output into terminal views.
+	ipcMain.handle(
+		'process:reconcileAfterReload',
+		withIpcErrorLogging(handlerOpts('reconcileAfterReload'), async () => {
+			const processManager = requireProcessManager(getProcessManager);
+			const processes = processManager.getAll();
+
+			return processes.map((p) => ({
+				sessionId: p.sessionId,
+				toolType: p.toolType,
+				pid: p.pid,
+				cwd: p.cwd,
+				isTerminal: p.isTerminal,
+				isBatchMode: p.isBatchMode || false,
+				startTime: p.startTime,
+				command: p.command,
+				args: p.args,
+				tabId: p.tabId,
+				// Include recent output buffer if available (capped at 10KB)
+				recentOutput: p.streamedText ? p.streamedText.slice(-10000) : undefined,
+			}));
+		})
+	);
+
 	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
 	// Supports SSH remote execution when sessionSshRemoteConfig is provided
 	ipcMain.handle(

@@ -49,11 +49,15 @@ export class ProcessManager extends EventEmitter {
 	spawn(config: ProcessConfig): SpawnResult {
 		const usePty = this.shouldUsePty(config);
 
-		if (usePty) {
-			return this.ptySpawner.spawn(config);
-		} else {
-			return this.childProcessSpawner.spawn(config);
+		const result = usePty
+			? this.ptySpawner.spawn(config)
+			: this.childProcessSpawner.spawn(config);
+
+		if (result.success) {
+			this.emit('spawn', config.sessionId);
 		}
+
+		return result;
 	}
 
 	private shouldUsePty(config: ProcessConfig): boolean {

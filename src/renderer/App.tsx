@@ -123,6 +123,7 @@ import {
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useProcessReconciliation } from './hooks/agent/useProcessReconciliation';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -3652,6 +3653,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 		rightPanelRef,
 		processQueuedItemRef,
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
+	});
+
+	// --- PROCESS RECONNECTION AFTER RELOAD ---
+	// Reconcile session states with still-running processes after renderer reload (F5, HMR)
+	useProcessReconciliation({
+		batchedUpdater,
+		addToastRef,
 	});
 
 	// PERFORMANCE: Memoized callback for creating new agent sessions

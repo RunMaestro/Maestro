@@ -695,5 +695,32 @@ function setupProcessListeners() {
 			},
 			logger,
 		});
+
+		// Hook spawn/exit events to update process state snapshot for renderer reconnection
+		const updateProcessSnapshot = () => {
+			if (!processManager) return;
+			const processes = processManager.getAll();
+			const snapshots: ProcessSnapshot[] = processes.map((p) => ({
+				sessionId: p.sessionId,
+				pid: p.pid,
+				toolType: p.toolType,
+				cwd: p.cwd,
+				isTerminal: p.isTerminal,
+				startTime: p.startTime,
+				command: p.command,
+				args: p.args,
+				isBatchMode: p.isBatchMode || false,
+				tabId: p.tabId,
+			}));
+			processStateStore.saveSnapshot(snapshots);
+		};
+
+		processManager.on('spawn', () => updateProcessSnapshot());
+		processManager.on('exit', () => updateProcessSnapshot());
+
+		// Clear snapshot on clean shutdown so stale data isn't used on next launch
+		app.on('will-quit', () => {
+			processStateStore.clear().catch(() => {});
+		});
 	}
 }

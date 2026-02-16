@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
-import { DATA_BUFFER_FLUSH_INTERVAL, DATA_BUFFER_SIZE_THRESHOLD } from '../constants';
+import { DATA_BUFFER_FLUSH_INTERVAL, DATA_BUFFER_SIZE_THRESHOLD, MAX_RECONNECT_OUTPUT_BUFFER } from '../constants';
 import type { ManagedProcess } from '../types';
 
 /**
@@ -50,8 +50,16 @@ export class DataBufferManager {
 		}
 
 		if (managedProcess.dataBuffer) {
+			const flushedData = managedProcess.dataBuffer;
+
+			// Retain output for renderer reconnection after reload
+			managedProcess.streamedText = (managedProcess.streamedText || '') + flushedData;
+			if (managedProcess.streamedText.length > MAX_RECONNECT_OUTPUT_BUFFER) {
+				managedProcess.streamedText = managedProcess.streamedText.slice(-MAX_RECONNECT_OUTPUT_BUFFER);
+			}
+
 			try {
-				this.emitter.emit('data', sessionId, managedProcess.dataBuffer);
+				this.emitter.emit('data', sessionId, flushedData);
 			} catch (err) {
 				logger.error('[ProcessManager] Error flushing data buffer', 'ProcessManager', {
 					sessionId,

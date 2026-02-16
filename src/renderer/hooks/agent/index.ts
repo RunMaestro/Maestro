@@ -95,3 +95,7 @@ export type {
 // Agent IPC listeners (process event routing)
 export { useAgentListeners, getErrorTitleForType } from './useAgentListeners';
 export type { UseAgentListenersDeps } from './useAgentListeners';
+
+// Process reconnection after renderer reload
+export { useProcessReconciliation } from './useProcessReconciliation';
+export type { UseProcessReconciliationDeps } from './useProcessReconciliation';

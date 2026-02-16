@@ -176,6 +176,24 @@ export function createProcessApi() {
 		getActiveProcesses: (): Promise<ActiveProcess[]> =>
 			ipcRenderer.invoke('process:getActiveProcesses'),
 
+		/**
+		 * Get running processes with metadata for reconnection after renderer reload.
+		 * Includes recent output buffer for replaying into terminal views.
+		 */
+		reconcileAfterReload: (): Promise<Array<{
+			sessionId: string;
+			toolType: string;
+			pid: number;
+			cwd: string;
+			isTerminal: boolean;
+			isBatchMode: boolean;
+			startTime: number;
+			command?: string;
+			args?: string[];
+			tabId?: string;
+			recentOutput?: string;
+		}>> => ipcRenderer.invoke('process:reconcileAfterReload'),
+
 		// Event listeners
 
 		/**

@@ -284,6 +284,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:reconcileAfterReload',
 				'process:runCommand',
 			];
 

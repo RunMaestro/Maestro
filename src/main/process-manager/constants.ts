@@ -15,6 +15,12 @@ export const DATA_BUFFER_FLUSH_INTERVAL = 50;
 export const DATA_BUFFER_SIZE_THRESHOLD = 8192; // 8KB
 
 /**
+ * Maximum size of the reconnection output buffer per process.
+ * Retained so the renderer can replay recent output after a reload.
+ */
+export const MAX_RECONNECT_OUTPUT_BUFFER = 50000; // 50KB
+
+/**
  * Standard Unix paths for PATH environment variable
  */
 export const STANDARD_UNIX_PATHS = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin';
