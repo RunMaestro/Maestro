@@ -17,11 +17,14 @@ import {
 	TrendingUp,
 	Users,
 	Zap,
+	BarChart3,
 } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type { AccountProfile } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 import { AccountUsageHistory } from './AccountUsageHistory';
+import { AccountTrendChart } from './UsageDashboard/AccountTrendChart';
+import { AccountRateMetrics } from './UsageDashboard/AccountRateMetrics';
 
 interface ThrottleEvent {
 	timestamp: number;
@@ -310,6 +313,18 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 												<span style={{ color: theme.colors.textMain }}>
 													~{formatTokenCount(Math.round(usage.burnRatePerHour))}/hr
 												</span>
+												{usage?.rateMetrics?.trend && usage.rateMetrics.trend !== 'stable' && (
+													<span
+														className="ml-1"
+														style={{
+															color: usage.rateMetrics.trend === 'up'
+																? theme.colors.warning
+																: theme.colors.success,
+														}}
+													>
+														{usage.rateMetrics.trend === 'up' ? '\u2197' : '\u2198'}
+													</span>
+												)}
 											</div>
 											{usage.estimatedTimeToLimitMs !== null && (
 												<div>
@@ -326,6 +341,13 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 												</span>
 											</div>
 										</div>
+
+										{/* 7-day sparkline */}
+										{usage && (
+											<div className="mt-2 pt-1.5 border-t" style={{ borderColor: theme.colors.border + '40' }}>
+												<AccountTrendChart accountId={account.id} theme={theme} days={7} compact={true} />
+											</div>
+										)}
 									</>
 								) : (
 									<p
@@ -460,6 +482,48 @@ export function VirtuosoUsageView({ theme, sessions }: VirtuosoUsageViewProps) {
 								</div>
 							);
 						})()}
+					</div>
+				</div>
+			)}
+
+			{/* Section B.5: Trends & Analytics */}
+			{accounts.length > 0 && (
+				<div>
+					<h3
+						className="text-xs font-bold uppercase mb-3 flex items-center gap-2"
+						style={{ color: theme.colors.textDim }}
+					>
+						<BarChart3 className="w-3.5 h-3.5" />
+						Trends &amp; Analytics
+					</h3>
+					<div className="space-y-4">
+						{accounts.map((account) => {
+							const usage = metrics[account.id];
+							if (!usage) return null;
+							return (
+								<div
+									key={account.id}
+									className="rounded-lg p-3 border"
+									style={{
+										borderColor: theme.colors.border,
+										backgroundColor: theme.colors.bgActivity,
+									}}
+								>
+									<div
+										className="text-xs font-medium mb-2"
+										style={{ color: theme.colors.textMain }}
+									>
+										{account.name || account.email}
+									</div>
+									<AccountTrendChart accountId={account.id} theme={theme} days={30} />
+									{usage.rateMetrics && (
+										<div className="mt-3">
+											<AccountRateMetrics rateMetrics={usage.rateMetrics} theme={theme} />
+										</div>
+									)}
+								</div>
+							);
+						})}
 					</div>
 				</div>
 			)}
