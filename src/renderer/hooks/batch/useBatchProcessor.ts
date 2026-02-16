@@ -21,12 +21,64 @@ import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useSessionDebounce } from './useSessionDebounce';
 import { DEFAULT_BATCH_STATE, type BatchAction } from './batchReducer';
 import { useBatchStore, selectHasAnyActiveBatch } from '../../stores/batchStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
 
 // Debounce delay for batch state updates (Quick Win 1)
 const BATCH_STATE_DEBOUNCE_MS = 200;
+
+/**
+ * Persist active batch state snapshots to the main process.
+ * Called after every dispatch that modifies running batch state.
+ * The main process debounces writes to disk (3s) so calling this frequently is safe.
+ */
+function persistBatchState(): void {
+	const allBatchStates = useBatchStore.getState().batchRunStates;
+	const sessions = useSessionStore.getState().sessions;
+
+	const activeBatches = Object.entries(allBatchStates)
+		.filter(([, state]) => state.isRunning)
+		.map(([sessionId, state]) => {
+			// Find the active AI tab's agentSessionId for this session
+			const session = sessions.find((s) => s.id === sessionId);
+			const activeTab = session?.aiTabs?.find((t) => t.id === session.activeTabId) || session?.aiTabs?.[0];
+			const agentSessionId = activeTab?.agentSessionId || undefined;
+			const agentType = session?.toolType || undefined;
+
+			return {
+				sessionId,
+				isRunning: state.isRunning,
+				processingState: state.processingState || 'RUNNING',
+				documents: state.documents,
+				lockedDocuments: state.lockedDocuments,
+				currentDocumentIndex: state.currentDocumentIndex,
+				currentDocTasksTotal: state.currentDocTasksTotal,
+				currentDocTasksCompleted: state.currentDocTasksCompleted,
+				totalTasksAcrossAllDocs: state.totalTasksAcrossAllDocs,
+				completedTasksAcrossAllDocs: state.completedTasksAcrossAllDocs,
+				loopEnabled: state.loopEnabled,
+				loopIteration: state.loopIteration,
+				maxLoops: state.maxLoops,
+				folderPath: state.folderPath,
+				worktreeActive: state.worktreeActive,
+				worktreePath: state.worktreePath,
+				worktreeBranch: state.worktreeBranch,
+				customPrompt: state.customPrompt,
+				startTime: state.startTime,
+				cumulativeTaskTimeMs: state.cumulativeTaskTimeMs,
+				accumulatedElapsedMs: state.accumulatedElapsedMs,
+				lastActiveTimestamp: state.lastActiveTimestamp,
+				agentSessionId,
+				agentType,
+			};
+		});
+
+	if (activeBatches.length > 0 && window.maestro?.batchState?.save) {
+		window.maestro.batchState.save(activeBatches);
+	}
+}
 
 // Regex to match checked markdown checkboxes for reset-on-completion
 // Matches both [x] and [X] with various checkbox formats (standard and GitHub-style)
@@ -242,6 +294,29 @@ export function useBatchProcessor({
 				newCompleted: newStates[sessionId]?.completedTasksAcrossAllDocs,
 			});
 		}
+
+		// Persist batch state snapshot after every state-modifying dispatch.
+		// On COMPLETE_BATCH, clear the snapshot instead (no running batches left for this session).
+		if (action.type === 'COMPLETE_BATCH') {
+			// Check if there are any OTHER active batches still running
+			const remainingActive = Object.entries(newStates).some(
+				([, state]) => state.isRunning
+			);
+			if (!remainingActive) {
+				window.maestro?.batchState?.clear();
+			} else {
+				persistBatchState();
+			}
+		} else if (
+			action.type === 'START_BATCH' ||
+			action.type === 'SET_RUNNING' ||
+			action.type === 'UPDATE_PROGRESS' ||
+			action.type === 'SET_ERROR' ||
+			action.type === 'CLEAR_ERROR' ||
+			action.type === 'INCREMENT_LOOP'
+		) {
+			persistBatchState();
+		}
 	}, []);
 
 	// Custom prompts per session — lives in batchStore
@@ -291,6 +366,200 @@ export function useBatchProcessor({
 			stopRequestedRefs.current = {};
 		};
 	}, []);
+
+	// Batch state recovery after renderer reload
+	// Loads persisted snapshot from main process and restores Zustand state
+	const hasRecoveredRef = useRef(false);
+	useEffect(() => {
+		if (hasRecoveredRef.current) return;
+		hasRecoveredRef.current = true;
+
+		let cancelled = false;
+
+		async function recoverBatchState() {
+			try {
+				if (!window.maestro?.batchState?.load) return;
+				const snapshot = await window.maestro.batchState.load();
+				if (cancelled || !snapshot || snapshot.activeBatches.length === 0) return;
+
+				// Check which processes are still running (PROC-RECONNECT-01)
+				let runningProcesses: Array<{
+					sessionId: string;
+					toolType: string;
+					tabId?: string;
+				}> = [];
+				try {
+					runningProcesses = await window.maestro.process.reconcileAfterReload();
+				} catch {
+					// If reconciliation fails, treat all processes as dead
+				}
+
+				const sessions = useSessionStore.getState().sessions;
+				let recoveredCount = 0;
+				let hasDeadProcesses = false;
+
+				for (const batch of snapshot.activeBatches) {
+					if (cancelled) return;
+
+					// Verify the batch's session still exists
+					const session = sessions.find((s) => s.id === batch.sessionId);
+					if (!session) continue;
+
+					// Check if the agent process is still running
+					const hasRunningProcess = runningProcesses.some(
+						(p) =>
+							p.sessionId === batch.sessionId ||
+							p.sessionId.startsWith(batch.sessionId + '-ai-')
+					);
+
+					// Restore the batch state into the Zustand store
+					dispatch({
+						type: 'START_BATCH',
+						sessionId: batch.sessionId,
+						payload: {
+							documents: batch.documents,
+							lockedDocuments: batch.lockedDocuments,
+							totalTasksAcrossAllDocs: batch.totalTasksAcrossAllDocs,
+							loopEnabled: batch.loopEnabled,
+							maxLoops: batch.maxLoops,
+							folderPath: batch.folderPath,
+							worktreeActive: batch.worktreeActive,
+							worktreePath: batch.worktreePath,
+							worktreeBranch: batch.worktreeBranch,
+							customPrompt: batch.customPrompt,
+							startTime: batch.startTime || Date.now(),
+							cumulativeTaskTimeMs: batch.cumulativeTaskTimeMs || 0,
+							accumulatedElapsedMs: batch.accumulatedElapsedMs || 0,
+							lastActiveTimestamp: Date.now(),
+						},
+					});
+
+					// Advance state to RUNNING and restore progress
+					dispatch({ type: 'SET_RUNNING', sessionId: batch.sessionId });
+					dispatch({
+						type: 'UPDATE_PROGRESS',
+						sessionId: batch.sessionId,
+						payload: {
+							currentDocumentIndex: batch.currentDocumentIndex,
+							currentDocTasksTotal: batch.currentDocTasksTotal,
+							currentDocTasksCompleted: batch.currentDocTasksCompleted,
+							completedTasksAcrossAllDocs: batch.completedTasksAcrossAllDocs,
+							loopIteration: batch.loopIteration,
+							accumulatedElapsedMs: batch.accumulatedElapsedMs,
+							lastActiveTimestamp: Date.now(),
+						},
+					});
+
+					if (!hasRunningProcess) {
+						// Agent process died — mark as paused with recovery error
+						hasDeadProcesses = true;
+
+						dispatch({
+							type: 'SET_ERROR',
+							sessionId: batch.sessionId,
+							payload: {
+								error: {
+									type: 'agent_crashed',
+									message:
+										'Auto Run interrupted by application reload. The agent process is no longer running.',
+									recoverable: true,
+									agentId: session.toolType || 'claude-code',
+									timestamp: Date.now(),
+								},
+								documentIndex: batch.currentDocumentIndex,
+								taskDescription: 'Task interrupted by reload',
+							},
+						});
+
+						// Restore agentSessionId on the active tab so next spawn uses --resume
+						if (batch.agentSessionId) {
+							const activeTab =
+								session.aiTabs?.find((t) => t.id === session.activeTabId) || session.aiTabs?.[0];
+							if (activeTab) {
+								useSessionStore.getState().setSessions((prev) =>
+									prev.map((s) => {
+										if (s.id !== batch.sessionId) return s;
+										return {
+											...s,
+											aiTabs: s.aiTabs.map((tab) => {
+												if (tab.id !== activeTab.id) return tab;
+												return { ...tab, agentSessionId: batch.agentSessionId ?? null };
+											}),
+										};
+									})
+								);
+							}
+						}
+					} else {
+						// Process is still running — re-acquire power management lock
+						try {
+							window.maestro.power.addReason(`autorun:${batch.sessionId}`);
+						} catch {
+							// Non-critical
+						}
+
+						// Restore agentSessionId if available
+						if (batch.agentSessionId) {
+							const activeTab =
+								session.aiTabs?.find((t) => t.id === session.activeTabId) || session.aiTabs?.[0];
+							if (activeTab) {
+								useSessionStore.getState().setSessions((prev) =>
+									prev.map((s) => {
+										if (s.id !== batch.sessionId) return s;
+										return {
+											...s,
+											aiTabs: s.aiTabs.map((tab) => {
+												if (tab.id !== activeTab.id) return tab;
+												return { ...tab, agentSessionId: batch.agentSessionId ?? null };
+											}),
+										};
+									})
+								);
+							}
+						}
+
+						// Verify worktree still exists if applicable
+						if (batch.worktreeActive && batch.worktreePath) {
+							try {
+								const worktreeInfo = await window.maestro.git.worktreeInfo(
+									batch.worktreePath
+								);
+								if (worktreeInfo.success && !worktreeInfo.exists) {
+									// Worktree was deleted — log warning but keep batch state
+									// The processing loop will handle the missing worktree when resumed
+									console.warn(
+										'[BatchRecovery] Worktree path no longer exists:',
+										batch.worktreePath
+									);
+								}
+							} catch {
+								// Non-critical — continue with whatever state we have
+							}
+						}
+					}
+
+					recoveredCount++;
+				}
+
+				// Show recovery notification
+				if (recoveredCount > 0) {
+					// Use window.maestro.notification or console since we don't have direct toast access
+					console.info(
+						`[BatchRecovery] Recovered ${recoveredCount} Auto Run(s) after reload`,
+						{ hasDeadProcesses }
+					);
+				}
+			} catch (err) {
+				console.error('[BatchRecovery] Batch state recovery failed:', err);
+			}
+		}
+
+		recoverBatchState();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [dispatch]);
 
 	/**
 	 * Broadcast Auto Run state to web interface immediately (synchronously).
@@ -1755,7 +2024,10 @@ export function useBatchProcessor({
 			timeTracking.stopTracking(sessionId);
 			delete stopRequestedRefs.current[sessionId];
 
-			// 8. Allow system to sleep
+			// 8. Clear persisted batch state snapshot
+			await window.maestro?.batchState?.clear();
+
+			// 9. Allow system to sleep
 			window.maestro.power.removeReason(`autorun:${sessionId}`);
 		},
 		[broadcastAutoRunState, flushDebouncedUpdate, timeTracking]
