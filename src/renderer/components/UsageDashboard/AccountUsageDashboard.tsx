@@ -14,7 +14,10 @@ import {
 	Zap,
 	TrendingUp,
 	ArrowRightLeft,
+	Clock,
 } from 'lucide-react';
+import { useAccountUsage } from '../../hooks/useAccountUsage';
+import { AccountTrendChart } from './AccountTrendChart';
 import type { Theme, Session } from '../../types';
 import type {
 	AccountProfile,
@@ -25,12 +28,13 @@ import type {
 
 interface AccountUsageDashboardProps {
 	theme: Theme;
-	sessions: Session[];
+	sessions?: Session[];
 	onClose: () => void;
 }
 
 /** Format token counts with K/M suffixes */
 function formatTokens(n: number): string {
+	if (n == null || isNaN(n)) return '0';
 	if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
 	if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
 	return n.toString();
@@ -38,6 +42,7 @@ function formatTokens(n: number): string {
 
 /** Format cost in USD */
 function formatCost(usd: number): string {
+	if (usd == null || isNaN(usd)) return '$0.00';
 	if (usd === 0) return '$0.00';
 	if (usd < 0.01) return '<$0.01';
 	return `$${usd.toFixed(2)}`;
@@ -81,13 +86,14 @@ interface ThrottleEvent {
 	recoveryAction?: string;
 }
 
-export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboardProps) {
+export function AccountUsageDashboard({ theme, sessions = [] }: AccountUsageDashboardProps) {
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [usageData, setUsageData] = useState<Record<string, AccountUsageSnapshot>>({});
 	const [assignments, setAssignments] = useState<AccountAssignment[]>([]);
 	const [throttleEvents, setThrottleEvents] = useState<ThrottleEvent[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
+	const { metrics: accountMetrics } = useAccountUsage();
 
 	// Fetch all data on mount
 	const fetchData = useCallback(async () => {
@@ -137,6 +143,10 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 					[data.accountId]: {
 						...defaults,
 						...prev[data.accountId],
+						inputTokens: data.inputTokens,
+						outputTokens: data.outputTokens,
+						cacheReadTokens: data.cacheReadTokens,
+						cacheCreationTokens: data.cacheCreationTokens,
 						costUsd: data.costUsd,
 						windowStart: data.windowStart,
 						windowEnd: data.windowEnd,
@@ -325,6 +335,11 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 									</div>
 								</div>
 
+								{/* Sparkline */}
+								<div className="mb-2">
+									<AccountTrendChart accountId={account.id} theme={theme} days={7} compact={true} />
+								</div>
+
 								{/* Stats grid */}
 								<div className="grid grid-cols-3 gap-2 text-xs">
 									<div>
@@ -346,6 +361,50 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 										</div>
 									</div>
 								</div>
+
+								{/* Prediction row */}
+								{(() => {
+									const acctMetrics = accountMetrics[account.id];
+									if (!acctMetrics || acctMetrics.burnRatePerHour <= 0) return null;
+									return (
+										<div
+											className="grid grid-cols-3 gap-2 text-xs mt-2 pt-2 border-t"
+											style={{ borderColor: theme.colors.border + '40' }}
+										>
+											<div>
+												<div style={{ color: theme.colors.textDim }}>Burn</div>
+												<div style={{ color: theme.colors.textMain, fontWeight: 'bold' }}>
+													~{formatTokens(Math.round(acctMetrics.burnRatePerHour))}/hr
+												</div>
+											</div>
+											<div>
+												<div style={{ color: theme.colors.textDim }}>TTL</div>
+												<div style={{
+													color: acctMetrics.estimatedTimeToLimitMs !== null && acctMetrics.estimatedTimeToLimitMs < 3600000
+														? theme.colors.error
+														: theme.colors.textMain,
+													fontWeight: 'bold',
+												}}>
+													{acctMetrics.estimatedTimeToLimitMs !== null
+														? formatTimeRemaining(acctMetrics.estimatedTimeToLimitMs)
+														: '—'}
+												</div>
+											</div>
+											<div>
+												<div style={{ color: theme.colors.textDim }}>Confidence</div>
+												<div className="font-bold" style={{
+													color: acctMetrics.prediction.confidence === 'high'
+														? theme.colors.success
+														: acctMetrics.prediction.confidence === 'medium'
+															? theme.colors.warning
+															: theme.colors.textDim,
+												}}>
+													{acctMetrics.prediction.confidence}
+												</div>
+											</div>
+										</div>
+									);
+								})()}
 							</div>
 						);
 					})}
@@ -496,6 +555,17 @@ export function AccountUsageDashboard({ theme, sessions }: AccountUsageDashboard
 										/>
 									)}
 								</div>
+								{(() => {
+									const m = accountMetrics[account.id];
+									if (!m?.rateMetrics) return null;
+									const trendSymbol = m.rateMetrics.trend === 'up' ? '\u2197' : m.rateMetrics.trend === 'down' ? '\u2198' : '\u2192';
+									const trendColor = m.rateMetrics.trend === 'up' ? theme.colors.warning : m.rateMetrics.trend === 'down' ? theme.colors.success : theme.colors.textDim;
+									return (
+										<span className="text-[10px] shrink-0" style={{ color: trendColor }}>
+											{trendSymbol} {formatTokens(Math.round(m.rateMetrics.tokensPerDay))}/day
+										</span>
+									);
+								})()}
 							</div>
 						);
 					})}
