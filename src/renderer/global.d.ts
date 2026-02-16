@@ -2650,6 +2650,67 @@ interface MaestroAPI {
 		}) => Promise<string | null>;
 	};
 
+	// Batch State Persistence API (Auto Run reload recovery)
+	batchState: {
+		save: (activeBatches: Array<{
+			sessionId: string;
+			isRunning: boolean;
+			processingState: string;
+			documents: string[];
+			lockedDocuments: string[];
+			currentDocumentIndex: number;
+			currentDocTasksTotal: number;
+			currentDocTasksCompleted: number;
+			totalTasksAcrossAllDocs: number;
+			completedTasksAcrossAllDocs: number;
+			loopEnabled: boolean;
+			loopIteration: number;
+			maxLoops?: number | null;
+			folderPath: string;
+			worktreeActive: boolean;
+			worktreePath?: string;
+			worktreeBranch?: string;
+			customPrompt?: string;
+			startTime?: number;
+			cumulativeTaskTimeMs?: number;
+			accumulatedElapsedMs?: number;
+			lastActiveTimestamp?: number;
+			agentSessionId?: string;
+			agentType?: string;
+		}>) => Promise<void>;
+		load: () => Promise<{
+			timestamp: number;
+			activeBatches: Array<{
+				sessionId: string;
+				isRunning: boolean;
+				processingState: string;
+				documents: string[];
+				lockedDocuments: string[];
+				currentDocumentIndex: number;
+				currentDocTasksTotal: number;
+				currentDocTasksCompleted: number;
+				totalTasksAcrossAllDocs: number;
+				completedTasksAcrossAllDocs: number;
+				loopEnabled: boolean;
+				loopIteration: number;
+				maxLoops?: number | null;
+				folderPath: string;
+				worktreeActive: boolean;
+				worktreePath?: string;
+				worktreeBranch?: string;
+				customPrompt?: string;
+				startTime?: number;
+				cumulativeTaskTimeMs?: number;
+				accumulatedElapsedMs?: number;
+				lastActiveTimestamp?: number;
+				agentSessionId?: string;
+				agentType?: string;
+			}>;
+		} | null>;
+		clear: () => Promise<void>;
+		flush: () => Promise<void>;
+	};
+
 	// Director's Notes API (unified history + synopsis generation)
 	directorNotes: {
 		getUnifiedHistory: (options: {
