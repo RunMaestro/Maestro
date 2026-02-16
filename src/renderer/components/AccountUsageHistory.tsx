@@ -58,7 +58,7 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 					: Date.now() - (view === '7d' ? 7 : 30) * 24 * 60 * 60 * 1000;
 				const events = await window.maestro.accounts.getThrottleEvents(accountId, sinceMs);
 				setThrottleCount(events.length);
-			} catch { /* non-fatal */ }
+			} catch (err) { console.warn('[AccountUsageHistory] Failed to load usage history:', err); }
 			setLoading(false);
 		}
 		load();
@@ -138,7 +138,7 @@ export function AccountUsageHistory({ accountId, theme }: { accountId: string; t
 					<span>Avg: <span style={{ color: theme.colors.textMain }}>{formatTokenCount(Math.round(avgTokens))}/{view === 'monthly' ? 'mo' : 'day'}</span></span>
 					<span>Peak: <span style={{ color: theme.colors.textMain }}>{formatTokenCount(peakTokens)}</span></span>
 					<span>Throttles: <span style={{
-						color: throttleCount > 0 ? '#ef4444' : theme.colors.textMain
+						color: throttleCount > 0 ? theme.colors.error : theme.colors.textMain
 					}}>{throttleCount}</span></span>
 				</div>
 			)}
