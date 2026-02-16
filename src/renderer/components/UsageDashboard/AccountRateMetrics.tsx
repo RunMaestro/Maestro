@@ -3,7 +3,6 @@
  * at three time scales with period-over-period deltas and trend indicator.
  */
 
-import React from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { RateMetrics } from '../../hooks/useAccountUsage';
