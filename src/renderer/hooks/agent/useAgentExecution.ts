@@ -8,6 +8,7 @@ import type {
 	ToolType,
 } from '../../types';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 
 /**
@@ -399,13 +400,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// Spawn the agent for batch processing
 					// Use effectiveCwd which may be a worktree path for parallel execution
 					const commandToUse = agent.path || agent.command;
-					// Use stdin transport on Windows local runs to avoid CLI length/escaping issues.
-					// SSH sessions have a dedicated stdin-script path and should not use these flags.
-					const isWindows = navigator.platform.toLowerCase().includes('win');
-					const isSshSession = !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled;
-					const supportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-					const sendPromptViaStdin = isWindows && !isSshSession && supportsStreamJson;
-					const sendPromptViaStdinRaw = isWindows && !isSshSession && !supportsStreamJson;
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					});
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -563,12 +561,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						}
 					}
 					const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
-					// Keep synopsis prompt delivery consistent with regular local Auto Run runs.
-					const isWindows = navigator.platform.toLowerCase().includes('win');
-					const isSshSession = !!effectiveSessionSshRemoteConfig?.enabled;
-					const supportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-					const sendPromptViaStdin = isWindows && !isSshSession && supportsStreamJson;
-					const sendPromptViaStdinRaw = isWindows && !isSshSession && !supportsStreamJson;
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					});
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
