@@ -91,18 +91,29 @@ export function formatRelativeTime(dateOrTimestamp: Date | number | string): str
 		timestamp = dateOrTimestamp.getTime();
 	}
 
-	const now = Date.now();
-	const diffMs = now - timestamp;
-	const diffMins = Math.floor(diffMs / 60000);
-	const diffHours = Math.floor(diffMins / 60);
-	const diffDays = Math.floor(diffHours / 24);
+	// Guard: invalid timestamps (falsy, NaN, or non-positive)
+	if (!timestamp || isNaN(timestamp) || timestamp <= 0) return '\u2014';
 
-	if (diffMins < 1) return 'just now';
-	if (diffMins < 60) return `${diffMins}m ago`;
-	if (diffHours < 24) return `${diffHours}h ago`;
-	if (diffDays < 7) return `${diffDays}d ago`;
-	// Show compact date format (e.g., "Dec 3") for older dates
-	return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+	const now = Date.now();
+	const diff = now - timestamp;
+
+	// Guard: future timestamps (clock skew)
+	if (diff < 0) return 'just now';
+
+	const seconds = Math.floor(diff / 1000);
+	if (seconds < 60) return 'just now';
+
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m ago`;
+
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+
+	const days = Math.floor(hours / 24);
+	if (days === 1) return 'yesterday';
+	if (days < 30) return `${days}d ago`;
+
+	return `${Math.floor(days / 30)}mo ago`;
 }
 
 /**

@@ -1120,4 +1120,26 @@ describe('modalStore', () => {
 			expect(result.current.quitConfirmModalOpen).toBe(false);
 		});
 	});
+
+	describe('setAgentInboxOpen', () => {
+		it('opens the agentInbox modal when called with true', () => {
+			const actions = getModalActions();
+
+			expect(useModalStore.getState().isOpen('agentInbox')).toBe(false);
+
+			actions.setAgentInboxOpen(true);
+
+			expect(useModalStore.getState().isOpen('agentInbox')).toBe(true);
+		});
+
+		it('closes the agentInbox modal when called with false', () => {
+			const actions = getModalActions();
+
+			actions.setAgentInboxOpen(true);
+			expect(useModalStore.getState().isOpen('agentInbox')).toBe(true);
+
+			actions.setAgentInboxOpen(false);
+			expect(useModalStore.getState().isOpen('agentInbox')).toBe(false);
+		});
+	});
 });

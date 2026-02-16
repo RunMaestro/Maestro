@@ -15,6 +15,7 @@ import {
 	PanelLeftOpen,
 	Folder,
 	FolderPlus,
+	Inbox,
 	Info,
 	GitBranch,
 	Bot,
@@ -439,6 +440,7 @@ interface HamburgerMenuContentProps {
 	setSettingsTab: (tab: SettingsTab) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
+	setAgentInboxOpen: (open: boolean) => void;
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen: (open: boolean) => void;
@@ -459,6 +461,7 @@ function HamburgerMenuContent({
 	setSettingsTab,
 	setLogViewerOpen,
 	setProcessMonitorOpen,
+	setAgentInboxOpen,
 	setUsageDashboardOpen,
 	setSymphonyModalOpen,
 	setDirectorNotesOpen,
@@ -653,6 +656,29 @@ function HamburgerMenuContent({
 					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 				>
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
+				</span>
+			</button>
+			<button
+				onClick={() => {
+					setAgentInboxOpen(true);
+					setMenuOpen(false);
+				}}
+				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+			>
+				<Inbox className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<div className="flex-1">
+					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						Unified Inbox
+					</div>
+					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						Unified tabs inbox
+					</div>
+				</div>
+				<span
+					className="text-xs font-mono px-1.5 py-0.5 rounded"
+					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+				>
+					{formatShortcutKeys(shortcuts.agentInbox.keys)}
 				</span>
 			</button>
 			<button
@@ -1076,6 +1102,7 @@ interface SessionListProps {
 	setUpdateCheckModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
+	setAgentInboxOpen: (open: boolean) => void;
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen: (open: boolean) => void;
@@ -1200,6 +1227,7 @@ function SessionListInner(props: SessionListProps) {
 		setUpdateCheckModalOpen,
 		setLogViewerOpen,
 		setProcessMonitorOpen,
+		setAgentInboxOpen,
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
@@ -2494,6 +2522,7 @@ function SessionListInner(props: SessionListProps) {
 										setSettingsTab={setSettingsTab}
 										setLogViewerOpen={setLogViewerOpen}
 										setProcessMonitorOpen={setProcessMonitorOpen}
+										setAgentInboxOpen={setAgentInboxOpen}
 										setUsageDashboardOpen={setUsageDashboardOpen}
 										setSymphonyModalOpen={setSymphonyModalOpen}
 										setDirectorNotesOpen={setDirectorNotesOpen}
@@ -2536,6 +2565,7 @@ function SessionListInner(props: SessionListProps) {
 									setSettingsTab={setSettingsTab}
 									setLogViewerOpen={setLogViewerOpen}
 									setProcessMonitorOpen={setProcessMonitorOpen}
+									setAgentInboxOpen={setAgentInboxOpen}
 									setUsageDashboardOpen={setUsageDashboardOpen}
 									setSymphonyModalOpen={setSymphonyModalOpen}
 									setDirectorNotesOpen={setDirectorNotesOpen}

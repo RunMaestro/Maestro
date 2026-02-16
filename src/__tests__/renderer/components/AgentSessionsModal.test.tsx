@@ -664,7 +664,7 @@ describe('AgentSessionsModal', () => {
 			});
 		});
 
-		it('should display full date for old timestamps', async () => {
+		it('should display months ago for old timestamps', async () => {
 			const date = new Date();
 			date.setDate(date.getDate() - 30);
 			const mockSessions = [createMockClaudeSession({ modifiedAt: date.toISOString() })];
@@ -685,9 +685,8 @@ describe('AgentSessionsModal', () => {
 			);
 
 			await waitFor(() => {
-				// Should show short date format (e.g., "Nov 13")
-				const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-				expect(screen.getByText(dateStr)).toBeInTheDocument();
+				// 30 days = 1 month → "1mo ago"
+				expect(screen.getByText('1mo ago')).toBeInTheDocument();
 			});
 		});
 	});

@@ -89,6 +89,7 @@ export interface UseSessionListPropsDeps {
 	setUpdateCheckModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
+	setAgentInboxOpen: (open: boolean) => void;
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen: (open: boolean) => void;
@@ -197,6 +198,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			setUpdateCheckModalOpen: deps.setUpdateCheckModalOpen,
 			setLogViewerOpen: deps.setLogViewerOpen,
 			setProcessMonitorOpen: deps.setProcessMonitorOpen,
+			setAgentInboxOpen: deps.setAgentInboxOpen,
 			setUsageDashboardOpen: deps.setUsageDashboardOpen,
 			setSymphonyModalOpen: deps.setSymphonyModalOpen,
 			setDirectorNotesOpen: deps.setDirectorNotesOpen,
@@ -326,6 +328,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.setUpdateCheckModalOpen,
 			deps.setLogViewerOpen,
 			deps.setProcessMonitorOpen,
+			deps.setAgentInboxOpen,
 			deps.setUsageDashboardOpen,
 			deps.setSymphonyModalOpen,
 			deps.setDirectorNotesOpen,

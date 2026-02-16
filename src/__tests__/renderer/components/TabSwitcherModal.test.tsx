@@ -356,7 +356,7 @@ describe('TabSwitcherModal', () => {
 				expect(screen.getByText('2d ago')).toBeInTheDocument();
 			});
 
-			it('formats as date for > 7 days ago', () => {
+			it('formats as "Xd ago" for > 7 days ago', () => {
 				const tab = createTestTab({
 					logs: [
 						{
@@ -380,9 +380,7 @@ describe('TabSwitcherModal', () => {
 					/>
 				);
 
-				// Should show something like "Nov 27" (short month + day)
-				const dateText = screen.queryByText(/^\w{3}\s\d{1,2}$/);
-				expect(dateText).toBeInTheDocument();
+				expect(screen.getByText('10d ago')).toBeInTheDocument();
 			});
 		});
 

@@ -184,7 +184,7 @@ describe('formatRelativeTime (via component)', () => {
 		});
 		render(<CommandHistoryDrawer {...createDefaultProps({ history: [entry] })} />);
 
-		expect(screen.getByText('1d ago')).toBeInTheDocument();
+		expect(screen.getByText('yesterday')).toBeInTheDocument();
 	});
 });
 
