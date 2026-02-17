@@ -117,6 +117,9 @@ interface QuickActionsModalProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Auto-scroll
+	autoScrollAiMode?: boolean;
+	setAutoScrollAiMode?: (value: boolean) => void;
 }
 
 export function QuickActionsModal(props: QuickActionsModalProps) {
@@ -201,6 +204,8 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 		onOpenLastDocumentGraph,
 		onOpenSymphony,
 		onOpenDirectorNotes,
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 	} = props;
 
 	// UI store actions for search commands (avoid threading more props through 3-layer chain)
@@ -1015,6 +1020,20 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 						subtext: 'View unified history and AI synopsis across all sessions',
 						action: () => {
 							onOpenDirectorNotes();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Auto-scroll toggle
+		...(setAutoScrollAiMode
+			? [
+					{
+						id: 'toggleAutoScroll',
+						label: autoScrollAiMode ? 'Disable Auto-Scroll AI Output' : 'Enable Auto-Scroll AI Output',
+						shortcut: shortcuts.toggleAutoScroll,
+						action: () => {
+							setAutoScrollAiMode(!autoScrollAiMode);
 							setQuickActionOpen(false);
 						},
 					},

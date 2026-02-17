@@ -108,6 +108,8 @@ interface MainPanelProps {
 	filePreviewLoading?: { name: string; path: string } | null;
 	markdownEditMode: boolean; // FilePreview: whether editing file content
 	chatRawTextMode: boolean; // TerminalOutput: whether to show raw text in AI responses
+	autoScrollAiMode: boolean; // Whether to auto-scroll in AI mode
+	setAutoScrollAiMode: (value: boolean) => void; // Toggle auto-scroll in AI mode
 	shortcuts: Record<string, Shortcut>;
 	rightPanelOpen: boolean;
 	maxOutputLines: number;
@@ -1800,6 +1802,8 @@ export const MainPanel = React.memo(
 													? () => props.refreshFileTree?.(activeSession.id)
 													: undefined
 											}
+											autoScrollAiMode={props.autoScrollAiMode}
+											setAutoScrollAiMode={props.setAutoScrollAiMode}
 											onOpenInTab={props.onOpenSavedFileInTab}
 										/>
 									)}

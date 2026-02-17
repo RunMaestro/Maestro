@@ -104,13 +104,13 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				// (e.g., when output search is open, user should still be able to toggle markdown mode)
 				const isMarkdownToggleShortcut =
 					(e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && keyLower === 'e';
-				// Allow system utility shortcuts (Alt+Cmd+L for logs, Alt+Cmd+P for processes) even when modals are open
+				// Allow system utility shortcuts (Alt+Cmd+L for logs, Alt+Cmd+P for processes, Alt+Cmd+S for auto-scroll toggle) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters (e.g., Alt+P = π)
 				const codeKeyLower = e.code?.replace('Key', '').toLowerCase() || '';
 				const isSystemUtilShortcut =
 					e.altKey &&
 					(e.metaKey || e.ctrlKey) &&
-					(codeKeyLower === 'l' || codeKeyLower === 'p' || codeKeyLower === 'u');
+					(codeKeyLower === 'l' || codeKeyLower === 'p' || codeKeyLower === 'u' || codeKeyLower === 's');
 				// Allow session jump shortcuts (Alt+Cmd+NUMBER) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters
 				const isSessionJumpShortcut =
@@ -404,6 +404,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);
 				trackShortcut('openSymphony');
+			} else if (ctx.isShortcut(e, 'toggleAutoScroll')) {
+				e.preventDefault();
+				ctx.setAutoScrollAiMode(!ctx.autoScrollAiMode);
+				trackShortcut('toggleAutoScroll');
 			} else if (ctx.isShortcut(e, 'directorNotes')) {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen(true);

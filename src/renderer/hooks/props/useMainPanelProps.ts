@@ -63,6 +63,8 @@ export interface UseMainPanelPropsDeps {
 	filePreviewLoading: { name: string; path: string } | null;
 	markdownEditMode: boolean; // FilePreview: whether editing file content
 	chatRawTextMode: boolean; // TerminalOutput: whether to show raw text in AI responses
+	autoScrollAiMode: boolean; // Whether to auto-scroll in AI mode
+	setAutoScrollAiMode: (value: boolean) => void; // Toggle auto-scroll in AI mode
 	shortcuts: Record<string, Shortcut>;
 	rightPanelOpen: boolean;
 	maxOutputLines: number;
@@ -334,6 +336,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			filePreviewLoading: deps.filePreviewLoading,
 			markdownEditMode: deps.markdownEditMode,
 			chatRawTextMode: deps.chatRawTextMode,
+			autoScrollAiMode: deps.autoScrollAiMode,
+			setAutoScrollAiMode: deps.setAutoScrollAiMode,
 			shortcuts: deps.shortcuts,
 			rightPanelOpen: deps.rightPanelOpen,
 			maxOutputLines: deps.maxOutputLines,
@@ -555,6 +559,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.filePreviewLoading,
 			deps.markdownEditMode,
 			deps.chatRawTextMode,
+			deps.autoScrollAiMode,
+			deps.setAutoScrollAiMode,
 			deps.shortcuts,
 			deps.rightPanelOpen,
 			deps.maxOutputLines,
