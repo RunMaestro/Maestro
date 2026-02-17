@@ -1505,6 +1505,8 @@ export const TerminalOutput = memo(
 			[theme]
 		);
 
+		const isAutoScrollActive = autoScrollAiMode && !autoScrollPaused;
+
 		return (
 			<div
 				ref={terminalOutputRef}
@@ -1721,30 +1723,27 @@ export const TerminalOutput = memo(
 
 				{/* Inline auto-scroll toggle - floating button (AI mode only) */}
 				{/* Shows active state only when auto-scroll is on AND not paused by user scrolling up */}
-				{session.inputMode === 'ai' && setAutoScrollAiMode && (() => {
-					const isActive = autoScrollAiMode && !autoScrollPaused;
-					return (
-						<button
-							onClick={() => {
-								if (autoScrollPaused) {
-									// Resume: clear pause and scroll to bottom
-									setAutoScrollPaused(false);
-								} else {
-									setAutoScrollAiMode(!autoScrollAiMode);
-								}
-							}}
-							className="absolute bottom-4 left-4 p-2 rounded-full shadow-lg transition-all hover:scale-105 z-20"
-							style={{
-								backgroundColor: isActive ? theme.colors.accent : theme.colors.bgSidebar,
-								color: isActive ? theme.colors.accentForeground : theme.colors.textDim,
-								border: `1px solid ${isActive ? 'transparent' : theme.colors.border}`,
-							}}
-							title={isActive ? 'Auto-scroll ON (click to disable)' : autoScrollPaused ? 'Auto-scroll paused (click to resume)' : 'Auto-scroll OFF (click to enable)'}
-						>
-							{isActive ? <ArrowDownToLine className="w-4 h-4" /> : <ScrollText className="w-4 h-4" />}
-						</button>
-					);
-				})()}
+				{session.inputMode === 'ai' && setAutoScrollAiMode && (
+					<button
+						onClick={() => {
+							if (autoScrollPaused) {
+								// Resume: clear pause and scroll to bottom
+								setAutoScrollPaused(false);
+							} else {
+								setAutoScrollAiMode(!autoScrollAiMode);
+							}
+						}}
+						className="absolute bottom-4 left-4 p-2 rounded-full shadow-lg transition-all hover:scale-105 z-20"
+						style={{
+							backgroundColor: isAutoScrollActive ? theme.colors.accent : theme.colors.bgSidebar,
+							color: isAutoScrollActive ? theme.colors.accentForeground : theme.colors.textDim,
+							border: `1px solid ${isAutoScrollActive ? 'transparent' : theme.colors.border}`,
+						}}
+						title={isAutoScrollActive ? 'Auto-scroll ON (click to disable)' : autoScrollPaused ? 'Auto-scroll paused (click to resume)' : 'Auto-scroll OFF (click to enable)'}
+					>
+						{isAutoScrollActive ? <ArrowDownToLine className="w-4 h-4" /> : <ScrollText className="w-4 h-4" />}
+					</button>
+				)}
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (
