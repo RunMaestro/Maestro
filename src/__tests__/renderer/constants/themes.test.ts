@@ -11,20 +11,46 @@ import { isValidThemeId } from '../../../shared/theme-types';
  */
 
 // Required color properties that every theme must have
+// Must match ThemeColors interface in src/shared/theme-types.ts exactly
 const REQUIRED_COLORS: (keyof ThemeColors)[] = [
+	// Core backgrounds
 	'bgMain',
 	'bgSidebar',
 	'bgActivity',
 	'border',
+	// Typography
 	'textMain',
 	'textDim',
+	// Accent
 	'accent',
 	'accentDim',
 	'accentText',
 	'accentForeground',
+	// Status colors
 	'success',
 	'warning',
 	'error',
+	'info',
+	// Status foregrounds (text ON status backgrounds)
+	'successForeground',
+	'warningForeground',
+	'errorForeground',
+	// Status dim backgrounds (subtle badges/tags)
+	'successDim',
+	'warningDim',
+	'errorDim',
+	'infoDim',
+	// Git diff colors
+	'diffAddition',
+	'diffAdditionBg',
+	'diffDeletion',
+	'diffDeletionBg',
+	// Overlay and interactive states
+	'overlay',
+	'overlayHeavy',
+	'hoverBg',
+	'activeBg',
+	'shadow',
 ];
 
 // Hex color regex
