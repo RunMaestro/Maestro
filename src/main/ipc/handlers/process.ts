@@ -221,6 +221,19 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// The actual merging happens in buildChildProcessEnv() or buildPtyTerminalEnv().
 				const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
 
+				// Debug logging when global env vars are configured
+				if (Object.keys(globalShellEnvVars).length > 0) {
+					logger.debug(
+						`Applying ${Object.keys(globalShellEnvVars).length} global environment variables to ${config.toolType}`,
+						LOG_CONTEXT,
+						{
+							sessionId: config.sessionId,
+							toolType: config.toolType,
+							globalEnvVarKeys: Object.keys(globalShellEnvVars).join(', '),
+						}
+					);
+				}
+
 				if (config.toolType === 'terminal') {
 					// Custom shell path overrides the detected/selected shell path
 					const customShellPath = settingsStore.get('customShellPath', '');
@@ -468,6 +481,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					shellToUse,
 					isWindows,
 					isSshCommand: !!sshRemoteUsed,
+					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
 				const result = processManager.spawn({
