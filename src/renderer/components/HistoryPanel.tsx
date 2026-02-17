@@ -527,7 +527,19 @@ export const HistoryPanel = React.memo(
 								? 'No history yet. Run batch tasks or use /history to add entries.'
 								: searchFilter
 									? `No entries match "${searchFilter}"`
-									: 'No entries match the selected filters.'}
+									: graphLookbackHours !== null ? (
+										<>
+											No entries in the last {graphLookbackHours <= 24 ? `${graphLookbackHours}h` : graphLookbackHours <= 168 ? `${Math.round(graphLookbackHours / 24)}d` : `${Math.round(graphLookbackHours / 720)}mo`}.
+											<br />
+											<button
+												onClick={() => handleLookbackChange(null)}
+												className="mt-2 underline hover:no-underline"
+												style={{ color: theme.colors.accent }}
+											>
+												Show all time ({historyEntries.length} entries)
+											</button>
+										</>
+									) : 'No entries match the selected filters.'}
 						</div>
 					) : (
 						<div

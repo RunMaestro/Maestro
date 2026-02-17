@@ -24,6 +24,7 @@ See [Performance Guidelines](#performance-guidelines) for specific practices.
 - [Testing](#testing)
 - [Linting & Pre-commit Hooks](#linting--pre-commit-hooks)
 - [Common Development Tasks](#common-development-tasks)
+- [Encore Features (Feature Gating)](#encore-features-feature-gating)
 - [Adding a New AI Agent](#adding-a-new-ai-agent)
 - [Code Style](#code-style)
 - [Performance Guidelines](#performance-guidelines)
@@ -421,6 +422,69 @@ Then add the ID to `ThemeId` type in `src/shared/theme-types.ts` and to the `isV
    ```
 
 3. Add types to `MaestroAPI` interface in preload.ts.
+
+## Encore Features (Feature Gating)
+
+Encore Features is Maestro's system for optional, user-toggled features. It serves as a precursor to a full plugin marketplace — features that are powerful but not essential for every user can be shipped as Encore Features, disabled by default.
+
+### When to Use Encore Features
+
+Consider making your feature an Encore Feature when:
+
+- It adds significant UI surface area (new modals, panels, shortcuts) that not all users need
+- It integrates with external services or has resource overhead
+- It's experimental or targeting a niche workflow
+- It would clutter the interface for users who don't want it
+
+**When disabled, an Encore Feature must be completely invisible** — no keyboard shortcuts, no menu items, no command palette entries.
+
+### Architecture
+
+Encore Features are managed through a single settings object:
+
+```typescript
+// src/renderer/types/index.ts
+export interface EncoreFeatureFlags {
+  directorNotes: boolean;
+  // Add new features here
+}
+```
+
+The flags live in `useSettings.ts` and persist via `window.maestro.settings`. The Encore Features panel in Settings (`SettingsModal.tsx`) provides toggle UI for each feature.
+
+### Adding a New Encore Feature
+
+1. **Add the flag** to `EncoreFeatureFlags` in `src/renderer/types/index.ts`:
+   ```typescript
+   export interface EncoreFeatureFlags {
+     directorNotes: boolean;
+     myFeature: boolean;  // Add here
+   }
+   ```
+
+2. **Set the default** in `useSettings.ts` — always default to `false`:
+   ```typescript
+   const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
+     directorNotes: false,
+     myFeature: false,
+   };
+   ```
+
+3. **Add toggle UI** in `SettingsModal.tsx` under the Encore Features tab. Follow the existing Director's Notes pattern — a clickable section with a toggle switch and feature-specific settings that only render when enabled.
+
+4. **Gate all access points** — the feature must be invisible when disabled:
+   - **Keyboard shortcuts** (`useMainKeyboardHandler.ts`): Guard with `ctx.encoreFeatures?.myFeature`
+   - **App.tsx**: Conditionally pass callbacks and render modals based on `encoreFeatures.myFeature`
+   - **SessionList hamburger menu**: Make the setter optional and conditionally render the menu item
+   - **Quick Actions** (`QuickActionsModal.tsx`): Pass `undefined` for the handler when disabled
+
+5. **Update tests** in `SettingsModal.test.tsx` — add toggle and settings tests within the Encore Features describe block.
+
+### Existing Encore Features
+
+| Feature | Flag | Description |
+|---------|------|-------------|
+| Director's Notes | `directorNotes` | AI-generated synopsis of work across sessions |
 
 ## Adding a New AI Agent
 

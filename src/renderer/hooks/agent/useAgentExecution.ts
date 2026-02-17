@@ -8,6 +8,7 @@ import type {
 	ToolType,
 } from '../../types';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 
 /**
@@ -399,6 +400,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// Spawn the agent for batch processing
 					// Use effectiveCwd which may be a worktree path for parallel execution
 					const commandToUse = agent.path || agent.command;
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession: !!session.sshRemoteId || !!session.sessionSshRemoteConfig?.enabled,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					});
 					// Batch processing (Auto Run) should NOT use read-only mode - it needs to make changes
 					window.maestro.process
 						.spawn({
@@ -417,6 +422,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomContextWindow: session.customContextWindow,
 							// Per-session SSH remote config (takes precedence over agent-level SSH config)
 							sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+							sendPromptViaStdin,
+							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
 							cleanup();
@@ -554,6 +561,10 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						}
 					}
 					const commandToUse = sessionConfig?.customPath || agent.path || agent.command;
+					const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
+						isSshSession: !!effectiveSessionSshRemoteConfig?.enabled,
+						supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
+					});
 					window.maestro.process
 						.spawn({
 							sessionId: targetSessionId,
@@ -571,6 +582,8 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 							sessionCustomContextWindow: sessionConfig?.customContextWindow,
 							// Always use effective SSH remote config if available
 							sessionSshRemoteConfig: effectiveSessionSshRemoteConfig,
+							sendPromptViaStdin,
+							sendPromptViaStdinRaw,
 						})
 						.catch(() => {
 							cleanup();

@@ -849,6 +849,10 @@ export interface AppUtilityModalsProps {
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
 
+	// Auto-scroll
+	autoScrollAiMode?: boolean;
+	setAutoScrollAiMode?: (value: boolean) => void;
+
 	// LightboxModal
 	lightboxImage: string | null;
 	lightboxImages: string[];
@@ -1046,6 +1050,9 @@ export function AppUtilityModals({
 	onOpenSymphony,
 	// Director's Notes
 	onOpenDirectorNotes,
+	// Auto-scroll
+	autoScrollAiMode,
+	setAutoScrollAiMode,
 	// LightboxModal
 	lightboxImage,
 	lightboxImages,
@@ -1201,6 +1208,8 @@ export function AppUtilityModals({
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
+					autoScrollAiMode={autoScrollAiMode}
+					setAutoScrollAiMode={setAutoScrollAiMode}
 				/>
 			)}
 
@@ -1984,6 +1993,9 @@ export interface AppModalsProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Auto-scroll
+	autoScrollAiMode?: boolean;
+	setAutoScrollAiMode?: (value: boolean) => void;
 	tabSwitcherOpen: boolean;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
@@ -2305,6 +2317,9 @@ export function AppModals(props: AppModalsProps) {
 		onOpenSymphony,
 		// Director's Notes
 		onOpenDirectorNotes,
+		// Auto-scroll
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 		tabSwitcherOpen,
 		onCloseTabSwitcher,
 		onTabSelect,
@@ -2612,6 +2627,8 @@ export function AppModals(props: AppModalsProps) {
 				onOpenMarketplace={onOpenMarketplace}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
+				autoScrollAiMode={autoScrollAiMode}
+				setAutoScrollAiMode={setAutoScrollAiMode}
 				tabSwitcherOpen={tabSwitcherOpen}
 				onCloseTabSwitcher={onCloseTabSwitcher}
 				onTabSelect={onTabSelect}

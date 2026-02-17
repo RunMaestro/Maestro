@@ -188,6 +188,95 @@ describe('useAgentExecution', () => {
 		expect(updatedSession.aiTabs[0].state).toBe('idle');
 	});
 
+	it('uses raw stdin prompt delivery for local Windows batch runs when stream-json input is unsupported', async () => {
+		const platformSpy = vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
+		const session = createMockSession({ toolType: 'codex' });
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		vi.mocked(window.maestro.agents.get).mockResolvedValueOnce({
+			id: 'codex',
+			command: 'codex',
+			args: ['exec', '--json'],
+			capabilities: { supportsStreamJsonInput: false },
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.sendPromptViaStdin).toBe(false);
+		expect(spawnConfig.sendPromptViaStdinRaw).toBe(true);
+
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
+		platformSpy.mockRestore();
+	});
+
+	it('does not enable local stdin flags for SSH batch runs', async () => {
+		const platformSpy = vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32');
+		const session = createMockSession({
+			toolType: 'codex',
+			sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+		});
+		const sessionsRef = { current: [session] };
+		const setSessions = vi.fn();
+		const processQueuedItemRef = { current: null };
+
+		vi.mocked(window.maestro.agents.get).mockResolvedValueOnce({
+			id: 'codex',
+			command: 'codex',
+			args: ['exec', '--json'],
+			capabilities: { supportsStreamJsonInput: false },
+		});
+
+		const { result } = renderHook(() =>
+			useAgentExecution({
+				activeSession: session,
+				sessionsRef,
+				setSessions,
+				processQueuedItemRef,
+				setFlashNotification: vi.fn(),
+				setSuccessFlashNotification: vi.fn(),
+			})
+		);
+
+		const spawnPromise = result.current.spawnAgentForSession(session.id, 'Test prompt');
+
+		await waitFor(() => {
+			expect(mockProcess.spawn).toHaveBeenCalledTimes(1);
+		});
+
+		const spawnConfig = mockProcess.spawn.mock.calls[0][0];
+		expect(spawnConfig.sendPromptViaStdin).toBe(false);
+		expect(spawnConfig.sendPromptViaStdinRaw).toBe(false);
+
+		const targetSessionId = spawnConfig.sessionId as string;
+		act(() => {
+			onExitHandler?.(targetSessionId);
+		});
+		await spawnPromise;
+		platformSpy.mockRestore();
+	});
+
 	it('queues the next item and logs queued messages', async () => {
 		const queuedItem: QueuedItem = {
 			id: 'queued-1',

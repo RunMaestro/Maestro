@@ -527,9 +527,17 @@ function MaestroConsoleInner() {
 		// File tab refresh settings
 		fileTabAutoRefreshEnabled,
 
+		// Auto-scroll settings
+		autoScrollAiMode,
+		setAutoScrollAiMode,
+
 		// Windows warning suppression
 		suppressWindowsWarning,
 		setSuppressWindowsWarning,
+
+		// Encore Features
+		encoreFeatures,
+		setEncoreFeatures,
 	} = settings;
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
@@ -7577,6 +7585,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
 		// Group chat context
@@ -7625,6 +7634,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Session bookmark toggle
 		toggleBookmark,
+
+		// Auto-scroll AI mode toggle
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 	};
 
 	// Update flat file list when active session's tree, expanded folders, filter, or hidden files setting changes
@@ -8002,6 +8015,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		filePreviewLoading,
 		markdownEditMode,
 		chatRawTextMode,
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 		shortcuts,
 		rightPanelOpen,
 		maxOutputLines,
@@ -8283,7 +8298,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
-		setDirectorNotesOpen,
+		setDirectorNotesOpen: encoreFeatures.directorNotes ? setDirectorNotesOpen : undefined,
 		setGroups,
 		setSessions,
 		setRenameInstanceModalOpen,
@@ -8734,7 +8749,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onAutoRunRefresh={handleAutoRunRefresh}
 					onOpenMarketplace={handleOpenMarketplace}
 					onOpenSymphony={() => setSymphonyModalOpen(true)}
-					onOpenDirectorNotes={() => setDirectorNotesOpen(true)}
+					onOpenDirectorNotes={encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined}
+					autoScrollAiMode={autoScrollAiMode}
+					setAutoScrollAiMode={setAutoScrollAiMode}
 					tabSwitcherOpen={tabSwitcherOpen}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
@@ -9114,8 +9131,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 					</Suspense>
 				)}
 
-				{/* --- DIRECTOR'S NOTES MODAL (lazy-loaded) --- */}
-				{directorNotesOpen && (
+				{/* --- DIRECTOR'S NOTES MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.directorNotes && directorNotesOpen && (
 					<Suspense fallback={null}>
 						<DirectorNotesModal
 							theme={theme}
@@ -9499,6 +9516,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 							setCrashReportingEnabled={setCrashReportingEnabled}
 							customAICommands={customAICommands}
 							setCustomAICommands={setCustomAICommands}
+							autoScrollAiMode={autoScrollAiMode}
+							setAutoScrollAiMode={setAutoScrollAiMode}
+							encoreFeatures={encoreFeatures}
+							setEncoreFeatures={setEncoreFeatures}
 							initialTab={settingsTab}
 							hasNoAgents={hasNoAgents}
 							onThemeImportError={(msg) => setFlashNotification(msg)}

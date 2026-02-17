@@ -81,7 +81,21 @@ export function buildAgentArgs(
 		finalArgs = [...finalArgs, ...agent.resumeArgs(options.agentSessionId)];
 	}
 
-	return finalArgs;
+	// Deduplicate repeated flag-style arguments while preserving order.
+	// Positional arguments (non-flags) are intentionally left untouched.
+	const seenFlags = new Set<string>();
+	const dedupedArgs: string[] = [];
+	for (const arg of finalArgs) {
+		if (arg.startsWith('-')) {
+			if (seenFlags.has(arg)) {
+				continue;
+			}
+			seenFlags.add(arg);
+		}
+		dedupedArgs.push(arg);
+	}
+
+	return dedupedArgs;
 }
 
 export function applyAgentConfigOverrides(

@@ -91,7 +91,7 @@ export interface UseSessionListPropsDeps {
 	setProcessMonitorOpen: (open: boolean) => void;
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
-	setDirectorNotesOpen: (open: boolean) => void;
+	setDirectorNotesOpen?: (open: boolean) => void;
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	setRenameInstanceModalOpen: (open: boolean) => void;
