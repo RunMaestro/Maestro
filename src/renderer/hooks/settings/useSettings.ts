@@ -1472,8 +1472,12 @@ export function useSettings(): UseSettingsReturn {
 			if (savedShowHiddenFiles !== undefined)
 				setShowHiddenFilesState(savedShowHiddenFiles as boolean);
 			if (savedActiveThemeId !== undefined) setActiveThemeIdState(savedActiveThemeId as ThemeId);
-			if (savedCustomThemeColors !== undefined)
-				setCustomThemeColorsState(savedCustomThemeColors as ThemeColors);
+			if (savedCustomThemeColors !== undefined) {
+				setCustomThemeColorsState({
+					...DEFAULT_CUSTOM_THEME_COLORS,
+					...(savedCustomThemeColors as Partial<ThemeColors>),
+				});
+			}
 			if (savedCustomThemeBaseId !== undefined)
 				setCustomThemeBaseIdState(savedCustomThemeBaseId as ThemeId);
 			if (savedTerminalWidth !== undefined) setTerminalWidthState(savedTerminalWidth as number);
