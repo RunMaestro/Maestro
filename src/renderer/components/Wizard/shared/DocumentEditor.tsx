@@ -61,7 +61,7 @@ export function ImagePreview({
 				className="absolute -top-2 -right-2 w-5 h-5 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
 				style={{
 					backgroundColor: theme.colors.error,
-					color: 'white',
+					color: theme.colors.errorForeground,
 				}}
 				title="Remove image"
 			>
@@ -70,8 +70,8 @@ export function ImagePreview({
 			<div
 				className="absolute bottom-0 left-0 right-0 px-1 py-0.5 text-[9px] truncate rounded-b"
 				style={{
-					backgroundColor: 'rgba(0,0,0,0.6)',
-					color: 'white',
+					backgroundColor: theme.colors.overlay,
+					color: theme.colors.textMain,
 				}}
 			>
 				{filename}

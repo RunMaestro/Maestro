@@ -41,6 +41,7 @@ export type ThemeMode = 'light' | 'dark' | 'vibe';
  * Each color serves a specific purpose in the UI
  */
 export interface ThemeColors {
+	// --- Core backgrounds ---
 	/** Main background color for primary content areas */
 	bgMain: string;
 	/** Sidebar background color */
@@ -49,10 +50,14 @@ export interface ThemeColors {
 	bgActivity: string;
 	/** Border color for dividers and outlines */
 	border: string;
+
+	// --- Typography ---
 	/** Primary text color */
 	textMain: string;
 	/** Dimmed/secondary text color */
 	textDim: string;
+
+	// --- Accent ---
 	/** Accent color for highlights and interactive elements */
 	accent: string;
 	/** Dimmed accent (typically with alpha transparency) */
@@ -61,12 +66,56 @@ export interface ThemeColors {
 	accentText: string;
 	/** Text color for use ON accent backgrounds (contrasting color) */
 	accentForeground: string;
+
+	// --- Status colors ---
 	/** Success state color (green tones) */
 	success: string;
 	/** Warning state color (yellow/orange tones) */
 	warning: string;
 	/** Error state color (red tones) */
 	error: string;
+	/** Info state color (blue tones) */
+	info: string;
+
+	// --- Status foregrounds (text ON status backgrounds) ---
+	/** Text color for use ON success backgrounds */
+	successForeground: string;
+	/** Text color for use ON warning backgrounds */
+	warningForeground: string;
+	/** Text color for use ON error backgrounds */
+	errorForeground: string;
+
+	// --- Status dim backgrounds (subtle badges/tags) ---
+	/** Dimmed success background for badges and tags */
+	successDim: string;
+	/** Dimmed warning background for badges and tags */
+	warningDim: string;
+	/** Dimmed error background for badges and tags */
+	errorDim: string;
+	/** Dimmed info background for badges and tags */
+	infoDim: string;
+
+	// --- Git diff colors ---
+	/** Color for added lines/files in diffs */
+	diffAddition: string;
+	/** Background for added lines/files in diffs */
+	diffAdditionBg: string;
+	/** Color for deleted lines/files in diffs */
+	diffDeletion: string;
+	/** Background for deleted lines/files in diffs */
+	diffDeletionBg: string;
+
+	// --- Overlay and interactive states ---
+	/** Modal/overlay backdrop color */
+	overlay: string;
+	/** Heavy overlay for wizard/fullscreen modals */
+	overlayHeavy: string;
+	/** Subtle hover state background */
+	hoverBg: string;
+	/** Selected/active state background */
+	activeBg: string;
+	/** Standard elevation shadow color */
+	shadow: string;
 }
 
 /**

@@ -140,7 +140,7 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 /**
  * Highlight matching substrings within a cell value.
  */
-function highlightMatches(text: string, query: string, accentColor: string): ReactNode {
+function highlightMatches(text: string, query: string, accentColor: string, accentForeground: string): ReactNode {
 	if (!query) return text;
 	const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 	const regex = new RegExp(`(${escaped})`, 'gi');
@@ -157,7 +157,7 @@ function highlightMatches(text: string, query: string, accentColor: string): Rea
 				key={key}
 				style={{
 					backgroundColor: accentColor,
-					color: '#fff',
+					color: accentForeground,
 					padding: '0 1px',
 					borderRadius: '2px',
 				}}
@@ -365,7 +365,7 @@ export function CsvTableRenderer({
 										title={row[colIdx] ?? ''}
 									>
 										{query
-											? highlightMatches(row[colIdx] ?? '', query, theme.colors.accent)
+											? highlightMatches(row[colIdx] ?? '', query, theme.colors.accent, theme.colors.accentForeground)
 											: (row[colIdx] ?? '')}
 									</td>
 								))}

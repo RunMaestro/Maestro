@@ -130,7 +130,7 @@ export function NotificationsPanel({
 								className="px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1"
 								style={{
 									backgroundColor: theme.colors.error,
-									color: '#fff',
+									color: theme.colors.errorForeground,
 									border: `1px solid ${theme.colors.error}`,
 								}}
 							>

@@ -225,7 +225,7 @@ export function AutoRunDocumentSelector({
 									: theme.colors.accentDim
 								: 'transparent',
 						color:
-							taskPct !== null ? (taskPct === 100 ? '#000' : theme.colors.textDim) : 'transparent',
+							taskPct !== null ? (taskPct === 100 ? theme.colors.successForeground : theme.colors.textDim) : 'transparent',
 					}}
 				>
 					{taskPct !== null ? `${taskPct}%` : ''}
@@ -259,7 +259,7 @@ export function AutoRunDocumentSelector({
 											selectedTaskPercentage === 100
 												? theme.colors.success
 												: theme.colors.accentDim,
-										color: selectedTaskPercentage === 100 ? '#000' : theme.colors.textDim,
+										color: selectedTaskPercentage === 100 ? theme.colors.successForeground : theme.colors.textDim,
 									}}
 								>
 									{selectedTaskPercentage}%
@@ -325,7 +325,7 @@ export function AutoRunDocumentSelector({
 													color:
 														taskPct !== null
 															? taskPct === 100
-																? '#000'
+																? theme.colors.successForeground
 																: theme.colors.textDim
 															: 'transparent',
 												}}

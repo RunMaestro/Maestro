@@ -953,7 +953,7 @@ export function ActivityHeatmap({
 								backgroundColor: theme.colors.bgActivity,
 								color: theme.colors.textMain,
 								border: `1px solid ${theme.colors.border}`,
-								boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
+								boxShadow: `0 4px 12px ${theme.colors.shadow}`,
 							}}
 						>
 							<div className="font-medium mb-0.5">

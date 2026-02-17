@@ -121,7 +121,7 @@ export function ExecutionQueueBrowser({
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
 			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" style={{ backdropFilter: 'blur(2px)' }} />
+			<div className="absolute inset-0" style={{ backgroundColor: theme.colors.overlay, backdropFilter: 'blur(2px)' }} />
 
 			{/* Modal */}
 			<div
@@ -452,7 +452,7 @@ function QueueItemRow({
 							? 'scale(1.01)'
 							: 'scale(1)',
 					boxShadow: isDragging
-						? `0 8px 32px ${theme.colors.accent}40, 0 4px 16px rgba(0,0,0,0.3)`
+						? `0 8px 32px ${theme.colors.accent}40, 0 4px 16px ${theme.colors.shadow}`
 						: showGrabbed
 							? `0 4px 16px ${theme.colors.accent}20`
 							: 'none',

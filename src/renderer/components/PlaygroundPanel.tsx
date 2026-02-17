@@ -758,7 +758,7 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 												style={{
 													backgroundColor: theme.colors.accent,
-													color: '#fff',
+													color: theme.colors.accentForeground,
 												}}
 											>
 												<Play className="w-4 h-4" />
@@ -828,8 +828,8 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												onClick={() => setShowKeyboardMasteryCelebration(true)}
 												className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 												style={{
-													backgroundColor: '#9B59B6',
-													color: '#fff',
+													backgroundColor: theme.colors.accent,
+													color: theme.colors.accentForeground,
 												}}
 											>
 												<Music className="w-4 h-4" />
@@ -1181,7 +1181,7 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 										className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg font-bold text-lg transition-all hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed"
 										style={{
 											backgroundColor: theme.colors.accent,
-											color: '#fff',
+											color: theme.colors.accentForeground,
 										}}
 									>
 										<Sparkles className="w-5 h-5" />
@@ -1193,7 +1193,7 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 										className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 										style={{
 											backgroundColor: copySuccess ? theme.colors.success : theme.colors.bgMain,
-											color: copySuccess ? '#fff' : theme.colors.textMain,
+											color: copySuccess ? theme.colors.successForeground : theme.colors.textMain,
 											border: `1px solid ${copySuccess ? theme.colors.success : theme.colors.border}`,
 										}}
 									>
@@ -1355,7 +1355,7 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												className="px-3 py-1 rounded text-sm font-medium transition-colors"
 												style={{
 													backgroundColor: batonActive ? theme.colors.accent : theme.colors.bgMain,
-													color: batonActive ? '#fff' : theme.colors.textMain,
+													color: batonActive ? theme.colors.accentForeground : theme.colors.textMain,
 												}}
 											>
 												{batonActive ? 'Active' : 'Paused'}
@@ -1497,7 +1497,7 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 											className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 											style={{
 												backgroundColor: batonCopySuccess ? theme.colors.success : theme.colors.bgMain,
-												color: batonCopySuccess ? '#fff' : theme.colors.textMain,
+												color: batonCopySuccess ? theme.colors.successForeground : theme.colors.textMain,
 												border: `1px solid ${batonCopySuccess ? theme.colors.success : theme.colors.border}`,
 											}}
 										>

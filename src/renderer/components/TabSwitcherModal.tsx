@@ -750,7 +750,7 @@ export function TabSwitcherModal({
 													className="text-[10px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
 													style={{
 														backgroundColor: isSelected
-															? 'rgba(255,255,255,0.2)'
+															? theme.colors.activeBg
 															: theme.colors.bgMain,
 														color: isSelected
 															? theme.colors.accentForeground
@@ -841,8 +841,12 @@ export function TabSwitcherModal({
 											<span
 												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 												style={{
-													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : extColors.bg,
-													color: isSelected ? theme.colors.accentForeground : extColors.text,
+													backgroundColor: isSelected
+														? theme.colors.activeBg
+														: extColors.bg,
+													color: isSelected
+														? theme.colors.accentForeground
+														: extColors.text,
 												}}
 											>
 												{tab.extension.replace(/^\./, '').toUpperCase()}
@@ -867,7 +871,7 @@ export function TabSwitcherModal({
 									<div
 										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
 										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+											backgroundColor: isSelected ? theme.colors.activeBg : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
 										}}
 									>
@@ -915,7 +919,7 @@ export function TabSwitcherModal({
 													className="text-[10px] px-1.5 py-0.5 rounded font-mono flex-shrink-0"
 													style={{
 														backgroundColor: isSelected
-															? 'rgba(255,255,255,0.2)'
+															? theme.colors.activeBg
 															: theme.colors.bgMain,
 														color: isSelected
 															? theme.colors.accentForeground
@@ -938,7 +942,7 @@ export function TabSwitcherModal({
 									<div
 										className="flex-shrink-0 text-[10px] px-2 py-1 rounded"
 										style={{
-											backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : theme.colors.bgMain,
+											backgroundColor: isSelected ? theme.colors.activeBg : theme.colors.bgMain,
 											color: isSelected ? theme.colors.accentForeground : theme.colors.textDim,
 										}}
 									>

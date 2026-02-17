@@ -388,13 +388,13 @@ export const GitLogViewer = memo(function GitLogViewer({
 																backgroundColor: isTag
 																	? 'rgba(234, 179, 8, 0.2)'
 																	: isBranch
-																		? 'rgba(34, 197, 94, 0.2)'
-																		: 'rgba(59, 130, 246, 0.2)',
+																		? theme.colors.diffAdditionBg
+																		: theme.colors.infoDim,
 																color: isTag
 																	? 'rgb(234, 179, 8)'
 																	: isBranch
-																		? 'rgb(34, 197, 94)'
-																		: 'rgb(59, 130, 246)',
+																		? theme.colors.diffAddition
+																		: theme.colors.info,
 															}}
 														>
 															{isTag ? (
@@ -429,10 +429,10 @@ export const GitLogViewer = memo(function GitLogViewer({
 											{((entry.additions ?? 0) > 0 || (entry.deletions ?? 0) > 0) && (
 												<span className="font-mono flex items-center gap-1">
 													{(entry.additions ?? 0) > 0 && (
-														<span style={{ color: 'rgb(34, 197, 94)' }}>+{entry.additions}</span>
+														<span style={{ color: theme.colors.diffAddition }}>+{entry.additions}</span>
 													)}
 													{(entry.deletions ?? 0) > 0 && (
-														<span style={{ color: 'rgb(239, 68, 68)' }}>-{entry.deletions}</span>
+														<span style={{ color: theme.colors.diffDeletion }}>-{entry.deletions}</span>
 													)}
 												</span>
 											)}

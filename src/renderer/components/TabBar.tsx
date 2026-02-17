@@ -482,7 +482,7 @@ const Tab = memo(function Tab({
 	const displayName = useMemo(() => getTabDisplayName(tab), [tab.name, tab.agentSessionId]);
 
 	// Hover background varies by theme mode for proper contrast
-	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
+	const hoverBgColor = theme.colors.hoverBg;
 
 	// Memoize tab styles to avoid creating new object references on every render
 	const tabStyle = useMemo(
@@ -1282,7 +1282,7 @@ const FileTab = memo(function FileTab({
 	);
 
 	// Hover background varies by theme mode for proper contrast
-	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
+	const hoverBgColor = theme.colors.hoverBg;
 
 	// Memoize tab styles to avoid creating new object references on every render
 	const tabStyle = useMemo(

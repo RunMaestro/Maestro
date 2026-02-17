@@ -177,8 +177,8 @@ function PlaybookTile({ playbook, theme, isSelected, onSelect }: PlaybookTilePro
 					<span
 						className="px-2 py-0.5 rounded text-xs font-medium"
 						style={{
-							backgroundColor: '#3b82f620',
-							color: '#3b82f6',
+							backgroundColor: theme.colors.infoDim,
+							color: theme.colors.info,
 						}}
 						title="Custom local playbook"
 					>
@@ -357,8 +357,8 @@ function PlaybookDetailView({
 							<span
 								className="px-2 py-0.5 rounded text-xs font-medium"
 								style={{
-									backgroundColor: '#3b82f620',
-									color: '#3b82f6',
+									backgroundColor: theme.colors.infoDim,
+									color: theme.colors.info,
 								}}
 								title="Custom local playbook"
 							>
@@ -534,8 +534,8 @@ function PlaybookDetailView({
 							<span
 								className="px-2 py-0.5 rounded text-xs font-medium inline-block"
 								style={{
-									backgroundColor: '#3b82f620',
-									color: '#3b82f6',
+									backgroundColor: theme.colors.infoDim,
+									color: theme.colors.info,
 								}}
 								title="Custom local playbook"
 							>
@@ -1075,7 +1075,7 @@ export function MarketplaceModal({
 	const modalContent = (
 		<div
 			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
-			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+			style={{ backgroundColor: theme.colors.overlay }}
 		>
 			<div
 				role="dialog"

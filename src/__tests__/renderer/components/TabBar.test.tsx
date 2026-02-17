@@ -131,6 +131,7 @@ const mockTheme: Theme = {
 		warning: '#ffaa00',
 		vibe: '#ff00ff',
 		agentStatus: '#00ff00',
+		hoverBg: 'rgba(255, 255, 255, 0.06)',
 	},
 };
 
@@ -1688,11 +1689,11 @@ describe('TabBar', () => {
 
 			// Before hover - check inline style is not hover state
 			const initialBgColor = inactiveTab.style.backgroundColor;
-			expect(initialBgColor).not.toBe('rgba(255, 255, 255, 0.08)');
+			expect(initialBgColor).not.toBe(mockTheme.colors.hoverBg);
 
 			// Hover
 			fireEvent.mouseEnter(inactiveTab);
-			expect(inactiveTab.style.backgroundColor).toBe('rgba(255, 255, 255, 0.08)');
+			expect(inactiveTab.style.backgroundColor).toBe(mockTheme.colors.hoverBg);
 
 			// Leave
 			fireEvent.mouseLeave(inactiveTab);
@@ -1703,7 +1704,7 @@ describe('TabBar', () => {
 			});
 
 			// Background color should no longer be hover state
-			expect(inactiveTab.style.backgroundColor).not.toBe('rgba(255, 255, 255, 0.08)');
+			expect(inactiveTab.style.backgroundColor).not.toBe(mockTheme.colors.hoverBg);
 		});
 
 		it('does not set title attribute on tabs (removed for cleaner UX)', () => {

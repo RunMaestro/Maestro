@@ -282,7 +282,7 @@ export function AgentCreationDialog({
 	const modalContent = (
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
-			style={{ backgroundColor: 'rgba(0, 0, 0, 0.6)' }}
+			style={{ backgroundColor: theme.colors.overlay }}
 		>
 			<div
 				role="dialog"

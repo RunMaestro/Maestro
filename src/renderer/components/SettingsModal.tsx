@@ -33,6 +33,7 @@ import {
 	Tag,
 	Timer,
 	User,
+	ArrowDownToLine,
 	Clapperboard,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
@@ -279,6 +280,8 @@ interface SettingsModalProps {
 	setCrashReportingEnabled: (value: boolean) => void;
 	customAICommands: CustomAICommand[];
 	setCustomAICommands: (commands: CustomAICommand[]) => void;
+	autoScrollAiMode: boolean;
+	setAutoScrollAiMode: (value: boolean) => void;
 	initialTab?:
 		| 'general'
 		| 'display'
@@ -1436,10 +1439,10 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								</label>
 								<ToggleButtonGroup
 									options={[
-										{ value: 'debug', label: 'Debug', activeColor: '#6366f1' },
-										{ value: 'info', label: 'Info', activeColor: '#3b82f6' },
-										{ value: 'warn', label: 'Warn', activeColor: '#f59e0b' },
-										{ value: 'error', label: 'Error', activeColor: '#ef4444' },
+										{ value: 'debug', label: 'Debug', activeColor: theme.colors.accent },
+										{ value: 'info', label: 'Info', activeColor: theme.colors.info },
+										{ value: 'warn', label: 'Warn', activeColor: theme.colors.warning },
+										{ value: 'error', label: 'Error', activeColor: theme.colors.error },
 									]}
 									value={props.logLevel}
 									onChange={props.setLogLevel}
@@ -1583,6 +1586,17 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								description="When you send your first message to a new tab, an AI will analyze it and generate a descriptive tab name. The naming request runs in parallel and leaves no history."
 								checked={automaticTabNamingEnabled}
 								onChange={setAutomaticTabNamingEnabled}
+								theme={theme}
+							/>
+
+							{/* Auto-scroll AI Output */}
+							<SettingCheckbox
+								icon={ArrowDownToLine}
+								sectionLabel="Auto-scroll AI Output"
+								title="Auto-scroll AI output"
+								description="Automatically scroll to the bottom when new AI output arrives. When disabled, a floating button appears for new messages."
+								checked={props.autoScrollAiMode}
+								onChange={props.setAutoScrollAiMode}
 								theme={theme}
 							/>
 
@@ -2586,13 +2600,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 												>
 													<div
 														className="w-2.5 h-2.5 rounded-full"
-														style={{ backgroundColor: '#eab308' }}
+														style={{ backgroundColor: theme.colors.warning }}
 													/>
 													Yellow warning threshold
 												</label>
 												<span
 													className="text-xs font-mono px-2 py-0.5 rounded"
-													style={{ backgroundColor: 'rgba(234, 179, 8, 0.2)', color: '#fde047' }}
+													style={{ backgroundColor: theme.colors.warningDim, color: theme.colors.warning }}
 												>
 													{contextManagementSettings.contextWarningYellowThreshold}%
 												</span>
@@ -2634,13 +2648,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 												>
 													<div
 														className="w-2.5 h-2.5 rounded-full"
-														style={{ backgroundColor: '#ef4444' }}
+														style={{ backgroundColor: theme.colors.error }}
 													/>
 													Red warning threshold
 												</label>
 												<span
 													className="text-xs font-mono px-2 py-0.5 rounded"
-													style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5' }}
+													style={{ backgroundColor: theme.colors.errorDim, color: theme.colors.error }}
 												>
 													{contextManagementSettings.contextWarningRedThreshold}%
 												</span>

@@ -40,6 +40,23 @@ function createMockTheme(overrides?: Partial<Theme>): Theme {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
+			info: '#8be9fd',
+			successForeground: '#282a36',
+			warningForeground: '#282a36',
+			errorForeground: '#282a36',
+			successDim: 'rgba(80, 250, 123, 0.15)',
+			warningDim: 'rgba(255, 184, 108, 0.15)',
+			errorDim: 'rgba(255, 85, 85, 0.15)',
+			infoDim: 'rgba(139, 233, 253, 0.15)',
+			diffAddition: '#50fa7b',
+			diffAdditionBg: 'rgba(80, 250, 123, 0.15)',
+			diffDeletion: '#ff5555',
+			diffDeletionBg: 'rgba(255, 85, 85, 0.15)',
+			overlay: 'rgba(0, 0, 0, 0.6)',
+			overlayHeavy: 'rgba(0, 0, 0, 0.8)',
+			hoverBg: 'rgba(255, 255, 255, 0.06)',
+			activeBg: 'rgba(255, 255, 255, 0.15)',
+			shadow: 'rgba(0, 0, 0, 0.3)',
 		},
 		...overrides,
 	};
@@ -65,14 +82,31 @@ function createLightTheme(): Theme {
 			success: '#1a7f37',
 			warning: '#9a6700',
 			error: '#cf222e',
+			info: '#0969da',
+			successForeground: '#ffffff',
+			warningForeground: '#ffffff',
+			errorForeground: '#ffffff',
+			successDim: 'rgba(26, 127, 55, 0.1)',
+			warningDim: 'rgba(154, 103, 0, 0.1)',
+			errorDim: 'rgba(207, 34, 46, 0.1)',
+			infoDim: 'rgba(9, 105, 218, 0.1)',
+			diffAddition: '#1a7f37',
+			diffAdditionBg: 'rgba(26, 127, 55, 0.1)',
+			diffDeletion: '#cf222e',
+			diffDeletionBg: 'rgba(207, 34, 46, 0.1)',
+			overlay: 'rgba(0, 0, 0, 0.5)',
+			overlayHeavy: 'rgba(0, 0, 0, 0.7)',
+			hoverBg: 'rgba(0, 0, 0, 0.04)',
+			activeBg: 'rgba(0, 0, 0, 0.1)',
+			shadow: 'rgba(0, 0, 0, 0.15)',
 		},
 	};
 }
 
 describe('cssCustomProperties', () => {
 	describe('THEME_CSS_PROPERTIES constant', () => {
-		it('should contain all 14 theme CSS properties', () => {
-			expect(THEME_CSS_PROPERTIES).toHaveLength(14);
+		it('should contain all 31 theme CSS properties', () => {
+			expect(THEME_CSS_PROPERTIES).toHaveLength(31);
 		});
 
 		it('should include all color properties', () => {
@@ -146,11 +180,11 @@ describe('cssCustomProperties', () => {
 			expect(properties['--maestro-mode']).toBe('vibe');
 		});
 
-		it('should return all 14 properties', () => {
+		it('should return all 31 properties', () => {
 			const theme = createMockTheme();
 			const properties = generateCSSProperties(theme);
 
-			expect(Object.keys(properties)).toHaveLength(14);
+			expect(Object.keys(properties)).toHaveLength(31);
 		});
 
 		it('should handle themes with rgba colors', () => {
@@ -437,7 +471,7 @@ describe('cssCustomProperties', () => {
 			expect(element.style.getPropertyValue('--maestro-mode')).toBe('dark');
 		});
 
-		it('should set all 13 properties', () => {
+		it('should set all 31 properties', () => {
 			const theme = createMockTheme();
 			setElementCSSProperties(element, theme);
 
@@ -447,7 +481,7 @@ describe('cssCustomProperties', () => {
 					count++;
 				}
 			});
-			expect(count).toBe(14);
+			expect(count).toBe(31);
 		});
 
 		it('should update properties when called again with different theme', () => {
@@ -751,8 +785,8 @@ describe('cssCustomProperties', () => {
 			// Should be valid CSS that can be parsed
 			expect(css).toMatch(/^:root \{[\s\S]+\}$/);
 
-			// Should contain all properties (14 = 13 colors + accentForeground + mode)
-			expect((css.match(/--maestro-/g) || []).length).toBe(14);
+			// Should contain all properties (31 = 30 color tokens + mode)
+			expect((css.match(/--maestro-/g) || []).length).toBe(31);
 		});
 
 		it('should support cssVar in style objects pattern', () => {

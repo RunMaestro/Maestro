@@ -208,7 +208,7 @@ function BadgeTooltip({
 			style={{
 				backgroundColor: theme.colors.bgSidebar,
 				border: `1px solid ${theme.colors.border}`,
-				boxShadow: `0 4px 20px rgba(0,0,0,0.3)`,
+				boxShadow: `0 4px 20px ${theme.colors.shadow}`,
 				...getPositionStyles(),
 			}}
 			onClick={(e) => e.stopPropagation()}
@@ -1059,7 +1059,7 @@ export function AchievementCard({
 								borderRadius: '50%',
 								background: 'linear-gradient(135deg, #FFD700 0%, #FFA500 100%)',
 								color: '#000',
-								boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+								boxShadow: `0 2px 4px ${theme.colors.shadow}`,
 							}}
 						>
 							{currentLevel}

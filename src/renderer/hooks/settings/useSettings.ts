@@ -270,6 +270,10 @@ export interface UseSettingsReturn {
 	suppressWindowsWarning: boolean;
 	setSuppressWindowsWarning: (value: boolean) => void;
 
+	// Auto-scroll in AI mode
+	autoScrollAiMode: boolean;
+	setAutoScrollAiMode: (value: boolean) => void;
+
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;

@@ -457,7 +457,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
 								style={{
 									backgroundColor: theme.colors.error,
-									color: '#ffffff',
+									color: theme.colors.errorForeground,
 								}}
 							>
 								×
@@ -573,7 +573,11 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 								? theme.colors.warning
 								: theme.colors.accent
 							: theme.colors.border,
-						color: message.trim() ? '#ffffff' : theme.colors.textDim,
+						color: message.trim()
+						? isBusy
+							? theme.colors.warningForeground
+							: theme.colors.accentForeground
+						: theme.colors.textDim,
 					}}
 					title={isBusy ? 'Queue message' : 'Send message'}
 				>

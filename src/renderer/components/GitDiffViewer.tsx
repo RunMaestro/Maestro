@@ -219,13 +219,13 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 										) : (
 											<>
 												{fileStats.additions > 0 && (
-													<span className="text-green-500 flex items-center gap-0.5">
+													<span style={{ color: theme.colors.diffAddition }} className="flex items-center gap-0.5">
 														<Plus className="w-3 h-3" />
 														{fileStats.additions}
 													</span>
 												)}
 												{fileStats.deletions > 0 && (
-													<span className="text-red-500 flex items-center gap-0.5">
+													<span style={{ color: theme.colors.diffDeletion }} className="flex items-center gap-0.5">
 														<Minus className="w-3 h-3" />
 														{fileStats.deletions}
 													</span>
@@ -311,11 +311,11 @@ export const GitDiffViewer = memo(function GitDiffViewer({
 							</span>
 						) : (
 							<div className="flex items-center gap-2">
-								<span className="text-green-500 flex items-center gap-1">
+								<span style={{ color: theme.colors.diffAddition }} className="flex items-center gap-1">
 									<Plus className="w-3 h-3" />
 									{stats.additions} additions
 								</span>
-								<span className="text-red-500 flex items-center gap-1">
+								<span style={{ color: theme.colors.diffDeletion }} className="flex items-center gap-1">
 									<Minus className="w-3 h-3" />
 									{stats.deletions} deletions
 								</span>

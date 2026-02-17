@@ -163,7 +163,7 @@ function CancelConfirmDialog({
 						className="px-3 py-1.5 rounded text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: theme.colors.error,
-							color: '#fff',
+							color: theme.colors.errorForeground,
 						}}
 					>
 						Cancel Merge
@@ -383,7 +383,7 @@ export function MergeProgressModal({
 												className="w-5 h-5 rounded-full flex items-center justify-center"
 												style={{ backgroundColor: theme.colors.success }}
 											>
-												<Check className="w-3 h-3" style={{ color: '#fff' }} />
+												<Check className="w-3 h-3" style={{ color: theme.colors.successForeground }} />
 											</div>
 										) : isActive ? (
 											<Loader2

@@ -206,7 +206,7 @@ export function CreatePRModal({
 	return (
 		<div className="fixed inset-0 z-50 flex items-center justify-center">
 			{/* Backdrop */}
-			<div className="absolute inset-0 bg-black/60" onClick={onClose} />
+			<div className="absolute inset-0" style={{ backgroundColor: theme.colors.overlay }} onClick={onClose} />
 
 			{/* Modal */}
 			<div

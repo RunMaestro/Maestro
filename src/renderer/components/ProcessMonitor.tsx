@@ -984,8 +984,8 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							<span
 								className="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
 								style={{
-									backgroundColor: '#a855f7' + '20',
-									color: '#a855f7',
+									backgroundColor: `${theme.colors.accent}20`,
+									color: theme.colors.accent,
 								}}
 							>
 								WIZARD
@@ -995,8 +995,8 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							<span
 								className="text-xs font-semibold px-1.5 py-0.5 rounded flex-shrink-0"
 								style={{
-									backgroundColor: '#a855f7' + '20',
-									color: '#a855f7',
+									backgroundColor: `${theme.colors.accent}20`,
+									color: theme.colors.accent,
 								}}
 							>
 								GENERATING
@@ -1580,7 +1580,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 			{killConfirmProcessId && (
 				<div
 					className="fixed inset-0 flex items-center justify-center z-[10000]"
-					style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+					style={{ backgroundColor: theme.colors.overlay }}
 					onClick={() => setKillConfirmProcessId(null)}
 				>
 					<div
@@ -1617,7 +1617,7 @@ export function ProcessMonitor(props: ProcessMonitorProps) {
 							<button
 								onClick={() => killProcess(killConfirmProcessId)}
 								className="px-3 py-1.5 rounded text-sm flex items-center gap-2"
-								style={{ backgroundColor: theme.colors.error, color: 'white' }}
+								style={{ backgroundColor: theme.colors.error, color: theme.colors.errorForeground }}
 								disabled={isKilling}
 								autoFocus
 							>

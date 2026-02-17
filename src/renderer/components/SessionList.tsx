@@ -2363,13 +2363,13 @@ function SessionListInner(props: SessionListProps) {
 													{copyFlash && (
 														<div
 															className="absolute inset-0 flex items-center justify-center rounded pointer-events-none animate-pulse"
-															style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+															style={{ backgroundColor: theme.colors.overlayHeavy }}
 														>
 															<div
 																className="px-4 py-2 rounded-full text-[12px] font-bold"
 																style={{
-																	backgroundColor: activeUrlTab === 'local' ? '#22c55e' : '#3b82f6',
-																	color: 'white',
+																	backgroundColor: activeUrlTab === 'local' ? theme.colors.success : theme.colors.info,
+																	color: activeUrlTab === 'local' ? theme.colors.successForeground : theme.colors.accentForeground,
 																}}
 															>
 																{copyFlash}
@@ -2441,11 +2441,11 @@ function SessionListInner(props: SessionListProps) {
 													}}
 													className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10 border"
 													style={{
-														color: activeUrlTab === 'local' ? '#4ade80' : '#60a5fa',
+														color: activeUrlTab === 'local' ? theme.colors.success : theme.colors.info,
 														borderColor:
 															activeUrlTab === 'local'
-																? 'rgba(74, 222, 128, 0.3)'
-																: 'rgba(96, 165, 250, 0.3)',
+																? `${theme.colors.success}4d`
+																: `${theme.colors.info}4d`,
 													}}
 												>
 													Open in Browser

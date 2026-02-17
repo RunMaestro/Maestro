@@ -1256,7 +1256,7 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
 											style={{ backgroundColor: tile.brandColor || theme.colors.accent }}
 										>
-											<Check className="w-3 h-3" style={{ color: '#fff' }} />
+											<Check className="w-3 h-3" style={{ color: theme.colors.accentForeground }} />
 										</div>
 									)}
 
@@ -1265,14 +1265,14 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 										<div
 											className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
 											style={{
-												backgroundColor: isDetected ? '#22c55e20' : '#ef444420',
+												backgroundColor: isDetected ? theme.colors.successDim : theme.colors.errorDim,
 											}}
 											title={isDetected ? 'Installed' : 'Not found'}
 										>
 											{isDetected ? (
-												<Check className="w-3 h-3" style={{ color: '#22c55e' }} />
+												<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
 											) : (
-												<X className="w-3 h-3" style={{ color: '#ef4444' }} />
+												<X className="w-3 h-3" style={{ color: theme.colors.error }} />
 											)}
 										</div>
 									)}

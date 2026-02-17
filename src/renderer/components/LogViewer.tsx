@@ -41,15 +41,17 @@ const LOG_LEVEL_PRIORITY: Record<string, number> = {
 	error: 3,
 };
 
-// Log level color mappings
-const LOG_LEVEL_COLORS: Record<string, { fg: string; bg: string }> = {
-	debug: { fg: '#6366f1', bg: 'rgba(99, 102, 241, 0.15)' }, // Indigo
-	info: { fg: '#3b82f6', bg: 'rgba(59, 130, 246, 0.15)' }, // Blue
-	warn: { fg: '#f59e0b', bg: 'rgba(245, 158, 11, 0.15)' }, // Amber
-	error: { fg: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' }, // Red
-	toast: { fg: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
-	autorun: { fg: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' }, // Orange
-};
+// Log level color mappings - uses theme tokens where available
+function getLogLevelColors(theme: Theme): Record<string, { fg: string; bg: string }> {
+	return {
+		debug: { fg: '#6366f1', bg: 'rgba(99, 102, 241, 0.15)' }, // Indigo
+		info: { fg: theme.colors.info, bg: theme.colors.infoDim },
+		warn: { fg: theme.colors.warning, bg: theme.colors.warningDim },
+		error: { fg: theme.colors.error, bg: theme.colors.errorDim },
+		toast: { fg: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
+		autorun: { fg: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' }, // Orange
+	};
+}
 
 export function LogViewer({
 	theme,
@@ -356,8 +358,9 @@ export function LogViewer({
 		}
 	};
 
-	const getLevelColor = (level: string) => LOG_LEVEL_COLORS[level]?.fg ?? theme.colors.textDim;
-	const getLevelBgColor = (level: string) => LOG_LEVEL_COLORS[level]?.bg ?? 'transparent';
+	const logLevelColors = getLogLevelColors(theme);
+	const getLevelColor = (level: string) => logLevelColors[level]?.fg ?? theme.colors.textDim;
+	const getLevelBgColor = (level: string) => logLevelColors[level]?.bg ?? 'transparent';
 
 	return (
 		<div
@@ -476,7 +479,7 @@ export function LogViewer({
 							? theme.colors.accent
 							: 'transparent',
 						color: Array.from(enabledLevels).every((level) => selectedLevels.has(level))
-							? 'white'
+							? theme.colors.accentForeground
 							: theme.colors.textDim,
 						border: `1px solid ${Array.from(enabledLevels).every((level) => selectedLevels.has(level)) ? theme.colors.accent : theme.colors.border}`,
 					}}
@@ -508,7 +511,7 @@ export function LogViewer({
 								backgroundColor: isEnabled && isSelected ? getLevelColor(level) : 'transparent',
 								color: isEnabled
 									? isSelected
-										? 'white'
+										? theme.colors.accentForeground
 										: theme.colors.textDim
 									: theme.colors.textDim,
 								border: `1px solid ${isEnabled && isSelected ? getLevelColor(level) : theme.colors.border}`,
@@ -643,7 +646,7 @@ export function LogViewer({
 											return (
 												<span
 													className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-													style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+													style={{ backgroundColor: theme.colors.successDim, color: theme.colors.success }}
 												>
 													<Pencil className="w-3 h-3" />
 													{project}
@@ -654,7 +657,7 @@ export function LogViewer({
 										{log.level === 'autorun' && log.context && (
 											<span
 												className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
-												style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+												style={{ backgroundColor: theme.colors.successDim, color: theme.colors.success }}
 											>
 												<Pencil className="w-3 h-3" />
 												{log.context}

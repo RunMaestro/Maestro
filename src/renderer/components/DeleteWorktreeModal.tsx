@@ -67,7 +67,7 @@ export function DeleteWorktreeModal({
 							className="px-3 py-1.5 rounded transition-colors outline-none flex items-center justify-center gap-1.5 text-xs whitespace-nowrap ml-auto"
 							style={{
 								backgroundColor: theme.colors.error,
-								color: '#ffffff',
+								color: theme.colors.errorForeground,
 								opacity: 0.7,
 							}}
 						>
@@ -106,7 +106,7 @@ export function DeleteWorktreeModal({
 								className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 								style={{
 									backgroundColor: `${theme.colors.error}99`,
-									color: '#ffffff',
+									color: theme.colors.errorForeground,
 								}}
 							>
 								Remove
@@ -123,7 +123,7 @@ export function DeleteWorktreeModal({
 								className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 								style={{
 									backgroundColor: theme.colors.error,
-									color: '#ffffff',
+									color: theme.colors.errorForeground,
 								}}
 							>
 								Remove and Delete

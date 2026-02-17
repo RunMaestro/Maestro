@@ -95,7 +95,7 @@ export function ImageDiffViewer({
 					{isNewFile && (
 						<span
 							className="text-xs px-2 py-0.5 rounded flex items-center gap-1"
-							style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: 'rgb(34, 197, 94)' }}
+							style={{ backgroundColor: theme.colors.diffAdditionBg, color: theme.colors.diffAddition }}
 						>
 							<Plus className="w-3 h-3" /> New file
 						</span>
@@ -103,7 +103,7 @@ export function ImageDiffViewer({
 					{isDeletedFile && (
 						<span
 							className="text-xs px-2 py-0.5 rounded flex items-center gap-1"
-							style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: 'rgb(239, 68, 68)' }}
+							style={{ backgroundColor: theme.colors.diffDeletionBg, color: theme.colors.diffDeletion }}
 						>
 							<Trash2 className="w-3 h-3" /> Deleted
 						</span>
@@ -121,12 +121,12 @@ export function ImageDiffViewer({
 					<div
 						className="px-3 py-2 text-sm font-medium border-b flex items-center gap-2"
 						style={{
-							backgroundColor: 'rgba(239, 68, 68, 0.1)',
+							backgroundColor: theme.colors.diffDeletionBg,
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
 						}}
 					>
-						<span className="text-red-500">Before</span>
+						<span style={{ color: theme.colors.diffDeletion }}>Before</span>
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							{isNewFile ? '(file did not exist)' : oldPath}
 						</span>
@@ -175,12 +175,12 @@ export function ImageDiffViewer({
 					<div
 						className="px-3 py-2 text-sm font-medium border-b flex items-center gap-2"
 						style={{
-							backgroundColor: 'rgba(34, 197, 94, 0.1)',
+							backgroundColor: theme.colors.diffAdditionBg,
 							borderColor: theme.colors.border,
 							color: theme.colors.textMain,
 						}}
 					>
-						<span className="text-green-500">After</span>
+						<span style={{ color: theme.colors.diffAddition }}>After</span>
 						<span className="text-xs" style={{ color: theme.colors.textDim }}>
 							{isDeletedFile ? '(file deleted)' : newPath}
 						</span>

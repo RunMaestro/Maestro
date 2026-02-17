@@ -178,7 +178,7 @@ export function QuitConfirmModal({
 							className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors hover:opacity-90 whitespace-nowrap"
 							style={{
 								backgroundColor: theme.colors.error,
-								color: '#ffffff',
+								color: theme.colors.errorForeground,
 							}}
 						>
 							Quit Anyway

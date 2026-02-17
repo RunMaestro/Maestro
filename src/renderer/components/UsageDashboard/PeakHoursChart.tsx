@@ -207,7 +207,7 @@ export function PeakHoursChart({
 												backgroundColor: theme.colors.bgActivity,
 												color: theme.colors.textMain,
 												border: `1px solid ${theme.colors.border}`,
-												boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+												boxShadow: `0 2px 8px ${theme.colors.shadow}`,
 											}}
 										>
 											<div className="font-medium">{formatHour(h.hour)}</div>

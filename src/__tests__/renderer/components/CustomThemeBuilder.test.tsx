@@ -29,6 +29,23 @@ const mockThemeColors: ThemeColors = {
 	success: '#10b981',
 	warning: '#f59e0b',
 	error: '#ef4444',
+	info: '#3b82f6',
+	successForeground: '#1a1a2e',
+	warningForeground: '#1a1a2e',
+	errorForeground: '#1a1a2e',
+	successDim: 'rgba(16, 185, 129, 0.15)',
+	warningDim: 'rgba(245, 158, 11, 0.15)',
+	errorDim: 'rgba(239, 68, 68, 0.15)',
+	infoDim: 'rgba(59, 130, 246, 0.15)',
+	diffAddition: '#10b981',
+	diffAdditionBg: 'rgba(16, 185, 129, 0.15)',
+	diffDeletion: '#ef4444',
+	diffDeletionBg: 'rgba(239, 68, 68, 0.15)',
+	overlay: 'rgba(0, 0, 0, 0.6)',
+	overlayHeavy: 'rgba(0, 0, 0, 0.8)',
+	hoverBg: 'rgba(255, 255, 255, 0.06)',
+	activeBg: 'rgba(255, 255, 255, 0.15)',
+	shadow: 'rgba(0, 0, 0, 0.3)',
 };
 
 const mockTheme: Theme = {

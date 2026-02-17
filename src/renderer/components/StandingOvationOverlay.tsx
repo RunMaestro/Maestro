@@ -389,7 +389,7 @@ export function StandingOvationOverlay({
 					style={{
 						backgroundColor: theme.colors.bgSidebar,
 						border: `2px solid ${goldColor}`,
-						boxShadow: `0 0 40px rgba(0, 0, 0, 0.5)`,
+						boxShadow: `0 0 40px ${theme.colors.shadow}`,
 						maxHeight: 'calc(100vh - 2rem)',
 					}}
 				>

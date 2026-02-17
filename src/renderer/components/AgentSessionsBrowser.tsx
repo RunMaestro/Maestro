@@ -1138,9 +1138,7 @@ export function AgentSessionsBrowser({
 												msg.type === 'user' ? theme.colors.accent : theme.colors.bgActivity,
 											color:
 												msg.type === 'user'
-													? theme.mode === 'light'
-														? '#fff'
-														: '#000'
+													? theme.colors.accentForeground
 													: theme.colors.textMain,
 										}}
 									>
@@ -1152,9 +1150,7 @@ export function AgentSessionsBrowser({
 											style={{
 												color:
 													msg.type === 'user'
-														? theme.mode === 'light'
-															? '#fff'
-															: '#000'
+														? theme.colors.accentForeground
 														: theme.colors.textDim,
 											}}
 										>

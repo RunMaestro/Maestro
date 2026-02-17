@@ -48,6 +48,10 @@ const mockTheme: Theme = {
 		bgSidebar: '#2a2a2a',
 		bgActivity: '#333333',
 		border: '#444444',
+		diffAddition: '#50fa7b',
+		diffAdditionBg: 'rgba(80, 250, 123, 0.15)',
+		diffDeletion: '#ff5555',
+		diffDeletionBg: 'rgba(255, 85, 85, 0.15)',
 	},
 };
 
@@ -565,24 +569,22 @@ describe('generateDiffViewStyles', () => {
 		const css = generateDiffViewStyles(mockTheme);
 		expect(css).toContain('.diff-gutter-insert');
 		expect(css).toContain('.diff-code-insert');
-		expect(css).toContain('rgba(34, 197, 94, 0.1)');
-		expect(css).toContain('rgba(34, 197, 94, 0.15)');
+		expect(css).toContain(mockTheme.colors.diffAdditionBg);
 	});
 
 	it('should include delete (red) color styling', () => {
 		const css = generateDiffViewStyles(mockTheme);
 		expect(css).toContain('.diff-gutter-delete');
 		expect(css).toContain('.diff-code-delete');
-		expect(css).toContain('rgba(239, 68, 68, 0.1)');
-		expect(css).toContain('rgba(239, 68, 68, 0.15)');
+		expect(css).toContain(mockTheme.colors.diffDeletionBg);
 	});
 
 	it('should include edit highlight styles within insert/delete', () => {
 		const css = generateDiffViewStyles(mockTheme);
 		expect(css).toContain('.diff-code-insert .diff-code-edit');
-		expect(css).toContain('rgba(34, 197, 94, 0.3)');
+		expect(css).toContain(`${mockTheme.colors.diffAddition}40`);
 		expect(css).toContain('.diff-code-delete .diff-code-edit');
-		expect(css).toContain('rgba(239, 68, 68, 0.3)');
+		expect(css).toContain(`${mockTheme.colors.diffDeletion}40`);
 	});
 
 	it('should include hunk header styles', () => {

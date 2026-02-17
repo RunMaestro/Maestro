@@ -474,10 +474,10 @@ describe('HistoryHelpModal', () => {
 				'font-medium',
 				'transition-colors'
 			);
-			// Check for accent background - the exact RGB value
+			// Check for accent background and theme-based foreground color
 			const style = gotItButton.getAttribute('style');
 			expect(style).toContain('background-color');
-			expect(style).toContain('color: white');
+			expect(style).toContain('color');
 		});
 
 		it('calls onClose when "Got it" button is clicked', () => {

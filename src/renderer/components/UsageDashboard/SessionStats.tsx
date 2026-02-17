@@ -270,7 +270,7 @@ export function SessionStats({ sessions, theme, colorBlindMode = false }: Sessio
 										{percentage > 20 && (
 											<span
 												className="text-xs font-medium px-2 text-white"
-												style={{ textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}
+												style={{ textShadow: `0 1px 2px ${theme.colors.shadow}` }}
 											>
 												{agent.count}
 											</span>

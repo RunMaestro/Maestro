@@ -237,7 +237,7 @@ export function PromptComposerModal({
 	return (
 		<div
 			className="fixed inset-0 z-50 flex items-center justify-center"
-			style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
+			style={{ backgroundColor: theme.colors.overlayHeavy }}
 			onClick={(e) => {
 				if (e.target === e.currentTarget) {
 					onSubmit(value);

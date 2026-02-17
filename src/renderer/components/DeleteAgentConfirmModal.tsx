@@ -75,7 +75,7 @@ export function DeleteAgentConfirmModal({
 						className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 						style={{
 							backgroundColor: `${theme.colors.error}99`,
-							color: '#ffffff',
+							color: theme.colors.errorForeground,
 						}}
 					>
 						Agent Only
@@ -90,7 +90,7 @@ export function DeleteAgentConfirmModal({
 						}`}
 						style={{
 							backgroundColor: theme.colors.error,
-							color: '#ffffff',
+							color: theme.colors.errorForeground,
 						}}
 					>
 						Agent + Working Directory

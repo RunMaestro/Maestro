@@ -1700,7 +1700,7 @@ export function SymphonyModal({
 	const modalContent = (
 		<div
 			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
-			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+			style={{ backgroundColor: theme.colors.overlay }}
 		>
 			<div
 				role="dialog"

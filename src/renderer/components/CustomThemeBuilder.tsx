@@ -29,22 +29,82 @@ interface CustomThemeBuilderProps {
 	onImportSuccess?: (message: string) => void;
 }
 
-// Color picker labels with descriptions
-const COLOR_CONFIG: { key: keyof ThemeColors; label: string; description: string }[] = [
-	{ key: 'bgMain', label: 'Main Background', description: 'Primary content area' },
-	{ key: 'bgSidebar', label: 'Sidebar Background', description: 'Left & right panels' },
-	{ key: 'bgActivity', label: 'Activity Background', description: 'Hover, active states' },
-	{ key: 'border', label: 'Border', description: 'Dividers & outlines' },
-	{ key: 'textMain', label: 'Main Text', description: 'Primary text color' },
-	{ key: 'textDim', label: 'Dimmed Text', description: 'Secondary text' },
-	{ key: 'accent', label: 'Accent', description: 'Highlights, links' },
-	{ key: 'accentDim', label: 'Accent Dim', description: 'Accent with transparency' },
-	{ key: 'accentText', label: 'Accent Text', description: 'Text in accent contexts' },
-	{ key: 'accentForeground', label: 'Accent Foreground', description: 'Text ON accent' },
-	{ key: 'success', label: 'Success', description: 'Green states' },
-	{ key: 'warning', label: 'Warning', description: 'Yellow/orange states' },
-	{ key: 'error', label: 'Error', description: 'Red states' },
+// Color picker sections with labels and descriptions
+const COLOR_SECTIONS: { title: string; items: { key: keyof ThemeColors; label: string; description: string }[] }[] = [
+	{
+		title: 'Backgrounds',
+		items: [
+			{ key: 'bgMain', label: 'Main Background', description: 'Primary content area' },
+			{ key: 'bgSidebar', label: 'Sidebar Background', description: 'Left & right panels' },
+			{ key: 'bgActivity', label: 'Activity Background', description: 'Hover, active states' },
+			{ key: 'border', label: 'Border', description: 'Dividers & outlines' },
+		],
+	},
+	{
+		title: 'Typography',
+		items: [
+			{ key: 'textMain', label: 'Main Text', description: 'Primary text color' },
+			{ key: 'textDim', label: 'Dimmed Text', description: 'Secondary text' },
+		],
+	},
+	{
+		title: 'Accent',
+		items: [
+			{ key: 'accent', label: 'Accent', description: 'Highlights, links' },
+			{ key: 'accentDim', label: 'Accent Dim', description: 'Accent with transparency' },
+			{ key: 'accentText', label: 'Accent Text', description: 'Text in accent contexts' },
+			{ key: 'accentForeground', label: 'Accent Foreground', description: 'Text ON accent bg' },
+		],
+	},
+	{
+		title: 'Status',
+		items: [
+			{ key: 'success', label: 'Success', description: 'Green states' },
+			{ key: 'warning', label: 'Warning', description: 'Yellow/orange states' },
+			{ key: 'error', label: 'Error', description: 'Red states' },
+			{ key: 'info', label: 'Info', description: 'Blue/informational states' },
+		],
+	},
+	{
+		title: 'Status Foregrounds',
+		items: [
+			{ key: 'successForeground', label: 'Success Foreground', description: 'Text ON success bg' },
+			{ key: 'warningForeground', label: 'Warning Foreground', description: 'Text ON warning bg' },
+			{ key: 'errorForeground', label: 'Error Foreground', description: 'Text ON error bg' },
+		],
+	},
+	{
+		title: 'Status Dim Backgrounds',
+		items: [
+			{ key: 'successDim', label: 'Success Dim', description: 'Subtle success badges' },
+			{ key: 'warningDim', label: 'Warning Dim', description: 'Subtle warning badges' },
+			{ key: 'errorDim', label: 'Error Dim', description: 'Subtle error badges' },
+			{ key: 'infoDim', label: 'Info Dim', description: 'Subtle info badges' },
+		],
+	},
+	{
+		title: 'Git Diff',
+		items: [
+			{ key: 'diffAddition', label: 'Diff Addition', description: 'Added lines color' },
+			{ key: 'diffAdditionBg', label: 'Diff Addition Bg', description: 'Added lines background' },
+			{ key: 'diffDeletion', label: 'Diff Deletion', description: 'Deleted lines color' },
+			{ key: 'diffDeletionBg', label: 'Diff Deletion Bg', description: 'Deleted lines background' },
+		],
+	},
+	{
+		title: 'Overlays & Interactive',
+		items: [
+			{ key: 'overlay', label: 'Overlay', description: 'Modal backdrop' },
+			{ key: 'overlayHeavy', label: 'Overlay Heavy', description: 'Wizard/fullscreen backdrop' },
+			{ key: 'hoverBg', label: 'Hover Background', description: 'Subtle hover state' },
+			{ key: 'activeBg', label: 'Active Background', description: 'Selected/active state' },
+			{ key: 'shadow', label: 'Shadow', description: 'Elevation shadow color' },
+		],
+	},
 ];
+
+// Flat list of all color config items (used for import validation and iteration)
+const COLOR_CONFIG = COLOR_SECTIONS.flatMap((section) => section.items);
 
 // Mini UI Preview component
 function MiniUIPreview({ colors }: { colors: ThemeColors }) {
@@ -570,16 +630,26 @@ export function CustomThemeBuilder({
 							borderColor: theme.colors.border,
 						}}
 					>
-						{COLOR_CONFIG.map(({ key, label, description }) => (
-							<ColorInput
-								key={key}
-								colorKey={key}
-								label={label}
-								description={description}
-								value={customThemeColors[key]}
-								onChange={handleColorChange}
-								theme={theme}
-							/>
+						{COLOR_SECTIONS.map((section) => (
+							<div key={section.title}>
+								<div
+									className="text-[9px] uppercase font-bold mt-2 mb-1 first:mt-0"
+									style={{ color: theme.colors.textDim }}
+								>
+									{section.title}
+								</div>
+								{section.items.map(({ key, label, description }) => (
+									<ColorInput
+										key={key}
+										colorKey={key}
+										label={label}
+										description={description}
+										value={customThemeColors[key]}
+										onChange={handleColorChange}
+										theme={theme}
+									/>
+								))}
+							</div>
 						))}
 					</div>
 				</div>

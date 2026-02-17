@@ -267,7 +267,7 @@ export function SpecKitCommandsPanel({ theme }: SpecKitCommandsPanelProps) {
 											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
 											style={{
 												backgroundColor: theme.colors.success,
-												color: '#000000',
+												color: theme.colors.successForeground,
 											}}
 										>
 											<Save className="w-3 h-3" />

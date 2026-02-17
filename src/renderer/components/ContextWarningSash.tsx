@@ -24,7 +24,7 @@ export interface ContextWarningSashProps {
  * - Dismiss button that hides the warning until usage increases 10%+ or crosses threshold
  */
 export function ContextWarningSash({
-	theme: _theme,
+	theme,
 	contextUsage,
 	yellowThreshold,
 	redThreshold,
@@ -77,19 +77,11 @@ export function ContextWarningSash({
 
 	const isRed = warningLevel === 'red';
 
-	// Color values from spec
-	const backgroundColor = isRed
-		? 'rgba(239, 68, 68, 0.15)' // red-500 with low opacity
-		: 'rgba(234, 179, 8, 0.15)'; // yellow-500 with low opacity
-
-	const borderColor = isRed ? 'rgba(239, 68, 68, 0.5)' : 'rgba(234, 179, 8, 0.5)';
-
-	const textColor = isRed
-		? '#fca5a5' // red-300
-		: '#fde047'; // yellow-300
-
-	const iconColor = isRed ? '#ef4444' : '#eab308';
-	const buttonBgColor = isRed ? '#ef4444' : '#eab308';
+	const backgroundColor = isRed ? theme.colors.errorDim : theme.colors.warningDim;
+	const borderColor = isRed ? theme.colors.error : theme.colors.warning;
+	const textColor = isRed ? theme.colors.error : theme.colors.warning;
+	const iconColor = isRed ? theme.colors.error : theme.colors.warning;
+	const buttonBgColor = isRed ? theme.colors.error : theme.colors.warning;
 
 	return (
 		<div

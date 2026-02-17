@@ -236,7 +236,7 @@ export function AgentComparisonChart({
 												<span
 													className="text-xs font-medium px-2 text-white"
 													style={{
-														textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+														textShadow: `0 1px 2px ${theme.colors.shadow}`,
 													}}
 												>
 													{agent.durationPercentage.toFixed(1)}%

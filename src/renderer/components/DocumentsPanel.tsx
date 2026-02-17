@@ -412,7 +412,8 @@ function DocumentSelectorModal({
 
 	return (
 		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000]"
+			className="fixed inset-0 flex items-center justify-center z-[10000]"
+			style={{ backgroundColor: theme.colors.overlay }}
 			onClick={onClose}
 		>
 			<div
@@ -1293,7 +1294,7 @@ export function DocumentsPanel({
 						height: 24,
 						borderRadius: '50%',
 						backgroundColor: theme.colors.success,
-						boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+						boxShadow: `0 2px 8px ${theme.colors.shadow}`,
 					}}
 				>
 					<Plus className="w-4 h-4 stroke-2" style={{ color: theme.colors.bgMain }} />

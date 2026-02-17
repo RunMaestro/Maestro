@@ -217,7 +217,7 @@ export function KeyboardMasteryCelebration({
 			<div
 				className="fixed inset-0 z-[99997] animate-in fade-in duration-300"
 				onClick={handleClose}
-				style={{ backgroundColor: 'rgba(0, 0, 0, 0.8)' }}
+				style={{ backgroundColor: theme.colors.overlayHeavy }}
 			/>
 
 			{/* Modal */}
