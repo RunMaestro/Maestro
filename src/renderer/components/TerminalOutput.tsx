@@ -1721,17 +1721,18 @@ export const TerminalOutput = memo(
 					<div ref={logsEndRef} />
 				</div>
 
-				{/* New Message Indicator - floating arrow button (AI mode only) */}
-				{hasNewMessages && !isAtBottom && session.inputMode === 'ai' && (
+				{/* Scroll-to-bottom indicator - floating arrow button on right (AI mode only) */}
+				{!isAtBottom && session.inputMode === 'ai' && (
 					<button
 						onClick={scrollToBottom}
 						className="absolute bottom-4 right-6 flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20"
 						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+							backgroundColor: hasNewMessages ? theme.colors.accent : theme.colors.bgSidebar,
+							color: hasNewMessages ? theme.colors.accentForeground : theme.colors.textDim,
+							border: `1px solid ${hasNewMessages ? 'transparent' : theme.colors.border}`,
+							animation: hasNewMessages ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined,
 						}}
-						title="Scroll to new messages"
+						title={hasNewMessages ? 'Scroll to new messages' : 'Scroll to bottom'}
 					>
 						<ArrowDown className="w-4 h-4" />
 						{newMessageCount > 0 && (
