@@ -223,7 +223,14 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 								agentType: session.toolType,
 							});
 							// Kill the hung process — onExit listener will fire and resolve the promise
-							window.maestro.process.kill(targetSessionId).catch(() => {});
+							window.maestro.process.kill(targetSessionId).catch((err) => {
+								window.maestro.logger.log('error', 'Failed to kill hung Auto Run process', 'AgentExecution', {
+									targetSessionId,
+									agentType: session.toolType,
+									idleMs,
+									error: String(err),
+								});
+							});
 						}
 					}, 30_000); // Check every 30 seconds
 
