@@ -18,6 +18,10 @@ const mockWebContents = {
 	send: vi.fn(),
 	openDevTools: vi.fn(),
 	on: vi.fn(),
+	setWindowOpenHandler: vi.fn(),
+	session: {
+		setPermissionRequestHandler: vi.fn(),
+	},
 };
 
 const mockWindowInstance = {
@@ -356,6 +360,155 @@ describe('app-lifecycle/window-manager', () => {
 					mode: 'production',
 				})
 			);
+		});
+
+		it('should set up window open handler to deny all popups', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			expect(mockWebContents.setWindowOpenHandler).toHaveBeenCalledWith(expect.any(Function));
+
+			// Verify the handler denies all requests
+			const handler = mockWebContents.setWindowOpenHandler.mock.calls[0][0];
+			const result = handler({ url: 'https://evil.example.com' });
+			expect(result).toEqual({ action: 'deny' });
+		});
+
+		it('should set up will-navigate handler', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			// Verify will-navigate handler was registered
+			expect(mockWebContents.on).toHaveBeenCalledWith('will-navigate', expect.any(Function));
+		});
+
+		it('should block navigation to external URLs in production', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			// Find the will-navigate handler
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			expect(willNavigateCall).toBeDefined();
+			const navigateHandler = willNavigateCall![1];
+
+			// Should block external URL
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'https://evil.example.com');
+			expect(mockEvent.preventDefault).toHaveBeenCalled();
+		});
+
+		it('should allow file:// navigation in production', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			// Should allow file:// navigation
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'file:///path/to/app/index.html');
+			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('should allow dev server navigation in development mode', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: true,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			const willNavigateCall = mockWebContents.on.mock.calls.find(
+				(call: unknown[]) => call[0] === 'will-navigate'
+			);
+			const navigateHandler = willNavigateCall![1];
+
+			// Should allow dev server navigation
+			const mockEvent = { preventDefault: vi.fn() };
+			navigateHandler(mockEvent, 'http://localhost:5173/some/path');
+			expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+		});
+
+		it('should deny all permission requests', async () => {
+			const { createWindowManager } = await import('../../../main/app-lifecycle/window-manager');
+
+			const windowManager = createWindowManager({
+				windowStateStore: mockWindowStateStore as unknown as Parameters<
+					typeof createWindowManager
+				>[0]['windowStateStore'],
+				isDevelopment: false,
+				preloadPath: '/path/to/preload.js',
+				rendererPath: '/path/to/index.html',
+				devServerUrl: 'http://localhost:5173',
+			});
+
+			windowManager.createWindow();
+
+			expect(
+				mockWebContents.session.setPermissionRequestHandler
+			).toHaveBeenCalledWith(expect.any(Function));
+
+			// Verify the handler denies all permissions
+			const handler =
+				mockWebContents.session.setPermissionRequestHandler.mock.calls[0][0];
+			const callback = vi.fn();
+			handler(null, 'camera', callback);
+			expect(callback).toHaveBeenCalledWith(false);
 		});
 	});
 });
