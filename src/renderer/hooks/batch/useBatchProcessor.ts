@@ -974,6 +974,12 @@ export function useBatchProcessor({
 					let skipCurrentDocumentAfterError = false;
 
 					// Process tasks in this document until none remain
+					// NOTE: No per-task timeout is implemented. If an agent hangs mid-execution
+					// (no output, no exit), the batch will stall on the awaited processTask() call.
+					// The user can manually cancel via Stop/Kill Auto Run controls.
+					// The stall detection (consecutiveNoChangeCount) only triggers after a task
+					// completes, so it cannot detect in-flight hangs. A future enhancement could
+					// add a configurable per-task timeout using Promise.race().
 					while (remainingTasks > 0) {
 						// Check for stop request before each task
 						if (stopRequestedRefs.current[sessionId]) {
