@@ -986,6 +986,10 @@ interface MaestroAPI {
 		cancelQuit: () => void;
 		onSystemResume: (callback: () => void) => () => void;
 	};
+	os: {
+		getPlatform: () => Promise<string>;
+		getArch: () => Promise<string>;
+	};
 	logger: {
 		log: (
 			level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun',

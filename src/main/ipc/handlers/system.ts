@@ -584,6 +584,18 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 	ipcMain.handle('power:removeReason', async (_event, reason: string) => {
 		powerManager.removeBlockReason(reason);
 	});
+
+	// ============ OS Handlers ============
+
+	// Get platform (darwin, linux, win32)
+	ipcMain.handle('os:getPlatform', async () => {
+		return process.platform;
+	});
+
+	// Get architecture (x64, arm64, etc.)
+	ipcMain.handle('os:getArch', async () => {
+		return process.arch;
+	});
 }
 
 /**

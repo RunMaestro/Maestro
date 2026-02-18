@@ -204,6 +204,24 @@ export function createAppApi() {
 	};
 }
 
+/**
+ * OS API interface for platform and architecture info
+ */
+export interface OsApi {
+	getPlatform: () => Promise<string>;
+	getArch: () => Promise<string>;
+}
+
+/**
+ * Creates the OS API object for preload exposure
+ */
+export function createOsApi(): OsApi {
+	return {
+		getPlatform: (): Promise<string> => ipcRenderer.invoke('os:getPlatform'),
+		getArch: (): Promise<string> => ipcRenderer.invoke('os:getArch'),
+	};
+}
+
 export type DialogApi = ReturnType<typeof createDialogApi>;
 export type FontsApi = ReturnType<typeof createFontsApi>;
 export type ShellsApi = ReturnType<typeof createShellsApi>;
@@ -214,3 +232,4 @@ export type DevtoolsApi = ReturnType<typeof createDevtoolsApi>;
 export type PowerApi = ReturnType<typeof createPowerApi>;
 export type UpdatesApi = ReturnType<typeof createUpdatesApi>;
 export type AppApi = ReturnType<typeof createAppApi>;
+export type OsApiType = ReturnType<typeof createOsApi>;

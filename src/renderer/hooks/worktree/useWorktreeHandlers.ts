@@ -80,6 +80,11 @@ function isSkippableBranch(branch: string | null | undefined): boolean {
 	return branch === 'main' || branch === 'master' || branch === 'HEAD';
 }
 
+/** Normalize file path for comparison: convert backslashes to forward slashes and remove trailing slashes. */
+function normalizePath(path: string): string {
+	return path.replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
 /**
  * Build a worktree Session object, consolidating the repeated construction
  * pattern (~60 lines each, repeated 5x in the original App.tsx).
@@ -605,10 +610,10 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						if (isSkippableBranch(subdir.branch)) continue;
 
 						// Check if a session already exists for this worktree
-						// Normalize paths for comparison (remove trailing slashes)
-						const normalizedSubdirPath = subdir.path.replace(/\/+$/, '');
+						// Normalize paths for comparison (backslashes + trailing slashes)
+						const normalizedSubdirPath = normalizePath(subdir.path);
 						const existingSession = currentSessions.find((s) => {
-							const normalizedCwd = s.cwd.replace(/\/+$/, '');
+							const normalizedCwd = normalizePath(s.cwd);
 							// Check if same path (regardless of parent) or same branch under same parent
 							return (
 								normalizedCwd === normalizedSubdirPath ||
@@ -618,9 +623,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 						if (existingSession) continue;
 
 						// Also check in sessions we're about to add
-						if (
-							newWorktreeSessions.some((s) => s.cwd.replace(/\/+$/, '') === normalizedSubdirPath)
-						) {
+						if (newWorktreeSessions.some((s) => normalizePath(s.cwd) === normalizedSubdirPath)) {
 							continue;
 						}
 
@@ -650,8 +653,10 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			if (newWorktreeSessions.length > 0) {
 				useSessionStore.getState().setSessions((prev) => {
 					// Double-check to avoid duplicates
-					const currentPaths = new Set(prev.map((s) => s.cwd));
-					const trulyNew = newWorktreeSessions.filter((s) => !currentPaths.has(s.cwd));
+					const currentPaths = new Set(prev.map((s) => normalizePath(s.cwd)));
+					const trulyNew = newWorktreeSessions.filter(
+						(s) => !currentPaths.has(normalizePath(s.cwd))
+					);
 					if (trulyNew.length === 0) return prev;
 					return [...prev, ...trulyNew];
 				});
@@ -707,10 +712,10 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			if (!parentSession) return;
 
 			// Check if session already exists for this worktree
-			// Normalize paths for comparison (remove trailing slashes)
-			const normalizedWorktreePath = worktree.path.replace(/\/+$/, '');
+			// Normalize paths for comparison (backslashes + trailing slashes)
+			const normalizedWorktreePath = normalizePath(worktree.path);
 			const existingSession = latestSessions.find((s) => {
-				const normalizedCwd = s.cwd.replace(/\/+$/, '');
+				const normalizedCwd = normalizePath(s.cwd);
 				// Check if same path (regardless of parent) or same branch under same parent
 				return (
 					normalizedCwd === normalizedWorktreePath ||
@@ -737,7 +742,7 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 
 			useSessionStore.getState().setSessions((prev) => {
 				// Double-check to avoid duplicates (normalize paths for comparison)
-				if (prev.some((s) => s.cwd.replace(/\/+$/, '') === normalizedWorktreePath)) return prev;
+				if (prev.some((s) => normalizePath(s.cwd) === normalizedWorktreePath)) return prev;
 				return [...prev, worktreeSession];
 			});
 
@@ -856,8 +861,10 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 				if (newSessionsToAdd.length > 0) {
 					useSessionStore.getState().setSessions((prev) => {
 						// Double-check against current state to avoid duplicates
-						const currentPaths = new Set(prev.map((s) => s.cwd));
-						const trulyNew = newSessionsToAdd.filter((s) => !currentPaths.has(s.cwd));
+						const currentPaths = new Set(prev.map((s) => normalizePath(s.cwd)));
+						const trulyNew = newSessionsToAdd.filter(
+							(s) => !currentPaths.has(normalizePath(s.cwd))
+						);
 						if (trulyNew.length === 0) return prev;
 						return [...prev, ...trulyNew];
 					});
