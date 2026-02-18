@@ -199,6 +199,15 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					let taskUsageStats: UsageStats | undefined;
 					const queryStartTime = Date.now(); // Track start time for stats
 
+					// Activity tracking for per-task stall detection.
+					// Resets on any signal: data output, thinking chunks, or tool execution.
+					// This bridges the IPC channel gap for agents like Codex whose reasoning
+					// and tool events travel on separate channels from data output.
+					let lastActivityTime = Date.now();
+					const markActivity = () => {
+						lastActivityTime = Date.now();
+					};
+
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
 
@@ -210,7 +219,29 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					cleanupFns.push(
 						window.maestro.process.onData((sid: string, data: string) => {
 							if (sid === targetSessionId) {
-								responseText += data;
+								markActivity();
+								// Guard against empty heartbeat data (e.g. from future heartbeat mechanisms)
+								if (data) {
+									responseText += data;
+								}
+							}
+						})
+					);
+
+					// Listen for thinking chunks as activity signals (Codex reasoning)
+					cleanupFns.push(
+						window.maestro.process.onThinkingChunk((sid: string, _content: string) => {
+							if (sid === targetSessionId) {
+								markActivity();
+							}
+						})
+					);
+
+					// Listen for tool execution events as activity signals (Codex tool use)
+					cleanupFns.push(
+						window.maestro.process.onToolExecution((sid: string, _toolEvent) => {
+							if (sid === targetSessionId) {
+								markActivity();
 							}
 						})
 					);
