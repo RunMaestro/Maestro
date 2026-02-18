@@ -208,8 +208,30 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 						lastActivityTime = Date.now();
 					};
 
+					// Per-task activity timeout: if no activity (data, thinking, tool) for
+					// this duration, assume the agent is hung and kill it. This catches
+					// mid-execution hangs that the post-execution stall detector in
+					// useBatchProcessor cannot detect (it only triggers after task completion).
+					const ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+					const activityCheckInterval = setInterval(() => {
+						const idleMs = Date.now() - lastActivityTime;
+						if (idleMs > ACTIVITY_TIMEOUT_MS) {
+							clearInterval(activityCheckInterval);
+							window.maestro.logger.log('warn', 'Auto Run task killed due to inactivity', 'AgentExecution', {
+								targetSessionId,
+								idleMs,
+								agentType: session.toolType,
+							});
+							// Kill the hung process — onExit listener will fire and resolve the promise
+							window.maestro.process.kill(targetSessionId).catch(() => {});
+						}
+					}, 30_000); // Check every 30 seconds
+
 					// Array to collect cleanup functions as listeners are registered
 					const cleanupFns: (() => void)[] = [];
+
+					// Include the activity timeout in cleanup so it's cleared on normal exit
+					cleanupFns.push(() => clearInterval(activityCheckInterval));
 
 					const cleanup = () => {
 						cleanupFns.forEach((fn) => fn());

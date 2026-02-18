@@ -187,6 +187,8 @@ export class CodexOutputParser implements AgentOutputParser {
 		const config = readCodexConfig();
 		this.model = config.model || 'gpt-5.2-codex-max';
 		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+		// Reset stateful fields so they don't leak across sessions (parser is a singleton)
+		this.lastToolName = null;
 	}
 
 	/**

@@ -88,7 +88,11 @@ export class ExitHandler {
 				const event = outputParser.parseJsonLine(remainingLine);
 				if (event && outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
 					managedProcess.resultEmitted = true;
-					const resultText = event.text || managedProcess.streamedText || '';
+					// For Codex, prefer codexPendingResult over streamedText (which contains reasoning)
+					const resultText = event.text
+						|| managedProcess.codexPendingResult
+						|| managedProcess.streamedText
+						|| '';
 					if (resultText) {
 						this.bufferManager.emitDataBuffered(sessionId, resultText);
 					}
@@ -101,9 +105,13 @@ export class ExitHandler {
 
 		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
 		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
-		// For Codex, prefer codexPendingResult (the actual agent_message) over streamedText (reasoning)
+		// For Codex: only emit codexPendingResult (the actual agent_message). Do NOT fall through
+		// to streamedText, which contains reasoning — emitting reasoning as a result is misleading.
+		// For other agents: streamedText is the correct fallback (it accumulates actual output).
 		if (isStreamJsonMode && !managedProcess.resultEmitted) {
-			const fallbackText = managedProcess.codexPendingResult || managedProcess.streamedText;
+			const fallbackText = managedProcess.toolType === 'codex'
+				? managedProcess.codexPendingResult
+				: managedProcess.streamedText;
 			if (fallbackText) {
 				managedProcess.resultEmitted = true;
 				logger.debug('[ProcessManager] Emitting streamed text at exit (no result event)', 'ProcessManager', {
