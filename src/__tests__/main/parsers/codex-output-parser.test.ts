@@ -404,6 +404,71 @@ describe('CodexOutputParser', () => {
 		});
 	});
 
+	describe('tool name carryover', () => {
+		it('should carry tool name from tool_call to subsequent tool_result', () => {
+			const p = new CodexOutputParser();
+			// First: tool_call with tool name
+			const callLine = JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_call', tool: 'shell', args: { command: ['ls'] } },
+			});
+			p.parseJsonLine(callLine);
+
+			// Then: tool_result without tool name
+			const resultLine = JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_result', output: 'file1.txt\nfile2.txt' },
+			});
+			const event = p.parseJsonLine(resultLine);
+			expect(event?.toolName).toBe('shell');
+			expect(event?.toolState?.status).toBe('completed');
+		});
+
+		it('should reset lastToolName after tool_result consumption', () => {
+			const p = new CodexOutputParser();
+			// tool_call → tool_result (consumes name) → another tool_result (no name)
+			p.parseJsonLine(JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_call', tool: 'shell', args: {} },
+			}));
+			p.parseJsonLine(JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_result', output: 'ok' },
+			}));
+			const orphan = p.parseJsonLine(JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_result', output: 'orphan' },
+			}));
+			expect(orphan?.toolName).toBeUndefined();
+		});
+	});
+
+	describe('tool output truncation', () => {
+		it('should truncate tool output exceeding 10000 chars', () => {
+			const p = new CodexOutputParser();
+			const longOutput = 'x'.repeat(15000);
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_result', output: longOutput },
+			});
+			const event = p.parseJsonLine(line);
+			expect(event?.toolState?.output).toContain('... [output truncated, 15000 chars total]');
+			// The truncated output should start with 10000 'x' chars
+			expect(event?.toolState?.output?.startsWith('x'.repeat(10000))).toBe(true);
+		});
+
+		it('should not truncate tool output within limit', () => {
+			const p = new CodexOutputParser();
+			const shortOutput = 'x'.repeat(5000);
+			const line = JSON.stringify({
+				type: 'item.completed',
+				item: { type: 'tool_result', output: shortOutput },
+			});
+			const event = p.parseJsonLine(line);
+			expect(event?.toolState?.output).toBe(shortOutput);
+		});
+	});
+
 	describe('detectErrorFromLine', () => {
 		it('should return null for empty lines', () => {
 			expect(parser.detectErrorFromLine('')).toBeNull();
