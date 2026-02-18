@@ -1406,7 +1406,11 @@ export const TerminalOutput = memo(
 			lastLogCountRef.current = currentCount;
 		}, [activeTabId]); // Only run when tab changes, not when filteredLogs changes
 
-		// Detect new messages when user is not at bottom (while staying on same tab)
+		// Detect new messages when user is not at bottom (while staying on same tab).
+		// NOTE: This intentionally uses filteredLogs.length (not the MutationObserver) because
+		// unread badge counts should only increment on NEW log entries, not on in-place text
+		// updates (thinking stream growth). The MutationObserver handles scroll triggering;
+		// this effect handles the unread badge.
 		useEffect(() => {
 			const currentCount = filteredLogs.length;
 			if (currentCount > lastLogCountRef.current) {
@@ -1441,27 +1445,50 @@ export const TerminalOutput = memo(
 			}
 		}, [autoScrollAiMode]);
 
-		// Auto-scroll to bottom when new output arrives
-		// Terminal mode always auto-scrolls; AI mode auto-scrolls when autoScrollAiMode is enabled
-		// Auto-scroll pauses when user scrolls up, resumes when they scroll back to bottom
+		// Auto-scroll to bottom when DOM content changes in the scroll container.
+		// Uses MutationObserver to detect ALL content mutations — new nodes (log entries),
+		// text changes (thinking stream growth), and attribute changes (tool status updates).
+		// This replaces the previous filteredLogs.length dependency, which missed in-place
+		// text updates during thinking/tool streaming (GitHub issue #402).
 		useEffect(() => {
-			const shouldAutoScroll =
+			const container = scrollContainerRef.current;
+			if (!container) return;
+
+			const shouldAutoScroll = () =>
 				session.inputMode === 'terminal' ||
 				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused);
-			if (shouldAutoScroll && scrollContainerRef.current) {
-				// Use requestAnimationFrame to ensure DOM has updated with new content
+
+			const scrollToBottom = () => {
+				if (!scrollContainerRef.current) return;
 				requestAnimationFrame(() => {
 					if (scrollContainerRef.current) {
 						scrollContainerRef.current.scrollTo({
 							top: scrollContainerRef.current.scrollHeight,
-							// Use 'auto' (instant) for continuous auto-scroll to prevent jitter
-							// when messages arrive rapidly during streaming
 							behavior: 'auto',
 						});
 					}
 				});
+			};
+
+			// Initial scroll on mount/dep change
+			if (shouldAutoScroll()) {
+				scrollToBottom();
 			}
-		}, [session.inputMode, filteredLogs.length, autoScrollAiMode, autoScrollPaused]);
+
+			const observer = new MutationObserver(() => {
+				if (shouldAutoScroll()) {
+					scrollToBottom();
+				}
+			});
+
+			observer.observe(container, {
+				childList: true,   // New/removed DOM nodes (new log entries, tool events)
+				subtree: true,     // Watch all descendants, not just direct children
+				characterData: true, // Text node mutations (thinking stream text growth)
+			});
+
+			return () => observer.disconnect();
+		}, [session.inputMode, autoScrollAiMode, autoScrollPaused]);
 
 		// Restore scroll position when component mounts or initialScrollTop changes
 		// Uses requestAnimationFrame to ensure DOM is ready
