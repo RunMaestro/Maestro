@@ -1492,7 +1492,10 @@ describe('process IPC handlers', () => {
 				modelSource: 'none',
 				customArgsSource: 'none',
 				customEnvSource: 'session',
-				effectiveCustomEnvVars: { SESSION_API_KEY: 'session-secret-123' },
+				effectiveCustomEnvVars: {
+					SESSION_API_KEY: 'session-key-placeholder',
+					DEBUG_MODE: 'debug_override_from_session', // DUPLICATE: also in global
+				},
 			});
 
 			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
@@ -1502,10 +1505,11 @@ describe('process IPC handlers', () => {
 				if (key === 'sshRemotes') return [mockSshRemote];
 				if (key === 'shellEnvVars') {
 					// Global environment variables set by user in Settings
+					// Using non-secret placeholders instead of literal secrets
 					return {
-						GLOBAL_API_KEY: 'global-secret-456',
-						PROXY_URL: 'http://proxy.internal:8080',
-						DEBUG_MODE: 'true',
+						GLOBAL_KEY_PLACEHOLDER: 'global_value_1',
+						PROXY_URL_PLACEHOLDER: 'proxy_value_default',
+						DEBUG_MODE: 'global_debug_setting', // DUPLICATE: also in session to test override
 					};
 				}
 				return defaultValue;
@@ -1521,8 +1525,11 @@ describe('process IPC handlers', () => {
 				command: 'claude',
 				args: ['--print'],
 				prompt: 'Hello from SSH',
-				// Session-level custom env var
-				sessionCustomEnvVars: { SESSION_API_KEY: 'session-secret-123' },
+				// Session-level custom env vars - includes duplicate key to test override
+				sessionCustomEnvVars: {
+					SESSION_API_KEY: 'session-key-placeholder',
+					DEBUG_MODE: 'debug_override_from_session', // DUPLICATE: overrides global value
+				},
 				// Session-level SSH config
 				sessionSshRemoteConfig: {
 					enabled: true,
@@ -1544,28 +1551,30 @@ describe('process IPC handlers', () => {
 			if (remoteOptions.env) {
 				expect(remoteOptions.env).toEqual(
 					expect.objectContaining({
-						GLOBAL_API_KEY: 'global-secret-456',
-						PROXY_URL: 'http://proxy.internal:8080',
-						DEBUG_MODE: 'true',
-						SESSION_API_KEY: 'session-secret-123', // Session var overrides global if same key
+						GLOBAL_KEY_PLACEHOLDER: 'global_value_1',
+						PROXY_URL_PLACEHOLDER: 'proxy_value_default',
+						DEBUG_MODE: 'debug_override_from_session', // SESSION override of global
+						SESSION_API_KEY: 'session-key-placeholder',
 					})
 				);
 
 				// 2. Session vars should override global vars if same key exists
-				// (both contain SESSION_API_KEY, so should use session value)
-				expect(remoteOptions.env.SESSION_API_KEY).toBe('session-secret-123');
+				// DEBUG_MODE appears in both global and session - session should win
+				expect(remoteOptions.env.DEBUG_MODE).toBe('debug_override_from_session');
+				expect(remoteOptions.env.SESSION_API_KEY).toBe('session-key-placeholder');
 			}
 
 			// 3. Verify stdin script contains the merged env exports
 			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
-			expect(spawnCall.sshStdinScript).toContain('GLOBAL_API_KEY=');
-			expect(spawnCall.sshStdinScript).toContain('PROXY_URL=');
+			expect(spawnCall.sshStdinScript).toContain('GLOBAL_KEY_PLACEHOLDER=');
+			expect(spawnCall.sshStdinScript).toContain('PROXY_URL_PLACEHOLDER=');
 			expect(spawnCall.sshStdinScript).toContain('DEBUG_MODE=');
 			expect(spawnCall.sshStdinScript).toContain('SESSION_API_KEY=');
 
 			// 4. Verify precedence: session vars are applied after global vars (last value wins)
-			// The stdinScript should have SESSION_API_KEY defined
-			expect(spawnCall.sshStdinScript).toMatch(/export SESSION_API_KEY=.*session-secret-123/);
+			// The stdinScript should have DEBUG_MODE with session override value and SESSION_API_KEY with session value
+			expect(spawnCall.sshStdinScript).toMatch(/export DEBUG_MODE=.*debug_override_from_session/);
+			expect(spawnCall.sshStdinScript).toMatch(/export SESSION_API_KEY=.*session-key-placeholder/);
 		});
 
 		it('should fall back to config.command when agent.binaryName is not available', async () => {
