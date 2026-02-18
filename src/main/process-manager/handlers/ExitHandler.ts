@@ -53,29 +53,6 @@ export class ExitHandler {
 			jsonBufferPreview: managedProcess.jsonBuffer?.substring(0, 200),
 		});
 
-		// Debug: Log exit details for group chat sessions
-		if (sessionId.includes('group-chat-')) {
-			console.log(`[GroupChat:Debug:ProcessManager] EXIT for session ${sessionId}`);
-			console.log(`[GroupChat:Debug:ProcessManager] Exit code: ${code}`);
-			console.log(`[GroupChat:Debug:ProcessManager] isStreamJsonMode: ${isStreamJsonMode}`);
-			console.log(`[GroupChat:Debug:ProcessManager] isBatchMode: ${isBatchMode}`);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] resultEmitted: ${managedProcess.resultEmitted}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] streamedText length: ${managedProcess.streamedText?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] jsonBuffer length: ${managedProcess.jsonBuffer?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] stderrBuffer length: ${managedProcess.stderrBuffer?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] stderrBuffer preview: "${(managedProcess.stderrBuffer || '').substring(0, 500)}"`
-			);
-		}
-
 		// Debug: Log exit details for synopsis sessions
 		if (sessionId.includes('-synopsis-')) {
 			logger.info('[ProcessManager] Synopsis session exit', 'ProcessManager', {
@@ -124,13 +101,17 @@ export class ExitHandler {
 
 		// Handle stream-json mode: emit accumulated streamed text if no result was emitted
 		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
-		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
-			managedProcess.resultEmitted = true;
-			logger.debug('[ProcessManager] Emitting streamed text at exit (no result event)', 'ProcessManager', {
-				sessionId,
-				streamedTextLength: managedProcess.streamedText.length,
-			});
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+		// For Codex, prefer codexPendingResult (the actual agent_message) over streamedText (reasoning)
+		if (isStreamJsonMode && !managedProcess.resultEmitted) {
+			const fallbackText = managedProcess.codexPendingResult || managedProcess.streamedText;
+			if (fallbackText) {
+				managedProcess.resultEmitted = true;
+				logger.debug('[ProcessManager] Emitting streamed text at exit (no result event)', 'ProcessManager', {
+					sessionId,
+					streamedTextLength: fallbackText.length,
+				});
+				this.bufferManager.emitDataBuffered(sessionId, fallbackText);
+			}
 		}
 
 		// Check for errors using the parser (if not already emitted)
