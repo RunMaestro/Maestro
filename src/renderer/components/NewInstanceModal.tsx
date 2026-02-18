@@ -1590,6 +1590,14 @@ export function EditAgentModal({
 							}}
 						>
 							{agentName}
+						{agent?.detectedVersion && (
+							<span
+								className="ml-2 text-xs font-normal"
+								style={{ color: theme.colors.textDim, opacity: 0.7 }}
+							>
+								v{agent.detectedVersion}
+							</span>
+						)}
 						</div>
 						<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
 							Provider cannot be changed after creation.
