@@ -2,22 +2,24 @@
  * Codex CLI Output Parser
  *
  * Parses JSON output from OpenAI Codex CLI (`codex exec --json`).
- * Codex outputs JSONL with the following message types:
  *
- * - thread.started: Thread initialization (contains thread_id for resume)
- * - turn.started: Beginning of a turn (agent is processing)
- * - item.completed: Completed item (reasoning, agent_message, tool_call, tool_result)
- * - turn.completed: End of turn (contains usage stats)
+ * Supports TWO output formats:
  *
- * Key schema details:
- * - Session IDs are called thread_id (not session_id like Claude)
- * - Text content is in item.text for reasoning and agent_message items
- * - Token stats are in usage: { input_tokens, output_tokens, cached_input_tokens }
- * - reasoning_output_tokens tracked separately from output_tokens
- * - Tool calls have item.type: "tool_call" with tool name and args
- * - Tool results have item.type: "tool_result" with output
+ * OLD format (item-envelope, Codex CLI ≤ v0.x legacy):
+ *   { type: 'thread.started', thread_id: '...' }
+ *   { type: 'turn.started' }
+ *   { type: 'item.completed', item: { type: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result', ... } }
+ *   { type: 'turn.completed', usage: { input_tokens, output_tokens, ... } }
  *
- * Verified against Codex CLI v0.73.0+ output schema
+ * NEW format (msg-envelope, Codex CLI v0.41.0+):
+ *   { id: '0', msg: { type: 'task_started', model_context_window: N } }
+ *   { id: '0', msg: { type: 'agent_reasoning', text: '...' } }
+ *   { id: '0', msg: { type: 'agent_message', message: '...' } }
+ *   { id: '0', msg: { type: 'exec_command_begin', call_id, command, cwd } }
+ *   { id: '0', msg: { type: 'exec_command_end', call_id, stdout, exit_code } }
+ *   { id: '0', msg: { type: 'token_count', info: { total_token_usage, model_context_window } } }
+ *   Plus non-envelope lines: { model: '...', sandbox: '...' } and { prompt: '...' }
+ *
  * @see https://github.com/openai/codex
  */
 
@@ -116,21 +118,19 @@ function readCodexConfig(): { model?: string; contextWindow?: number } {
 	}
 }
 
+// ─── OLD FORMAT INTERFACES ──────────────────────────────────────────
+
 /**
- * Raw message structure from Codex JSON output
- * Based on verified Codex CLI v0.73.0+ output
+ * Raw message structure from old Codex JSON output (item-envelope format)
  */
-interface CodexRawMessage {
+interface CodexOldMessage {
 	type?: 'thread.started' | 'turn.started' | 'item.completed' | 'turn.completed' | 'error';
 	thread_id?: string;
 	item?: CodexItem;
-	usage?: CodexUsage;
+	usage?: CodexOldUsage;
 	error?: string;
 }
 
-/**
- * Item structure for item.completed events
- */
 interface CodexItem {
 	id?: string;
 	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result';
@@ -140,21 +140,122 @@ interface CodexItem {
 	output?: string | number[];
 }
 
-/**
- * Usage statistics from turn.completed events
- */
-interface CodexUsage {
+interface CodexOldUsage {
 	input_tokens?: number;
 	output_tokens?: number;
 	cached_input_tokens?: number;
 	reasoning_output_tokens?: number;
 }
 
+// ─── NEW FORMAT INTERFACES ──────────────────────────────────────────
+
+/**
+ * New format envelope: { id: string, msg: { type: string, ... } }
+ */
+interface CodexNewEnvelope {
+	id: string;
+	msg: CodexNewMsg;
+}
+
+type CodexNewMsg =
+	| CodexNewTaskStarted
+	| CodexNewAgentReasoning
+	| CodexNewReasoningSectionBreak
+	| CodexNewAgentMessage
+	| CodexNewExecCommandBegin
+	| CodexNewExecCommandOutputDelta
+	| CodexNewExecCommandEnd
+	| CodexNewTokenCount
+	| CodexNewGenericMsg;
+
+interface CodexNewTaskStarted {
+	type: 'task_started';
+	model_context_window?: number;
+}
+
+interface CodexNewAgentReasoning {
+	type: 'agent_reasoning';
+	text?: string;
+}
+
+interface CodexNewReasoningSectionBreak {
+	type: 'agent_reasoning_section_break';
+}
+
+interface CodexNewAgentMessage {
+	type: 'agent_message';
+	message?: string;
+}
+
+interface CodexNewExecCommandBegin {
+	type: 'exec_command_begin';
+	call_id?: string;
+	command?: string[];
+	parsed_cmd?: Array<{ cmd?: string; args?: string[] }>;
+	cwd?: string;
+}
+
+interface CodexNewExecCommandOutputDelta {
+	type: 'exec_command_output_delta';
+	call_id?: string;
+	stream?: string; // 'stdout' | 'stderr'
+	chunk?: string; // base64-encoded
+}
+
+interface CodexNewExecCommandEnd {
+	type: 'exec_command_end';
+	call_id?: string;
+	stdout?: string;
+	stderr?: string;
+	aggregated_output?: string;
+	exit_code?: number;
+	duration?: number;
+	formatted_output?: string;
+}
+
+interface CodexNewTokenCount {
+	type: 'token_count';
+	info?: {
+		total_token_usage?: {
+			input_tokens?: number;
+			cached_input_tokens?: number;
+			output_tokens?: number;
+			reasoning_output_tokens?: number;
+			total_tokens?: number;
+		};
+		last_token_usage?: {
+			input_tokens?: number;
+			cached_input_tokens?: number;
+			output_tokens?: number;
+			reasoning_output_tokens?: number;
+			total_tokens?: number;
+		};
+		model_context_window?: number;
+	};
+	rate_limits?: unknown;
+}
+
+interface CodexNewGenericMsg {
+	type: string;
+	[key: string]: unknown;
+}
+
+/**
+ * Non-envelope config line: { model: '...', sandbox: '...' }
+ */
+interface CodexConfigLine {
+	model?: string;
+	sandbox?: string;
+	[key: string]: unknown;
+}
+
+// ─── PARSER IMPLEMENTATION ──────────────────────────────────────────
+
 /**
  * Codex CLI Output Parser Implementation
  *
  * Transforms Codex's JSON format into normalized ParsedEvents.
- * Verified against Codex CLI v0.73.0+ output schema.
+ * Supports both old (item-envelope) and new (msg-envelope) formats.
  */
 export class CodexOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'codex';
@@ -163,10 +264,13 @@ export class CodexOutputParser implements AgentOutputParser {
 	private contextWindow: number;
 	private model: string;
 
-	// Track tool name from tool_call to carry over to tool_result
-	// (Codex emits tool_call and tool_result as separate item.completed events,
+	// OLD FORMAT: Track tool name from tool_call to carry over to tool_result
+	// (Codex old format emits tool_call and tool_result as separate item.completed events,
 	// but tool_result doesn't include the tool name)
 	private lastToolName: string | null = null;
+
+	// NEW FORMAT: Track tool names by call_id for exec_command_begin → exec_command_end carryover
+	private toolNamesByCallId: Map<string, string> = new Map();
 
 	constructor() {
 		// Read config at initialization.
@@ -189,16 +293,16 @@ export class CodexOutputParser implements AgentOutputParser {
 		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
 		// Reset stateful fields so they don't leak across sessions (parser is a singleton)
 		this.lastToolName = null;
+		this.toolNamesByCallId.clear();
 	}
 
 	/**
-	 * Parse a single JSON line from Codex output
+	 * Parse a single JSON line from Codex output.
 	 *
-	 * Codex message types (verified v0.73.0+):
-	 * - { type: 'thread.started', thread_id: 'uuid' }
-	 * - { type: 'turn.started' }
-	 * - { type: 'item.completed', item: { id, type, text|tool|args|output } }
-	 * - { type: 'turn.completed', usage: { input_tokens, output_tokens, cached_input_tokens } }
+	 * Detects the format automatically:
+	 * - If parsed object has `msg` field → new format (msg-envelope)
+	 * - If parsed object has `type` field → old format (item-envelope)
+	 * - If parsed object has `model` or `prompt` → config/prompt echo line (new format only)
 	 */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
@@ -206,8 +310,8 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			const msg: CodexRawMessage = JSON.parse(line);
-			return this.transformMessage(msg);
+			const parsed = JSON.parse(line);
+			return this.routeMessage(parsed);
 		} catch {
 			// Not valid JSON - return as raw text event
 			return {
@@ -219,9 +323,219 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Transform a parsed Codex message into a normalized ParsedEvent
+	 * Route a parsed JSON object to the appropriate format handler
 	 */
-	private transformMessage(msg: CodexRawMessage): ParsedEvent {
+	private routeMessage(parsed: Record<string, unknown>): ParsedEvent {
+		// New format detection: presence of `msg` field with `type` inside
+		if (parsed.msg && typeof parsed.msg === 'object' && (parsed.msg as Record<string, unknown>).type) {
+			return this.transformNewFormat(parsed as unknown as CodexNewEnvelope);
+		}
+
+		// Old format detection: top-level `type` field or standalone `error` field
+		if (typeof parsed.type === 'string' || typeof parsed.error === 'string') {
+			return this.transformOldFormat(parsed as unknown as CodexOldMessage);
+		}
+
+		// Non-envelope lines (new format only): config echo or prompt echo
+		if (parsed.model || parsed.prompt !== undefined) {
+			return this.transformConfigLine(parsed as CodexConfigLine);
+		}
+
+		// Unknown structure - preserve as system event
+		return {
+			type: 'system',
+			raw: parsed,
+		};
+	}
+
+	// ─── NEW FORMAT HANDLERS ──────────────────────────────────────
+
+	/**
+	 * Transform a new-format msg-envelope event into a normalized ParsedEvent
+	 */
+	private transformNewFormat(envelope: CodexNewEnvelope): ParsedEvent {
+		const msg = envelope.msg;
+
+		switch (msg.type) {
+			case 'task_started':
+				// Update context window if provided by the agent
+				if ((msg as CodexNewTaskStarted).model_context_window) {
+					this.contextWindow = (msg as CodexNewTaskStarted).model_context_window!;
+				}
+				// Emit as system event with raw.type = 'turn.started' so StdoutHandler's
+				// reset check at line 319 recognizes it as a turn boundary
+				return {
+					type: 'system',
+					raw: { type: 'turn.started', _originalType: 'task_started' },
+				};
+
+			case 'agent_reasoning':
+				return {
+					type: 'text',
+					text: this.formatReasoningText((msg as CodexNewAgentReasoning).text || ''),
+					isPartial: true,
+					raw: envelope,
+				};
+
+			case 'agent_reasoning_section_break':
+				// Section break between reasoning blocks — emit as a newline in reasoning
+				return {
+					type: 'text',
+					text: '\n\n',
+					isPartial: true,
+					raw: envelope,
+				};
+
+			case 'agent_message':
+				// Final text response — note: new format uses `message` not `text`
+				return {
+					type: 'result',
+					text: (msg as CodexNewAgentMessage).message || '',
+					isPartial: false,
+					raw: envelope,
+				};
+
+			case 'exec_command_begin':
+				return this.transformExecCommandBegin(msg as CodexNewExecCommandBegin, envelope);
+
+			case 'exec_command_end':
+				return this.transformExecCommandEnd(msg as CodexNewExecCommandEnd, envelope);
+
+			case 'exec_command_output_delta':
+				// Streaming output chunk — ignore, final output comes in exec_command_end
+				return {
+					type: 'system',
+					raw: envelope,
+				};
+
+			case 'token_count':
+				return this.transformTokenCount(msg as CodexNewTokenCount, envelope);
+
+			default:
+				return {
+					type: 'system',
+					raw: envelope,
+				};
+		}
+	}
+
+	/**
+	 * Transform exec_command_begin → tool_use (running)
+	 */
+	private transformExecCommandBegin(msg: CodexNewExecCommandBegin, envelope: CodexNewEnvelope): ParsedEvent {
+		// Extract tool name from command array or parsed_cmd
+		let toolName: string | undefined;
+		if (msg.command && msg.command.length > 0) {
+			toolName = msg.command[0];
+		} else if (msg.parsed_cmd && msg.parsed_cmd.length > 0 && msg.parsed_cmd[0].cmd) {
+			toolName = msg.parsed_cmd[0].cmd;
+		}
+
+		// Store tool name by call_id for carryover to exec_command_end
+		if (msg.call_id && toolName) {
+			this.toolNamesByCallId.set(msg.call_id, toolName);
+		}
+
+		return {
+			type: 'tool_use',
+			toolName,
+			toolState: {
+				status: 'running',
+				input: {
+					command: msg.command,
+					cwd: msg.cwd,
+				},
+			},
+			raw: envelope,
+		};
+	}
+
+	/**
+	 * Transform exec_command_end → tool_use (completed)
+	 */
+	private transformExecCommandEnd(msg: CodexNewExecCommandEnd, envelope: CodexNewEnvelope): ParsedEvent {
+		// Retrieve and clean up tool name by call_id
+		let toolName: string | undefined;
+		if (msg.call_id) {
+			toolName = this.toolNamesByCallId.get(msg.call_id);
+			this.toolNamesByCallId.delete(msg.call_id);
+		}
+
+		// Use aggregated_output or stdout, with truncation
+		const rawOutput = msg.aggregated_output || msg.stdout || msg.formatted_output || '';
+		const output = this.truncateToolOutput(rawOutput);
+
+		return {
+			type: 'tool_use',
+			toolName,
+			toolState: {
+				status: 'completed',
+				output,
+				exitCode: msg.exit_code,
+			},
+			raw: envelope,
+		};
+	}
+
+	/**
+	 * Transform token_count → usage event
+	 */
+	private transformTokenCount(msg: CodexNewTokenCount, envelope: CodexNewEnvelope): ParsedEvent {
+		// token_count events without info are rate-limit-only — skip usage extraction
+		if (!msg.info?.total_token_usage) {
+			return {
+				type: 'usage',
+				raw: envelope,
+			};
+		}
+
+		const total = msg.info.total_token_usage;
+		const inputTokens = total.input_tokens || 0;
+		const outputTokens = total.output_tokens || 0;
+		const cachedInputTokens = total.cached_input_tokens || 0;
+		const reasoningOutputTokens = total.reasoning_output_tokens || 0;
+		const totalOutputTokens = outputTokens + reasoningOutputTokens;
+
+		// Update context window if provided
+		if (msg.info.model_context_window) {
+			this.contextWindow = msg.info.model_context_window;
+		}
+
+		return {
+			type: 'usage',
+			usage: {
+				inputTokens,
+				outputTokens: totalOutputTokens,
+				cacheReadTokens: cachedInputTokens,
+				cacheCreationTokens: 0,
+				contextWindow: this.contextWindow,
+				reasoningTokens: reasoningOutputTokens,
+			},
+			raw: envelope,
+		};
+	}
+
+	/**
+	 * Transform a non-envelope config/prompt echo line
+	 */
+	private transformConfigLine(parsed: CodexConfigLine): ParsedEvent {
+		// If the config line tells us the model, update our context window
+		if (parsed.model && typeof parsed.model === 'string') {
+			this.model = parsed.model;
+			this.contextWindow = getModelContextWindow(this.model);
+		}
+		return {
+			type: 'system',
+			raw: parsed,
+		};
+	}
+
+	// ─── OLD FORMAT HANDLERS ──────────────────────────────────────
+
+	/**
+	 * Transform an old-format (item-envelope) message into a normalized ParsedEvent
+	 */
+	private transformOldFormat(msg: CodexOldMessage): ParsedEvent {
 		// Handle thread.started (session initialization with thread_id)
 		if (msg.type === 'thread.started') {
 			return {
@@ -245,16 +559,13 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		// Handle turn.completed (end of turn with usage stats)
-		// Note: This is NOT the result message - actual text comes from agent_message items
-		// This event only contains usage statistics
 		if (msg.type === 'turn.completed') {
 			const event: ParsedEvent = {
-				type: 'usage', // Mark as 'usage' type, not 'result'
+				type: 'usage',
 				raw: msg,
 			};
 
-			// Extract usage stats if present
-			const usage = this.extractUsageFromRaw(msg);
+			const usage = this.extractOldFormatUsage(msg);
 			if (usage) {
 				event.usage = usage;
 			}
@@ -279,15 +590,11 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
-	 * Transform an item.completed event based on item type
+	 * Transform an old-format item.completed event based on item type
 	 */
-	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
+	private transformItemCompleted(item: CodexItem, msg: CodexOldMessage): ParsedEvent {
 		switch (item.type) {
 			case 'reasoning':
-				// Reasoning shows model's thinking process
-				// Emit as text but mark it as partial/streaming
-				// Format reasoning text: add line breaks before ** SECTION ** markers
-				// Codex uses this pattern to separate thinking stages
 				return {
 					type: 'text',
 					text: this.formatReasoningText(item.text || ''),
@@ -296,8 +603,6 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'agent_message':
-				// Final text response from agent - mark as 'result' so it gets emitted
-				// This is the actual response text (not reasoning or tool output)
 				return {
 					type: 'result',
 					text: item.text || '',
@@ -306,7 +611,6 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_call':
-				// Agent is using a tool — store tool name for the subsequent tool_result
 				this.lastToolName = item.tool || null;
 				return {
 					type: 'tool_use',
@@ -319,7 +623,6 @@ export class CodexOutputParser implements AgentOutputParser {
 				};
 
 			case 'tool_result': {
-				// Tool execution completed — carry over tool name from preceding tool_call
 				const toolName = this.lastToolName || undefined;
 				this.lastToolName = null;
 				return {
@@ -334,7 +637,6 @@ export class CodexOutputParser implements AgentOutputParser {
 			}
 
 			default:
-				// Unknown item type - preserve as system event
 				return {
 					type: 'system',
 					raw: msg,
@@ -342,17 +644,15 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 	}
 
+	// ─── SHARED UTILITIES ───────────────────────────────────────────
+
 	/**
 	 * Format reasoning text by adding line breaks before **section** markers
-	 * Codex uses patterns like **Thinking**, **Planning**, **Executing** etc.
-	 * to separate different stages of its thinking process
 	 */
 	private formatReasoningText(text: string): string {
 		if (!text) {
 			return text;
 		}
-		// Match patterns like **some description** (bold markdown sections)
-		// Add a blank line before each section marker for better readability
 		return text.replace(/(\*\*[^*]+\*\*)/g, '\n\n$1');
 	}
 
@@ -360,9 +660,19 @@ export class CodexOutputParser implements AgentOutputParser {
 	private static readonly MAX_TOOL_OUTPUT_LENGTH = 10000;
 
 	/**
-	 * Decode tool output which may be a string or byte array
-	 * Codex sometimes returns command output as byte arrays.
-	 * Large outputs are truncated to prevent oversized log entries from degrading UI performance.
+	 * Truncate tool output if it exceeds the limit
+	 */
+	private truncateToolOutput(output: string): string {
+		if (output.length > CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) {
+			const originalLength = output.length;
+			return output.substring(0, CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) +
+				`\n... [output truncated, ${originalLength} chars total]`;
+		}
+		return output;
+	}
+
+	/**
+	 * Decode tool output which may be a string or byte array (old format only)
 	 */
 	private decodeToolOutput(output: string | number[] | undefined): string {
 		if (output === undefined) {
@@ -374,9 +684,6 @@ export class CodexOutputParser implements AgentOutputParser {
 		if (typeof output === 'string') {
 			decoded = output;
 		} else if (Array.isArray(output)) {
-			// Byte array - decode to string
-			// Note: Using Buffer.from instead of String.fromCharCode(...output) to avoid
-			// stack overflow on large arrays (spread operator has argument limit ~10K)
 			try {
 				decoded = Buffer.from(output).toString('utf-8');
 			} catch {
@@ -386,66 +693,45 @@ export class CodexOutputParser implements AgentOutputParser {
 			decoded = String(output);
 		}
 
-		// Truncate oversized output to prevent UI performance degradation
-		if (decoded.length > CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) {
-			const originalLength = decoded.length;
-			decoded = decoded.substring(0, CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) +
-				`\n... [output truncated, ${originalLength} chars total]`;
-		}
-
-		return decoded;
+		return this.truncateToolOutput(decoded);
 	}
 
 	/**
-	 * Extract usage statistics from raw Codex message
-	 * Codex usage structure: { input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens }
-	 * Note: Cost tracking is not supported - Codex doesn't provide cost and pricing varies by model
+	 * Extract usage statistics from old-format turn.completed message
 	 */
-	private extractUsageFromRaw(msg: CodexRawMessage): ParsedEvent['usage'] | null {
+	private extractOldFormatUsage(msg: CodexOldMessage): ParsedEvent['usage'] | null {
 		if (!msg.usage) {
 			return null;
 		}
 
 		const usage = msg.usage;
-
 		const inputTokens = usage.input_tokens || 0;
 		const outputTokens = usage.output_tokens || 0;
 		const cachedInputTokens = usage.cached_input_tokens || 0;
 		const reasoningOutputTokens = usage.reasoning_output_tokens || 0;
-
-		// Total output tokens = output_tokens + reasoning_output_tokens
 		const totalOutputTokens = outputTokens + reasoningOutputTokens;
 
 		return {
 			inputTokens,
 			outputTokens: totalOutputTokens,
-			// Note: For OpenAI/Codex, cached_input_tokens is a SUBSET of input_tokens (already included)
-			// Unlike Claude where cache tokens are separate and need to be added to get total context.
-			// We still report cacheReadTokens for display purposes (shows cache efficiency).
-			// Context calculations should use inputTokens + outputTokens, not add cache tokens again.
 			cacheReadTokens: cachedInputTokens,
-			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
-			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
-			// Context window from Codex config (~/.codex/config.toml) or model lookup table
 			contextWindow: this.contextWindow,
-			// Store reasoning tokens separately for UI display
 			reasoningTokens: reasoningOutputTokens,
 		};
 	}
 
 	/**
-	 * Check if an event is a final result message
-	 * For Codex, agent_message items contain the actual response text
-	 * We check for 'result' type which agent_message events are now marked as
+	 * Check if an event is a final result message.
+	 * For both formats, agent_message items produce type: 'result' with text.
 	 */
 	isResultMessage(event: ParsedEvent): boolean {
 		return event.type === 'result' && !!event.text;
 	}
 
 	/**
-	 * Extract session ID from an event
-	 * Codex uses thread_id for session continuity
+	 * Extract session ID from an event.
+	 * Old format uses thread_id; new format doesn't provide a session ID.
 	 */
 	extractSessionId(event: ParsedEvent): string | null {
 		return event.sessionId || null;
@@ -463,52 +749,44 @@ export class CodexOutputParser implements AgentOutputParser {
 	 * NOTE: Codex does not support slash commands
 	 */
 	extractSlashCommands(_event: ParsedEvent): string[] | null {
-		// Codex doesn't have discoverable slash commands
 		return null;
 	}
 
 	/**
-	 * Detect an error from a line of agent output
+	 * Detect an error from a line of agent output.
 	 *
-	 * IMPORTANT: Only detect errors from structured JSON error events, not from
-	 * arbitrary text content. Pattern matching on conversational text leads to
-	 * false positives (e.g., AI discussing "timeout" triggers timeout error).
-	 *
-	 * Error detection sources (in order of reliability):
-	 * 1. Structured JSON: { type: "error", error: "..." } or { error: "..." }
-	 * 2. stderr output (handled separately by process-manager)
-	 * 3. Non-zero exit code (handled by detectErrorFromExit)
+	 * Only detect errors from structured JSON error events, not from
+	 * arbitrary text content.
 	 */
 	detectErrorFromLine(line: string): AgentError | null {
-		// Skip empty lines
 		if (!line.trim()) {
 			return null;
 		}
 
-		// Only detect errors from structured JSON error events
-		// Do NOT pattern match on arbitrary text - it causes false positives
 		let errorText: string | null = null;
 		try {
 			const parsed = JSON.parse(line);
-			// Check for error type messages
+			// Old format: { type: 'error', error: '...' }
 			if (parsed.type === 'error' && parsed.error) {
 				errorText = parsed.error;
 			} else if (parsed.error) {
 				errorText = typeof parsed.error === 'string' ? parsed.error : JSON.stringify(parsed.error);
 			}
-			// If no error field in JSON, this is normal output - don't check it
+			// New format: check inside msg envelope
+			if (!errorText && parsed.msg && typeof parsed.msg === 'object') {
+				const msg = parsed.msg as Record<string, unknown>;
+				if (msg.type === 'error' && msg.error) {
+					errorText = typeof msg.error === 'string' ? msg.error : JSON.stringify(msg.error);
+				}
+			}
 		} catch {
 			// Not JSON - skip pattern matching entirely
-			// Errors should come through structured JSON, stderr, or exit codes
-			// Pattern matching on arbitrary text causes false positives
 		}
 
-		// If no error text was extracted, no error to detect
 		if (!errorText) {
 			return null;
 		}
 
-		// Match against error patterns
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, errorText);
 
@@ -532,12 +810,10 @@ export class CodexOutputParser implements AgentOutputParser {
 	 * Detect an error from process exit information
 	 */
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null {
-		// Exit code 0 is success
 		if (exitCode === 0) {
 			return null;
 		}
 
-		// Check stderr and stdout for error patterns
 		const combined = `${stderr}\n${stdout}`;
 		const patterns = getErrorPatterns(this.agentId);
 		const match = matchErrorPattern(patterns, combined);
@@ -557,7 +833,6 @@ export class CodexOutputParser implements AgentOutputParser {
 			};
 		}
 
-		// Non-zero exit with no recognized pattern - treat as crash
 		return {
 			type: 'agent_crashed',
 			message: `Agent exited with code ${exitCode}`,
