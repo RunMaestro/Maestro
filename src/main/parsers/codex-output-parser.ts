@@ -191,11 +191,23 @@ export class CodexOutputParser implements AgentOutputParser {
 	private lastToolName: string | null = null;
 
 	constructor() {
-		// Read config once at initialization
+		// Read config at initialization.
+		// NOTE: This parser is a SINGLETON (registered once via initializeOutputParsers).
+		// Call refreshConfig() before each spawn to pick up config changes.
 		const config = readCodexConfig();
 		this.model = config.model || 'gpt-5.2-codex-max';
 
 		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
+		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+	}
+
+	/**
+	 * Re-read ~/.codex/config.toml to pick up model/context window changes.
+	 * Must be called before each process spawn since this parser is a singleton.
+	 */
+	refreshConfig(): void {
+		const config = readCodexConfig();
+		this.model = config.model || 'gpt-5.2-codex-max';
 		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
 	}
 
