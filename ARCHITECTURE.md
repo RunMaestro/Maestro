@@ -1045,8 +1045,16 @@ type UnifiedTab =
 filePreviewTabs: FilePreviewTab[];   // Array of file preview tabs
 activeFileTabId: string | null;      // Active file tab (null if AI tab active)
 unifiedTabOrder: UnifiedTabRef[];    // Visual order of all tabs
-closedUnifiedTabHistory: ClosedUnifiedTab[]; // Undo stack for Cmd+Shift+T
+unifiedClosedTabHistory: ClosedTabEntry[]; // Undo stack for Cmd+Shift+T
 ```
+
+### Critical Invariant
+
+**`unifiedTabOrder` is the source of truth for the TabBar.** Every tab in `aiTabs` or `filePreviewTabs` must have a corresponding `UnifiedTabRef` in `unifiedTabOrder`. Tabs missing from this array will have content that renders (via `activeTabId`/`activeFileTabId` lookups) but will be invisible in the TabBar.
+
+When adding or activating tabs, always update `unifiedTabOrder`. Use `ensureInUnifiedTabOrder()` from `tabHelpers.ts` when activating existing tabs defensively. See [[CLAUDE-PATTERNS.md]] section 6 for code examples.
+
+The shared `buildUnifiedTabs(session)` function in `tabHelpers.ts` is the canonical way to compute the tab list for rendering. It follows `unifiedTabOrder` and appends any orphaned tabs as a safety net.
 
 ### Behavior
 
@@ -1079,7 +1087,9 @@ File tabs display a colored badge based on file extension. Colors are theme-awar
 | `TabBar.tsx` | Unified tab rendering with AI and file tabs |
 | `FilePreview.tsx` | File content viewer with edit mode |
 | `MainPanel.tsx` | Coordinates tab display and file loading |
-| `App.tsx` | File tab creation (`handleOpenFileTab`) |
+| `tabHelpers.ts` | Shared tab utilities (`buildUnifiedTabs`, `ensureInUnifiedTabOrder`, `createTab`, `closeTab`, etc.) |
+| `useTabHandlers.ts` | Tab operation hooks including `handleOpenFileTab` |
+| `tabStore.ts` | Zustand selectors for tab state (`selectUnifiedTabs`, `selectActiveTab`) |
 | `useDebouncedPersistence.ts` | Persists file tabs across sessions |
 
 ---

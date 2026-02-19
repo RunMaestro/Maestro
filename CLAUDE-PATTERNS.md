@@ -79,25 +79,62 @@ style={{ color: theme.colors.textMain }}  // Correct
 className="text-gray-500"                  // Wrong for themed text
 ```
 
-## 6. Multi-Tab Agents
+## 6. Multi-Tab Agents & Unified Tab System
 
-Agents support multiple AI conversation tabs:
+Agents support multiple AI conversation tabs and file preview tabs in a unified tab bar.
+
+### Critical Invariant: `unifiedTabOrder` Must Stay in Sync
+
+**Every tab in `aiTabs` or `filePreviewTabs` MUST have a corresponding entry in `unifiedTabOrder`.** The TabBar renders from `unifiedTabOrder` — tabs missing from this array are invisible even if their content renders.
+
 ```typescript
-// Each session has an array of tabs
-session.aiTabs: AITab[]
-session.activeTabId: string
+// Session tab state (three arrays that MUST stay in sync)
+session.aiTabs: AITab[]                    // AI conversation tab data
+session.filePreviewTabs: FilePreviewTab[]  // File preview tab data
+session.unifiedTabOrder: UnifiedTabRef[]   // Visual order — TabBar source of truth
 
-// Each tab maintains its own conversation
-interface AITab {
-  id: string;
-  name: string;
-  logs: LogEntry[];           // Tab-specific history
-  agentSessionId?: string;    // Provider session continuity
-}
-
-// Tab operations
-const activeTab = session.aiTabs.find(t => t.id === session.activeTabId);
+session.activeTabId: string                // Active AI tab
+session.activeFileTabId: string | null     // Active file tab (null if AI tab active)
 ```
+
+### When Adding Tabs
+
+Always update both the tab array AND `unifiedTabOrder`:
+```typescript
+// CORRECT — tab appears in TabBar
+return {
+  ...s,
+  aiTabs: [...s.aiTabs, newTab],
+  activeTabId: newTabId,
+  unifiedTabOrder: [...s.unifiedTabOrder, { type: 'ai', id: newTabId }],
+};
+
+// WRONG — tab content renders but no tab visible
+return {
+  ...s,
+  aiTabs: [...s.aiTabs, newTab],
+  activeTabId: newTabId,
+  // unifiedTabOrder not updated — ghost tab!
+};
+```
+
+### When Activating Existing Tabs
+
+Use `ensureInUnifiedTabOrder()` to repair orphaned tabs defensively:
+```typescript
+import { ensureInUnifiedTabOrder } from '../utils/tabHelpers';
+
+return {
+  ...s,
+  activeFileTabId: existingTab.id,
+  unifiedTabOrder: ensureInUnifiedTabOrder(s.unifiedTabOrder, 'file', existingTab.id),
+};
+```
+
+### Shared Utilities (`tabHelpers.ts`)
+
+- **`buildUnifiedTabs(session)`** — Builds the unified tab list from session data. Follows `unifiedTabOrder` then appends orphaned tabs as a safety net. Single source of truth used by both `useTabHandlers.ts` and `tabStore.ts`.
+- **`ensureInUnifiedTabOrder(order, type, id)`** — Returns order unchanged if tab is present, appends it otherwise. Zero-cost no-op when no repair needed (returns same reference).
 
 ## 7. Execution Queue
 
