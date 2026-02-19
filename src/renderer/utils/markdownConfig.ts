@@ -125,7 +125,7 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${compactSpacing ? `${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }` : ''}
     ${s} li { margin: ${compactSpacing ? '0' : '0.25em 0'} !important; ${compactSpacing ? 'padding: 0;' : ''} line-height: 1.4; display: list-item; }
     ${s} ol li { padding-left: 0.15em; }
-    ${s} li > p { margin: 0 !important; display: block; line-height: inherit; }
+    ${s} li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
     ${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }
     ${s} li > p > strong:first-child, ${s} li > p > b:first-child, ${s} li > p > em:first-child, ${s} li > p > code:first-child, ${s} li > p > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { color: ${colors.textMain}; }

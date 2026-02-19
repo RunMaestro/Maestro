@@ -387,6 +387,18 @@ section {
 	margin-top: 0 !important;
 }
 
+.prose li > p {
+  display: inline !important;
+  margin: 0 !important;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.prose li > p + ul,
+.prose li > p + ol {
+  margin-top: 0 !important;
+}
+
 /* Fix bullet alignment when first element is bold/styled */
 .prose li > strong:first-child,
 .prose li > b:first-child,
