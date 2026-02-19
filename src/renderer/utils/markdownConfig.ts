@@ -124,8 +124,9 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} ol { list-style-type: decimal; }
     ${compactSpacing ? `${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }` : ''}
     ${s} li { margin: ${compactSpacing ? '0' : '0.25em 0'} !important; ${compactSpacing ? 'padding: 0;' : ''} line-height: 1.4; display: list-item; }
-    ${compactSpacing ? `${s} li > p { margin: 0 !important; display: inline; }` : ''}
-    ${compactSpacing ? `${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }` : ''}
+    ${s} li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }
+    ${s} li > p > strong:first-child, ${s} li > p > b:first-child, ${s} li > p > em:first-child, ${s} li > p > code:first-child, ${s} li > p > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { color: ${colors.textMain}; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
     ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
@@ -501,7 +502,7 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} > ul, ${s} > ol { color: ${c.textMain}; margin: 0.25em 0 !important; padding-left: 2em; list-style-position: outside; }
     ${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }
     ${s} li { margin: 0 !important; padding: 0; line-height: 1.4; display: list-item; }
-    ${s} li > p { margin: 0 !important; display: inline; }
+    ${s} li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
     ${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
     ${s} code { background-color: ${c.bgSidebar}; color: ${c.textMain}; padding: 0.15em 0.3em; border-radius: 3px; font-size: 0.9em; }
@@ -515,7 +516,8 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} th { background-color: ${c.bgSidebar}; font-weight: bold; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
-    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child { vertical-align: baseline; line-height: inherit; }
+    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child,
+    ${s} li > p > strong:first-child, ${s} li > p > b:first-child, ${s} li > p > em:first-child, ${s} li > p > code:first-child, ${s} li > p > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { font-weight: normal; }
   `;
 }

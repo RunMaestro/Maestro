@@ -213,6 +213,20 @@ describe('generateProseStyles', () => {
 			expect(css).toContain('.prose li ul, .prose li ol { margin: 0 !important');
 		});
 
+		it('should include baseline alignment selectors for styled first-child content inside list-item paragraphs', () => {
+			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
+			expect(css).toContain(
+				'.prose li > p > strong:first-child, .prose li > p > b:first-child, .prose li > p > em:first-child, .prose li > p > code:first-child, .prose li > p > a:first-child { vertical-align: baseline; line-height: inherit; }'
+			);
+		});
+
+		it('should normalize list-item paragraphs even when compactSpacing is false', () => {
+			const css = generateProseStyles({ theme: mockTheme, compactSpacing: false });
+			expect(css).toContain(
+				'.prose li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+			);
+		});
+
 		it('should use 3px border-left on blockquote when compact', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
 			expect(css).toContain(`border-left: 3px solid ${mockTheme.colors.border}`);
@@ -512,7 +526,9 @@ describe('generateTerminalProseStyles', () => {
 
 	it('should include li inline styling rules', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
-		expect(css).toContain(`${scopeSelector} .prose li > p { margin: 0 !important; display: inline; }`);
+		expect(css).toContain(
+			`${scopeSelector} .prose li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }`
+		);
 	});
 
 	it('should include marker styling for list items', () => {
@@ -520,9 +536,10 @@ describe('generateTerminalProseStyles', () => {
 		expect(css).toContain(`${scopeSelector} .prose li::marker { font-weight: normal; }`);
 	});
 
-	it('should include extra vertical-align rule for first-child strong/b/em/code/a in li', () => {
+	it('should include extra vertical-align rule for styled first-child content in list items', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
 		expect(css).toContain(`${scopeSelector} .prose li > strong:first-child`);
+		expect(css).toContain(`${scopeSelector} .prose li > p > strong:first-child`);
 		expect(css).toContain('vertical-align: baseline');
 	});
 

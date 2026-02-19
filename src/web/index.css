@@ -367,12 +367,29 @@ p, span, div, article, section {
   display: list-item !important;
 }
 
+.prose li > p {
+  display: inline !important;
+  margin: 0 !important;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.prose li > p + ul,
+.prose li > p + ol {
+  margin-top: 0 !important;
+}
+
 /* Fix bullet alignment when first element is bold/styled */
 .prose li > strong:first-child,
 .prose li > b:first-child,
 .prose li > em:first-child,
 .prose li > code:first-child,
-.prose li > a:first-child {
+.prose li > a:first-child,
+.prose li > p > strong:first-child,
+.prose li > p > b:first-child,
+.prose li > p > em:first-child,
+.prose li > p > code:first-child,
+.prose li > p > a:first-child {
   vertical-align: baseline;
   line-height: inherit;
 }
