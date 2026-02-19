@@ -4,7 +4,7 @@
  * Displays:
  * - Provider icon and name
  * - Health status badge (Healthy/Degraded/Failing/Not Installed/Idle)
- * - Stats grid: sessions, errors, error rate, last error
+ * - Stats grid: sessions, queries, tokens, cost, errors, last error
  * - Health bar at bottom (green/yellow/red gradient)
  */
 
@@ -12,8 +12,10 @@ import React from 'react';
 import type { Theme } from '../types';
 import type { ToolType } from '../../shared/types';
 import type { ProviderErrorStats } from '../../shared/account-types';
+import type { ProviderUsageStats } from '../hooks/useProviderHealth';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../services/contextGroomer';
+import { formatTokenCount } from '../hooks/useAccountUsage';
 
 // ============================================================================
 // Types
@@ -27,6 +29,7 @@ export interface ProviderHealthCardProps {
 	available: boolean;
 	activeSessionCount: number;
 	errorStats: ProviderErrorStats | null;
+	usageStats: ProviderUsageStats;
 	failoverThreshold: number;
 	healthPercent: number;
 	status: HealthStatus;
@@ -112,6 +115,7 @@ export function ProviderHealthCard({
 	available,
 	activeSessionCount,
 	errorStats,
+	usageStats,
 	failoverThreshold,
 	healthPercent,
 	status,
@@ -124,13 +128,8 @@ export function ProviderHealthCard({
 		? theme.colors.textDim + '30'
 		: getHealthBarColor(healthPercent, theme);
 
-	// Approximate error rate: errors / (errors + some baseline)
-	// Since we don't have total responses, show raw error count and threshold fraction
-	const errorRateDisplay = status === 'not_installed' || status === 'idle'
-		? '\u2014'
-		: errorCount === 0
-			? '0%'
-			: `${Math.min(100, Math.round((errorCount / failoverThreshold) * 100))}%`;
+	const isUnavailable = status === 'not_installed';
+	const dash = '\u2014';
 
 	return (
 		<div
@@ -201,32 +200,42 @@ export function ProviderHealthCard({
 				<StatRow
 					theme={theme}
 					label="Sessions"
+					value={isUnavailable ? dash : `${activeSessionCount} active`}
+				/>
+				<StatRow
+					theme={theme}
+					label="Queries"
+					value={isUnavailable ? dash : usageStats.queryCount.toLocaleString()}
+				/>
+				<StatRow
+					theme={theme}
+					label="Tokens"
 					value={
-						status === 'not_installed'
-							? '\u2014'
-							: `${activeSessionCount} active`
+						isUnavailable
+							? dash
+							: `${formatTokenCount(usageStats.totalInputTokens)} in / ${formatTokenCount(usageStats.totalOutputTokens)} out`
 					}
+				/>
+				<StatRow
+					theme={theme}
+					label="Cost"
+					value={isUnavailable ? dash : `$${usageStats.totalCostUsd.toFixed(2)}`}
 				/>
 				<StatRow
 					theme={theme}
 					label="Errors"
 					value={
-						status === 'not_installed'
-							? '\u2014'
-							: `${errorCount} (${formatWindowDuration(errorStats ? windowMs : windowMs)})`
+						isUnavailable
+							? dash
+							: `${errorCount} (${formatWindowDuration(windowMs)})`
 					}
-				/>
-				<StatRow
-					theme={theme}
-					label="Error rate"
-					value={errorRateDisplay}
 				/>
 				<StatRow
 					theme={theme}
 					label="Last error"
 					value={
-						status === 'not_installed'
-							? '\u2014'
+						isUnavailable
+							? dash
 							: formatRelativeTime(errorStats?.lastErrorAt ?? null)
 					}
 				/>
