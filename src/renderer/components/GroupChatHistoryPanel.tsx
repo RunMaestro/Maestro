@@ -9,7 +9,10 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Check, Send, MessageSquare, Layers, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
-import type { GroupChatHistoryEntry, GroupChatHistoryEntryType } from '../../shared/group-chat-types';
+import type {
+	GroupChatHistoryEntry,
+	GroupChatHistoryEntryType,
+} from '../../shared/group-chat-types';
 import { stripMarkdown } from '../utils/textProcessing';
 import { useUIStore } from '../stores/uiStore';
 
@@ -574,7 +577,11 @@ export function GroupChatHistoryPanel({
 	};
 
 	return (
-		<div className="flex-1 flex flex-col overflow-hidden p-3" tabIndex={0} onKeyDown={handleKeyDown}>
+		<div
+			className="flex-1 flex flex-col overflow-hidden p-3"
+			tabIndex={0}
+			onKeyDown={handleKeyDown}
+		>
 			{/* Type Filter Pills */}
 			<div className="flex gap-1.5 flex-wrap mb-2 justify-center">
 				{TYPE_FILTER_CONFIG.map(({ type, label, icon: Icon }) => {

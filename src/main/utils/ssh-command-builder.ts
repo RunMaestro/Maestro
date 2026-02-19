@@ -12,7 +12,7 @@ import { shellEscape, buildShellCommand } from './shell-escape';
 import { expandTilde } from '../../shared/pathUtils';
 import { logger } from './logger';
 import { resolveSshPath } from './cliDetection';
-import { parseDataUrl } from '../process-manager/utils/imageUtils';
+import { parseDataUrl, buildImagePromptPrefix } from '../process-manager/utils/imageUtils';
 
 /**
  * Result of building an SSH command.
@@ -25,6 +25,8 @@ export interface SshCommandResult {
 	args: string[];
 	/** Script to send via stdin (for stdin-based execution) */
 	stdinScript?: string;
+	/** Remote temp file paths created during image decoding (for informational/logging purposes) */
+	remoteTempImagePaths?: string[];
 }
 
 /**
@@ -181,6 +183,9 @@ export async function buildSshCommandWithStdin(
 		images?: string[];
 		/** Function to build CLI args for each image path (e.g., (path) => ['-i', path]) */
 		imageArgs?: (imagePath: string) => string[];
+		/** When set to 'prompt-embed', embed image paths in the prompt/stdinInput instead of adding -i CLI args.
+		 * Used for resumed Codex sessions where the resume command doesn't support -i flag. */
+		imageResumeMode?: 'prompt-embed';
 	}
 ): Promise<SshCommandResult> {
 	const args: string[] = [];
@@ -244,9 +249,13 @@ export async function buildSshCommandWithStdin(
 	}
 
 	// Decode images into remote temp files for file-based agents (Codex, OpenCode)
-	// This creates temp files on the remote host from base64 data, then adds
-	// the appropriate CLI args (e.g., -i /tmp/image.png for Codex)
+	// This creates temp files on the remote host from base64 data, then either:
+	// - Adds CLI args (e.g., -i /tmp/image.png) for initial spawns
+	// - Embeds paths in the prompt/stdinInput for resumed sessions (imageResumeMode === 'prompt-embed')
 	const imageArgParts: string[] = [];
+	const remoteImagePaths: string[] = [];
+	/** All remote temp file paths created during image decoding (for cleanup) */
+	const allRemoteTempPaths: string[] = [];
 	if (remoteOptions.images && remoteOptions.images.length > 0 && remoteOptions.imageArgs) {
 		const timestamp = Date.now();
 		for (let i = 0; i < remoteOptions.images.length; i++) {
@@ -254,18 +263,41 @@ export async function buildSshCommandWithStdin(
 			if (!parsed) continue;
 			const ext = parsed.mediaType.split('/')[1] || 'png';
 			const remoteTempPath = `/tmp/maestro-image-${timestamp}-${i}.${ext}`;
+			allRemoteTempPaths.push(remoteTempPath);
 			// Use heredoc + base64 decode to create the file on the remote host
 			// Heredoc avoids shell argument length limits for large images
 			// Base64 alphabet (A-Za-z0-9+/=) is safe in heredocs
 			scriptLines.push(`base64 -d > ${shellEscape(remoteTempPath)} <<'MAESTRO_IMG_${i}_EOF'`);
 			scriptLines.push(parsed.base64);
 			scriptLines.push(`MAESTRO_IMG_${i}_EOF`);
-			imageArgParts.push(...remoteOptions.imageArgs(remoteTempPath).map((arg) => shellEscape(arg)));
+			if (remoteOptions.imageResumeMode === 'prompt-embed') {
+				// Resume mode: collect paths for prompt embedding instead of CLI args
+				remoteImagePaths.push(remoteTempPath);
+			} else {
+				// Normal mode: add -i (or equivalent) CLI args
+				imageArgParts.push(
+					...remoteOptions.imageArgs(remoteTempPath).map((arg) => shellEscape(arg))
+				);
+			}
 		}
 		logger.info('SSH: embedded remote image decode commands', '[ssh-command-builder]', {
 			imageCount: remoteOptions.images.length,
-			decodedCount: imageArgParts.length / 2,
+			decodedCount:
+				remoteOptions.imageResumeMode === 'prompt-embed'
+					? remoteImagePaths.length
+					: imageArgParts.length / 2,
+			imageResumeMode: remoteOptions.imageResumeMode || 'default',
 		});
+	}
+
+	// For prompt-embed mode (resumed sessions), prepend image paths to stdinInput/prompt
+	if (remoteImagePaths.length > 0) {
+		const imagePrefix = buildImagePromptPrefix(remoteImagePaths);
+		if (remoteOptions.stdinInput !== undefined) {
+			remoteOptions.stdinInput = imagePrefix + remoteOptions.stdinInput;
+		} else if (remoteOptions.prompt) {
+			remoteOptions.prompt = imagePrefix + remoteOptions.prompt;
+		}
 	}
 
 	// Build the command line
@@ -283,10 +315,16 @@ export async function buildSshCommandWithStdin(
 		cmdParts.push(shellEscape(remoteOptions.prompt));
 	}
 
-	// Use exec to replace the shell with the command (cleaner process tree)
-	// When stdinInput is provided, the prompt will be appended after the script
-	// and passed through to the exec'd command via stdin inheritance
-	scriptLines.push(`exec ${cmdParts.join(' ')}`);
+	// When remote temp files exist, don't use exec (which replaces the shell) so that
+	// cleanup commands can run after the agent exits. When no temp files, use exec for
+	// a cleaner process tree. When stdinInput is provided, the prompt will be appended
+	// after the script and passed through to the command via stdin inheritance.
+	if (allRemoteTempPaths.length > 0) {
+		const rmPaths = allRemoteTempPaths.map((p) => shellEscape(p)).join(' ');
+		scriptLines.push(`${cmdParts.join(' ')}; rm -f ${rmPaths}`);
+	} else {
+		scriptLines.push(`exec ${cmdParts.join(' ')}`);
+	}
 
 	// Build the final stdin content: script + optional prompt passthrough
 	// The script ends with exec, which replaces bash with the target command
@@ -317,6 +355,7 @@ export async function buildSshCommandWithStdin(
 		command: sshPath,
 		args,
 		stdinScript,
+		remoteTempImagePaths: allRemoteTempPaths.length > 0 ? allRemoteTempPaths : undefined,
 	};
 }
 

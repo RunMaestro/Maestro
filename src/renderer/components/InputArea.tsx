@@ -18,7 +18,11 @@ import {
 	Pin,
 } from 'lucide-react';
 import type { Session, Theme, BatchRunState, Shortcut, ThinkingMode } from '../types';
-import { formatShortcutKeys, formatEnterToSend, formatEnterToSendTooltip } from '../utils/shortcutFormatter';
+import {
+	formatShortcutKeys,
+	formatEnterToSend,
+	formatEnterToSendTooltip,
+} from '../utils/shortcutFormatter';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks';
 import type {
 	SummarizeProgress,
@@ -1115,9 +1119,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								<button
 									onClick={() => setEnterToSend(!enterToSend)}
 									className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
-									title={
-										formatEnterToSendTooltip(enterToSend)
-									}
+									title={formatEnterToSendTooltip(enterToSend)}
 								>
 									<Keyboard className="w-3 h-3" />
 									{formatEnterToSend(enterToSend)}

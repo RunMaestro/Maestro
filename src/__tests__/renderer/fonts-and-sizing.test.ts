@@ -18,6 +18,18 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { render, screen } from '@testing-library/react';
 import { useSettings } from '../../renderer/hooks';
 import React from 'react';
+import {
+	useSettingsStore,
+	DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+	DEFAULT_GLOBAL_STATS,
+	DEFAULT_AUTO_RUN_STATS,
+	DEFAULT_USAGE_STATS,
+	DEFAULT_KEYBOARD_MASTERY_STATS,
+	DEFAULT_ONBOARDING_STATS,
+	DEFAULT_AI_COMMANDS,
+} from '../../renderer/stores/settingsStore';
+import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS } from '../../renderer/constants/shortcuts';
+import { DEFAULT_CUSTOM_THEME_COLORS } from '../../renderer/constants/themes';
 
 // Mock the FontConfigurationPanel's common monospace fonts list
 const COMMON_MONOSPACE_FONTS = [
@@ -52,6 +64,75 @@ describe('Cross-platform Fonts and Sizing', () => {
 	let originalProcessPlatform: PropertyDescriptor | undefined;
 
 	beforeEach(() => {
+		// Reset Zustand store to defaults (singleton persists across tests)
+		useSettingsStore.setState({
+			settingsLoaded: false,
+			conductorProfile: '',
+			llmProvider: 'openrouter',
+			modelSlug: 'anthropic/claude-3.5-sonnet',
+			apiKey: '',
+			defaultShell: 'zsh',
+			customShellPath: '',
+			shellArgs: '',
+			shellEnvVars: {},
+			ghPath: '',
+			fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+			fontSize: 14,
+			activeThemeId: 'dracula',
+			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
+			customThemeBaseId: 'dracula',
+			enterToSendAI: false,
+			enterToSendTerminal: true,
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+			leftSidebarWidth: 256,
+			rightPanelWidth: 384,
+			markdownEditMode: false,
+			chatRawTextMode: false,
+			showHiddenFiles: true,
+			terminalWidth: 100,
+			logLevel: 'info',
+			maxLogBuffer: 5000,
+			maxOutputLines: 25,
+			osNotificationsEnabled: true,
+			audioFeedbackEnabled: false,
+			audioFeedbackCommand: 'say',
+			toastDuration: 20,
+			checkForUpdatesOnStartup: true,
+			enableBetaUpdates: false,
+			crashReportingEnabled: true,
+			logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			customAICommands: DEFAULT_AI_COMMANDS,
+			globalStats: DEFAULT_GLOBAL_STATS,
+			autoRunStats: DEFAULT_AUTO_RUN_STATS,
+			usageStats: DEFAULT_USAGE_STATS,
+			ungroupedCollapsed: false,
+			tourCompleted: false,
+			firstAutoRunCompleted: false,
+			onboardingStats: DEFAULT_ONBOARDING_STATS,
+			leaderboardRegistration: null,
+			webInterfaceUseCustomPort: false,
+			webInterfaceCustomPort: 8080,
+			contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+			keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
+			colorBlindMode: false,
+			documentGraphShowExternalLinks: false,
+			documentGraphMaxNodes: 50,
+			documentGraphPreviewCharLimit: 100,
+			statsCollectionEnabled: true,
+			defaultStatsTimeRange: 'week',
+			preventSleepEnabled: false,
+			disableGpuAcceleration: false,
+			disableConfetti: false,
+			sshRemoteIgnorePatterns: ['.git', '*cache*'],
+			sshRemoteHonorGitignore: true,
+			automaticTabNamingEnabled: true,
+			fileTabAutoRefreshEnabled: false,
+			suppressWindowsWarning: false,
+		});
+
 		vi.clearAllMocks();
 		originalFontSize = document.documentElement.style.fontSize;
 		originalProcessPlatform = Object.getOwnPropertyDescriptor(process, 'platform');

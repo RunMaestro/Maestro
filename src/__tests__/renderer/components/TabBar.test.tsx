@@ -210,7 +210,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(`New tab (${formatShortcutKeys(['Meta', 't'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`New tab (${formatShortcutKeys(['Meta', 't'])})`)
+			).toBeInTheDocument();
 		});
 
 		it('renders unread filter button', () => {
@@ -241,7 +243,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+			).toBeInTheDocument();
 		});
 
 		it('does not render tab search button when onOpenTabSearch not provided', () => {
@@ -256,7 +260,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.queryByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+			).not.toBeInTheDocument();
 		});
 	});
 
@@ -729,7 +735,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(`Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`)
+			).toBeInTheDocument();
 
 			rerender(
 				<TabBar
@@ -743,7 +751,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(`Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`)
+			).toBeInTheDocument();
 		});
 	});
 
@@ -761,7 +771,9 @@ describe('TabBar', () => {
 				/>
 			);
 
-			fireEvent.click(screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`));
+			fireEvent.click(
+				screen.getByTitle(`Search tabs (${formatShortcutKeys(['Meta', 'Shift', 'o'])})`)
+			);
 			expect(mockOnOpenTabSearch).toHaveBeenCalled();
 		});
 	});
@@ -1734,7 +1746,9 @@ describe('TabBar', () => {
 			);
 
 			// Should still render the new tab button
-			expect(screen.getByTitle(`New tab (${formatShortcutKeys(['Meta', 't'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`New tab (${formatShortcutKeys(['Meta', 't'])})`)
+			).toBeInTheDocument();
 		});
 
 		it('handles special characters in tab names', () => {

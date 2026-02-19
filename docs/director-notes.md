@@ -6,6 +6,12 @@ icon: clapperboard
 
 Director's Notes is your bird's-eye view of everything happening across all your AI agents. Instead of switching between tabs to check what each agent has been doing, Director's Notes aggregates all history entries into a single, searchable, filterable timeline — and can generate an AI-powered synopsis of recent activity.
 
+<Note>
+Director's Notes is an **Encore Feature** — it's disabled by default. Enable it in **Settings > Encore Features** to access the shortcut, menu entry, and command palette action.
+</Note>
+
+![Encore Features settings panel](./screenshots/encore-features.png)
+
 ## Opening Director's Notes
 
 **Keyboard shortcut:**
@@ -78,7 +84,7 @@ The AI produces a structured report organized by agent/project with sections for
 The synopsis is rendered as rich markdown with full formatting support.
 
 **Provider Configuration:**
-Configure which AI provider generates the synopsis in **Settings > Director's Notes**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
+Configure which AI provider generates the synopsis in **Settings > Encore Features**. Any installed agent (Claude Code, Codex, OpenCode) can be used. The default lookback window is also configurable there.
 
 <Note>
 The AI Overview tab becomes available once the synopsis has finished generating. A spinning indicator on the tab shows generation is in progress. Results are cached for the session — switching tabs won't trigger a regeneration.
@@ -117,7 +123,7 @@ A built-in reference guide explaining all Director's Notes features, entry types
 
 ## Settings
 
-Access Director's Notes settings via **Settings > Director's Notes**:
+Access Director's Notes settings via **Settings > Encore Features** (enable Director's Notes first):
 
 | Setting | Description |
 |---------|-------------|

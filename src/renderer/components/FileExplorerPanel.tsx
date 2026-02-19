@@ -406,6 +406,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const isOverOverlayRef = useRef(false);
 	const autoRefreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const autoRefreshSpinTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const autoRefreshInFlightRef = useRef(false);
 
 	// Context menu state for file tree items
 	const [contextMenu, setContextMenu] = useState<{
@@ -456,8 +458,8 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		sessionIdRef.current = session.id;
 	}, [session.id]);
 
-	// Get current auto-refresh interval from session
-	const autoRefreshInterval = session.fileTreeAutoRefreshInterval || 0;
+	// Get current auto-refresh interval from session (180s default as defense-in-depth for unmigrated sessions)
+	const autoRefreshInterval = session.fileTreeAutoRefreshInterval ?? 180;
 
 	// Handle refresh with animation and flash notification
 	const handleRefresh = useCallback(async () => {
@@ -490,9 +492,23 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 
 		// Start new timer if interval is set
 		if (autoRefreshInterval > 0) {
-			autoRefreshTimerRef.current = setInterval(() => {
-				// Use refs to get latest values without causing effect re-runs
-				refreshFileTreeRef.current(sessionIdRef.current);
+			autoRefreshTimerRef.current = setInterval(async () => {
+				// Skip if a previous auto-refresh is still in flight
+				if (autoRefreshInFlightRef.current) return;
+				autoRefreshInFlightRef.current = true;
+
+				// Brief spin animation so user can see auto-refresh is active
+				setIsRefreshing(true);
+				try {
+					await refreshFileTreeRef.current(sessionIdRef.current);
+				} catch (error) {
+					console.error('[FileExplorer] Auto-refresh failed:', error);
+				} finally {
+					autoRefreshSpinTimeoutRef.current = setTimeout(() => {
+						setIsRefreshing(false);
+						autoRefreshInFlightRef.current = false;
+					}, 500);
+				}
 			}, autoRefreshInterval * 1000);
 		}
 
@@ -502,6 +518,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 				clearInterval(autoRefreshTimerRef.current);
 				autoRefreshTimerRef.current = null;
 			}
+			if (autoRefreshSpinTimeoutRef.current) {
+				clearTimeout(autoRefreshSpinTimeoutRef.current);
+				autoRefreshSpinTimeoutRef.current = null;
+			}
+			autoRefreshInFlightRef.current = false;
 		};
 	}, [autoRefreshInterval]); // Only depends on the interval now
 
@@ -935,7 +956,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							? theme.colors.bgActivity
 							: isSelected
 								? 'rgba(255,255,255,0.1)'
-								: 'transparent',
+								: undefined,
 					}}
 					onMouseDown={(e) => {
 						// Prevent focus from leaving the filter input when filtering

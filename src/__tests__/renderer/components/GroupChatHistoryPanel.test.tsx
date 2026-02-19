@@ -19,7 +19,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { GroupChatHistoryPanel } from '../../../renderer/components/GroupChatHistoryPanel';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import type { Theme } from '../../../renderer/types';
-import type { GroupChatHistoryEntry, GroupChatHistoryEntryType } from '../../../shared/group-chat-types';
+import type {
+	GroupChatHistoryEntry,
+	GroupChatHistoryEntryType,
+} from '../../../shared/group-chat-types';
 
 // ============================================================================
 // TEST HELPERS
@@ -45,7 +48,9 @@ const mockTheme: Theme = {
 	},
 };
 
-const createMockEntry = (overrides: Partial<GroupChatHistoryEntry> = {}): GroupChatHistoryEntry => ({
+const createMockEntry = (
+	overrides: Partial<GroupChatHistoryEntry> = {}
+): GroupChatHistoryEntry => ({
 	id: `entry-${Math.random().toString(36).substring(7)}`,
 	timestamp: Date.now(),
 	summary: 'Test summary',
@@ -58,7 +63,7 @@ const createMockEntry = (overrides: Partial<GroupChatHistoryEntry> = {}): GroupC
 const mockParticipantColors: Record<string, string> = {
 	'Agent A': '#ff0000',
 	'Agent B': '#00ff00',
-	'Moderator': '#0000ff',
+	Moderator: '#0000ff',
 };
 
 const defaultProps = {
@@ -109,9 +114,7 @@ describe('GroupChatHistoryPanel', () => {
 
 		it('should show search empty state when search has no matches', () => {
 			const entries = [createMockEntry({ summary: 'Alpha task' })];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Open search
 			const panel = container.querySelector('[tabIndex="0"]');
@@ -221,9 +224,7 @@ describe('GroupChatHistoryPanel', () => {
 
 		it('should close search with Escape and clear filter', () => {
 			const entries = [createMockEntry({ summary: 'Visible entry' })];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Open search
 			const panel = container.querySelector('[tabIndex="0"]');
@@ -248,9 +249,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e1', summary: 'Alpha task completed' }),
 				createMockEntry({ id: 'e2', summary: 'Beta implementation done' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Open search
 			const panel = container.querySelector('[tabIndex="0"]');
@@ -272,9 +271,7 @@ describe('GroupChatHistoryPanel', () => {
 				}),
 				createMockEntry({ id: 'e2', summary: 'Other entry' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			const panel = container.querySelector('[tabIndex="0"]');
 			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
@@ -291,9 +288,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e1', summary: 'Task by A', participantName: 'Agent A' }),
 				createMockEntry({ id: 'e2', summary: 'Task by B', participantName: 'Agent B' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			const panel = container.querySelector('[tabIndex="0"]');
 			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
@@ -306,12 +301,8 @@ describe('GroupChatHistoryPanel', () => {
 		});
 
 		it('should be case-insensitive', () => {
-			const entries = [
-				createMockEntry({ id: 'e1', summary: 'UPPERCASE Task' }),
-			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const entries = [createMockEntry({ id: 'e1', summary: 'UPPERCASE Task' })];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			const panel = container.querySelector('[tabIndex="0"]');
 			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
@@ -328,9 +319,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e2', summary: 'Alpha two' }),
 				createMockEntry({ id: 'e3', summary: 'Beta xyz' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			const panel = container.querySelector('[tabIndex="0"]');
 			fireEvent.keyDown(panel!, { key: 'f', metaKey: true });
@@ -348,9 +337,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e2', type: 'response', summary: 'Alpha response' }),
 				createMockEntry({ id: 'e3', type: 'delegation', summary: 'Beta delegation' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Toggle off delegation
 			fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
@@ -372,9 +359,7 @@ describe('GroupChatHistoryPanel', () => {
 	// ===== ENTRY RENDERING =====
 	describe('entry rendering', () => {
 		it('should render participant name pill with correct color', () => {
-			const entries = [
-				createMockEntry({ participantName: 'Agent A' }),
-			];
+			const entries = [createMockEntry({ participantName: 'Agent A' })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			const pill = screen.getByText('Agent A');
@@ -383,36 +368,28 @@ describe('GroupChatHistoryPanel', () => {
 		});
 
 		it('should render entry summary', () => {
-			const entries = [
-				createMockEntry({ summary: 'Completed the refactoring task' }),
-			];
+			const entries = [createMockEntry({ summary: 'Completed the refactoring task' })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			expect(screen.getByText('Completed the refactoring task')).toBeInTheDocument();
 		});
 
 		it('should render cost when present', () => {
-			const entries = [
-				createMockEntry({ cost: 0.15 }),
-			];
+			const entries = [createMockEntry({ cost: 0.15 })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			expect(screen.getByText('$0.15')).toBeInTheDocument();
 		});
 
 		it('should not render cost badge for zero cost', () => {
-			const entries = [
-				createMockEntry({ cost: 0 }),
-			];
+			const entries = [createMockEntry({ cost: 0 })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			expect(screen.queryByText('$0.00')).not.toBeInTheDocument();
 		});
 
 		it('should not render cost badge when cost is undefined', () => {
-			const entries = [
-				createMockEntry({ cost: undefined }),
-			];
+			const entries = [createMockEntry({ cost: undefined })];
 			render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// No dollar sign in the output
@@ -447,9 +424,7 @@ describe('GroupChatHistoryPanel', () => {
 			const entries = [
 				createMockEntry({ id: 'recent', timestamp: now - 1000, summary: 'Recent entry' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Find clickable bars (those with cursor: pointer)
 			const bars = container.querySelectorAll('[style*="cursor: pointer"]');
@@ -505,9 +480,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e3', type: 'delegation', summary: 'Beta task' }),
 				createMockEntry({ id: 'e4', type: 'response', summary: 'Beta response' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Toggle off delegation type
 			fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
@@ -531,9 +504,7 @@ describe('GroupChatHistoryPanel', () => {
 				createMockEntry({ id: 'e2', type: 'response', summary: 'Shared keyword' }),
 				createMockEntry({ id: 'e3', type: 'response', summary: 'Other text' }),
 			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Toggle off delegation
 			fireEvent.click(screen.getByRole('button', { name: /Delegation/i }));
@@ -580,12 +551,8 @@ describe('GroupChatHistoryPanel', () => {
 		});
 
 		it('should render entries with data-entry-id attribute', () => {
-			const entries = [
-				createMockEntry({ id: 'entry-abc' }),
-			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const entries = [createMockEntry({ id: 'entry-abc' })];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			expect(container.querySelector('[data-entry-id="entry-abc"]')).toBeInTheDocument();
 		});
@@ -609,12 +576,8 @@ describe('GroupChatHistoryPanel', () => {
 	// ===== LAYOUT =====
 	describe('layout', () => {
 		it('should render filter pills, activity graph area, and entry list vertically', () => {
-			const entries = [
-				createMockEntry({ id: 'e1', summary: 'Test entry' }),
-			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const entries = [createMockEntry({ id: 'e1', summary: 'Test entry' })];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Main container should be flex-col (vertical stacking)
 			const mainPanel = container.querySelector('.flex-col.overflow-hidden');
@@ -628,12 +591,8 @@ describe('GroupChatHistoryPanel', () => {
 		});
 
 		it('should have activity graph with w-full class for full width', () => {
-			const entries = [
-				createMockEntry({ timestamp: Date.now() - 1000, summary: 'Recent' }),
-			];
-			const { container } = render(
-				<GroupChatHistoryPanel {...defaultProps} entries={entries} />
-			);
+			const entries = [createMockEntry({ timestamp: Date.now() - 1000, summary: 'Recent' })];
+			const { container } = render(<GroupChatHistoryPanel {...defaultProps} entries={entries} />);
 
 			// Activity graph should use w-full for full width
 			const graphContainer = container.querySelector('.w-full.flex.flex-col.relative');

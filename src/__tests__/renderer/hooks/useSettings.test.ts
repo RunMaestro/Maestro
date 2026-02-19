@@ -8,6 +8,18 @@ import type {
 	CustomAICommand,
 } from '../../../renderer/types';
 import { DEFAULT_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import {
+	useSettingsStore,
+	DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+	DEFAULT_GLOBAL_STATS,
+	DEFAULT_AUTO_RUN_STATS,
+	DEFAULT_USAGE_STATS,
+	DEFAULT_KEYBOARD_MASTERY_STATS,
+	DEFAULT_ONBOARDING_STATS,
+	DEFAULT_AI_COMMANDS,
+} from '../../../renderer/stores/settingsStore';
+import { TAB_SHORTCUTS } from '../../../renderer/constants/shortcuts';
+import { DEFAULT_CUSTOM_THEME_COLORS } from '../../../renderer/constants/themes';
 
 // Helper to wait for settings to load
 const waitForSettingsLoaded = async (result: { current: ReturnType<typeof useSettings> }) => {
@@ -21,6 +33,75 @@ describe('useSettings', () => {
 	let originalFontSize: string;
 
 	beforeEach(() => {
+		// Reset Zustand store to defaults (singleton persists across tests)
+		useSettingsStore.setState({
+			settingsLoaded: false,
+			conductorProfile: '',
+			llmProvider: 'openrouter',
+			modelSlug: 'anthropic/claude-3.5-sonnet',
+			apiKey: '',
+			defaultShell: 'zsh',
+			customShellPath: '',
+			shellArgs: '',
+			shellEnvVars: {},
+			ghPath: '',
+			fontFamily: 'Roboto Mono, Menlo, "Courier New", monospace',
+			fontSize: 14,
+			activeThemeId: 'dracula',
+			customThemeColors: DEFAULT_CUSTOM_THEME_COLORS,
+			customThemeBaseId: 'dracula',
+			enterToSendAI: false,
+			enterToSendTerminal: true,
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+			leftSidebarWidth: 256,
+			rightPanelWidth: 384,
+			markdownEditMode: false,
+			chatRawTextMode: false,
+			showHiddenFiles: true,
+			terminalWidth: 100,
+			logLevel: 'info',
+			maxLogBuffer: 5000,
+			maxOutputLines: 25,
+			osNotificationsEnabled: true,
+			audioFeedbackEnabled: false,
+			audioFeedbackCommand: 'say',
+			toastDuration: 20,
+			checkForUpdatesOnStartup: true,
+			enableBetaUpdates: false,
+			crashReportingEnabled: true,
+			logViewerSelectedLevels: ['debug', 'info', 'warn', 'error', 'toast'],
+			shortcuts: DEFAULT_SHORTCUTS,
+			tabShortcuts: TAB_SHORTCUTS,
+			customAICommands: DEFAULT_AI_COMMANDS,
+			globalStats: DEFAULT_GLOBAL_STATS,
+			autoRunStats: DEFAULT_AUTO_RUN_STATS,
+			usageStats: DEFAULT_USAGE_STATS,
+			ungroupedCollapsed: false,
+			tourCompleted: false,
+			firstAutoRunCompleted: false,
+			onboardingStats: DEFAULT_ONBOARDING_STATS,
+			leaderboardRegistration: null,
+			webInterfaceUseCustomPort: false,
+			webInterfaceCustomPort: 8080,
+			contextManagementSettings: DEFAULT_CONTEXT_MANAGEMENT_SETTINGS,
+			keyboardMasteryStats: DEFAULT_KEYBOARD_MASTERY_STATS,
+			colorBlindMode: false,
+			documentGraphShowExternalLinks: false,
+			documentGraphMaxNodes: 50,
+			documentGraphPreviewCharLimit: 100,
+			statsCollectionEnabled: true,
+			defaultStatsTimeRange: 'week',
+			preventSleepEnabled: false,
+			disableGpuAcceleration: false,
+			disableConfetti: false,
+			sshRemoteIgnorePatterns: ['.git', '*cache*'],
+			sshRemoteHonorGitignore: true,
+			automaticTabNamingEnabled: true,
+			fileTabAutoRefreshEnabled: false,
+			suppressWindowsWarning: false,
+		});
+
 		vi.clearAllMocks();
 		originalFontSize = document.documentElement.style.fontSize;
 		// Reset all mocks to return empty/default (default behavior)
@@ -1815,6 +1896,69 @@ describe('useSettings', () => {
 				expect(analytics.averageConversationExchanges).toBe(12.5);
 				expect(analytics.averagePhasesPerWizard).toBe(3.2);
 			});
+		});
+	});
+
+	describe('WakaTime integration settings', () => {
+		it('should have correct default values for WakaTime settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.wakatimeApiKey).toBe('');
+			expect(result.current.wakatimeEnabled).toBe(false);
+		});
+
+		it('should update wakatimeApiKey and persist to settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeApiKey('waka_test_12345');
+			});
+
+			expect(result.current.wakatimeApiKey).toBe('waka_test_12345');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeApiKey', 'waka_test_12345');
+		});
+
+		it('should update wakatimeEnabled and persist to settings', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeEnabled(true);
+			});
+
+			expect(result.current.wakatimeEnabled).toBe(true);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeEnabled', true);
+		});
+
+		it('should load saved WakaTime settings from store', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				wakatimeApiKey: 'waka_saved_key',
+				wakatimeEnabled: true,
+			});
+
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			expect(result.current.wakatimeApiKey).toBe('waka_saved_key');
+			expect(result.current.wakatimeEnabled).toBe(true);
+		});
+
+		it('should clear wakatimeApiKey when set to empty string', async () => {
+			const { result } = renderHook(() => useSettings());
+			await waitForSettingsLoaded(result);
+
+			act(() => {
+				result.current.setWakatimeApiKey('waka_test_key');
+			});
+			expect(result.current.wakatimeApiKey).toBe('waka_test_key');
+
+			act(() => {
+				result.current.setWakatimeApiKey('');
+			});
+			expect(result.current.wakatimeApiKey).toBe('');
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('wakatimeApiKey', '');
 		});
 	});
 });

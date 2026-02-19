@@ -13,6 +13,7 @@ import {
 	parseMarkdownLinks,
 	extractDomain,
 	type ParsedMarkdownLinks,
+	type ParseMarkdownLinksOptions,
 } from '../../../renderer/utils/markdownLinkParser';
 
 // ---------------------------------------------------------------------------
@@ -78,9 +79,7 @@ describe('extractDomain', () => {
 	});
 
 	it('should handle URLs with deep paths', () => {
-		expect(extractDomain('https://github.com/org/repo/blob/main/src/file.ts')).toBe(
-			'github.com'
-		);
+		expect(extractDomain('https://github.com/org/repo/blob/main/src/file.ts')).toBe('github.com');
 	});
 
 	it('should return original for malformed URLs without match', () => {
@@ -179,8 +178,7 @@ describe('parseMarkdownLinks', () => {
 		});
 
 		it('should skip various image extensions in wiki links', () => {
-			const content =
-				'[[a.jpeg]] [[b.webp]] [[c.svg]] [[d.bmp]] [[e.ico]] [[real-doc]]';
+			const content = '[[a.jpeg]] [[b.webp]] [[c.svg]] [[d.bmp]] [[e.ico]] [[real-doc]]';
 			const result = parseMarkdownLinks(content, 'readme.md');
 
 			expect(result.internalLinks).toHaveLength(1);
@@ -691,7 +689,8 @@ Also see [another doc](./other.md) here.
 		});
 
 		it('should handle wiki links with special characters', () => {
-			const content = 'See [[link-with-\u00E9mojis-\uD83C\uDF89]] and [[\u65E5\u672C\u8A9E\u30EA\u30F3\u30AF]].';
+			const content =
+				'See [[link-with-\u00E9mojis-\uD83C\uDF89]] and [[\u65E5\u672C\u8A9E\u30EA\u30F3\u30AF]].';
 			const result = parseMarkdownLinks(content, 'doc.md');
 
 			expect(result.internalLinks).toHaveLength(2);
@@ -783,9 +782,7 @@ with newline](./file.md).`;
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
-				expect(result.externalLinks[0].url).toBe(
-					'https://example.com/wiki/Term_(disambiguation)'
-				);
+				expect(result.externalLinks[0].url).toBe('https://example.com/wiki/Term_(disambiguation)');
 			});
 
 			it('should handle multiple URLs with parentheses in same content', () => {
@@ -813,8 +810,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			});
 
 			it('should handle URLs with special characters in query parameters', () => {
-				const content =
-					'[Encode](https://example.com/api?data=%7B%22key%22%3A%22value%22%7D)';
+				const content = '[Encode](https://example.com/api?data=%7B%22key%22%3A%22value%22%7D)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
@@ -826,9 +822,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
-				expect(result.externalLinks[0].url).toBe(
-					'https://example.com/search?q=hello+world'
-				);
+				expect(result.externalLinks[0].url).toBe('https://example.com/search?q=hello+world');
 			});
 		});
 
@@ -846,9 +840,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
-				expect(result.externalLinks[0].url).toBe(
-					'https://example.com/page?id=123#heading'
-				);
+				expect(result.externalLinks[0].url).toBe('https://example.com/page?id=123#heading');
 			});
 		});
 
@@ -884,9 +876,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
-				expect(result.externalLinks[0].url).toBe(
-					'https://example.com/path%20with%20spaces'
-				);
+				expect(result.externalLinks[0].url).toBe('https://example.com/path%20with%20spaces');
 			});
 
 			it('should handle URLs with unicode path segments', () => {
@@ -916,8 +906,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 
 		describe('complex real-world URLs', () => {
 			it('should handle GitHub file URLs', () => {
-				const content =
-					'[Code](https://github.com/user/repo/blob/main/src/index.ts#L10-L20)';
+				const content = '[Code](https://github.com/user/repo/blob/main/src/index.ts#L10-L20)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
@@ -926,8 +915,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			});
 
 			it('should handle Google search URLs', () => {
-				const content =
-					'[Google](https://www.google.com/search?q=markdown+tutorial&source=hp)';
+				const content = '[Google](https://www.google.com/search?q=markdown+tutorial&source=hp)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
@@ -935,8 +923,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			});
 
 			it('should handle YouTube URLs with video IDs', () => {
-				const content =
-					'[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s)';
+				const content = '[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=30s)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
@@ -944,8 +931,7 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			});
 
 			it('should handle Amazon product URLs', () => {
-				const content =
-					'[Product](https://www.amazon.com/dp/B08N5WRWNW?ref=cm_sw_r_cp_api)';
+				const content = '[Product](https://www.amazon.com/dp/B08N5WRWNW?ref=cm_sw_r_cp_api)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
@@ -962,13 +948,111 @@ See [First](https://en.wikipedia.org/wiki/A_(letter)) and
 			});
 
 			it('should handle Twitter/X status URLs', () => {
-				const content =
-					'[Tweet](https://twitter.com/user/status/1234567890123456789)';
+				const content = '[Tweet](https://twitter.com/user/status/1234567890123456789)';
 				const result = parseMarkdownLinks(content, 'readme.md');
 
 				expect(result.externalLinks).toHaveLength(1);
 				expect(result.externalLinks[0].domain).toBe('twitter.com');
 			});
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// File-tree-aware fallback resolution (allFiles option)
+	// -----------------------------------------------------------------------
+	describe('file-tree-aware fallback resolution', () => {
+		const allFiles = [
+			'Market Research/INDEX.md',
+			'Market Research/Vendors/PlexTrac.md',
+			'Market Research/Vendors/AttackForge.md',
+			'Market Research/Competitors/Cyver-Core.md',
+			'notes/readme.md',
+			'docs/guide.md',
+			'docs/advanced/config.md',
+			'standalone.md',
+		];
+		const options: ParseMarkdownLinksOptions = { allFiles };
+
+		it('should resolve wiki links to files in different directories', () => {
+			const content = 'See [[PlexTrac]] and [[AttackForge]] for vendor details.';
+			const result = parseMarkdownLinks(content, 'Market Research/INDEX.md', options);
+
+			expect(result.internalLinks).toContain('Market Research/Vendors/PlexTrac.md');
+			expect(result.internalLinks).toContain('Market Research/Vendors/AttackForge.md');
+		});
+
+		it('should resolve wiki links with partial paths via fallback', () => {
+			const content = 'See [[Competitors/Cyver-Core]] for details.';
+			const result = parseMarkdownLinks(content, 'Market Research/INDEX.md', options);
+
+			expect(result.internalLinks).toContain('Market Research/Competitors/Cyver-Core.md');
+		});
+
+		it('should prefer relative resolution when file exists at relative path', () => {
+			// If a file exists at the relative path, use it directly (no fallback needed)
+			const content = '[[guide]]';
+			const result = parseMarkdownLinks(content, 'docs/readme.md', {
+				allFiles: ['docs/guide.md', 'other/guide.md'],
+			});
+
+			expect(result.internalLinks).toContain('docs/guide.md');
+		});
+
+		it('should fall back to filename match when relative path not in file tree', () => {
+			// File at relative path "somedir/guide.md" doesn't exist, but "docs/guide.md" does
+			const content = '[[guide]]';
+			const result = parseMarkdownLinks(content, 'somedir/index.md', {
+				allFiles: ['docs/guide.md'],
+			});
+
+			expect(result.internalLinks).toContain('docs/guide.md');
+		});
+
+		it('should resolve standard markdown links via fallback', () => {
+			const content = '[PlexTrac](PlexTrac.md)';
+			const result = parseMarkdownLinks(content, 'Market Research/INDEX.md', options);
+
+			expect(result.internalLinks).toContain('Market Research/Vendors/PlexTrac.md');
+		});
+
+		it('should pick closest match when multiple files share a filename', () => {
+			const content = '[[readme]]';
+			// From Market Research directory, "notes/readme.md" is equally far;
+			// the important thing is it resolves to something valid
+			const result = parseMarkdownLinks(content, 'docs/index.md', {
+				allFiles: ['docs/readme.md', 'notes/readme.md'],
+			});
+
+			// Should prefer docs/readme.md since it shares the docs/ prefix with the current file
+			expect(result.internalLinks).toContain('docs/readme.md');
+		});
+
+		it('should still work without allFiles (backward compatible)', () => {
+			const content = 'See [[other-doc]] for more info.';
+			const result = parseMarkdownLinks(content, 'docs/readme.md');
+
+			// Without allFiles, resolves relative to current file
+			expect(result.internalLinks).toContain('docs/other-doc.md');
+		});
+
+		it('should handle wiki link that resolves nowhere even with fallback', () => {
+			const content = '[[nonexistent-document]]';
+			const result = parseMarkdownLinks(content, 'docs/readme.md', options);
+
+			// Should still include the relative resolution (docs/nonexistent-document.md)
+			// even though it's not in allFiles - the parser doesn't filter by existence
+			expect(result.internalLinks).toHaveLength(1);
+		});
+
+		it('should deduplicate when relative and fallback resolve to same path', () => {
+			const content = '[[standalone]]';
+			const result = parseMarkdownLinks(content, 'index.md', {
+				allFiles: ['standalone.md'],
+			});
+
+			// relative resolves to standalone.md, which is in allFiles - no fallback needed
+			expect(result.internalLinks).toHaveLength(1);
+			expect(result.internalLinks).toContain('standalone.md');
 		});
 	});
 });

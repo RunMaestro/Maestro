@@ -27,7 +27,7 @@ import type {
 	UsageStats,
 	GlobalStats,
 } from '../../types';
-import type { Toast } from '../../contexts/ToastContext';
+import { notifyToast } from '../../stores/notificationStore';
 import type { HistoryEntryInput } from './useAgentSessionManagement';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
@@ -80,8 +80,6 @@ export interface UseAgentListenersDeps {
 
 	// --- Callback refs (populated after hook call, read in useEffect) ---
 
-	/** Toast notification callback */
-	addToastRef: React.RefObject<((toast: Omit<Toast, 'id' | 'timestamp'>) => void) | null>;
 	/** History entry callback (from useAgentSessionManagement) */
 	addHistoryEntryRef: React.RefObject<((entry: HistoryEntryInput) => Promise<void>) | null>;
 	/** Background synopsis spawner (from useAgentExecution) */
@@ -789,7 +787,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							(!tabIdFromSession || currentActiveSession.activeTabId === tabIdFromSession);
 
 						if (!isViewingCompletedTab) {
-							deps.addToastRef.current?.({
+							notifyToast({
 								type: 'success',
 								title: toastData!.title,
 								message: toastData!.summary,
@@ -875,7 +873,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 									})
 								);
 
-								deps.addToastRef.current?.({
+								notifyToast({
 									type: 'info',
 									title: 'Synopsis',
 									message: parsed.shortSummary,
@@ -1302,15 +1300,13 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							});
 						}
 
-						if (deps.addToastRef.current) {
-							const errorTitle = getErrorTitleForType(agentError.type);
-							deps.addToastRef.current({
-								type: 'error',
-								title: `Auto Run: ${errorTitle}`,
-								message: agentError.message,
-								sessionId: actualSessionId,
-							});
-						}
+						const errorTitle = getErrorTitleForType(agentError.type);
+						notifyToast({
+							type: 'error',
+							title: `Auto Run: ${errorTitle}`,
+							message: agentError.message,
+							sessionId: actualSessionId,
+						});
 					}
 				}
 

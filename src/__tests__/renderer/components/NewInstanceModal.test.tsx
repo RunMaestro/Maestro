@@ -630,10 +630,14 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`)).toBeInTheDocument();
+				expect(
+					screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`)
+				).toBeInTheDocument();
 			});
 
-			const folderButton = screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`);
+			const folderButton = screen.getByTitle(
+				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+			);
 			await act(async () => {
 				fireEvent.click(folderButton);
 			});
@@ -662,13 +666,17 @@ describe('NewInstanceModal', () => {
 			);
 
 			await waitFor(() => {
-				expect(screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`)).toBeInTheDocument();
+				expect(
+					screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`)
+				).toBeInTheDocument();
 			});
 
 			const dirInput = screen.getByPlaceholderText('Select directory...');
 			fireEvent.change(dirInput, { target: { value: '/existing/path' } });
 
-			const folderButton = screen.getByTitle(`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`);
+			const folderButton = screen.getByTitle(
+				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+			);
 			await act(async () => {
 				fireEvent.click(folderButton);
 			});

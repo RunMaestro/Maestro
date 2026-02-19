@@ -170,6 +170,36 @@ describe('buildAgentArgs', () => {
 		expect(result).toEqual(['--print']);
 	});
 
+	it('deduplicates Codex bypass flag when batch and yolo args both include it', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check'],
+			yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['--json'],
+			prompt: 'fix bug',
+			yoloMode: true,
+		});
+		expect(result).toEqual([
+			'--json',
+			'--dangerously-bypass-approvals-and-sandbox',
+			'--skip-git-repo-check',
+		]);
+	});
+
+	it('does not deduplicate positional args when deduplicating flags', () => {
+		const agent = makeAgent({
+			batchModeArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+			yoloModeArgs: ['--dangerously-bypass-approvals-and-sandbox'],
+		});
+		const result = buildAgentArgs(agent, {
+			baseArgs: ['input-a', 'input-a'],
+			prompt: 'fix bug',
+			yoloMode: true,
+		});
+		expect(result).toEqual(['input-a', 'input-a', '--dangerously-bypass-approvals-and-sandbox']);
+	});
+
 	// -- resumeArgs --
 	it('adds resumeArgs when agentSessionId provided', () => {
 		const agent = makeAgent({

@@ -304,7 +304,7 @@ export function AgentCreationDialog({
 							className="text-lg font-semibold"
 							style={{ color: theme.colors.textMain }}
 						>
-							Create Agent Session
+							Create Symphony Agent
 						</h2>
 					</div>
 					<button

@@ -27,7 +27,9 @@ const mockTheme = {
 describe('CsvTableRenderer', () => {
 	describe('basic rendering', () => {
 		it('renders a table with header and data rows', () => {
-			render(<CsvTableRenderer content={"Name,Age,City\nAlice,30,NYC\nBob,25,LA"} theme={mockTheme} />);
+			render(
+				<CsvTableRenderer content={'Name,Age,City\nAlice,30,NYC\nBob,25,LA'} theme={mockTheme} />
+			);
 
 			expect(screen.getByText('Name')).toBeInTheDocument();
 			expect(screen.getByText('Age')).toBeInTheDocument();
@@ -39,7 +41,7 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('shows row and column count', () => {
-			render(<CsvTableRenderer content={"A,B\n1,2\n3,4\n5,6"} theme={mockTheme} />);
+			render(<CsvTableRenderer content={'A,B\n1,2\n3,4\n5,6'} theme={mockTheme} />);
 
 			expect(screen.getByText('3 rows × 2 columns')).toBeInTheDocument();
 		});
@@ -51,7 +53,7 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('shows row numbers starting at 1', () => {
-			render(<CsvTableRenderer content={"Name\nAlice\nBob"} theme={mockTheme} />);
+			render(<CsvTableRenderer content={'Name\nAlice\nBob'} theme={mockTheme} />);
 
 			expect(screen.getByText('1')).toBeInTheDocument();
 			expect(screen.getByText('2')).toBeInTheDocument();
@@ -60,7 +62,12 @@ describe('CsvTableRenderer', () => {
 
 	describe('CSV parsing', () => {
 		it('handles quoted fields with commas', () => {
-			render(<CsvTableRenderer content={'Name,Location\n"Smith, John","New York, NY"'} theme={mockTheme} />);
+			render(
+				<CsvTableRenderer
+					content={'Name,Location\n"Smith, John","New York, NY"'}
+					theme={mockTheme}
+				/>
+			);
 
 			expect(screen.getByText('Smith, John')).toBeInTheDocument();
 			expect(screen.getByText('New York, NY')).toBeInTheDocument();
@@ -73,7 +80,9 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('handles CRLF line endings', () => {
-			const { container } = render(<CsvTableRenderer content={"A,B\r\n1,2\r\n3,4"} theme={mockTheme} />);
+			const { container } = render(
+				<CsvTableRenderer content={'A,B\r\n1,2\r\n3,4'} theme={mockTheme} />
+			);
 
 			const cells = container.querySelectorAll('tbody td');
 			const cellTexts = Array.from(cells).map((c) => c.textContent);
@@ -83,7 +92,7 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('handles rows with different column counts', () => {
-			render(<CsvTableRenderer content={"A,B,C\n1,2\n3,4,5,6"} theme={mockTheme} />);
+			render(<CsvTableRenderer content={'A,B,C\n1,2\n3,4,5,6'} theme={mockTheme} />);
 
 			// Should not crash — fills missing cells with empty, ignores extra
 			expect(screen.getByText('A')).toBeInTheDocument();
@@ -94,7 +103,7 @@ describe('CsvTableRenderer', () => {
 	describe('column sorting', () => {
 		it('sorts ascending on first click', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Name,Value\nCharlie,3\nAlice,1\nBob,2"} theme={mockTheme} />
+				<CsvTableRenderer content={'Name,Value\nCharlie,3\nAlice,1\nBob,2'} theme={mockTheme} />
 			);
 
 			// Click on the Name header
@@ -109,7 +118,7 @@ describe('CsvTableRenderer', () => {
 
 		it('sorts descending on second click', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Name,Value\nCharlie,3\nAlice,1\nBob,2"} theme={mockTheme} />
+				<CsvTableRenderer content={'Name,Value\nCharlie,3\nAlice,1\nBob,2'} theme={mockTheme} />
 			);
 
 			// Click twice for descending
@@ -124,7 +133,7 @@ describe('CsvTableRenderer', () => {
 
 		it('clears sort on third click', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Name,Value\nCharlie,3\nAlice,1\nBob,2"} theme={mockTheme} />
+				<CsvTableRenderer content={'Name,Value\nCharlie,3\nAlice,1\nBob,2'} theme={mockTheme} />
 			);
 
 			// Click three times to clear sort
@@ -141,7 +150,7 @@ describe('CsvTableRenderer', () => {
 
 		it('sorts numeric columns numerically', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Item,Price\nA,10\nB,2\nC,100"} theme={mockTheme} />
+				<CsvTableRenderer content={'Item,Price\nA,10\nB,2\nC,100'} theme={mockTheme} />
 			);
 
 			fireEvent.click(screen.getByText('Price'));
@@ -154,7 +163,7 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('shows sort indicator on sorted column', () => {
-			render(<CsvTableRenderer content={"Name,Age\nAlice,30"} theme={mockTheme} />);
+			render(<CsvTableRenderer content={'Name,Age\nAlice,30'} theme={mockTheme} />);
 
 			fireEvent.click(screen.getByText('Name'));
 
@@ -175,7 +184,7 @@ describe('CsvTableRenderer', () => {
 		});
 
 		it('does not show truncation banner for small datasets', () => {
-			render(<CsvTableRenderer content={"A,B\n1,2\n3,4"} theme={mockTheme} />);
+			render(<CsvTableRenderer content={'A,B\n1,2\n3,4'} theme={mockTheme} />);
 
 			expect(screen.queryByText(/Showing/)).not.toBeInTheDocument();
 		});
@@ -185,7 +194,7 @@ describe('CsvTableRenderer', () => {
 		it('parses tab-delimited content with delimiter prop', () => {
 			render(
 				<CsvTableRenderer
-					content={"Name\tAge\tCity\nAlice\t30\tNYC\nBob\t25\tLA"}
+					content={'Name\tAge\tCity\nAlice\t30\tNYC\nBob\t25\tLA'}
 					theme={mockTheme}
 					delimiter={'\t'}
 				/>
@@ -213,7 +222,7 @@ describe('CsvTableRenderer', () => {
 		it('sorts TSV columns correctly', () => {
 			const { container } = render(
 				<CsvTableRenderer
-					content={"Name\tValue\nCharlie\t3\nAlice\t1\nBob\t2"}
+					content={'Name\tValue\nCharlie\t3\nAlice\t1\nBob\t2'}
 					theme={mockTheme}
 					delimiter={'\t'}
 				/>
@@ -229,7 +238,7 @@ describe('CsvTableRenderer', () => {
 	describe('numeric detection', () => {
 		it('right-aligns columns with majority numeric values', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Value\n100\n200\n300"} theme={mockTheme} />
+				<CsvTableRenderer content={'Value\n100\n200\n300'} theme={mockTheme} />
 			);
 
 			// Numeric columns get right-aligned td cells
@@ -240,7 +249,7 @@ describe('CsvTableRenderer', () => {
 
 		it('does not treat trailing-dot numbers as numeric (e.g., "123.")', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Value\n123.\n456.\n789."} theme={mockTheme} />
+				<CsvTableRenderer content={'Value\n123.\n456.\n789.'} theme={mockTheme} />
 			);
 
 			// "123." is not a valid number — column should be left-aligned
@@ -250,7 +259,7 @@ describe('CsvTableRenderer', () => {
 
 		it('treats proper decimals as numeric', () => {
 			const { container } = render(
-				<CsvTableRenderer content={"Value\n1.50\n2.75\n3.00"} theme={mockTheme} />
+				<CsvTableRenderer content={'Value\n1.50\n2.75\n3.00'} theme={mockTheme} />
 			);
 
 			const cells = container.querySelectorAll('tbody td');
@@ -262,7 +271,7 @@ describe('CsvTableRenderer', () => {
 		it('filters rows to only those matching the search query', () => {
 			const { container } = render(
 				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC"}
+					content={'Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC'}
 					theme={mockTheme}
 					searchQuery="NYC"
 				/>
@@ -277,7 +286,7 @@ describe('CsvTableRenderer', () => {
 		it('performs case-insensitive search', () => {
 			const { container } = render(
 				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC\nBob,LA"}
+					content={'Name,City\nAlice,NYC\nBob,LA'}
 					theme={mockTheme}
 					searchQuery="nyc"
 				/>
@@ -291,7 +300,7 @@ describe('CsvTableRenderer', () => {
 		it('shows match count in footer when filtering', () => {
 			render(
 				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC"}
+					content={'Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC'}
 					theme={mockTheme}
 					searchQuery="NYC"
 				/>
@@ -303,7 +312,7 @@ describe('CsvTableRenderer', () => {
 		it('shows all rows when search query is empty', () => {
 			const { container } = render(
 				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC\nBob,LA"}
+					content={'Name,City\nAlice,NYC\nBob,LA'}
 					theme={mockTheme}
 					searchQuery=""
 				/>
@@ -317,7 +326,7 @@ describe('CsvTableRenderer', () => {
 			const onMatchCount = vi.fn();
 			render(
 				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC"}
+					content={'Name,City\nAlice,NYC\nBob,LA\nCharlie,NYC'}
 					theme={mockTheme}
 					searchQuery="NYC"
 					onMatchCount={onMatchCount}
@@ -331,7 +340,7 @@ describe('CsvTableRenderer', () => {
 			const longQuery = 'a'.repeat(300);
 			const { container } = render(
 				<CsvTableRenderer
-					content={"Name\n" + 'a'.repeat(250)}
+					content={'Name\n' + 'a'.repeat(250)}
 					theme={mockTheme}
 					searchQuery={longQuery}
 				/>
@@ -344,11 +353,7 @@ describe('CsvTableRenderer', () => {
 
 		it('highlights matching text in cells', () => {
 			const { container } = render(
-				<CsvTableRenderer
-					content={"Name,City\nAlice,NYC"}
-					theme={mockTheme}
-					searchQuery="NYC"
-				/>
+				<CsvTableRenderer content={'Name,City\nAlice,NYC'} theme={mockTheme} searchQuery="NYC" />
 			);
 
 			const marks = container.querySelectorAll('mark');

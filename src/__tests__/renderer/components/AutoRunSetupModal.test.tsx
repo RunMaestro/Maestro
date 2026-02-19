@@ -1501,7 +1501,10 @@ describe('AutoRunSetupModal', () => {
 			});
 
 			const browseButton = screen.getByTestId('folder-icon').closest('button');
-			expect(browseButton).toHaveAttribute('title', `Browse folders (${formatShortcutKeys(['Meta', 'o'])})`);
+			expect(browseButton).toHaveAttribute(
+				'title',
+				`Browse folders (${formatShortcutKeys(['Meta', 'o'])})`
+			);
 		});
 	});
 });

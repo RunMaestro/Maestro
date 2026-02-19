@@ -13,7 +13,7 @@ import { Package, Check, Loader2, FolderOpen, AlertCircle, Copy } from 'lucide-r
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal, ModalFooter } from './ui/Modal';
-import { useToast } from '../contexts/ToastContext';
+import { notifyToast } from '../stores/notificationStore';
 
 interface DebugPackageModalProps {
 	theme: Theme;
@@ -31,7 +31,6 @@ interface PreviewCategory {
 type GenerationState = 'idle' | 'generating' | 'success' | 'error';
 
 export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalProps) {
-	const { addToast } = useToast();
 	const generateButtonRef = useRef<HTMLButtonElement>(null);
 
 	// Category selection state
@@ -112,7 +111,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 			if (result.success && result.path) {
 				setGenerationState('success');
 				setResultPath(result.path);
-				addToast({
+				notifyToast({
 					type: 'success',
 					title: 'Debug Package Created',
 					message: `Package saved to ${result.path}`,
@@ -120,7 +119,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 			} else {
 				setGenerationState('error');
 				setErrorMessage(result.error || 'Unknown error occurred');
-				addToast({
+				notifyToast({
 					type: 'error',
 					title: 'Debug Package Failed',
 					message: result.error || 'Failed to create debug package',
@@ -130,13 +129,13 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 			console.error('[DebugPackageModal] Generation failed:', err);
 			setGenerationState('error');
 			setErrorMessage(err instanceof Error ? err.message : 'Unknown error');
-			addToast({
+			notifyToast({
 				type: 'error',
 				title: 'Debug Package Failed',
 				message: err instanceof Error ? err.message : 'Failed to create debug package',
 			});
 		}
-	}, [categories, addToast]);
+	}, [categories]);
 
 	// Reveal the generated file in Finder
 	const handleRevealInFinder = useCallback(() => {
@@ -159,7 +158,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 			navigator.clipboard
 				.writeText(resultPath)
 				.then(() => {
-					addToast({
+					notifyToast({
 						type: 'success',
 						title: 'Copied',
 						message: 'File path copied to clipboard',
@@ -167,7 +166,7 @@ export function DebugPackageModal({ theme, isOpen, onClose }: DebugPackageModalP
 				})
 				.catch(console.error);
 		}
-	}, [resultPath, addToast]);
+	}, [resultPath]);
 
 	if (!isOpen) return null;
 

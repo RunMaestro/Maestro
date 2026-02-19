@@ -25,7 +25,10 @@ interface OverviewTabProps {
 	shortcuts: Record<string, Shortcut>;
 }
 
-export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function OverviewTab({ theme, shortcuts }, ref) {
+export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function OverviewTab(
+	{ theme, shortcuts },
+	ref
+) {
 	const containerRef = useRef<HTMLDivElement>(null);
 
 	useImperativeHandle(ref, () => ({
@@ -50,9 +53,10 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 					</div>
 					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
 						<p>
-							Director's Notes aggregates history from <strong style={{ color: theme.colors.textMain }}>all your active agents</strong> into
-							a single timeline. Instead of switching between tabs to check what each agent has been doing,
-							you get a bird's-eye view of every completed task, decision, and interaction.
+							Director's Notes aggregates history from{' '}
+							<strong style={{ color: theme.colors.textMain }}>all your active agents</strong> into
+							a single timeline. Instead of switching between tabs to check what each agent has been
+							doing, you get a bird's-eye view of every completed task, decision, and interaction.
 						</p>
 						<p>
 							Think of it as your project logbook — a searchable, filterable record of everything
@@ -74,14 +78,20 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 									<History className="w-4 h-4" style={{ color: theme.colors.accent }} />
 									<strong style={{ color: theme.colors.textMain }}>Unified History</strong>
 								</div>
-								<p>Chronological list of all history entries across every agent, with filters and search.</p>
+								<p>
+									Chronological list of all history entries across every agent, with filters and
+									search.
+								</p>
 							</div>
 							<div className="flex items-start gap-3">
 								<div className="flex items-center gap-1.5 shrink-0 mt-0.5">
 									<Sparkles className="w-4 h-4" style={{ color: theme.colors.accent }} />
 									<strong style={{ color: theme.colors.textMain }}>AI Overview</strong>
 								</div>
-								<p>An AI-generated synopsis of recent work — auto-generated when you open Director's Notes.</p>
+								<p>
+									An AI-generated synopsis of recent work — auto-generated when you open Director's
+									Notes.
+								</p>
 							</div>
 						</div>
 					</div>
@@ -106,7 +116,17 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 								<User className="w-2.5 h-2.5" />
 								USER
 							</span>
-							<p>Interactive work sessions — created via <code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>/history</code> or <code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>/clear</code>.</p>
+							<p>
+								Interactive work sessions — created via{' '}
+								<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+									/history
+								</code>{' '}
+								or{' '}
+								<code className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+									/clear
+								</code>
+								.
+							</p>
 						</div>
 						<div className="flex items-start gap-3">
 							<span
@@ -134,8 +154,10 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
 						<p>
 							The bar graph in the Unified History header visualizes activity over time.
-							<strong style={{ color: theme.colors.textMain }}> Right-click</strong> to change the lookback period.
-							<strong style={{ color: theme.colors.textMain }}> Click a bar</strong> to jump to entries in that time range.
+							<strong style={{ color: theme.colors.textMain }}> Right-click</strong> to change the
+							lookback period.
+							<strong style={{ color: theme.colors.textMain }}> Click a bar</strong> to jump to
+							entries in that time range.
 						</p>
 					</div>
 				</section>
@@ -148,9 +170,20 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 					</div>
 					<div className={sectionContentClass} style={{ color: theme.colors.textDim }}>
 						<p>
-							Press <kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>{formatShortcutKeys(['Meta', 'f'])}</kbd> to search across all entry summaries and agent names.
-							Results filter the list in real-time. The search bar shows match count and supports
-							previous/next navigation with <kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>Enter</kbd> / <kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>Shift+Enter</kbd>.
+							Press{' '}
+							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								{formatShortcutKeys(['Meta', 'f'])}
+							</kbd>{' '}
+							to search across all entry summaries and agent names. Results filter the list in
+							real-time. The search bar shows match count and supports previous/next navigation with{' '}
+							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								Enter
+							</kbd>{' '}
+							/{' '}
+							<kbd className={codeClass} style={{ backgroundColor: theme.colors.bgActivity }}>
+								Shift+Enter
+							</kbd>
+							.
 						</p>
 					</div>
 				</section>
@@ -167,7 +200,10 @@ export const OverviewTab = forwardRef<TabFocusHandle, OverviewTabProps>(function
 							style={{ borderColor: theme.colors.border }}
 						>
 							{[
-								[shortcuts.directorNotes ? formatShortcutKeys(shortcuts.directorNotes.keys) : '', 'Open Director\'s Notes'],
+								[
+									shortcuts.directorNotes ? formatShortcutKeys(shortcuts.directorNotes.keys) : '',
+									"Open Director's Notes",
+								],
 								[`${formatShortcutKeys(['Meta', 'Shift'])} [ / ]`, 'Switch between tabs'],
 								[formatShortcutKeys(['Meta', 'f']), 'Search / filter entries'],
 								['Arrow Up/Down', 'Navigate entry list'],

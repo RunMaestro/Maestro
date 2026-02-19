@@ -29,7 +29,13 @@ vi.mock('../../../renderer/components/ConfirmModal', () => ({
 		<div data-testid="confirm-modal">
 			<span data-testid="confirm-modal-title">{title}</span>
 			<span data-testid="confirm-modal-message">{message}</span>
-			<button data-testid="confirm-modal-confirm" onClick={() => { onConfirm?.(); onClose(); }}>
+			<button
+				data-testid="confirm-modal-confirm"
+				onClick={() => {
+					onConfirm?.();
+					onClose();
+				}}
+			>
 				{confirmLabel || 'Confirm'}
 			</button>
 			<button data-testid="confirm-modal-cancel" onClick={onClose}>

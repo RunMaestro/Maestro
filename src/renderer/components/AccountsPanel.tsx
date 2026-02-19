@@ -18,7 +18,7 @@ import type { AccountProfile, AccountSwitchConfig } from '../../shared/account-t
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 import { AccountUsageHistory } from './AccountUsageHistory';
-import { useToast } from '../contexts/ToastContext';
+import { notifyToast } from '../stores/notificationStore';
 
 const PLAN_PRESETS = [
 	{ label: 'Custom', tokens: 0, cost: null },
@@ -58,7 +58,7 @@ const WINDOW_DURATION_OPTIONS = [
 ];
 
 export function AccountsPanel({ theme }: AccountsPanelProps) {
-	const { addToast } = useToast();
+	const addToast = notifyToast;
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [switchConfig, setSwitchConfig] = useState<AccountSwitchConfig>(ACCOUNT_SWITCH_DEFAULTS);
 	const [discoveredAccounts, setDiscoveredAccounts] = useState<DiscoveredAccount[] | null>(null);

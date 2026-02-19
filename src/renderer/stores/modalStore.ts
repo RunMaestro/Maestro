@@ -108,6 +108,11 @@ export interface AgentErrorModalData {
 	sessionId: string;
 }
 
+/** Delete agent modal data */
+export interface DeleteAgentModalData {
+	session: Session;
+}
+
 /** Worktree modal data (create/delete/PR) */
 export interface WorktreeModalData {
 	session: Session;
@@ -153,6 +158,7 @@ export type ModalId =
 	// Instance Management
 	| 'newInstance'
 	| 'editAgent'
+	| 'deleteAgent'
 	| 'renameInstance'
 	| 'agentError'
 	// Quick Actions
@@ -232,6 +238,7 @@ export interface ModalDataMap {
 	agentSessions: AgentSessionsModalData;
 	wizardResume: WizardResumeModalData;
 	agentError: AgentErrorModalData;
+	deleteAgent: DeleteAgentModalData;
 	createWorktree: WorktreeModalData;
 	createPR: WorktreeModalData;
 	deleteWorktree: WorktreeModalData;
@@ -459,6 +466,12 @@ export function getModalActions() {
 		setEditAgentSession: (session: Session | null) =>
 			session ? openModal('editAgent', { session }) : closeModal('editAgent'),
 
+		// Delete Agent Modal
+		setDeleteAgentModalOpen: (open: boolean) =>
+			open ? openModal('deleteAgent') : closeModal('deleteAgent'),
+		setDeleteAgentSession: (session: Session | null) =>
+			session ? openModal('deleteAgent', { session }) : closeModal('deleteAgent'),
+
 		// Shortcuts Help Modal
 		setShortcutsHelpOpen: (open: boolean) =>
 			open ? openModal('shortcutsHelp') : closeModal('shortcutsHelp'),
@@ -561,7 +574,10 @@ export function getModalActions() {
 
 		// Rename Instance Modal
 		setRenameInstanceModalOpen: (open: boolean) => {
-			if (!open) { closeModal('renameInstance'); return; }
+			if (!open) {
+				closeModal('renameInstance');
+				return;
+			}
 			const current = useModalStore.getState().getData('renameInstance');
 			openModal('renameInstance', current ?? { sessionId: '', value: '' });
 		},
@@ -581,7 +597,10 @@ export function getModalActions() {
 
 		// Rename Tab Modal
 		setRenameTabModalOpen: (open: boolean) => {
-			if (!open) { closeModal('renameTab'); return; }
+			if (!open) {
+				closeModal('renameTab');
+				return;
+			}
 			const current = useModalStore.getState().getData('renameTab');
 			openModal('renameTab', current ?? { tabId: '', initialName: '' });
 		},
@@ -601,14 +620,21 @@ export function getModalActions() {
 
 		// Rename Group Modal
 		setRenameGroupModalOpen: (open: boolean) => {
-			if (!open) { closeModal('renameGroup'); return; }
+			if (!open) {
+				closeModal('renameGroup');
+				return;
+			}
 			const current = useModalStore.getState().getData('renameGroup');
 			openModal('renameGroup', current ?? { groupId: '', value: '', emoji: '📂' });
 		},
 		setRenameGroupId: (groupId: string | null) => {
 			if (!groupId) return;
 			const current = useModalStore.getState().getData('renameGroup');
-			openModal('renameGroup', { groupId, value: current?.value ?? '', emoji: current?.emoji ?? '📂' });
+			openModal('renameGroup', {
+				groupId,
+				value: current?.value ?? '',
+				emoji: current?.emoji ?? '📂',
+			});
 		},
 		setRenameGroupValue: (value: string) => {
 			const current = useModalStore.getState().getData('renameGroup');
@@ -766,6 +792,8 @@ export function useModalActions() {
 	const newInstanceData = useModalStore(selectModalData('newInstance'));
 	const editAgentModalOpen = useModalStore(selectModalOpen('editAgent'));
 	const editAgentData = useModalStore(selectModalData('editAgent'));
+	const deleteAgentModalOpen = useModalStore(selectModalOpen('deleteAgent'));
+	const deleteAgentData = useModalStore(selectModalData('deleteAgent'));
 	const shortcutsHelpOpen = useModalStore(selectModalOpen('shortcutsHelp'));
 	const quickActionOpen = useModalStore(selectModalOpen('quickAction'));
 	const quickActionData = useModalStore(selectModalData('quickAction'));
@@ -842,6 +870,10 @@ export function useModalActions() {
 		// Edit Agent Modal
 		editAgentModalOpen,
 		editAgentSession: editAgentData?.session ?? null,
+
+		// Delete Agent Modal
+		deleteAgentModalOpen,
+		deleteAgentSession: deleteAgentData?.session ?? null,
 
 		// Shortcuts Help Modal
 		shortcutsHelpOpen,

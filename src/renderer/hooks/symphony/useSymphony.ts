@@ -65,6 +65,8 @@ export interface UseSymphonyReturn {
 		contributionId?: string;
 		branchName?: string;
 		autoRunPath?: string;
+		draftPrNumber?: number;
+		draftPrUrl?: string;
 		error?: string;
 	}>;
 	cancelContribution: (contributionId: string, cleanup?: boolean) => Promise<{ success: boolean }>;
@@ -282,6 +284,8 @@ export function useSymphony(): UseSymphonyReturn {
 			contributionId?: string;
 			branchName?: string;
 			autoRunPath?: string;
+			draftPrNumber?: number;
+			draftPrUrl?: string;
 			error?: string;
 		}> => {
 			try {
@@ -306,8 +310,7 @@ export function useSymphony(): UseSymphonyReturn {
 					};
 				}
 
-				// Step 2: Start contribution (creates branch, sets up docs, NO PR yet)
-				// Draft PR will be created on first real commit via symphony:createDraftPR
+				// Step 2: Start contribution (creates branch, sets up docs, opens draft PR to claim issue)
 				const startResult = await window.maestro.symphony.startContribution({
 					contributionId,
 					sessionId,
@@ -331,6 +334,8 @@ export function useSymphony(): UseSymphonyReturn {
 					contributionId,
 					branchName: startResult.branchName,
 					autoRunPath: startResult.autoRunPath,
+					draftPrNumber: startResult.draftPrNumber,
+					draftPrUrl: startResult.draftPrUrl,
 				};
 			} catch (err) {
 				return {

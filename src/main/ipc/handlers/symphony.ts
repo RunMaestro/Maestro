@@ -24,6 +24,7 @@ import {
 	SYMPHONY_REGISTRY_URL,
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
+	STARS_CACHE_TTL_MS,
 	SYMPHONY_STATE_PATH,
 	SYMPHONY_CACHE_PATH,
 	SYMPHONY_REPOS_DIR,
@@ -409,6 +410,39 @@ async function fetchRegistry(): Promise<SymphonyRegistry> {
 			error
 		);
 	}
+}
+
+/**
+ * Fetch GitHub star counts for multiple repositories.
+ * Uses concurrent requests with a concurrency limit to stay within rate limits.
+ */
+async function fetchStarCounts(repoSlugs: string[]): Promise<Record<string, number>> {
+	const CONCURRENCY = 5;
+	const counts: Record<string, number> = {};
+
+	for (let i = 0; i < repoSlugs.length; i += CONCURRENCY) {
+		const batch = repoSlugs.slice(i, i + CONCURRENCY);
+		const results = await Promise.allSettled(
+			batch.map(async (slug) => {
+				const response = await fetch(`${GITHUB_API_BASE}/repos/${slug}`, {
+					headers: {
+						Accept: 'application/vnd.github.v3+json',
+						'User-Agent': 'Maestro-Symphony',
+					},
+				});
+				if (!response.ok) return { slug, stars: 0 };
+				const data = (await response.json()) as { stargazers_count?: number };
+				return { slug, stars: data.stargazers_count ?? 0 };
+			})
+		);
+		for (const result of results) {
+			if (result.status === 'fulfilled') {
+				counts[result.value.slug] = result.value.stars;
+			}
+		}
+	}
+
+	return counts;
 }
 
 /**
@@ -929,6 +963,65 @@ export function registerSymphonyHandlers({
 	// ─────────────────────────────────────────────────────────────────────────
 
 	/**
+	 * Enrich registry repositories with star counts.
+	 * Uses a 24-hour cache; fetches fresh counts only when cache is expired.
+	 */
+	async function enrichWithStars(
+		registry: SymphonyRegistry,
+		cache: SymphonyCache | null,
+		forceRefresh: boolean
+	): Promise<SymphonyRegistry> {
+		const slugs = registry.repositories.filter((r) => r.isActive).map((r) => r.slug);
+		if (slugs.length === 0) return registry;
+
+		// Use cached star counts if valid
+		if (!forceRefresh && cache?.stars && isCacheValid(cache.stars.fetchedAt, STARS_CACHE_TTL_MS)) {
+			return {
+				...registry,
+				repositories: registry.repositories.map((r) => ({
+					...r,
+					stars: cache.stars!.data[r.slug],
+				})),
+			};
+		}
+
+		// Fetch fresh star counts (non-critical — fall back to stale cache or undefined)
+		try {
+			const counts = await fetchStarCounts(slugs);
+
+			// Persist to cache
+			const updatedCache: SymphonyCache = {
+				...cache,
+				issues: cache?.issues ?? {},
+				stars: { data: counts, fetchedAt: Date.now() },
+			};
+			await writeCache(app, updatedCache);
+
+			return {
+				...registry,
+				repositories: registry.repositories.map((r) => ({
+					...r,
+					stars: counts[r.slug],
+				})),
+			};
+		} catch (error) {
+			logger.warn('Failed to fetch star counts', LOG_CONTEXT, { error });
+
+			// Fall back to stale cache if available
+			if (cache?.stars) {
+				return {
+					...registry,
+					repositories: registry.repositories.map((r) => ({
+						...r,
+						stars: cache.stars!.data[r.slug],
+					})),
+				};
+			}
+			return registry;
+		}
+	}
+
+	/**
 	 * Get the symphony registry (with caching).
 	 */
 	ipcMain.handle(
@@ -944,8 +1037,9 @@ export function registerSymphonyHandlers({
 					cache?.registry &&
 					isCacheValid(cache.registry.fetchedAt, REGISTRY_CACHE_TTL_MS)
 				) {
+					const enriched = await enrichWithStars(cache.registry.data, cache, false);
 					return {
-						registry: cache.registry.data,
+						registry: enriched,
 						fromCache: true,
 						cacheAge: Date.now() - cache.registry.fetchedAt,
 					};
@@ -954,12 +1048,14 @@ export function registerSymphonyHandlers({
 				// Fetch fresh data
 				try {
 					const registry = await fetchRegistry();
+					const enriched = await enrichWithStars(registry, cache, !!forceRefresh);
 
-					// Update cache
+					// Update cache (enriched registry includes stars on repo objects,
+					// but the canonical star data lives in cache.stars)
 					const newCache: SymphonyCache = {
-						...cache,
+						...(await readCache(app)), // Re-read to get stars written by enrichWithStars
 						registry: {
-							data: registry,
+							data: registry, // Store unenriched registry (stars are in cache.stars)
 							fetchedAt: Date.now(),
 						},
 						issues: cache?.issues ?? {},
@@ -967,7 +1063,7 @@ export function registerSymphonyHandlers({
 					await writeCache(app, newCache);
 
 					return {
-						registry,
+						registry: enriched,
 						fromCache: false,
 					};
 				} catch (error) {
@@ -980,8 +1076,9 @@ export function registerSymphonyHandlers({
 							`Using expired cache as fallback (age: ${Math.round(cacheAge / 1000)}s)`,
 							LOG_CONTEXT
 						);
+						const enriched = await enrichWithStars(cache.registry.data, cache, false);
 						return {
-							registry: cache.registry.data,
+							registry: enriched,
 							fromCache: true,
 							cacheAge,
 						};
@@ -1350,6 +1447,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 				branchName: string;
 				totalDocuments: number;
 				agentType: string;
+				draftPrNumber?: number;
+				draftPrUrl?: string;
 			}): Promise<{ success: boolean; error?: string }> => {
 				const {
 					contributionId,
@@ -1362,6 +1461,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 					branchName,
 					totalDocuments,
 					agentType,
+					draftPrNumber,
+					draftPrUrl,
 				} = params;
 
 				const state = await readState(app);
@@ -1373,7 +1474,7 @@ This PR will be updated automatically when the Auto Run completes.`;
 					return { success: true };
 				}
 
-				// Create active contribution entry (without PR info initially)
+				// Create active contribution entry
 				const contribution: ActiveContribution = {
 					id: contributionId,
 					repoSlug,
@@ -1382,9 +1483,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 					issueTitle,
 					localPath,
 					branchName,
-					// PR info will be set later when first commit creates the draft PR
-					draftPrNumber: undefined,
-					draftPrUrl: undefined,
+					draftPrNumber,
+					draftPrUrl,
 					startedAt: new Date().toISOString(),
 					status: 'running',
 					progress: {
@@ -2391,7 +2491,56 @@ This PR will be updated automatically when the Auto Run completes.`;
 							? path.dirname(resolvedDocs[0].path)
 							: localPath;
 
-					// 5. Broadcast status update (no PR yet - will be created on first commit)
+					// 5. Create empty commit, push branch, and open draft PR to claim the issue
+					let draftPrNumber: number | undefined;
+					let draftPrUrl: string | undefined;
+
+					const baseBranch = await getDefaultBranch(localPath);
+					const commitMsg = `[Symphony] Start contribution for #${issueNumber}`;
+					const emptyCommitResult = await execFileNoThrow(
+						'git',
+						['commit', '--allow-empty', '-m', commitMsg],
+						localPath
+					);
+
+					if (emptyCommitResult.exitCode === 0) {
+						const prTitle = `[WIP] Symphony: ${issueTitle} (#${issueNumber})`;
+						const prBody = `## Maestro Symphony Contribution
+
+Working on #${issueNumber} via [Maestro Symphony](https://runmaestro.ai).
+
+**Status:** In Progress
+**Started:** ${new Date().toISOString()}
+
+---
+
+This PR will be updated automatically when the Auto Run completes.`;
+
+						const prResult = await createDraftPR(localPath, baseBranch, prTitle, prBody);
+						if (prResult.success) {
+							draftPrNumber = prResult.prNumber;
+							draftPrUrl = prResult.prUrl;
+
+							// Update metadata with PR info
+							const metaContent = JSON.parse(await fs.readFile(metadataPath, 'utf-8'));
+							metaContent.prCreated = true;
+							metaContent.draftPrNumber = draftPrNumber;
+							metaContent.draftPrUrl = draftPrUrl;
+							await fs.writeFile(metadataPath, JSON.stringify(metaContent, null, 2));
+						} else {
+							logger.warn('Failed to create draft PR, continuing without claim', LOG_CONTEXT, {
+								contributionId,
+								error: prResult.error,
+							});
+						}
+					} else {
+						logger.warn('Empty commit failed, continuing without draft PR', LOG_CONTEXT, {
+							contributionId,
+							error: emptyCommitResult.stderr,
+						});
+					}
+
+					// 6. Broadcast status update
 					const mainWindow = getMainWindow?.();
 					if (isWebContentsAvailable(mainWindow)) {
 						mainWindow.webContents.send('symphony:contributionStarted', {
@@ -2399,7 +2548,8 @@ This PR will be updated automatically when the Auto Run completes.`;
 							sessionId,
 							branchName,
 							autoRunPath,
-							// No PR yet - will be created on first commit
+							draftPrNumber,
+							draftPrUrl,
 						});
 					}
 
@@ -2409,13 +2559,15 @@ This PR will be updated automatically when the Auto Run completes.`;
 						branchName,
 						documentCount: resolvedDocs.length,
 						hasExternalDocs,
+						draftPrNumber,
 					});
 
 					return {
 						success: true,
 						branchName,
 						autoRunPath,
-						// draftPrNumber and draftPrUrl will be set when PR is created on first commit
+						draftPrNumber,
+						draftPrUrl,
 					};
 				} catch (error) {
 					logger.error('Symphony contribution failed', LOG_CONTEXT, { error });
@@ -2680,7 +2832,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 
 				// Validate required fields
 				if (!repoSlug || !repoName || !issueNumber || !prNumber || !prUrl) {
-					return { error: 'Missing required fields: repoSlug, repoName, issueNumber, prNumber, prUrl' };
+					return {
+						error: 'Missing required fields: repoSlug, repoName, issueNumber, prNumber, prUrl',
+					};
 				}
 
 				const state = await readState(app);
@@ -2690,7 +2844,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 					(c) => c.repoSlug === repoSlug && c.prNumber === prNumber
 				);
 				if (existingContribution) {
-					return { error: `PR #${prNumber} is already credited (contribution: ${existingContribution.id})` };
+					return {
+						error: `PR #${prNumber} is already credited (contribution: ${existingContribution.id})`,
+					};
 				}
 
 				const now = new Date().toISOString();

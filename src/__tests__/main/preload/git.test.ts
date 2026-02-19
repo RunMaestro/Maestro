@@ -166,10 +166,15 @@ describe('Git Preload API', () => {
 
 			const result = await api.log('/home/user/project', { limit: 10, search: 'fix' });
 
-			expect(mockInvoke).toHaveBeenCalledWith('git:log', '/home/user/project', {
-				limit: 10,
-				search: 'fix',
-			});
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'git:log',
+				'/home/user/project',
+				{
+					limit: 10,
+					search: 'fix',
+				},
+				undefined
+			);
 			expect(result.entries).toEqual(mockEntries);
 		});
 	});

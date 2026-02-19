@@ -87,10 +87,22 @@ vi.mock('lucide-react', () => {
 // so tests are deterministic regardless of where they run. Individual test files can override
 // this with their own vi.mock() if they need custom behavior.
 const SHORTCUT_KEY_MAP: Record<string, string> = {
-	Meta: 'Ctrl', Alt: 'Alt', Shift: 'Shift', Control: 'Ctrl', Ctrl: 'Ctrl',
-	ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
-	Backspace: 'Backspace', Delete: 'Delete', Enter: 'Enter', Return: 'Enter',
-	Escape: 'Esc', Tab: 'Tab', Space: 'Space',
+	Meta: 'Ctrl',
+	Alt: 'Alt',
+	Shift: 'Shift',
+	Control: 'Ctrl',
+	Ctrl: 'Ctrl',
+	ArrowUp: '↑',
+	ArrowDown: '↓',
+	ArrowLeft: '←',
+	ArrowRight: '→',
+	Backspace: 'Backspace',
+	Delete: 'Delete',
+	Enter: 'Enter',
+	Return: 'Enter',
+	Escape: 'Esc',
+	Tab: 'Tab',
+	Space: 'Space',
 };
 const mockFormatKey = (key: string): string => {
 	if (SHORTCUT_KEY_MAP[key]) return SHORTCUT_KEY_MAP[key];
@@ -104,7 +116,7 @@ vi.mock('../renderer/utils/shortcutFormatter', () => ({
 		return keys.map(mockFormatKey).join(sep);
 	}),
 	formatMetaKey: vi.fn(() => 'Ctrl'),
-	formatEnterToSend: vi.fn((enterToSend: boolean) => enterToSend ? 'Enter' : 'Ctrl + Enter'),
+	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
 	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
 		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
 	),
@@ -570,6 +582,10 @@ const mockMaestro = {
 		confirmQuit: vi.fn(),
 		cancelQuit: vi.fn(),
 		onSystemResume: vi.fn().mockReturnValue(() => {}),
+	},
+	wakatime: {
+		checkCli: vi.fn().mockResolvedValue({ available: false }),
+		validateApiKey: vi.fn().mockResolvedValue({ valid: false }),
 	},
 };
 

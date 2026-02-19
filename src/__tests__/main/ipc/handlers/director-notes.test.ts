@@ -8,7 +8,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerDirectorNotesHandlers, sanitizeDisplayName } from '../../../../main/ipc/handlers/director-notes';
+import {
+	registerDirectorNotesHandlers,
+	sanitizeDisplayName,
+} from '../../../../main/ipc/handlers/director-notes';
 import * as historyManagerModule from '../../../../main/history-manager';
 import type { HistoryManager } from '../../../../main/history-manager';
 import type { HistoryEntry } from '../../../../shared/types';
@@ -145,10 +148,20 @@ describe('director-notes IPC handlers', () => {
 
 			vi.mocked(mockHistoryManager.getEntries)
 				.mockReturnValueOnce([
-					createMockEntry({ id: 'e1', timestamp: now - 1000, summary: 'Entry 1', sessionName: 'Agent A' }),
+					createMockEntry({
+						id: 'e1',
+						timestamp: now - 1000,
+						summary: 'Entry 1',
+						sessionName: 'Agent A',
+					}),
 				])
 				.mockReturnValueOnce([
-					createMockEntry({ id: 'e2', timestamp: now - 2000, summary: 'Entry 2', sessionName: 'Agent B' }),
+					createMockEntry({
+						id: 'e2',
+						timestamp: now - 2000,
+						summary: 'Entry 2',
+						sessionName: 'Agent B',
+					}),
 				]);
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
@@ -172,20 +185,40 @@ describe('director-notes IPC handlers', () => {
 
 			vi.mocked(mockHistoryManager.getEntries)
 				.mockReturnValueOnce([
-					createMockEntry({ id: 'e1', type: 'AUTO', timestamp: now - 1000, agentSessionId: 'as-1' }),
-					createMockEntry({ id: 'e2', type: 'USER', timestamp: now - 2000, agentSessionId: 'as-1' }),
+					createMockEntry({
+						id: 'e1',
+						type: 'AUTO',
+						timestamp: now - 1000,
+						agentSessionId: 'as-1',
+					}),
+					createMockEntry({
+						id: 'e2',
+						type: 'USER',
+						timestamp: now - 2000,
+						agentSessionId: 'as-1',
+					}),
 				])
 				.mockReturnValueOnce([
-					createMockEntry({ id: 'e3', type: 'AUTO', timestamp: now - 3000, agentSessionId: 'as-2' }),
-					createMockEntry({ id: 'e4', type: 'USER', timestamp: now - 4000, agentSessionId: 'as-3' }),
+					createMockEntry({
+						id: 'e3',
+						type: 'AUTO',
+						timestamp: now - 3000,
+						agentSessionId: 'as-2',
+					}),
+					createMockEntry({
+						id: 'e4',
+						type: 'USER',
+						timestamp: now - 4000,
+						agentSessionId: 'as-3',
+					}),
 				]);
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
 			const result = await handler!({} as any, { lookbackDays: 7 });
 
 			expect(result.stats).toBeDefined();
-			expect(result.stats.agentCount).toBe(2);       // 2 Maestro sessions
-			expect(result.stats.sessionCount).toBe(3);      // 3 unique provider sessions (as-1, as-2, as-3)
+			expect(result.stats.agentCount).toBe(2); // 2 Maestro sessions
+			expect(result.stats.sessionCount).toBe(3); // 3 unique provider sessions (as-1, as-2, as-3)
 			expect(result.stats.autoCount).toBe(2);
 			expect(result.stats.userCount).toBe(2);
 			expect(result.stats.totalCount).toBe(4);
@@ -286,9 +319,7 @@ describe('director-notes IPC handlers', () => {
 
 			// Session 1 has older entry, session 2 has newer entry
 			vi.mocked(mockHistoryManager.getEntries)
-				.mockReturnValueOnce([
-					createMockEntry({ id: 'oldest', timestamp: now - 3000 }),
-				])
+				.mockReturnValueOnce([createMockEntry({ id: 'oldest', timestamp: now - 3000 })])
 				.mockReturnValueOnce([
 					createMockEntry({ id: 'newest', timestamp: now - 1000 }),
 					createMockEntry({ id: 'middle', timestamp: now - 2000 }),
@@ -312,9 +343,17 @@ describe('director-notes IPC handlers', () => {
 
 			// Mock the sessions store to return a session with a name
 			mockGetSessionsStore.mockReturnValue({
-				get: vi.fn().mockReturnValue([
-					{ id: 'session-1', name: '🚧 my-feature', toolType: 'claude-code', cwd: '/test', projectRoot: '/test' },
-				]),
+				get: vi
+					.fn()
+					.mockReturnValue([
+						{
+							id: 'session-1',
+							name: '🚧 my-feature',
+							toolType: 'claude-code',
+							cwd: '/test',
+							projectRoot: '/test',
+						},
+					]),
 			});
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
@@ -333,9 +372,17 @@ describe('director-notes IPC handlers', () => {
 
 			// Sessions store returns no matching session
 			mockGetSessionsStore.mockReturnValue({
-				get: vi.fn().mockReturnValue([
-					{ id: 'other-session', name: 'Other', toolType: 'claude-code', cwd: '/test', projectRoot: '/test' },
-				]),
+				get: vi
+					.fn()
+					.mockReturnValue([
+						{
+							id: 'other-session',
+							name: 'Other',
+							toolType: 'claude-code',
+							cwd: '/test',
+							projectRoot: '/test',
+						},
+					]),
 			});
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
@@ -469,7 +516,9 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
@@ -525,7 +574,9 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, {
@@ -546,7 +597,7 @@ describe('director-notes IPC handlers', () => {
 					sessionCustomEnvVars: { ANTHROPIC_API_KEY: 'test-key' },
 				}),
 				mockProcessManager,
-				mockAgentDetector,
+				mockAgentDetector
 			);
 		});
 
@@ -559,13 +610,23 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			// Mock sessions store with Maestro session name
 			mockGetSessionsStore.mockReturnValue({
-				get: vi.fn().mockReturnValue([
-					{ id: 'session-1', name: '🚧 feature-branch', toolType: 'claude-code', cwd: '/test', projectRoot: '/test' },
-				]),
+				get: vi
+					.fn()
+					.mockReturnValue([
+						{
+							id: 'session-1',
+							name: '🚧 feature-branch',
+							toolType: 'claude-code',
+							cwd: '/test',
+							projectRoot: '/test',
+						},
+					]),
 			});
 
 			const handler = handlers.get('director-notes:generateSynopsis');
@@ -586,7 +647,9 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['unknown-session']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/unknown-session.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/unknown-session.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
@@ -600,7 +663,9 @@ describe('director-notes IPC handlers', () => {
 			vi.mocked(groomContext).mockRejectedValue(new Error('Agent timed out'));
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
@@ -618,7 +683,9 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
@@ -636,13 +703,23 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			// Session name with markdown injection characters
 			mockGetSessionsStore.mockReturnValue({
-				get: vi.fn().mockReturnValue([
-					{ id: 'session-1', name: '**bold** [link](http://evil) # heading', toolType: 'claude-code', cwd: '/test', projectRoot: '/test' },
-				]),
+				get: vi
+					.fn()
+					.mockReturnValue([
+						{
+							id: 'session-1',
+							name: '**bold** [link](http://evil) # heading',
+							toolType: 'claude-code',
+							cwd: '/test',
+							projectRoot: '/test',
+						},
+					]),
 			});
 
 			const handler = handlers.get('director-notes:generateSynopsis');
@@ -664,7 +741,9 @@ describe('director-notes IPC handlers', () => {
 			});
 
 			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue('/data/history/session-1.json');
+			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
+				'/data/history/session-1.json'
+			);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			await handler!({} as any, { lookbackDays: 14, provider: 'claude-code' });

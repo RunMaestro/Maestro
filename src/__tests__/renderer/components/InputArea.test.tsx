@@ -234,7 +234,9 @@ describe('InputArea', () => {
 			const props = createDefaultProps();
 			render(<InputArea {...props} />);
 
-			expect(screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
+			).toBeInTheDocument();
 		});
 
 		it('renders the send button', () => {
@@ -2111,7 +2113,9 @@ describe('InputArea', () => {
 			expect(screen.getByTestId('wizard-input-panel')).toBeInTheDocument();
 			// Normal components should NOT be rendered
 			expect(screen.queryByTestId('thinking-status-pill')).not.toBeInTheDocument();
-			expect(screen.queryByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
+			).not.toBeInTheDocument();
 			expect(screen.queryByTitle('Send message')).not.toBeInTheDocument();
 		});
 

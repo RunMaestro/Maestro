@@ -7,7 +7,11 @@
  * Used by the DocumentGraphView component to visualize document connections.
  */
 
-import { parseMarkdownLinks, ExternalLink } from '../../utils/markdownLinkParser';
+import {
+	parseMarkdownLinks,
+	ExternalLink,
+	type ParseMarkdownLinksOptions,
+} from '../../utils/markdownLinkParser';
 import { computeDocumentStats, DocumentStats } from '../../utils/documentStats';
 import { getRendererPerfMetrics } from '../../utils/logger';
 import { PERFORMANCE_THRESHOLDS } from '../../../shared/performance-metrics';
@@ -408,6 +412,9 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	const allMarkdownFiles = await scanMarkdownFiles(rootPath, onProgress, sshRemoteId);
 	console.log(`[DocumentGraph] Found ${allMarkdownFiles.length} markdown files in ${rootPath}`);
 
+	// Build parse options with file tree for fallback link resolution
+	const parseOptions: ParseMarkdownLinksOptions = { allFiles: allMarkdownFiles };
+
 	// Track parsed files by path for deduplication
 	const parsedFileMap = new Map<string, ParsedFile>();
 	// BFS queue: [relativePath, depth]
@@ -416,7 +423,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 	const visited = new Set<string>();
 
 	// Step 1: Parse the focus file first (use SSH-aware parsing)
-	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId);
+	const focusParsed = await parseFileWithSsh(rootPath, focusFile, sshRemoteId, parseOptions);
 	if (!focusParsed) {
 		console.error(`[DocumentGraph] Failed to parse focus file: ${focusFile}`);
 		return {
@@ -471,7 +478,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 		if (depth > maxDepth) continue;
 
 		// Parse the file (use SSH-aware parsing)
-		const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId);
+		const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId, parseOptions);
 		if (!parsed) continue; // File doesn't exist or failed to parse
 
 		parsedFileMap.set(path, parsed);
@@ -673,7 +680,12 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 					}
 
 					// Parse just the links from this file (use SSH-aware parsing)
-					const entry = await parseFileLinksOnlyWithSsh(rootPath, filePath, sshRemoteId);
+					const entry = await parseFileLinksOnlyWithSsh(
+						rootPath,
+						filePath,
+						sshRemoteId,
+						parseOptions
+					);
 					if (!entry) {
 						filesScanned++;
 						continue;
@@ -686,7 +698,7 @@ export async function buildGraphData(options: BuildOptions): Promise<GraphData> 
 						discoveredBacklinkFiles.add(filePath);
 
 						// Parse the full file to get stats for the node (use SSH-aware parsing)
-						const parsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId);
+						const parsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId, parseOptions);
 						if (parsed) {
 							const nodeId = `doc-${filePath}`;
 
@@ -824,6 +836,8 @@ export interface ExpandNodeOptions {
 	maxDepth?: number;
 	/** Optional SSH remote ID for remote file operations */
 	sshRemoteId?: string;
+	/** All known markdown file paths for file-tree-aware link resolution */
+	allMarkdownFiles?: string[];
 }
 
 /**
@@ -852,7 +866,7 @@ export interface ExpandNodeResult {
  * @returns ExpandNodeResult with new nodes and edges to add to the graph
  */
 export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNodeResult> {
-	const { rootPath, filePath, loadedPaths, maxDepth = 1, sshRemoteId } = options;
+	const { rootPath, filePath, loadedPaths, maxDepth = 1, sshRemoteId, allMarkdownFiles } = options;
 
 	console.log('[DocumentGraph] Expanding node:', {
 		filePath,
@@ -866,11 +880,16 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 	const newExternalEdges: GraphEdge[] = [];
 	const updatedLoadedPaths = new Set(loadedPaths);
 
+	// Build parse options with file tree for fallback link resolution
+	const parseOptions: ParseMarkdownLinksOptions | undefined = allMarkdownFiles
+		? { allFiles: allMarkdownFiles }
+		: undefined;
+
 	// Track external domains found during expansion
 	const externalDomains = new Map<string, { count: number; urls: string[] }>();
 
 	// Parse the source node to get its outgoing links
-	const sourceParsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId);
+	const sourceParsed = await parseFileWithSsh(rootPath, filePath, sshRemoteId, parseOptions);
 	if (!sourceParsed) {
 		console.warn('[DocumentGraph] Failed to parse source node for expansion:', filePath);
 		return {
@@ -925,7 +944,7 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 		if (depth > maxDepth) continue;
 
 		// Parse the file
-		const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId);
+		const parsed = await parseFileWithSsh(rootPath, path, sshRemoteId, parseOptions);
 		if (!parsed) continue; // File doesn't exist or failed to parse
 
 		// Add to loaded paths
@@ -1047,7 +1066,8 @@ export async function expandNode(options: ExpandNodeOptions): Promise<ExpandNode
 async function parseFileWithSsh(
 	rootPath: string,
 	relativePath: string,
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	parseOptions?: ParseMarkdownLinksOptions
 ): Promise<ParsedFile | null> {
 	const fullPath = `${rootPath}/${relativePath}`;
 
@@ -1083,8 +1103,12 @@ async function parseFileWithSsh(
 			contentForParsing = content.substring(0, LARGE_FILE_PARSE_LIMIT);
 		}
 
-		// Parse links from content
-		const { internalLinks, externalLinks } = parseMarkdownLinks(contentForParsing, relativePath);
+		// Parse links from content (with file-tree-aware fallback if allFiles provided)
+		const { internalLinks, externalLinks } = parseMarkdownLinks(
+			contentForParsing,
+			relativePath,
+			parseOptions
+		);
 
 		// Compute document statistics
 		const stats = computeDocumentStats(contentForParsing, relativePath, fileSize);
@@ -1122,7 +1146,8 @@ async function parseFileWithSsh(
 async function parseFileLinksOnlyWithSsh(
 	rootPath: string,
 	relativePath: string,
-	sshRemoteId?: string
+	sshRemoteId?: string,
+	parseOptions?: ParseMarkdownLinksOptions
 ): Promise<LinkIndexEntry | null> {
 	const fullPath = `${rootPath}/${relativePath}`;
 
@@ -1160,7 +1185,7 @@ async function parseFileLinksOnlyWithSsh(
 		}
 
 		// Parse links from content (only need internal links for index)
-		const { internalLinks } = parseMarkdownLinks(contentForParsing, relativePath);
+		const { internalLinks } = parseMarkdownLinks(contentForParsing, relativePath, parseOptions);
 
 		return {
 			relativePath,

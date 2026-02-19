@@ -752,8 +752,18 @@ describe('useMainKeyboardHandler', () => {
 		function createUnifiedTabContext(overrides: Record<string, unknown> = {}) {
 			const aiTab1 = { id: 'ai-tab-1', name: 'AI Tab 1', logs: [] };
 			const aiTab2 = { id: 'ai-tab-2', name: 'AI Tab 2', logs: [] };
-			const fileTab1 = { id: 'file-tab-1', path: '/test/file1.ts', name: 'file1', extension: '.ts' };
-			const fileTab2 = { id: 'file-tab-2', path: '/test/file2.ts', name: 'file2', extension: '.ts' };
+			const fileTab1 = {
+				id: 'file-tab-1',
+				path: '/test/file1.ts',
+				name: 'file1',
+				extension: '.ts',
+			};
+			const fileTab2 = {
+				id: 'file-tab-2',
+				path: '/test/file2.ts',
+				name: 'file2',
+				extension: '.ts',
+			};
 
 			return createMockContext({
 				activeSession: {
@@ -787,7 +797,9 @@ describe('useMainKeyboardHandler', () => {
 						id: 'session-1',
 						aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
 						activeTabId: 'ai-tab-1',
-						filePreviewTabs: [{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' }],
+						filePreviewTabs: [
+							{ id: 'file-tab-1', path: '/test/file.ts', name: 'file', extension: '.ts' },
+						],
 						activeFileTabId: 'file-tab-1', // File tab is active
 						unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
 						inputMode: 'ai',

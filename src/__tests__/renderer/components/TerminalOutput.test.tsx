@@ -1702,6 +1702,86 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('thinking log markdown rendering', () => {
+		it('renders thinking logs with MarkdownRenderer in AI mode', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: '**bold thinking** and `code`', source: 'thinking' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				markdownEditMode: false,
+			});
+
+			render(<TerminalOutput {...props} />);
+
+			// MarkdownRenderer is mocked as react-markdown with data-testid
+			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
+		});
+
+		it('renders thinking logs as plain text when markdownEditMode is true', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: '**bold thinking** and `code`', source: 'thinking' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				markdownEditMode: true,
+			});
+
+			render(<TerminalOutput {...props} />);
+
+			// Should show raw text, not rendered markdown
+			expect(screen.getByText(/\*\*bold thinking\*\*/)).toBeInTheDocument();
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+		});
+
+		it('shows thinking pill label alongside markdown content', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ text: '# Analysis\n\nLet me think...', source: 'thinking' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// The "thinking" label pill should still be visible
+			expect(screen.getByText('thinking')).toBeInTheDocument();
+			// And markdown should be rendered
+			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
+		});
+
+		it('renders thinking logs as plain text in terminal mode', () => {
+			const logs: LogEntry[] = [createLogEntry({ text: '**bold** thinking', source: 'thinking' })];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			// Terminal mode = not AI mode, so plain text
+			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
+			expect(screen.getByText(/\*\*bold\*\* thinking/)).toBeInTheDocument();
+		});
+	});
+
 	describe('local filter functionality', () => {
 		it('shows filter button for terminal output entries', () => {
 			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];

@@ -99,6 +99,7 @@
           ]
         }
       ],
+      "artifactName": "${name}-${version}-${arch}-mac.${ext}",
       "icon": "build/icon.icns",
       "extraResources": [
         {
@@ -153,6 +154,7 @@
         "deb",
         "rpm"
       ],
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "category": "Development",
       "icon": "build/icon.png",
       "extraResources": [
@@ -203,10 +205,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "${productName}-Setup-${version}.${ext}"
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-Portable-${version}.${ext}"
+      "artifactName": "${productName}-Portable-${version}-${arch}.${ext}"
     }
   },
   "dependencies": {

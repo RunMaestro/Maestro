@@ -48,6 +48,16 @@ export function saveImageToTempFile(dataUrl: string, index: number): string | nu
 }
 
 /**
+ * Build a text prefix for embedding image file paths in the prompt.
+ * Used when an agent's resume mode doesn't support -i flag (e.g., codex exec resume).
+ * The prefix is prepended to the user's prompt so the agent knows where to find images on disk.
+ */
+export function buildImagePromptPrefix(tempPaths: string[]): string {
+	if (tempPaths.length === 0) return '';
+	return `[Attached images: ${tempPaths.join(', ')}]\n\n`;
+}
+
+/**
  * Clean up temp image files asynchronously.
  * Fire-and-forget to avoid blocking the main thread.
  */

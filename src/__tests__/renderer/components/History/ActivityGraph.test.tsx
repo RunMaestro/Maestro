@@ -82,9 +82,7 @@ describe('ActivityGraph', () => {
 	});
 
 	it('shows tooltip on mouse enter over a bar', () => {
-		const entries = [
-			createMockEntry({ timestamp: NOW - 1 * 60 * 60 * 1000, type: 'AUTO' }),
-		];
+		const entries = [createMockEntry({ timestamp: NOW - 1 * 60 * 60 * 1000, type: 'AUTO' })];
 
 		const { container } = render(
 			<ActivityGraph
@@ -109,9 +107,7 @@ describe('ActivityGraph', () => {
 	});
 
 	it('hides tooltip on mouse leave', () => {
-		const entries = [
-			createMockEntry({ timestamp: NOW - 1 * 60 * 60 * 1000 }),
-		];
+		const entries = [createMockEntry({ timestamp: NOW - 1 * 60 * 60 * 1000 })];
 
 		const { container } = render(
 			<ActivityGraph
@@ -154,10 +150,7 @@ describe('ActivityGraph', () => {
 		fireEvent.click(lastBar);
 
 		// onBarClick should be called with bucket time range
-		expect(onBarClick).toHaveBeenCalledWith(
-			expect.any(Number),
-			expect.any(Number)
-		);
+		expect(onBarClick).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
 	});
 
 	it('does not call onBarClick for empty bars', () => {
@@ -269,12 +262,7 @@ describe('ActivityGraph', () => {
 
 	it('renders axis labels for 24-hour lookback', () => {
 		render(
-			<ActivityGraph
-				entries={[]}
-				theme={mockTheme}
-				lookbackHours={24}
-				onLookbackChange={vi.fn()}
-			/>
+			<ActivityGraph entries={[]} theme={mockTheme} lookbackHours={24} onLookbackChange={vi.fn()} />
 		);
 
 		expect(screen.getByText('24h')).toBeInTheDocument();

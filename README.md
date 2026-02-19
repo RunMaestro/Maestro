@@ -168,11 +168,9 @@ Full documentation and usage guide available at **[docs.runmaestro.ai](https://d
 - **Discord**: [Join Us](https://runmaestro.ai/discord)
 - **GitHub Issues**: [Report bugs & request features](https://github.com/RunMaestro/Maestro/issues)
 
-## Contributors
+## Team
 
-- [@pedramamini](https://github.com/pedramamini) - Creator and Benevolent Dictator
-- [@mattjay](https://github.com/mattjay) - Contributor and tester
-- [@chr1syy](https://github.com/chr1syy) - Windows Contributor and tester
+Meet the team behind Maestro at [runmaestro.ai/team](https://runmaestro.ai/team/).
 
 ### Contributing
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, architecture details, and contribution guidelines.

@@ -1931,7 +1931,11 @@ function TabBarInner({
 						color: showUnreadOnly ? theme.colors.accent : theme.colors.textDim,
 						opacity: showUnreadOnly ? 1 : 0.5,
 					}}
-					title={showUnreadOnly ? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})` : `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`}
+					title={
+						showUnreadOnly
+							? `Showing unread only (${formatShortcutKeys(['Meta', 'u'])})`
+							: `Filter unread tabs (${formatShortcutKeys(['Meta', 'u'])})`
+					}
 				>
 					<Mail className="w-4 h-4" />
 					{/* Notification dot */}

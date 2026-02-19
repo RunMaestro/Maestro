@@ -86,6 +86,17 @@ export interface ParsedMarkdownLinks {
 	frontMatter: Record<string, unknown>;
 }
 
+/**
+ * Options for parseMarkdownLinks when file-tree-aware resolution is desired.
+ * When allFiles is provided, wiki links that don't resolve via relative path
+ * will fall back to filename-based matching across the entire file tree,
+ * matching the behavior of remarkFileLinks.
+ */
+export interface ParseMarkdownLinksOptions {
+	/** All known markdown file paths (relative to root) for fallback resolution */
+	allFiles?: string[];
+}
+
 // Regex patterns - aligned with remarkFileLinks.ts for consistency
 
 /**
@@ -191,6 +202,109 @@ function parseFrontMatter(content: string): Record<string, unknown> {
 }
 
 /**
+ * Build a filename index from a list of file paths for O(1) lookup.
+ * Maps each filename (with and without .md) to an array of full relative paths.
+ */
+function buildFilenameIndex(allFiles: string[]): Map<string, string[]> {
+	const index = new Map<string, string[]>();
+	for (const filePath of allFiles) {
+		const lastSlash = filePath.lastIndexOf('/');
+		const filename = lastSlash === -1 ? filePath : filePath.slice(lastSlash + 1);
+
+		const paths = index.get(filename) || [];
+		paths.push(filePath);
+		index.set(filename, paths);
+
+		// Also index without .md extension
+		if (filename.endsWith('.md')) {
+			const withoutExt = filename.slice(0, -3);
+			const pathsNoExt = index.get(withoutExt) || [];
+			pathsNoExt.push(filePath);
+			index.set(withoutExt, pathsNoExt);
+		}
+	}
+	return index;
+}
+
+/**
+ * Calculate path proximity - how "close" a candidate file is to the current file.
+ * Lower score = closer. Used to pick the best match when multiple files share a filename.
+ */
+function calculatePathProximity(candidatePath: string, currentFilePath: string): number {
+	const candidateSegments = candidatePath.split('/');
+	const currentSegments = dirname(currentFilePath).split('/').filter(Boolean);
+
+	let commonLength = 0;
+	for (let i = 0; i < Math.min(candidateSegments.length, currentSegments.length); i++) {
+		if (candidateSegments[i] === currentSegments[i]) {
+			commonLength++;
+		} else {
+			break;
+		}
+	}
+
+	return currentSegments.length - commonLength + (candidateSegments.length - commonLength);
+}
+
+/**
+ * Find a file by filename across the full file tree, using proximity to pick the best match.
+ * This mirrors the behavior of remarkFileLinks.findClosestMatch().
+ *
+ * @param reference - The link reference (e.g., "PlexTrac" or "Vendors/PlexTrac")
+ * @param currentFilePath - Path of the file containing the link (for proximity)
+ * @param filenameIndex - Pre-built filename index
+ * @param allFilesSet - Set of all known file paths
+ * @returns Resolved path or null
+ */
+function findFileByName(
+	reference: string,
+	currentFilePath: string,
+	filenameIndex: Map<string, string[]>,
+	allFilesSet: Set<string>
+): string | null {
+	// Try exact path match first
+	if (allFilesSet.has(reference)) return reference;
+	if (allFilesSet.has(`${reference}.md`)) return `${reference}.md`;
+
+	// Extract filename from reference (handles partial paths like "Vendors/PlexTrac")
+	const refParts = reference.split('/');
+	const filename = refParts[refParts.length - 1];
+
+	let candidates = filenameIndex.get(filename) || [];
+
+	// Also try with .md appended
+	if (candidates.length === 0 && !filename.endsWith('.md')) {
+		candidates = filenameIndex.get(`${filename}.md`) || [];
+	}
+
+	if (candidates.length === 0) return null;
+	if (candidates.length === 1) return candidates[0];
+
+	// Multiple matches - filter by partial path if reference includes directories
+	if (refParts.length > 1) {
+		const filtered = candidates.filter(
+			(c) => c.endsWith(reference) || c.endsWith(`${reference}.md`)
+		);
+		if (filtered.length === 1) return filtered[0];
+		if (filtered.length > 1) candidates = filtered;
+	}
+
+	// Pick closest to current file
+	let closest = candidates[0];
+	let closestScore = calculatePathProximity(candidates[0], currentFilePath);
+
+	for (let i = 1; i < candidates.length; i++) {
+		const score = calculatePathProximity(candidates[i], currentFilePath);
+		if (score < closestScore) {
+			closestScore = score;
+			closest = candidates[i];
+		}
+	}
+
+	return closest;
+}
+
+/**
  * Resolve a relative link path to a normalized path
  * @param linkPath - The path from the link (e.g., "../docs/file.md")
  * @param currentFilePath - The path of the file containing the link
@@ -243,9 +357,14 @@ function resolveRelativePath(linkPath: string, currentFilePath: string): string 
  *
  * @param content - The markdown file content
  * @param filePath - The relative path of the file (used to resolve relative links)
+ * @param options - Optional settings for file-tree-aware link resolution
  * @returns Parsed links and metadata (empty arrays/object if parsing fails)
  */
-export function parseMarkdownLinks(content: string, filePath: string): ParsedMarkdownLinks {
+export function parseMarkdownLinks(
+	content: string,
+	filePath: string,
+	options?: ParseMarkdownLinksOptions
+): ParsedMarkdownLinks {
 	// Return empty result for null/undefined/non-string content
 	if (content === null || content === undefined || typeof content !== 'string') {
 		return {
@@ -257,6 +376,11 @@ export function parseMarkdownLinks(content: string, filePath: string): ParsedMar
 
 	const internalLinks: string[] = [];
 	const externalLinks: ExternalLink[] = [];
+
+	// Build filename index for fallback resolution when allFiles is provided
+	const allFiles = options?.allFiles;
+	const filenameIndex = allFiles ? buildFilenameIndex(allFiles) : null;
+	const allFilesSet = allFiles ? new Set(allFiles) : null;
 
 	// Parse front matter with error handling
 	let frontMatter: Record<string, unknown> = {};
@@ -287,7 +411,17 @@ export function parseMarkdownLinks(content: string, filePath: string): ParsedMar
 			}
 
 			// Resolve the path relative to current file
-			const resolved = resolveRelativePath(linkPath, filePath);
+			let resolved = resolveRelativePath(linkPath, filePath);
+
+			// Fallback: if relative resolution produced a path not in the file tree,
+			// try filename-based lookup (matches remarkFileLinks behavior)
+			if (resolved && filenameIndex && allFilesSet && !allFilesSet.has(resolved)) {
+				const fallback = findFileByName(linkPath, filePath, filenameIndex, allFilesSet);
+				if (fallback) {
+					resolved = fallback;
+				}
+			}
+
 			if (resolved && !seenInternal.has(resolved)) {
 				seenInternal.add(resolved);
 				internalLinks.push(resolved);
@@ -318,7 +452,23 @@ export function parseMarkdownLinks(content: string, filePath: string): ParsedMar
 				}
 			} else {
 				// Internal link
-				const resolved = resolveRelativePath(linkUrl, filePath);
+				let resolved = resolveRelativePath(linkUrl, filePath);
+
+				// Fallback: if relative resolution produced a path not in the file tree,
+				// try filename-based lookup (matches remarkFileLinks behavior)
+				if (
+					resolved &&
+					resolved.endsWith('.md') &&
+					filenameIndex &&
+					allFilesSet &&
+					!allFilesSet.has(resolved)
+				) {
+					const fallback = findFileByName(linkUrl, filePath, filenameIndex, allFilesSet);
+					if (fallback) {
+						resolved = fallback;
+					}
+				}
+
 				if (resolved && !seenInternal.has(resolved)) {
 					// Only include markdown files as internal links
 					if (resolved.endsWith('.md')) {

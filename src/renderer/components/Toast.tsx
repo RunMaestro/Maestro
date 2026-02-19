@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import type { Theme } from '../types';
-import { useToast, Toast as ToastType } from '../contexts/ToastContext';
+import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 
 interface ToastContainerProps {
 	theme: Theme;
@@ -299,7 +299,8 @@ function ToastItem({
 }
 
 export function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
-	const { toasts, removeToast } = useToast();
+	const toasts = useNotificationStore((s) => s.toasts);
+	const removeToast = useNotificationStore((s) => s.removeToast);
 
 	if (toasts.length === 0) return null;
 

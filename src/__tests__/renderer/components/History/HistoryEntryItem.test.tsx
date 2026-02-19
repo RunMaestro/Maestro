@@ -120,7 +120,9 @@ describe('HistoryEntryItem', () => {
 				onOpenDetailModal={vi.fn()}
 			/>
 		);
-		expect(screen.getByTitle('Task completed successfully and human-validated')).toBeInTheDocument();
+		expect(
+			screen.getByTitle('Task completed successfully and human-validated')
+		).toBeInTheDocument();
 	});
 
 	it('shows failure indicator for failed AUTO entries', () => {

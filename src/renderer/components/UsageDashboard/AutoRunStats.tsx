@@ -214,7 +214,8 @@ export function AutoRunStats({ timeRange, theme, columns = 6 }: AutoRunStatsProp
 		const avgSessionDuration = totalSessions > 0 ? totalSessionDuration / totalSessions : 0;
 
 		// Average task duration (session time / checkboxes completed)
-		const avgTaskDuration = totalTasksCompleted > 0 ? totalSessionDuration / totalTasksCompleted : 0;
+		const avgTaskDuration =
+			totalTasksCompleted > 0 ? totalSessionDuration / totalTasksCompleted : 0;
 
 		return {
 			totalSessions,

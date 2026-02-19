@@ -85,7 +85,7 @@ interface AgentConfig {
 	binaryName?: string;
 	available: boolean;
 	path?: string;
-  	customPath?: string;
+	customPath?: string;
 	command: string;
 	args?: string[];
 	hidden?: boolean;
@@ -369,6 +369,21 @@ interface MaestroAPI {
 			sshRemoteId?: string,
 			remoteCwd?: string
 		) => Promise<{ stdout: string; stderr: string }>;
+		/**
+		 * Get list of all branches
+		 */
+		branches: (
+			cwd: string,
+			sshRemoteId?: string,
+			remoteCwd?: string
+		) => Promise<{ branches: string[] }>;
+		/**
+		 * Get list of tags
+		 */
+		tags: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ tags: string[] }>;
+		/**
+		 * Get remote URL
+		 */
 		remote: (
 			cwd: string,
 			sshRemoteId?: string,
@@ -387,7 +402,8 @@ interface MaestroAPI {
 		}>;
 		log: (
 			cwd: string,
-			options?: { limit?: number; search?: string }
+			options?: { limit?: number; search?: string },
+			sshRemoteId?: string
 		) => Promise<{
 			entries: Array<{
 				hash: string;
@@ -396,22 +412,28 @@ interface MaestroAPI {
 				date: string;
 				refs: string[];
 				subject: string;
+				additions?: number;
+				deletions?: number;
 			}>;
 			error: string | null;
 		}>;
-		show: (cwd: string, hash: string) => Promise<{ stdout: string; stderr: string }>;
+		commitCount: (
+			cwd: string,
+			sshRemoteId?: string
+		) => Promise<{ count: number; error: string | null }>;
+		show: (
+			cwd: string,
+			hash: string,
+			sshRemoteId?: string
+		) => Promise<{ stdout: string; stderr: string }>;
+		/**
+		 * Show file content at a specific ref
+		 */
 		showFile: (
 			cwd: string,
 			ref: string,
 			filePath: string
 		) => Promise<{ content?: string; error?: string }>;
-		branches: (
-			cwd: string,
-			sshRemoteId?: string,
-			remoteCwd?: string
-		) => Promise<{ branches: string[] }>;
-		tags: (cwd: string, sshRemoteId?: string, remoteCwd?: string) => Promise<{ tags: string[] }>;
-		commitCount: (cwd: string) => Promise<{ count: number; error: string | null }>;
 		checkGhCli: (ghPath?: string) => Promise<{ installed: boolean; authenticated: boolean }>;
 		createGist: (
 			filename: string,
@@ -546,7 +568,11 @@ interface MaestroAPI {
 		homeDir: () => Promise<string>;
 		readDir: (dirPath: string, sshRemoteId?: string) => Promise<DirectoryEntry[]>;
 		readFile: (filePath: string, sshRemoteId?: string) => Promise<string>;
-		writeFile: (filePath: string, content: string, sshRemoteId?: string) => Promise<{ success: boolean }>;
+		writeFile: (
+			filePath: string,
+			content: string,
+			sshRemoteId?: string
+		) => Promise<{ success: boolean }>;
 		stat: (
 			filePath: string,
 			sshRemoteId?: string
@@ -2508,6 +2534,8 @@ interface MaestroAPI {
 			sessionId: string;
 			agentType: string;
 			totalDocuments: number;
+			draftPrNumber?: number;
+			draftPrUrl?: string;
 		}) => Promise<{ success: boolean; error?: string }>;
 		updateStatus: (params: {
 			contributionId: string;
@@ -2731,6 +2759,12 @@ interface MaestroAPI {
 			};
 			error?: string;
 		}>;
+	};
+
+	// WakaTime API (CLI check, API key validation)
+	wakatime: {
+		checkCli: () => Promise<{ available: boolean; version?: string }>;
+		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
 }
 

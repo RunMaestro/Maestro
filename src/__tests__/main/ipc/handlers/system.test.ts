@@ -513,6 +513,27 @@ describe('system IPC handlers', () => {
 
 			expect(shell.openExternal).toHaveBeenCalledWith('mailto:test@example.com');
 		});
+
+		it('should gracefully handle Launch Services errors', async () => {
+			vi.mocked(shell.openExternal).mockRejectedValue(
+				new Error('No application in the Launch Services database matches the input criteria.')
+			);
+
+			const handler = handlers.get('shell:openExternal');
+			// Should not throw - known recoverable error is caught and logged
+			await expect(handler!({} as any, 'file:///some/path.xyz')).resolves.toBeUndefined();
+		});
+
+		it('should re-throw unexpected openExternal errors', async () => {
+			vi.mocked(shell.openExternal).mockRejectedValue(
+				new Error('Unexpected Electron internal failure')
+			);
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'https://example.com')).rejects.toThrow(
+				'Unexpected Electron internal failure'
+			);
+		});
 	});
 
 	describe('shell:showItemInFolder', () => {
@@ -537,7 +558,9 @@ describe('system IPC handlers', () => {
 
 			const handler = handlers.get('shell:showItemInFolder');
 
-			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow('Path does not exist');
+			await expect(handler!({} as any, '/non/existent/path')).rejects.toThrow(
+				'Path does not exist'
+			);
 		});
 	});
 

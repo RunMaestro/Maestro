@@ -3,7 +3,7 @@
  *
  * Tests the SettingsModal component, including:
  * - Modal rendering and isOpen conditional
- * - Tab navigation (general, display, shortcuts, theme, notifications, aicommands)
+ * - Tab navigation (general, display, shortcuts, theme, notifications, aicommands, encore)
  * - Tab keyboard navigation (Cmd+Shift+[ and ])
  * - Layer stack integration
  * - Agent loading and configuration
@@ -41,8 +41,10 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => keys.join('+')),
 	isMacOS: vi.fn(() => false), // Test environment is not Mac
 	formatMetaKey: vi.fn(() => 'Ctrl'),
-	formatEnterToSend: vi.fn((enterToSend: boolean) => enterToSend ? 'Enter' : 'Ctrl + Enter'),
-	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) => enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'),
+	formatEnterToSend: vi.fn((enterToSend: boolean) => (enterToSend ? 'Enter' : 'Ctrl + Enter')),
+	formatEnterToSendTooltip: vi.fn((enterToSend: boolean) =>
+		enterToSend ? 'Switch to Ctrl+Enter to send' : 'Switch to Enter to send'
+	),
 }));
 
 // Mock AICommandsPanel
@@ -72,8 +74,10 @@ vi.mock('../../../renderer/components/CustomThemeBuilder', () => ({
 
 // Shared mock fns so tests can assert on useSettings setters
 const mockSetDirectorNotesSettings = vi.fn();
+const mockSetEncoreFeatures = vi.fn();
 
-// Mock useSettings hook (used for context management settings and SSH remote ignore settings)
+// Mock useSettings hook (used for context management settings, SSH remote ignore settings, and WakaTime)
+let mockUseSettingsOverrides: Record<string, any> = {};
 vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
 		// Conductor profile settings
@@ -102,6 +106,12 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
+		// WakaTime integration settings
+		wakatimeEnabled: false,
+		setWakatimeEnabled: vi.fn(),
+		wakatimeApiKey: '',
+		setWakatimeApiKey: vi.fn(),
+		...mockUseSettingsOverrides,
 	}),
 }));
 
@@ -248,6 +258,8 @@ const createDefaultProps = (overrides = {}) => ({
 	setCrashReportingEnabled: vi.fn(),
 	customAICommands: [],
 	setCustomAICommands: vi.fn(),
+	encoreFeatures: { directorNotes: false },
+	setEncoreFeatures: mockSetEncoreFeatures,
 	...overrides,
 });
 
@@ -292,6 +304,7 @@ describe('SettingsModal', () => {
 	afterEach(() => {
 		vi.useRealTimers();
 		vi.clearAllMocks();
+		mockUseSettingsOverrides = {};
 	});
 
 	describe('render conditions', () => {
@@ -327,6 +340,7 @@ describe('SettingsModal', () => {
 			expect(screen.getByTitle('Themes')).toBeInTheDocument();
 			expect(screen.getByTitle('Notifications')).toBeInTheDocument();
 			expect(screen.getByTitle('AI Commands')).toBeInTheDocument();
+			expect(screen.getByTitle('Encore Features')).toBeInTheDocument();
 		});
 
 		it('should default to general tab', async () => {
@@ -444,14 +458,14 @@ describe('SettingsModal', () => {
 		});
 
 		it('should wrap around when navigating past last tab', async () => {
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'director-notes' })} />);
+			render(<SettingsModal {...createDefaultProps({ initialTab: 'encore' })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on Director's Notes tab (last tab)
-			expect(screen.getByText("Director's Notes", { selector: 'h3' })).toBeInTheDocument();
+			// Start on Encore Features tab (last tab)
+			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
 
 			// Press Cmd+Shift+] to wrap to general
 			fireEvent.keyDown(window, { key: ']', metaKey: true, shiftKey: true });
@@ -474,14 +488,14 @@ describe('SettingsModal', () => {
 			// Start on general tab (first tab)
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to wrap to Director's Notes (last tab)
+			// Press Cmd+Shift+[ to wrap to Encore Features (last tab)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			expect(screen.getByText("Director's Notes", { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
 		});
 	});
 
@@ -1967,6 +1981,143 @@ describe('SettingsModal', () => {
 		});
 	});
 
+	describe('WakaTime CLI status', () => {
+		it('should not check CLI when WakaTime is disabled', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).not.toHaveBeenCalled();
+		});
+
+		it('should check CLI when WakaTime is enabled', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
+				available: true,
+				version: '1.0.0',
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalled();
+		});
+
+		it('should show auto-install message when CLI is not available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(
+				screen.getByText('WakaTime CLI is being installed automatically...')
+			).toBeInTheDocument();
+		});
+
+		it('should retry CLI check after 3 seconds when first check returns unavailable', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli)
+				.mockResolvedValueOnce({ available: false })
+				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// First check should have been called
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+
+			// Advance to trigger retry
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// Second check should have been called
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(2);
+		});
+
+		it('should not retry CLI check when first check returns available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
+				available: true,
+				version: '1.0.0',
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+
+			// Advance past retry timeout
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// Should still be 1 — no retry needed
+			expect(window.maestro.wakatime.checkCli).toHaveBeenCalledTimes(1);
+		});
+
+		it('should not show auto-install message when CLI is available', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
+				available: true,
+				version: '1.0.0',
+			});
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			expect(
+				screen.queryByText('WakaTime CLI is being installed automatically...')
+			).not.toBeInTheDocument();
+		});
+
+		it('should retry on error and update status after retry succeeds', async () => {
+			mockUseSettingsOverrides = { wakatimeEnabled: true };
+			vi.mocked(window.maestro.wakatime.checkCli)
+				.mockRejectedValueOnce(new Error('Network error'))
+				.mockResolvedValueOnce({ available: true, version: '1.0.0' });
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(100);
+			});
+
+			// Should show the auto-install message after error
+			expect(
+				screen.getByText('WakaTime CLI is being installed automatically...')
+			).toBeInTheDocument();
+
+			// Advance to trigger retry
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(3000);
+			});
+
+			// After retry succeeds, message should disappear
+			expect(
+				screen.queryByText('WakaTime CLI is being installed automatically...')
+			).not.toBeInTheDocument();
+		});
+	});
+
 	describe('Shell selection with mouseEnter and focus', () => {
 		it('should load shells on mouseEnter', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
@@ -2001,123 +2152,71 @@ describe('SettingsModal', () => {
 		});
 	});
 
-	describe('Director\'s Notes settings tab', () => {
-		it('should render Director\'s Notes tab button', async () => {
+	describe('Encore Features settings tab', () => {
+		it('should render Encore Features tab button', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByTitle("Director's Notes")).toBeInTheDocument();
+			expect(screen.getByTitle('Encore Features')).toBeInTheDocument();
 		});
 
-		it('should switch to Director\'s Notes tab when clicked', async () => {
+		it('should switch to Encore Features tab when clicked', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const tab = screen.getByTitle("Director's Notes");
+			const tab = screen.getByTitle('Encore Features');
 			fireEvent.click(tab);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText("Director's Notes", { selector: 'h3' })).toBeInTheDocument();
+			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
 		});
 
-		it('should render provider dropdown with detected available agents', async () => {
+		it('should show description text for Encore Features', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Navigate to Director's Notes tab
-			fireEvent.click(screen.getByTitle("Director's Notes"));
+			fireEvent.click(screen.getByTitle('Encore Features'));
 
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Synopsis Provider')).toBeInTheDocument();
-
-			// With the default mock, only claude-code is available and supported
-			const select = screen.getByLabelText('Select synopsis provider agent');
-			expect(select).toBeInTheDocument();
-
-			const options = select.querySelectorAll('option');
-			expect(options.length).toBeGreaterThanOrEqual(1);
-			expect(options[0]).toHaveValue('claude-code');
-			expect(options[0]).toHaveTextContent('Claude Code');
+			expect(screen.getByText(/Optional features that extend Maestro's capabilities/)).toBeInTheDocument();
+			expect(screen.getByText(/Contributors building new features should consider gating them here/)).toBeInTheDocument();
 		});
 
-		it('should render Customize button for provider configuration', async () => {
+		it('should show Director\'s Notes feature toggle defaulting to off', async () => {
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Navigate to Director's Notes tab
-			fireEvent.click(screen.getByTitle("Director's Notes"));
+			fireEvent.click(screen.getByTitle('Encore Features'));
 
 			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
+				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const customizeButton = screen.getByTitle('Customize provider settings');
-			expect(customizeButton).toBeInTheDocument();
-			expect(customizeButton).toHaveTextContent('Customize');
+			// Director's Notes section is visible but DN settings are hidden
+			expect(screen.getByText("Director's Notes")).toBeInTheDocument();
+			expect(screen.queryByText('Synopsis Provider')).not.toBeInTheDocument();
 		});
 
-		it('should render default lookback period slider with range 1-90', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle("Director's Notes"));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// Check the label shows current value
-			expect(screen.getByText(/Default Lookback Period: 7 days/)).toBeInTheDocument();
-
-			// Check the range input
-			const slider = screen.getByRole('slider');
-			expect(slider).toBeInTheDocument();
-			expect(slider).toHaveAttribute('min', '1');
-			expect(slider).toHaveAttribute('max', '90');
-			expect(slider).toHaveValue('7');
-		});
-
-		it('should show description text for the feature', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle("Director's Notes"));
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			expect(screen.getByText(/unified view of your work across all Maestro sessions/)).toBeInTheDocument();
-			expect(screen.getByText(/AI agent used to generate synopsis summaries/)).toBeInTheDocument();
-			expect(screen.getByText(/How far back to look when generating notes/)).toBeInTheDocument();
-		});
-
-		it('should call setDirectorNotesSettings when provider is changed', async () => {
-			mockSetDirectorNotesSettings.mockClear();
+		it('should call setEncoreFeatures when Director\'s Notes toggle is clicked', async () => {
+			mockSetEncoreFeatures.mockClear();
 
 			render(<SettingsModal {...createDefaultProps()} />);
 
@@ -2125,60 +2224,196 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			fireEvent.click(screen.getByTitle("Director's Notes"));
+			fireEvent.click(screen.getByTitle('Encore Features'));
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const select = screen.getByDisplayValue('Claude Code');
-			fireEvent.change(select, { target: { value: 'codex' } });
+			// Click the Director's Notes feature section to toggle
+			const dnSection = screen.getByText("Director's Notes").closest('button');
+			expect(dnSection).toBeInTheDocument();
+			fireEvent.click(dnSection!);
 
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
-				provider: 'codex',
-				defaultLookbackDays: 7,
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: true,
 			});
 		});
 
-		it('should call setDirectorNotesSettings when lookback slider is changed', async () => {
-			mockSetDirectorNotesSettings.mockClear();
+		it('should call setEncoreFeatures with false when toggling DN off', async () => {
+			mockSetEncoreFeatures.mockClear();
 
-			render(<SettingsModal {...createDefaultProps()} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByTitle("Director's Notes"));
+			render(<SettingsModal {...createDefaultProps({ encoreFeatures: { directorNotes: true } })} />);
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			const slider = screen.getByRole('slider');
-			fireEvent.change(slider, { target: { value: '30' } });
+			fireEvent.click(screen.getByTitle('Encore Features'));
 
-			expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
-				provider: 'claude-code',
-				defaultLookbackDays: 30,
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const dnSection = screen.getByText("Director's Notes").closest('button');
+			expect(dnSection).toBeInTheDocument();
+			fireEvent.click(dnSection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
 			});
 		});
 
-		it('should render lookback scale markers', async () => {
-			render(<SettingsModal {...createDefaultProps()} />);
+		describe('with Director\'s Notes enabled', () => {
+			const dnEnabledProps = { encoreFeatures: { directorNotes: true } };
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
+			it('should render provider dropdown with detected available agents', async () => {
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(100);
+				});
+
+				expect(screen.getByText('Synopsis Provider')).toBeInTheDocument();
+
+				// With the default mock, only claude-code is available and supported
+				const select = screen.getByLabelText('Select synopsis provider agent');
+				expect(select).toBeInTheDocument();
+
+				const options = select.querySelectorAll('option');
+				expect(options.length).toBeGreaterThanOrEqual(1);
+				expect(options[0]).toHaveValue('claude-code');
+				expect(options[0]).toHaveTextContent('Claude Code');
 			});
 
-			fireEvent.click(screen.getByTitle("Director's Notes"));
+			it('should render Customize button for provider configuration', async () => {
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
 
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(100);
+				});
+
+				const customizeButton = screen.getByTitle('Customize provider settings');
+				expect(customizeButton).toBeInTheDocument();
+				expect(customizeButton).toHaveTextContent('Customize');
 			});
 
-			expect(screen.getByText('1 day')).toBeInTheDocument();
-			expect(screen.getByText('90 days')).toBeInTheDocument();
+			it('should render default lookback period slider with range 1-90', async () => {
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				expect(screen.getByText(/Default Lookback Period: 7 days/)).toBeInTheDocument();
+
+				const slider = screen.getByRole('slider');
+				expect(slider).toBeInTheDocument();
+				expect(slider).toHaveAttribute('min', '1');
+				expect(slider).toHaveAttribute('max', '90');
+				expect(slider).toHaveValue('7');
+			});
+
+			it('should show DN description text when enabled', async () => {
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				expect(screen.getByText(/Unified history view and AI-generated synopsis across all sessions/)).toBeInTheDocument();
+				expect(screen.getByText(/AI agent used to generate synopsis summaries/)).toBeInTheDocument();
+				expect(screen.getByText(/How far back to look when generating notes/)).toBeInTheDocument();
+			});
+
+			it('should call setDirectorNotesSettings when provider is changed', async () => {
+				mockSetDirectorNotesSettings.mockClear();
+
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				const select = screen.getByDisplayValue('Claude Code');
+				fireEvent.change(select, { target: { value: 'codex' } });
+
+				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
+					provider: 'codex',
+					defaultLookbackDays: 7,
+				});
+			});
+
+			it('should call setDirectorNotesSettings when lookback slider is changed', async () => {
+				mockSetDirectorNotesSettings.mockClear();
+
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				const slider = screen.getByRole('slider');
+				fireEvent.change(slider, { target: { value: '30' } });
+
+				expect(mockSetDirectorNotesSettings).toHaveBeenCalledWith({
+					provider: 'claude-code',
+					defaultLookbackDays: 30,
+				});
+			});
+
+			it('should render lookback scale markers', async () => {
+				render(<SettingsModal {...createDefaultProps(dnEnabledProps)} />);
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				fireEvent.click(screen.getByTitle('Encore Features'));
+
+				await act(async () => {
+					await vi.advanceTimersByTimeAsync(50);
+				});
+
+				expect(screen.getByText('1 day')).toBeInTheDocument();
+				expect(screen.getByText('90 days')).toBeInTheDocument();
+			});
 		});
 	});
 });

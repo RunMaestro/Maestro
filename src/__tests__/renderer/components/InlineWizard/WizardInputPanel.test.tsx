@@ -13,7 +13,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { WizardInputPanel } from '../../../../renderer/components/InlineWizard/WizardInputPanel';
-import { formatShortcutKeys, formatEnterToSend } from '../../../../renderer/utils/shortcutFormatter';
+import {
+	formatShortcutKeys,
+	formatEnterToSend,
+} from '../../../../renderer/utils/shortcutFormatter';
 import type { Session, Theme } from '../../../../renderer/types';
 
 // Mock useLayerStack for the WizardExitConfirmDialog
@@ -199,7 +202,9 @@ describe('WizardInputPanel', () => {
 	describe('mode toggle', () => {
 		it('renders the mode toggle button', () => {
 			render(<WizardInputPanel {...defaultProps} />);
-			expect(screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`Toggle Mode (${formatShortcutKeys(['Meta', 'j'])})`)
+			).toBeInTheDocument();
 		});
 
 		it('calls toggleInputMode when clicked', () => {

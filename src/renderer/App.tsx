@@ -72,7 +72,7 @@ import type { SymphonyContributionData } from './components/SymphonyModal';
 
 // Group Chat Components
 import { GroupChatPanel } from './components/GroupChatPanel';
-import { GroupChatRightPanel, type GroupChatRightTab } from './components/GroupChatRightPanel';
+import { GroupChatRightPanel } from './components/GroupChatRightPanel';
 
 // Import custom hooks
 import {
@@ -104,7 +104,6 @@ import {
 	// Agent
 	useAgentSessionManagement,
 	useAgentExecution,
-	useAgentErrorRecovery,
 	useAgentCapabilities,
 	useMergeSessionWithSessions,
 	useSendToAgentWithSessions,
@@ -121,6 +120,14 @@ import {
 	useAppHandlers,
 	// Auto Run
 	useAutoRunHandlers,
+	// Tab handlers
+	useTabHandlers,
+	// Group chat handlers
+	useGroupChatHandlers,
+	// Modal handlers
+	useModalHandlers,
+	// Worktree handlers
+	useWorktreeHandlers,
 } from './hooks';
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
@@ -128,12 +135,11 @@ import { useAgentListeners } from './hooks/agent/useAgentListeners';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
-import { useToast } from './contexts/ToastContext';
+import { useNotificationStore, notifyToast } from './stores/notificationStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
 import { useGroupChatStore } from './stores/groupChatStore';
-import type { GroupChatMessagesHandle } from './components/GroupChatMessages';
 import { useBatchStore } from './stores/batchStore';
 // All session state is read directly from useSessionStore in MaestroConsoleInner.
 import { useSessionStore, selectActiveSession } from './stores/sessionStore';
@@ -160,15 +166,12 @@ import type {
 	LogEntry,
 	Session,
 	AITab,
-	FilePreviewTab,
-	UnifiedTabRef,
 	QueuedItem,
 	BatchRunConfig,
 	AgentError,
 	BatchRunState,
 	SpecKitCommand,
 	OpenSpecCommand,
-	LeaderboardRegistration,
 	CustomAICommand,
 	ThinkingMode,
 } from './types';
@@ -176,12 +179,9 @@ import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
 import {
-	setActiveTab,
 	createTab,
 	closeTab,
 	reopenUnifiedClosedTab,
-	closeFileTab as closeFileTabHelper,
-	addAiTabToUnifiedHistory,
 	getActiveTab,
 	navigateToNextTab,
 	navigateToPrevTab,
@@ -191,13 +191,12 @@ import {
 	navigateToLastUnifiedTab,
 	navigateToNextUnifiedTab,
 	navigateToPrevUnifiedTab,
-	getInitialRenameValue,
 	hasActiveWizard,
 } from './utils/tabHelpers';
 import { shouldOpenExternally, flattenTree } from './utils/fileExplorer';
 import type { FileNode } from './types/fileTree';
 import { substituteTemplateVariables } from './utils/templateVariables';
-import { validateNewSession, getProviderDisplayName } from './utils/sessionValidation';
+import { validateNewSession } from './utils/sessionValidation';
 import { formatLogsForClipboard } from './utils/contextExtractor';
 import { getSlashCommandDescription } from './constants/app';
 import { useUIStore } from './stores/uiStore';
@@ -207,14 +206,6 @@ import { useFileExplorerStore } from './stores/fileExplorerStore';
 function MaestroConsoleInner() {
 	// --- LAYER STACK (for blocking shortcuts when modals are open) ---
 	const { hasOpenLayers, hasOpenModal } = useLayerStack();
-
-	// --- TOAST NOTIFICATIONS ---
-	const {
-		addToast,
-		setDefaultDuration: setToastDefaultDuration,
-		setAudioFeedback,
-		setOsNotifications,
-	} = useToast();
 
 	// --- MODAL STATE (from modalStore, replaces ModalContext) ---
 	const {
@@ -233,10 +224,13 @@ function MaestroConsoleInner() {
 		setEditAgentModalOpen,
 		editAgentSession,
 		setEditAgentSession,
+		// Delete Agent Modal
+		deleteAgentModalOpen,
+		deleteAgentSession,
+		setDeleteAgentSession,
 		// Shortcuts Help Modal
 		shortcutsHelpOpen,
 		setShortcutsHelpOpen,
-		setShortcutsSearchQuery,
 		// Quick Actions Modal
 		quickActionOpen,
 		setQuickActionOpen,
@@ -244,14 +238,8 @@ function MaestroConsoleInner() {
 		setQuickActionInitialMode,
 		// Lightbox Modal
 		lightboxImage,
-		setLightboxImage,
 		lightboxImages,
-		setLightboxImages,
-		setLightboxSource,
-		lightboxIsGroupChat,
 		lightboxAllowDelete,
-		setLightboxIsGroupChat,
-		setLightboxAllowDelete,
 		// About Modal
 		aboutModalOpen,
 		setAboutModalOpen,
@@ -260,7 +248,6 @@ function MaestroConsoleInner() {
 		setUpdateCheckModalOpen,
 		// Leaderboard Registration Modal
 		leaderboardRegistrationOpen,
-		setLeaderboardRegistrationOpen,
 		// Standing Ovation Overlay
 		standingOvationData,
 		setStandingOvationData,
@@ -278,7 +265,6 @@ function MaestroConsoleInner() {
 		setUsageDashboardOpen,
 		// Keyboard Mastery Celebration
 		pendingKeyboardMasteryLevel,
-		setPendingKeyboardMasteryLevel,
 		// Playground Panel
 		playgroundOpen,
 		setPlaygroundOpen,
@@ -333,7 +319,6 @@ function MaestroConsoleInner() {
 		setActiveAgentSessionId,
 		// Execution Queue Browser Modal
 		queueBrowserOpen,
-		setQueueBrowserOpen,
 		// Batch Runner Modal
 		batchRunnerModalOpen,
 		setBatchRunnerModalOpen,
@@ -349,23 +334,15 @@ function MaestroConsoleInner() {
 		wizardResumeState,
 		setWizardResumeState,
 		// Agent Error Modal
-		agentErrorModalSessionId,
-		setAgentErrorModalSessionId,
 		// Worktree Modals
 		worktreeConfigModalOpen,
-		setWorktreeConfigModalOpen,
 		createWorktreeModalOpen,
-		setCreateWorktreeModalOpen,
 		createWorktreeSession,
-		setCreateWorktreeSession,
 		createPRModalOpen,
-		setCreatePRModalOpen,
 		createPRSession,
 		setCreatePRSession,
 		deleteWorktreeModalOpen,
-		setDeleteWorktreeModalOpen,
 		deleteWorktreeSession,
-		setDeleteWorktreeSession,
 		// Tab Switcher Modal
 		tabSwitcherOpen,
 		setTabSwitcherOpen,
@@ -385,13 +362,9 @@ function MaestroConsoleInner() {
 		showNewGroupChatModal,
 		setShowNewGroupChatModal,
 		showDeleteGroupChatModal,
-		setShowDeleteGroupChatModal,
 		showRenameGroupChatModal,
-		setShowRenameGroupChatModal,
 		showEditGroupChatModal,
-		setShowEditGroupChatModal,
 		showGroupChatInfo,
-		setShowGroupChatInfo,
 		// Git Diff Viewer
 		gitDiffPreview,
 		setGitDiffPreview,
@@ -517,8 +490,6 @@ function MaestroConsoleInner() {
 		setAutoRunStats,
 		recordAutoRunComplete,
 		updateAutoRunProgress,
-		acknowledgeBadge,
-		getUnacknowledgedBadgeLevel,
 		usageStats,
 		updateUsageStats,
 		tourCompleted: _tourCompleted,
@@ -541,8 +512,6 @@ function MaestroConsoleInner() {
 
 		keyboardMasteryStats,
 		recordShortcutUsage,
-		acknowledgeKeyboardMasteryLevel,
-		getUnacknowledgedKeyboardMasteryLevel,
 
 		// Document Graph & Stats settings
 		colorBlindMode,
@@ -560,9 +529,21 @@ function MaestroConsoleInner() {
 		// File tab refresh settings
 		fileTabAutoRefreshEnabled,
 
+		// Auto-scroll settings
+		autoScrollAiMode,
+		setAutoScrollAiMode,
+
+		// Message alignment
+		userMessageAlignment,
+		setUserMessageAlignment,
+
 		// Windows warning suppression
 		suppressWindowsWarning,
 		setSuppressWindowsWarning,
+
+		// Encore Features
+		encoreFeatures,
+		setEncoreFeatures,
 	} = settings;
 
 	// --- KEYBOARD SHORTCUT HELPERS ---
@@ -622,15 +603,6 @@ function MaestroConsoleInner() {
 		}),
 		[]
 	) as React.MutableRefObject<string>;
-
-	const removedWorktreePathsRef = useMemo(
-		() => ({
-			get current() {
-				return useSessionStore.getState().removedWorktreePaths;
-			},
-		}),
-		[]
-	) as React.MutableRefObject<Set<string>>;
 
 	// initialLoadComplete — Proxy bridges ref API (.current = true) to store boolean
 	const initialLoadComplete = useMemo(() => {
@@ -745,29 +717,11 @@ function MaestroConsoleInner() {
 	const {
 		setGroupChats,
 		setActiveGroupChatId,
-		setGroupChatMessages,
-		setGroupChatState,
 		setGroupChatStagedImages,
 		setGroupChatReadOnlyMode,
-		setGroupChatExecutionQueue,
 		setGroupChatRightTab,
 		setGroupChatParticipantColors,
-		setModeratorUsage,
-		setParticipantStates,
-		setGroupChatStates,
-		setAllGroupChatParticipantStates,
-		setGroupChatError,
 	} = useGroupChatStore.getState();
-
-	// Refs for focus management (previously in GroupChatContext)
-	const groupChatInputRef = useRef<HTMLTextAreaElement>(null);
-	const groupChatMessagesRef = useRef<GroupChatMessagesHandle>(null);
-
-	// clearGroupChatError: store clears error, we handle the focus side-effect
-	const handleClearGroupChatErrorBase = useCallback(() => {
-		useGroupChatStore.getState().clearGroupChatError();
-		setTimeout(() => groupChatInputRef.current?.focus(), 0);
-	}, []);
 
 	// SSH Remote configs for looking up SSH remote names (used for participant cards in group chat)
 	const [sshRemoteConfigs, setSshRemoteConfigs] = useState<Array<{ id: string; name: string }>>([]);
@@ -795,7 +749,7 @@ function MaestroConsoleInner() {
 			?.getInitializationResult()
 			.then((result) => {
 				if (result?.userMessage) {
-					addToast({
+					notifyToast({
 						type: 'warning',
 						title: 'Statistics Database',
 						message: result.userMessage,
@@ -806,7 +760,7 @@ function MaestroConsoleInner() {
 				}
 			})
 			.catch(console.error);
-	}, [addToast]);
+	}, []);
 
 	// Compute map of session names to SSH remote names (for group chat participant cards)
 	const sessionSshRemoteNames = useMemo(() => {
@@ -890,9 +844,8 @@ function MaestroConsoleInner() {
 	const tabGistContent = useTabStore((s) => s.tabGistContent);
 	const fileGistUrls = useTabStore((s) => s.fileGistUrls);
 
-	// Delete Agent Modal State
-	const [deleteAgentModalOpen, setDeleteAgentModalOpen] = useState(false);
-	const [deleteAgentSession, setDeleteAgentSession] = useState<Session | null>(null);
+	// Note: Delete Agent Modal State is now managed by modalStore (Zustand)
+	// See useModalActions() destructuring above for deleteAgentModalOpen / deleteAgentSession
 
 	// Account Switch Prompt Modal State
 	const [switchPromptData, setSwitchPromptData] = useState<{
@@ -914,95 +867,8 @@ function MaestroConsoleInner() {
 	// Note: All modal states are now managed by modalStore (Zustand)
 	// See useModalActions() destructuring above for modal states
 
-	// Stable callbacks for memoized modals (prevents re-renders from callback reference changes)
-	// NOTE: These must be declared AFTER the state they reference
-	const handleCloseGitDiff = useCallback(() => setGitDiffPreview(null), []);
-	const handleCloseGitLog = useCallback(() => setGitLogOpen(false), []);
-	const handleCloseSettings = useCallback(() => setSettingsModalOpen(false), []);
-	const handleCloseDebugPackage = useCallback(() => setDebugPackageModalOpen(false), []);
-
-	// AppInfoModals stable callbacks
-	const handleCloseShortcutsHelp = useCallback(() => setShortcutsHelpOpen(false), []);
-	const handleCloseAboutModal = useCallback(() => setAboutModalOpen(false), []);
-	const handleCloseUpdateCheckModal = useCallback(() => setUpdateCheckModalOpen(false), []);
-	const handleCloseProcessMonitor = useCallback(() => setProcessMonitorOpen(false), []);
-	const handleCloseLogViewer = useCallback(() => setLogViewerOpen(false), []);
-
-	// Confirm modal close handler
-	const handleCloseConfirmModal = useCallback(() => setConfirmModalOpen(false), []);
-
-	// Delete agent modal handlers
-	const handleCloseDeleteAgentModal = useCallback(() => {
-		setDeleteAgentModalOpen(false);
-		setDeleteAgentSession(null);
-	}, []);
-
-	// Quit confirm modal handlers
-	const handleConfirmQuit = useCallback(() => {
-		setQuitConfirmModalOpen(false);
-		window.maestro.app.confirmQuit();
-	}, []);
-
-	const handleCancelQuit = useCallback(() => {
-		setQuitConfirmModalOpen(false);
-		window.maestro.app.cancelQuit();
-	}, []);
-
-	// Keyboard mastery level-up callback
-	const onKeyboardMasteryLevelUp = useCallback((level: number) => {
-		setPendingKeyboardMasteryLevel(level);
-	}, []);
-
-	// Handle keyboard mastery celebration close
-	const handleKeyboardMasteryCelebrationClose = useCallback(() => {
-		if (pendingKeyboardMasteryLevel !== null) {
-			acknowledgeKeyboardMasteryLevel(pendingKeyboardMasteryLevel);
-		}
-		setPendingKeyboardMasteryLevel(null);
-	}, [pendingKeyboardMasteryLevel, acknowledgeKeyboardMasteryLevel]);
-
-	// Handle standing ovation close
-	const handleStandingOvationClose = useCallback(() => {
-		if (standingOvationData) {
-			// Mark badge as acknowledged when user clicks "Take a Bow"
-			acknowledgeBadge(standingOvationData.badge.level);
-		}
-		setStandingOvationData(null);
-	}, [standingOvationData, acknowledgeBadge]);
-
-	// Handle first run celebration close
-	const handleFirstRunCelebrationClose = useCallback(() => {
-		setFirstRunCelebrationData(null);
-	}, []);
-
-	// Handle open leaderboard registration
-	const handleOpenLeaderboardRegistration = useCallback(() => {
-		setLeaderboardRegistrationOpen(true);
-	}, []);
-
-	// Handle open leaderboard registration from About modal (closes About first)
-	const handleOpenLeaderboardRegistrationFromAbout = useCallback(() => {
-		setAboutModalOpen(false);
-		setLeaderboardRegistrationOpen(true);
-	}, []);
-
-	// AppSessionModals stable callbacks
-	const handleCloseNewInstanceModal = useCallback(() => {
-		setNewInstanceModalOpen(false);
-		setDuplicatingSessionId(null);
-	}, [setDuplicatingSessionId]);
-	const handleCloseEditAgentModal = useCallback(() => {
-		setEditAgentModalOpen(false);
-		setEditAgentSession(null);
-	}, []);
-	const handleCloseRenameSessionModal = useCallback(() => {
-		setRenameInstanceModalOpen(false);
-		setRenameInstanceSessionId(null);
-	}, []);
-	const handleCloseRenameTabModal = useCallback(() => {
-		setRenameTabModalOpen(false);
-		setRenameTabId(null);
-	}, []);
+	// Note: Modal close/open handlers are now provided by useModalHandlers() hook
+	// See the destructured handlers below (handleCloseGitDiff, handleCloseGitLog, etc.)
 
 	// Note: All modal states (confirmation, rename, queue browser, batch runner, etc.)
 	// are now managed by modalStore - see useModalActions() destructuring above
@@ -1032,25 +898,6 @@ function MaestroConsoleInner() {
 		setDocumentTaskCounts: setAutoRunDocumentTaskCounts,
 	} = useBatchStore.getState();
 
-	// Restore focus when LogViewer closes to ensure global hotkeys work
-	useEffect(() => {
-		// When LogViewer closes, restore focus to main container or input
-		if (!logViewerOpen) {
-			setTimeout(() => {
-				// Try to focus input first, otherwise focus document body to ensure hotkeys work
-				if (inputRef.current) {
-					inputRef.current.focus();
-				} else if (terminalOutputRef.current) {
-					terminalOutputRef.current.focus();
-				} else {
-					// Blur any focused element to let global handlers work
-					(document.activeElement as HTMLElement)?.blur();
-					document.body.focus();
-				}
-			}, 50);
-		}
-	}, [logViewerOpen]);
-
 	// ProcessMonitor navigation handlers
 	const handleProcessMonitorNavigateToSession = useCallback(
 		(sessionId: string, tabId?: string) => {
@@ -1065,48 +912,18 @@ function MaestroConsoleInner() {
 		[setActiveSessionId, setSessions]
 	);
 
-	const handleProcessMonitorNavigateToGroupChat = useCallback(
-		(groupChatId: string) => {
-			// Restore state for this group chat when navigating from ProcessMonitor
-			setActiveGroupChatId(groupChatId);
-			setGroupChatState(groupChatStates.get(groupChatId) ?? 'idle');
-			setParticipantStates(allGroupChatParticipantStates.get(groupChatId) ?? new Map());
-			setProcessMonitorOpen(false);
-		},
-		[
-			setActiveGroupChatId,
-			setGroupChatState,
-			groupChatStates,
-			setParticipantStates,
-			allGroupChatParticipantStates,
-		]
-	);
-
-	// LogViewer shortcut handler
-	const handleLogViewerShortcutUsed = useCallback(
-		(shortcutId: string) => {
-			const result = recordShortcutUsage(shortcutId);
-			if (result.newLevel !== null) {
-				onKeyboardMasteryLevelUp(result.newLevel);
-			}
-		},
-		[recordShortcutUsage, onKeyboardMasteryLevelUp]
-	);
-
-	// Sync toast duration setting to ToastContext
+	// Sync toast settings to notificationStore
 	useEffect(() => {
-		setToastDefaultDuration(toastDuration);
-	}, [toastDuration, setToastDefaultDuration]);
+		useNotificationStore.getState().setDefaultDuration(toastDuration);
+	}, [toastDuration]);
 
-	// Sync audio feedback settings to ToastContext for TTS on toast notifications
 	useEffect(() => {
-		setAudioFeedback(audioFeedbackEnabled, audioFeedbackCommand);
-	}, [audioFeedbackEnabled, audioFeedbackCommand, setAudioFeedback]);
+		useNotificationStore.getState().setAudioFeedback(audioFeedbackEnabled, audioFeedbackCommand);
+	}, [audioFeedbackEnabled, audioFeedbackCommand]);
 
-	// Sync OS notifications setting to ToastContext
 	useEffect(() => {
-		setOsNotifications(osNotificationsEnabled);
-	}, [osNotificationsEnabled, setOsNotifications]);
+		useNotificationStore.getState().setOsNotifications(osNotificationsEnabled);
+	}, [osNotificationsEnabled]);
 
 	// Expose playground() function for developer console
 	useEffect(() => {
@@ -1176,6 +993,22 @@ function MaestroConsoleInner() {
 			// Migration: ensure projectRoot is set (for sessions created before this field was added)
 			if (!session.projectRoot) {
 				session = { ...session, projectRoot: session.cwd };
+			}
+
+			// Migration: default autoRunFolderPath for sessions that don't have one
+			if (!session.autoRunFolderPath && session.projectRoot) {
+				session = {
+					...session,
+					autoRunFolderPath: `${session.projectRoot}/${AUTO_RUN_FOLDER_NAME}`,
+				};
+			}
+
+			// Migration: ensure fileTreeAutoRefreshInterval is set (default 180s for legacy sessions)
+			if (session.fileTreeAutoRefreshInterval == null) {
+				console.warn(
+					`[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s`
+				);
+				session = { ...session, fileTreeAutoRefreshInterval: 180 };
 			}
 
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
@@ -1281,7 +1114,9 @@ function MaestroConsoleInner() {
 				// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
 				const sshRemoteId =
 					correctedSession.sshRemoteId ||
-					correctedSession.sessionSshRemoteConfig?.remoteId ||
+					(correctedSession.sessionSshRemoteConfig?.enabled
+						? correctedSession.sessionSshRemoteConfig.remoteId
+						: undefined) ||
 					undefined;
 
 				// For SSH remote sessions, defer git operations to background to avoid blocking
@@ -1455,7 +1290,11 @@ function MaestroConsoleInner() {
 					// For remote (SSH) sessions, fetch git info in background to avoid blocking
 					// startup on SSH connection timeouts. This runs after UI is shown.
 					for (const session of restoredSessions) {
-						const sshRemoteId = session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId;
+						const sshRemoteId =
+							session.sshRemoteId ||
+							(session.sessionSshRemoteConfig?.enabled
+								? session.sessionSshRemoteConfig.remoteId
+								: undefined);
 						if (sshRemoteId) {
 							// Fire and forget - don't await, let it update sessions when done
 							fetchGitInfoInBackground(session.id, session.cwd, sshRemoteId);
@@ -1592,300 +1431,7 @@ function MaestroConsoleInner() {
 		openSettings: () => setSettingsModalOpen(true),
 	};
 
-	// Check for unacknowledged badges on startup (show missed standing ovations)
-	useEffect(() => {
-		if (settingsLoaded && sessionsLoaded) {
-			const unacknowledgedLevel = getUnacknowledgedBadgeLevel();
-			if (unacknowledgedLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find((b) => b.level === unacknowledgedLevel);
-				if (badge) {
-					// Show the standing ovation overlay for the missed badge
-					// Small delay to ensure UI is fully rendered
-					setTimeout(() => {
-						setStandingOvationData({
-							badge,
-							isNewRecord: false, // We don't know if it was a record, so default to false
-							recordTimeMs: autoRunStats.longestRunMs,
-						});
-					}, 1000);
-				}
-			}
-		}
-		// autoRunStats.longestRunMs and getUnacknowledgedBadgeLevel intentionally omitted -
-		// this effect runs once on startup to check for missed badges, not on every stats update
-	}, [settingsLoaded, sessionsLoaded]);
-
-	// Check for unacknowledged badges when user returns to the app
-	// Uses multiple triggers: visibility change, window focus, and mouse activity
-	// This catches badges earned during overnight Auto Runs when display was off
-	useEffect(() => {
-		if (!settingsLoaded || !sessionsLoaded) return;
-
-		// Debounce to avoid showing multiple times
-		let checkPending = false;
-
-		const checkForUnacknowledgedBadge = () => {
-			// Don't show if there's already an ovation displayed
-			if (standingOvationData) return;
-			if (checkPending) return;
-
-			const unacknowledgedLevel = getUnacknowledgedBadgeLevel();
-			if (unacknowledgedLevel !== null) {
-				const badge = CONDUCTOR_BADGES.find((b) => b.level === unacknowledgedLevel);
-				if (badge) {
-					checkPending = true;
-					// Small delay to let the UI stabilize
-					setTimeout(() => {
-						// Double-check in case it was acknowledged in the meantime
-						if (!standingOvationData) {
-							setStandingOvationData({
-								badge,
-								isNewRecord: false,
-								recordTimeMs: autoRunStats.longestRunMs,
-							});
-						}
-						checkPending = false;
-					}, 500);
-				}
-			}
-		};
-
-		const handleVisibilityChange = () => {
-			// Only check when becoming visible
-			if (!document.hidden) {
-				checkForUnacknowledgedBadge();
-			}
-		};
-
-		const handleWindowFocus = () => {
-			// Window gained focus - user is actively looking at the app
-			checkForUnacknowledgedBadge();
-		};
-
-		// Mouse move handler with heavy debounce - only triggers once per 30 seconds
-		let lastMouseCheck = 0;
-		const handleMouseMove = () => {
-			const now = Date.now();
-			if (now - lastMouseCheck > 30000) {
-				// 30 second debounce
-				lastMouseCheck = now;
-				checkForUnacknowledgedBadge();
-			}
-		};
-
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-		window.addEventListener('focus', handleWindowFocus);
-		document.addEventListener('mousemove', handleMouseMove, { passive: true });
-
-		return () => {
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
-			window.removeEventListener('focus', handleWindowFocus);
-			document.removeEventListener('mousemove', handleMouseMove);
-		};
-	}, [
-		settingsLoaded,
-		sessionsLoaded,
-		standingOvationData,
-		getUnacknowledgedBadgeLevel,
-		autoRunStats.longestRunMs,
-	]);
-
-	// Check for unacknowledged keyboard mastery levels on startup
-	useEffect(() => {
-		if (settingsLoaded && sessionsLoaded) {
-			const unacknowledgedLevel = getUnacknowledgedKeyboardMasteryLevel();
-			if (unacknowledgedLevel !== null) {
-				// Show the keyboard mastery level-up celebration after a short delay
-				setTimeout(() => {
-					setPendingKeyboardMasteryLevel(unacknowledgedLevel);
-				}, 1200); // Slightly longer delay than badge to avoid overlap
-			}
-		}
-		// getUnacknowledgedKeyboardMasteryLevel intentionally omitted -
-		// this effect runs once on startup to check for unacknowledged levels, not on function changes
-	}, [settingsLoaded, sessionsLoaded]);
-
-	// Scan worktree directories on startup for sessions with worktreeConfig
-	// This restores worktree sub-agents after app restart
-	useEffect(() => {
-		if (!sessionsLoaded) return;
-
-		const scanWorktreeConfigsOnStartup = async () => {
-			// Find sessions that have worktreeConfig with basePath
-			const sessionsWithWorktreeConfig = sessions.filter(
-				(s) => s.worktreeConfig?.basePath && !s.parentSessionId // Only parent sessions
-			);
-
-			if (sessionsWithWorktreeConfig.length === 0) return;
-
-			const newWorktreeSessions: Session[] = [];
-
-			for (const parentSession of sessionsWithWorktreeConfig) {
-				try {
-					// Get SSH remote ID for remote git operations
-					const sshRemoteId =
-						parentSession.sshRemoteId ||
-						parentSession.sessionSshRemoteConfig?.remoteId ||
-						undefined;
-					const scanResult = await window.maestro.git.scanWorktreeDirectory(
-						parentSession.worktreeConfig!.basePath,
-						sshRemoteId
-					);
-					const { gitSubdirs } = scanResult;
-
-					for (const subdir of gitSubdirs) {
-						// Skip main/master/HEAD branches
-						if (
-							subdir.branch === 'main' ||
-							subdir.branch === 'master' ||
-							subdir.branch === 'HEAD'
-						) {
-							continue;
-						}
-
-						// Check if a session already exists for this worktree
-						// Normalize paths for comparison (remove trailing slashes)
-						const normalizedSubdirPath = subdir.path.replace(/\/+$/, '');
-						const existingSession = sessions.find((s) => {
-							const normalizedCwd = s.cwd.replace(/\/+$/, '');
-							// Check if same path (regardless of parent) or same branch under same parent
-							return (
-								normalizedCwd === normalizedSubdirPath ||
-								(s.parentSessionId === parentSession.id && s.worktreeBranch === subdir.branch)
-							);
-						});
-						if (existingSession) {
-							continue;
-						}
-
-						// Also check in sessions we're about to add
-						if (
-							newWorktreeSessions.some((s) => s.cwd.replace(/\/+$/, '') === normalizedSubdirPath)
-						) {
-							continue;
-						}
-
-						const newId = generateId();
-						const initialTabId = generateId();
-						const initialTab: AITab = {
-							id: initialTabId,
-							agentSessionId: null,
-							name: null,
-							starred: false,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-							createdAt: Date.now(),
-							state: 'idle',
-							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking,
-						};
-
-						// Fetch git info (via SSH for remote sessions)
-						let gitBranches: string[] | undefined;
-						let gitTags: string[] | undefined;
-						let gitRefsCacheTime: number | undefined;
-
-						try {
-							[gitBranches, gitTags] = await Promise.all([
-								gitService.getBranches(subdir.path, sshRemoteId),
-								gitService.getTags(subdir.path, sshRemoteId),
-							]);
-							gitRefsCacheTime = Date.now();
-						} catch {
-							// Ignore errors
-						}
-
-						const worktreeSession: Session = {
-							id: newId,
-							name: subdir.branch || subdir.name,
-							groupId: parentSession.groupId, // Inherit group from parent
-							toolType: parentSession.toolType,
-							state: 'idle',
-							cwd: subdir.path,
-							fullPath: subdir.path,
-							projectRoot: subdir.path,
-							isGitRepo: true,
-							gitBranches,
-							gitTags,
-							gitRefsCacheTime,
-							parentSessionId: parentSession.id,
-							worktreeBranch: subdir.branch || undefined,
-							aiLogs: [],
-							shellLogs: [
-								{
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'system',
-									text: 'Worktree Session Ready.',
-								},
-							],
-							workLog: [],
-							contextUsage: 0,
-							inputMode: parentSession.toolType === 'terminal' ? 'terminal' : 'ai',
-							aiPid: 0,
-							terminalPid: 0,
-							port: 3000 + Math.floor(Math.random() * 100),
-							isLive: false,
-							changedFiles: [],
-							fileTree: [],
-							fileExplorerExpanded: [],
-							fileExplorerScrollPos: 0,
-							fileTreeAutoRefreshInterval: 180,
-							shellCwd: subdir.path,
-							aiCommandHistory: [],
-							shellCommandHistory: [],
-							executionQueue: [],
-							activeTimeMs: 0,
-							aiTabs: [initialTab],
-							activeTabId: initialTabId,
-							closedTabHistory: [],
-							filePreviewTabs: [],
-							activeFileTabId: null,
-							unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-							unifiedClosedTabHistory: [],
-							customPath: parentSession.customPath,
-							customArgs: parentSession.customArgs,
-							customEnvVars: parentSession.customEnvVars,
-							customModel: parentSession.customModel,
-							customContextWindow: parentSession.customContextWindow,
-							nudgeMessage: parentSession.nudgeMessage,
-							autoRunFolderPath: parentSession.autoRunFolderPath,
-							// Inherit SSH configuration from parent session
-							sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig,
-						};
-
-						newWorktreeSessions.push(worktreeSession);
-					}
-				} catch (err) {
-					console.error(
-						`[WorktreeStartup] Error scanning ${parentSession.worktreeConfig!.basePath}:`,
-						err
-					);
-				}
-			}
-
-			if (newWorktreeSessions.length > 0) {
-				setSessions((prev) => {
-					// Double-check to avoid duplicates
-					const currentPaths = new Set(prev.map((s) => s.cwd));
-					const trulyNew = newWorktreeSessions.filter((s) => !currentPaths.has(s.cwd));
-					if (trulyNew.length === 0) return prev;
-					return [...prev, ...trulyNew];
-				});
-
-				// Expand worktrees on parent sessions
-				const parentIds = new Set(newWorktreeSessions.map((s) => s.parentSessionId));
-				setSessions((prev) =>
-					prev.map((s) => (parentIds.has(s.id) ? { ...s, worktreesExpanded: true } : s))
-				);
-			}
-		};
-
-		// Run once on startup with a small delay to let UI settle
-		const timer = setTimeout(scanWorktreeConfigsOnStartup, 500);
-		return () => clearTimeout(timer);
-	}, [sessionsLoaded]); // Only run once when sessions are loaded
+	// Note: Standing ovation and keyboard mastery startup checks are now in useModalHandlers
 
 	// Sync beta updates setting to electron-updater when it changes
 	useEffect(() => {
@@ -1987,139 +1533,7 @@ function MaestroConsoleInner() {
 
 	// IPC process event listeners are now in useAgentListeners hook (called after useAgentSessionManagement)
 
-	// --- GROUP CHAT EVENT LISTENERS ---
-	// Listen for real-time updates to group chat messages and state
-	useEffect(() => {
-		const unsubMessage = window.maestro.groupChat.onMessage((id, message) => {
-			if (id === activeGroupChatId) {
-				setGroupChatMessages((prev) => [...prev, message]);
-			}
-		});
-
-		const unsubState = window.maestro.groupChat.onStateChange((id, state) => {
-			// Track state for ALL group chats (for sidebar indicator when not active)
-			setGroupChatStates((prev) => {
-				const next = new Map(prev);
-				next.set(id, state);
-				return next;
-			});
-			// Also update the active group chat's state for immediate UI
-			if (id === activeGroupChatId) {
-				setGroupChatState(state);
-			}
-		});
-
-		const unsubParticipants = window.maestro.groupChat.onParticipantsChanged((id, participants) => {
-			// Update the group chat's participants list
-			setGroupChats((prev) =>
-				prev.map((chat) => (chat.id === id ? { ...chat, participants } : chat))
-			);
-		});
-
-		const unsubModeratorUsage = window.maestro.groupChat.onModeratorUsage?.((id, usage) => {
-			if (id === activeGroupChatId) {
-				// When contextUsage is -1, tokens were accumulated from multi-tool turns.
-				// Preserve previous context/token values; only update cost.
-				if (usage.contextUsage < 0) {
-					setModeratorUsage((prev) =>
-						prev
-							? { ...prev, totalCost: usage.totalCost }
-							: { contextUsage: 0, totalCost: usage.totalCost, tokenCount: 0 }
-					);
-				} else {
-					setModeratorUsage(usage);
-				}
-			}
-		});
-
-		console.log(
-			`[GroupChat:UI] Setting up onParticipantState listener, activeGroupChatId=${activeGroupChatId}`
-		);
-		const unsubParticipantState = window.maestro.groupChat.onParticipantState?.(
-			(id, participantName, state) => {
-				console.log(
-					`[GroupChat:UI] Received participant state: chatId=${id}, participant=${participantName}, state=${state}, activeGroupChatId=${activeGroupChatId}`
-				);
-				// Track participant state for ALL group chats (for sidebar indicator)
-				setAllGroupChatParticipantStates((prev) => {
-					const next = new Map(prev);
-					const chatStates = next.get(id) || new Map();
-					const updatedChatStates = new Map(chatStates);
-					updatedChatStates.set(participantName, state);
-					next.set(id, updatedChatStates);
-					console.log(
-						`[GroupChat:UI] Updated allGroupChatParticipantStates for ${id}: ${JSON.stringify([
-							...updatedChatStates.entries(),
-						])}`
-					);
-					return next;
-				});
-				// Also update the active group chat's participant states for immediate UI
-				if (id === activeGroupChatId) {
-					console.log(
-						`[GroupChat:UI] Updating participantStates for active chat: ${participantName}=${state}`
-					);
-					setParticipantStates((prev) => {
-						const next = new Map(prev);
-						next.set(participantName, state);
-						console.log(
-							`[GroupChat:UI] New participantStates: ${JSON.stringify([...next.entries()])}`
-						);
-						return next;
-					});
-				} else {
-					console.log(
-						`[GroupChat:UI] Skipping participantStates update - not active chat (${id} vs ${activeGroupChatId})`
-					);
-				}
-			}
-		);
-
-		const unsubModeratorSessionId = window.maestro.groupChat.onModeratorSessionIdChanged?.(
-			(id, agentSessionId) => {
-				// Update the group chat's moderator agent session ID (the Claude Code session UUID)
-				setGroupChats((prev) =>
-					prev.map((chat) =>
-						chat.id === id ? { ...chat, moderatorAgentSessionId: agentSessionId } : chat
-					)
-				);
-			}
-		);
-
-		return () => {
-			unsubMessage();
-			unsubState();
-			unsubParticipants();
-			unsubModeratorUsage?.();
-			unsubParticipantState?.();
-			unsubModeratorSessionId?.();
-		};
-	}, [activeGroupChatId]);
-
-	// Process group chat execution queue when state becomes idle
-	useEffect(() => {
-		if (groupChatState === 'idle' && groupChatExecutionQueue.length > 0 && activeGroupChatId) {
-			// Take the first item from the queue
-			const [nextItem, ...remainingQueue] = groupChatExecutionQueue;
-			setGroupChatExecutionQueue(remainingQueue);
-
-			// Send the queued message - update both active state and per-chat state
-			setGroupChatState('moderator-thinking');
-			setGroupChatStates((prev) => {
-				const next = new Map(prev);
-				next.set(activeGroupChatId, 'moderator-thinking');
-				return next;
-			});
-			window.maestro.groupChat.sendToModerator(
-				activeGroupChatId,
-				nextItem.text || '',
-				nextItem.images,
-				nextItem.readOnlyMode
-			);
-		}
-	}, [groupChatState, groupChatExecutionQueue, activeGroupChatId]);
-
-	// Refs (groupChatInputRef and groupChatMessagesRef are now declared above with groupChatStore state)
+	// Group chat event listeners and execution queue are now in useGroupChatHandlers hook
 	const logsEndRef = useRef<HTMLDivElement>(null);
 	const inputRef = useRef<HTMLTextAreaElement>(null);
 	const terminalOutputRef = useRef<HTMLDivElement>(null);
@@ -2127,18 +1541,15 @@ function MaestroConsoleInner() {
 	const fileTreeContainerRef = useRef<HTMLDivElement>(null);
 	const fileTreeFilterInputRef = useRef<HTMLInputElement>(null);
 	const fileTreeKeyboardNavRef = useRef(false); // Track if selection change came from keyboard
-	const recentlyCreatedWorktreePathsRef = useRef(new Set<string>()); // Prevent duplicate UI entries from file watcher
 	const rightPanelRef = useRef<RightPanelHandle>(null);
 	const mainPanelRef = useRef<MainPanelHandle>(null);
 
-	// Refs for toast notifications (to access latest values in event handlers)
-	const addToastRef = useRef(addToast);
+	// Refs for accessing latest values in event handlers
 	const updateGlobalStatsRef = useRef(updateGlobalStats);
 	const customAICommandsRef = useRef(customAICommands);
 	const speckitCommandsRef = useRef(speckitCommands);
 	const openspecCommandsRef = useRef(openspecCommands);
 	const fileTabAutoRefreshEnabledRef = useRef(fileTabAutoRefreshEnabled);
-	addToastRef.current = addToast;
 	updateGlobalStatsRef.current = updateGlobalStats;
 	customAICommandsRef.current = customAICommands;
 	speckitCommandsRef.current = speckitCommands;
@@ -2168,7 +1579,7 @@ function MaestroConsoleInner() {
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 
-	// Expose addToast to window for debugging/testing
+	// Expose notifyToast to window for debugging/testing
 	useEffect(() => {
 		(window as any).__maestroDebug = {
 			addToast: (
@@ -2176,10 +1587,10 @@ function MaestroConsoleInner() {
 				title: string,
 				message: string
 			) => {
-				addToastRef.current({ type, title, message });
+				notifyToast({ type, title, message });
 			},
 			testToast: () => {
-				addToastRef.current({
+				notifyToast({
 					type: 'success',
 					title: 'Test Notification',
 					message: 'This is a test toast notification from the console!',
@@ -2196,7 +1607,7 @@ function MaestroConsoleInner() {
 	// Subscribe to account limit warning/reached events for toast notifications
 	useEffect(() => {
 		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
-			addToastRef.current({
+			notifyToast({
 				type: 'warning',
 				title: 'Virtuoso Limit Warning',
 				message: `Virtuoso ${data.accountName} is at ${Math.round(data.usagePercent)}% of its token limit`,
@@ -2205,7 +1616,7 @@ function MaestroConsoleInner() {
 		});
 
 		const unsubReached = window.maestro.accounts.onLimitReached((data) => {
-			addToastRef.current({
+			notifyToast({
 				type: 'error',
 				title: 'Virtuoso Limit Reached',
 				message: `Virtuoso ${data.accountName} has reached its token limit (${Math.round(data.usagePercent)}%)`,
@@ -2222,7 +1633,7 @@ function MaestroConsoleInner() {
 	// Subscribe to account recovery events for auto-resume of paused Auto Runs
 	useEffect(() => {
 		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
-			addToastRef.current({
+			notifyToast({
 				type: 'success',
 				title: 'Virtuoso Recovered',
 				message: data.recoveredCount === 1
@@ -2250,7 +1661,7 @@ function MaestroConsoleInner() {
 					if (recoveredForThis || data.recoveredAccountIds.length > 0) {
 						resumeAfterErrorRef.current?.(session.id);
 
-						addToastRef.current({
+						notifyToast({
 							type: 'info',
 							title: 'Auto Run Resuming',
 							message: 'Resuming after virtuoso recovery',
@@ -2379,7 +1790,7 @@ function MaestroConsoleInner() {
 					}, 2000);
 				}
 
-				addToastRef.current({
+				notifyToast({
 					type: 'info',
 					title: 'Account Switched',
 					message: `Switched to account ${toAccountName} (${reason})`,
@@ -2387,7 +1798,7 @@ function MaestroConsoleInner() {
 				});
 			} catch (error) {
 				console.error('[AccountSwitch] Failed to respawn agent:', error);
-				addToastRef.current({
+				notifyToast({
 					type: 'error',
 					title: 'Account Switch Failed',
 					message: `Failed to respawn agent after account switch: ${String(error)}`,
@@ -2397,7 +1808,7 @@ function MaestroConsoleInner() {
 		});
 
 		const unsubSwitchFailed = window.maestro.accounts.onSwitchFailed((data) => {
-			addToastRef.current({
+			notifyToast({
 				type: 'error',
 				title: 'Account Switch Failed',
 				message: `Failed to switch account: ${data.error || 'Unknown error'}`,
@@ -2444,7 +1855,7 @@ function MaestroConsoleInner() {
 		});
 
 		const unsubSwitchCompleted = window.maestro.accounts.onSwitchCompleted((data: any) => {
-			addToastRef.current({
+			notifyToast({
 				type: 'success',
 				title: 'Account Switched',
 				message: `Switched from ${data.fromAccountName ?? data.fromAccountId} to ${data.toAccountName ?? data.toAccountId}`,
@@ -2572,222 +1983,168 @@ function MaestroConsoleInner() {
 		activeSession?.projectRoot,
 	]);
 
-	// Per-tab navigation history for the active file tab
-	const activeFileTabHistory = useMemo(() => {
-		if (!activeSession?.activeFileTabId) return [];
-		const tab = activeSession.filePreviewTabs.find((t) => t.id === activeSession.activeFileTabId);
-		return tab?.navigationHistory ?? [];
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
+	// --- TAB HANDLERS (extracted hook) ---
+	const {
+		activeTab,
+		unifiedTabs,
+		activeFileTab,
+		isResumingSession,
+		fileTabBackHistory,
+		fileTabForwardHistory,
+		fileTabCanGoBack,
+		fileTabCanGoForward,
+		activeFileTabNavIndex,
+		performTabClose,
+		handleNewAgentSession,
+		handleTabSelect,
+		handleTabClose,
+		handleNewTab,
+		handleTabReorder,
+		handleUnifiedTabReorder,
+		handleCloseAllTabs,
+		handleCloseOtherTabs,
+		handleCloseTabsLeft,
+		handleCloseTabsRight,
+		handleCloseCurrentTab,
+		handleRequestTabRename,
+		handleUpdateTabByClaudeSessionId,
+		handleTabStar,
+		handleTabMarkUnread,
+		handleToggleTabReadOnlyMode,
+		handleToggleTabSaveToHistory,
+		handleToggleTabShowThinking,
+		handleOpenFileTab,
+		handleSelectFileTab,
+		handleCloseFileTab,
+		handleFileTabEditModeChange,
+		handleFileTabEditContentChange,
+		handleFileTabScrollPositionChange,
+		handleFileTabSearchQueryChange,
+		handleReloadFileTab,
+		handleFileTabNavigateBack,
+		handleFileTabNavigateForward,
+		handleFileTabNavigateToIndex,
+		handleClearFilePreviewHistory,
+		handleScrollPositionChange,
+		handleAtBottomChange,
+		handleDeleteLog,
+	} = useTabHandlers();
 
-	const activeFileTabNavIndex = useMemo(() => {
-		if (!activeSession?.activeFileTabId) return -1;
-		const tab = activeSession.filePreviewTabs.find((t) => t.id === activeSession.activeFileTabId);
-		return tab?.navigationIndex ?? (tab?.navigationHistory?.length ?? 0) - 1;
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
+	// --- GROUP CHAT HANDLERS (extracted from App.tsx Phase 2B) ---
+	const {
+		groupChatInputRef,
+		groupChatMessagesRef,
+		handleClearGroupChatError,
+		groupChatRecoveryActions,
+		handleOpenGroupChat,
+		handleCloseGroupChat,
+		handleCreateGroupChat,
+		handleUpdateGroupChat,
+		deleteGroupChatWithConfirmation,
+		handleProcessMonitorNavigateToGroupChat,
+		handleOpenModeratorSession,
+		handleJumpToGroupChatMessage,
+		handleGroupChatRightTabChange,
+		handleSendGroupChatMessage,
+		handleGroupChatDraftChange,
+		handleRemoveGroupChatQueueItem,
+		handleReorderGroupChatQueueItems,
+		handleNewGroupChat,
+		handleEditGroupChat,
+		handleOpenRenameGroupChatModal,
+		handleOpenDeleteGroupChatModal,
+		handleCloseNewGroupChatModal,
+		handleCloseDeleteGroupChatModal,
+		handleConfirmDeleteGroupChat,
+		handleCloseRenameGroupChatModal,
+		handleRenameGroupChatFromModal,
+		handleCloseEditGroupChatModal,
+		handleCloseGroupChatInfo,
+	} = useGroupChatHandlers();
 
-	// Per-tab back/forward history arrays
-	const fileTabBackHistory = useMemo(
-		() => activeFileTabHistory.slice(0, activeFileTabNavIndex),
-		[activeFileTabHistory, activeFileTabNavIndex]
-	);
-	const fileTabForwardHistory = useMemo(
-		() => activeFileTabHistory.slice(activeFileTabNavIndex + 1),
-		[activeFileTabHistory, activeFileTabNavIndex]
-	);
+	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
+	const {
+		errorSession,
+		recoveryActions,
+		handleCloseGitDiff,
+		handleCloseGitLog,
+		handleCloseSettings,
+		handleCloseDebugPackage,
+		handleCloseShortcutsHelp,
+		handleCloseAboutModal,
+		handleCloseUpdateCheckModal,
+		handleCloseProcessMonitor,
+		handleCloseLogViewer,
+		handleCloseConfirmModal,
+		handleCloseDeleteAgentModal,
+		handleCloseNewInstanceModal,
+		handleCloseEditAgentModal,
+		handleCloseRenameSessionModal,
+		handleCloseRenameTabModal,
+		handleConfirmQuit,
+		handleCancelQuit,
+		onKeyboardMasteryLevelUp,
+		handleKeyboardMasteryCelebrationClose,
+		handleStandingOvationClose,
+		handleFirstRunCelebrationClose,
+		handleOpenLeaderboardRegistration,
+		handleOpenLeaderboardRegistrationFromAbout,
+		handleCloseLeaderboardRegistration,
+		handleSaveLeaderboardRegistration,
+		handleLeaderboardOptOut,
+		handleCloseAgentErrorModal,
+		handleShowAgentErrorModal,
+		handleClearAgentError,
+		handleOpenQueueBrowser,
+		handleOpenTabSearch,
+		handleOpenPromptComposer,
+		handleOpenFuzzySearch,
+		handleOpenCreatePR,
+		handleOpenAboutModal,
+		handleOpenBatchRunner,
+		handleOpenMarketplace,
+		handleEditAgent,
+		handleOpenCreatePRSession,
+		handleStartTour,
+		handleSetLightboxImage,
+		handleCloseLightbox,
+		handleNavigateLightbox,
+		handleDeleteLightboxImage,
+		handleCloseAutoRunSetup,
+		handleCloseBatchRunner,
+		handleCloseTabSwitcher,
+		handleCloseFileSearch,
+		handleClosePromptComposer,
+		handleCloseCreatePRModal,
+		handleCloseSendToAgent,
+		handleCloseQueueBrowser,
+		handleCloseRenameGroupModal,
+		handleQuickActionsRenameTab,
+		handleQuickActionsOpenTabSwitcher,
+		handleQuickActionsStartTour,
+		handleQuickActionsEditAgent,
+		handleQuickActionsOpenMergeSession,
+		handleQuickActionsOpenSendToAgent,
+		handleQuickActionsOpenCreatePR,
+		handleLogViewerShortcutUsed,
+	} = useModalHandlers(inputRef, terminalOutputRef);
 
-	// Can navigate back/forward in the current file tab
-	const fileTabCanGoBack = activeFileTabNavIndex > 0;
-	const fileTabCanGoForward = activeFileTabNavIndex < activeFileTabHistory.length - 1;
-
-	/**
-	 * Open a file preview tab. If a tab with the same path already exists, select it.
-	 * Otherwise, create a new FilePreviewTab, add it to filePreviewTabs and unifiedTabOrder,
-	 * and set it as the active file tab (deselecting any active AI tab).
-	 *
-	 * For SSH remote files, pass sshRemoteId so content can be re-fetched if needed.
-	 */
-	const handleOpenFileTab = useCallback(
-		(
-			file: {
-				path: string;
-				name: string;
-				content: string;
-				sshRemoteId?: string;
-				lastModified?: number;
-			},
-			options?: {
-				/** If true, create new tab adjacent to current file tab. If false, replace current file tab content. Default: true (create new tab) */
-				openInNewTab?: boolean;
-			}
-		) => {
-			const openInNewTab = options?.openInNewTab ?? true; // Default to opening in new tab for backward compatibility
-
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-
-					// Check if a tab with this path already exists
-					const existingTab = s.filePreviewTabs.find((tab) => tab.path === file.path);
-					if (existingTab) {
-						// Tab exists - update content and lastModified if provided (e.g., after re-fetch) and select it
-						const updatedTabs = s.filePreviewTabs.map((tab) =>
-							tab.id === existingTab.id
-								? {
-										...tab,
-										content: file.content,
-										lastModified: file.lastModified ?? tab.lastModified,
-										isLoading: false,
-									}
-								: tab
-						);
-						return {
-							...s,
-							filePreviewTabs: updatedTabs,
-							activeFileTabId: existingTab.id,
-							activeTabId: s.activeTabId, // Keep AI tab reference but it's not visually active
-						};
-					}
-
-					// If not opening in new tab and there's an active file tab, replace its content
-					if (!openInNewTab && s.activeFileTabId) {
-						const currentTabId = s.activeFileTabId;
-						const currentTab = s.filePreviewTabs.find((tab) => tab.id === currentTabId);
-						const extension = file.name.includes('.') ? '.' + file.name.split('.').pop() : '';
-						const nameWithoutExtension = extension
-							? file.name.slice(0, -extension.length)
-							: file.name;
-
-						// Replace current tab's content with new file and update navigation history
-						const updatedTabs = s.filePreviewTabs.map((tab) => {
-							if (tab.id !== currentTabId) return tab;
-
-							// Build updated navigation history
-							const currentHistory = tab.navigationHistory ?? [];
-							const currentIndex = tab.navigationIndex ?? currentHistory.length - 1;
-
-							// Save current file to history before replacing (if we have content)
-							// Truncate forward history if we're not at the end
-							const truncatedHistory =
-								currentIndex >= 0 && currentIndex < currentHistory.length - 1
-									? currentHistory.slice(0, currentIndex + 1)
-									: currentHistory;
-
-							// Add current file to history if it exists and isn't already the last entry
-							let newHistory = truncatedHistory;
-							if (
-								currentTab &&
-								currentTab.path &&
-								(truncatedHistory.length === 0 ||
-									truncatedHistory[truncatedHistory.length - 1].path !== currentTab.path)
-							) {
-								newHistory = [
-									...truncatedHistory,
-									{
-										path: currentTab.path,
-										name: currentTab.name,
-										scrollTop: currentTab.scrollTop,
-									},
-								];
-							}
-
-							// Add the new file to history
-							const finalHistory = [
-								...newHistory,
-								{
-									path: file.path,
-									name: nameWithoutExtension,
-									scrollTop: 0,
-								},
-							];
-
-							return {
-								...tab,
-								path: file.path,
-								name: nameWithoutExtension,
-								extension,
-								content: file.content,
-								scrollTop: 0, // Reset scroll for new file
-								searchQuery: '', // Clear search
-								editMode: false,
-								editContent: undefined,
-								lastModified: file.lastModified ?? Date.now(),
-								sshRemoteId: file.sshRemoteId,
-								isLoading: false,
-								navigationHistory: finalHistory,
-								navigationIndex: finalHistory.length - 1, // Point to current (new) file
-							};
-						});
-						return {
-							...s,
-							filePreviewTabs: updatedTabs,
-							// activeFileTabId stays the same since we're replacing in-place
-						};
-					}
-
-					// Create a new file preview tab
-					const newTabId = generateId();
-					const extension = file.name.includes('.') ? '.' + file.name.split('.').pop() : '';
-					const nameWithoutExtension = extension
-						? file.name.slice(0, -extension.length)
-						: file.name;
-
-					const newFileTab: FilePreviewTab = {
-						id: newTabId,
-						path: file.path,
-						name: nameWithoutExtension,
-						extension,
-						content: file.content,
-						scrollTop: 0,
-						searchQuery: '',
-						editMode: false,
-						editContent: undefined,
-						createdAt: Date.now(),
-						lastModified: file.lastModified ?? Date.now(), // Use file mtime or current time as fallback
-						sshRemoteId: file.sshRemoteId,
-						isLoading: false, // Content is already loaded when this is called
-						// Initialize navigation history with the first file
-						navigationHistory: [{ path: file.path, name: nameWithoutExtension, scrollTop: 0 }],
-						navigationIndex: 0,
-					};
-
-					// Create the unified tab reference
-					const newTabRef: UnifiedTabRef = { type: 'file', id: newTabId };
-
-					// If opening in new tab and there's an active file tab, insert adjacent to it
-					let updatedUnifiedTabOrder: UnifiedTabRef[];
-					if (openInNewTab && s.activeFileTabId) {
-						const currentIndex = s.unifiedTabOrder.findIndex(
-							(ref) => ref.type === 'file' && ref.id === s.activeFileTabId
-						);
-						if (currentIndex !== -1) {
-							// Insert right after the current file tab
-							updatedUnifiedTabOrder = [
-								...s.unifiedTabOrder.slice(0, currentIndex + 1),
-								newTabRef,
-								...s.unifiedTabOrder.slice(currentIndex + 1),
-							];
-						} else {
-							// Fallback: append at end
-							updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-						}
-					} else {
-						// No active file tab or not specified - append at end
-						updatedUnifiedTabOrder = [...s.unifiedTabOrder, newTabRef];
-					}
-
-					return {
-						...s,
-						filePreviewTabs: [...s.filePreviewTabs, newFileTab],
-						unifiedTabOrder: updatedUnifiedTabOrder,
-						activeFileTabId: newTabId,
-						// Deselect AI tab when file tab becomes active
-						// Note: activeTabId stays as is - it tracks the last active AI tab for when user switches back
-					};
-				})
-			);
-		},
-		[]
-	);
+	const {
+		handleOpenWorktreeConfig,
+		handleQuickCreateWorktree,
+		handleOpenWorktreeConfigSession,
+		handleDeleteWorktreeSession,
+		handleToggleWorktreeExpanded,
+		handleCloseWorktreeConfigModal,
+		handleSaveWorktreeConfig,
+		handleDisableWorktreeConfig,
+		handleCreateWorktreeFromConfig,
+		handleCloseCreateWorktreeModal,
+		handleCreateWorktree,
+		handleCloseDeleteWorktreeModal,
+		handleConfirmDeleteWorktree,
+		handleConfirmAndDeleteWorktreeOnDisk,
+	} = useWorktreeHandlers();
 
 	// --- APP HANDLERS (drag, file, folder operations) ---
 	const {
@@ -2849,79 +2206,6 @@ function MaestroConsoleInner() {
 
 	// PERF: Memoize hasNoAgents check for SettingsModal (only depends on session count)
 	const hasNoAgents = useMemo(() => sessions.length === 0, [sessions.length]);
-
-	// Get the session with the active error (for AgentErrorModal)
-	const errorSession = useMemo(
-		() =>
-			agentErrorModalSessionId ? sessions.find((s) => s.id === agentErrorModalSessionId) : null,
-		[agentErrorModalSessionId, sessions]
-	);
-
-	// Handler to close the agent error modal without clearing the error
-	const handleCloseAgentErrorModal = useCallback(() => {
-		setAgentErrorModalSessionId(null);
-	}, []);
-
-	// Error recovery handlers — delegate state mutation + IPC to agentStore,
-	// keep UI side-effects (focus input, close modal) here in App.tsx.
-	const handleClearAgentError = useCallback((sessionId: string, tabId?: string) => {
-		useAgentStore.getState().clearAgentError(sessionId, tabId);
-		setAgentErrorModalSessionId(null);
-	}, []);
-
-	const handleStartNewSessionAfterError = useCallback(
-		(sessionId: string) => {
-			useAgentStore.getState().startNewSessionAfterError(sessionId, {
-				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
-			});
-			setAgentErrorModalSessionId(null);
-			setTimeout(() => inputRef.current?.focus(), 0);
-		},
-		[defaultSaveToHistory, defaultShowThinking]
-	);
-
-	const handleRetryAfterError = useCallback((sessionId: string) => {
-		useAgentStore.getState().retryAfterError(sessionId);
-		setAgentErrorModalSessionId(null);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, []);
-
-	const handleRestartAgentAfterError = useCallback(async (sessionId: string) => {
-		await useAgentStore.getState().restartAgentAfterError(sessionId);
-		setAgentErrorModalSessionId(null);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, []);
-
-	const handleAuthenticateAfterError = useCallback((sessionId: string) => {
-		useAgentStore.getState().authenticateAfterError(sessionId);
-		setAgentErrorModalSessionId(null);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, []);
-
-	// Use the agent error recovery hook to get recovery actions
-	const { recoveryActions } = useAgentErrorRecovery({
-		error: errorSession?.agentError,
-		agentId: errorSession?.toolType || 'claude-code',
-		sessionId: errorSession?.id || '',
-		onNewSession: errorSession ? () => handleStartNewSessionAfterError(errorSession.id) : undefined,
-		onRetry: errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
-		onClearError: errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
-		onRestartAgent: errorSession ? () => handleRestartAgentAfterError(errorSession.id) : undefined,
-		onAuthenticate: errorSession ? () => handleAuthenticateAfterError(errorSession.id) : undefined,
-	});
-
-	// Handler to clear group chat error (now uses context's clearGroupChatError)
-	const handleClearGroupChatError = handleClearGroupChatErrorBase;
-
-	// Use the agent error recovery hook for group chat errors
-	const { recoveryActions: groupChatRecoveryActions } = useAgentErrorRecovery({
-		error: groupChatError?.error,
-		agentId: 'claude-code', // Group chat moderator is always claude-code for now
-		sessionId: groupChatError?.groupChatId || '',
-		onRetry: handleClearGroupChatError,
-		onClearError: handleClearGroupChatError,
-	});
 
 	// Tab completion hook for terminal mode
 	const { getSuggestions: getTabCompletionSuggestions } = useTabCompletion(activeSession);
@@ -3027,7 +2311,7 @@ function MaestroConsoleInner() {
 					: info.sessionName;
 
 			// Show toast notification in the UI
-			addToast({
+			notifyToast({
 				type: 'success',
 				title: 'Session Merged',
 				message: `Created "${info.sessionName}" from ${sourceInfo}${tokenInfo}.${savedInfo}`,
@@ -3071,7 +2355,7 @@ function MaestroConsoleInner() {
 					);
 				}
 
-				addToast({
+				notifyToast({
 					type: 'success',
 					title: 'Context Merged',
 					message: `"${result.sourceSessionName || 'Current Session'}" → "${
@@ -3107,7 +2391,7 @@ function MaestroConsoleInner() {
 			setSendToAgentModalOpen(false);
 
 			// Show toast notification in the UI
-			addToast({
+			notifyToast({
 				type: 'success',
 				title: 'Context Transferred',
 				message: `Created "${sessionName}" with transferred context`,
@@ -3129,19 +2413,6 @@ function MaestroConsoleInner() {
 	});
 
 	// --- STABLE HANDLERS FOR APP AGENT MODALS ---
-
-	// LeaderboardRegistrationModal handlers
-	const handleCloseLeaderboardRegistration = useCallback(() => {
-		setLeaderboardRegistrationOpen(false);
-	}, []);
-
-	const handleSaveLeaderboardRegistration = useCallback((registration: LeaderboardRegistration) => {
-		setLeaderboardRegistration(registration);
-	}, []);
-
-	const handleLeaderboardOptOut = useCallback(() => {
-		setLeaderboardRegistration(null);
-	}, []);
 
 	// Sync autorun stats from server (for new device installations)
 	const handleSyncAutoRunStats = useCallback(
@@ -3188,7 +2459,7 @@ function MaestroConsoleInner() {
 			);
 
 			if (!result.success) {
-				addToast({
+				notifyToast({
 					type: 'error',
 					title: 'Merge Failed',
 					message: result.error || 'Failed to merge contexts',
@@ -3199,7 +2470,7 @@ function MaestroConsoleInner() {
 
 			return result;
 		},
-		[activeSession, executeMerge, addToast]
+		[activeSession, executeMerge]
 	);
 
 	// TransferProgressModal handlers
@@ -3214,11 +2485,6 @@ function MaestroConsoleInner() {
 		setTransferSourceAgent(null);
 		setTransferTargetAgent(null);
 	}, [resetTransfer]);
-
-	// SendToAgentModal handlers
-	const handleCloseSendToAgent = useCallback(() => {
-		setSendToAgentModalOpen(false);
-	}, []);
 
 	const handleSendToAgent = useCallback(
 		async (targetSessionId: string, options: SendToAgentOptions) => {
@@ -3338,7 +2604,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const tokenInfo = estimatedTokens > 0 ? ` (~${estimatedTokens.toLocaleString()} tokens)` : '';
 
 			// Show success toast
-			addToast({
+			notifyToast({
 				type: 'success',
 				title: 'Context Sent',
 				message: `"${sourceName}" → "${targetSession.name}"${tokenInfo}`,
@@ -3436,7 +2702,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			return { success: true, newSessionId: targetSessionId, newTabId };
 		},
-		[activeSession, sessions, setSessions, setActiveSessionId, addToast, resetTransfer]
+		[activeSession, sessions, setSessions, setActiveSessionId, resetTransfer]
 	);
 
 	// Summarize & Continue hook for context compaction (non-blocking, per-tab)
@@ -3462,7 +2728,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const targetTab = activeSession.aiTabs.find((t) => t.id === targetTabId);
 
 			if (!targetTab || !canSummarize(activeSession.contextUsage, targetTab.logs)) {
-				addToast({
+				notifyToast({
 					type: 'warning',
 					title: 'Cannot Compact',
 					message: `Context too small. Need at least ${minContextUsagePercent}% usage, ~2k tokens, or 8+ messages to compact.`,
@@ -3498,7 +2764,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 					// Show success notification with click-to-navigate
 					const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
-					addToast({
+					notifyToast({
 						type: 'success',
 						title: 'Context Compacted',
 						message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
@@ -3518,7 +2784,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			minContextUsagePercent,
 			startSummarize,
 			setSessions,
-			addToast,
 			clearTabState,
 		]
 	);
@@ -3603,61 +2868,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// For AI mode: use active tab's inputValue (stored per-tab)
 	// For terminal mode: use local state (shared across tabs)
 	const isAiMode = activeSession?.inputMode === 'ai';
-	// PERF: Memoize activeTab lookup to avoid O(n) .find() on every keystroke
-	// This is THE canonical activeTab for the component - use this instead of calling getActiveTab()
-	const activeTab = useMemo(
-		() => (activeSession ? getActiveTab(activeSession) : undefined),
-		[activeSession?.aiTabs, activeSession?.activeTabId]
-	);
-
-	// UNIFIED TAB SYSTEM: Combine aiTabs and filePreviewTabs according to unifiedTabOrder
-	// This produces a single list for rendering tabs in the correct order (AI and file tabs interspersed)
-	// The type discriminator allows components to render the appropriate content for each tab type
-	type UnifiedTab =
-		| { type: 'ai'; id: string; data: AITab }
-		| { type: 'file'; id: string; data: FilePreviewTab };
-
-	const unifiedTabs = useMemo((): UnifiedTab[] => {
-		if (!activeSession) return [];
-
-		const { aiTabs, filePreviewTabs, unifiedTabOrder } = activeSession;
-		const aiTabMap = new Map(aiTabs.map((tab) => [tab.id, tab]));
-		const fileTabMap = new Map(filePreviewTabs.map((tab) => [tab.id, tab]));
-
-		return unifiedTabOrder
-			.map((ref): UnifiedTab | null => {
-				if (ref.type === 'ai') {
-					const tab = aiTabMap.get(ref.id);
-					return tab ? { type: 'ai', id: ref.id, data: tab } : null;
-				} else {
-					const tab = fileTabMap.get(ref.id);
-					return tab ? { type: 'file', id: ref.id, data: tab } : null;
-				}
-			})
-			.filter((tab): tab is UnifiedTab => tab !== null);
-	}, [activeSession?.aiTabs, activeSession?.filePreviewTabs, activeSession?.unifiedTabOrder]);
-
-	// Get the active file preview tab (if a file tab is active)
-	const activeFileTab = useMemo((): FilePreviewTab | null => {
-		if (!activeSession?.activeFileTabId) return null;
-		return (
-			activeSession.filePreviewTabs.find((tab) => tab.id === activeSession.activeFileTabId) ?? null
-		);
-	}, [activeSession?.activeFileTabId, activeSession?.filePreviewTabs]);
-
-	const isResumingSession = !!activeTab?.agentSessionId;
 	const canAttachImages = useMemo(() => {
 		if (!activeSession || activeSession.inputMode !== 'ai') return false;
 		return isResumingSession
 			? hasActiveSessionCapability('supportsImageInputOnResume')
 			: hasActiveSessionCapability('supportsImageInput');
 	}, [activeSession, isResumingSession, hasActiveSessionCapability]);
-	const blockCodexResumeImages =
-		!!activeSession &&
-		activeSession.toolType === 'codex' &&
-		isResumingSession &&
-		!hasActiveSessionCapability('supportsImageInputOnResume');
-
 	// Track previous active tab to detect tab switches
 	const prevActiveTabIdRef = useRef<string | undefined>(activeTab?.id);
 
@@ -3935,7 +3151,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	// Effect: process pending resume after agent switch completes
 	useEffect(() => {
-		if (pendingResumeRef.current && activeSession?.id === pendingResumeRef.current.targetSessionId) {
+		if (
+			pendingResumeRef.current &&
+			activeSession?.id === pendingResumeRef.current.targetSessionId
+		) {
 			const { agentSessionId } = pendingResumeRef.current;
 			pendingResumeRef.current = null;
 			handleResumeSession(agentSessionId);
@@ -3948,7 +3167,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 	// onUsage, onAgentError, onThinkingChunk, onSshRemote, onToolExecution)
 	useAgentListeners({
 		batchedUpdater,
-		addToastRef,
 		addHistoryEntryRef,
 		spawnBackgroundSynopsisRef,
 		getBatchStateRef,
@@ -3958,622 +3176,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		processQueuedItemRef,
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
 	});
-
-	// PERFORMANCE: Memoized callback for creating new agent sessions
-	// Extracted from inline function to prevent MainPanel re-renders
-	const handleNewAgentSession = useCallback(() => {
-		// Create a fresh AI tab using functional setState to avoid stale closure
-		setSessions((prev) => {
-			const currentSession = prev.find((s) => s.id === activeSessionIdRef.current);
-			if (!currentSession) return prev;
-			return prev.map((s) => {
-				if (s.id !== currentSession.id) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
-			});
-		});
-		setActiveAgentSessionId(null);
-		setAgentSessionsOpen(false);
-	}, [defaultSaveToHistory, defaultShowThinking]);
-
-	// PERFORMANCE: Memoized tab management callbacks
-	// Extracted from inline functions to prevent MainPanel re-renders
-	const handleTabSelect = useCallback((tabId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				const result = setActiveTab(s, tabId);
-				return result ? result.session : s;
-			})
-		);
-	}, []);
-
-	/**
-	 * Force close a file preview tab without confirmation.
-	 * Removes it from filePreviewTabs and unifiedTabOrder.
-	 * If this was the active file tab, selects the next tab in unifiedTabOrder (could be AI or file).
-	 * Updates activeTabId or activeFileTabId accordingly.
-	 */
-	const forceCloseFileTab = useCallback((tabId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				// Use helper function to close file tab and add to unified history
-				const result = closeFileTabHelper(s, tabId);
-				if (!result) return s;
-
-				return result.session;
-			})
-		);
-	}, []);
-
-	/**
-	 * Close a file preview tab with unsaved changes check.
-	 * If the tab has unsaved changes (editContent !== undefined), show a confirmation modal.
-	 * Otherwise, close the tab immediately.
-	 */
-	const handleCloseFileTab = useCallback(
-		(tabId: string) => {
-			// Find the tab to check for unsaved changes
-			const activeSession = sessions.find((s) => s.id === activeSessionIdRef.current);
-			if (!activeSession) {
-				forceCloseFileTab(tabId);
-				return;
-			}
-
-			const tabToClose = activeSession.filePreviewTabs.find((tab) => tab.id === tabId);
-			if (!tabToClose) {
-				forceCloseFileTab(tabId);
-				return;
-			}
-
-			// Check if tab has unsaved changes (editContent is set when different from saved content)
-			if (tabToClose.editContent !== undefined) {
-				// Show confirmation modal (use openModal with data atomically to avoid race condition)
-				useModalStore.getState().openModal('confirm', {
-					message: `"${tabToClose.name}${tabToClose.extension}" has unsaved changes. Are you sure you want to close it?`,
-					onConfirm: () => {
-						forceCloseFileTab(tabId);
-					},
-				});
-			} else {
-				// No unsaved changes, close immediately
-				forceCloseFileTab(tabId);
-			}
-		},
-		[
-			sessions,
-			forceCloseFileTab,
-			setConfirmModalMessage,
-			setConfirmModalOnConfirm,
-			setConfirmModalOpen,
-		]
-	);
-
-	/**
-	 * Update a file tab's editMode state.
-	 * Called when user toggles between edit and preview mode in FilePreview.
-	 */
-	const handleFileTabEditModeChange = useCallback((tabId: string, editMode: boolean) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				const updatedFileTabs = s.filePreviewTabs.map((tab) => {
-					if (tab.id !== tabId) return tab;
-					return { ...tab, editMode };
-				});
-
-				return { ...s, filePreviewTabs: updatedFileTabs };
-			})
-		);
-	}, []);
-
-	/**
-	 * Update a file tab's editContent state.
-	 * Called when user edits content in FilePreview.
-	 * Pass undefined to indicate no pending changes (content matches saved file).
-	 * Optionally pass savedContent to update the tab's base content after a save.
-	 */
-	const handleFileTabEditContentChange = useCallback(
-		(tabId: string, editContent: string | undefined, savedContent?: string) => {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-
-					const updatedFileTabs = s.filePreviewTabs.map((tab) => {
-						if (tab.id !== tabId) return tab;
-						// If savedContent is provided, update the base content as well
-						if (savedContent !== undefined) {
-							return { ...tab, editContent, content: savedContent };
-						}
-						return { ...tab, editContent };
-					});
-
-					return { ...s, filePreviewTabs: updatedFileTabs };
-				})
-			);
-		},
-		[]
-	);
-
-	/**
-	 * Update a file tab's scroll position.
-	 * Called when user scrolls within FilePreview (throttled at 200ms).
-	 * Also syncs the scroll position to the current entry in navigationHistory
-	 * so that tab close/restore preserves correct breadcrumb positions.
-	 */
-	const handleFileTabScrollPositionChange = useCallback((tabId: string, scrollTop: number) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				const updatedFileTabs = s.filePreviewTabs.map((tab) => {
-					if (tab.id !== tabId) return tab;
-
-					// Also update the scroll position in navigationHistory for the current entry
-					// This ensures close/restore preserves the correct scroll position in breadcrumbs
-					let updatedHistory = tab.navigationHistory;
-					if (updatedHistory && updatedHistory.length > 0) {
-						const currentIndex = tab.navigationIndex ?? updatedHistory.length - 1;
-						if (currentIndex >= 0 && currentIndex < updatedHistory.length) {
-							updatedHistory = updatedHistory.map((entry, idx) =>
-								idx === currentIndex ? { ...entry, scrollTop } : entry
-							);
-						}
-					}
-
-					return { ...tab, scrollTop, navigationHistory: updatedHistory };
-				});
-
-				return { ...s, filePreviewTabs: updatedFileTabs };
-			})
-		);
-	}, []);
-
-	/**
-	 * Update a file tab's search query state.
-	 * Called when user types in the search box within FilePreview.
-	 */
-	const handleFileTabSearchQueryChange = useCallback((tabId: string, searchQuery: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				const updatedFileTabs = s.filePreviewTabs.map((tab) => {
-					if (tab.id !== tabId) return tab;
-					return { ...tab, searchQuery };
-				});
-
-				return { ...s, filePreviewTabs: updatedFileTabs };
-			})
-		);
-	}, []);
-
-	/**
-	 * Reload a file tab's content from disk. Called when the user clicks Reload in the file-changed banner.
-	 */
-	const handleReloadFileTab = useCallback(async (tabId: string) => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession) return;
-
-		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-		if (!fileTab) return;
-
-		try {
-			const [content, stat] = await Promise.all([
-				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
-				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
-			]);
-			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
-
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-					return {
-						...s,
-						filePreviewTabs: s.filePreviewTabs.map((tab) =>
-							tab.id === tabId
-								? { ...tab, content, lastModified: newMtime, editContent: undefined }
-								: tab
-						),
-					};
-				})
-			);
-		} catch (error) {
-			console.debug('[handleReloadFileTab] Failed to reload:', error);
-		}
-	}, []);
-
-	/**
-	 * Select a file preview tab. This sets the file tab as active.
-	 * activeTabId is preserved to track the last active AI tab for when the user switches back.
-	 * If fileTabAutoRefreshEnabled setting is true, checks if file has changed on disk and refreshes content.
-	 */
-	const handleSelectFileTab = useCallback(async (tabId: string) => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession) return;
-
-		// Verify the file tab exists
-		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
-		if (!fileTab) return;
-
-		// Set the tab as active immediately
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				return {
-					...s,
-					activeFileTabId: tabId,
-					// activeTabId stays as is - it tracks the last active AI tab for when user switches back
-				};
-			})
-		);
-
-		// If auto-refresh is enabled and tab has pending edits, skip refresh to avoid losing changes
-		if (fileTabAutoRefreshEnabledRef.current && !fileTab.editContent) {
-			try {
-				// Get the current file stat to check if it has changed
-				const stat = await window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId);
-				if (!stat || !stat.modifiedAt) return;
-
-				const currentMtime = new Date(stat.modifiedAt).getTime();
-
-				// If file has been modified since we last loaded it, refresh content
-				if (currentMtime > fileTab.lastModified) {
-					const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== activeSessionIdRef.current) return s;
-							return {
-								...s,
-								filePreviewTabs: s.filePreviewTabs.map((tab) =>
-									tab.id === tabId ? { ...tab, content, lastModified: currentMtime } : tab
-								),
-							};
-						})
-					);
-				}
-			} catch (error) {
-				// Silently ignore refresh errors - the tab still shows previous content
-				console.debug('[handleSelectFileTab] Auto-refresh failed:', error);
-			}
-		}
-	}, []);
-
-	/**
-	 * Reorder tabs in the unified tab order. This allows moving both AI and file tabs
-	 * relative to each other. The fromIndex and toIndex refer to positions in unifiedTabOrder.
-	 * This replaces/supplements handleTabReorder for the unified tab system.
-	 */
-	const handleUnifiedTabReorder = useCallback((fromIndex: number, toIndex: number) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				// Validate indices
-				if (
-					fromIndex < 0 ||
-					fromIndex >= s.unifiedTabOrder.length ||
-					toIndex < 0 ||
-					toIndex >= s.unifiedTabOrder.length ||
-					fromIndex === toIndex
-				) {
-					return s;
-				}
-
-				// Reorder the unifiedTabOrder array
-				const newOrder = [...s.unifiedTabOrder];
-				const [movedRef] = newOrder.splice(fromIndex, 1);
-				newOrder.splice(toIndex, 0, movedRef);
-
-				return { ...s, unifiedTabOrder: newOrder };
-			})
-		);
-	}, []);
-
-	/**
-	 * Internal tab close handler that performs the actual close.
-	 * Wizard tabs are closed without being added to history (they can't be restored).
-	 */
-	const performTabClose = useCallback((tabId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				// Check if this is a wizard tab - wizard tabs should not be added to close history
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				const isWizardTab = tab && hasActiveWizard(tab);
-				// Find the unified index before closing
-				const unifiedIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === 'ai' && ref.id === tabId
-				);
-				// Note: showUnreadOnly is accessed via ref pattern if needed, or we accept this dep
-				const result = closeTab(s, tabId, false, { skipHistory: isWizardTab }); // Don't filter for unread during close
-				if (!result) return s;
-				// Also add to unified closed history (unless wizard tab) so it can be reopened with Cmd+Shift+T
-				if (!isWizardTab && tab) {
-					return addAiTabToUnifiedHistory(result.session, tab, unifiedIndex);
-				}
-				return result.session;
-			})
-		);
-	}, []);
-
-	/**
-	 * Tab close handler that shows confirmation for wizard tabs.
-	 * Wizard tabs require confirmation before closing since they can't be restored.
-	 */
-	const handleTabClose = useCallback(
-		(tabId: string) => {
-			// Find the tab to check if it has an active wizard
-			const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-			const tab = session?.aiTabs.find((t) => t.id === tabId);
-
-			if (tab && hasActiveWizard(tab)) {
-				// Show confirmation modal for wizard tabs (use openModal atomically)
-				useModalStore.getState().openModal('confirm', {
-					message: 'Close this wizard? Your progress will be lost and cannot be restored.',
-					onConfirm: () => performTabClose(tabId),
-				});
-			} else {
-				// Regular tab - close directly
-				performTabClose(tabId);
-			}
-		},
-		[performTabClose]
-	);
-
-	const handleNewTab = useCallback(() => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				const result = createTab(s, {
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				});
-				if (!result) return s;
-				return result.session;
-			})
-		);
-	}, [defaultSaveToHistory, defaultShowThinking]);
-
-	/**
-	 * Close all tabs in the active session.
-	 * Creates a fresh new tab after closing all existing ones.
-	 */
-	const handleCloseAllTabs = useCallback(() => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				// Close all tabs by iterating through them
-				let updatedSession = s;
-				const tabIds = s.aiTabs.map((t) => t.id);
-				for (const tabId of tabIds) {
-					const tab = updatedSession.aiTabs.find((t) => t.id === tabId);
-					const result = closeTab(updatedSession, tabId, false, {
-						skipHistory: tab ? hasActiveWizard(tab) : false,
-					});
-					if (result) {
-						updatedSession = result.session;
-					}
-				}
-				return updatedSession;
-			})
-		);
-	}, []);
-
-	/**
-	 * Close all tabs except the active tab (works with unified tabs).
-	 * Supports both AI tabs and file preview tabs based on unifiedTabOrder.
-	 */
-	const handleCloseOtherTabs = useCallback(() => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				// Determine the currently active tab in unified order
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				// Find tabs to close (all except the active one)
-				const tabsToClose = s.unifiedTabOrder.filter(
-					(ref) => !(ref.type === activeUnifiedType && ref.id === activeUnifiedId)
-				);
-
-				let updatedSession = s;
-
-				for (const tabRef of tabsToClose) {
-					if (tabRef.type === 'ai') {
-						// Close AI tab using closeTab helper
-						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
-						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
-								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
-						}
-					} else {
-						// Close file tab by removing from arrays
-						updatedSession = {
-							...updatedSession,
-							filePreviewTabs: updatedSession.filePreviewTabs.filter((t) => t.id !== tabRef.id),
-							unifiedTabOrder: updatedSession.unifiedTabOrder.filter(
-								(ref) => !(ref.type === 'file' && ref.id === tabRef.id)
-							),
-						};
-					}
-				}
-
-				return updatedSession;
-			})
-		);
-	}, []);
-
-	/**
-	 * Close all tabs to the left of the active tab (works with unified tabs).
-	 * Supports both AI tabs and file preview tabs based on unifiedTabOrder.
-	 */
-	const handleCloseTabsLeft = useCallback(() => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				// Determine the currently active tab in unified order
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				// Find the active tab's position in unifiedTabOrder
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
-				if (activeIndex <= 0) return s; // Nothing to close
-
-				// Get all tabs to the left of the active tab
-				const tabsToClose = s.unifiedTabOrder.slice(0, activeIndex);
-
-				let updatedSession = s;
-
-				for (const tabRef of tabsToClose) {
-					if (tabRef.type === 'ai') {
-						// Close AI tab using closeTab helper
-						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
-						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
-								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
-						}
-					} else {
-						// Close file tab by removing from arrays
-						updatedSession = {
-							...updatedSession,
-							filePreviewTabs: updatedSession.filePreviewTabs.filter((t) => t.id !== tabRef.id),
-							unifiedTabOrder: updatedSession.unifiedTabOrder.filter(
-								(ref) => !(ref.type === 'file' && ref.id === tabRef.id)
-							),
-						};
-					}
-				}
-
-				return updatedSession;
-			})
-		);
-	}, []);
-
-	/**
-	 * Close all tabs to the right of the active tab (works with unified tabs).
-	 * Supports both AI tabs and file preview tabs based on unifiedTabOrder.
-	 */
-	const handleCloseTabsRight = useCallback(() => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-
-				// Determine the currently active tab in unified order
-				const activeUnifiedId = s.activeFileTabId ?? s.activeTabId;
-				const activeUnifiedType = s.activeFileTabId ? 'file' : 'ai';
-
-				// Find the active tab's position in unifiedTabOrder
-				const activeIndex = s.unifiedTabOrder.findIndex(
-					(ref) => ref.type === activeUnifiedType && ref.id === activeUnifiedId
-				);
-				if (activeIndex < 0 || activeIndex >= s.unifiedTabOrder.length - 1) return s; // Nothing to close
-
-				// Get all tabs to the right of the active tab
-				const tabsToClose = s.unifiedTabOrder.slice(activeIndex + 1);
-
-				let updatedSession = s;
-
-				for (const tabRef of tabsToClose) {
-					if (tabRef.type === 'ai') {
-						// Close AI tab using closeTab helper
-						const tab = updatedSession.aiTabs.find((t) => t.id === tabRef.id);
-						if (tab) {
-							const result = closeTab(updatedSession, tab.id, false, {
-								skipHistory: hasActiveWizard(tab),
-							});
-							if (result) {
-								updatedSession = result.session;
-							}
-						}
-					} else {
-						// Close file tab by removing from arrays
-						updatedSession = {
-							...updatedSession,
-							filePreviewTabs: updatedSession.filePreviewTabs.filter((t) => t.id !== tabRef.id),
-							unifiedTabOrder: updatedSession.unifiedTabOrder.filter(
-								(ref) => !(ref.type === 'file' && ref.id === tabRef.id)
-							),
-						};
-					}
-				}
-
-				return updatedSession;
-			})
-		);
-	}, []);
-
-	/**
-	 * Close the currently active tab (for Cmd+W).
-	 * Determines which tab is active (checking activeFileTabId first, then activeTabId),
-	 * and calls the appropriate close handler.
-	 *
-	 * For file tabs: closes immediately.
-	 * For AI tabs: prevents closing if it's the last AI tab (keeps at least one AI tab).
-	 *
-	 * Returns an object indicating what action was taken, for the keyboard handler
-	 * to potentially show confirmation modals for wizard tabs.
-	 */
-	const handleCloseCurrentTab = useCallback((): {
-		type: 'file' | 'ai' | 'prevented' | 'none';
-		tabId?: string;
-		isWizardTab?: boolean;
-	} => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return { type: 'none' };
-
-		// Check if a file tab is active first
-		if (session.activeFileTabId) {
-			const tabId = session.activeFileTabId;
-			// File tabs can always be closed (no wizard confirmation needed)
-			// Use the closeFileTabHelper to properly add to unifiedClosedTabHistory for Cmd+Shift+T
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-					const result = closeFileTabHelper(s, tabId);
-					if (!result) return s;
-					return result.session;
-				})
-			);
-			return { type: 'file', tabId };
-		}
-
-		// AI tab is active
-		if (session.activeTabId) {
-			// Prevent closing if it's the last AI tab
-			if (session.aiTabs.length <= 1) {
-				return { type: 'prevented' };
-			}
-
-			const tabId = session.activeTabId;
-			const tab = session.aiTabs.find((t) => t.id === tabId);
-			const isWizardTab = tab ? hasActiveWizard(tab) : false;
-
-			// Return info for the keyboard handler to show confirmation modal if needed
-			return { type: 'ai', tabId, isWizardTab };
-		}
-
-		return { type: 'none' };
-	}, []);
 
 	const handleRemoveQueuedItem = useCallback((itemId: string) => {
 		setSessions((prev) =>
@@ -4595,345 +3197,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSessions((prev) =>
 			prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
 		);
-	}, []);
-
-	const handleOpenQueueBrowser = useCallback(() => {
-		setQueueBrowserOpen(true);
-	}, []);
-
-	// PERF: Memoized callback for deleting log entries
-	// Extracted from inline function to prevent MainPanel re-renders
-	const handleDeleteLog = useCallback((logId: string): number | null => {
-		// Use refs to access current state without adding dependencies
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession) return null;
-
-		const isAIMode = currentSession.inputMode === 'ai';
-
-		// For AI mode, use the active tab's logs; for terminal mode, use shellLogs
-		const currentActiveTab = isAIMode ? getActiveTab(currentSession) : null;
-		const logs = isAIMode ? currentActiveTab?.logs || [] : currentSession.shellLogs;
-
-		// Find the log entry and its index
-		const logIndex = logs.findIndex((log) => log.id === logId);
-		if (logIndex === -1) return null;
-
-		const log = logs[logIndex];
-		if (log.source !== 'user') return null; // Only delete user commands/messages
-
-		// Find the next user command index (or end of array)
-		let endIndex = logs.length;
-		for (let i = logIndex + 1; i < logs.length; i++) {
-			if (logs[i].source === 'user') {
-				endIndex = i;
-				break;
-			}
-		}
-
-		// Remove logs from logIndex to endIndex (exclusive)
-		const newLogs = [...logs.slice(0, logIndex), ...logs.slice(endIndex)];
-
-		// Find the index of the next user command in the NEW array
-		// This is the command that was at endIndex, now at logIndex position
-		let nextUserCommandIndex: number | null = null;
-		for (let i = logIndex; i < newLogs.length; i++) {
-			if (newLogs[i].source === 'user') {
-				nextUserCommandIndex = i;
-				break;
-			}
-		}
-		// If no next command, try to find the previous user command
-		if (nextUserCommandIndex === null) {
-			for (let i = logIndex - 1; i >= 0; i--) {
-				if (newLogs[i].source === 'user') {
-					nextUserCommandIndex = i;
-					break;
-				}
-			}
-		}
-
-		if (isAIMode && currentActiveTab) {
-			// For AI mode, also delete from the Claude session JSONL file
-			// This ensures the context is actually removed for future interactions
-			// Use the active tab's agentSessionId, not the deprecated session-level one
-			const agentSessionId = currentActiveTab.agentSessionId;
-			if (agentSessionId && currentSession.cwd) {
-				// Delete asynchronously - don't block the UI update
-				window.maestro.claude
-					.deleteMessagePair(
-						currentSession.cwd,
-						agentSessionId,
-						logId, // This is the UUID if loaded from Claude session
-						log.text // Fallback: match by content if UUID doesn't match
-					)
-					.then((result) => {
-						if (!result.success) {
-							console.warn('[handleDeleteLog] Failed to delete from Claude session:', result.error);
-						}
-					})
-					.catch((err) => {
-						console.error('[handleDeleteLog] Error deleting from Claude session:', err);
-					});
-			}
-
-			// Update the active tab's logs and aiCommandHistory
-			const commandText = log.text.trim();
-
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentSession.id) return s;
-					const newAICommandHistory = (s.aiCommandHistory || []).filter(
-						(cmd) => cmd !== commandText
-					);
-					return {
-						...s,
-						aiCommandHistory: newAICommandHistory,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === currentActiveTab.id ? { ...tab, logs: newLogs } : tab
-						),
-					};
-				})
-			);
-		} else {
-			// Terminal mode - update shellLogs and shellCommandHistory
-			const commandText = log.text.trim();
-
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== currentSession.id) return s;
-					const newShellCommandHistory = (s.shellCommandHistory || []).filter(
-						(cmd) => cmd !== commandText
-					);
-					return {
-						...s,
-						shellLogs: newLogs,
-						shellCommandHistory: newShellCommandHistory,
-					};
-				})
-			);
-		}
-
-		return nextUserCommandIndex;
-	}, []);
-
-	// PERF: Memoized callbacks for MainPanel tab management props
-	// These were previously inline arrow functions, causing MainPanel re-renders on every keystroke
-	const handleRequestTabRename = useCallback((tabId: string) => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		const tab = session.aiTabs?.find((t) => t.id === tabId);
-		if (tab) {
-			// Cancel automatic tab naming if in progress (user is manually renaming)
-			if (tab.isGeneratingName) {
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== activeSessionIdRef.current) return s;
-						return {
-							...s,
-							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, isGeneratingName: false } : t)),
-						};
-					})
-				);
-			}
-			setRenameTabId(tabId);
-			setRenameTabInitialName(getInitialRenameValue(tab));
-			setRenameTabModalOpen(true);
-		}
-	}, []);
-
-	const handleTabReorder = useCallback((fromIndex: number, toIndex: number) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current || !s.aiTabs) return s;
-				const tabs = [...s.aiTabs];
-				const [movedTab] = tabs.splice(fromIndex, 1);
-				tabs.splice(toIndex, 0, movedTab);
-				return { ...s, aiTabs: tabs };
-			})
-		);
-	}, []);
-
-	const handleUpdateTabByClaudeSessionId = useCallback(
-		(agentSessionId: string, updates: { name?: string | null; starred?: boolean }) => {
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-					const tabIndex = s.aiTabs.findIndex((tab) => tab.agentSessionId === agentSessionId);
-					if (tabIndex === -1) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.agentSessionId === agentSessionId
-								? {
-										...tab,
-										...(updates.name !== undefined ? { name: updates.name } : {}),
-										...(updates.starred !== undefined ? { starred: updates.starred } : {}),
-									}
-								: tab
-						),
-					};
-				})
-			);
-		},
-		[]
-	);
-
-	const handleTabStar = useCallback((tabId: string, starred: boolean) => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		const tabToStar = session.aiTabs.find((t) => t.id === tabId);
-		if (!tabToStar?.agentSessionId) return;
-
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				const tab = s.aiTabs.find((t) => t.id === tabId);
-				if (tab?.agentSessionId) {
-					const agentId = s.toolType || 'claude-code';
-					if (agentId === 'claude-code') {
-						window.maestro.claude
-							.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
-					} else {
-						window.maestro.agentSessions
-							.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
-							.catch((err) => console.error('Failed to persist tab starred:', err));
-					}
-				}
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
-				};
-			})
-		);
-	}, []);
-
-	const handleTabMarkUnread = useCallback((tabId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: true } : t)),
-				};
-			})
-		);
-	}, []);
-
-	const handleToggleTabReadOnlyMode = useCallback(() => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		const activeTab = getActiveTab(session);
-		if (!activeTab) return;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTab.id ? { ...tab, readOnlyMode: !tab.readOnlyMode } : tab
-					),
-				};
-			})
-		);
-	}, []);
-
-	const handleToggleTabSaveToHistory = useCallback(() => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		const activeTab = getActiveTab(session);
-		if (!activeTab) return;
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) =>
-						tab.id === activeTab.id ? { ...tab, saveToHistory: !tab.saveToHistory } : tab
-					),
-				};
-			})
-		);
-	}, []);
-
-	const handleToggleTabShowThinking = useCallback(() => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		const activeTab = getActiveTab(session);
-		if (!activeTab) return;
-		// Cycle through: off -> on -> sticky -> off
-		const cycleThinkingMode = (current: ThinkingMode | undefined): ThinkingMode => {
-			if (!current || current === 'off') return 'on';
-			if (current === 'on') return 'sticky';
-			return 'off'; // sticky -> off
-		};
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionIdRef.current) return s;
-				return {
-					...s,
-					aiTabs: s.aiTabs.map((tab) => {
-						if (tab.id !== activeTab.id) return tab;
-						const newMode = cycleThinkingMode(tab.showThinking);
-						// When turning OFF, also clear any existing thinking/tool logs
-						if (newMode === 'off') {
-							return {
-								...tab,
-								showThinking: 'off',
-								logs: tab.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
-							};
-						}
-						return { ...tab, showThinking: newMode };
-					}),
-				};
-			})
-		);
-	}, []);
-
-	const handleScrollPositionChange = useCallback((scrollTop: number) => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		if (session.inputMode === 'ai') {
-			const activeTab = getActiveTab(session);
-			if (!activeTab) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) => (tab.id === activeTab.id ? { ...tab, scrollTop } : tab)),
-					};
-				})
-			);
-		} else {
-			setSessions((prev) =>
-				prev.map((s) =>
-					s.id === activeSessionIdRef.current ? { ...s, terminalScrollTop: scrollTop } : s
-				)
-			);
-		}
-	}, []);
-
-	const handleAtBottomChange = useCallback((isAtBottom: boolean) => {
-		const session = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!session) return;
-		if (session.inputMode === 'ai') {
-			const activeTab = getActiveTab(session);
-			if (!activeTab) return;
-			setSessions((prev) =>
-				prev.map((s) => {
-					if (s.id !== activeSessionIdRef.current) return s;
-					return {
-						...s,
-						aiTabs: s.aiTabs.map((tab) =>
-							tab.id === activeTab.id
-								? { ...tab, isAtBottom, hasUnread: isAtBottom ? false : tab.hasUnread }
-								: tab
-						),
-					};
-				})
-			);
-		}
 	}, []);
 
 	const handleMainPanelInputBlur = useCallback(() => {
@@ -4960,83 +3223,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[setStagedImages]
 	);
 
-	const handleOpenTabSearch = useCallback(() => {
-		setTabSwitcherOpen(true);
-	}, []);
-
-	const handleOpenPromptComposer = useCallback(() => {
-		setPromptComposerOpen(true);
-	}, []);
-
-	const handleOpenFuzzySearch = useCallback(() => {
-		setFuzzyFileSearchOpen(true);
-	}, []);
-
-	const handleOpenWorktreeConfig = useCallback(() => {
-		setWorktreeConfigModalOpen(true);
-	}, []);
-
-	const handleOpenCreatePR = useCallback(() => {
-		setCreatePRModalOpen(true);
-	}, []);
-
-	const handleOpenAboutModal = useCallback(() => {
-		setAboutModalOpen(true);
-	}, []);
-
 	const handleFocusFileInGraph = useFileExplorerStore.getState().focusFileInGraph;
 	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
-
-	// PERF: Memoized callbacks for SessionList props - these were inline arrow functions
-	const handleEditAgent = useCallback((session: Session) => {
-		setEditAgentSession(session);
-	}, []);
-
-	const handleOpenCreatePRSession = useCallback((session: Session) => {
-		setCreatePRSession(session);
-	}, []);
-
-	const handleQuickCreateWorktree = useCallback((session: Session) => {
-		setCreateWorktreeSession(session);
-	}, []);
-
-	const handleOpenWorktreeConfigSession = useCallback((session: Session) => {
-		setActiveSessionId(session.id);
-		setWorktreeConfigModalOpen(true);
-	}, []);
-
-	const handleDeleteWorktreeSession = useCallback((session: Session) => {
-		setDeleteWorktreeSession(session);
-	}, []);
-
-	const handleToggleWorktreeExpanded = useCallback((sessionId: string) => {
-		setSessions((prev) =>
-			prev.map((s) =>
-				s.id === sessionId ? { ...s, worktreesExpanded: !(s.worktreesExpanded ?? true) } : s
-			)
-		);
-	}, []);
-
-	const handleStartTour = useCallback(() => {
-		setTourFromWizard(false);
-		setTourOpen(true);
-	}, []);
-
-	const handleNewGroupChat = useCallback(() => {
-		setShowNewGroupChatModal(true);
-	}, []);
-
-	const handleEditGroupChat = useCallback((id: string) => {
-		setShowEditGroupChatModal(id);
-	}, []);
-
-	const handleOpenRenameGroupChatModal = useCallback((id: string) => {
-		setShowRenameGroupChatModal(id);
-	}, []);
-
-	const handleOpenDeleteGroupChatModal = useCallback((id: string) => {
-		setShowDeleteGroupChatModal(id);
-	}, []);
 
 	// PERF: Memoized callbacks for MainPanel file preview navigation
 	// These were inline arrow functions causing MainPanel re-renders on every keystroke
@@ -5087,174 +3275,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[handleOpenFileTab]
 	);
 
-	const handleClearFilePreviewHistory = useCallback(() => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession) return;
-		setSessions((prev) =>
-			prev.map((s) =>
-				s.id === currentSession.id
-					? { ...s, filePreviewHistory: [], filePreviewHistoryIndex: -1 }
-					: s
-			)
-		);
-	}, []);
-
-	/**
-	 * Navigate back in the current file tab's navigation history.
-	 * Loads the previous file and updates the navigation index.
-	 */
-	const handleFileTabNavigateBack = useCallback(async () => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession?.activeFileTabId) return;
-
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
-		if (!currentTab) return;
-
-		const history = currentTab.navigationHistory ?? [];
-		const currentIndex = currentTab.navigationIndex ?? history.length - 1;
-
-		if (currentIndex > 0) {
-			const newIndex = currentIndex - 1;
-			const historyEntry = history[newIndex];
-
-			// Fetch the file content (use SSH remote ID from the current tab if available)
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
-
-				// Update the tab with new content and navigation index
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				console.error('Failed to navigate back:', error);
-			}
-		}
-	}, []);
-
-	/**
-	 * Navigate forward in the current file tab's navigation history.
-	 * Loads the next file and updates the navigation index.
-	 */
-	const handleFileTabNavigateForward = useCallback(async () => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession?.activeFileTabId) return;
-
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
-		if (!currentTab) return;
-
-		const history = currentTab.navigationHistory ?? [];
-		const currentIndex = currentTab.navigationIndex ?? history.length - 1;
-
-		if (currentIndex < history.length - 1) {
-			const newIndex = currentIndex + 1;
-			const historyEntry = history[newIndex];
-
-			// Fetch the file content (use SSH remote ID from the current tab if available)
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
-
-				// Update the tab with new content and navigation index
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: newIndex,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				console.error('Failed to navigate forward:', error);
-			}
-		}
-	}, []);
-
-	/**
-	 * Navigate to a specific index in the current file tab's navigation history.
-	 */
-	const handleFileTabNavigateToIndex = useCallback(async (index: number) => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession?.activeFileTabId) return;
-
-		const currentTab = currentSession.filePreviewTabs.find(
-			(tab) => tab.id === currentSession.activeFileTabId
-		);
-		if (!currentTab) return;
-
-		const history = currentTab.navigationHistory ?? [];
-
-		if (index >= 0 && index < history.length) {
-			const historyEntry = history[index];
-
-			// Fetch the file content (use SSH remote ID from the current tab if available)
-			try {
-				const sshRemoteId = currentTab.sshRemoteId;
-				const content = await window.maestro.fs.readFile(historyEntry.path, sshRemoteId);
-				if (!content) return;
-
-				// Update the tab with new content and navigation index
-				setSessions((prev) =>
-					prev.map((s) => {
-						if (s.id !== currentSession.id) return s;
-						return {
-							...s,
-							filePreviewTabs: s.filePreviewTabs.map((tab) =>
-								tab.id === currentTab.id
-									? {
-											...tab,
-											path: historyEntry.path,
-											name: historyEntry.name,
-											content,
-											scrollTop: historyEntry.scrollTop ?? 0,
-											navigationIndex: index,
-										}
-									: tab
-							),
-						};
-					})
-				);
-			} catch (error) {
-				console.error('Failed to navigate to index:', error);
-			}
-		}
-	}, []);
-
 	const handleMergeWith = useCallback((tabId: string) => {
 		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
 		if (currentSession) {
@@ -5285,7 +3305,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		navigator.clipboard
 			.writeText(text)
 			.then(() => {
-				addToastRef.current({
+				notifyToast({
 					type: 'success',
 					title: 'Context Copied',
 					message: 'Conversation copied to clipboard.',
@@ -5293,7 +3313,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			})
 			.catch((err) => {
 				console.error('Failed to copy context:', err);
-				addToastRef.current({
+				notifyToast({
 					type: 'error',
 					title: 'Copy Failed',
 					message: 'Failed to copy context to clipboard.',
@@ -5319,14 +3339,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 				},
 				themeRef.current
 			);
-			addToastRef.current({
+			notifyToast({
 				type: 'success',
 				title: 'Export Complete',
 				message: 'Conversation exported as HTML.',
 			});
 		} catch (err) {
 			console.error('Failed to export tab:', err);
-			addToastRef.current({
+			notifyToast({
 				type: 'error',
 				title: 'Export Failed',
 				message: 'Failed to export conversation as HTML.',
@@ -5360,15 +3380,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!activeTab?.agentError) return;
 		handleClearAgentError(currentSession.id, activeTab.id);
 	}, [handleClearAgentError]);
-
-	// Memoized handler for showing agent error modal
-	const handleShowAgentErrorModal = useCallback(() => {
-		const currentSession = sessionsRef.current.find((s) => s.id === activeSessionIdRef.current);
-		if (!currentSession) return;
-		const activeTab = currentSession.aiTabs.find((t) => t.id === currentSession.activeTabId);
-		if (!activeTab?.agentError) return;
-		setAgentErrorModalSessionId(currentSession.id);
-	}, []);
 
 	// Note: spawnBackgroundSynopsisRef and spawnAgentWithPromptRef are now updated in useAgentExecution hook
 
@@ -5430,7 +3441,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				message = `Completed ${info.completedTasks} of ${info.totalTasks} tasks`;
 			}
 
-			addToast({
+			notifyToast({
 				type: toastType,
 				title: 'Auto-Run Complete',
 				message,
@@ -5563,7 +3574,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 											message += ` | New personal best! #${longestRun.rank} on longest runs!`;
 										}
 
-										addToastRef.current({
+										notifyToast({
 											type: 'success',
 											title: 'Leaderboard Updated',
 											message,
@@ -5604,7 +3615,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 			if (info.success) {
 				// PR created successfully - show success toast with PR URL
-				addToast({
+				notifyToast({
 					type: 'success',
 					title: 'PR Created',
 					message: info.prUrl || 'Pull request created successfully',
@@ -5614,7 +3625,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				});
 			} else {
 				// PR creation failed - show warning (not error, since the auto-run itself succeeded)
-				addToast({
+				notifyToast({
 					type: 'warning',
 					title: 'PR Creation Failed',
 					message: info.error || 'Failed to create pull request',
@@ -6120,7 +4131,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				);
 
 				// Show toast
-				addToast({
+				notifyToast({
 					type: 'success',
 					title: 'History Entry Added',
 					message: parsed.shortSummary,
@@ -6181,7 +4192,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				})
 			);
 		}
-	}, [activeSession, groups, spawnBackgroundSynopsis, addHistoryEntry, setSessions, addToast]);
+	}, [activeSession, groups, spawnBackgroundSynopsis, addHistoryEntry, setSessions]);
 
 	// Handler for the built-in /skills command (Claude Code only)
 	// Lists available skills from .claude/skills/ directories
@@ -6586,399 +4597,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		});
 	}, [sessions, activeBatchSessionIds, updateUsageStats]);
 
-	// Memoize worktree config key to avoid complex expression in dependency array
-	const worktreeConfigKey = useMemo(
-		() =>
-			sessions
-				.map((s) => `${s.id}:${s.worktreeConfig?.basePath}:${s.worktreeConfig?.watchEnabled}`)
-				.join(','),
-		[sessions]
-	);
-
-	// File watcher for worktree directories - provides immediate detection
-	// This is more efficient than polling and gives real-time results
-	useEffect(() => {
-		// Find sessions that have worktreeConfig with watchEnabled
-		const watchableSessions = sessions.filter(
-			(s) => s.worktreeConfig?.basePath && s.worktreeConfig?.watchEnabled
-		);
-
-		// Start watchers for each session
-		for (const session of watchableSessions) {
-			window.maestro.git.watchWorktreeDirectory(session.id, session.worktreeConfig!.basePath);
-		}
-
-		// Set up listener for discovered worktrees
-		const cleanup = window.maestro.git.onWorktreeDiscovered(async (data) => {
-			const { sessionId, worktree } = data;
-
-			// Skip worktrees that were just manually created (prevents duplicate UI entries)
-			if (recentlyCreatedWorktreePathsRef.current.has(worktree.path)) {
-				return;
-			}
-
-			// Skip main/master/HEAD branches (already filtered by main process, but double-check)
-			if (
-				worktree.branch === 'main' ||
-				worktree.branch === 'master' ||
-				worktree.branch === 'HEAD'
-			) {
-				return;
-			}
-
-			// Get current sessions to check for duplicates
-			const currentSessions = sessionsRef.current;
-
-			// Find the parent session
-			const parentSession = currentSessions.find((s) => s.id === sessionId);
-			if (!parentSession) return;
-
-			// Check if session already exists for this worktree
-			// Normalize paths for comparison (remove trailing slashes)
-			const normalizedWorktreePath = worktree.path.replace(/\/+$/, '');
-			const existingSession = currentSessions.find((s) => {
-				const normalizedCwd = s.cwd.replace(/\/+$/, '');
-				// Check if same path (regardless of parent) or same branch under same parent
-				return (
-					normalizedCwd === normalizedWorktreePath ||
-					(s.parentSessionId === sessionId && s.worktreeBranch === worktree.branch)
-				);
-			});
-			if (existingSession) return;
-
-			// Create new worktree session
-			const newId = generateId();
-			const initialTabId = generateId();
-			const initialTab: AITab = {
-				id: initialTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
-			};
-
-			// Get SSH remote ID for remote git operations
-			const sshRemoteId =
-				parentSession.sshRemoteId || parentSession.sessionSshRemoteConfig?.remoteId || undefined;
-
-			// Fetch git info (via SSH for remote sessions)
-			let gitBranches: string[] | undefined;
-			let gitTags: string[] | undefined;
-			let gitRefsCacheTime: number | undefined;
-
-			try {
-				[gitBranches, gitTags] = await Promise.all([
-					gitService.getBranches(worktree.path, sshRemoteId),
-					gitService.getTags(worktree.path, sshRemoteId),
-				]);
-				gitRefsCacheTime = Date.now();
-			} catch {
-				// Ignore errors
-			}
-
-			const worktreeSession: Session = {
-				id: newId,
-				name: worktree.branch || worktree.name,
-				groupId: parentSession.groupId, // Inherit group from parent
-				toolType: parentSession.toolType,
-				state: 'idle',
-				cwd: worktree.path,
-				fullPath: worktree.path,
-				projectRoot: worktree.path,
-				isGitRepo: true,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				parentSessionId: sessionId,
-				worktreeBranch: worktree.branch || undefined,
-				aiLogs: [],
-				shellLogs: [
-					{
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: 'Worktree Session Ready.',
-					},
-				],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: parentSession.toolType === 'terminal' ? 'terminal' : 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 3000 + Math.floor(Math.random() * 100),
-				isLive: false,
-				changedFiles: [],
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				fileTreeAutoRefreshInterval: 180,
-				shellCwd: worktree.path,
-				aiCommandHistory: [],
-				shellCommandHistory: [],
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [initialTab],
-				activeTabId: initialTabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-				unifiedClosedTabHistory: [],
-				customPath: parentSession.customPath,
-				customArgs: parentSession.customArgs,
-				customEnvVars: parentSession.customEnvVars,
-				customModel: parentSession.customModel,
-				customContextWindow: parentSession.customContextWindow,
-				nudgeMessage: parentSession.nudgeMessage,
-				autoRunFolderPath: parentSession.autoRunFolderPath,
-				// Inherit SSH configuration from parent session
-				sessionSshRemoteConfig: parentSession.sessionSshRemoteConfig,
-			};
-
-			setSessions((prev) => {
-				// Double-check to avoid duplicates
-				if (prev.some((s) => s.cwd === worktree.path)) return prev;
-				return [...prev, worktreeSession];
-			});
-
-			// Expand parent's worktrees
-			setSessions((prev) =>
-				prev.map((s) => (s.id === sessionId ? { ...s, worktreesExpanded: true } : s))
-			);
-
-			addToast({
-				type: 'success',
-				title: 'New Worktree Discovered',
-				message: worktree.branch || worktree.name,
-			});
-		});
-
-		// Cleanup: stop watchers and remove listener
-		return () => {
-			cleanup();
-			for (const session of watchableSessions) {
-				window.maestro.git.unwatchWorktreeDirectory(session.id);
-			}
-		};
-	}, [
-		// Re-run when worktreeConfig changes on any session
-		worktreeConfigKey,
-		defaultSaveToHistory,
-	]);
-
-	// Legacy: Scanner for sessions using old worktreeParentPath
-	// TODO: Remove after migration to new parent/child model (use worktreeConfig with file watchers instead)
-	// PERFORMANCE: Only scan on app focus (visibility change) instead of continuous polling
-	// This avoids blocking the main thread every 30 seconds during active use
-	useEffect(() => {
-		// Check if any sessions use the legacy worktreeParentPath model
-		const hasLegacyWorktreeSessions = sessions.some((s) => s.worktreeParentPath);
-		if (!hasLegacyWorktreeSessions) return;
-
-		// Track if we're currently scanning to avoid overlapping scans
-		let isScanning = false;
-
-		const scanWorktreeParents = async () => {
-			if (isScanning) return;
-			isScanning = true;
-
-			try {
-				// Find sessions that have worktreeParentPath set (legacy model)
-				const worktreeParentSessions = sessionsRef.current.filter((s) => s.worktreeParentPath);
-				if (worktreeParentSessions.length === 0) return;
-
-				// Collect all new sessions to add in a single batch (avoids stale closure issues)
-				const newSessionsToAdd: Session[] = [];
-				// Track paths we're about to add to avoid duplicates within this scan
-				const pathsBeingAdded = new Set<string>();
-
-				for (const session of worktreeParentSessions) {
-					try {
-						// Get SSH remote ID for parent session (check both runtime and config)
-						const parentSshRemoteId =
-							session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
-						const result = await window.maestro.git.scanWorktreeDirectory(
-							session.worktreeParentPath!,
-							parentSshRemoteId
-						);
-						const { gitSubdirs } = result;
-
-						for (const subdir of gitSubdirs) {
-							// Skip if this path was manually removed by the user (use ref for current value)
-							const currentRemovedPaths = removedWorktreePathsRef.current;
-							if (currentRemovedPaths.has(subdir.path)) {
-								continue;
-							}
-
-							// Skip if session already exists (check current sessions via ref)
-							const currentSessions = sessionsRef.current;
-							const existingSession = currentSessions.find(
-								(s) => s.cwd === subdir.path || s.projectRoot === subdir.path
-							);
-							if (existingSession) {
-								continue;
-							}
-
-							// Skip if we're already adding this path in this scan batch
-							if (pathsBeingAdded.has(subdir.path)) {
-								continue;
-							}
-
-							// Found a new worktree - prepare session creation
-							pathsBeingAdded.add(subdir.path);
-
-							const sessionName = subdir.branch ? `${subdir.name} (${subdir.branch})` : subdir.name;
-
-							const newId = generateId();
-							const initialTabId = generateId();
-							const initialTab: AITab = {
-								id: initialTabId,
-								agentSessionId: null,
-								name: null,
-								starred: false,
-								logs: [],
-								inputValue: '',
-								stagedImages: [],
-								createdAt: Date.now(),
-								state: 'idle',
-								saveToHistory: defaultSaveToHistory,
-								showThinking: defaultShowThinking,
-							};
-
-							// Fetch git info (with SSH support)
-							let gitBranches: string[] | undefined;
-							let gitTags: string[] | undefined;
-							let gitRefsCacheTime: number | undefined;
-
-							try {
-								[gitBranches, gitTags] = await Promise.all([
-									gitService.getBranches(subdir.path, parentSshRemoteId),
-									gitService.getTags(subdir.path, parentSshRemoteId),
-								]);
-								gitRefsCacheTime = Date.now();
-							} catch {
-								// Ignore errors
-							}
-
-							const newSession: Session = {
-								id: newId,
-								name: sessionName,
-								groupId: session.groupId,
-								toolType: session.toolType,
-								state: 'idle',
-								cwd: subdir.path,
-								fullPath: subdir.path,
-								projectRoot: subdir.path,
-								isGitRepo: true,
-								gitBranches,
-								gitTags,
-								gitRefsCacheTime,
-								worktreeParentPath: session.worktreeParentPath,
-								// Inherit SSH configuration from parent session
-								sessionSshRemoteConfig: session.sessionSshRemoteConfig,
-								aiLogs: [],
-								shellLogs: [
-									{
-										id: generateId(),
-										timestamp: Date.now(),
-										source: 'system',
-										text: 'Shell Session Ready.',
-									},
-								],
-								workLog: [],
-								contextUsage: 0,
-								inputMode: session.inputMode,
-								aiPid: 0,
-								terminalPid: 0,
-								port: 3000 + Math.floor(Math.random() * 100),
-								isLive: false,
-								changedFiles: [],
-								fileTree: [],
-								fileExplorerExpanded: [],
-								fileExplorerScrollPos: 0,
-								fileTreeAutoRefreshInterval: 180,
-								shellCwd: subdir.path,
-								aiCommandHistory: [],
-								shellCommandHistory: [],
-								executionQueue: [],
-								activeTimeMs: 0,
-								aiTabs: [initialTab],
-								activeTabId: initialTabId,
-								closedTabHistory: [],
-								filePreviewTabs: [],
-								activeFileTabId: null,
-								unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-								unifiedClosedTabHistory: [],
-								customPath: session.customPath,
-								customArgs: session.customArgs,
-								customEnvVars: session.customEnvVars,
-								customModel: session.customModel,
-							};
-
-							newSessionsToAdd.push(newSession);
-						}
-					} catch (error) {
-						console.error(`[WorktreeScanner] Error scanning ${session.worktreeParentPath}:`, error);
-					}
-				}
-
-				// Add all new sessions in a single update (uses functional update to get fresh state)
-				if (newSessionsToAdd.length > 0) {
-					setSessions((prev) => {
-						// Double-check against current state to avoid duplicates
-						const currentPaths = new Set(prev.map((s) => s.cwd));
-						const trulyNew = newSessionsToAdd.filter((s) => !currentPaths.has(s.cwd));
-						if (trulyNew.length === 0) return prev;
-						return [...prev, ...trulyNew];
-					});
-
-					for (const session of newSessionsToAdd) {
-						addToast({
-							type: 'success',
-							title: 'New Worktree Discovered',
-							message: session.name,
-						});
-					}
-				}
-			} finally {
-				isScanning = false;
-			}
-		};
-
-		// Scan once on mount
-		scanWorktreeParents();
-
-		// Scan when app regains focus (visibility change) instead of polling
-		// This is much more efficient - only scans when user returns to app
-		const handleVisibilityChange = () => {
-			if (!document.hidden) {
-				scanWorktreeParents();
-			}
-		};
-
-		document.addEventListener('visibilitychange', handleVisibilityChange);
-
-		return () => {
-			document.removeEventListener('visibilitychange', handleVisibilityChange);
-		};
-	}, [sessions.some((s) => s.worktreeParentPath), defaultSaveToHistory]); // Only re-run when legacy sessions exist/don't exist
-
-	// Handler to open batch runner modal
-	const handleOpenBatchRunner = useCallback(() => {
-		setBatchRunnerModalOpen(true);
-	}, []);
-
-	// Handler to open marketplace modal
-	const handleOpenMarketplace = useCallback(() => {
-		setMarketplaceModalOpen(true);
-	}, [setMarketplaceModalOpen]);
-
 	// Handler for switching to autorun tab - shows setup modal if no folder configured
 	const handleSetActiveRightTab = useCallback(
 		(tab: RightPanelTab) => {
@@ -7028,13 +4646,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			if (activeSession?.autoRunFolderPath) {
 				handleAutoRunRefresh();
 			}
-			addToast({
+			notifyToast({
 				type: 'success',
 				title: 'Playbook Imported',
 				message: `Successfully imported playbook to ${folderName}`,
 			});
 		},
-		[activeSession?.autoRunFolderPath, handleAutoRunRefresh, addToast]
+		[activeSession?.autoRunFolderPath, handleAutoRunRefresh]
 	);
 
 	// File tree auto-refresh interval change handler (kept in App.tsx as it's not Auto Run specific)
@@ -7147,273 +4765,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[setActiveSessionId]
 	);
-
-	// Handler to open lightbox with optional context images for navigation
-	// source: 'staged' allows deletion, 'history' is read-only
-	const handleSetLightboxImage = useCallback(
-		(image: string | null, contextImages?: string[], source: 'staged' | 'history' = 'history') => {
-			// Set lightbox context data before opening
-			setLightboxIsGroupChat(activeGroupChatId !== null);
-			setLightboxAllowDelete(source === 'staged');
-
-			setLightboxImage(image);
-			setLightboxImages(contextImages || []);
-			setLightboxSource(source);
-		},
-		[
-			activeGroupChatId,
-			setLightboxIsGroupChat,
-			setLightboxAllowDelete,
-			setLightboxImage,
-			setLightboxImages,
-			setLightboxSource,
-		]
-	);
-
-	// --- GROUP CHAT HANDLERS ---
-
-	const handleOpenGroupChat = useCallback(
-		async (id: string) => {
-			const chat = await window.maestro.groupChat.load(id);
-			if (chat) {
-				setActiveGroupChatId(id);
-				const messages = await window.maestro.groupChat.getMessages(id);
-				setGroupChatMessages(messages);
-
-				// Restore the state for this specific chat from the per-chat state map
-				// This prevents state from one chat bleeding into another when switching
-				setGroupChatState((_prev) => {
-					const savedState = groupChatStates.get(id);
-					return savedState ?? 'idle';
-				});
-
-				// Restore participant states for this chat
-				const savedParticipantStates = allGroupChatParticipantStates.get(id);
-				console.log(
-					`[GroupChat:UI] handleOpenGroupChat: restoring participantStates for ${id}: ${
-						savedParticipantStates ? JSON.stringify([...savedParticipantStates.entries()]) : 'none'
-					}`
-				);
-				setParticipantStates(savedParticipantStates ?? new Map());
-
-				// Load saved right tab preference for this group chat
-				const savedTab = await window.maestro.settings.get(`groupChatRightTab:${id}`);
-				if (savedTab === 'participants' || savedTab === 'history') {
-					setGroupChatRightTab(savedTab);
-				} else {
-					setGroupChatRightTab('participants'); // Default
-				}
-
-				// Start moderator if not running - this initializes the session ID prefix
-				const moderatorSessionId = await window.maestro.groupChat.startModerator(id);
-				// Update the group chat state with the moderator session ID
-				if (moderatorSessionId) {
-					setGroupChats((prev) =>
-						prev.map((c) => (c.id === id ? { ...c, moderatorSessionId } : c))
-					);
-				}
-
-				// Focus the input after the component renders
-				setTimeout(() => {
-					setActiveFocus('main');
-					groupChatInputRef.current?.focus();
-				}, 100);
-			}
-		},
-		[groupChatStates, allGroupChatParticipantStates]
-	);
-
-	const handleCloseGroupChat = useCallback(() => {
-		setActiveGroupChatId(null);
-		setGroupChatMessages([]);
-		setGroupChatState('idle');
-		setParticipantStates(new Map());
-		setGroupChatError(null);
-	}, []);
-
-	// Handle right panel tab change with persistence
-	const handleGroupChatRightTabChange = useCallback(
-		(tab: GroupChatRightTab) => {
-			setGroupChatRightTab(tab);
-			if (activeGroupChatId) {
-				window.maestro.settings.set(`groupChatRightTab:${activeGroupChatId}`, tab);
-			}
-		},
-		[activeGroupChatId]
-	);
-
-	// Jump to a message in the group chat by timestamp
-	const handleJumpToGroupChatMessage = useCallback((timestamp: number) => {
-		// Use the messages ref to scroll to the target message
-		groupChatMessagesRef.current?.scrollToMessage(timestamp);
-	}, []);
-
-	// Open the moderator session in the direct agent view
-	const handleOpenModeratorSession = useCallback(
-		(moderatorSessionId: string) => {
-			// Find the session that has this agent session ID
-			const session = sessions.find((s) =>
-				s.aiTabs?.some((tab) => tab.agentSessionId === moderatorSessionId)
-			);
-
-			if (session) {
-				// Close group chat
-				setActiveGroupChatId(null);
-				setGroupChatMessages([]);
-				setGroupChatState('idle');
-				setParticipantStates(new Map());
-
-				// Set the session as active
-				setActiveSessionId(session.id);
-
-				// Find and activate the tab with this agent session ID
-				const tab = session.aiTabs?.find((t) => t.agentSessionId === moderatorSessionId);
-				if (tab) {
-					setSessions((prev) =>
-						prev.map((s) => (s.id === session.id ? { ...s, activeTabId: tab.id } : s))
-					);
-				}
-			}
-		},
-		[sessions, setActiveSessionId]
-	);
-
-	const handleCreateGroupChat = useCallback(
-		async (
-			name: string,
-			moderatorAgentId: string,
-			moderatorConfig?: {
-				customPath?: string;
-				customArgs?: string;
-				customEnvVars?: Record<string, string>;
-				customModel?: string;
-			}
-		) => {
-			const chat = await window.maestro.groupChat.create(name, moderatorAgentId, moderatorConfig);
-			setGroupChats((prev) => [chat, ...prev]);
-			setShowNewGroupChatModal(false);
-			handleOpenGroupChat(chat.id);
-		},
-		[handleOpenGroupChat]
-	);
-
-	const handleDeleteGroupChat = useCallback(
-		async (id: string) => {
-			await window.maestro.groupChat.delete(id);
-			setGroupChats((prev) => prev.filter((c) => c.id !== id));
-			if (activeGroupChatId === id) {
-				handleCloseGroupChat();
-			}
-			setShowDeleteGroupChatModal(null);
-		},
-		[activeGroupChatId, handleCloseGroupChat]
-	);
-
-	const handleRenameGroupChat = useCallback(async (id: string, newName: string) => {
-		await window.maestro.groupChat.rename(id, newName);
-		setGroupChats((prev) => prev.map((c) => (c.id === id ? { ...c, name: newName } : c)));
-		setShowRenameGroupChatModal(null);
-	}, []);
-
-	const handleUpdateGroupChat = useCallback(
-		async (
-			id: string,
-			name: string,
-			moderatorAgentId: string,
-			moderatorConfig?: {
-				customPath?: string;
-				customArgs?: string;
-				customEnvVars?: Record<string, string>;
-			}
-		) => {
-			const updated = await window.maestro.groupChat.update(id, {
-				name,
-				moderatorAgentId,
-				moderatorConfig,
-			});
-			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
-			setShowEditGroupChatModal(null);
-		},
-		[]
-	);
-
-	// --- GROUP CHAT MODAL HANDLERS ---
-	// Stable callback handlers for AppGroupChatModals component
-	const handleCloseNewGroupChatModal = useCallback(() => setShowNewGroupChatModal(false), []);
-	const handleCloseDeleteGroupChatModal = useCallback(() => setShowDeleteGroupChatModal(null), []);
-	const handleConfirmDeleteGroupChat = useCallback(() => {
-		if (showDeleteGroupChatModal) {
-			handleDeleteGroupChat(showDeleteGroupChatModal);
-		}
-	}, [showDeleteGroupChatModal, handleDeleteGroupChat]);
-	const handleCloseRenameGroupChatModal = useCallback(() => setShowRenameGroupChatModal(null), []);
-	const handleRenameGroupChatFromModal = useCallback(
-		(newName: string) => {
-			if (showRenameGroupChatModal) {
-				handleRenameGroupChat(showRenameGroupChatModal, newName);
-			}
-		},
-		[showRenameGroupChatModal, handleRenameGroupChat]
-	);
-	const handleCloseEditGroupChatModal = useCallback(() => setShowEditGroupChatModal(null), []);
-	const handleCloseGroupChatInfo = useCallback(() => setShowGroupChatInfo(false), []);
-
-	const handleSendGroupChatMessage = useCallback(
-		async (content: string, images?: string[], readOnly?: boolean) => {
-			if (!activeGroupChatId) return;
-
-			// If group chat is busy, queue the message instead of sending immediately
-			if (groupChatState !== 'idle') {
-				const queuedItem: QueuedItem = {
-					id: generateId(),
-					timestamp: Date.now(),
-					tabId: activeGroupChatId, // Use group chat ID as tab ID
-					type: 'message',
-					text: content,
-					images: images ? [...images] : undefined,
-					tabName: groupChats.find((c) => c.id === activeGroupChatId)?.name || 'Group Chat',
-					readOnlyMode: readOnly,
-				};
-				setGroupChatExecutionQueue((prev) => [...prev, queuedItem]);
-				return;
-			}
-
-			setGroupChatState('moderator-thinking');
-			setGroupChatStates((prev) => {
-				const next = new Map(prev);
-				next.set(activeGroupChatId, 'moderator-thinking');
-				return next;
-			});
-			await window.maestro.groupChat.sendToModerator(activeGroupChatId, content, images, readOnly);
-		},
-		[activeGroupChatId, groupChatState, groupChats]
-	);
-
-	// Handle draft message changes - update local state (persisted on switch/close)
-	const handleGroupChatDraftChange = useCallback(
-		(draft: string) => {
-			if (!activeGroupChatId) return;
-			setGroupChats((prev) =>
-				prev.map((c) => (c.id === activeGroupChatId ? { ...c, draftMessage: draft } : c))
-			);
-		},
-		[activeGroupChatId]
-	);
-
-	// Handle removing an item from the group chat execution queue
-	const handleRemoveGroupChatQueueItem = useCallback((itemId: string) => {
-		setGroupChatExecutionQueue((prev) => prev.filter((item) => item.id !== itemId));
-	}, []);
-
-	// Handle reordering items in the group chat execution queue
-	const handleReorderGroupChatQueueItems = useCallback((fromIndex: number, toIndex: number) => {
-		setGroupChatExecutionQueue((prev) => {
-			const queue = [...prev];
-			const [removed] = queue.splice(fromIndex, 1);
-			queue.splice(toIndex, 0, removed);
-			return queue;
-		});
-	}, []);
 
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
@@ -7538,6 +4889,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 					if (s.id !== activeSession.id) return s;
 					// Find the tab to get its agentSessionId for persistence
 					const tab = s.aiTabs.find((t) => t.id === renameTabId);
+					const oldName = tab?.name;
+
+					window.maestro.logger.log(
+						'info',
+						`Tab renamed: "${oldName || '(auto)'}" → "${newName || '(cleared)'}"`,
+						'TabNaming',
+						{
+							tabId: renameTabId,
+							sessionId: activeSession.id,
+							agentSessionId: tab?.agentSessionId,
+							oldName,
+							newName: newName || null,
+						}
+					);
+
 					if (tab?.agentSessionId) {
 						// Persist name to agent session metadata (async, fire and forget)
 						// Use projectRoot (not cwd) for consistent session storage access
@@ -7545,16 +4911,58 @@ You are taking over this conversation. Based on the context above, provide a bri
 						if (agentId === 'claude-code') {
 							window.maestro.claude
 								.updateSessionName(s.projectRoot, tab.agentSessionId, newName || '')
-								.catch((err) => console.error('Failed to persist tab name:', err));
+								.catch((err) => {
+									window.maestro.logger.log(
+										'error',
+										'Failed to persist tab name to Claude session storage',
+										'TabNaming',
+										{
+											tabId: renameTabId,
+											agentSessionId: tab.agentSessionId,
+											error: String(err),
+										}
+									);
+								});
 						} else {
 							window.maestro.agentSessions
 								.setSessionName(agentId, s.projectRoot, tab.agentSessionId, newName || null)
-								.catch((err) => console.error('Failed to persist tab name:', err));
+								.catch((err) => {
+									window.maestro.logger.log(
+										'error',
+										'Failed to persist tab name to agent session storage',
+										'TabNaming',
+										{
+											tabId: renameTabId,
+											agentSessionId: tab.agentSessionId,
+											agentType: agentId,
+											error: String(err),
+										}
+									);
+								});
 						}
 						// Also update past history entries with this agentSessionId
 						window.maestro.history
 							.updateSessionName(tab.agentSessionId, newName || '')
-							.catch((err) => console.error('Failed to update history session names:', err));
+							.catch((err) => {
+								window.maestro.logger.log(
+									'warn',
+									'Failed to update history session names',
+									'TabNaming',
+									{
+										agentSessionId: tab.agentSessionId,
+										error: String(err),
+									}
+								);
+							});
+					} else {
+						window.maestro.logger.log(
+							'info',
+							'Tab renamed (no agentSessionId, skipping persistence)',
+							'TabNaming',
+							{
+								tabId: renameTabId,
+							}
+						);
 					}
 					return {
 						...s,
@@ -7605,13 +5013,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			});
 		}
 	}, [activeSessionId, activeSession?.activeTabId]); // Track session and tab changes
-
-	// Reset shortcuts search when modal closes
-	useEffect(() => {
-		if (!shortcutsHelpOpen) {
-			setShortcutsSearchQuery('');
-		}
-	}, [shortcutsHelpOpen]);
 
 	// Helper to count tasks in document content
 	const countTasksInContent = useCallback(
@@ -7967,33 +5368,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 		useModalStore.getState().openModal('confirm', { message, onConfirm });
 	}, []);
 
-	// Delete group chat with confirmation dialog (for keyboard shortcut and CMD+K)
-	const deleteGroupChatWithConfirmation = useCallback(
-		(id: string) => {
-			const chat = groupChats.find((c) => c.id === id);
-			if (!chat) return;
-
-			showConfirmation(
-				`Are you sure you want to delete the group chat "${chat.name}"? This action cannot be undone.`,
-				async () => {
-					await window.maestro.groupChat.delete(id);
-					setGroupChats((prev) => prev.filter((c) => c.id !== id));
-					if (activeGroupChatId === id) {
-						handleCloseGroupChat();
-					}
-				}
-			);
-		},
-		[groupChats, activeGroupChatId, handleCloseGroupChat]
-	);
-
 	const deleteSession = (id: string) => {
 		const session = sessions.find((s) => s.id === id);
 		if (!session) return;
 
-		// Open the delete agent modal
+		// Open the delete agent modal (setDeleteAgentSession opens the modal with session data)
 		setDeleteAgentSession(session);
-		setDeleteAgentModalOpen(true);
 	};
 
 	// Internal function to perform the actual session deletion
@@ -8043,7 +5423,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				} catch (error) {
 					console.error('Failed to move working directory to trash:', error);
 					// Show a toast notification about the failure
-					addToast({
+					notifyToast({
 						title: 'Failed to Erase Directory',
 						message: error instanceof Error ? error.message : 'Unknown error',
 						type: 'error',
@@ -8062,14 +5442,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				setActiveSessionId('');
 			}
 		},
-		[
-			sessions,
-			setSessions,
-			setActiveSessionId,
-			flushSessionPersistence,
-			setRemovedWorktreePaths,
-			addToast,
-		]
+		[sessions, setSessions, setActiveSessionId, flushSessionPersistence, setRemovedWorktreePaths]
 	);
 
 	// Delete an entire worktree group and all its agents
@@ -8133,7 +5506,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					setActiveSessionId('');
 				}
 
-				addToast({
+				notifyToast({
 					type: 'success',
 					title: 'Group Removed',
 					message: `Removed "${group.name}" and ${sessionCount} agent${
@@ -8179,7 +5552,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			const validation = validateNewSession(name, workingDir, agentId as ToolType, sessions);
 			if (!validation.valid) {
 				console.error(`Session validation failed: ${validation.error}`);
-				addToast({
+				notifyToast({
 					type: 'error',
 					title: 'Session Creation Failed',
 					message: validation.error || 'Cannot create duplicate session',
@@ -8288,6 +5661,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 				customProviderPath,
 				// Per-session SSH remote config (takes precedence over agent-level SSH config)
 				sessionSshRemoteConfig,
+				// Default Auto Run folder path (user can change later)
+				autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
 			};
 
 			// Pre-assign account for Claude Code sessions if accounts are configured
@@ -8363,7 +5738,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			);
 			if (!validation.valid) {
 				console.error(`Wizard session validation failed: ${validation.error}`);
-				addToast({
+				notifyToast({
 					type: 'error',
 					title: 'Session Creation Failed',
 					message: validation.error || 'Cannot create duplicate session',
@@ -8550,7 +5925,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			setActiveFocus,
 			startBatchRun,
 			sessions,
-			addToast,
 		]
 	);
 
@@ -8711,7 +6085,13 @@ You are taking over this conversation. Based on the context above, provide a bri
 			activeSession.inputMode === 'terminal'
 				? activeSession.shellCwd || activeSession.cwd
 				: activeSession.cwd;
-		const diff = await gitService.getDiff(cwd);
+		const sshRemoteId =
+			activeSession.sshRemoteId ||
+			(activeSession.sessionSshRemoteConfig?.enabled
+				? activeSession.sessionSshRemoteConfig.remoteId
+				: undefined) ||
+			undefined;
+		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
 
 		if (diff.diff) {
 			setGitDiffPreview(diff.diff);
@@ -9829,15 +7209,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 	};
 
 	// Image Handlers
-	const showImageAttachBlockedNotice = useCallback(() => {
-		const agentName = activeSession?.toolType
-			? getProviderDisplayName(activeSession.toolType)
-			: 'the agent';
-		const message = `Images are only available in the initial message to ${agentName}. Please start a new session if you want to include an image.`;
-		setSuccessFlashNotification(message);
-		setTimeout(() => setSuccessFlashNotification(null), 4000);
-	}, [setSuccessFlashNotification, activeSession?.toolType]);
-
 	const handlePaste = (e: React.ClipboardEvent) => {
 		// Allow image pasting in group chat or direct AI mode
 		const isGroupChatActive = !!activeGroupChatId;
@@ -9871,12 +7242,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Image handling requires AI mode or group chat
 		if (!isGroupChatActive && !isDirectAIMode) return;
-
-		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
-			e.preventDefault();
-			showImageAttachBlockedNotice();
-			return;
-		}
 
 		for (let i = 0; i < items.length; i++) {
 			if (items[i].type.indexOf('image') !== -1) {
@@ -9926,12 +7291,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		if (!isGroupChatActive && !isDirectAIMode) return;
 
 		const files = e.dataTransfer.files;
-		const hasImage = Array.from(files).some((file) => file.type.startsWith('image/'));
-
-		if (hasImage && isDirectAIMode && !isGroupChatActive && blockCodexResumeImages) {
-			showImageAttachBlockedNotice();
-			return;
-		}
 
 		for (let i = 0; i < files.length; i++) {
 			if (files[i].type.startsWith('image/')) {
@@ -10012,10 +7371,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setCreateGroupModalOpen(false);
 		setPendingMoveToGroupSessionId(null); // Clear pending move on close
 	}, [setCreateGroupModalOpen]);
-	const handleCloseRenameGroupModal = useCallback(() => {
-		setRenameGroupModalOpen(false);
-	}, []);
-
 	// Handler for when a new group is created - move pending session to it
 	const handleGroupCreated = useCallback(
 		(groupId: string) => {
@@ -10038,526 +7393,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 		[setCreateGroupModalOpen]
 	);
 
-	// Worktree Modal Handlers (stable callbacks for AppWorktreeModals)
-	const handleCloseWorktreeConfigModal = useCallback(() => {
-		setWorktreeConfigModalOpen(false);
-	}, []);
-
-	const handleSaveWorktreeConfig = useCallback(
-		async (config: { basePath: string; watchEnabled: boolean }) => {
-			if (!activeSession) return;
-
-			// Save the config first
-			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSession.id ? { ...s, worktreeConfig: config } : s))
-			);
-
-			// Scan for worktrees and create sub-agent sessions
-			// Get SSH remote ID for parent session (check both runtime and config)
-			const parentSshRemoteId =
-				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
-			try {
-				const scanResult = await window.maestro.git.scanWorktreeDirectory(
-					config.basePath,
-					parentSshRemoteId
-				);
-				const { gitSubdirs } = scanResult;
-
-				if (gitSubdirs.length > 0) {
-					const newWorktreeSessions: Session[] = [];
-
-					for (const subdir of gitSubdirs) {
-						// Skip main/master/HEAD branches - they're typically the main repo
-						if (
-							subdir.branch === 'main' ||
-							subdir.branch === 'master' ||
-							subdir.branch === 'HEAD'
-						) {
-							continue;
-						}
-
-						// Check if a session already exists for this worktree
-						const existingSession = sessions.find(
-							(s) => s.parentSessionId === activeSession.id && s.worktreeBranch === subdir.branch
-						);
-						if (existingSession) {
-							continue;
-						}
-
-						// Also check by path
-						const existingByPath = sessions.find((s) => s.cwd === subdir.path);
-						if (existingByPath) {
-							continue;
-						}
-
-						const newId = generateId();
-						const initialTabId = generateId();
-						const initialTab: AITab = {
-							id: initialTabId,
-							agentSessionId: null,
-							name: null,
-							starred: false,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-							createdAt: Date.now(),
-							state: 'idle',
-							saveToHistory: defaultSaveToHistory,
-							showThinking: defaultShowThinking,
-						};
-
-						// Fetch git info for this subdirectory (with SSH support)
-						let gitBranches: string[] | undefined;
-						let gitTags: string[] | undefined;
-						let gitRefsCacheTime: number | undefined;
-
-						try {
-							[gitBranches, gitTags] = await Promise.all([
-								gitService.getBranches(subdir.path, parentSshRemoteId),
-								gitService.getTags(subdir.path, parentSshRemoteId),
-							]);
-							gitRefsCacheTime = Date.now();
-						} catch {
-							// Ignore errors fetching git info
-						}
-
-						const worktreeSession: Session = {
-							id: newId,
-							name: subdir.branch || subdir.name,
-							groupId: activeSession.groupId,
-							toolType: activeSession.toolType,
-							state: 'idle',
-							cwd: subdir.path,
-							fullPath: subdir.path,
-							projectRoot: subdir.path,
-							isGitRepo: true,
-							gitBranches,
-							gitTags,
-							gitRefsCacheTime,
-							parentSessionId: activeSession.id,
-							worktreeBranch: subdir.branch || undefined,
-							// Inherit SSH configuration from parent session
-							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-							aiLogs: [],
-							shellLogs: [
-								{
-									id: generateId(),
-									timestamp: Date.now(),
-									source: 'system',
-									text: 'Worktree Session Ready.',
-								},
-							],
-							workLog: [],
-							contextUsage: 0,
-							inputMode: activeSession.toolType === 'terminal' ? 'terminal' : 'ai',
-							aiPid: 0,
-							terminalPid: 0,
-							port: 3000 + Math.floor(Math.random() * 100),
-							isLive: false,
-							changedFiles: [],
-							fileTree: [],
-							fileExplorerExpanded: [],
-							fileExplorerScrollPos: 0,
-							fileTreeAutoRefreshInterval: 180,
-							shellCwd: subdir.path,
-							aiCommandHistory: [],
-							shellCommandHistory: [],
-							executionQueue: [],
-							activeTimeMs: 0,
-							aiTabs: [initialTab],
-							activeTabId: initialTabId,
-							closedTabHistory: [],
-							filePreviewTabs: [],
-							activeFileTabId: null,
-							unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-							unifiedClosedTabHistory: [],
-							customPath: activeSession.customPath,
-							customArgs: activeSession.customArgs,
-							customEnvVars: activeSession.customEnvVars,
-							customModel: activeSession.customModel,
-							customContextWindow: activeSession.customContextWindow,
-							nudgeMessage: activeSession.nudgeMessage,
-							autoRunFolderPath: activeSession.autoRunFolderPath,
-						};
-
-						newWorktreeSessions.push(worktreeSession);
-					}
-
-					if (newWorktreeSessions.length > 0) {
-						setSessions((prev) => [...prev, ...newWorktreeSessions]);
-						// Expand worktrees on parent
-						setSessions((prev) =>
-							prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s))
-						);
-						addToast({
-							type: 'success',
-							title: 'Worktrees Discovered',
-							message: `Found ${newWorktreeSessions.length} worktree sub-agent${
-								newWorktreeSessions.length > 1 ? 's' : ''
-							}`,
-						});
-					}
-				}
-			} catch (err) {
-				console.error('Failed to scan for worktrees:', err);
-			}
-		},
-		[activeSession, sessions, addToast]
-	);
-
-	const handleDisableWorktreeConfig = useCallback(() => {
-		if (!activeSession) return;
-
-		// Count worktree children that will be removed
-		const worktreeChildCount = sessions.filter(
-			(s) => s.parentSessionId === activeSession.id
-		).length;
-
-		setSessions((prev) =>
-			prev
-				// Remove all worktree children of this parent
-				.filter((s) => s.parentSessionId !== activeSession.id)
-				// Clear worktree config on the parent
-				.map((s) =>
-					s.id === activeSession.id
-						? { ...s, worktreeConfig: undefined, worktreeParentPath: undefined }
-						: s
-				)
-		);
-
-		const childMessage =
-			worktreeChildCount > 0
-				? ` Removed ${worktreeChildCount} worktree sub-agent${worktreeChildCount > 1 ? 's' : ''}.`
-				: '';
-
-		addToast({
-			type: 'success',
-			title: 'Worktrees Disabled',
-			message: `Worktree configuration cleared for this agent.${childMessage}`,
-		});
-	}, [activeSession, sessions, addToast]);
-
-	const handleCreateWorktreeFromConfig = useCallback(
-		async (branchName: string, basePath: string) => {
-			if (!activeSession || !basePath) {
-				addToast({
-					type: 'error',
-					title: 'Error',
-					message: 'No worktree directory configured',
-				});
-				return;
-			}
-
-			const worktreePath = `${basePath}/${branchName}`;
-			console.log('[WorktreeConfig] Create worktree:', branchName, 'at', worktreePath);
-
-			// Get SSH remote ID for remote worktree operations
-			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
-			const sshRemoteId =
-				activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
-
-			try {
-				// Create the worktree via git (pass SSH remote ID for remote sessions)
-				const result = await window.maestro.git.worktreeSetup(
-					activeSession.cwd,
-					worktreePath,
-					branchName,
-					sshRemoteId
-				);
-
-				if (!result.success) {
-					throw new Error(result.error || 'Failed to create worktree');
-				}
-
-				// Create a new session for the worktree, inheriting all config from parent
-				const newId = generateId();
-				const initialTabId = generateId();
-				const initialTab: AITab = {
-					id: initialTabId,
-					agentSessionId: null,
-					name: null,
-					starred: false,
-					logs: [],
-					inputValue: '',
-					stagedImages: [],
-					createdAt: Date.now(),
-					state: 'idle',
-					saveToHistory: defaultSaveToHistory,
-					showThinking: defaultShowThinking,
-				};
-
-				// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
-				let gitBranches: string[] | undefined;
-				let gitTags: string[] | undefined;
-				let gitRefsCacheTime: number | undefined;
-
-				try {
-					[gitBranches, gitTags] = await Promise.all([
-						gitService.getBranches(worktreePath, sshRemoteId),
-						gitService.getTags(worktreePath, sshRemoteId),
-					]);
-					gitRefsCacheTime = Date.now();
-				} catch {
-					// Ignore errors
-				}
-
-				const worktreeSession: Session = {
-					id: newId,
-					name: branchName,
-					groupId: activeSession.groupId,
-					toolType: activeSession.toolType,
-					state: 'idle',
-					cwd: worktreePath,
-					fullPath: worktreePath,
-					projectRoot: worktreePath,
-					isGitRepo: true,
-					gitBranches,
-					gitTags,
-					gitRefsCacheTime,
-					parentSessionId: activeSession.id,
-					worktreeBranch: branchName,
-					aiLogs: [],
-					shellLogs: [
-						{
-							id: generateId(),
-							timestamp: Date.now(),
-							source: 'system',
-							text: 'Worktree Session Ready.',
-						},
-					],
-					workLog: [],
-					contextUsage: 0,
-					inputMode: activeSession.toolType === 'terminal' ? 'terminal' : 'ai',
-					aiPid: 0,
-					terminalPid: 0,
-					port: 3000 + Math.floor(Math.random() * 100),
-					isLive: false,
-					changedFiles: [],
-					fileTree: [],
-					fileExplorerExpanded: [],
-					fileExplorerScrollPos: 0,
-					fileTreeAutoRefreshInterval: 180,
-					shellCwd: worktreePath,
-					aiCommandHistory: [],
-					shellCommandHistory: [],
-					executionQueue: [],
-					activeTimeMs: 0,
-					aiTabs: [initialTab],
-					activeTabId: initialTabId,
-					closedTabHistory: [],
-					filePreviewTabs: [],
-					activeFileTabId: null,
-					unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-					unifiedClosedTabHistory: [],
-					customPath: activeSession.customPath,
-					customArgs: activeSession.customArgs,
-					customEnvVars: activeSession.customEnvVars,
-					customModel: activeSession.customModel,
-					customContextWindow: activeSession.customContextWindow,
-					nudgeMessage: activeSession.nudgeMessage,
-					autoRunFolderPath: activeSession.autoRunFolderPath,
-					// Inherit SSH configuration from parent session
-					sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
-				};
-
-				// Mark path so the file watcher discovery handler skips it
-				recentlyCreatedWorktreePathsRef.current.add(worktreePath);
-				setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(worktreePath), 10000);
-
-				setSessions((prev) => [...prev, worktreeSession]);
-
-				// Expand parent's worktrees
-				setSessions((prev) =>
-					prev.map((s) => (s.id === activeSession.id ? { ...s, worktreesExpanded: true } : s))
-				);
-
-				addToast({
-					type: 'success',
-					title: 'Worktree Created',
-					message: branchName,
-				});
-			} catch (err) {
-				console.error('[WorktreeConfig] Failed to create worktree:', err);
-				addToast({
-					type: 'error',
-					title: 'Failed to Create Worktree',
-					message: err instanceof Error ? err.message : String(err),
-				});
-				throw err; // Re-throw so the modal can show the error
-			}
-		},
-		[activeSession, defaultSaveToHistory, addToast]
-	);
-
-	const handleCloseCreateWorktreeModal = useCallback(() => {
-		setCreateWorktreeModalOpen(false);
-		setCreateWorktreeSession(null);
-	}, []);
-
-	const handleCreateWorktree = useCallback(
-		async (branchName: string) => {
-			if (!createWorktreeSession) return;
-
-			// Determine base path: use configured path or default to parent directory
-			const basePath =
-				createWorktreeSession.worktreeConfig?.basePath ||
-				createWorktreeSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
-
-			const worktreePath = `${basePath}/${branchName}`;
-			console.log('[CreateWorktree] Create worktree:', branchName, 'at', worktreePath);
-
-			// Get SSH remote ID for remote worktree operations
-			// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
-			// we must fall back to sessionSshRemoteConfig.remoteId. See CLAUDE.md "SSH Remote Sessions".
-			const sshRemoteId =
-				createWorktreeSession.sshRemoteId ||
-				createWorktreeSession.sessionSshRemoteConfig?.remoteId ||
-				undefined;
-
-			// Create the worktree via git (pass SSH remote ID for remote sessions)
-			const result = await window.maestro.git.worktreeSetup(
-				createWorktreeSession.cwd,
-				worktreePath,
-				branchName,
-				sshRemoteId
-			);
-
-			if (!result.success) {
-				throw new Error(result.error || 'Failed to create worktree');
-			}
-
-			// Create a new session for the worktree, inheriting all config from parent
-			const newId = generateId();
-			const initialTabId = generateId();
-			const initialTab: AITab = {
-				id: initialTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
-			};
-
-			// Fetch git info for the worktree (pass SSH remote ID for remote sessions)
-			let gitBranches: string[] | undefined;
-			let gitTags: string[] | undefined;
-			let gitRefsCacheTime: number | undefined;
-
-			try {
-				[gitBranches, gitTags] = await Promise.all([
-					gitService.getBranches(worktreePath, sshRemoteId),
-					gitService.getTags(worktreePath, sshRemoteId),
-				]);
-				gitRefsCacheTime = Date.now();
-			} catch {
-				// Ignore errors
-			}
-
-			const worktreeSession: Session = {
-				id: newId,
-				name: branchName,
-				groupId: createWorktreeSession.groupId,
-				toolType: createWorktreeSession.toolType,
-				state: 'idle',
-				cwd: worktreePath,
-				fullPath: worktreePath,
-				projectRoot: worktreePath,
-				isGitRepo: true,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				parentSessionId: createWorktreeSession.id,
-				worktreeBranch: branchName,
-				aiLogs: [],
-				shellLogs: [
-					{
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: 'Worktree Session Ready.',
-					},
-				],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: createWorktreeSession.toolType === 'terminal' ? 'terminal' : 'ai',
-				aiPid: 0,
-				terminalPid: 0,
-				port: 3000 + Math.floor(Math.random() * 100),
-				isLive: false,
-				changedFiles: [],
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				fileTreeAutoRefreshInterval: 180,
-				shellCwd: worktreePath,
-				aiCommandHistory: [],
-				shellCommandHistory: [],
-				executionQueue: [],
-				activeTimeMs: 0,
-				aiTabs: [initialTab],
-				activeTabId: initialTabId,
-				closedTabHistory: [],
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-				unifiedClosedTabHistory: [],
-				customPath: createWorktreeSession.customPath,
-				customArgs: createWorktreeSession.customArgs,
-				customEnvVars: createWorktreeSession.customEnvVars,
-				customModel: createWorktreeSession.customModel,
-				customContextWindow: createWorktreeSession.customContextWindow,
-				nudgeMessage: createWorktreeSession.nudgeMessage,
-				autoRunFolderPath: createWorktreeSession.autoRunFolderPath,
-				// Inherit SSH configuration from parent session
-				sessionSshRemoteConfig: createWorktreeSession.sessionSshRemoteConfig,
-			};
-
-			// Mark path so the file watcher discovery handler skips it
-			recentlyCreatedWorktreePathsRef.current.add(worktreePath);
-			setTimeout(() => recentlyCreatedWorktreePathsRef.current.delete(worktreePath), 10000);
-
-			setSessions((prev) => [...prev, worktreeSession]);
-
-			// Expand parent's worktrees
-			setSessions((prev) =>
-				prev.map((s) => (s.id === createWorktreeSession.id ? { ...s, worktreesExpanded: true } : s))
-			);
-
-			// Save worktree config if not already configured
-			if (!createWorktreeSession.worktreeConfig?.basePath) {
-				setSessions((prev) =>
-					prev.map((s) =>
-						s.id === createWorktreeSession.id
-							? { ...s, worktreeConfig: { basePath, watchEnabled: true } }
-							: s
-					)
-				);
-			}
-
-			addToast({
-				type: 'success',
-				title: 'Worktree Created',
-				message: branchName,
-			});
-		},
-		[createWorktreeSession, defaultSaveToHistory, addToast]
-	);
-
-	const handleCloseCreatePRModal = useCallback(() => {
-		setCreatePRModalOpen(false);
-		setCreatePRSession(null);
-	}, []);
-
 	const handlePRCreated = useCallback(
 		async (prDetails: PRDetails) => {
 			const session = createPRSession || activeSession;
-			addToast({
+			notifyToast({
 				type: 'success',
 				title: 'Pull Request Created',
 				message: prDetails.title,
@@ -10586,72 +7425,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 			}
 			setCreatePRSession(null);
 		},
-		[createPRSession, activeSession, addToast]
+		[createPRSession, activeSession]
 	);
 
-	const handleCloseDeleteWorktreeModal = useCallback(() => {
-		setDeleteWorktreeModalOpen(false);
-		setDeleteWorktreeSession(null);
-	}, []);
-
-	const handleConfirmDeleteWorktree = useCallback(() => {
-		if (!deleteWorktreeSession) return;
-		// Remove the session but keep the worktree on disk
-		setSessions((prev) => prev.filter((s) => s.id !== deleteWorktreeSession.id));
-	}, [deleteWorktreeSession]);
-
-	const handleConfirmAndDeleteWorktreeOnDisk = useCallback(async () => {
-		if (!deleteWorktreeSession) return;
-		// Remove the session AND delete the worktree from disk
-		const result = await window.maestro.git.removeWorktree(deleteWorktreeSession.cwd, true);
-		if (!result.success) {
-			throw new Error(result.error || 'Failed to remove worktree');
-		}
-		setSessions((prev) => prev.filter((s) => s.id !== deleteWorktreeSession.id));
-	}, [deleteWorktreeSession]);
-
-	// AppUtilityModals stable callbacks
-	const handleCloseLightbox = useCallback(() => {
-		setLightboxImage(null);
-		setLightboxImages([]);
-		setLightboxSource('history');
-		setLightboxIsGroupChat(false);
-		setLightboxAllowDelete(false);
-		// Return focus to input after closing carousel
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, [
-		setLightboxImage,
-		setLightboxImages,
-		setLightboxSource,
-		setLightboxIsGroupChat,
-		setLightboxAllowDelete,
-	]);
-	const handleNavigateLightbox = useCallback(
-		(img: string) => setLightboxImage(img),
-		[setLightboxImage]
-	);
-	const handleDeleteLightboxImage = useCallback(
-		(img: string) => {
-			// Use lightboxIsGroupChat from store to check which staged images to update
-			if (lightboxIsGroupChat) {
-				setGroupChatStagedImages((prev) => prev.filter((i) => i !== img));
-			} else {
-				setStagedImages((prev) => prev.filter((i) => i !== img));
-			}
-			// Also update lightboxImages so the lightbox navigation stays in sync
-			// (lightboxImages is a snapshot taken when the lightbox opened, so it gets stale on deletion)
-			setLightboxImages(lightboxImages.filter((i) => i !== img));
-		},
-		[
-			setStagedImages,
-			setLightboxImages,
-			lightboxImages,
-			lightboxIsGroupChat,
-			setGroupChatStagedImages,
-		]
-	);
-	const handleCloseAutoRunSetup = useCallback(() => setAutoRunSetupModalOpen(false), []);
-	const handleCloseBatchRunner = useCallback(() => setBatchRunnerModalOpen(false), []);
 	const handleSaveBatchPrompt = useCallback(
 		(prompt: string) => {
 			if (!activeSession) return;
@@ -10670,7 +7446,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[activeSession]
 	);
-	const handleCloseTabSwitcher = useCallback(() => setTabSwitcherOpen(false), []);
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
@@ -10703,7 +7478,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[handleResumeSession, setActiveFocus]
 	);
-	const handleCloseFileSearch = useCallback(() => setFuzzyFileSearchOpen(false), []);
 	const handleFileSearchSelect = useCallback(
 		(file: FlatFileItem) => {
 			// Preview the file directly (handleFileClick expects relative path)
@@ -10713,10 +7487,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[handleFileClick]
 	);
-	const handleClosePromptComposer = useCallback(() => {
-		setPromptComposerOpen(false);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	}, []);
 	const handlePromptComposerSubmit = useCallback(
 		(value: string) => {
 			if (activeGroupChatId) {
@@ -10833,17 +7603,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 	);
 
 	// QuickActionsModal stable callbacks
-	const handleQuickActionsRenameTab = useCallback(() => {
-		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
-			const activeTab = activeSession.aiTabs?.find((t) => t.id === activeSession.activeTabId);
-			// Only allow rename if tab has an active Claude session
-			if (activeTab?.agentSessionId) {
-				setRenameTabId(activeTab.id);
-				setRenameTabInitialName(getInitialRenameValue(activeTab));
-				setRenameTabModalOpen(true);
-			}
-		}
-	}, [activeSession, getInitialRenameValue]);
 	const handleQuickActionsToggleReadOnlyMode = useCallback(() => {
 		if (activeSession?.inputMode === 'ai' && activeSession.activeTabId) {
 			setSessions((prev) =>
@@ -10890,11 +7649,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 			);
 		}
 	}, [activeSession]);
-	const handleQuickActionsOpenTabSwitcher = useCallback(() => {
-		if (activeSession?.inputMode === 'ai' && activeSession.aiTabs) {
-			setTabSwitcherOpen(true);
-		}
-	}, [activeSession]);
 	const handleQuickActionsRefreshGitFileState = useCallback(async () => {
 		if (activeSessionId) {
 			// Refresh file tree, branches/tags, and history
@@ -10934,19 +7688,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setMarkdownEditMode,
 		setChatRawTextMode,
 	]);
-	const handleQuickActionsStartTour = useCallback(() => {
-		setTourFromWizard(false);
-		setTourOpen(true);
-	}, []);
-	const handleQuickActionsEditAgent = useCallback((session: Session) => {
-		setEditAgentSession(session);
-	}, []);
-	const handleQuickActionsNewGroupChat = useCallback(() => setShowNewGroupChatModal(true), []);
-	const handleQuickActionsOpenMergeSession = useCallback(() => setMergeSessionModalOpen(true), []);
-	const handleQuickActionsOpenSendToAgent = useCallback(() => setSendToAgentModalOpen(true), []);
-	const handleQuickActionsOpenCreatePR = useCallback((session: Session) => {
-		setCreatePRSession(session);
-	}, []);
 	const handleQuickActionsSummarizeAndContinue = useCallback(
 		() => handleSummarizeAndContinue(),
 		[handleSummarizeAndContinue]
@@ -10969,7 +7710,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 		rightPanelRef.current?.openAutoRunResetTasksModal();
 	}, []);
 
-	const handleCloseQueueBrowser = useCallback(() => setQueueBrowserOpen(false), []);
 	const handleRemoveQueueItem = useCallback((sessionId: string, itemId: string) => {
 		setSessions((prev) =>
 			prev.map((s) => {
@@ -11114,6 +7854,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
 		// Group chat context
@@ -11162,6 +7903,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 		// Session bookmark toggle
 		toggleBookmark,
+
+		// Auto-scroll AI mode toggle
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 	};
 
 	// Update flat file list when active session's tree, expanded folders, filter, or hidden files setting changes
@@ -11186,7 +7931,23 @@ You are taking over this conversation. Based on the context above, provide a bri
 		// Use filteredFileTree when available (it returns the full tree when no filter is active)
 		// Then apply hidden files filter to match what FileExplorerPanel displays
 		const displayTree = filterHiddenFiles(filteredFileTree);
-		setFlatFileList(flattenTree(displayTree, expandedSet));
+		const newFlatList = flattenTree(displayTree, expandedSet);
+
+		// Preserve selection identity: track the selected item by path, not index.
+		// When folders expand/collapse, the flat list shifts — re-locate the selected item.
+		const { flatFileList: oldList, selectedFileIndex: oldIndex } = useFileExplorerStore.getState();
+		const selectedPath = oldList[oldIndex]?.fullPath;
+		if (selectedPath) {
+			const newIndex = newFlatList.findIndex((item) => item.fullPath === selectedPath);
+			if (newIndex >= 0) {
+				setSelectedFileIndex(newIndex);
+			} else {
+				// Item no longer visible (inside collapsed folder) — clamp to valid range
+				setSelectedFileIndex(Math.min(oldIndex, Math.max(0, newFlatList.length - 1)));
+			}
+		}
+
+		setFlatFileList(newFlatList);
 	}, [activeSession?.fileExplorerExpanded, filteredFileTree, showHiddenFiles]);
 
 	// Handle pending jump path from /jump command
@@ -11523,6 +8284,9 @@ You are taking over this conversation. Based on the context above, provide a bri
 		filePreviewLoading,
 		markdownEditMode,
 		chatRawTextMode,
+		autoScrollAiMode,
+		setAutoScrollAiMode,
+		userMessageAlignment,
 		shortcuts,
 		rightPanelOpen,
 		maxOutputLines,
@@ -11804,7 +8568,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setProcessMonitorOpen,
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
-		setDirectorNotesOpen,
+		setDirectorNotesOpen: encoreFeatures.directorNotes ? setDirectorNotesOpen : undefined,
 		setGroups,
 		setSessions,
 		setRenameInstanceModalOpen,
@@ -12204,7 +8968,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					startTour={handleQuickActionsStartTour}
 					setFuzzyFileSearchOpen={setFuzzyFileSearchOpen}
 					onEditAgent={handleQuickActionsEditAgent}
-					onNewGroupChat={handleQuickActionsNewGroupChat}
+					onNewGroupChat={handleNewGroupChat}
 					onOpenGroupChat={handleOpenGroupChat}
 					onCloseGroupChat={handleCloseGroupChat}
 					onDeleteGroupChat={deleteGroupChatWithConfirmation}
@@ -12256,7 +9020,11 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onAutoRunRefresh={handleAutoRunRefresh}
 					onOpenMarketplace={handleOpenMarketplace}
 					onOpenSymphony={() => setSymphonyModalOpen(true)}
-					onOpenDirectorNotes={() => setDirectorNotesOpen(true)}
+					onOpenDirectorNotes={
+						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
+					}
+					autoScrollAiMode={autoScrollAiMode}
+					setAutoScrollAiMode={setAutoScrollAiMode}
 					tabSwitcherOpen={tabSwitcherOpen}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
@@ -12290,9 +9058,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 							: canAttachImages
 								? setStagedImages
 								: undefined
-					}
-					onPromptImageAttachBlocked={
-						activeGroupChatId || !blockCodexResumeImages ? undefined : showImageAttachBlockedNotice
 					}
 					onPromptOpenLightbox={handleSetLightboxImage}
 					promptTabSaveToHistory={activeGroupChatId ? false : (activeTab?.saveToHistory ?? false)}
@@ -12449,7 +9214,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								const agent = await window.maestro.agents.get(data.agentType);
 								if (!agent) {
 									console.error(`Agent not found: ${data.agentType}`);
-									addToast({
+									notifyToast({
 										type: 'error',
 										title: 'Symphony Error',
 										message: `Agent not found: ${data.agentType}`,
@@ -12466,7 +9231,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 								);
 								if (!validation.valid) {
 									console.error(`Session validation failed: ${validation.error}`);
-									addToast({
+									notifyToast({
 										type: 'error',
 										title: 'Session Creation Failed',
 										message: validation.error || 'Cannot create duplicate session',
@@ -12587,6 +9352,8 @@ You are taking over this conversation. Based on the context above, provide a bri
 										branchName: data.branchName || '',
 										totalDocuments: data.issue.documentPaths.length,
 										agentType: data.agentType,
+										draftPrNumber: data.draftPrNumber,
+										draftPrUrl: data.draftPrUrl,
 									})
 									.catch((err: unknown) => {
 										console.error('[Symphony] Failed to register active contribution:', err);
@@ -12608,20 +9375,46 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 								// Switch to Auto Run tab so user sees the documents
 								setActiveRightTab('autorun');
+
+								// Auto-start batch run with all contribution documents
+								if (data.autoRunPath && data.issue.documentPaths.length > 0) {
+									const batchConfig: BatchRunConfig = {
+										documents: data.issue.documentPaths.map((doc) => ({
+											id: generateId(),
+											filename: doc.name.replace(/\.md$/, ''),
+											resetOnCompletion: false,
+											isDuplicate: false,
+										})),
+										prompt: DEFAULT_BATCH_PROMPT,
+										loopEnabled: false,
+									};
+
+									// Small delay to ensure session state is fully propagated
+									setTimeout(() => {
+										console.log(
+											'[Symphony] Auto-starting batch run with',
+											batchConfig.documents.length,
+											'documents'
+										);
+										startBatchRun(newId, batchConfig, data.autoRunPath!);
+									}, 500);
+								}
 							}}
 						/>
 					</Suspense>
 				)}
 
-				{/* --- DIRECTOR'S NOTES MODAL (lazy-loaded) --- */}
-				{directorNotesOpen && (
+				{/* --- DIRECTOR'S NOTES MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.directorNotes && directorNotesOpen && (
 					<Suspense fallback={null}>
 						<DirectorNotesModal
 							theme={theme}
 							onClose={() => setDirectorNotesOpen(false)}
 							onResumeSession={handleDirectorNotesResumeSession}
 							fileTree={activeSession?.fileTree}
-							onFileClick={(path: string) => handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)}
+							onFileClick={(path: string) =>
+								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
+							}
 						/>
 					</Suspense>
 				)}
@@ -12652,7 +9445,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							// Copy the gist URL to clipboard
 							navigator.clipboard.writeText(gistUrl).catch(() => {});
 							// Show a toast notification
-							addToast({
+							notifyToast({
 								type: 'success',
 								title: 'Gist Published',
 								message: `${isPublic ? 'Public' : 'Secret'} gist created! URL copied to clipboard.`,
@@ -12863,8 +9656,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 									})()}
 									onSendMessage={handleSendGroupChatMessage}
 									onClose={handleCloseGroupChat}
-									onRename={() => setShowRenameGroupChatModal(activeGroupChatId)}
-									onShowInfo={() => setShowGroupChatInfo(true)}
+									onRename={() =>
+										activeGroupChatId && handleOpenRenameGroupChatModal(activeGroupChatId)
+									}
+									onShowInfo={() => useModalStore.getState().openModal('groupChatInfo')}
 									rightPanelOpen={rightPanelOpen}
 									onToggleRightPanel={() => setRightPanelOpen(!rightPanelOpen)}
 									shortcuts={shortcuts}
@@ -13026,6 +9821,12 @@ You are taking over this conversation. Based on the context above, provide a bri
 							setCrashReportingEnabled={setCrashReportingEnabled}
 							customAICommands={customAICommands}
 							setCustomAICommands={setCustomAICommands}
+							autoScrollAiMode={autoScrollAiMode}
+							setAutoScrollAiMode={setAutoScrollAiMode}
+							userMessageAlignment={userMessageAlignment}
+							setUserMessageAlignment={setUserMessageAlignment}
+							encoreFeatures={encoreFeatures}
+							setEncoreFeatures={setEncoreFeatures}
 							initialTab={settingsTab}
 							hasNoAgents={hasNoAgents}
 							onThemeImportError={(msg) => setFlashNotification(msg)}
@@ -13172,7 +9973,6 @@ You are taking over this conversation. Based on the context above, provide a bri
  * Phase 5: Auto Run state now lives in batchStore (Zustand) — no context wrapper needed
  * Phase 6: Session state now lives in sessionStore (Zustand) — no context wrapper needed
  * Phase 7: InlineWizardProvider - inline /wizard command state management
- * See refactor-details-2.md for full plan.
  */
 export default function MaestroConsole() {
 	return (

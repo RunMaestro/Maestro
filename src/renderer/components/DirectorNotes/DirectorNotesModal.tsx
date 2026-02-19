@@ -9,8 +9,12 @@ import { hasCachedSynopsis } from './AIOverviewTab';
 import { useSettings } from '../../hooks';
 
 // Lazy load tab components
-const UnifiedHistoryTab = lazy(() => import('./UnifiedHistoryTab').then(m => ({ default: m.UnifiedHistoryTab })));
-const AIOverviewTab = lazy(() => import('./AIOverviewTab').then(m => ({ default: m.AIOverviewTab })));
+const UnifiedHistoryTab = lazy(() =>
+	import('./UnifiedHistoryTab').then((m) => ({ default: m.UnifiedHistoryTab }))
+);
+const AIOverviewTab = lazy(() =>
+	import('./AIOverviewTab').then((m) => ({ default: m.AIOverviewTab }))
+);
 
 interface DirectorNotesModalProps {
 	theme: Theme;
@@ -54,15 +58,18 @@ export function DirectorNotesModal({
 	const aiOverviewContentRef = useRef<HTMLDivElement>(null);
 
 	// Focus the active tab's content area
-	const focusActiveTab = useCallback((tabId?: TabId) => {
-		const target = tabId ?? activeTab;
-		// Delay to allow React to render/show the tab
-		requestAnimationFrame(() => {
-			if (target === 'overview') overviewTabRef.current?.focus();
-			else if (target === 'history') historyTabRef.current?.focus();
-			else if (target === 'ai-overview') aiOverviewContentRef.current?.focus();
-		});
-	}, [activeTab]);
+	const focusActiveTab = useCallback(
+		(tabId?: TabId) => {
+			const target = tabId ?? activeTab;
+			// Delay to allow React to render/show the tab
+			requestAnimationFrame(() => {
+				if (target === 'overview') overviewTabRef.current?.focus();
+				else if (target === 'history') historyTabRef.current?.focus();
+				else if (target === 'ai-overview') aiOverviewContentRef.current?.focus();
+			});
+		},
+		[activeTab]
+	);
 
 	// Store callbacks in refs to avoid re-registering layer when they change
 	const onCloseRef = useRef(onClose);
@@ -82,9 +89,12 @@ export function DirectorNotesModal({
 			focusTrap: 'lenient',
 			onEscape: () => {
 				// Delegate Escape to the active tab first (e.g. to close search)
-				const tabRef = activeTabRef.current === 'history' ? historyTabRef
-					: activeTabRef.current === 'overview' ? overviewTabRef
-					: null;
+				const tabRef =
+					activeTabRef.current === 'history'
+						? historyTabRef
+						: activeTabRef.current === 'overview'
+							? overviewTabRef
+							: null;
 				if (tabRef?.current?.onEscape?.()) return;
 				onCloseRef.current();
 			},
@@ -113,25 +123,31 @@ export function DirectorNotesModal({
 	}, []);
 
 	// Check if a tab can be navigated to
-	const isTabEnabled = useCallback((tabId: TabId) => {
-		if (tabId === 'ai-overview') return overviewReady;
-		return true;
-	}, [overviewReady]);
+	const isTabEnabled = useCallback(
+		(tabId: TabId) => {
+			if (tabId === 'ai-overview') return overviewReady;
+			return true;
+		},
+		[overviewReady]
+	);
 
 	// Navigate to adjacent tab
-	const navigateTab = useCallback((direction: -1 | 1) => {
-		const currentIndex = TABS.findIndex(t => t.id === activeTab);
-		let nextIndex = currentIndex;
-		// Find next enabled tab in the given direction, wrapping around
-		for (let i = 1; i <= TABS.length; i++) {
-			const candidate = (currentIndex + direction * i + TABS.length) % TABS.length;
-			if (isTabEnabled(TABS[candidate].id)) {
-				nextIndex = candidate;
-				break;
+	const navigateTab = useCallback(
+		(direction: -1 | 1) => {
+			const currentIndex = TABS.findIndex((t) => t.id === activeTab);
+			let nextIndex = currentIndex;
+			// Find next enabled tab in the given direction, wrapping around
+			for (let i = 1; i <= TABS.length; i++) {
+				const candidate = (currentIndex + direction * i + TABS.length) % TABS.length;
+				if (isTabEnabled(TABS[candidate].id)) {
+					nextIndex = candidate;
+					break;
+				}
 			}
-		}
-		setActiveTab(TABS[nextIndex].id);
-	}, [activeTab, isTabEnabled]);
+			setActiveTab(TABS[nextIndex].id);
+		},
+		[activeTab, isTabEnabled]
+	);
 
 	// Global keyboard handler for Cmd+Shift+[/]
 	useEffect(() => {
@@ -153,7 +169,9 @@ export function DirectorNotesModal({
 		<div
 			className="fixed inset-0 modal-overlay flex items-start justify-center pt-16 z-[9999] animate-in fade-in duration-100"
 			style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
-			onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+			onClick={(e) => {
+				if (e.target === e.currentTarget) onClose();
+			}}
 		>
 			{/* Modal */}
 			<div
@@ -185,10 +203,7 @@ export function DirectorNotesModal({
 					</div>
 
 					{/* Close button */}
-					<button
-						onClick={onClose}
-						className="p-1 rounded hover:bg-white/10 transition-colors"
-					>
+					<button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
 						<X className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 					</button>
 				</div>
@@ -223,21 +238,24 @@ export function DirectorNotesModal({
 									<Icon className="w-4 h-4" />
 								)}
 								{tab.label}
-								{showGenerating && (
-									<span className="text-[10px] font-normal">(generating...)</span>
-								)}
+								{showGenerating && <span className="text-[10px] font-normal">(generating...)</span>}
 							</button>
 						);
 					})}
 				</div>
 
 				{/* Tab content */}
-				<div className="flex-1 overflow-hidden min-h-0 flex flex-col" style={{ backgroundColor: theme.colors.bgMain }}>
-					<Suspense fallback={
-						<div className="flex items-center justify-center h-full">
-							<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.textDim }} />
-						</div>
-					}>
+				<div
+					className="flex-1 overflow-hidden min-h-0 flex flex-col"
+					style={{ backgroundColor: theme.colors.bgMain }}
+				>
+					<Suspense
+						fallback={
+							<div className="flex items-center justify-center h-full">
+								<Loader2 className="w-8 h-8 animate-spin" style={{ color: theme.colors.textDim }} />
+							</div>
+						}
+					>
 						<div className={`h-full ${activeTab === 'overview' ? '' : 'hidden'}`}>
 							<OverviewTab ref={overviewTabRef} theme={theme} shortcuts={shortcuts} />
 						</div>
@@ -255,10 +273,7 @@ export function DirectorNotesModal({
 							tabIndex={0}
 							className={`h-full outline-none ${activeTab === 'ai-overview' ? '' : 'hidden'}`}
 						>
-							<AIOverviewTab
-								theme={theme}
-								onSynopsisReady={handleSynopsisReady}
-							/>
+							<AIOverviewTab theme={theme} onSynopsisReady={handleSynopsisReady} />
 						</div>
 					</Suspense>
 				</div>

@@ -24,19 +24,30 @@ vi.mock('../../../../renderer/constants/modalPriorities', () => ({
 
 // Mock lazy-loaded child components (use forwardRef to match real components)
 vi.mock('../../../../renderer/components/DirectorNotes/UnifiedHistoryTab', () => ({
-	UnifiedHistoryTab: React.forwardRef(({ theme, onResumeSession }: { theme: Theme; onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void }, _ref: any) => (
-		<div data-testid="unified-history-tab" tabIndex={0}>
-			Unified History Content
-			{onResumeSession && (
-				<button
-					data-testid="mock-resume-session"
-					onClick={() => onResumeSession('source-session-1', 'agent-session-abc')}
-				>
-					Mock Resume
-				</button>
-			)}
-		</div>
-	)),
+	UnifiedHistoryTab: React.forwardRef(
+		(
+			{
+				theme,
+				onResumeSession,
+			}: {
+				theme: Theme;
+				onResumeSession?: (sourceSessionId: string, agentSessionId: string) => void;
+			},
+			_ref: any
+		) => (
+			<div data-testid="unified-history-tab" tabIndex={0}>
+				Unified History Content
+				{onResumeSession && (
+					<button
+						data-testid="mock-resume-session"
+						onClick={() => onResumeSession('source-session-1', 'agent-session-abc')}
+					>
+						Mock Resume
+					</button>
+				)}
+			</div>
+		)
+	),
 }));
 
 vi.mock('../../../../renderer/components/DirectorNotes/AIOverviewTab', () => ({
@@ -59,7 +70,9 @@ vi.mock('../../../../renderer/hooks', () => ({
 
 vi.mock('../../../../renderer/components/DirectorNotes/OverviewTab', () => ({
 	OverviewTab: React.forwardRef(({ theme }: { theme: Theme }, _ref: any) => (
-		<div data-testid="overview-tab" tabIndex={0}>Overview Content</div>
+		<div data-testid="overview-tab" tabIndex={0}>
+			Overview Content
+		</div>
 	)),
 	TabFocusHandle: {},
 }));
@@ -102,13 +115,7 @@ describe('DirectorNotesModal', () => {
 	});
 
 	const renderModal = (props?: Partial<React.ComponentProps<typeof DirectorNotesModal>>) => {
-		return render(
-			<DirectorNotesModal
-				theme={mockTheme}
-				onClose={onClose}
-				{...props}
-			/>
-		);
+		return render(<DirectorNotesModal theme={mockTheme} onClose={onClose} {...props} />);
 	};
 
 	describe('Rendering', () => {
@@ -333,12 +340,14 @@ describe('DirectorNotesModal', () => {
 
 			// Starting on history (index 1), Cmd+Shift+] should go to ai-overview (index 2)
 			await act(async () => {
-				window.dispatchEvent(new KeyboardEvent('keydown', {
-					key: ']',
-					metaKey: true,
-					shiftKey: true,
-					bubbles: true,
-				}));
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: ']',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
 			});
 
 			const aiOverviewContainer = screen.getByTestId('ai-overview-tab').closest('.h-full');
@@ -354,12 +363,14 @@ describe('DirectorNotesModal', () => {
 
 			// Starting on history (index 1), Cmd+Shift+[ should go to help (index 0)
 			await act(async () => {
-				window.dispatchEvent(new KeyboardEvent('keydown', {
-					key: '[',
-					metaKey: true,
-					shiftKey: true,
-					bubbles: true,
-				}));
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '[',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
 			});
 
 			const overviewContainer = screen.getByTestId('overview-tab').closest('.h-full');
@@ -375,12 +386,14 @@ describe('DirectorNotesModal', () => {
 
 			// AI Overview is disabled (not ready). From history (index 1), Cmd+Shift+] should skip to help (index 0)
 			await act(async () => {
-				window.dispatchEvent(new KeyboardEvent('keydown', {
-					key: ']',
-					metaKey: true,
-					shiftKey: true,
-					bubbles: true,
-				}));
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: ']',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
 			});
 
 			const overviewContainer = screen.getByTestId('overview-tab').closest('.h-full');

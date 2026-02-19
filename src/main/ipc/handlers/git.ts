@@ -270,7 +270,14 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 		'git:log',
 		withIpcErrorLogging(
 			handlerOpts('log'),
-			async (cwd: string, options?: { limit?: number; search?: string }) => {
+			async (
+				cwd: string,
+				options?: { limit?: number; search?: string },
+				sshRemoteId?: string,
+				remoteCwd?: string
+			) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
 				// Get git log with formatted output for parsing
 				// Format: hash|author|date|refs|subject followed by shortstat
 				// Using a unique separator to split commits
@@ -288,7 +295,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					args.push('--all', `--grep=${options.search}`, '-i');
 				}
 
-				const result = await execFileNoThrow('git', args, cwd);
+				const result = await execGit(args, cwd, sshRemote, effectiveRemoteCwd);
 
 				if (result.exitCode !== 0) {
 					return { entries: [], error: result.stderr };
@@ -331,23 +338,43 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 
 	ipcMain.handle(
 		'git:commitCount',
-		withIpcErrorLogging(handlerOpts('commitCount'), async (cwd: string) => {
-			// Get total commit count using rev-list
-			const result = await execFileNoThrow('git', ['rev-list', '--count', 'HEAD'], cwd);
-			if (result.exitCode !== 0) {
-				return { count: 0, error: result.stderr };
+		withIpcErrorLogging(
+			handlerOpts('commitCount'),
+			async (cwd: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				// Get total commit count using rev-list
+				const result = await execGit(
+					['rev-list', '--count', 'HEAD'],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				if (result.exitCode !== 0) {
+					return { count: 0, error: result.stderr };
+				}
+				return { count: parseInt(result.stdout.trim(), 10) || 0, error: null };
 			}
-			return { count: parseInt(result.stdout.trim(), 10) || 0, error: null };
-		})
+		)
 	);
 
 	ipcMain.handle(
 		'git:show',
-		withIpcErrorLogging(handlerOpts('show'), async (cwd: string, hash: string) => {
-			// Get the full diff for a specific commit
-			const result = await execFileNoThrow('git', ['show', '--stat', '--patch', hash], cwd);
-			return { stdout: result.stdout, stderr: result.stderr };
-		})
+		withIpcErrorLogging(
+			handlerOpts('show'),
+			async (cwd: string, hash: string, sshRemoteId?: string, remoteCwd?: string) => {
+				const sshRemote = getSshRemoteById(sshRemoteId);
+				const effectiveRemoteCwd = sshRemote ? remoteCwd || cwd : undefined;
+				// Get the full diff for a specific commit
+				const result = await execGit(
+					['show', '--stat', '--patch', hash],
+					cwd,
+					sshRemote,
+					effectiveRemoteCwd
+				);
+				return { stdout: result.stdout, stderr: result.stderr };
+			}
+		)
 	);
 
 	// Read file content at a specific git ref (e.g., HEAD:path/to/file.png)
@@ -1083,9 +1110,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							}
 							const toplevel = toplevelResult.stdout.trim();
 							// For SSH, compare as-is; for local, resolve to handle symlinks
-							const normalizedSubdir = sshRemote
-								? subdirPath
-								: path.resolve(subdirPath);
+							const normalizedSubdir = sshRemote ? subdirPath : path.resolve(subdirPath);
 							const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
 							if (normalizedSubdir !== normalizedToplevel) {
 								return null; // Subdirectory inside a repo, not a repo/worktree root

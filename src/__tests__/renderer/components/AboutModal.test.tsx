@@ -1001,15 +1001,13 @@ describe('AboutModal', () => {
 
 			await act(async () => {
 				if (statsCallback) {
-					statsCallback(
-						createGlobalStats({ totalCostUsd: undefined as any, hasCostData: true })
-					);
+					statsCallback(createGlobalStats({ totalCostUsd: undefined as any, hasCostData: true }));
 				}
 			});
 
 			// Should render $0.00 instead of crashing ($ and 0.00 in same span)
 			const costSpan = screen.getByText((_content, element) => {
-				return element?.tagName === 'SPAN' && element?.textContent?.includes('0.00') || false;
+				return (element?.tagName === 'SPAN' && element?.textContent?.includes('0.00')) || false;
 			});
 			expect(costSpan).toBeInTheDocument();
 		});

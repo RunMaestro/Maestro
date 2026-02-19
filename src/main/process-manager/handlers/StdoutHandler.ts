@@ -315,13 +315,38 @@ export class StdoutHandler {
 			}
 		}
 
+		// Codex can emit multiple agent_message results in a single turn:
+		// an interim "I'm checking..." message and then the final answer.
+		// Keep the latest result text and emit once at turn completion.
+		if (managedProcess.toolType === 'codex' && outputParser.isResultMessage(event) && event.text) {
+			managedProcess.streamedText = event.text;
+		}
+
+		// For Codex, flush the latest captured result when the turn completes.
+		// turn.completed is normalized as a usage event by the Codex parser.
+		if (managedProcess.toolType === 'codex' && event.type === 'usage' && !managedProcess.resultEmitted) {
+			const resultText = managedProcess.streamedText || '';
+			if (resultText) {
+				managedProcess.resultEmitted = true;
+				logger.debug('[ProcessManager] Emitting final Codex result at turn completion', 'ProcessManager', {
+					sessionId,
+					resultLength: resultText.length,
+				});
+				this.bufferManager.emitDataBuffered(sessionId, resultText);
+			}
+		}
+
 		// Skip processing error events further - they're handled by agent-error emission
 		if (event.type === 'error') {
 			return;
 		}
 
 		// Handle result
-		if (outputParser.isResultMessage(event) && !managedProcess.resultEmitted) {
+		if (
+			managedProcess.toolType !== 'codex' &&
+			outputParser.isResultMessage(event) &&
+			!managedProcess.resultEmitted
+		) {
 			managedProcess.resultEmitted = true;
 			const resultText = event.text || managedProcess.streamedText || '';
 

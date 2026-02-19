@@ -50,6 +50,7 @@ import { createSymphonyApi } from './symphony';
 import { createTabNamingApi } from './tabNaming';
 import { createDirectorNotesApi } from './directorNotes';
 import { createAccountsApi } from './accounts';
+import { createWakatimeApi } from './wakatime';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
@@ -188,6 +189,9 @@ contextBridge.exposeInMainWorld('maestro', {
 
 	// Account Multiplexing API (usage events, limit warnings)
 	accounts: createAccountsApi(),
+
+	// WakaTime API (CLI check, API key validation)
+	wakatime: createWakatimeApi(),
 });
 
 // Re-export factory functions for external consumers (e.g., tests)
@@ -261,6 +265,8 @@ export {
 	createDirectorNotesApi,
 	// Accounts
 	createAccountsApi,
+	// WakaTime
+	createWakatimeApi,
 };
 
 // Re-export types for TypeScript consumers
@@ -471,3 +477,7 @@ export type {
 	AccountUsageUpdate,
 	AccountLimitEvent,
 } from './accounts';
+export type {
+	// From wakatime
+	WakatimeApi,
+} from './wakatime';

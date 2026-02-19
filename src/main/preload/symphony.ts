@@ -235,6 +235,8 @@ export function createSymphonyApi() {
 			sessionId: string;
 			agentType: string;
 			totalDocuments: number;
+			draftPrNumber?: number;
+			draftPrUrl?: string;
 		}): Promise<{ success: boolean; error?: string }> =>
 			ipcRenderer.invoke('symphony:registerActive', params),
 

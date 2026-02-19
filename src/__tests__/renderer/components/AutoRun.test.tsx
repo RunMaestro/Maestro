@@ -1746,14 +1746,18 @@ describe('Lightbox Functionality', () => {
 		});
 
 		// Verify copy button is present
-		const copyButton = screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`);
+		const copyButton = screen.getByTitle(
+			`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
+		);
 		expect(copyButton).toBeInTheDocument();
 
 		// Click it - the actual clipboard copy may fail but we're testing the button renders/clicks
 		fireEvent.click(copyButton);
 
 		// The button should still be there
-		expect(screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)).toBeInTheDocument();
+		expect(
+			screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)
+		).toBeInTheDocument();
 	});
 
 	it('closes lightbox when clicking overlay background', async () => {

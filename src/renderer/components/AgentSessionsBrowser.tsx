@@ -1274,7 +1274,11 @@ export function AgentSessionsBrowser({
 								}}
 								className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 								style={{ color: theme.colors.textDim }}
-								title={showSearchPanel ? 'Show activity graph' : `Search sessions (${formatShortcutKeys(['Meta', 'f'])})`}
+								title={
+									showSearchPanel
+										? 'Show activity graph'
+										: `Search sessions (${formatShortcutKeys(['Meta', 'f'])})`
+								}
 							>
 								{showSearchPanel ? (
 									<BarChart3 className="w-4 h-4" />

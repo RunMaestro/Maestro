@@ -66,9 +66,7 @@ export function useResizablePanel({
 			let currentWidth = startWidth;
 
 			const handleMouseMove = (moveEvent: MouseEvent) => {
-				const delta = side === 'left'
-					? moveEvent.clientX - startX
-					: startX - moveEvent.clientX;
+				const delta = side === 'left' ? moveEvent.clientX - startX : startX - moveEvent.clientX;
 				currentWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + delta));
 				if (panelRef.current) {
 					panelRef.current.style.width = `${currentWidth}px`;
@@ -92,7 +90,7 @@ export function useResizablePanel({
 			document.addEventListener('mousemove', handleMouseMove);
 			document.addEventListener('mouseup', handleMouseUp);
 		},
-		[width, minWidth, maxWidth, settingsKey, setWidth, side],
+		[width, minWidth, maxWidth, settingsKey, setWidth, side]
 	);
 
 	const transitionClass = isResizing ? 'transition-none' : 'transition-[width] duration-150';

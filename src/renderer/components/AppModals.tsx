@@ -849,6 +849,10 @@ export interface AppUtilityModalsProps {
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
 
+	// Auto-scroll
+	autoScrollAiMode?: boolean;
+	setAutoScrollAiMode?: (value: boolean) => void;
+
 	// LightboxModal
 	lightboxImage: string | null;
 	lightboxImages: string[];
@@ -1046,6 +1050,9 @@ export function AppUtilityModals({
 	onOpenSymphony,
 	// Director's Notes
 	onOpenDirectorNotes,
+	// Auto-scroll
+	autoScrollAiMode,
+	setAutoScrollAiMode,
 	// LightboxModal
 	lightboxImage,
 	lightboxImages,
@@ -1201,6 +1208,8 @@ export function AppUtilityModals({
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
+					autoScrollAiMode={autoScrollAiMode}
+					setAutoScrollAiMode={setAutoScrollAiMode}
 				/>
 			)}
 
@@ -1231,7 +1240,18 @@ export function AppUtilityModals({
 			{/* --- GIT LOG VIEWER (lazy-loaded) --- */}
 			{gitLogOpen && activeSession && (
 				<Suspense fallback={null}>
-					<GitLogViewer cwd={gitViewerCwd} theme={theme} onClose={onCloseGitLog} />
+					<GitLogViewer
+						cwd={gitViewerCwd}
+						theme={theme}
+						onClose={onCloseGitLog}
+						sshRemoteId={
+							activeSession?.sshRemoteId ||
+							(activeSession?.sessionSshRemoteConfig?.enabled
+								? activeSession.sessionSshRemoteConfig.remoteId
+								: undefined) ||
+							undefined
+						}
+					/>
 				</Suspense>
 			)}
 
@@ -1245,7 +1265,9 @@ export function AppUtilityModals({
 					sessionName={activeSession?.name}
 					sshRemoteId={
 						activeSession?.sshRemoteId ||
-						activeSession?.sessionSshRemoteConfig?.remoteId ||
+						(activeSession?.sessionSshRemoteConfig?.enabled
+							? activeSession.sessionSshRemoteConfig.remoteId
+							: undefined) ||
 						undefined
 					}
 					sshRemoteHost={activeSession?.sshRemote?.host}
@@ -1971,6 +1993,9 @@ export interface AppModalsProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Auto-scroll
+	autoScrollAiMode?: boolean;
+	setAutoScrollAiMode?: (value: boolean) => void;
 	tabSwitcherOpen: boolean;
 	onCloseTabSwitcher: () => void;
 	onTabSelect: (tabId: string) => void;
@@ -2292,6 +2317,9 @@ export function AppModals(props: AppModalsProps) {
 		onOpenSymphony,
 		// Director's Notes
 		onOpenDirectorNotes,
+		// Auto-scroll
+		autoScrollAiMode,
+		setAutoScrollAiMode,
 		tabSwitcherOpen,
 		onCloseTabSwitcher,
 		onTabSelect,
@@ -2599,6 +2627,8 @@ export function AppModals(props: AppModalsProps) {
 				onOpenMarketplace={onOpenMarketplace}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
+				autoScrollAiMode={autoScrollAiMode}
+				setAutoScrollAiMode={setAutoScrollAiMode}
 				tabSwitcherOpen={tabSwitcherOpen}
 				onCloseTabSwitcher={onCloseTabSwitcher}
 				onTabSelect={onTabSelect}

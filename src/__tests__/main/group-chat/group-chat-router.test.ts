@@ -772,9 +772,11 @@ describe('group-chat-router', () => {
 		};
 
 		const mockSshStore = {
-			getSshRemotes: vi.fn().mockReturnValue([
-				{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
-			]),
+			getSshRemotes: vi
+				.fn()
+				.mockReturnValue([
+					{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
+				]),
 		};
 
 		beforeEach(() => {

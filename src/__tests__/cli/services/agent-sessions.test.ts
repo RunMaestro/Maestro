@@ -30,39 +30,47 @@ describe('listClaudeSessions', () => {
 	const encodedPath = '-path-to-project';
 	const sessionsDir = `/home/testuser/.claude/projects/${encodedPath}`;
 
-	const makeJsonlContent = (opts: {
-		userMessage?: string;
-		assistantMessage?: string;
-		timestamp?: string;
-		inputTokens?: number;
-		outputTokens?: number;
-	} = {}) => {
+	const makeJsonlContent = (
+		opts: {
+			userMessage?: string;
+			assistantMessage?: string;
+			timestamp?: string;
+			inputTokens?: number;
+			outputTokens?: number;
+		} = {}
+	) => {
 		const lines: string[] = [];
 		const ts = opts.timestamp || '2026-02-08T10:00:00.000Z';
 
 		if (opts.userMessage) {
-			lines.push(JSON.stringify({
-				type: 'user',
-				timestamp: ts,
-				message: { role: 'user', content: opts.userMessage },
-			}));
+			lines.push(
+				JSON.stringify({
+					type: 'user',
+					timestamp: ts,
+					message: { role: 'user', content: opts.userMessage },
+				})
+			);
 		}
 		if (opts.assistantMessage) {
-			lines.push(JSON.stringify({
-				type: 'assistant',
-				timestamp: ts,
-				message: { role: 'assistant', content: opts.assistantMessage },
-			}));
+			lines.push(
+				JSON.stringify({
+					type: 'assistant',
+					timestamp: ts,
+					message: { role: 'assistant', content: opts.assistantMessage },
+				})
+			);
 		}
 		if (opts.inputTokens || opts.outputTokens) {
-			lines.push(JSON.stringify({
-				type: 'result',
-				timestamp: ts,
-				usage: {
-					input_tokens: opts.inputTokens || 0,
-					output_tokens: opts.outputTokens || 0,
-				},
-			}));
+			lines.push(
+				JSON.stringify({
+					type: 'result',
+					timestamp: ts,
+					usage: {
+						input_tokens: opts.inputTokens || 0,
+						output_tokens: opts.outputTokens || 0,
+					},
+				})
+			);
 		}
 		return lines.join('\n');
 	};
@@ -324,9 +332,7 @@ describe('listClaudeSessions', () => {
 			return false;
 		});
 
-		vi.mocked(fs.readdirSync).mockReturnValue([
-			'session-named.jsonl' as unknown as fs.Dirent,
-		]);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-named.jsonl' as unknown as fs.Dirent]);
 
 		vi.mocked(fs.statSync).mockReturnValue({
 			size: 500,
@@ -422,9 +428,7 @@ describe('listClaudeSessions', () => {
 			return false;
 		});
 
-		vi.mocked(fs.readdirSync).mockReturnValue([
-			'session-tokens.jsonl' as unknown as fs.Dirent,
-		]);
+		vi.mocked(fs.readdirSync).mockReturnValue(['session-tokens.jsonl' as unknown as fs.Dirent]);
 
 		vi.mocked(fs.statSync).mockReturnValue({
 			size: 1000,

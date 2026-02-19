@@ -81,6 +81,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsBatchMode).toBe(true);
 			expect(capabilities.supportsStreaming).toBe(true);
 			expect(capabilities.supportsResultMessages).toBe(true);
+			expect(capabilities.imageResumeMode).toBeUndefined();
 		});
 
 		it('should have capabilities for terminal', () => {
@@ -106,6 +107,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsStreaming).toBe(true);
 			expect(capabilities.supportsSlashCommands).toBe(false);
 			expect(capabilities.supportsResultMessages).toBe(false);
+			expect(capabilities.imageResumeMode).toBe('prompt-embed');
 		});
 
 		it('should have capabilities for gemini-cli', () => {
@@ -267,11 +269,15 @@ describe('agent-capabilities', () => {
 		});
 
 		it('should have all agent capabilities contain all required fields', () => {
-			const expectedKeys = Object.keys(DEFAULT_CAPABILITIES);
+			const requiredKeys = Object.keys(DEFAULT_CAPABILITIES);
 
 			for (const [agentId, capabilities] of Object.entries(AGENT_CAPABILITIES)) {
 				const agentKeys = Object.keys(capabilities);
-				expect(agentKeys.sort()).toEqual(expectedKeys.sort());
+				// Every required key must be present in each agent
+				for (const key of requiredKeys) {
+					expect(agentKeys).toContain(key);
+				}
+				// Agent may have optional keys (e.g., imageResumeMode) not in DEFAULT_CAPABILITIES
 			}
 		});
 	});

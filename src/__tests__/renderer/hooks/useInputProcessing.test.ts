@@ -338,6 +338,7 @@ describe('useInputProcessing', () => {
 		];
 
 		it('matches and processes custom AI command', async () => {
+			vi.useFakeTimers();
 			const deps = createDeps({
 				inputValue: '/commit',
 				customAICommands: customCommands,
@@ -352,6 +353,7 @@ describe('useInputProcessing', () => {
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
 			expect(mockSyncAiInputToSession).toHaveBeenCalledWith('');
+			vi.useRealTimers();
 		});
 
 		it('does not match unknown slash command as custom command', async () => {
@@ -441,6 +443,7 @@ describe('useInputProcessing', () => {
 		];
 
 		it('matches and processes speckit command', async () => {
+			vi.useFakeTimers();
 			const deps = createDeps({
 				inputValue: '/speckit.help',
 				customAICommands: speckitCommands,
@@ -454,9 +457,11 @@ describe('useInputProcessing', () => {
 			// Should clear input (indicates command was matched)
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
 			expect(mockSetSlashCommandOpen).toHaveBeenCalledWith(false);
+			vi.useRealTimers();
 		});
 
 		it('matches speckit.constitution command', async () => {
+			vi.useFakeTimers();
 			const deps = createDeps({
 				inputValue: '/speckit.constitution',
 				customAICommands: speckitCommands,
@@ -468,6 +473,7 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			vi.useRealTimers();
 		});
 
 		it('does not match partial speckit command', async () => {
@@ -508,6 +514,7 @@ describe('useInputProcessing', () => {
 		];
 
 		it('matches custom command when both types present', async () => {
+			vi.useFakeTimers();
 			const deps = createDeps({
 				inputValue: '/commit',
 				customAICommands: combinedCommands,
@@ -519,9 +526,11 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			vi.useRealTimers();
 		});
 
 		it('matches speckit command when both types present', async () => {
+			vi.useFakeTimers();
 			const deps = createDeps({
 				inputValue: '/speckit.help',
 				customAICommands: combinedCommands,
@@ -533,6 +542,7 @@ describe('useInputProcessing', () => {
 			});
 
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			vi.useRealTimers();
 		});
 	});
 
@@ -769,6 +779,7 @@ describe('useInputProcessing', () => {
 
 	describe('override input value', () => {
 		it('uses overrideInputValue when provided', async () => {
+			vi.useFakeTimers();
 			const customCommands: CustomAICommand[] = [
 				{ id: 'commit', command: '/commit', description: 'Commit', prompt: 'Commit.' },
 			];
@@ -784,6 +795,7 @@ describe('useInputProcessing', () => {
 
 			// Should match the override value, not the inputValue
 			expect(mockSetInputValue).toHaveBeenCalledWith('');
+			vi.useRealTimers();
 		});
 	});
 
@@ -955,6 +967,7 @@ describe('useInputProcessing', () => {
 
 	describe('command history tracking', () => {
 		it('adds slash command to aiCommandHistory', async () => {
+			vi.useFakeTimers();
 			const customCommands: CustomAICommand[] = [
 				{ id: 'test', command: '/test', description: 'Test', prompt: 'Test prompt.' },
 			];
@@ -975,6 +988,7 @@ describe('useInputProcessing', () => {
 			const setSessionsCall = mockSetSessions.mock.calls[0][0];
 			const updatedSessions = setSessionsCall([session]);
 			expect(updatedSessions[0].aiCommandHistory).toContain('/test');
+			vi.useRealTimers();
 		});
 	});
 
@@ -1189,6 +1203,59 @@ describe('useInputProcessing', () => {
 			await act(async () => {
 				resolveNaming!('Generated Name');
 			});
+		});
+
+		it('uses quick-path naming for GitHub PR URLs without spawning agent', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'https://github.com/RunMaestro/Maestro/pull/380 review this PR',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should NOT call generateTabName (quick-path handles it)
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
+
+			// Should have called setSessions to set the name directly
+			expect(mockSetSessions).toHaveBeenCalled();
+		});
+
+		it('uses quick-path naming for GitHub issue URLs without spawning agent', async () => {
+			const newTab = createMockTab({
+				agentSessionId: null,
+				name: null,
+			});
+			const session = createMockSession({
+				aiTabs: [newTab],
+				activeTabId: newTab.id,
+			});
+			const deps = createDeps({
+				activeSession: session,
+				sessionsRef: { current: [session] },
+				inputValue: 'thoughts on this issue? https://github.com/RunMaestro/Maestro/issues/381',
+				automaticTabNamingEnabled: true,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			// Should NOT call generateTabName (quick-path handles it)
+			expect(mockGenerateTabName).not.toHaveBeenCalled();
 		});
 
 		it('handles tab naming failure gracefully', async () => {

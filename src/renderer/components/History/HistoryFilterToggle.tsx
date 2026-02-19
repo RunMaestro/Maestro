@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { Bot, User } from 'lucide-react';
 import type { Theme, HistoryEntryType } from '../../types';
 

@@ -97,7 +97,12 @@ vi.mock('../../../renderer/components/AutoRun', () => ({
 // Mock shortcut formatter
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => {
-		const keyMap: Record<string, string> = { Meta: 'Ctrl', Alt: 'Alt', Shift: 'Shift', Control: 'Ctrl' };
+		const keyMap: Record<string, string> = {
+			Meta: 'Ctrl',
+			Alt: 'Alt',
+			Shift: 'Shift',
+			Control: 'Ctrl',
+		};
 		return keys.map((k: string) => keyMap[k] || (k.length === 1 ? k.toUpperCase() : k)).join('+');
 	}),
 	isMacOS: vi.fn(() => false),
@@ -624,7 +629,10 @@ describe('AutoRunExpandedModal', () => {
 			renderWithProvider(<AutoRunExpandedModal {...props} />);
 
 			const collapseButton = screen.getByRole('button', { name: /collapse/i });
-			expect(collapseButton).toHaveAttribute('title', `Collapse (${formatShortcutKeys(['Meta', 'Shift', 'A'])})`);
+			expect(collapseButton).toHaveAttribute(
+				'title',
+				`Collapse (${formatShortcutKeys(['Meta', 'Shift', 'A'])})`
+			);
 		});
 
 		it('should show default Esc shortcut in Collapse button when no shortcut provided', () => {

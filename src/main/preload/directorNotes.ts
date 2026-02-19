@@ -11,11 +11,11 @@ import type { ToolType } from '../../shared/types';
 
 /** Aggregate stats returned alongside unified history */
 export interface UnifiedHistoryStats {
-	agentCount: number;       // Distinct Maestro agents with history
-	sessionCount: number;     // Distinct provider sessions across all agents
-	autoCount: number;        // Total AUTO entries
-	userCount: number;        // Total USER entries
-	totalCount: number;       // Total entries (autoCount + userCount)
+	agentCount: number; // Distinct Maestro agents with history
+	sessionCount: number; // Distinct provider sessions across all agents
+	autoCount: number; // Total AUTO entries
+	userCount: number; // Total USER entries
+	totalCount: number; // Total entries (autoCount + userCount)
 }
 
 /**
@@ -78,9 +78,9 @@ export interface SynopsisOptions {
  * Stats about the synopsis generation
  */
 export interface SynopsisStats {
-	agentCount: number;     // Maestro agents with history in the lookback window
-	entryCount: number;     // Total history entries in the lookback window
-	durationMs: number;     // Time taken for AI generation
+	agentCount: number; // Maestro agents with history in the lookback window
+	entryCount: number; // Total history entries in the lookback window
+	durationMs: number; // Time taken for AI generation
 }
 
 /**

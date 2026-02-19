@@ -2990,11 +2990,14 @@ describe('useBatchProcessor hook', () => {
 			mockReadDoc.mockImplementation(async () => {
 				readCount++;
 				// Initial reads: 3 tasks unchecked
-				if (readCount <= 2) return { success: true, content: '- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3' };
+				if (readCount <= 2)
+					return { success: true, content: '- [ ] Task 1\n- [ ] Task 2\n- [ ] Task 3' };
 				// After first resume: 1 done, 2 remaining
-				if (readCount <= 4) return { success: true, content: '- [x] Task 1\n- [ ] Task 2\n- [ ] Task 3' };
+				if (readCount <= 4)
+					return { success: true, content: '- [x] Task 1\n- [ ] Task 2\n- [ ] Task 3' };
 				// After second resume: 2 done, 1 remaining
-				if (readCount <= 6) return { success: true, content: '- [x] Task 1\n- [x] Task 2\n- [ ] Task 3' };
+				if (readCount <= 6)
+					return { success: true, content: '- [x] Task 1\n- [x] Task 2\n- [ ] Task 3' };
 				// Final: all done
 				return { success: true, content: '- [x] Task 1\n- [x] Task 2\n- [x] Task 3' };
 			});
@@ -3086,7 +3089,9 @@ describe('useBatchProcessor hook', () => {
 			await waitFor(() =>
 				expect(result.current.getBatchState('test-session-id').errorPaused).toBe(true)
 			);
-			expect(result.current.getBatchState('test-session-id').error?.message).toBe('Rate limit hit again');
+			expect(result.current.getBatchState('test-session-id').error?.message).toBe(
+				'Rate limit hit again'
+			);
 
 			// Resume second error
 			act(() => {

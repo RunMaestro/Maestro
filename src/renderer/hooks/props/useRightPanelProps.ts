@@ -235,6 +235,7 @@ export function useRightPanelProps(deps: UseRightPanelPropsDeps) {
 		[
 			// Primitive dependencies for minimal re-computation
 			deps.activeSession?.id,
+			deps.activeSession?.fileTreeAutoRefreshInterval,
 			deps.activeSession?.autoRunContent,
 			deps.activeSession?.autoRunContentVersion,
 			deps.theme,

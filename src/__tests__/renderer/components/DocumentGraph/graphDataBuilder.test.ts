@@ -61,6 +61,20 @@ describe('graphDataBuilder', () => {
 				size: 200,
 			},
 		},
+		research: {
+			_isDirectory: true,
+			'index.md': {
+				content: '# Research\n\nSee [[vendor-report]] and [[config]] for details.',
+				size: 80,
+			},
+			vendors: {
+				_isDirectory: true,
+				'vendor-report.md': {
+					content: '# Vendor Report\n\nSee [[index]] for overview.',
+					size: 60,
+				},
+			},
+		},
 		node_modules: {
 			_isDirectory: true,
 			'package.json': {
@@ -223,6 +237,34 @@ describe('graphDataBuilder', () => {
 			const nodeIds = result.nodes.map((n) => n.id);
 			const uniqueIds = new Set(nodeIds);
 			expect(nodeIds.length).toBe(uniqueIds.size);
+		});
+	});
+
+	describe('cross-directory wiki link resolution', () => {
+		it('should resolve wiki links to files in subdirectories via filename fallback', async () => {
+			// research/index.md has [[vendor-report]] which lives at research/vendors/vendor-report.md
+			// Without file-tree-aware resolution, this would resolve to research/vendor-report.md (wrong)
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'research/index.md',
+				maxDepth: 2,
+			});
+
+			const nodeIds = result.nodes.map((n) => n.id);
+			expect(nodeIds).toContain('doc-research/index.md');
+			expect(nodeIds).toContain('doc-research/vendors/vendor-report.md');
+		});
+
+		it('should resolve wiki links across sibling directories', async () => {
+			// research/index.md has [[config]] which lives at advanced/config.md
+			const result = await buildGraphData({
+				rootPath: '/test',
+				focusFile: 'research/index.md',
+				maxDepth: 2,
+			});
+
+			const nodeIds = result.nodes.map((n) => n.id);
+			expect(nodeIds).toContain('doc-advanced/config.md');
 		});
 	});
 

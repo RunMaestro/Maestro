@@ -68,6 +68,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 	fuzzyFileSearch: { id: 'fuzzyFileSearch', label: 'Fuzzy File Search', keys: ['Meta', 'g'] },
 	toggleBookmark: { id: 'toggleBookmark', label: 'Toggle Bookmark', keys: ['Meta', 'Shift', 'b'] },
 	openSymphony: { id: 'openSymphony', label: 'Maestro Symphony', keys: ['Meta', 'Shift', 'y'] },
+	toggleAutoScroll: {
+		id: 'toggleAutoScroll',
+		label: 'Toggle Auto-Scroll AI Output',
+		keys: ['Alt', 'Meta', 's'],
+	},
 	directorNotes: {
 		id: 'directorNotes',
 		label: "Director's Notes",

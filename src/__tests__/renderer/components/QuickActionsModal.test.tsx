@@ -5,7 +5,6 @@ import { formatShortcutKeys } from '../../../renderer/utils/shortcutFormatter';
 import type { Session, Group, Theme, Shortcut } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
-
 // Add missing window.maestro.devtools and debug mocks
 beforeAll(() => {
 	(window.maestro as any).devtools = {
@@ -40,12 +39,16 @@ vi.mock('../../../renderer/contexts/LayerStackContext', () => ({
 	}),
 }));
 
-const mockAddToast = vi.fn();
-vi.mock('../../../renderer/contexts/ToastContext', () => ({
-	useToast: () => ({
-		addToast: mockAddToast,
-	}),
-}));
+const mockNotifyToast = vi.fn();
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual<typeof import('../../../renderer/stores/notificationStore')>(
+		'../../../renderer/stores/notificationStore'
+	);
+	return {
+		...actual,
+		notifyToast: (...args: any[]) => mockNotifyToast(...args),
+	};
+});
 
 vi.mock('../../../renderer/constants/modalPriorities', () => ({
 	MODAL_PRIORITIES: {
@@ -285,7 +288,9 @@ describe('QuickActionsModal', () => {
 			render(<QuickActionsModal {...props} />);
 
 			expect(screen.getByText('Toggle Sidebar')).toBeInTheDocument();
-			expect(screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))).toBeInTheDocument();
+			expect(
+				screen.getByText(formatShortcutKeys(mockShortcuts.toggleSidebar.keys))
+			).toBeInTheDocument();
 		});
 
 		it('renders Settings action', () => {
@@ -621,9 +626,55 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project');
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
 				expect(props.setGitDiffPreview).toHaveBeenCalledWith('mock diff content');
 				expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+			});
+		});
+
+		it('handles View Git Diff with SSH remote ID when session has SSH remote config enabled', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const session = createMockSession({
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'ssh-remote-456' },
+			});
+			const props = createDefaultProps({ sessions: [session] });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith(
+					'/home/user/project',
+					undefined,
+					'ssh-remote-456'
+				);
+			});
+		});
+
+		it('handles View Git Diff with undefined SSH remote ID when session has no SSH remote config', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const props = createDefaultProps();
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
+			});
+		});
+
+		it('handles View Git Diff with undefined SSH remote ID when session has SSH remote config disabled', async () => {
+			const { gitService } = await import('../../../renderer/services/git');
+			const session = createMockSession({
+				sessionSshRemoteConfig: { enabled: false, remoteId: 'ssh-remote-456' },
+			});
+			const props = createDefaultProps({ sessions: [session] });
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('View Git Diff'));
+
+			await waitFor(() => {
+				expect(gitService.getDiff).toHaveBeenCalledWith('/home/user/project', undefined, undefined);
 			});
 		});
 
@@ -637,7 +688,7 @@ describe('QuickActionsModal', () => {
 			fireEvent.click(screen.getByText('View Git Diff'));
 
 			await waitFor(() => {
-				expect(gitService.getDiff).toHaveBeenCalledWith('/different/path');
+				expect(gitService.getDiff).toHaveBeenCalledWith('/different/path', undefined, undefined);
 			});
 		});
 
@@ -1393,7 +1444,7 @@ describe('QuickActionsModal', () => {
 
 			await waitFor(() => {
 				expect(window.maestro.shell.openExternal).not.toHaveBeenCalled();
-				expect(mockAddToast).toHaveBeenCalledWith({
+				expect(mockNotifyToast).toHaveBeenCalledWith({
 					type: 'error',
 					title: 'No Remote URL',
 					message: 'Could not find a remote URL for this repository',
@@ -1417,7 +1468,7 @@ describe('QuickActionsModal', () => {
 					'Failed to open repository in browser:',
 					expect.any(Error)
 				);
-				expect(mockAddToast).toHaveBeenCalledWith({
+				expect(mockNotifyToast).toHaveBeenCalledWith({
 					type: 'error',
 					title: 'Error',
 					message: 'Network error',

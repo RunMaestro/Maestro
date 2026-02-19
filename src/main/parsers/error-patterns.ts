@@ -189,14 +189,14 @@ export const CLAUDE_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 		{
 			pattern: /quota exceeded/i,
-			message: 'Your API quota has been exceeded.',
-			recoverable: false,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
 		},
 		{
 			// Matches: "usage limit" or "hit your limit"
 			pattern: /usage.?limit|hit your.*limit/i,
 			message: 'Usage limit reached. Check your plan for available quota.',
-			recoverable: false,
+			recoverable: true,
 		},
 	],
 
@@ -448,8 +448,8 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 		{
 			pattern: /quota.*exceeded/i,
-			message: 'Your API quota has been exceeded.',
-			recoverable: false,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
 		},
 		{
 			// HTTP 429 - Rate limited. Word boundary prevents false positives from ports/versions
@@ -461,7 +461,7 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			// Matches: "You've hit your usage limit" or "usage limit reached/exceeded"
 			pattern: /usage.?limit|hit your.*limit/i,
 			message: 'Usage limit reached. Please wait or check your plan quota.',
-			recoverable: false,
+			recoverable: true,
 		},
 	],
 
@@ -611,8 +611,8 @@ export const FACTORY_DROID_ERROR_PATTERNS: AgentErrorPatterns = {
 		},
 		{
 			pattern: /quota.*exceeded/i,
-			message: 'Your API quota has been exceeded.',
-			recoverable: false,
+			message: 'Your API quota has been exceeded. Resume when quota resets.',
+			recoverable: true,
 		},
 		{
 			pattern: /\b429\b/,
@@ -940,7 +940,10 @@ export function matchErrorPattern(
 					typeof pattern.message === 'function' ? pattern.message(match) : pattern.message;
 
 				// Log detailed info for SSH shell parse errors to help debug
-				if (pattern.pattern.source.includes('parse error') || pattern.pattern.source.includes('syntax error')) {
+				if (
+					pattern.pattern.source.includes('parse error') ||
+					pattern.pattern.source.includes('syntax error')
+				) {
 					logger.info('[ErrorPatterns] Shell parse error detected', 'error-patterns', {
 						errorType,
 						patternSource: pattern.pattern.source,

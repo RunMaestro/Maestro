@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
 	X,
 	Bot,
@@ -46,7 +46,6 @@ interface HistoryDetailModalProps {
 	projectRoot?: string;
 	onFileClick?: (path: string) => void;
 }
-
 
 export function HistoryDetailModal({
 	theme,

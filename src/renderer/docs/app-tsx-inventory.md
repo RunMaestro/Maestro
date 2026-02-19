@@ -592,7 +592,6 @@ isAiMode          // activeSession?.inputMode === 'ai'
 activeTab         // Memoized getActiveTab(activeSession)
 isResumingSession // Boolean: has agentSessionId
 canAttachImages   // Capability check (resume vs new)
-blockCodexResumeImages // Codex-specific resume image block
 ```
 
 #### Tab Switching useEffects (lines 3003-3087)

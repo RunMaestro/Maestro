@@ -69,6 +69,12 @@ export interface MaestroSettings {
 	sshRemoteHonorGitignore: boolean;
 	// Unique installation identifier (generated once on first run)
 	installationId: string | null;
+	// WakaTime integration
+	wakatimeEnabled: boolean;
+	wakatimeApiKey: string;
+	// Allow dynamic settings keys (electron-store is a key-value store
+	// with many settings not explicitly declared above)
+	[key: string]: any;
 }
 
 // ============================================================================

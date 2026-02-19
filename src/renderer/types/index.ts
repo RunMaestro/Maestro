@@ -906,6 +906,12 @@ export interface LeaderboardSubmitResponse {
 	};
 }
 
+// Encore Features - optional features that are disabled by default
+// Each key is a feature ID, value indicates whether it's enabled
+export interface EncoreFeatureFlags {
+	directorNotes: boolean;
+}
+
 // Director's Notes settings for synopsis generation
 export interface DirectorNotesSettings {
 	/** Agent type to use for synopsis generation */

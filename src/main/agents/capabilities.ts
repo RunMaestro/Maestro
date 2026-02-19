@@ -69,6 +69,11 @@ export interface AgentCapabilities {
 
 	/** Agent can export its context for transfer to other sessions/agents */
 	supportsContextExport: boolean;
+
+	/** How images should be handled on resume when -i flag is not available.
+	 * 'prompt-embed': Save images to temp files and embed file paths in the prompt text.
+	 * undefined: Use default image handling (or no special resume handling needed). */
+	imageResumeMode?: 'prompt-embed';
 }
 
 /**
@@ -174,7 +179,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsJsonOutput: true, // --json flag - Verified
 		supportsSessionId: true, // thread_id in thread.started event - Verified
 		supportsImageInput: true, // -i, --image flag - Documented
-		supportsImageInputOnResume: false, // Codex resume subcommand doesn't support -i flag - Verified
+		supportsImageInputOnResume: true, // Images are written to disk and paths embedded in prompt text (codex exec resume doesn't support -i flag)
 		supportsSlashCommands: false, // None - Verified
 		supportsSessionStorage: true, // ~/.codex/sessions/YYYY/MM/DD/*.jsonl - Verified
 		supportsCostTracking: false, // Token counts only - Codex doesn't provide cost, pricing varies by model
@@ -188,6 +193,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)
 		supportsContextMerge: true, // Can receive merged context via prompts
 		supportsContextExport: true, // Session storage supports context export
+		imageResumeMode: 'prompt-embed', // codex exec resume doesn't support -i; embed file paths in prompt text
 	},
 
 	/**
@@ -323,5 +329,5 @@ export function getAgentCapabilities(agentId: string): AgentCapabilities {
  */
 export function hasCapability(agentId: string, capability: keyof AgentCapabilities): boolean {
 	const capabilities = getAgentCapabilities(agentId);
-	return capabilities[capability];
+	return !!capabilities[capability];
 }

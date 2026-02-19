@@ -91,6 +91,8 @@ interface LogItemProps {
 	onShowErrorDetails?: () => void;
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
+	// Message alignment
+	userMessageAlignment: 'left' | 'right';
 }
 
 const LogItemComponent = memo(
@@ -129,6 +131,7 @@ const LogItemComponent = memo(
 		onFileClick,
 		onShowErrorDetails,
 		onSaveToFile,
+		userMessageAlignment,
 	}: LogItemProps) => {
 		// Ref for the log item container - used for scroll-into-view on expand
 		const logItemRef = useRef<HTMLDivElement>(null);
@@ -327,15 +330,16 @@ const LogItemComponent = memo(
 				: htmlContent;
 
 		const isUserMessage = log.source === 'user';
+		const isReversed = userMessageAlignment === 'right' ? isUserMessage : !isUserMessage;
 
 		return (
 			<div
 				ref={logItemRef}
-				className={`flex gap-4 group ${isUserMessage ? 'flex-row-reverse' : ''} px-6 py-2`}
+				className={`flex gap-4 group ${isReversed ? 'flex-row-reverse' : ''} px-6 py-2`}
 				data-log-index={index}
 			>
 				<div
-					className={`w-20 shrink-0 text-[10px] pt-2 ${isUserMessage ? 'text-right' : 'text-left'}`}
+					className={`w-20 shrink-0 text-[10px] pt-2 ${isReversed ? 'text-right' : 'text-left'}`}
 					style={{ fontFamily, color: theme.colors.textDim, opacity: 0.6 }}
 				>
 					{(() => {
@@ -361,7 +365,7 @@ const LogItemComponent = memo(
 					})()}
 				</div>
 				<div
-					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isUserMessage ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
+					className={`flex-1 min-w-0 p-4 pb-10 rounded-xl border ${isReversed ? 'rounded-tr-none' : 'rounded-tl-none'} relative overflow-hidden`}
 					style={{
 						backgroundColor: isUserMessage
 							? isAIMode
@@ -474,8 +478,20 @@ const LogItemComponent = memo(
 									thinking
 								</span>
 							</div>
-							<div className="whitespace-pre-wrap">
-								{log.text}
+							<div className="whitespace-pre-wrap text-sm break-words">
+								{isAIMode && !markdownEditMode ? (
+									<MarkdownRenderer
+										content={log.text}
+										theme={theme}
+										onCopy={copyToClipboard}
+										fileTree={fileTree}
+										cwd={cwd}
+										projectRoot={projectRoot}
+										onFileClick={onFileClick}
+									/>
+								) : (
+									log.text
+								)}
 							</div>
 						</div>
 					)}
@@ -762,7 +778,11 @@ const LogItemComponent = memo(
 								onClick={onToggleMarkdownEditMode}
 								className="p-1.5 rounded opacity-0 group-hover:opacity-50 hover:!opacity-100"
 								style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
-								title={markdownEditMode ? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})` : `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`}
+								title={
+									markdownEditMode
+										? `Show formatted (${formatShortcutKeys(['Meta', 'e'])})`
+										: `Show plain text (${formatShortcutKeys(['Meta', 'e'])})`
+								}
 							>
 								{markdownEditMode ? <Eye className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
 							</button>
@@ -882,7 +902,8 @@ const LogItemComponent = memo(
 			prevProps.theme === nextProps.theme &&
 			prevProps.maxOutputLines === nextProps.maxOutputLines &&
 			prevProps.markdownEditMode === nextProps.markdownEditMode &&
-			prevProps.fontFamily === nextProps.fontFamily
+			prevProps.fontFamily === nextProps.fontFamily &&
+			prevProps.userMessageAlignment === nextProps.userMessageAlignment
 		);
 	}
 );
@@ -962,7 +983,15 @@ interface TerminalOutputProps {
 	onFileClick?: (path: string) => void; // Callback when a file link is clicked
 	onShowErrorDetails?: () => void; // Callback to show the error modal (for error log entries)
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
-	onOpenInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void; // Callback to open saved file in a tab
+	autoScrollAiMode?: boolean; // Whether to auto-scroll in AI mode (like terminal mode)
+	setAutoScrollAiMode?: (value: boolean) => void; // Toggle auto-scroll in AI mode
+	userMessageAlignment?: 'left' | 'right'; // User message bubble alignment (default: right)
+	onOpenInTab?: (file: {
+		path: string;
+		name: string;
+		content: string;
+		sshRemoteId?: string;
+	}) => void; // Callback to open saved file in a tab
 }
 
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
@@ -999,6 +1028,9 @@ export const TerminalOutput = memo(
 			onFileClick,
 			onShowErrorDetails,
 			onFileSaved,
+			autoScrollAiMode,
+			setAutoScrollAiMode,
+			userMessageAlignment = 'right',
 			onOpenInTab,
 		} = props;
 
@@ -1055,6 +1087,8 @@ export const TerminalOutput = memo(
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
+		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
+		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
 
 		// Track read state per tab - stores the log count when user scrolled to bottom
 		const tabReadStateRef = useRef<Map<string, number>>(new Map());
@@ -1308,10 +1342,15 @@ export const TerminalOutput = memo(
 			if (atBottom) {
 				setHasNewMessages(false);
 				setNewMessageCount(0);
+				// Resume auto-scroll when user scrolls back to bottom
+				setAutoScrollPaused(false);
 				// Save read state for current tab
 				if (activeTabId) {
 					tabReadStateRef.current.set(activeTabId, filteredLogs.length);
 				}
+			} else if (autoScrollAiMode) {
+				// Pause auto-scroll when user scrolls away from bottom
+				setAutoScrollPaused(true);
 			}
 
 			// Throttled scroll position save (200ms)
@@ -1324,7 +1363,7 @@ export const TerminalOutput = memo(
 					scrollSaveTimerRef.current = null;
 				}, 200);
 			}
-		}, [activeTabId, filteredLogs.length, onScrollPositionChange, onAtBottomChange]);
+		}, [activeTabId, filteredLogs.length, onScrollPositionChange, onAtBottomChange, autoScrollAiMode]);
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
 		const handleScroll = useThrottledCallback(handleScrollInner, 16);
@@ -1395,21 +1434,34 @@ export const TerminalOutput = memo(
 			lastLogCountRef.current = currentCount;
 		}, [filteredLogs.length, isAtBottom, activeTabId]);
 
-		// Auto-scroll to bottom in terminal mode when new output arrives
-		// Terminal mode should always auto-scroll since users expect to see command output immediately
+		// Reset auto-scroll pause when user explicitly re-enables auto-scroll (button or shortcut)
 		useEffect(() => {
-			if (session.inputMode === 'terminal' && scrollContainerRef.current) {
+			if (autoScrollAiMode) {
+				setAutoScrollPaused(false);
+			}
+		}, [autoScrollAiMode]);
+
+		// Auto-scroll to bottom when new output arrives
+		// Terminal mode always auto-scrolls; AI mode auto-scrolls when autoScrollAiMode is enabled
+		// Auto-scroll pauses when user scrolls up, resumes when they scroll back to bottom
+		useEffect(() => {
+			const shouldAutoScroll =
+				session.inputMode === 'terminal' ||
+				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused);
+			if (shouldAutoScroll && scrollContainerRef.current) {
 				// Use requestAnimationFrame to ensure DOM has updated with new content
 				requestAnimationFrame(() => {
 					if (scrollContainerRef.current) {
 						scrollContainerRef.current.scrollTo({
 							top: scrollContainerRef.current.scrollHeight,
-							behavior: 'smooth',
+							// Use 'auto' (instant) for continuous auto-scroll to prevent jitter
+							// when messages arrive rapidly during streaming
+							behavior: 'auto',
 						});
 					}
 				});
 			}
-		}, [session.inputMode, session.shellLogs.length]);
+		}, [session.inputMode, filteredLogs.length, autoScrollAiMode, autoScrollPaused]);
 
 		// Restore scroll position when component mounts or initialScrollTop changes
 		// Uses requestAnimationFrame to ensure DOM is ready
@@ -1443,18 +1495,6 @@ export const TerminalOutput = memo(
 			};
 		}, []);
 
-		// Scroll to bottom function
-		const scrollToBottom = useCallback(() => {
-			if (scrollContainerRef.current) {
-				scrollContainerRef.current.scrollTo({
-					top: scrollContainerRef.current.scrollHeight,
-					behavior: 'smooth',
-				});
-				setHasNewMessages(false);
-				setNewMessageCount(0);
-			}
-		}, []);
-
 		// Helper to find last user command for echo stripping in terminal mode
 		const getLastUserCommand = useCallback(
 			(index: number): string | undefined => {
@@ -1478,6 +1518,8 @@ export const TerminalOutput = memo(
 			() => generateTerminalProseStyles(theme, '.terminal-output'),
 			[theme]
 		);
+
+		const isAutoScrollActive = autoScrollAiMode && !autoScrollPaused;
 
 		return (
 			<div
@@ -1571,9 +1613,17 @@ export const TerminalOutput = memo(
 				{/* Prose styles for markdown rendering - injected once at container level for performance */}
 				<style>{proseStyles}</style>
 				{/* Native scroll log list */}
+				{/* overflow-anchor: disabled in AI mode when auto-scroll is off to prevent
+				    browser from automatically keeping viewport pinned to bottom on new content */}
 				<div
 					ref={scrollContainerRef}
 					className="flex-1 overflow-y-auto scrollbar-thin"
+					style={{
+						overflowAnchor:
+							session.inputMode === 'ai' && (!autoScrollAiMode || autoScrollPaused)
+								? 'none'
+								: undefined,
+					}}
 					onScroll={handleScroll}
 				>
 					{/* Log entries */}
@@ -1616,6 +1666,7 @@ export const TerminalOutput = memo(
 							onFileClick={onFileClick}
 							onShowErrorDetails={onShowErrorDetails}
 							onSaveToFile={handleSaveToFile}
+							userMessageAlignment={userMessageAlignment}
 						/>
 					))}
 
@@ -1664,20 +1715,39 @@ export const TerminalOutput = memo(
 					<div ref={logsEndRef} />
 				</div>
 
-				{/* New Message Indicator - floating arrow button (AI mode only, terminal auto-scrolls) */}
-				{hasNewMessages && !isAtBottom && session.inputMode === 'ai' && (
+				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
+				{/* Visible when: not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin) */}
+				{session.inputMode === 'ai' && setAutoScrollAiMode && (!isAtBottom || isAutoScrollActive) && (
 					<button
-						onClick={scrollToBottom}
-						className="absolute bottom-4 right-6 flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-							animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+						onClick={() => {
+							if (isAutoScrollActive && isAtBottom) {
+								// Currently pinned at bottom — unpin
+								setAutoScrollAiMode(false);
+							} else {
+								// Not pinned — jump to bottom and pin
+								setAutoScrollPaused(false);
+								setAutoScrollAiMode(true);
+								setHasNewMessages(false);
+								setNewMessageCount(0);
+								if (scrollContainerRef.current) {
+									scrollContainerRef.current.scrollTo({
+										top: scrollContainerRef.current.scrollHeight,
+										behavior: 'smooth',
+									});
+								}
+							}
 						}}
-						title="Scroll to new messages"
+						className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
+						style={{
+							backgroundColor: isAutoScrollActive ? theme.colors.accent : hasNewMessages ? theme.colors.accent : theme.colors.bgSidebar,
+							color: isAutoScrollActive ? theme.colors.accentForeground : hasNewMessages ? theme.colors.accentForeground : theme.colors.textDim,
+							border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
+							animation: hasNewMessages && !isAutoScrollActive ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined,
+						}}
+						title={isAutoScrollActive ? 'Auto-scroll ON (click to unpin)' : hasNewMessages ? 'New messages (click to pin to bottom)' : 'Scroll to bottom (click to pin)'}
 					>
 						<ArrowDown className="w-4 h-4" />
-						{newMessageCount > 0 && (
+						{newMessageCount > 0 && !isAutoScrollActive && (
 							<span className="text-xs font-bold">
 								{newMessageCount > 99 ? '99+' : newMessageCount}
 							</span>
@@ -1707,12 +1777,11 @@ export const TerminalOutput = memo(
 						onClose={() => setSaveModalContent(null)}
 						defaultFolder={cwd || session.cwd || ''}
 						isRemoteSession={
-							session.sessionSshRemoteConfig?.enabled &&
-							!!session.sessionSshRemoteConfig?.remoteId
+							session.sessionSshRemoteConfig?.enabled && !!session.sessionSshRemoteConfig?.remoteId
 						}
 						sshRemoteId={
 							session.sessionSshRemoteConfig?.enabled
-								? session.sessionSshRemoteConfig?.remoteId ?? undefined
+								? (session.sessionSshRemoteConfig?.remoteId ?? undefined)
 								: undefined
 						}
 						onFileSaved={onFileSaved}

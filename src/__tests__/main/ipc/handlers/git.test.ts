@@ -63,6 +63,19 @@ vi.mock('chokidar', () => ({
 	},
 }));
 
+// Mock gitSettingsStore
+vi.mock('../../../../main/services/gitSettingsStore', () => ({
+	gitSettingsStore: {
+		get: vi.fn(),
+	},
+}));
+
+// Mock remote-git
+vi.mock('../../../../main/utils/remote-git', () => ({
+	execGitRemote: vi.fn(),
+	execGit: vi.fn(),
+}));
+
 // Mock child_process for spawnSync (used in git:showFile for images)
 // The handler uses require('child_process') at runtime - need vi.hoisted for proper hoisting
 const { mockSpawnSync } = vi.hoisted(() => ({
@@ -82,10 +95,15 @@ vi.mock('child_process', () => ({
 
 describe('Git IPC handlers', () => {
 	let handlers: Map<string, Function>;
+	let mockSettingsStore: any;
 
-	beforeEach(() => {
+	beforeEach(async () => {
 		// Clear mocks
 		vi.clearAllMocks();
+
+		mockSettingsStore = {
+			get: vi.fn().mockReturnValue([]),
+		};
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -95,9 +113,17 @@ describe('Git IPC handlers', () => {
 
 		// Register handlers with mock settings store
 		registerGitHandlers({
-			settingsStore: {
-				get: vi.fn().mockReturnValue([]),
-			},
+			settingsStore: mockSettingsStore,
+		});
+
+		// Set up execGit mock to dispatch to local or remote
+		const remoteGit = await import('../../../../main/utils/remote-git');
+		vi.mocked(remoteGit.execGit).mockImplementation(async (args, localCwd, sshRemote) => {
+			if (sshRemote) {
+				return remoteGit.execGitRemote(args, { sshRemote, remoteCwd: localCwd });
+			} else {
+				return execFile.execFileNoThrow('git', args, localCwd);
+			}
 		});
 	});
 
@@ -1110,6 +1136,58 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 				deletions: 0,
 			});
 		});
+
+		it('should use SSH remote execution when sshRemoteId is provided', async () => {
+			// Mock the remote config
+			mockSettingsStore.get.mockReturnValue([
+				{
+					id: 'ssh-remote-123',
+					enabled: true,
+					host: 'example.com',
+					user: 'testuser',
+					privateKeyPath: '/path/to/key',
+					knownHostsPath: '/path/to/known_hosts',
+				},
+			]);
+
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValue({
+				stdout: `COMMIT_STARTabc123|John Doe|2024-01-15T10:30:00+00:00|HEAD -> main|Initial commit
+
+  2 files changed, 50 insertions(+), 10 deletions(-)
+COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
+
+  1 file changed, 25 insertions(+)`,
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:log');
+			const result = await handler!({} as any, '/test/repo', undefined, 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(
+				[
+					'log',
+					'--max-count=100',
+					'--pretty=format:COMMIT_START%H|%an|%ad|%D|%s',
+					'--date=iso-strict',
+					'--shortstat',
+				],
+				{
+					sshRemote: {
+						id: 'ssh-remote-123',
+						enabled: true,
+						host: 'example.com',
+						user: 'testuser',
+						privateKeyPath: '/path/to/key',
+						knownHostsPath: '/path/to/known_hosts',
+					},
+					remoteCwd: '/test/repo',
+				}
+			);
+			expect(result.entries).toHaveLength(2);
+			expect(result.entries[0].subject).toBe('Initial commit');
+		});
 	});
 
 	describe('git:commitCount', () => {
@@ -1164,6 +1242,46 @@ COMMIT_STARTdef987654321|Jane Smith|2024-01-14T09:00:00+00:00||Add feature
 			expect(result).toEqual({
 				count: 0,
 				error: 'fatal: not a git repository',
+			});
+		});
+
+		it('should use SSH remote execution when sshRemoteId is provided for git:commitCount', async () => {
+			// Mock the remote config
+			mockSettingsStore.get.mockReturnValue([
+				{
+					id: 'ssh-remote-123',
+					enabled: true,
+					host: 'example.com',
+					user: 'testuser',
+					privateKeyPath: '/path/to/key',
+					knownHostsPath: '/path/to/known_hosts',
+				},
+			]);
+
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValue({
+				stdout: '250\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:commitCount');
+			const result = await handler!({} as any, '/test/repo', 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(['rev-list', '--count', 'HEAD'], {
+				sshRemote: {
+					id: 'ssh-remote-123',
+					enabled: true,
+					host: 'example.com',
+					user: 'testuser',
+					privateKeyPath: '/path/to/key',
+					knownHostsPath: '/path/to/known_hosts',
+				},
+				remoteCwd: '/test/repo',
+			});
+			expect(result).toEqual({
+				count: 250,
+				error: null,
 			});
 		});
 
@@ -1308,6 +1426,61 @@ Date:   Tue Jan 16 14:00:00 2024 +0000
 			expect(result).toEqual({
 				stdout: '',
 				stderr: 'fatal: not a git repository',
+			});
+		});
+
+		it('should use SSH remote execution when sshRemoteId is provided for git:show', async () => {
+			// Mock the remote config
+			mockSettingsStore.get.mockReturnValue([
+				{
+					id: 'ssh-remote-123',
+					enabled: true,
+					host: 'example.com',
+					user: 'testuser',
+					privateKeyPath: '/path/to/key',
+					knownHostsPath: '/path/to/known_hosts',
+				},
+			]);
+
+			const remoteGit = await import('../../../../main/utils/remote-git');
+			vi.mocked(remoteGit.execGitRemote).mockResolvedValue({
+				stdout: `commit abc123456789
+Author: Test Author <test@example.com>
+Date:   Mon Jan 15 10:30:00 2024 +0000
+
+    Test commit
+
+diff --git a/test.txt b/test.txt
+new file mode 100644
+index 0000000..abc1234
+--- /dev/null
++++ b/test.txt
+@@ -0,0 +1 @@
++test content`,
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const handler = handlers.get('git:show');
+			const result = await handler!({} as any, '/test/repo', 'abc123456789', 'ssh-remote-123');
+
+			expect(remoteGit.execGitRemote).toHaveBeenCalledWith(
+				['show', '--stat', '--patch', 'abc123456789'],
+				{
+					sshRemote: {
+						id: 'ssh-remote-123',
+						enabled: true,
+						host: 'example.com',
+						user: 'testuser',
+						privateKeyPath: '/path/to/key',
+						knownHostsPath: '/path/to/known_hosts',
+					},
+					remoteCwd: '/test/repo',
+				}
+			);
+			expect(result).toEqual({
+				stdout: expect.stringContaining('Test commit'),
+				stderr: '',
 			});
 		});
 

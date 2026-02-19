@@ -829,10 +829,7 @@ export function TabSwitcherModal({
 												style={{ backgroundColor: theme.colors.success }}
 											/>
 										) : (
-											<FileText
-												className="w-3.5 h-3.5"
-												style={{ color: theme.colors.textDim }}
-											/>
+											<FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
 										)}
 									</div>
 
@@ -844,12 +841,8 @@ export function TabSwitcherModal({
 											<span
 												className="text-[9px] px-1 py-0.5 rounded font-semibold uppercase flex-shrink-0"
 												style={{
-													backgroundColor: isSelected
-														? 'rgba(255,255,255,0.2)'
-														: extColors.bg,
-													color: isSelected
-														? theme.colors.accentForeground
-														: extColors.text,
+													backgroundColor: isSelected ? 'rgba(255,255,255,0.2)' : extColors.bg,
+													color: isSelected ? theme.colors.accentForeground : extColors.text,
 												}}
 											>
 												{tab.extension.replace(/^\./, '').toUpperCase()}

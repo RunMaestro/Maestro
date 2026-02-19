@@ -24,9 +24,15 @@ interface GitLogViewerProps {
 	cwd: string;
 	theme: Theme;
 	onClose: () => void;
+	sshRemoteId?: string;
 }
 
-export const GitLogViewer = memo(function GitLogViewer({ cwd, theme, onClose }: GitLogViewerProps) {
+export const GitLogViewer = memo(function GitLogViewer({
+	cwd,
+	theme,
+	onClose,
+	sshRemoteId,
+}: GitLogViewerProps) {
 	const [entries, setEntries] = useState<GitLogEntry[]>([]);
 	const [totalCommits, setTotalCommits] = useState<number | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -60,8 +66,8 @@ export const GitLogViewer = memo(function GitLogViewer({ cwd, theme, onClose }: 
 			try {
 				// Fetch log entries and total count in parallel
 				const [logResult, countResult] = await Promise.all([
-					window.maestro.git.log(cwd, { limit: 200 }),
-					window.maestro.git.commitCount(cwd),
+					window.maestro.git.log(cwd, { limit: 200 }, sshRemoteId),
+					window.maestro.git.commitCount(cwd, sshRemoteId),
 				]);
 
 				if (logResult.error) {
@@ -87,7 +93,7 @@ export const GitLogViewer = memo(function GitLogViewer({ cwd, theme, onClose }: 
 		async (hash: string) => {
 			setLoadingDiff(true);
 			try {
-				const result = await window.maestro.git.show(cwd, hash);
+				const result = await window.maestro.git.show(cwd, hash, sshRemoteId);
 				setSelectedCommitDiff(result.stdout);
 			} catch {
 				setSelectedCommitDiff(null);

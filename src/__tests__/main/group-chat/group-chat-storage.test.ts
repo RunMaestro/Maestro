@@ -449,7 +449,7 @@ describe('group-chat-storage', () => {
 			// Simulate concurrent usage events for both participants
 			const promises = [
 				updateParticipant(chat.id, 'Alice', { tokenCount: 1000, totalCost: 0.05 }),
-				updateParticipant(chat.id, 'Bob', { tokenCount: 2000, totalCost: 0.10 }),
+				updateParticipant(chat.id, 'Bob', { tokenCount: 2000, totalCost: 0.1 }),
 				updateParticipant(chat.id, 'Alice', { contextUsage: 45 }),
 				updateParticipant(chat.id, 'Bob', { contextUsage: 60 }),
 			];
@@ -716,9 +716,9 @@ describe('group-chat-storage', () => {
 		it('throws when updating non-existent participant', async () => {
 			const chat = await createGroupChat('Update Missing', 'claude-code');
 
-			await expect(
-				updateParticipant(chat.id, 'Ghost', { tokenCount: 100 })
-			).rejects.toThrow(/not found/i);
+			await expect(updateParticipant(chat.id, 'Ghost', { tokenCount: 100 })).rejects.toThrow(
+				/not found/i
+			);
 
 			await deleteGroupChat(chat.id);
 		});

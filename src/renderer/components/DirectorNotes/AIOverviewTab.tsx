@@ -6,7 +6,9 @@ import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
 
-type SynopsisStats = NonNullable<Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']>;
+type SynopsisStats = NonNullable<
+	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
+>;
 
 interface AIOverviewTabProps {
 	theme: Theme;
@@ -14,10 +16,17 @@ interface AIOverviewTabProps {
 }
 
 // Module-level cache so synopsis survives tab switches (unmount/remount)
-let cachedSynopsis: { content: string; generatedAt: number; lookbackDays: number; stats?: SynopsisStats } | null = null;
+let cachedSynopsis: {
+	content: string;
+	generatedAt: number;
+	lookbackDays: number;
+	stats?: SynopsisStats;
+} | null = null;
 
 // Exported for testing only – allows resetting the module-level cache between test runs
-export function _resetCacheForTesting() { cachedSynopsis = null; }
+export function _resetCacheForTesting() {
+	cachedSynopsis = null;
+}
 
 // Check whether a cached synopsis exists for the given lookback window
 export function hasCachedSynopsis(lookbackDays: number): boolean {
@@ -28,7 +37,9 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	const { directorNotesSettings } = useSettings();
 	const [lookbackDays, setLookbackDays] = useState(directorNotesSettings.defaultLookbackDays);
 	const [synopsis, setSynopsis] = useState<string>(cachedSynopsis?.content ?? '');
-	const [generatedAt, setGeneratedAt] = useState<number | null>(cachedSynopsis?.generatedAt ?? null);
+	const [generatedAt, setGeneratedAt] = useState<number | null>(
+		cachedSynopsis?.generatedAt ?? null
+	);
 	const [isGenerating, setIsGenerating] = useState(false);
 	const [progress, setProgress] = useState({ phase: 'idle', message: '', percent: 0 });
 	const [showSaveModal, setShowSaveModal] = useState(false);
@@ -88,7 +99,12 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			// Always cache regardless of mount state so result is available next open
 			if (result.success) {
 				const ts = result.generatedAt ?? Date.now();
-				cachedSynopsis = { content: result.synopsis, generatedAt: ts, lookbackDays, stats: result.stats };
+				cachedSynopsis = {
+					content: result.synopsis,
+					generatedAt: ts,
+					lookbackDays,
+					stats: result.stats,
+				};
 			}
 
 			// Only update component state if still mounted
@@ -125,7 +141,9 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 		} else {
 			generateSynopsis();
 		}
-		return () => { mountedRef.current = false; };
+		return () => {
+			mountedRef.current = false;
+		};
 	}, []); // Only on mount
 
 	return (
@@ -137,7 +155,10 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 			>
 				{/* Lookback slider */}
 				<div className="flex items-center gap-3 flex-1 min-w-[200px]">
-					<label className="text-xs font-bold whitespace-nowrap" style={{ color: theme.colors.textMain }}>
+					<label
+						className="text-xs font-bold whitespace-nowrap"
+						style={{ color: theme.colors.textMain }}
+					>
 						Lookback: {lookbackDays} days
 					</label>
 					<input
@@ -155,9 +176,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 				{generatedAt && !isGenerating && (
 					<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 						<Clock className="w-3 h-3" />
-						<span className="text-xs">
-							{formatGeneratedAt(generatedAt)}
-						</span>
+						<span className="text-xs">{formatGeneratedAt(generatedAt)}</span>
 					</div>
 				)}
 
@@ -208,11 +227,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						opacity: synopsis && !isGenerating ? 1 : 0.5,
 					}}
 				>
-					{copied ? (
-						<Check className="w-3.5 h-3.5" />
-					) : (
-						<Copy className="w-3.5 h-3.5" />
-					)}
+					{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
 					{copied ? 'Copied!' : 'Copy'}
 				</button>
 			</div>
@@ -249,16 +264,20 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 					<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 						<History className="w-3.5 h-3.5" />
 						<span className="text-xs">
-							<span style={{ color: theme.colors.textMain, fontWeight: 600 }}>{stats.entryCount}</span>
-							{' '}{stats.entryCount === 1 ? 'history entry' : 'history entries'}
+							<span style={{ color: theme.colors.textMain, fontWeight: 600 }}>
+								{stats.entryCount}
+							</span>{' '}
+							{stats.entryCount === 1 ? 'history entry' : 'history entries'}
 						</span>
 					</div>
 					<div className="flex items-center gap-1.5" style={{ color: theme.colors.textDim }}>
 						<Bot className="w-3.5 h-3.5" />
 						<span className="text-xs">
 							across{' '}
-							<span style={{ color: theme.colors.textMain, fontWeight: 600 }}>{stats.agentCount}</span>
-							{' '}{stats.agentCount === 1 ? 'agent' : 'agents'}
+							<span style={{ color: theme.colors.textMain, fontWeight: 600 }}>
+								{stats.agentCount}
+							</span>{' '}
+							{stats.agentCount === 1 ? 'agent' : 'agents'}
 						</span>
 					</div>
 					{stats.durationMs > 0 && (

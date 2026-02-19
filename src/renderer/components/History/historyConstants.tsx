@@ -1,7 +1,13 @@
 import React from 'react';
 
 // Double checkmark SVG component for validated entries
-export const DoubleCheck = ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
+export const DoubleCheck = ({
+	className,
+	style,
+}: {
+	className?: string;
+	style?: React.CSSProperties;
+}) => (
 	<svg
 		className={className}
 		style={style}

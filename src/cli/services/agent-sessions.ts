@@ -84,15 +84,9 @@ function readOriginsStore(): OriginsStore {
 	if (platform === 'darwin') {
 		configDir = path.join(home, 'Library', 'Application Support', 'Maestro');
 	} else if (platform === 'win32') {
-		configDir = path.join(
-			process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
-			'Maestro'
-		);
+		configDir = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
 	} else {
-		configDir = path.join(
-			process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
-			'Maestro'
-		);
+		configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
 	}
 
 	const filePath = path.join(configDir, 'claude-session-origins.json');
@@ -130,7 +124,6 @@ function getSessionOriginInfo(
 // ============================================================================
 // Session Parsing
 // ============================================================================
-
 
 function calculateCost(
 	inputTokens: number,

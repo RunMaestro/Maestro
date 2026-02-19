@@ -44,7 +44,10 @@ function enqueueWrite<T>(chatId: string, fn: () => Promise<T>): Promise<T> {
 	const prev = writeQueues.get(chatId) ?? Promise.resolve();
 	const next = prev.then(fn, fn); // run fn regardless of prior success/failure
 	// Store the void version so the queue keeps its shape
-	const settled = next.then(() => {}, () => {});
+	const settled = next.then(
+		() => {},
+		() => {}
+	);
 	writeQueues.set(chatId, settled);
 	// Clean up the queue entry once this write settles — if nothing new was
 	// enqueued in the meantime the Map entry is just a resolved promise.
@@ -418,10 +421,7 @@ export function addParticipantToChat(
  * @param participantName - The name of the participant to remove
  * @returns The updated GroupChat object
  */
-export function removeParticipantFromChat(
-	id: string,
-	participantName: string
-): Promise<GroupChat> {
+export function removeParticipantFromChat(id: string, participantName: string): Promise<GroupChat> {
 	return enqueueWrite(id, async () => {
 		const chat = await loadGroupChat(id);
 		if (!chat) {

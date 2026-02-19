@@ -6,7 +6,7 @@ import * as Sentry from '@sentry/electron/renderer';
 import MaestroConsole from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { LayerStackProvider } from './contexts/LayerStackContext';
-import { ToastProvider } from './contexts/ToastContext';
+// ToastProvider removed - notification state now managed by notificationStore (Zustand)
 // ModalProvider removed - modal state now managed by modalStore (Zustand)
 import { WizardProvider } from './components/Wizard';
 import { logger } from './utils/logger';
@@ -87,13 +87,11 @@ window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => 
 ReactDOM.createRoot(document.getElementById('root')!).render(
 	<React.StrictMode>
 		<ErrorBoundary>
-			<ToastProvider>
-				<LayerStackProvider>
-					<WizardProvider>
-						<MaestroConsole />
-					</WizardProvider>
-				</LayerStackProvider>
-			</ToastProvider>
+			<LayerStackProvider>
+				<WizardProvider>
+					<MaestroConsole />
+				</WizardProvider>
+			</LayerStackProvider>
 		</ErrorBoundary>
 	</React.StrictMode>
 );

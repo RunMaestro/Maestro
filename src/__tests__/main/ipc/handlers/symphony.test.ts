@@ -247,7 +247,17 @@ describe('Symphony IPC handlers', () => {
 		const getStartContributionHandler = () => handlers.get('symphony:startContribution');
 
 		it('should accept valid owner/repo format', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					contributionId: 'contrib_123',
+					repoSlug: 'owner/repo',
+					issueNumber: 42,
+					issueTitle: 'Test Issue',
+					branchName: 'symphony/issue-42-abc',
+					localPath: '/tmp/test-repo',
+					prCreated: false,
+				})
+			);
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'main',
@@ -355,8 +365,19 @@ describe('Symphony IPC handlers', () => {
 		const getStartContributionHandler = () => handlers.get('symphony:startContribution');
 
 		it('should pass with all valid parameters', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					contributionId: 'contrib_123',
+					repoSlug: 'owner/repo',
+					issueNumber: 42,
+					issueTitle: 'Test Issue',
+					branchName: 'symphony/issue-42-abc',
+					localPath: '/tmp/test-repo',
+					prCreated: false,
+				})
+			);
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
+			vi.mocked(fs.access).mockResolvedValue(undefined);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'main',
 				stderr: '',
@@ -425,7 +446,17 @@ describe('Symphony IPC handlers', () => {
 		});
 
 		it('should skip validation for external document URLs', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					contributionId: 'contrib_123',
+					repoSlug: 'owner/repo',
+					issueNumber: 42,
+					issueTitle: 'Test Issue',
+					branchName: 'symphony/issue-42-abc',
+					localPath: '/tmp/test-repo',
+					prCreated: false,
+				})
+			);
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'main',
@@ -861,7 +892,17 @@ describe('Symphony IPC handlers', () => {
 
 	describe('generateBranchName', () => {
 		it('should include issue number in output', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					contributionId: 'contrib_123',
+					repoSlug: 'owner/repo',
+					issueNumber: 42,
+					issueTitle: 'Test Issue',
+					branchName: 'symphony/issue-42-abc',
+					localPath: '/tmp/test-repo',
+					prCreated: false,
+				})
+			);
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'main',
@@ -885,7 +926,17 @@ describe('Symphony IPC handlers', () => {
 		});
 
 		it('should match BRANCH_TEMPLATE pattern', async () => {
-			vi.mocked(fs.readFile).mockRejectedValue(new Error('ENOENT'));
+			vi.mocked(fs.readFile).mockResolvedValue(
+				JSON.stringify({
+					contributionId: 'contrib_123',
+					repoSlug: 'owner/repo',
+					issueNumber: 99,
+					issueTitle: 'Test Issue',
+					branchName: 'symphony/issue-99-abc',
+					localPath: '/tmp/test-repo',
+					prCreated: false,
+				})
+			);
 			vi.mocked(fs.mkdir).mockResolvedValue(undefined);
 			vi.mocked(execFileNoThrow).mockResolvedValue({
 				stdout: 'main',
@@ -1710,7 +1761,12 @@ describe('Symphony IPC handlers', () => {
 				await handler!({} as any, validStartParams);
 
 				// First call should be gh auth status (with optional cwd and env args)
-				expect(execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, expect.any(Object));
+				expect(execFileNoThrow).toHaveBeenCalledWith(
+					'gh',
+					['auth', 'status'],
+					undefined,
+					expect.any(Object)
+				);
 			});
 
 			it('should fail early if not authenticated', async () => {
@@ -4098,7 +4154,12 @@ describe('Symphony IPC handlers', () => {
 				await handler!({} as any, validStartContributionParams);
 
 				// First call should be gh auth status (with optional cwd and env args)
-				expect(execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, expect.any(Object));
+				expect(execFileNoThrow).toHaveBeenCalledWith(
+					'gh',
+					['auth', 'status'],
+					undefined,
+					expect.any(Object)
+				);
 			});
 
 			it('should fail early if not authenticated', async () => {
@@ -4560,7 +4621,12 @@ describe('Symphony IPC handlers', () => {
 				expect(result.success).toBe(false);
 				expect(result.error).toContain('not authenticated');
 				// execFileNoThrow is called with optional cwd and env args
-				expect(execFileNoThrow).toHaveBeenCalledWith('gh', ['auth', 'status'], undefined, expect.any(Object));
+				expect(execFileNoThrow).toHaveBeenCalledWith(
+					'gh',
+					['auth', 'status'],
+					undefined,
+					expect.any(Object)
+				);
 			});
 		});
 

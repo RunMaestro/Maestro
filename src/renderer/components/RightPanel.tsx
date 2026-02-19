@@ -7,7 +7,14 @@ import React, {
 	useCallback,
 	memo,
 } from 'react';
-import { PanelRightClose, PanelRightOpen, Loader2, GitBranch, Skull, AlertTriangle } from 'lucide-react';
+import {
+	PanelRightClose,
+	PanelRightOpen,
+	Loader2,
+	GitBranch,
+	Skull,
+	AlertTriangle,
+} from 'lucide-react';
 import type { Session, Theme, RightPanelTab, Shortcut, BatchRunState, FocusArea } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
@@ -207,7 +214,11 @@ export const RightPanel = memo(
 
 		const historyPanelRef = useRef<HistoryPanelHandle>(null);
 		const autoRunRef = useRef<AutoRunHandle>(null);
-		const { panelRef, onResizeStart: onRightPanelResizeStart, transitionClass: rightPanelTransitionClass } = useResizablePanel({
+		const {
+			panelRef,
+			onResizeStart: onRightPanelResizeStart,
+			transitionClass: rightPanelTransitionClass,
+		} = useResizablePanel({
 			width: rightPanelWidth,
 			minWidth: 384,
 			maxWidth: 800,
@@ -551,7 +562,10 @@ export const RightPanel = memo(
 								{currentSessionBatchState.errorPaused ? (
 									<AlertTriangle className="w-4 h-4" style={{ color: theme.colors.error }} />
 								) : (
-									<Loader2 className="w-4 h-4 animate-spin" style={{ color: theme.colors.warning }} />
+									<Loader2
+										className="w-4 h-4 animate-spin"
+										style={{ color: theme.colors.warning }}
+									/>
 								)}
 								{currentSessionBatchState.errorPaused ? (
 									<button
@@ -686,18 +700,26 @@ export const RightPanel = memo(
 													100
 												: 0
 									}%`,
-									backgroundColor: currentSessionBatchState.isStopping || currentSessionBatchState.errorPaused
-										? theme.colors.error
-										: theme.colors.warning,
+									backgroundColor:
+										currentSessionBatchState.isStopping || currentSessionBatchState.errorPaused
+											? theme.colors.error
+											: theme.colors.warning,
 								}}
 							/>
 						</div>
 
 						{/* Overall completed count with loop info */}
 						<div className="mt-2 flex items-start justify-between gap-2">
-							<span className="text-[10px]" style={{ color: currentSessionBatchState.errorPaused ? theme.colors.error : theme.colors.textDim }}>
+							<span
+								className="text-[10px]"
+								style={{
+									color: currentSessionBatchState.errorPaused
+										? theme.colors.error
+										: theme.colors.textDim,
+								}}
+							>
 								{currentSessionBatchState.errorPaused
-									? (currentSessionBatchState.error?.message || 'Paused due to error')
+									? currentSessionBatchState.error?.message || 'Paused due to error'
 									: currentSessionBatchState.isStopping
 										? 'Waiting for current task to complete before stopping...'
 										: currentSessionBatchState.totalTasksAcrossAllDocs > 0

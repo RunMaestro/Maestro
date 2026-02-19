@@ -389,11 +389,7 @@ describe('calculateContextDisplay', () => {
 	});
 
 	it('should return zeros when context window is 0', () => {
-		const result = calculateContextDisplay(
-			{ inputTokens: 50000 },
-			0,
-			'claude-code'
-		);
+		const result = calculateContextDisplay({ inputTokens: 50000 }, 0, 'claude-code');
 		expect(result.tokens).toBe(0);
 		expect(result.percentage).toBe(0);
 		expect(result.contextWindow).toBe(0);

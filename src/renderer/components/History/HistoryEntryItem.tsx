@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import { memo } from 'react';
 import { Bot, User, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
@@ -83,7 +83,9 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 	const colors = getPillColor(entry.type, theme);
 	const Icon = getEntryIcon(entry.type);
 
-	const agentName = showAgentName ? (entry as HistoryEntry & { agentName?: string }).agentName : undefined;
+	const agentName = showAgentName
+		? (entry as HistoryEntry & { agentName?: string }).agentName
+		: undefined;
 
 	return (
 		<div

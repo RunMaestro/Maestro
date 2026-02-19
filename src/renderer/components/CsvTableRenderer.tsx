@@ -170,7 +170,13 @@ function highlightMatches(text: string, query: string, accentColor: string): Rea
 	});
 }
 
-export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery, onMatchCount }: CsvTableRendererProps) {
+export function CsvTableRenderer({
+	content,
+	theme,
+	delimiter = ',',
+	searchQuery,
+	onMatchCount,
+}: CsvTableRendererProps) {
 	const [sort, setSort] = useState<SortState | null>(null);
 	const query = (searchQuery?.trim() ?? '').slice(0, 200);
 
@@ -179,7 +185,7 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 	const headerRow = allRows[0] ?? [];
 	const columnCount = useMemo(
 		() => allRows.reduce((max, row) => Math.max(max, row.length), 0),
-		[allRows],
+		[allRows]
 	);
 	const dataRows = useMemo(() => allRows.slice(1), [allRows]);
 
@@ -187,9 +193,7 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 	const filteredRows = useMemo(() => {
 		if (!query) return dataRows;
 		const lowerQuery = query.toLowerCase();
-		return dataRows.filter((row) =>
-			row.some((cell) => cell.toLowerCase().includes(lowerQuery)),
-		);
+		return dataRows.filter((row) => row.some((cell) => cell.toLowerCase().includes(lowerQuery)));
 	}, [dataRows, query]);
 
 	const totalDataRows = dataRows.length;
@@ -197,14 +201,14 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 
 	const alignments = useMemo(
 		() => detectColumnAlignments(dataRows.slice(0, 100), columnCount),
-		[dataRows, columnCount],
+		[dataRows, columnCount]
 	);
 
 	const sortedRows = useMemo(() => {
 		const rows = isTruncated ? filteredRows.slice(0, MAX_DISPLAY_ROWS) : filteredRows;
 		if (!sort) return rows;
 		return [...rows].sort((a, b) =>
-			compareValues(a[sort.column] ?? '', b[sort.column] ?? '', sort.direction),
+			compareValues(a[sort.column] ?? '', b[sort.column] ?? '', sort.direction)
 		);
 	}, [filteredRows, sort, isTruncated]);
 
@@ -216,9 +220,7 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 	const handleHeaderClick = (colIndex: number) => {
 		setSort((prev) => {
 			if (prev?.column === colIndex) {
-				return prev.direction === 'asc'
-					? { column: colIndex, direction: 'desc' }
-					: null; // Third click clears sort
+				return prev.direction === 'asc' ? { column: colIndex, direction: 'desc' } : null; // Third click clears sort
 			}
 			return { column: colIndex, direction: 'asc' };
 		});
@@ -246,10 +248,14 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 						color: theme.colors.warning,
 					}}
 				>
-					Showing {MAX_DISPLAY_ROWS.toLocaleString()} of {filteredRows.length.toLocaleString()}{query ? ' matching' : ''} rows
+					Showing {MAX_DISPLAY_ROWS.toLocaleString()} of {filteredRows.length.toLocaleString()}
+					{query ? ' matching' : ''} rows
 				</div>
 			)}
-			<div className="overflow-x-auto rounded" style={{ border: `1px solid ${theme.colors.border}` }}>
+			<div
+				className="overflow-x-auto rounded"
+				style={{ border: `1px solid ${theme.colors.border}` }}
+			>
 				<table
 					className="w-full"
 					style={{
@@ -286,11 +292,11 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 									style={{
 										padding: '8px 12px',
 										textAlign: alignments[i] ?? 'left',
-										backgroundColor: sort?.column === i
-											? theme.colors.accent + '20'
-											: theme.colors.bgActivity,
+										backgroundColor:
+											sort?.column === i ? theme.colors.accent + '20' : theme.colors.bgActivity,
 										borderBottom: `2px solid ${theme.colors.border}`,
-										borderRight: i < headerRow.length - 1 ? `1px solid ${theme.colors.border}` : undefined,
+										borderRight:
+											i < headerRow.length - 1 ? `1px solid ${theme.colors.border}` : undefined,
 										color: theme.colors.textMain,
 										fontWeight: 600,
 										cursor: 'pointer',
@@ -302,11 +308,18 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 								>
 									<span className="inline-flex items-center gap-1">
 										{header}
-										{sort?.column === i && (
-											sort.direction === 'asc'
-												? <ChevronUp className="w-3 h-3 inline-block" style={{ color: theme.colors.accent }} />
-												: <ChevronDown className="w-3 h-3 inline-block" style={{ color: theme.colors.accent }} />
-										)}
+										{sort?.column === i &&
+											(sort.direction === 'asc' ? (
+												<ChevronUp
+													className="w-3 h-3 inline-block"
+													style={{ color: theme.colors.accent }}
+												/>
+											) : (
+												<ChevronDown
+													className="w-3 h-3 inline-block"
+													style={{ color: theme.colors.accent }}
+												/>
+											))}
 									</span>
 								</th>
 							))}
@@ -317,7 +330,8 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 							<tr
 								key={rowIdx}
 								style={{
-									backgroundColor: rowIdx % 2 === 0 ? 'transparent' : theme.colors.bgActivity + '60',
+									backgroundColor:
+										rowIdx % 2 === 0 ? 'transparent' : theme.colors.bgActivity + '60',
 								}}
 								className="hover:brightness-110 transition-[filter] duration-75"
 							>
@@ -340,7 +354,8 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 										style={{
 											padding: '6px 12px',
 											textAlign: alignments[colIdx] ?? 'left',
-											borderRight: colIdx < columnCount - 1 ? `1px solid ${theme.colors.border}` : undefined,
+											borderRight:
+												colIdx < columnCount - 1 ? `1px solid ${theme.colors.border}` : undefined,
 											color: theme.colors.textMain,
 											whiteSpace: 'nowrap',
 											maxWidth: '400px',
@@ -359,13 +374,11 @@ export function CsvTableRenderer({ content, theme, delimiter = ',', searchQuery,
 					</tbody>
 				</table>
 			</div>
-			<div
-				className="mt-2 text-xs"
-				style={{ color: theme.colors.textDim }}
-			>
+			<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
 				{query
 					? `${filteredRows.length.toLocaleString()} of ${totalDataRows.toLocaleString()} rows match`
-					: `${totalDataRows.toLocaleString()} rows`} × {columnCount} columns
+					: `${totalDataRows.toLocaleString()} rows`}{' '}
+				× {columnCount} columns
 			</div>
 		</div>
 	);

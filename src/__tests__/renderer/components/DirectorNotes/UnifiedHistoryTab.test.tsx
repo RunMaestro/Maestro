@@ -42,7 +42,9 @@ vi.mock('../../../../renderer/components/HistoryDetailModal', () => ({
 		<div data-testid="history-detail-modal">
 			<span data-testid="detail-entry-summary">{entry?.summary}</span>
 			<span data-testid="detail-entry-validated">{entry?.validated ? 'true' : 'false'}</span>
-			<button data-testid="detail-close" onClick={onClose}>Close</button>
+			<button data-testid="detail-close" onClick={onClose}>
+				Close
+			</button>
 			<button
 				data-testid="detail-navigate-next"
 				onClick={() => onNavigate?.({ id: 'next', summary: 'Next entry' }, 1)}
@@ -67,7 +69,10 @@ vi.mock('../../../../renderer/components/History', () => ({
 		<div data-testid="activity-graph">
 			<span data-testid="activity-entry-count">{entries.length}</span>
 			<span data-testid="activity-lookback-hours">{lookbackHours ?? 'null'}</span>
-			<button data-testid="bar-click" onClick={() => onBarClick?.(Date.now() - 3600000, Date.now())}>
+			<button
+				data-testid="bar-click"
+				onClick={() => onBarClick?.(Date.now() - 3600000, Date.now())}
+			>
 				Click Bar
 			</button>
 			<button data-testid="lookback-change-168" onClick={() => onLookbackChange?.(168)}>
@@ -388,7 +393,9 @@ describe('UnifiedHistoryTab', () => {
 			});
 
 			mockGetUnifiedHistory.mockClear();
-			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(createMockEntries().slice(0, 1)));
+			mockGetUnifiedHistory.mockResolvedValue(
+				createPaginatedResponse(createMockEntries().slice(0, 1))
+			);
 
 			// Change lookback to 1 week (168 hours = 7 days)
 			await act(async () => {
@@ -409,7 +416,9 @@ describe('UnifiedHistoryTab', () => {
 				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 			});
 
-			mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(createMockEntries().slice(0, 1)));
+			mockGetUnifiedHistory.mockResolvedValue(
+				createPaginatedResponse(createMockEntries().slice(0, 1))
+			);
 
 			await act(async () => {
 				fireEvent.click(screen.getByTestId('lookback-change-168'));
@@ -436,9 +445,30 @@ describe('UnifiedHistoryTab', () => {
 			mockGetUnifiedHistory.mockResolvedValueOnce(
 				createPaginatedResponse(
 					[
-						{ id: 'entry-4', type: 'AUTO', timestamp: Date.now() - 4000, summary: 'Action D', sourceSessionId: 's1', projectPath: '/test' },
-						{ id: 'entry-5', type: 'USER', timestamp: Date.now() - 5000, summary: 'Action E', sourceSessionId: 's2', projectPath: '/test' },
-						{ id: 'entry-6', type: 'AUTO', timestamp: Date.now() - 6000, summary: 'Action F', sourceSessionId: 's1', projectPath: '/test' },
+						{
+							id: 'entry-4',
+							type: 'AUTO',
+							timestamp: Date.now() - 4000,
+							summary: 'Action D',
+							sourceSessionId: 's1',
+							projectPath: '/test',
+						},
+						{
+							id: 'entry-5',
+							type: 'USER',
+							timestamp: Date.now() - 5000,
+							summary: 'Action E',
+							sourceSessionId: 's2',
+							projectPath: '/test',
+						},
+						{
+							id: 'entry-6',
+							type: 'AUTO',
+							timestamp: Date.now() - 6000,
+							summary: 'Action F',
+							sourceSessionId: 's1',
+							projectPath: '/test',
+						},
 					],
 					false,
 					6
@@ -511,7 +541,9 @@ describe('UnifiedHistoryTab', () => {
 
 			await waitFor(() => {
 				expect(screen.getByTestId('history-detail-modal')).toBeInTheDocument();
-				expect(screen.getByTestId('detail-entry-summary')).toHaveTextContent('User performed action A');
+				expect(screen.getByTestId('detail-entry-summary')).toHaveTextContent(
+					'User performed action A'
+				);
 			});
 		});
 
@@ -623,11 +655,7 @@ describe('UnifiedHistoryTab', () => {
 			const onFileClick = vi.fn();
 
 			render(
-				<UnifiedHistoryTab
-					theme={mockTheme}
-					fileTree={fileTree as any}
-					onFileClick={onFileClick}
-				/>
+				<UnifiedHistoryTab theme={mockTheme} fileTree={fileTree as any} onFileClick={onFileClick} />
 			);
 
 			await waitFor(() => {

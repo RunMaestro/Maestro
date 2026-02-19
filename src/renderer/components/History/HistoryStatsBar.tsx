@@ -32,7 +32,10 @@ function StatItem({ icon, label, value, color, theme }: StatItemProps) {
 			>
 				{icon}
 			</span>
-			<span className="text-[10px] uppercase tracking-wider" style={{ color: theme.colors.textDim }}>
+			<span
+				className="text-[10px] uppercase tracking-wider"
+				style={{ color: theme.colors.textDim }}
+			>
 				{label}
 			</span>
 			<span className="text-xs font-bold tabular-nums" style={{ color: theme.colors.textMain }}>
@@ -42,11 +45,12 @@ function StatItem({ icon, label, value, color, theme }: StatItemProps) {
 	);
 }
 
-export const HistoryStatsBar = memo(function HistoryStatsBar({ stats, theme }: HistoryStatsBarProps) {
+export const HistoryStatsBar = memo(function HistoryStatsBar({
+	stats,
+	theme,
+}: HistoryStatsBarProps) {
 	return (
-		<div
-			className="flex items-center justify-center gap-4 py-2 mb-3 flex-wrap"
-		>
+		<div className="flex items-center justify-center gap-4 py-2 mb-3 flex-wrap">
 			<StatItem
 				icon={<Layers className="w-3 h-3" />}
 				label="Agents"
@@ -61,10 +65,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({ stats, theme }: H
 				color={theme.colors.accent}
 				theme={theme}
 			/>
-			<div
-				className="w-px h-4 flex-shrink-0"
-				style={{ backgroundColor: theme.colors.border }}
-			/>
+			<div className="w-px h-4 flex-shrink-0" style={{ backgroundColor: theme.colors.border }} />
 			<StatItem
 				icon={<User className="w-3 h-3" />}
 				label="User"
@@ -79,10 +80,7 @@ export const HistoryStatsBar = memo(function HistoryStatsBar({ stats, theme }: H
 				color={theme.colors.warning}
 				theme={theme}
 			/>
-			<div
-				className="w-px h-4 flex-shrink-0"
-				style={{ backgroundColor: theme.colors.border }}
-			/>
+			<div className="w-px h-4 flex-shrink-0" style={{ backgroundColor: theme.colors.border }} />
 			<StatItem
 				icon={<BarChart3 className="w-3 h-3" />}
 				label="Total"

@@ -634,7 +634,9 @@ describe('HistoryPanel', () => {
 			});
 			mockHistoryGetAll.mockResolvedValue([recentEntry, oldEntry]);
 
-			const { container } = render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+			const { container } = render(
+				<HistoryPanel session={createMockSession()} theme={mockTheme} />
+			);
 
 			// Both entries visible initially (all time)
 			await waitFor(() => {
@@ -643,7 +645,9 @@ describe('HistoryPanel', () => {
 			});
 
 			// Right-click the graph to open context menu
-			const graphContainer = container.querySelector('[class*="flex-1"][class*="min-w-0"][class*="flex-col"]');
+			const graphContainer = container.querySelector(
+				'[class*="flex-1"][class*="min-w-0"][class*="flex-col"]'
+			);
 			if (graphContainer) {
 				fireEvent.contextMenu(graphContainer);
 			}

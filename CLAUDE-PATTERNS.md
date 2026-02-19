@@ -277,3 +277,35 @@ import { createPortal } from 'react-dom';
 // Scroll element into view without centering
 element.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 ```
+
+## 12. Encore Features (Feature Gating)
+
+Optional features that not all users need should be gated behind Encore Features — disabled by default, completely invisible when off (no shortcuts, menus, or command palette entries).
+
+**Critical architecture detail:** `encoreFeatures` state lives in App.tsx's `useSettings()` and is passed to SettingsModal as **props** (not consumed via SettingsModal's own `useSettings()`). This ensures toggles propagate immediately to App.tsx for gating.
+
+### Gating Checklist
+
+When adding a new Encore Feature, gate **all** access points:
+
+1. **Type flag** — Add to `EncoreFeatureFlags` in `src/renderer/types/index.ts`
+2. **Default** — Set to `false` in `DEFAULT_ENCORE_FEATURES` in `useSettings.ts`
+3. **Toggle UI** — Add section in SettingsModal's Encore tab (follow Director's Notes pattern)
+4. **App.tsx** — Gate modal rendering and callback props on `encoreFeatures.yourFeature`
+5. **Keyboard shortcuts** — Guard with `ctx.encoreFeatures?.yourFeature` in `useMainKeyboardHandler.ts`
+6. **Hamburger menu** — Make the setter optional, conditionally render the menu item in `SessionList.tsx`
+7. **Command palette** — Pass `undefined` for the handler in `QuickActionsModal.tsx` (already conditionally renders based on handler existence)
+
+### Reference Implementation: Director's Notes
+
+Director's Notes is the first Encore Feature and serves as the canonical example:
+
+- **Flag:** `encoreFeatures.directorNotes` in `EncoreFeatureFlags`
+- **App.tsx gating:** Modal render wrapped in `{encoreFeatures.directorNotes && directorNotesOpen && (…)}`, callback passed as `encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined`
+- **Keyboard shortcut:** `ctx.encoreFeatures?.directorNotes` guard in `useMainKeyboardHandler.ts`
+- **Hamburger menu:** `setDirectorNotesOpen` made optional in `SessionList.tsx`, button conditionally rendered with `{setDirectorNotesOpen && (…)}`
+- **Command palette:** `onOpenDirectorNotes` already conditionally renders in `QuickActionsModal.tsx` — passing `undefined` from App.tsx is sufficient
+
+When adding a new Encore Feature, mirror this pattern across all access points.
+
+See [CONTRIBUTING.md → Encore Features](CONTRIBUTING.md#encore-features-feature-gating) for the full contributor guide.

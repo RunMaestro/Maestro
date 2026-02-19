@@ -46,10 +46,7 @@ export const LookbackSelector = memo(function LookbackSelector({
 
 	return (
 		<div className="flex items-center gap-2 flex-shrink-0 min-w-[160px]">
-			<Calendar
-				className="w-3 h-3 flex-shrink-0"
-				style={{ color: theme.colors.textDim }}
-			/>
+			<Calendar className="w-3 h-3 flex-shrink-0" style={{ color: theme.colors.textDim }} />
 			<input
 				type="range"
 				min={0}

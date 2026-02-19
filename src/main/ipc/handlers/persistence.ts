@@ -18,50 +18,10 @@ import { logger } from '../../utils/logger';
 import { getThemeById } from '../../themes';
 import { WebServer } from '../../web-server';
 
-/**
- * Interface for Maestro settings store
- */
-export interface MaestroSettings {
-	activeThemeId: string;
-	llmProvider: string;
-	modelSlug: string;
-	apiKey: string;
-	shortcuts: Record<string, any>;
-	fontSize: number;
-	fontFamily: string;
-	customFonts: string[];
-	logLevel: 'debug' | 'info' | 'warn' | 'error';
-	defaultShell: string;
-	webAuthEnabled: boolean;
-	webAuthToken: string | null;
-	// Web interface custom port
-	webInterfaceUseCustomPort: boolean;
-	webInterfaceCustomPort: number;
-	// SSH Remote configuration
-	sshRemotes: any[];
-	defaultSshRemoteId: string | null;
-	// SSH Remote file indexing ignore patterns (glob patterns)
-	sshRemoteIgnorePatterns: string[];
-	// Whether to honor .gitignore files on remote hosts
-	sshRemoteHonorGitignore: boolean;
-	// Unique installation identifier (generated once on first run)
-	installationId: string | null;
-	[key: string]: any;
-}
-
-/**
- * Interface for sessions store
- */
-export interface SessionsData {
-	sessions: any[];
-}
-
-/**
- * Interface for groups store
- */
-export interface GroupsData {
-	groups: any[];
-}
+// Re-export types from canonical source so existing imports from './persistence' still work
+export type { MaestroSettings, SessionsData, GroupsData } from '../../stores/types';
+import type { MaestroSettings, SessionsData, GroupsData, StoredSession } from '../../stores/types';
+import type { Group } from '../../../shared/types';
 
 /**
  * Dependencies required for persistence handlers
@@ -132,17 +92,15 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 	// Sessions persistence
 	ipcMain.handle('sessions:getAll', async () => {
 		const sessions = sessionsStore.get('sessions', []);
-		console.log(
-			`[sessions:getAll] Loaded ${sessions.length} sessions from store path: ${(sessionsStore as any).path}`
-		);
+		logger.debug(`Loaded ${sessions.length} sessions from store`, 'Sessions');
 		return sessions;
 	});
 
-	ipcMain.handle('sessions:setAll', async (_, sessions: any[]) => {
+	ipcMain.handle('sessions:setAll', async (_, sessions: StoredSession[]) => {
 		// Get previous sessions to detect changes
 		const previousSessions = sessionsStore.get('sessions', []);
-		const previousSessionMap = new Map(previousSessions.map((s: any) => [s.id, s]));
-		const currentSessionMap = new Map(sessions.map((s: any) => [s.id, s]));
+		const previousSessionMap = new Map(previousSessions.map((s) => [s.id, s]));
+		const currentSessionMap = new Map(sessions.map((s) => [s.id, s]));
 
 		// Log session lifecycle events at DEBUG level
 		for (const session of sessions) {
@@ -223,10 +181,7 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 			// the next debounced write will succeed when conditions improve.
 			// Log but don't throw so the renderer doesn't see an unhandled rejection.
 			const code = (err as NodeJS.ErrnoException).code;
-			logger.warn(
-				`Failed to persist sessions: ${code || (err as Error).message}`,
-				'Sessions'
-			);
+			logger.warn(`Failed to persist sessions: ${code || (err as Error).message}`, 'Sessions');
 			return false;
 		}
 
@@ -238,15 +193,12 @@ export function registerPersistenceHandlers(deps: PersistenceHandlerDependencies
 		return groupsStore.get('groups', []);
 	});
 
-	ipcMain.handle('groups:setAll', async (_, groups: any[]) => {
+	ipcMain.handle('groups:setAll', async (_, groups: Group[]) => {
 		try {
 			groupsStore.set('groups', groups);
 		} catch (err) {
 			const code = (err as NodeJS.ErrnoException).code;
-			logger.warn(
-				`Failed to persist groups: ${code || (err as Error).message}`,
-				'Groups'
-			);
+			logger.warn(`Failed to persist groups: ${code || (err as Error).message}`, 'Groups');
 			return false;
 		}
 		return true;

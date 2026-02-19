@@ -4,7 +4,11 @@ import type { Theme, ThinkingMode } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { estimateTokenCount } from '../../shared/formatters';
-import { formatShortcutKeys, formatEnterToSend, formatEnterToSendTooltip } from '../utils/shortcutFormatter';
+import {
+	formatShortcutKeys,
+	formatEnterToSend,
+	formatEnterToSendTooltip,
+} from '../utils/shortcutFormatter';
 
 interface PromptComposerModalProps {
 	isOpen: boolean;
@@ -451,9 +455,7 @@ export function PromptComposerModal({
 							<button
 								onClick={onToggleEnterToSend}
 								className="flex items-center gap-1 text-[10px] opacity-50 hover:opacity-100 px-2 py-1 rounded hover:bg-white/5"
-								title={
-									formatEnterToSendTooltip(enterToSend)
-								}
+								title={formatEnterToSendTooltip(enterToSend)}
 							>
 								<Keyboard className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 								<span style={{ color: theme.colors.textDim }}>

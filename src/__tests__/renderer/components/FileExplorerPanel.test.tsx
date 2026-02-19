@@ -224,6 +224,7 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => ({
 	fileExplorerExpanded: [],
 	messageQueue: [],
 	changedFiles: [],
+	fileTreeAutoRefreshInterval: 0,
 	...overrides,
 });
 
@@ -712,60 +713,149 @@ describe('FileExplorerPanel', () => {
 	});
 
 	describe('Auto-refresh Timer', () => {
-		it('starts timer when interval is set', () => {
+		it('starts timer when interval is set', async () => {
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			render(<FileExplorerPanel {...defaultProps} session={session} />);
 
 			expect(defaultProps.refreshFileTree).not.toHaveBeenCalled();
 
-			act(() => {
-				vi.advanceTimersByTime(5000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
 			});
 
 			expect(defaultProps.refreshFileTree).toHaveBeenCalledWith('session-1');
 		});
 
-		it('calls refresh at interval repeatedly', () => {
+		it('shows brief spin animation during auto-refresh', async () => {
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			render(<FileExplorerPanel {...defaultProps} session={session} />);
 
-			act(() => {
-				vi.advanceTimersByTime(15000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
+			});
+
+			// Icon should be spinning after auto-refresh fires
+			const refreshIcon = screen.getByTestId('refresh-icon');
+			expect(refreshIcon.className).toContain('animate-spin');
+
+			// After 500ms the spin stops
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
+			});
+			expect(refreshIcon.className).not.toContain('animate-spin');
+		});
+
+		it('calls refresh at interval repeatedly', async () => {
+			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(15000);
 			});
 
 			expect(defaultProps.refreshFileTree).toHaveBeenCalledTimes(3);
 		});
 
-		it('does not start timer when interval is 0', () => {
-			render(<FileExplorerPanel {...defaultProps} />);
+		it('does not start timer when interval is 0', async () => {
+			const session = createMockSession({ fileTreeAutoRefreshInterval: 0 });
+			render(<FileExplorerPanel {...defaultProps} session={session} />);
 
-			act(() => {
-				vi.advanceTimersByTime(60000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(60000);
 			});
 
 			expect(defaultProps.refreshFileTree).not.toHaveBeenCalled();
 		});
 
-		it('clears timer on unmount', () => {
+		it('skips auto-refresh when previous call is still in flight', async () => {
+			let resolveRefresh: () => void;
+			const slowRefresh = vi.fn(
+				() =>
+					new Promise<void>((resolve) => {
+						resolveRefresh = resolve;
+					})
+			);
+			const session = createMockSession({ fileTreeAutoRefreshInterval: 1 });
+			render(
+				<FileExplorerPanel {...defaultProps} session={session} refreshFileTree={slowRefresh} />
+			);
+
+			// First interval fires, refresh starts but doesn't resolve
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
+			});
+			expect(slowRefresh).toHaveBeenCalledTimes(1);
+
+			// Second interval fires while first is still in flight — should be skipped
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
+			});
+			expect(slowRefresh).toHaveBeenCalledTimes(1);
+
+			// Resolve the first call and let spin timeout clear
+			await act(async () => {
+				resolveRefresh!();
+				await vi.advanceTimersByTimeAsync(500);
+			});
+
+			// Third interval fires — should proceed now
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(1000);
+			});
+			expect(slowRefresh).toHaveBeenCalledTimes(2);
+		});
+
+		it('handles auto-refresh errors gracefully', async () => {
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+			const failingRefresh = vi.fn().mockRejectedValue(new Error('network failure'));
+			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
+			render(
+				<FileExplorerPanel {...defaultProps} session={session} refreshFileTree={failingRefresh} />
+			);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
+			});
+
+			expect(failingRefresh).toHaveBeenCalledTimes(1);
+			expect(errorSpy).toHaveBeenCalledWith(
+				'[FileExplorer] Auto-refresh failed:',
+				expect.any(Error)
+			);
+
+			// Spin timeout should still clear, allowing the next refresh to fire
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(500);
+			});
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
+			});
+			expect(failingRefresh).toHaveBeenCalledTimes(2);
+
+			errorSpy.mockRestore();
+		});
+
+		it('clears timer on unmount', async () => {
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			const { unmount } = render(<FileExplorerPanel {...defaultProps} session={session} />);
 
 			unmount();
 
-			act(() => {
-				vi.advanceTimersByTime(10000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(10000);
 			});
 
 			// No calls after unmount
 			expect(defaultProps.refreshFileTree).not.toHaveBeenCalled();
 		});
 
-		it('restarts timer when interval changes', () => {
+		it('restarts timer when interval changes', async () => {
 			const session = createMockSession({ fileTreeAutoRefreshInterval: 60 });
 			const { rerender } = render(<FileExplorerPanel {...defaultProps} session={session} />);
 
-			act(() => {
-				vi.advanceTimersByTime(30000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(30000);
 			});
 
 			expect(defaultProps.refreshFileTree).not.toHaveBeenCalled();
@@ -774,8 +864,8 @@ describe('FileExplorerPanel', () => {
 			const newSession = createMockSession({ fileTreeAutoRefreshInterval: 5 });
 			rerender(<FileExplorerPanel {...defaultProps} session={newSession} />);
 
-			act(() => {
-				vi.advanceTimersByTime(5000);
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(5000);
 			});
 
 			expect(defaultProps.refreshFileTree).toHaveBeenCalledTimes(1);
@@ -1698,7 +1788,9 @@ describe('FileExplorerPanel', () => {
 			const openButton = screen.getByText('Open in Default App');
 			fireEvent.click(openButton);
 
-			expect(mockShell.openExternal).toHaveBeenCalledWith('file:///Users/test/project/package.json');
+			expect(mockShell.openExternal).toHaveBeenCalledWith(
+				'file:///Users/test/project/package.json'
+			);
 		});
 
 		it('does not show Open in Default App option for SSH sessions', () => {

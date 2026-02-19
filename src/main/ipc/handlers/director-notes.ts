@@ -17,7 +17,11 @@ import { paginateEntries } from '../../../shared/history';
 import type { PaginatedResult } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { getSessionsStore } from '../../stores';
-import { withIpcErrorLogging, requireDependency, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	withIpcErrorLogging,
+	requireDependency,
+	CreateHandlerOptions,
+} from '../../utils/ipcHandler';
 import { groomContext } from '../../utils/context-groomer';
 import { directorNotesPrompt } from '../../../prompts';
 import type { ProcessManager } from '../../process-manager';
@@ -31,12 +35,14 @@ const LOG_CONTEXT = '[DirectorNotes]';
  * be interpreted as prompt instructions by the AI agent.
  */
 export function sanitizeDisplayName(name: string): string {
-	return name
-		// Strip markdown headers, bold, italic, links, images
-		.replace(/[#*_`~\[\]()!|>]/g, '')
-		// Collapse multiple whitespace/newlines into single space
-		.replace(/\s+/g, ' ')
-		.trim();
+	return (
+		name
+			// Strip markdown headers, bold, italic, links, images
+			.replace(/[#*_`~\[\]()!|>]/g, '')
+			// Collapse multiple whitespace/newlines into single space
+			.replace(/\s+/g, ' ')
+			.trim()
+	);
 }
 
 // Helper to create handler options with consistent context
@@ -85,11 +91,11 @@ export interface UnifiedHistoryEntry extends HistoryEntry {
 
 /** Aggregate stats returned alongside unified history (computed from the full unfiltered set) */
 export interface UnifiedHistoryStats {
-	agentCount: number;       // Distinct Maestro agents with history
-	sessionCount: number;     // Distinct provider sessions across all agents
-	autoCount: number;        // Total AUTO entries
-	userCount: number;        // Total USER entries
-	totalCount: number;       // Total entries (autoCount + userCount)
+	agentCount: number; // Distinct Maestro agents with history
+	sessionCount: number; // Distinct provider sessions across all agents
+	autoCount: number; // Total AUTO entries
+	userCount: number; // Total USER entries
+	totalCount: number; // Total entries (autoCount + userCount)
 }
 
 export interface SynopsisOptions {
@@ -101,9 +107,9 @@ export interface SynopsisOptions {
 }
 
 export interface SynopsisStats {
-	agentCount: number;     // Maestro agents with history in the lookback window
-	entryCount: number;     // Total history entries in the lookback window
-	durationMs: number;     // Time taken for AI generation
+	agentCount: number; // Maestro agents with history in the lookback window
+	entryCount: number; // Total history entries in the lookback window
+	durationMs: number; // Time taken for AI generation
 }
 
 export interface SynopsisResult {
@@ -130,12 +136,12 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 		'director-notes:getUnifiedHistory',
 		withIpcErrorLogging(
 			handlerOpts('getUnifiedHistory'),
-			async (options: UnifiedHistoryOptions): Promise<PaginatedResult<UnifiedHistoryEntry> & { stats: UnifiedHistoryStats }> => {
+			async (
+				options: UnifiedHistoryOptions
+			): Promise<PaginatedResult<UnifiedHistoryEntry> & { stats: UnifiedHistoryStats }> => {
 				const { lookbackDays, filter, limit, offset } = options;
 				// lookbackDays <= 0 means "all time" — no cutoff
-				const cutoffTime = lookbackDays > 0
-					? Date.now() - lookbackDays * 24 * 60 * 60 * 1000
-					: 0;
+				const cutoffTime = lookbackDays > 0 ? Date.now() - lookbackDays * 24 * 60 * 60 * 1000 : 0;
 
 				// Get all session IDs from history manager
 				const sessionIds = historyManager.listSessionsWithHistory();
@@ -265,14 +271,21 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 
 				// Build the prompt with file paths instead of inline data
 				const manifestLines = sessionManifest
-					.map(s => `- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`)
+					.map(
+						(s) =>
+							`- Session "${sanitizeDisplayName(s.displayName)}" (ID: ${s.sessionId}): ${s.historyFilePath}`
+					)
 					.join('\n');
 
 				const cutoffDate = new Date(cutoffTime).toLocaleDateString('en-US', {
-					month: 'short', day: 'numeric', year: 'numeric',
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
 				});
 				const nowDate = new Date().toLocaleDateString('en-US', {
-					month: 'short', day: 'numeric', year: 'numeric',
+					month: 'short',
+					day: 'numeric',
+					year: 'numeric',
 				});
 
 				const prompt = [
