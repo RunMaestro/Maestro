@@ -77,6 +77,7 @@ interface MainPanelProps {
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	fontFamily: string;
+	fontSize?: number;
 	isMobileLandscape?: boolean;
 	activeFocus: FocusArea;
 	outputSearchOpen: boolean;
@@ -562,6 +563,91 @@ export const MainPanel = React.memo(
 			[activeSession?.terminalTabs, activeSession?.activeTerminalTabId]
 		);
 		const activeTabError = activeTab?.agentError;
+		const activeSessionIdForTerminalActions = activeSession?.id;
+
+		const handleTerminalTabSelect = useCallback(
+			(tabId: string) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabSelect?.(activeSessionIdForTerminalActions, tabId);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabSelect]
+		);
+
+		const handleTerminalTabClose = useCallback(
+			(tabId: string) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabClose?.(activeSessionIdForTerminalActions, tabId);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabClose]
+		);
+
+		const handleTerminalNewTab = useCallback(() => {
+			if (!activeSessionIdForTerminalActions) {
+				return;
+			}
+			props.onTerminalNewTab?.(activeSessionIdForTerminalActions);
+		}, [activeSessionIdForTerminalActions, props.onTerminalNewTab]);
+
+		const handleTerminalTabRename = useCallback(
+			(tabId: string, name: string) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabRename?.(activeSessionIdForTerminalActions, tabId, name);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabRename]
+		);
+
+		const handleTerminalTabReorder = useCallback(
+			(from: number, to: number) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabReorder?.(activeSessionIdForTerminalActions, from, to);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabReorder]
+		);
+
+		const handleTerminalTabStateChange = useCallback(
+			(tabId: string, state: 'idle' | 'busy' | 'exited', exitCode?: number) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabStateChange?.(activeSessionIdForTerminalActions, tabId, state, exitCode);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabStateChange]
+		);
+
+		const handleTerminalTabCwdChange = useCallback(
+			(tabId: string, cwd: string) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabCwdChange?.(activeSessionIdForTerminalActions, tabId, cwd);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabCwdChange]
+		);
+
+		const handleTerminalTabPidChange = useCallback(
+			(tabId: string, pid: number) => {
+				if (!activeSessionIdForTerminalActions) {
+					return;
+				}
+				props.onTerminalTabPidChange?.(activeSessionIdForTerminalActions, tabId, pid);
+			},
+			[activeSessionIdForTerminalActions, props.onTerminalTabPidChange]
+		);
+
+		const handleRequestTerminalTabRename = useCallback(
+			(tabId: string) => {
+				props.onRequestTerminalTabRename?.(tabId);
+			},
+			[props.onRequestTerminalTabRename]
+		);
 
 		// Resolve the configured context window from session override or agent settings.
 		useEffect(() => {
@@ -1753,29 +1839,19 @@ export const MainPanel = React.memo(
 											session={activeSession}
 											theme={theme}
 											fontFamily={props.fontFamily}
-											fontSize={14}
+											fontSize={props.fontSize ?? 14}
 											defaultShell={props.defaultShell || activeTerminalTab?.shellType || 'zsh'}
 											shellArgs={props.shellArgs}
 											shellEnvVars={props.shellEnvVars}
-											onTabSelect={(tabId) => props.onTerminalTabSelect?.(activeSession.id, tabId)}
-											onTabClose={(tabId) => props.onTerminalTabClose?.(activeSession.id, tabId)}
-											onNewTab={() => props.onTerminalNewTab?.(activeSession.id)}
-											onTabRename={(tabId, name) =>
-												props.onTerminalTabRename?.(activeSession.id, tabId, name)
-											}
-											onRequestRename={props.onRequestTerminalTabRename}
-											onTabReorder={(from, to) =>
-												props.onTerminalTabReorder?.(activeSession.id, from, to)
-											}
-											onTabStateChange={(tabId, state, exitCode) =>
-												props.onTerminalTabStateChange?.(activeSession.id, tabId, state, exitCode)
-											}
-											onTabCwdChange={(tabId, cwd) =>
-												props.onTerminalTabCwdChange?.(activeSession.id, tabId, cwd)
-											}
-											onTabPidChange={(tabId, pid) =>
-												props.onTerminalTabPidChange?.(activeSession.id, tabId, pid)
-											}
+											onTabSelect={handleTerminalTabSelect}
+											onTabClose={handleTerminalTabClose}
+											onNewTab={handleTerminalNewTab}
+											onTabRename={handleTerminalTabRename}
+											onRequestRename={handleRequestTerminalTabRename}
+											onTabReorder={handleTerminalTabReorder}
+											onTabStateChange={handleTerminalTabStateChange}
+											onTabCwdChange={handleTerminalTabCwdChange}
+											onTabPidChange={handleTerminalTabPidChange}
 											searchOpen={terminalSearchOpen}
 											onSearchClose={onTerminalSearchClose}
 										/>

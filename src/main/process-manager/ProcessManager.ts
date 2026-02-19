@@ -15,6 +15,7 @@ import { DataBufferManager } from './handlers/DataBufferManager';
 import { LocalCommandRunner } from './runners/LocalCommandRunner';
 import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
+import { getDefaultShell } from '../stores/defaults';
 import type { SshRemoteConfig } from '../../shared/types';
 
 /**
@@ -68,8 +69,8 @@ export class ProcessManager extends EventEmitter {
 		cols?: number;
 		rows?: number;
 	}): SpawnResult {
-		const { sessionId, cwd, shell, shellArgs, shellEnvVars } = config;
-		const terminalShell = shell || (process.platform === 'win32' ? 'powershell.exe' : 'zsh');
+		const { sessionId, cwd, shell, shellArgs, shellEnvVars, cols, rows } = config;
+		const terminalShell = shell || getDefaultShell();
 
 		return this.spawn({
 			sessionId,
@@ -77,6 +78,8 @@ export class ProcessManager extends EventEmitter {
 			cwd,
 			command: terminalShell,
 			args: [],
+			cols,
+			rows,
 			shell: terminalShell,
 			shellArgs,
 			shellEnvVars,

@@ -263,7 +263,23 @@ export const TerminalView = memo(
 				shellExitedTabsRef.current.delete(tabId);
 				try {
 					if (tab && tab.pid > 0) {
-						await window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+						try {
+							await window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+						} catch (error) {
+							captureException(error, {
+								tags: {
+									component: 'TerminalView',
+									operation: 'handleTabClose',
+									api: 'window.maestro.process.kill',
+								},
+								extra: {
+									sessionId: session.id,
+									tabId,
+									terminalSessionId: getTerminalSessionId(session.id, tabId),
+									tabPid: tab.pid,
+								},
+							});
+						}
 					}
 				} finally {
 					onTabClose(tabId);

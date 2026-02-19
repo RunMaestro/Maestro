@@ -585,13 +585,15 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 					const currentHistory =
 						currentMode === 'ai' ? s.aiCommandHistory || [] : s.shellCommandHistory || [];
 					const newHistory = [...currentHistory];
+					const trimmedCommand = effectiveInputValue.trim();
 					if (
-						effectiveInputValue.trim() &&
-						(newHistory.length === 0 ||
-							newHistory[newHistory.length - 1] !== effectiveInputValue.trim())
+						trimmedCommand &&
+						(newHistory.length === 0 || newHistory[newHistory.length - 1] !== trimmedCommand)
 					) {
-						newHistory.push(effectiveInputValue.trim());
+						newHistory.push(trimmedCommand);
 					}
+					const boundedHistory =
+						historyKey === 'shellCommandHistory' ? newHistory.slice(-50) : newHistory;
 
 					// For terminal mode, add to shellLogs
 					if (currentMode !== 'ai') {
@@ -603,7 +605,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							shellCwd: newShellCwd,
 							// Update remoteCwd for SSH sessions when cd command changes directory
 							...(remoteCwdChanged && newRemoteCwd && { remoteCwd: newRemoteCwd }),
-							[historyKey]: newHistory,
+							[historyKey]: boundedHistory,
 						};
 					}
 
@@ -644,7 +646,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						// Context usage is now exclusively updated from agent-reported usage stats
 						// Remove artificial +5 increment that was causing erroneous 100% detection
 						shellCwd: newShellCwd,
-						[historyKey]: newHistory,
+						[historyKey]: boundedHistory,
 						aiTabs: updatedAiTabs,
 					};
 				})
@@ -982,7 +984,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						}
 
 						const { sendPromptViaStdin, sendPromptViaStdinRaw } = getStdinFlags({
-							isSshSession: !!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
+							isSshSession:
+								!!freshSession.sshRemoteId || !!freshSession.sessionSshRemoteConfig?.enabled,
 							supportsStreamJsonInput: agent.capabilities?.supportsStreamJsonInput ?? false,
 						});
 

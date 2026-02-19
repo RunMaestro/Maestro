@@ -453,38 +453,24 @@ export function NewInstanceModal({
 						workingDirOverride: sshRemoteConfig.workingDirOverride,
 					}
 				: { enabled: false, remoteId: null };
-		const sourceTerminalShellType = sourceSession?.terminalTabs?.[0]?.shellType;
+		const sourceTerminalShellType =
+			sourceSession?.terminalTabs?.find((tab) => tab.id === sourceSession?.activeTerminalTabId)
+				?.shellType || sourceSession?.terminalTabs?.[0]?.shellType;
 
-		if (sourceTerminalShellType) {
-			onCreate(
-				selectedAgent,
-				expandedWorkingDir,
-				name,
-				nudgeMessage.trim() || undefined,
-				agentCustomPath,
-				agentCustomArgs,
-				agentCustomEnvVars,
-				agentCustomModel,
-				agentCustomContextWindow,
-				agentCustomProviderPath,
-				sessionSshRemoteConfig,
-				sourceTerminalShellType
-			);
-		} else {
-			onCreate(
-				selectedAgent,
-				expandedWorkingDir,
-				name,
-				nudgeMessage.trim() || undefined,
-				agentCustomPath,
-				agentCustomArgs,
-				agentCustomEnvVars,
-				agentCustomModel,
-				agentCustomContextWindow,
-				agentCustomProviderPath,
-				sessionSshRemoteConfig
-			);
-		}
+		onCreate(
+			selectedAgent,
+			expandedWorkingDir,
+			name,
+			nudgeMessage.trim() || undefined,
+			agentCustomPath,
+			agentCustomArgs,
+			agentCustomEnvVars,
+			agentCustomModel,
+			agentCustomContextWindow,
+			agentCustomProviderPath,
+			sessionSshRemoteConfig,
+			sourceTerminalShellType
+		);
 		onClose();
 
 		// Reset

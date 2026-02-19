@@ -12,6 +12,8 @@ export interface ProcessConfig {
 	cwd: string;
 	command: string;
 	args: string[];
+	cols?: number;
+	rows?: number;
 	requiresPty?: boolean;
 	prompt?: string;
 	shell?: string;

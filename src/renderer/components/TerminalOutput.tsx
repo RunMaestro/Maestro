@@ -31,6 +31,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { captureException } from '../utils/sentry';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -1137,7 +1138,13 @@ export const TerminalOutput = memo(
 				setShowCopiedNotification(true);
 				setTimeout(() => setShowCopiedNotification(false), 1500);
 			} catch (err) {
-				console.error('Failed to copy to clipboard:', err);
+				captureException(err, {
+					tags: {
+						component: 'TerminalOutput',
+						operation: 'copyToClipboard',
+					},
+				});
+				throw err;
 			}
 		}, []);
 

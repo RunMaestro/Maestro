@@ -27,6 +27,8 @@ export class PtySpawner {
 			cwd,
 			command,
 			args,
+			cols,
+			rows,
 			shell,
 			shellArgs,
 			shellEnvVars,
@@ -103,8 +105,8 @@ export class PtySpawner {
 
 			const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {
 				name: 'xterm-256color',
-				cols: 100,
-				rows: 30,
+				cols: cols ?? 100,
+				rows: rows ?? 30,
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});

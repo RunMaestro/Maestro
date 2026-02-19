@@ -13,10 +13,15 @@
  */
 
 import { useEffect, useRef, useCallback, useState } from 'react';
-import type { Session } from '../../types';
+import type { Session, TerminalTab } from '../../types';
 
 // Maximum persisted logs per AI tab (matches session persistence limit)
 const MAX_PERSISTED_LOGS_PER_TAB = 100;
+
+export type PersistedTerminalTab = Pick<
+	TerminalTab,
+	'id' | 'name' | 'shellType' | 'cwd' | 'createdAt'
+>;
 
 /**
  * Prepare a session for persistence by:
@@ -81,13 +86,15 @@ const prepareSessionForPersistence = (session: Session): Session => {
 
 	// Persist terminal tab metadata only.
 	// Runtime PTY/xterm state is recreated on restore and should not be written to disk.
-	const terminalTabsForPersistence = (session.terminalTabs || []).map((tab) => ({
-		id: tab.id,
-		name: tab.name,
-		shellType: tab.shellType,
-		cwd: tab.cwd,
-		createdAt: tab.createdAt,
-	}));
+	const terminalTabsForPersistence: PersistedTerminalTab[] = (session.terminalTabs || []).map(
+		(tab) => ({
+			id: tab.id,
+			name: tab.name,
+			shellType: tab.shellType,
+			cwd: tab.cwd,
+			createdAt: tab.createdAt,
+		})
+	);
 
 	// Return session without runtime-only fields
 
@@ -105,14 +112,16 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	const activeTabExists = truncatedTabs.some((tab) => tab.id === session.activeTabId);
 	const newActiveTabId = activeTabExists ? session.activeTabId : truncatedTabs[0]?.id;
 
-	return {
+	const persistedSession = {
 		...sessionWithoutRuntimeFields,
 		aiTabs: truncatedTabs,
-		terminalTabs: terminalTabsForPersistence,
+		terminalTabs: terminalTabsForPersistence as Session['terminalTabs'],
+		closedTabHistory: [],
+		unifiedClosedTabHistory: [],
 		closedTerminalTabHistory: [],
 		activeTabId: newActiveTabId,
 		// Reset runtime-only session state - processes don't survive app restart
-		state: 'idle',
+		state: 'idle' as Session['state'],
 		busySource: undefined,
 		thinkingStartTime: undefined,
 		currentCycleTokens: undefined,
@@ -125,7 +134,9 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		sshRemote: undefined,
 		sshRemoteId: undefined,
 		remoteCwd: undefined,
-	} as unknown as Session;
+	};
+
+	return persistedSession;
 };
 
 export interface UseDebouncedPersistenceReturn {

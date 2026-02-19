@@ -7113,6 +7113,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		thinkingItems,
 		theme,
 		fontFamily,
+		fontSize,
 		isMobileLandscape,
 		activeFocus,
 		outputSearchOpen,

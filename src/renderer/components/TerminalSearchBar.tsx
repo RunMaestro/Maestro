@@ -21,13 +21,18 @@ export const TerminalSearchBar = memo(function TerminalSearchBar({
 }: TerminalSearchBarProps) {
 	const [query, setQuery] = useState('');
 	const [hasResults, setHasResults] = useState(false);
-	const inputRef = useRef<HTMLInputElement>(null);
+	const inputRef = useRef<HTMLInputElement | null>(null);
 
-	useEffect(() => {
-		if (!isOpen) return;
-		inputRef.current?.focus();
-		inputRef.current?.select();
-	}, [isOpen]);
+	const setInputRef = useCallback(
+		(el: HTMLInputElement | null) => {
+			inputRef.current = el;
+			if (el && isOpen) {
+				el.focus();
+				el.select();
+			}
+		},
+		[isOpen]
+	);
 
 	useEffect(() => {
 		if (!isOpen) return;
@@ -81,7 +86,8 @@ export const TerminalSearchBar = memo(function TerminalSearchBar({
 		>
 			<Search className="w-4 h-4 shrink-0" style={{ color: theme.colors.textDim }} />
 			<input
-				ref={inputRef}
+				ref={setInputRef}
+				tabIndex={0}
 				type="text"
 				value={query}
 				onChange={(e) => setQuery(e.target.value)}
