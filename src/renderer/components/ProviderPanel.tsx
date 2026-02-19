@@ -18,12 +18,14 @@ import {
 } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type { ToolType } from '../../shared/types';
+import type { StatsTimeRange } from '../../shared/stats-types';
 import type { ProviderSwitchConfig } from '../../shared/account-types';
 import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../../shared/account-types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../services/contextGroomer';
 import { ProviderHealthCard } from './ProviderHealthCard';
 import { useProviderHealth } from '../hooks/useProviderHealth';
+import { formatTokenCount } from '../hooks/useAccountUsage';
 
 // ============================================================================
 // Types
@@ -55,6 +57,14 @@ const ERROR_WINDOW_OPTIONS = [
 ];
 
 const MIGRATION_HISTORY_LIMIT = 20;
+
+const TIME_RANGE_OPTIONS: { label: string; value: StatsTimeRange }[] = [
+	{ label: 'Today', value: 'day' },
+	{ label: 'This Week', value: 'week' },
+	{ label: 'This Month', value: 'month' },
+	{ label: 'This Quarter', value: 'quarter' },
+	{ label: 'All Time', value: 'all' },
+];
 
 // ============================================================================
 // Helpers
@@ -96,8 +106,11 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 		providers: healthProviders,
 		isLoading: healthLoading,
 		lastUpdated,
+		timeRange,
+		setTimeRange,
 		refresh: refreshHealth,
 		failoverThreshold,
+		totals,
 	} = useProviderHealth(sessions);
 	const [config, setConfig] = useState<ProviderSwitchConfig>(DEFAULT_PROVIDER_SWITCH_CONFIG);
 	const [showMoreHistory, setShowMoreHistory] = useState(false);
@@ -204,32 +217,42 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 		fontSize: 11,
 	};
 
+	const timeRangeLabel = TIME_RANGE_OPTIONS.find((o) => o.value === timeRange)?.label?.toLowerCase() ?? 'today';
+
 	// ── Render ───────────────────────────────────────────────────────────
 	return (
 		<div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 4 }}>
 			{/* Provider Health Dashboard */}
 			<div style={sectionStyle}>
-				<div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
-					<div style={sectionTitleStyle} className="mb-0">Provider Health</div>
-					<div className="flex items-center gap-3">
-						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
-							Auto-refresh: every 10s
+				<div style={sectionTitleStyle}>Provider Health</div>
+
+				{/* Totals summary bar */}
+				{!healthLoading && healthProviders.length > 0 && (
+					<div
+						style={{
+							backgroundColor: theme.colors.bgMain,
+							borderRadius: 6,
+							padding: '8px 14px',
+							marginBottom: 10,
+							border: `1px solid ${theme.colors.border}`,
+						}}
+					>
+						<span style={{ color: theme.colors.textDim, fontSize: 11 }}>
+							Total {timeRangeLabel}:
 						</span>
-						<button
-							onClick={refreshHealth}
-							className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
-							style={{
-								color: theme.colors.accent,
-								backgroundColor: `${theme.colors.accent}10`,
-								border: `1px solid ${theme.colors.accent}30`,
-							}}
-							title="Refresh Now"
-						>
-							<RefreshCw className="w-3 h-3" />
-							Refresh
-						</button>
+						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500, marginLeft: 8 }}>
+							{totals.queryCount.toLocaleString()} queries
+						</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>&middot;</span>
+						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500 }}>
+							{formatTokenCount(totals.totalTokens)} tokens
+						</span>
+						<span style={{ color: theme.colors.textDim, fontSize: 11, margin: '0 6px' }}>&middot;</span>
+						<span style={{ color: theme.colors.textMain, fontSize: 12, fontWeight: 500 }}>
+							${totals.totalCostUsd.toFixed(2)} cost
+						</span>
 					</div>
-				</div>
+				)}
 
 				{healthLoading && healthProviders.length === 0 ? (
 					<div
@@ -297,6 +320,7 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 								available={provider.available}
 								activeSessionCount={provider.activeSessionCount}
 								errorStats={provider.errorStats}
+								usageStats={provider.usageStats}
 								failoverThreshold={failoverThreshold}
 								healthPercent={provider.healthPercent}
 								status={provider.status}
@@ -307,6 +331,52 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 						)}
 					</div>
 				)}
+
+				{/* Footer: time range selector, auto-refresh, refresh button */}
+				<div
+					className="flex items-center justify-between"
+					style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${theme.colors.border}30` }}
+				>
+					<div className="flex items-center gap-2">
+						<span style={{ color: theme.colors.textDim, fontSize: 11 }}>Time range:</span>
+						<select
+							value={timeRange}
+							onChange={(e) => setTimeRange(e.target.value as StatsTimeRange)}
+							style={{
+								backgroundColor: theme.colors.bgMain,
+								color: theme.colors.textMain,
+								border: `1px solid ${theme.colors.border}`,
+								borderRadius: 4,
+								padding: '2px 6px',
+								fontSize: 11,
+							}}
+						>
+							{TIME_RANGE_OPTIONS.map((opt) => (
+								<option key={opt.value} value={opt.value}>
+									{opt.label}
+								</option>
+							))}
+						</select>
+					</div>
+					<div className="flex items-center gap-3">
+						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+							Auto-refresh: 10s
+						</span>
+						<button
+							onClick={refreshHealth}
+							className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
+							style={{
+								color: theme.colors.accent,
+								backgroundColor: `${theme.colors.accent}10`,
+								border: `1px solid ${theme.colors.accent}30`,
+							}}
+							title="Refresh Now"
+						>
+							<RefreshCw className="w-3 h-3" />
+							Refresh
+						</button>
+					</div>
+				</div>
 			</div>
 
 			{/* Failover Configuration */}
