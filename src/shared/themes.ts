@@ -73,7 +73,7 @@ export const LIGHT_ANSI_COLORS: ThemeAnsiColors = {
 	selection: 'rgba(38, 139, 210, 0.3)',
 };
 
-const DRACULA_ANSI_COLORS: ThemeAnsiColors = {
+export const DRACULA_ANSI_COLORS: ThemeAnsiColors = {
 	ansiBlack: '#21222c',
 	ansiRed: '#ff5555',
 	ansiGreen: '#50fa7b',
@@ -93,7 +93,7 @@ const DRACULA_ANSI_COLORS: ThemeAnsiColors = {
 	selection: 'rgba(189, 147, 249, 0.3)',
 };
 
-const NORD_ANSI_COLORS: ThemeAnsiColors = {
+export const NORD_ANSI_COLORS: ThemeAnsiColors = {
 	ansiBlack: '#3b4252',
 	ansiRed: '#bf616a',
 	ansiGreen: '#a3be8c',
@@ -113,7 +113,7 @@ const NORD_ANSI_COLORS: ThemeAnsiColors = {
 	selection: 'rgba(136, 192, 208, 0.3)',
 };
 
-const GRUVBOX_DARK_ANSI_COLORS: ThemeAnsiColors = {
+export const GRUVBOX_DARK_ANSI_COLORS: ThemeAnsiColors = {
 	ansiBlack: '#282828',
 	ansiRed: '#cc241d',
 	ansiGreen: '#98971a',

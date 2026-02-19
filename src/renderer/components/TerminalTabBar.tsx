@@ -76,9 +76,15 @@ const TerminalTabComponent = memo(function TerminalTabComponent({
 
 	return (
 		<div
+			ref={(el) => {
+				if (isActive) {
+					el?.focus();
+				}
+			}}
 			data-testid={`terminal-tab-${tab.id}`}
 			data-transition-state={transitionState}
 			title={tabHoverTitle}
+			tabIndex={isActive ? 0 : -1}
 			draggable={transitionState !== 'exiting'}
 			onDragStart={onDragStart}
 			onDragOver={onDragOver}
@@ -94,7 +100,7 @@ const TerminalTabComponent = memo(function TerminalTabComponent({
 			}}
 			onDoubleClick={onRename}
 			className={`
-				flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer
+				flex items-center gap-1.5 px-3 py-1.5 text-sm cursor-pointer outline-none
 				border-r transition-all duration-150 ease-out select-none shrink-0
 				${transitionState === 'entering' || transitionState === 'exiting' ? 'opacity-0 -translate-y-1 scale-95 pointer-events-none' : 'opacity-100 translate-y-0 scale-100'}
 				${isDragging ? 'opacity-50' : ''}

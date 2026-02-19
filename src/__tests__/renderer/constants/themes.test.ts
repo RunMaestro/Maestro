@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { DARK_ANSI_COLORS, LIGHT_ANSI_COLORS, THEMES } from '../../../renderer/constants/themes';
+import {
+	DARK_ANSI_COLORS,
+	LIGHT_ANSI_COLORS,
+	DRACULA_ANSI_COLORS,
+	NORD_ANSI_COLORS,
+	GRUVBOX_DARK_ANSI_COLORS,
+	THEMES,
+} from '../../../renderer/constants/themes';
 import type { ThemeColors } from '../../../shared/theme-types';
 import { isValidThemeId } from '../../../shared/theme-types';
 
@@ -158,17 +165,19 @@ describe('THEMES constant', () => {
 		});
 
 		it('should use distinctive ANSI palettes for selected dark themes', () => {
-			expect(THEMES.dracula.colors.ansiBlue).toBe('#bd93f9');
-			expect(THEMES.dracula.colors.ansiMagenta).toBe('#ff79c6');
-			expect(THEMES.dracula.colors.selection).toBe('rgba(189, 147, 249, 0.3)');
+			expect(THEMES.dracula.colors.ansiBlue).toBe(DRACULA_ANSI_COLORS.ansiBlue);
+			expect(THEMES.dracula.colors.ansiMagenta).toBe(DRACULA_ANSI_COLORS.ansiMagenta);
+			expect(THEMES.dracula.colors.selection).toBe(DRACULA_ANSI_COLORS.selection);
 
-			expect(THEMES.nord.colors.ansiBlue).toBe('#81a1c1');
-			expect(THEMES.nord.colors.ansiBrightCyan).toBe('#8fbcbb');
-			expect(THEMES.nord.colors.selection).toBe('rgba(136, 192, 208, 0.3)');
+			expect(THEMES.nord.colors.ansiBlue).toBe(NORD_ANSI_COLORS.ansiBlue);
+			expect(THEMES.nord.colors.ansiBrightCyan).toBe(NORD_ANSI_COLORS.ansiBrightCyan);
+			expect(THEMES.nord.colors.selection).toBe(NORD_ANSI_COLORS.selection);
 
-			expect(THEMES['gruvbox-dark'].colors.ansiBlue).toBe('#458588');
-			expect(THEMES['gruvbox-dark'].colors.ansiBrightGreen).toBe('#b8bb26');
-			expect(THEMES['gruvbox-dark'].colors.selection).toBe('rgba(69, 133, 136, 0.3)');
+			expect(THEMES['gruvbox-dark'].colors.ansiBlue).toBe(GRUVBOX_DARK_ANSI_COLORS.ansiBlue);
+			expect(THEMES['gruvbox-dark'].colors.ansiBrightGreen).toBe(
+				GRUVBOX_DARK_ANSI_COLORS.ansiBrightGreen
+			);
+			expect(THEMES['gruvbox-dark'].colors.selection).toBe(GRUVBOX_DARK_ANSI_COLORS.selection);
 		});
 
 		it('should keep distinctive ANSI palettes separate from generic dark defaults', () => {

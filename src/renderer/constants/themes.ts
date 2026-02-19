@@ -10,6 +10,9 @@ export {
 	DEFAULT_CUSTOM_THEME_COLORS,
 	DARK_ANSI_COLORS,
 	LIGHT_ANSI_COLORS,
+	DRACULA_ANSI_COLORS,
+	NORD_ANSI_COLORS,
+	GRUVBOX_DARK_ANSI_COLORS,
 	getThemeById,
 } from '../../shared/themes';
 export type { Theme, ThemeId, ThemeColors, ThemeMode } from '../../shared/themes';

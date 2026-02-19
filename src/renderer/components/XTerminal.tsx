@@ -5,9 +5,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { SearchAddon, type ISearchOptions } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
-import * as Sentry from '@sentry/electron/renderer';
 import '@xterm/xterm/css/xterm.css';
 import type { Theme } from '../types';
+import { captureException, captureMessage } from '../utils/sentry';
 
 interface XTerminalProps {
 	sessionId: string;
@@ -208,12 +208,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			const { cols, rows } = terminalRef.current;
 			onResize?.(cols, rows);
 			window.maestro.process.resize(sessionId, cols, rows).catch((error) => {
-				Sentry.captureException(error, {
-					tags: {
-						component: 'XTerminal',
-						operation: 'process.resize',
-					},
+				captureException(error, {
 					extra: {
+						location: 'XTerminal.handleResize',
 						sessionId,
 						cols,
 						rows,
@@ -258,6 +255,11 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			webglAddon = new WebglAddon();
 			const webglInstance = webglAddon;
 			webglInstance.onContextLoss(() => {
+				captureMessage('WebGL context lost, falling back to canvas renderer', 'warning', {
+					sessionId,
+					location: 'XTerminal.WebglAddon.onContextLoss',
+					fallback: 'canvas',
+				});
 				console.warn('WebGL context lost, falling back to canvas renderer');
 				webglInstance.dispose();
 				if (addonsRef.current.webgl === webglInstance) {
@@ -266,12 +268,9 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			});
 			terminal.loadAddon(webglInstance);
 		} catch (error) {
-			Sentry.captureException(error, {
-				tags: {
-					component: 'XTerminal',
-					operation: 'webgl.init',
-				},
+			captureException(error, {
 				extra: {
+					location: 'XTerminal.WebglAddon.init',
 					sessionId,
 					fontFamily,
 					fontSize: fontSize ?? 14,
