@@ -62,6 +62,14 @@ export interface MarkdownComponentsOptions {
 		/** Callback to track match index for scrolling */
 		onMatchRendered?: (index: number, element: HTMLElement) => void;
 	};
+	/** Optional style overrides for syntax-highlighted code blocks */
+	codeBlockStyle?: {
+		margin?: string;
+		padding?: string;
+		fontSize?: string;
+		borderRadius?: string;
+		backgroundColor?: string;
+	};
 }
 
 /**
@@ -69,6 +77,8 @@ export interface MarkdownComponentsOptions {
  * Centralized so wizard/chat surfaces don't define this inline repeatedly.
  */
 export const REMARK_GFM_PLUGINS = [remarkGfm];
+
+export type InlineWizardPreviewVariant = 'document' | 'streaming';
 
 // ============================================================================
 // Prose Styles Generator
@@ -322,6 +332,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		onAnchorClick,
 		containerRef,
 		searchHighlight,
+		codeBlockStyle,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -384,11 +395,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 					language,
 					style: vscDarkPlus,
 					customStyle: {
-						margin: '0.5em 0',
-						padding: '1em',
-						background: theme.colors.bgActivity,
-						fontSize: '0.9em',
-						borderRadius: '6px',
+						margin: codeBlockStyle?.margin ?? '0.5em 0',
+						padding: codeBlockStyle?.padding ?? '1em',
+						background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+						fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+						borderRadius: codeBlockStyle?.borderRadius ?? '6px',
 					},
 					PreTag: 'div',
 					children: codeContent,
@@ -460,6 +471,91 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	}
 
 	return components;
+}
+
+/**
+ * Scoped prose styles for inline wizard preview surfaces.
+ * Keeps rendering style definitions centralized for:
+ * - InlineWizard/DocumentGenerationView
+ * - InlineWizard/StreamingDocumentPreview
+ */
+export function generateInlineWizardPreviewProseStyles(
+	theme: Theme,
+	scopeSelector: string,
+	variant: InlineWizardPreviewVariant
+): string {
+	const c = theme.colors;
+	const s = `${scopeSelector} .prose`;
+	const isStreaming = variant === 'streaming';
+
+	const heading1Size = isStreaming ? '1.75em' : '2em';
+	const heading2Size = isStreaming ? '1.4em' : '1.5em';
+	const heading3Size = isStreaming ? '1.15em' : '1.17em';
+	const headingMargin = isStreaming ? '0.5em 0' : '0.67em 0';
+	const paragraphMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+	const listMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+	const listItemMargin = isStreaming ? '0.2em 0' : '0.25em 0';
+	const codePadding = isStreaming ? '0.15em 0.3em' : '0.2em 0.4em';
+	const codeFontSize = isStreaming ? '0.85em' : '0.9em';
+	const prePadding = isStreaming ? '0.75em' : '1em';
+	const blockquoteBorder = isStreaming ? '3px' : '4px';
+	const blockquoteMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+
+	const checkboxSize = isStreaming ? '14px' : '16px';
+	const checkboxMarginRight = isStreaming ? '6px' : '8px';
+	const checkLeft = isStreaming ? '3px' : '4px';
+	const checkTop = isStreaming ? '0px' : '1px';
+	const checkWidth = isStreaming ? '4px' : '5px';
+	const checkHeight = isStreaming ? '8px' : '9px';
+
+	return `
+    ${s} h1 { color: ${c.textMain}; font-size: ${heading1Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} h2 { color: ${c.textMain}; font-size: ${heading2Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} h3 { color: ${c.textMain}; font-size: ${heading3Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} p { color: ${c.textMain}; margin: ${paragraphMargin}; }
+    ${s} ul, ${s} ol { color: ${c.textMain}; margin: ${listMargin}; padding-left: 1.5em; }
+    ${s} ul { list-style-type: disc; }
+    ${s} li { margin: ${listItemMargin}; display: list-item; }
+    ${s} code { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${codePadding}; border-radius: 3px; font-size: ${codeFontSize}; }
+    ${s} pre { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${prePadding}; border-radius: 6px; overflow-x: auto; }
+    ${s} pre code { background: none; padding: 0; }
+    ${s} blockquote { border-left: ${blockquoteBorder} solid ${c.border}; padding-left: 1em; margin: ${blockquoteMargin}; color: ${c.textDim}; }
+    ${s} a { color: ${c.accent}; text-decoration: underline; }
+    ${s} strong { font-weight: bold; }
+    ${s} em { font-style: italic; }
+    ${s} input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: ${checkboxSize};
+      height: ${checkboxSize};
+      border: 2px solid ${c.accent};
+      border-radius: 3px;
+      background-color: transparent;
+      cursor: pointer;
+      vertical-align: middle;
+      margin-right: ${checkboxMarginRight};
+      position: relative;
+    }
+    ${s} input[type="checkbox"]:checked {
+      background-color: ${c.accent};
+      border-color: ${c.accent};
+    }
+    ${s} input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: ${checkLeft};
+      top: ${checkTop};
+      width: ${checkWidth};
+      height: ${checkHeight};
+      border: solid ${c.bgMain};
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    ${s} li:has(> input[type="checkbox"]) {
+      list-style-type: none;
+      margin-left: -1.5em;
+    }
+  `;
 }
 
 /**

@@ -8,7 +8,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
 	LayoutGrid,
 	RefreshCw,
@@ -29,7 +28,7 @@ import type { MarketplacePlaybook } from '../../shared/marketplace-types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useMarketplace } from '../hooks/batch/useMarketplace';
-import { generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
+import { REMARK_GFM_PLUGINS, generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 
 // ============================================================================
@@ -630,7 +629,7 @@ function PlaybookDetailView({
 							</div>
 						) : (
 							<div className="prose prose-sm max-w-none" style={{ color: theme.colors.textMain }}>
-								<ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+								<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
 									{selectedDocFilename
 										? documentContent || '*Document not found*'
 										: readmeContent || '*No README available*'}

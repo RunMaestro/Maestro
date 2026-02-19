@@ -14,9 +14,6 @@
 
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Eye, Edit, ChevronDown, ChevronRight, X, Loader2, FileText, Check } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GeneratedDocument } from '../Wizard/WizardContext';
@@ -25,9 +22,11 @@ import { useClickOutside } from '../../hooks';
 import { AustinFactsDisplay } from './AustinFactsDisplay';
 import { formatShortcutKeys } from '../../utils/shortcutFormatter';
 import { formatSize, formatElapsedTime } from '../../../shared/formatters';
-
-// Memoize remarkPlugins array - it never changes
-const REMARK_PLUGINS = [remarkGfm];
+import {
+	REMARK_GFM_PLUGINS,
+	createMarkdownComponents,
+	generateInlineWizardPreviewProseStyles,
+} from '../../utils/markdownConfig';
 
 /**
  * Props for DocumentGenerationView
@@ -546,106 +545,25 @@ function DocumentEditor({
 
 	// Prose styles for markdown preview
 	const proseStyles = useMemo(
-		() => `
-    .doc-gen-view .prose h1 { color: ${theme.colors.textMain}; font-size: 2em; font-weight: bold; margin: 0.67em 0; }
-    .doc-gen-view .prose h2 { color: ${theme.colors.textMain}; font-size: 1.5em; font-weight: bold; margin: 0.75em 0; }
-    .doc-gen-view .prose h3 { color: ${theme.colors.textMain}; font-size: 1.17em; font-weight: bold; margin: 0.83em 0; }
-    .doc-gen-view .prose p { color: ${theme.colors.textMain}; margin: 0.5em 0; }
-    .doc-gen-view .prose ul, .doc-gen-view .prose ol { color: ${theme.colors.textMain}; margin: 0.5em 0; padding-left: 1.5em; }
-    .doc-gen-view .prose ul { list-style-type: disc; }
-    .doc-gen-view .prose li { margin: 0.25em 0; display: list-item; }
-    .doc-gen-view .prose code { background-color: ${theme.colors.bgActivity}; color: ${theme.colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
-    .doc-gen-view .prose pre { background-color: ${theme.colors.bgActivity}; color: ${theme.colors.textMain}; padding: 1em; border-radius: 6px; overflow-x: auto; }
-    .doc-gen-view .prose pre code { background: none; padding: 0; }
-    .doc-gen-view .prose blockquote { border-left: 4px solid ${theme.colors.border}; padding-left: 1em; margin: 0.5em 0; color: ${theme.colors.textDim}; }
-    .doc-gen-view .prose a { color: ${theme.colors.accent}; text-decoration: underline; }
-    .doc-gen-view .prose strong { font-weight: bold; }
-    .doc-gen-view .prose em { font-style: italic; }
-    .doc-gen-view .prose input[type="checkbox"] {
-      appearance: none;
-      -webkit-appearance: none;
-      width: 16px;
-      height: 16px;
-      border: 2px solid ${theme.colors.accent};
-      border-radius: 3px;
-      background-color: transparent;
-      cursor: pointer;
-      vertical-align: middle;
-      margin-right: 8px;
-      position: relative;
-    }
-    .doc-gen-view .prose input[type="checkbox"]:checked {
-      background-color: ${theme.colors.accent};
-      border-color: ${theme.colors.accent};
-    }
-    .doc-gen-view .prose input[type="checkbox"]:checked::after {
-      content: '';
-      position: absolute;
-      left: 4px;
-      top: 1px;
-      width: 5px;
-      height: 9px;
-      border: solid ${theme.colors.bgMain};
-      border-width: 0 2px 2px 0;
-      transform: rotate(45deg);
-    }
-    .doc-gen-view .prose li:has(> input[type="checkbox"]) {
-      list-style-type: none;
-      margin-left: -1.5em;
-    }
-  `,
+		() => generateInlineWizardPreviewProseStyles(theme, '.doc-gen-view', 'document'),
 		[theme]
 	);
 
 	// Markdown components
 	const markdownComponents = useMemo(
-		() => ({
-			code: ({ inline, className, children, ...props }: any) => {
-				const match = (className || '').match(/language-(\w+)/);
-				const language = match ? match[1] : 'text';
-				const codeContent = String(children).replace(/\n$/, '');
-
-				if (!inline && language === 'mermaid') {
-					return <MermaidRenderer chart={codeContent} theme={theme} />;
-				}
-
-				return !inline && match ? (
-					<SyntaxHighlighter
-						language={language}
-						style={vscDarkPlus}
-						customStyle={{
-							margin: '0.5em 0',
-							padding: '1em',
-							background: theme.colors.bgActivity,
-							fontSize: '0.9em',
-							borderRadius: '6px',
-						}}
-						PreTag="div"
-					>
-						{codeContent}
-					</SyntaxHighlighter>
-				) : (
-					<code className={className} {...props}>
-						{children}
-					</code>
-				);
-			},
-			img: ({ src, alt, ...props }: any) => (
-				<MarkdownImage src={src} alt={alt} folderPath={folderPath} theme={theme} {...props} />
-			),
-			a: ({ href, children }: any) => (
-				<a
-					href={href}
-					onClick={(e) => {
-						e.preventDefault();
-						if (href) window.maestro.shell.openExternal(href);
-					}}
-					style={{ color: theme.colors.accent, textDecoration: 'underline', cursor: 'pointer' }}
-				>
-					{children}
-				</a>
-			),
-		}),
+		() =>
+			createMarkdownComponents({
+				theme,
+				customLanguageRenderers: {
+					mermaid: ({ code, theme: rendererTheme }) => (
+						<MermaidRenderer chart={code} theme={rendererTheme} />
+					),
+				},
+				imageRenderer: ({ src, alt, ...props }) => (
+					<MarkdownImage src={src} alt={alt} folderPath={folderPath} theme={theme} {...props} />
+				),
+				onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+			}),
 		[theme, folderPath]
 	);
 
@@ -764,7 +682,7 @@ function DocumentEditor({
 						}}
 					>
 						<style>{proseStyles}</style>
-						<ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
 							{content || '*No content yet.*'}
 						</ReactMarkdown>
 					</div>

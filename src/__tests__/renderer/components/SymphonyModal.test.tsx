@@ -35,6 +35,7 @@ vi.mock('../../../renderer/components/AgentCreationDialog', () => ({
 }));
 
 vi.mock('../../../renderer/utils/markdownConfig', () => ({
+	REMARK_GFM_PLUGINS: [],
 	generateProseStyles: () => '',
 	createMarkdownComponents: () => ({}),
 }));

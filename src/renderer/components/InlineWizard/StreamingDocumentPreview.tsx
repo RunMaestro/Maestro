@@ -14,14 +14,13 @@
 
 import { useState, useEffect, useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { FileText, Code2, AlignLeft } from 'lucide-react';
 import type { Theme } from '../../types';
-
-// Memoize remarkPlugins array - it never changes
-const REMARK_PLUGINS = [remarkGfm];
+import {
+	REMARK_GFM_PLUGINS,
+	createMarkdownComponents,
+	generateInlineWizardPreviewProseStyles,
+} from '../../utils/markdownConfig';
 
 /**
  * Props for StreamingDocumentPreview
@@ -128,103 +127,21 @@ export function StreamingDocumentPreview({
 
 	// Prose styles for markdown preview - scoped to .streaming-preview
 	const proseStyles = useMemo(
-		() => `
-    .streaming-preview .prose h1 { color: ${theme.colors.textMain}; font-size: 1.75em; font-weight: bold; margin: 0.5em 0; }
-    .streaming-preview .prose h2 { color: ${theme.colors.textMain}; font-size: 1.4em; font-weight: bold; margin: 0.5em 0; }
-    .streaming-preview .prose h3 { color: ${theme.colors.textMain}; font-size: 1.15em; font-weight: bold; margin: 0.5em 0; }
-    .streaming-preview .prose p { color: ${theme.colors.textMain}; margin: 0.4em 0; }
-    .streaming-preview .prose ul, .streaming-preview .prose ol { color: ${theme.colors.textMain}; margin: 0.4em 0; padding-left: 1.5em; }
-    .streaming-preview .prose ul { list-style-type: disc; }
-    .streaming-preview .prose li { margin: 0.2em 0; display: list-item; }
-    .streaming-preview .prose code { background-color: ${theme.colors.bgActivity}; color: ${theme.colors.textMain}; padding: 0.15em 0.3em; border-radius: 3px; font-size: 0.85em; }
-    .streaming-preview .prose pre { background-color: ${theme.colors.bgActivity}; color: ${theme.colors.textMain}; padding: 0.75em; border-radius: 6px; overflow-x: auto; margin: 0.5em 0; }
-    .streaming-preview .prose pre code { background: none; padding: 0; }
-    .streaming-preview .prose blockquote { border-left: 3px solid ${theme.colors.border}; padding-left: 0.75em; margin: 0.4em 0; color: ${theme.colors.textDim}; }
-    .streaming-preview .prose a { color: ${theme.colors.accent}; text-decoration: underline; }
-    .streaming-preview .prose strong { font-weight: bold; }
-    .streaming-preview .prose em { font-style: italic; }
-    .streaming-preview .prose input[type="checkbox"] {
-      appearance: none;
-      -webkit-appearance: none;
-      width: 14px;
-      height: 14px;
-      border: 2px solid ${theme.colors.accent};
-      border-radius: 3px;
-      background-color: transparent;
-      cursor: default;
-      vertical-align: middle;
-      margin-right: 6px;
-      position: relative;
-    }
-    .streaming-preview .prose input[type="checkbox"]:checked {
-      background-color: ${theme.colors.accent};
-      border-color: ${theme.colors.accent};
-    }
-    .streaming-preview .prose input[type="checkbox"]:checked::after {
-      content: '';
-      position: absolute;
-      left: 3px;
-      top: 0px;
-      width: 4px;
-      height: 8px;
-      border: solid ${theme.colors.bgMain};
-      border-width: 0 2px 2px 0;
-      transform: rotate(45deg);
-    }
-    .streaming-preview .prose li:has(> input[type="checkbox"]) {
-      list-style-type: none;
-      margin-left: -1.5em;
-    }
-  `,
+		() => generateInlineWizardPreviewProseStyles(theme, '.streaming-preview', 'streaming'),
 		[theme]
 	);
 
 	// Markdown components for rendering
 	const markdownComponents = useMemo(
-		() => ({
-			code: ({ inline, className, children, ...props }: any) => {
-				const match = (className || '').match(/language-(\w+)/);
-				const language = match ? match[1] : 'text';
-				const codeContent = String(children).replace(/\n$/, '');
-
-				return !inline && match ? (
-					<SyntaxHighlighter
-						language={language}
-						style={vscDarkPlus}
-						customStyle={{
-							margin: '0.5em 0',
-							padding: '0.75em',
-							background: theme.colors.bgActivity,
-							fontSize: '0.85em',
-							borderRadius: '6px',
-						}}
-						PreTag="div"
-					>
-						{codeContent}
-					</SyntaxHighlighter>
-				) : (
-					<code className={className} {...props}>
-						{children}
-					</code>
-				);
-			},
-			a: ({ href, children }: any) => (
-				<a
-					href={href}
-					onClick={(e) => {
-						e.preventDefault();
-						if (href) window.maestro.shell.openExternal(href);
-					}}
-					style={{
-						color: theme.colors.accent,
-						textDecoration: 'underline',
-						cursor: 'pointer',
-					}}
-				>
-					{children}
-				</a>
-			),
-		}),
+		() =>
+			createMarkdownComponents({
+				theme,
+				onExternalLinkClick: (href) => window.maestro.shell.openExternal(href),
+				codeBlockStyle: {
+					padding: '0.75em',
+					fontSize: '0.85em',
+				},
+			}),
 		[theme]
 	);
 
@@ -324,7 +241,7 @@ export function StreamingDocumentPreview({
 					/* Markdown preview */
 					<div className="prose prose-sm max-w-none text-sm">
 						<style>{proseStyles}</style>
-						<ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={markdownComponents}>
+						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
 							{cleanedContent}
 						</ReactMarkdown>
 						{/* Blinking cursor at end */}
