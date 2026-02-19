@@ -46,6 +46,7 @@ import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
 import { AccountSwitchModal } from './components/AccountSwitchModal';
 import { VirtuososModal } from './components/VirtuososModal';
+import { SwitchProviderModal } from './components/SwitchProviderModal';
 
 // Lazy-loaded components for performance (rarely-used heavy modals)
 // These are loaded on-demand when the user first opens them
@@ -132,6 +133,7 @@ import {
 import type { TabCompletionSuggestion, TabCompletionFilter } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useProviderSwitch } from './hooks/agent/useProviderSwitch';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -152,6 +154,7 @@ import { ToastContainer } from './components/Toast';
 import { gitService } from './services/git';
 import { getSpeckitCommands } from './services/speckit';
 import { getOpenSpecCommands } from './services/openspec';
+import { getAgentDisplayName } from './services/contextGroomer';
 
 // Import prompts and synopsis parsing
 import { autorunSynopsisPrompt, maestroSystemPrompt } from '../prompts';
@@ -859,6 +862,9 @@ function MaestroConsoleInner() {
 		tokensAtThrottle?: number;
 		usagePercent?: number;
 	} | null>(null);
+
+	// Provider Switch state
+	const [switchProviderSession, setSwitchProviderSession] = useState<Session | null>(null);
 
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
 
@@ -2725,6 +2731,15 @@ You are taking over this conversation. Based on the context above, provide a bri
 		canSummarize,
 		minContextUsagePercent,
 	} = useSummarizeAndContinue(activeSession ?? null);
+
+	const {
+		switchProvider,
+		transferState: providerSwitchState,
+		progress: providerSwitchProgress,
+		error: providerSwitchError,
+		cancelSwitch: cancelProviderSwitch,
+		reset: resetProviderSwitch,
+	} = useProviderSwitch();
 
 	// Handler for starting summarization (non-blocking - UI remains interactive)
 	const handleSummarizeAndContinue = useCallback(
@@ -4887,6 +4902,61 @@ You are taking over this conversation. Based on the context above, provide a bri
 		},
 		[sessionsRef]
 	);
+
+	// Provider Switch handlers
+	const handleSwitchProvider = useCallback((sessionId: string) => {
+		const session = sessionsRef.current.find(s => s.id === sessionId);
+		if (session && session.toolType !== 'terminal') {
+			setSwitchProviderSession(session);
+		}
+	}, []);
+
+	const handleConfirmProviderSwitch = useCallback(async (request: {
+		targetProvider: ToolType;
+		groomContext: boolean;
+		archiveSource: boolean;
+	}) => {
+		if (!switchProviderSession) return;
+
+		const activeTab = getActiveTab(switchProviderSession);
+		if (!activeTab) return;
+
+		const result = await switchProvider({
+			sourceSession: switchProviderSession,
+			sourceTabId: activeTab.id,
+			targetProvider: request.targetProvider,
+			groomContext: request.groomContext,
+			archiveSource: request.archiveSource,
+		});
+
+		if (result.success && result.newSession) {
+			// Add the new session to state
+			setSessions(prev => [...prev, result.newSession!]);
+
+			// Mark source as archived if requested
+			if (request.archiveSource) {
+				setSessions(prev => prev.map(s =>
+					s.id === switchProviderSession.id
+						? { ...s, archivedByMigration: true, migratedToSessionId: result.newSessionId }
+						: s
+				));
+			}
+
+			// Navigate to the new session
+			setActiveSessionId(result.newSessionId!);
+
+			// Show success toast
+			notifyToast({
+				type: 'success',
+				title: 'Provider Switched',
+				message: `Switched to ${getAgentDisplayName(request.targetProvider)}`,
+				duration: 5_000,
+			});
+		}
+
+		// Close the modal
+		setSwitchProviderSession(null);
+	}, [switchProviderSession, switchProvider, setActiveSessionId]);
 
 	const handleRenameTab = useCallback(
 		(newName: string) => {
@@ -8610,6 +8680,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
+		handleSwitchProvider: encoreFeatures.virtuosos ? handleSwitchProvider : undefined,
 		openWizardModal,
 		handleStartTour,
 
@@ -8883,6 +8954,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 					onCloseEditAgentModal={handleCloseEditAgentModal}
 					onSaveEditAgent={handleSaveEditAgent}
 					editAgentSession={editAgentSession}
+					onSwitchProviderFromEdit={encoreFeatures.virtuosos && editAgentSession ? () => handleSwitchProvider(editAgentSession.id) : undefined}
 					renameSessionModalOpen={renameInstanceModalOpen}
 					renameSessionValue={renameInstanceValue}
 					setRenameSessionValue={setRenameInstanceValue}
@@ -9584,6 +9656,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 						onClose={() => setVirtuososOpen(false)}
 						theme={theme}
 						sessions={sessions}
+					/>
+				)}
+
+				{/* Provider Switch Modal */}
+				{encoreFeatures.virtuosos && switchProviderSession && (
+					<SwitchProviderModal
+						theme={theme}
+						isOpen={true}
+						onClose={() => {
+							setSwitchProviderSession(null);
+							resetProviderSwitch();
+						}}
+						sourceSession={switchProviderSession}
+						sourceTabId={getActiveTab(switchProviderSession)?.id || ''}
+						onConfirmSwitch={handleConfirmProviderSwitch}
 					/>
 				)}
 
