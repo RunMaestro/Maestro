@@ -9,6 +9,11 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import type { Theme } from '../../../shared/theme-types';
 import type { AccountProfile } from '../../../shared/account-types';
 
+// Mock settingsStore to enable virtuosos feature flag
+vi.mock('../../../renderer/stores/settingsStore', () => ({
+	useSettingsStore: (selector: any) => selector({ encoreFeatures: { virtuosos: true } }),
+}));
+
 // Mock useAccountUsage before importing the component
 vi.mock('../../../renderer/hooks/useAccountUsage', () => ({
 	useAccountUsage: vi.fn().mockReturnValue({
