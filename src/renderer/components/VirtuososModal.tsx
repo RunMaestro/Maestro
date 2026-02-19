@@ -1,23 +1,26 @@
 /**
  * VirtuososModal - Standalone modal for account (Virtuoso) management
  *
- * Two-tab layout:
- * 1. Configuration — AccountsPanel (account CRUD, discovery, plan presets, auto-switch)
- * 2. Usage — VirtuosoUsageView (real-time metrics, predictions, history, throttle events)
+ * Three-tab layout:
+ * 1. Accounts — AccountsPanel (account CRUD, discovery, plan presets, auto-switch)
+ * 2. Providers — ProviderPanel (provider status, failover config, migration history)
+ * 3. Usage — VirtuosoUsageView (real-time metrics, predictions, history, throttle events)
  */
 
 import React, { useState, useEffect } from 'react';
-import { Users, Settings, BarChart3 } from 'lucide-react';
+import { Users, Settings, BarChart3, ArrowRightLeft } from 'lucide-react';
 import { AccountsPanel } from './AccountsPanel';
+import { ProviderPanel } from './ProviderPanel';
 import { VirtuosoUsageView } from './VirtuosoUsageView';
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import type { Theme, Session } from '../types';
 
-type VirtuosoTab = 'config' | 'usage';
+type VirtuosoTab = 'config' | 'providers' | 'usage';
 
 const VIRTUOSO_TABS: { value: VirtuosoTab; label: string; icon: typeof Settings }[] = [
-	{ value: 'config', label: 'Configuration', icon: Settings },
+	{ value: 'config', label: 'Accounts', icon: Settings },
+	{ value: 'providers', label: 'Providers', icon: ArrowRightLeft },
 	{ value: 'usage', label: 'Usage', icon: BarChart3 },
 ];
 
@@ -57,7 +60,7 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososMo
 
 	if (!isOpen) return null;
 
-	const modalWidth = activeTab === 'usage' ? 900 : 720;
+	const modalWidth = activeTab === 'usage' ? 900 : activeTab === 'providers' ? 860 : 720;
 
 	return (
 		<Modal
@@ -124,6 +127,7 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososMo
 
 			{/* Tab content */}
 			{activeTab === 'config' && <AccountsPanel theme={theme} />}
+			{activeTab === 'providers' && <ProviderPanel theme={theme} sessions={sessions} />}
 			{activeTab === 'usage' && <VirtuosoUsageView theme={theme} sessions={sessions} />}
 		</Modal>
 	);

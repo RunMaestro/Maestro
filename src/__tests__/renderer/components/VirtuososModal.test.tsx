@@ -28,6 +28,10 @@ vi.mock('../../../renderer/components/AccountsPanel', () => ({
 	AccountsPanel: () => <div data-testid="accounts-panel">AccountsPanel</div>,
 }));
 
+vi.mock('../../../renderer/components/ProviderPanel', () => ({
+	ProviderPanel: () => <div data-testid="provider-panel">ProviderPanel</div>,
+}));
+
 vi.mock('../../../renderer/components/VirtuosoUsageView', () => ({
 	VirtuosoUsageView: () => (
 		<div data-testid="virtuoso-usage-view">VirtuosoUsageView</div>
@@ -77,19 +81,36 @@ describe('VirtuososModal', () => {
 		expect(container.firstChild).toBeNull();
 	});
 
-	it('renders Configuration tab by default', () => {
+	it('renders Accounts tab by default', () => {
 		render(<VirtuososModal isOpen={true} onClose={onClose} theme={theme} />);
 
-		const configTab = screen.getByRole('tab', { name: /Configuration/i });
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
+		const providersTab = screen.getByRole('tab', { name: /Providers/i });
 		const usageTab = screen.getByRole('tab', { name: /Usage/i });
 
-		expect(configTab).toBeDefined();
+		expect(accountsTab).toBeDefined();
+		expect(providersTab).toBeDefined();
 		expect(usageTab).toBeDefined();
 
-		expect(configTab.getAttribute('aria-selected')).toBe('true');
+		expect(accountsTab.getAttribute('aria-selected')).toBe('true');
+		expect(providersTab.getAttribute('aria-selected')).toBe('false');
 		expect(usageTab.getAttribute('aria-selected')).toBe('false');
 
 		expect(screen.getByTestId('accounts-panel')).toBeDefined();
+	});
+
+	it('switches to Providers tab on click', () => {
+		render(<VirtuososModal isOpen={true} onClose={onClose} theme={theme} />);
+
+		const providersTab = screen.getByRole('tab', { name: /Providers/i });
+		fireEvent.click(providersTab);
+
+		expect(providersTab.getAttribute('aria-selected')).toBe('true');
+
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
+		expect(accountsTab.getAttribute('aria-selected')).toBe('false');
+
+		expect(screen.getByTestId('provider-panel')).toBeDefined();
 	});
 
 	it('switches to Usage tab on click', () => {
@@ -100,8 +121,8 @@ describe('VirtuososModal', () => {
 
 		expect(usageTab.getAttribute('aria-selected')).toBe('true');
 
-		const configTab = screen.getByRole('tab', { name: /Configuration/i });
-		expect(configTab.getAttribute('aria-selected')).toBe('false');
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
+		expect(accountsTab.getAttribute('aria-selected')).toBe('false');
 
 		expect(screen.getByTestId('virtuoso-usage-view')).toBeDefined();
 	});
@@ -109,11 +130,24 @@ describe('VirtuososModal', () => {
 	it('cycles tabs with Cmd+Shift+]', async () => {
 		render(<VirtuososModal isOpen={true} onClose={onClose} theme={theme} />);
 
-		const configTab = screen.getByRole('tab', { name: /Configuration/i });
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
+		const providersTab = screen.getByRole('tab', { name: /Providers/i });
 		const usageTab = screen.getByRole('tab', { name: /Usage/i });
 
-		expect(configTab.getAttribute('aria-selected')).toBe('true');
+		expect(accountsTab.getAttribute('aria-selected')).toBe('true');
 
+		// Accounts -> Providers
+		fireEvent.keyDown(window, {
+			key: ']',
+			metaKey: true,
+			shiftKey: true,
+		});
+
+		await waitFor(() => {
+			expect(providersTab.getAttribute('aria-selected')).toBe('true');
+		});
+
+		// Providers -> Usage
 		fireEvent.keyDown(window, {
 			key: ']',
 			metaKey: true,
@@ -132,15 +166,28 @@ describe('VirtuososModal', () => {
 		fireEvent.click(usageTab);
 		expect(usageTab.getAttribute('aria-selected')).toBe('true');
 
+		// Usage -> Providers
 		fireEvent.keyDown(window, {
 			key: '[',
 			metaKey: true,
 			shiftKey: true,
 		});
 
-		const configTab = screen.getByRole('tab', { name: /Configuration/i });
+		const providersTab = screen.getByRole('tab', { name: /Providers/i });
 		await waitFor(() => {
-			expect(configTab.getAttribute('aria-selected')).toBe('true');
+			expect(providersTab.getAttribute('aria-selected')).toBe('true');
+		});
+
+		// Providers -> Accounts
+		fireEvent.keyDown(window, {
+			key: '[',
+			metaKey: true,
+			shiftKey: true,
+		});
+
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
+		await waitFor(() => {
+			expect(accountsTab.getAttribute('aria-selected')).toBe('true');
 		});
 	});
 
@@ -176,9 +223,25 @@ describe('VirtuososModal', () => {
 			shiftKey: true,
 		});
 
-		const configTab = screen.getByRole('tab', { name: /Configuration/i });
+		const accountsTab = screen.getByRole('tab', { name: /Accounts/i });
 		await waitFor(() => {
-			expect(configTab.getAttribute('aria-selected')).toBe('true');
+			expect(accountsTab.getAttribute('aria-selected')).toBe('true');
+		});
+	});
+
+	it('wraps around when cycling before first tab', async () => {
+		render(<VirtuososModal isOpen={true} onClose={onClose} theme={theme} />);
+
+		// Accounts is first, press [ to wrap to Usage (last)
+		fireEvent.keyDown(window, {
+			key: '[',
+			metaKey: true,
+			shiftKey: true,
+		});
+
+		const usageTab = screen.getByRole('tab', { name: /Usage/i });
+		await waitFor(() => {
+			expect(usageTab.getAttribute('aria-selected')).toBe('true');
 		});
 	});
 });
