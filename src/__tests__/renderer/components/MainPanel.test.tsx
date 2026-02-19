@@ -33,6 +33,22 @@ vi.mock('../../../renderer/components/TerminalOutput', () => ({
 	}),
 }));
 
+let lastTerminalViewProps: Record<string, unknown> | null = null;
+let lastTerminalViewRef: React.ForwardedRef<unknown> | null = null;
+
+vi.mock('../../../renderer/components/TerminalView', () => ({
+	TerminalView: React.forwardRef<unknown, Record<string, unknown>>((props, ref) => {
+		const typedProps = props as { session?: { name?: string } } & Record<string, unknown>;
+		lastTerminalViewProps = typedProps;
+		lastTerminalViewRef = ref;
+		return React.createElement(
+			'div',
+			{ 'data-testid': 'terminal-view' },
+			`Terminal View for ${typedProps.session?.name}`
+		);
+	}),
+}));
+
 vi.mock('../../../renderer/components/InputArea', () => ({
 	InputArea: (props: { session: { name: string }; onInputFocus: () => void }) => {
 		return React.createElement(
@@ -321,6 +337,19 @@ describe('MainPanel', () => {
 			},
 		],
 		activeTabId: 'tab-1',
+		terminalTabs: [
+			{
+				id: 'terminal-tab-1',
+				name: null,
+				shellType: 'zsh',
+				pid: 0,
+				cwd: '/test/project',
+				createdAt: Date.now(),
+				state: 'idle',
+			},
+		],
+		activeTerminalTabId: 'terminal-tab-1',
+		closedTerminalTabHistory: [],
 		...overrides,
 	});
 
@@ -420,6 +449,8 @@ describe('MainPanel', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers({ shouldAdvanceTime: true });
+		lastTerminalViewProps = null;
+		lastTerminalViewRef = null;
 
 		// Clear capabilities cache and pre-populate with Claude Code capabilities (default test agent)
 		clearCapabilitiesCache();
@@ -514,6 +545,98 @@ describe('MainPanel', () => {
 
 			expect(screen.getByTestId('terminal-output')).toBeInTheDocument();
 			expect(screen.getByTestId('input-area')).toBeInTheDocument();
+		});
+
+		it('should render TerminalView in terminal mode', () => {
+			const session = createSession({ inputMode: 'terminal' });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			expect(screen.getByTestId('terminal-view')).toBeInTheDocument();
+			expect(screen.queryByTestId('terminal-output')).not.toBeInTheDocument();
+			expect(screen.queryByTestId('input-area')).not.toBeInTheDocument();
+		});
+
+		it('should keep the terminal container in full-height flex layout', () => {
+			const session = createSession({ inputMode: 'terminal' });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const terminalContainer = screen
+				.getByTestId('terminal-view')
+				.closest('[data-tour="main-terminal"]');
+
+			expect(terminalContainer).toBeInTheDocument();
+			expect(terminalContainer).toHaveClass('flex-1');
+			expect(terminalContainer).toHaveClass('flex');
+			expect(terminalContainer).toHaveClass('min-h-0');
+			expect(terminalContainer).toHaveClass('flex-col');
+			expect(terminalContainer).toHaveClass('overflow-hidden');
+		});
+
+		it('should pass terminal tab callbacks and shell settings to TerminalView', () => {
+			const onTerminalTabSelect = vi.fn();
+			const onTerminalNewTab = vi.fn();
+			const onRequestTerminalTabRename = vi.fn();
+			const session = createSession({ inputMode: 'terminal' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					defaultShell="bash"
+					onTerminalTabSelect={onTerminalTabSelect}
+					onTerminalNewTab={onTerminalNewTab}
+					onRequestTerminalTabRename={onRequestTerminalTabRename}
+				/>
+			);
+
+			expect(lastTerminalViewProps).not.toBeNull();
+			expect(lastTerminalViewProps?.defaultShell).toBe('bash');
+
+			(lastTerminalViewProps?.onTabSelect as ((tabId: string) => void) | undefined)?.(
+				'terminal-tab-1'
+			);
+			(lastTerminalViewProps?.onNewTab as (() => void) | undefined)?.();
+			(lastTerminalViewProps?.onRequestRename as ((tabId: string) => void) | undefined)?.(
+				'terminal-tab-1'
+			);
+
+			expect(onTerminalTabSelect).toHaveBeenCalledWith(session.id, 'terminal-tab-1');
+			expect(onTerminalNewTab).toHaveBeenCalledWith(session.id);
+			expect(onRequestTerminalTabRename).toHaveBeenCalledWith('terminal-tab-1');
+		});
+
+		it('should pass terminal search state and close callback to TerminalView', () => {
+			const onTerminalSearchClose = vi.fn();
+			const session = createSession({ inputMode: 'terminal' });
+
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					terminalSearchOpen={true}
+					onTerminalSearchClose={onTerminalSearchClose}
+				/>
+			);
+
+			expect(lastTerminalViewProps).not.toBeNull();
+			expect(lastTerminalViewProps?.searchOpen).toBe(true);
+
+			(lastTerminalViewProps?.onSearchClose as (() => void) | undefined)?.();
+			expect(onTerminalSearchClose).toHaveBeenCalledTimes(1);
+		});
+
+		it('should pass a ref to TerminalView', () => {
+			const session = createSession({ inputMode: 'terminal' });
+			const terminalViewRef = React.createRef();
+			render(
+				<MainPanel
+					{...defaultProps}
+					activeSession={session}
+					terminalViewRef={terminalViewRef as React.RefObject<any>}
+				/>
+			);
+
+			expect(lastTerminalViewRef).toBe(terminalViewRef);
 		});
 	});
 

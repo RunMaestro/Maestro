@@ -17,7 +17,7 @@ export interface UseKeyboardShortcutHelpersDeps {
 export interface UseKeyboardShortcutHelpersReturn {
 	/** Check if a keyboard event matches a shortcut by action ID */
 	isShortcut: (e: KeyboardEvent, actionId: string) => boolean;
-	/** Check if a keyboard event matches a tab shortcut (AI mode only) */
+	/** Check if a keyboard event matches a tab shortcut */
 	isTabShortcut: (e: KeyboardEvent, actionId: string) => boolean;
 }
 
@@ -119,7 +119,7 @@ export function useKeyboardShortcutHelpers(
 	);
 
 	/**
-	 * Check if a keyboard event matches a tab shortcut (AI mode only).
+	 * Check if a keyboard event matches a tab shortcut.
 	 *
 	 * Uses user-configurable tabShortcuts, falling back to global shortcuts
 	 * if a tab-specific shortcut isn't defined.

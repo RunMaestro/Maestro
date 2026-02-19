@@ -21,8 +21,10 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
+import { getDefaultShell } from '../../stores/defaults';
 import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
+import type { SpawnTerminalTabConfig } from '../../preload/process';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
 
@@ -562,6 +564,51 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		)
 	);
 
+	// Spawn a terminal PTY for a specific terminal tab
+	ipcMain.handle(
+		'process:spawnTerminalTab',
+		withIpcErrorLogging(handlerOpts('spawnTerminalTab'), async (config: SpawnTerminalTabConfig) => {
+			const processManager = requireProcessManager(getProcessManager);
+			const customShellPath = settingsStore.get('customShellPath', '').trim();
+			const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+			const shellToUse = config.shell || customShellPath || getDefaultShell();
+			const mergedShellEnvVars = {
+				...globalShellEnvVars,
+				...(config.shellEnvVars || {}),
+			};
+			let sshRemoteConfig: SshRemoteConfig | null = null;
+
+			if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
+				const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
+				const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+					sessionSshConfig: config.sessionSshRemoteConfig,
+				});
+
+				if (sshResult.config) {
+					sshRemoteConfig = sshResult.config;
+				}
+			}
+
+			logger.info('Spawning terminal tab', LOG_CONTEXT, {
+				sessionId: config.sessionId,
+				cwd: config.cwd,
+				shell: shellToUse,
+				sshRemote: sshRemoteConfig?.name || null,
+			});
+
+			return processManager.spawnTerminalTab({
+				sessionId: config.sessionId,
+				cwd: config.cwd,
+				shell: shellToUse,
+				shellArgs: config.shellArgs,
+				shellEnvVars: mergedShellEnvVars,
+				cols: config.cols,
+				rows: config.rows,
+				...(sshRemoteConfig ? { sshRemoteConfig } : {}),
+			});
+		})
+	);
+
 	// Write data to a process
 	ipcMain.handle(
 		'process:write',
@@ -630,8 +677,10 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
-	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
-	// Supports SSH remote execution when sessionSshRemoteConfig is provided
+	// DEPRECATED: process:runCommand was used for discrete command execution.
+	// Terminal mode now uses persistent PTY tabs via process:spawnTerminalTab.
+	// Keeping this handler for backwards compatibility with existing callers.
+	// Supports SSH remote execution when sessionSshRemoteConfig is provided.
 	ipcMain.handle(
 		'process:runCommand',
 		withIpcErrorLogging(
@@ -649,6 +698,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				};
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
+				logger.warn(
+					'process:runCommand is deprecated, use process:spawnTerminalTab for terminal workflows',
+					LOG_CONTEXT,
+					{ sessionId: config.sessionId }
+				);
 
 				// Get the shell from settings if not provided
 				// Custom shell path takes precedence over the selected shell ID

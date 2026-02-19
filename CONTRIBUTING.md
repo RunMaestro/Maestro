@@ -95,6 +95,13 @@ maestro/
 └── dist/                  # Build output (generated)
 ```
 
+### Terminal Architecture
+
+- `src/renderer/components/XTerminal.tsx` - xterm.js wrapper component
+- `src/renderer/components/TerminalView.tsx` - Terminal tab management and PTY lifecycle
+- `src/renderer/components/TerminalTabBar.tsx` - Terminal tab UI and tab actions
+- Main process uses `node-pty` through `src/main/process-manager.ts` for PTY spawning and lifecycle management
+
 ## Development Scripts
 
 ```bash

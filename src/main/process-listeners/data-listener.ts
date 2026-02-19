@@ -94,6 +94,7 @@ export function setupDataListener(
 			return; // Don't send to regular process:data handler
 		}
 
+		// Preserve full session ID for per-tab routing (e.g., {sessionId}-terminal-{tabId}).
 		safeSend('process:data', sessionId, data);
 
 		// Broadcast to web clients - extract base session ID (remove -ai or -terminal suffix)
@@ -115,9 +116,10 @@ export function setupDataListener(
 				return;
 			}
 
-			// Extract base session ID and tab ID from format: {id}-ai-{tabId}
-			const baseSessionId = sessionId.replace(REGEX_AI_SUFFIX, '');
+			// AI session IDs use format: {id}-ai-{tabId}; terminal tab IDs remain full
+			// format: {id}-terminal-{tabId} and should not be stripped.
 			const isAiOutput = sessionId.includes('-ai-');
+			const baseSessionId = isAiOutput ? sessionId.replace(REGEX_AI_SUFFIX, '') : sessionId;
 
 			// Extract tab ID from session ID format: {id}-ai-{tabId}
 			const tabIdMatch = sessionId.match(REGEX_AI_TAB_ID);

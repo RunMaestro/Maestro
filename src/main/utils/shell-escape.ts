@@ -60,6 +60,26 @@ export function buildShellCommand(command: string, args: string[]): string {
 }
 
 /**
+ * Parse a shell-style argument string into an argv array.
+ *
+ * Supports quoted segments with single or double quotes and strips
+ * the outer quote pair from each token.
+ */
+export function parseShellArgs(shellArgs?: string): string[] {
+	if (!shellArgs || !shellArgs.trim()) {
+		return [];
+	}
+
+	const parsedArgs = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+	return parsedArgs.map((arg) => {
+		if ((arg.startsWith('"') && arg.endsWith('"')) || (arg.startsWith("'") && arg.endsWith("'"))) {
+			return arg.slice(1, -1);
+		}
+		return arg;
+	});
+}
+
+/**
  * Escape a string for inclusion in double-quoted shell context.
  *
  * Escapes characters that have special meaning within double quotes:

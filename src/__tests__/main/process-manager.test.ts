@@ -429,6 +429,345 @@ describe('process-manager.ts', () => {
 				expect(event).toBeNull();
 			});
 		});
+
+		describe('spawnTerminalTab', () => {
+			it('spawns terminal tabs using terminal toolType defaults', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 777,
+					success: true,
+				});
+
+				const result = processManager.spawnTerminalTab({
+					sessionId: 'abc123-terminal-def456',
+					cwd: '/tmp',
+					shellArgs: '--noprofile',
+					shellEnvVars: { TEST_ENV: '1' },
+				});
+
+				expect(result).toEqual({ pid: 777, success: true });
+				expect(spawnSpy).toHaveBeenCalledWith({
+					sessionId: 'abc123-terminal-def456',
+					toolType: 'terminal',
+					cwd: '/tmp',
+					command: process.platform === 'win32' ? 'powershell.exe' : 'zsh',
+					args: [],
+					shell: process.platform === 'win32' ? 'powershell.exe' : 'zsh',
+					shellArgs: '--noprofile',
+					shellEnvVars: { TEST_ENV: '1' },
+				});
+			});
+
+			it('uses a custom shell when provided', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 888,
+					success: true,
+				});
+
+				processManager.spawnTerminalTab({
+					sessionId: 'session-terminal-tab',
+					cwd: '/tmp',
+					shell: '/bin/bash',
+				});
+
+				expect(spawnSpy).toHaveBeenCalledWith({
+					sessionId: 'session-terminal-tab',
+					toolType: 'terminal',
+					cwd: '/tmp',
+					command: '/bin/bash',
+					args: [],
+					shell: '/bin/bash',
+					shellArgs: undefined,
+					shellEnvVars: undefined,
+				});
+			});
+
+			it('normalizes invalid terminal dimensions before spawning', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 999,
+					success: true,
+				});
+
+				processManager.spawnTerminalTab({
+					sessionId: 'terminal-with-invalid-size',
+					cwd: '/tmp',
+					cols: Number.POSITIVE_INFINITY,
+					rows: -5,
+				});
+
+				expect(spawnSpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessionId: 'terminal-with-invalid-size',
+						cols: 100,
+						rows: 30,
+					})
+				);
+			});
+
+			it('spawns SSH-backed terminal tabs when ssh config is provided', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 123,
+					success: true,
+				});
+
+				processManager.spawnTerminalTab({
+					sessionId: 'ssh-terminal-tab',
+					cwd: '/tmp',
+					shell: 'zsh',
+					sshRemoteConfig: {
+						id: 'remote-1',
+						name: 'Remote',
+						host: 'example.com',
+						port: 22,
+						username: 'dev',
+						privateKeyPath: '~/.ssh/id_ed25519',
+						enabled: true,
+					},
+				});
+
+				expect(spawnSpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessionId: 'ssh-terminal-tab',
+						toolType: 'terminal',
+						command: 'ssh',
+						args: expect.arrayContaining(['-tt', 'dev@example.com', "zsh '-l' '-i'"]),
+					})
+				);
+			});
+		});
+
+		describe('spawn routing', () => {
+			it('routes terminal-tab session IDs to the PTY spawner when toolType is terminal', () => {
+				const ptySpawn = vi.fn().mockReturnValue({ pid: 321, success: true });
+				const childSpawn = vi.fn();
+
+				(
+					processManager as unknown as { ptySpawner: { spawn: (config: unknown) => unknown } }
+				).ptySpawner = {
+					spawn: ptySpawn,
+				};
+				(
+					processManager as unknown as {
+						childProcessSpawner: { spawn: (config: unknown) => unknown };
+					}
+				).childProcessSpawner = {
+					spawn: childSpawn,
+				};
+
+				const config = {
+					sessionId: 'abc123-terminal-def456',
+					toolType: 'terminal',
+					cwd: '/tmp',
+					command: 'bash',
+					args: [],
+				};
+
+				const result = processManager.spawn(config);
+
+				expect(result).toEqual({ pid: 321, success: true });
+				expect(ptySpawn).toHaveBeenCalledWith(config);
+				expect(childSpawn).not.toHaveBeenCalled();
+			});
+		});
+
+		describe('interrupt', () => {
+			it('sends Ctrl+C to a terminal-tab PTY using the full terminal session id', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyWrite = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 24,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						write: ptyWrite,
+					},
+				});
+
+				expect(processManager.interrupt(terminalSessionId)).toBe(true);
+				expect(ptyWrite).toHaveBeenCalledWith('\x03');
+			});
+
+			it('does not interrupt a terminal-tab PTY when only the base session id is provided', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyWrite = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 88,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						write: ptyWrite,
+					},
+				});
+
+				expect(processManager.interrupt('abc123')).toBe(false);
+				expect(ptyWrite).not.toHaveBeenCalled();
+				expect(processManager.get(terminalSessionId)).toBeDefined();
+			});
+		});
+
+		describe('resize', () => {
+			it('resizes a terminal-tab PTY using the full terminal session id', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyResize = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 313,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						resize: ptyResize,
+					},
+				});
+
+				expect(processManager.resize(terminalSessionId, 132, 48)).toBe(true);
+				expect(ptyResize).toHaveBeenCalledWith(132, 48);
+			});
+
+			it('does not resize a terminal-tab PTY when only the base session id is provided', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyResize = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 271,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						resize: ptyResize,
+					},
+				});
+
+				expect(processManager.resize('abc123', 120, 40)).toBe(false);
+				expect(ptyResize).not.toHaveBeenCalled();
+				expect(processManager.get(terminalSessionId)).toBeDefined();
+			});
+		});
+
+		describe('kill', () => {
+			it('kills a terminal-tab PTY using the full terminal session id', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyKill = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 42,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						kill: ptyKill,
+					},
+				});
+
+				expect(processManager.kill(terminalSessionId)).toBe(true);
+				expect(ptyKill).toHaveBeenCalledOnce();
+				expect(processManager.get(terminalSessionId)).toBeUndefined();
+			});
+
+			it('does not kill a terminal-tab PTY when only the base session id is provided', () => {
+				const terminalSessionId = 'abc123-terminal-def456';
+				const ptyKill = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set(terminalSessionId, {
+					sessionId: terminalSessionId,
+					toolType: 'terminal',
+					cwd: '/tmp',
+					pid: 99,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						kill: ptyKill,
+					},
+				});
+
+				expect(processManager.kill('abc123')).toBe(false);
+				expect(ptyKill).not.toHaveBeenCalled();
+				expect(processManager.get(terminalSessionId)).toBeDefined();
+			});
+		});
+
+		describe('killAll', () => {
+			it('kills all terminal and non-terminal processes during shutdown', () => {
+				const terminalKill = vi.fn();
+				const childKill = vi.fn();
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set('terminal-tab-session', {
+					sessionId: 'terminal-tab-session',
+					toolType: 'terminal',
+					cwd: '/tmp/terminal',
+					pid: 101,
+					isTerminal: true,
+					startTime: Date.now(),
+					ptyProcess: {
+						kill: terminalKill,
+					},
+				});
+
+				(
+					processManager as unknown as {
+						processes: Map<string, Record<string, unknown>>;
+					}
+				).processes.set('ai-session', {
+					sessionId: 'ai-session',
+					toolType: 'claude-code',
+					cwd: '/tmp/ai',
+					pid: 202,
+					isTerminal: false,
+					startTime: Date.now(),
+					childProcess: {
+						kill: childKill,
+					},
+				});
+
+				processManager.killAll();
+
+				expect(terminalKill).toHaveBeenCalledOnce();
+				expect(childKill).toHaveBeenCalledWith('SIGTERM');
+				expect(processManager.get('terminal-tab-session')).toBeUndefined();
+				expect(processManager.get('ai-session')).toBeUndefined();
+			});
+		});
 	});
 
 	describe('data buffering', () => {

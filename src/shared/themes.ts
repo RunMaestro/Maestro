@@ -10,7 +10,128 @@
  * Do NOT duplicate theme definitions elsewhere.
  */
 
-import type { Theme, ThemeId } from './theme-types';
+import type { Theme, ThemeColors, ThemeId } from './theme-types';
+
+type ThemeAnsiColors = Pick<
+	ThemeColors,
+	| 'ansiBlack'
+	| 'ansiRed'
+	| 'ansiGreen'
+	| 'ansiYellow'
+	| 'ansiBlue'
+	| 'ansiMagenta'
+	| 'ansiCyan'
+	| 'ansiWhite'
+	| 'ansiBrightBlack'
+	| 'ansiBrightRed'
+	| 'ansiBrightGreen'
+	| 'ansiBrightYellow'
+	| 'ansiBrightBlue'
+	| 'ansiBrightMagenta'
+	| 'ansiBrightCyan'
+	| 'ansiBrightWhite'
+	| 'selection'
+>;
+
+export const DARK_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#282c34',
+	ansiRed: '#e06c75',
+	ansiGreen: '#98c379',
+	ansiYellow: '#e5c07b',
+	ansiBlue: '#61afef',
+	ansiMagenta: '#c678dd',
+	ansiCyan: '#56b6c2',
+	ansiWhite: '#abb2bf',
+	ansiBrightBlack: '#5c6370',
+	ansiBrightRed: '#e06c75',
+	ansiBrightGreen: '#98c379',
+	ansiBrightYellow: '#e5c07b',
+	ansiBrightBlue: '#61afef',
+	ansiBrightMagenta: '#c678dd',
+	ansiBrightCyan: '#56b6c2',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(97, 175, 239, 0.3)',
+};
+
+export const LIGHT_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#073642',
+	ansiRed: '#dc322f',
+	ansiGreen: '#859900',
+	ansiYellow: '#b58900',
+	ansiBlue: '#268bd2',
+	ansiMagenta: '#d33682',
+	ansiCyan: '#2aa198',
+	ansiWhite: '#eee8d5',
+	ansiBrightBlack: '#586e75',
+	ansiBrightRed: '#cb4b16',
+	ansiBrightGreen: '#859900',
+	ansiBrightYellow: '#b58900',
+	ansiBrightBlue: '#268bd2',
+	ansiBrightMagenta: '#6c71c4',
+	ansiBrightCyan: '#2aa198',
+	ansiBrightWhite: '#fdf6e3',
+	selection: 'rgba(38, 139, 210, 0.3)',
+};
+
+export const DRACULA_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#21222c',
+	ansiRed: '#ff5555',
+	ansiGreen: '#50fa7b',
+	ansiYellow: '#f1fa8c',
+	ansiBlue: '#bd93f9',
+	ansiMagenta: '#ff79c6',
+	ansiCyan: '#8be9fd',
+	ansiWhite: '#f8f8f2',
+	ansiBrightBlack: '#6272a4',
+	ansiBrightRed: '#ff6e6e',
+	ansiBrightGreen: '#69ff94',
+	ansiBrightYellow: '#ffffa5',
+	ansiBrightBlue: '#d6acff',
+	ansiBrightMagenta: '#ff92df',
+	ansiBrightCyan: '#a4ffff',
+	ansiBrightWhite: '#ffffff',
+	selection: 'rgba(189, 147, 249, 0.3)',
+};
+
+export const NORD_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#3b4252',
+	ansiRed: '#bf616a',
+	ansiGreen: '#a3be8c',
+	ansiYellow: '#ebcb8b',
+	ansiBlue: '#81a1c1',
+	ansiMagenta: '#b48ead',
+	ansiCyan: '#88c0d0',
+	ansiWhite: '#e5e9f0',
+	ansiBrightBlack: '#4c566a',
+	ansiBrightRed: '#bf616a',
+	ansiBrightGreen: '#a3be8c',
+	ansiBrightYellow: '#ebcb8b',
+	ansiBrightBlue: '#81a1c1',
+	ansiBrightMagenta: '#b48ead',
+	ansiBrightCyan: '#8fbcbb',
+	ansiBrightWhite: '#eceff4',
+	selection: 'rgba(136, 192, 208, 0.3)',
+};
+
+export const GRUVBOX_DARK_ANSI_COLORS: ThemeAnsiColors = {
+	ansiBlack: '#282828',
+	ansiRed: '#cc241d',
+	ansiGreen: '#98971a',
+	ansiYellow: '#d79921',
+	ansiBlue: '#458588',
+	ansiMagenta: '#b16286',
+	ansiCyan: '#689d6a',
+	ansiWhite: '#a89984',
+	ansiBrightBlack: '#928374',
+	ansiBrightRed: '#fb4934',
+	ansiBrightGreen: '#b8bb26',
+	ansiBrightYellow: '#fabd2f',
+	ansiBrightBlue: '#83a598',
+	ansiBrightMagenta: '#d3869b',
+	ansiBrightCyan: '#8ec07c',
+	ansiBrightWhite: '#ebdbb2',
+	selection: 'rgba(69, 133, 136, 0.3)',
+};
 
 export const THEMES: Record<ThemeId, Theme> = {
 	// Dark themes
@@ -32,6 +153,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
+			...DRACULA_ANSI_COLORS,
 		},
 	},
 	monokai: {
@@ -52,6 +174,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a6e22e',
 			warning: '#e6db74',
 			error: '#f92672',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	nord: {
@@ -72,6 +195,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a3be8c',
 			warning: '#ebcb8b',
 			error: '#bf616a',
+			...NORD_ANSI_COLORS,
 		},
 	},
 	'tokyo-night': {
@@ -92,6 +216,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#9ece6a',
 			warning: '#e0af68',
 			error: '#f7768e',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	'catppuccin-mocha': {
@@ -112,6 +237,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#a6e3a1',
 			warning: '#fab387',
 			error: '#f38ba8',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	'gruvbox-dark': {
@@ -132,6 +258,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#b8bb26',
 			warning: '#fabd2f',
 			error: '#fb4934',
+			...GRUVBOX_DARK_ANSI_COLORS,
 		},
 	},
 	// Light themes
@@ -153,6 +280,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#1a7f37',
 			warning: '#9a6700',
 			error: '#cf222e',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	'solarized-light': {
@@ -173,6 +301,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#859900',
 			warning: '#b58900',
 			error: '#dc322f',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	'one-light': {
@@ -193,6 +322,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50a14f',
 			warning: '#c18401',
 			error: '#e45649',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	'gruvbox-light': {
@@ -213,6 +343,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#98971a',
 			warning: '#d79921',
 			error: '#cc241d',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	'catppuccin-latte': {
@@ -233,6 +364,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#40a02b',
 			warning: '#fe640b',
 			error: '#d20f39',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	'ayu-light': {
@@ -253,6 +385,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#86b300',
 			warning: '#f2ae49',
 			error: '#f07171',
+			...LIGHT_ANSI_COLORS,
 		},
 	},
 	// Vibe themes
@@ -274,6 +407,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#7cb342',
 			warning: '#d4af37',
 			error: '#da70d6',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	'maestros-choice': {
@@ -294,6 +428,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#66d9a0',
 			warning: '#f4c430',
 			error: '#e05070',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	'dre-synth': {
@@ -314,6 +449,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#00ffcc',
 			warning: '#ff2a6d',
 			error: '#ff2a6d',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	inquest: {
@@ -334,6 +470,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#f5f5f5',
 			warning: '#cc0033',
 			error: '#cc0033',
+			...DARK_ANSI_COLORS,
 		},
 	},
 	// Custom theme - user-configurable, defaults to Dracula
@@ -355,6 +492,7 @@ export const THEMES: Record<ThemeId, Theme> = {
 			success: '#50fa7b',
 			warning: '#ffb86c',
 			error: '#ff5555',
+			...DARK_ANSI_COLORS,
 		},
 	},
 };

@@ -51,6 +51,24 @@ export interface ProcessSpawnResponse {
 }
 
 /**
+ * Configuration for spawning a persistent terminal tab PTY
+ */
+export interface SpawnTerminalTabConfig {
+	sessionId: string;
+	cwd: string;
+	shell?: string;
+	shellArgs?: string;
+	shellEnvVars?: Record<string, string>;
+	cols?: number;
+	rows?: number;
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
+}
+
+/**
  * Configuration for running a single command
  */
 export interface RunCommandConfig {
@@ -139,6 +157,12 @@ export function createProcessApi() {
 		 */
 		spawn: (config: ProcessConfig): Promise<ProcessSpawnResponse> =>
 			ipcRenderer.invoke('process:spawn', config),
+
+		/**
+		 * Spawn a terminal PTY for a specific tab (xterm.js integration)
+		 */
+		spawnTerminalTab: (config: SpawnTerminalTabConfig): Promise<ProcessSpawnResponse> =>
+			ipcRenderer.invoke('process:spawnTerminalTab', config),
 
 		/**
 		 * Write data to a process stdin

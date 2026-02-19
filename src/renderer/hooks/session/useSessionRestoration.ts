@@ -19,6 +19,7 @@ import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
+import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 
 // ============================================================================
@@ -143,6 +144,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 					`[restoreSession] Session missing fileTreeAutoRefreshInterval, defaulting to 180s`
 				);
 				session = { ...session, fileTreeAutoRefreshInterval: 180 };
+			}
+
+			// Migrate sessions without terminal tabs (backwards compatibility)
+			if (!session.terminalTabs || session.terminalTabs.length === 0) {
+				const defaultTerminalTab = createTerminalTab('zsh', session.cwd, null);
+				session = {
+					...session,
+					terminalTabs: [defaultTerminalTab],
+					activeTerminalTabId: defaultTerminalTab.id,
+					closedTerminalTabHistory: [],
+				};
+				console.log(`[restoreSession] Migrated session ${session.id} to terminal tabs`);
+			}
+
+			// Ensure closedTerminalTabHistory exists (runtime-only, not persisted)
+			if (!session.closedTerminalTabHistory) {
+				session = { ...session, closedTerminalTabHistory: [] };
 			}
 
 			// Sessions must have aiTabs - if missing, this is a data corruption issue
@@ -271,6 +289,50 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				thinkingStartTime: undefined,
 			}));
 
+			const restoredTerminalTabs = (correctedSession.terminalTabs || []).map((tab) => {
+				const restoredState: 'idle' | 'busy' | 'exited' =
+					tab.state === 'busy' || tab.state === 'exited' || tab.state === 'idle'
+						? tab.state
+						: 'idle';
+				const restoredPid =
+					typeof tab.pid === 'number' && Number.isFinite(tab.pid) && tab.pid > 0
+						? Math.floor(tab.pid)
+						: 0;
+
+				return {
+					id: tab.id || generateId(),
+					name: tab.name ?? null,
+					shellType:
+						typeof tab.shellType === 'string' && tab.shellType.trim().length > 0
+							? tab.shellType
+							: 'zsh',
+					pid: restoredPid,
+					cwd:
+						typeof tab.cwd === 'string' && tab.cwd.trim().length > 0
+							? tab.cwd
+							: correctedSession.cwd,
+					createdAt:
+						typeof tab.createdAt === 'number' && Number.isFinite(tab.createdAt)
+							? tab.createdAt
+							: Date.now(),
+					state: restoredState,
+					exitCode:
+						restoredState === 'exited' && typeof tab.exitCode === 'number'
+							? tab.exitCode
+							: undefined,
+					scrollTop:
+						typeof tab.scrollTop === 'number' && Number.isFinite(tab.scrollTop) ? tab.scrollTop : 0,
+					searchQuery: typeof tab.searchQuery === 'string' ? tab.searchQuery : '',
+				};
+			});
+
+			const hasValidActiveTerminalTabId = restoredTerminalTabs.some(
+				(tab) => tab.id === correctedSession.activeTerminalTabId
+			);
+			const restoredActiveTerminalTabId = hasValidActiveTerminalTabId
+				? correctedSession.activeTerminalTabId
+				: restoredTerminalTabs[0]?.id || '';
+
 			return {
 				...correctedSession,
 				aiPid: 0,
@@ -290,6 +352,8 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				aiLogs: [],
 				aiTabs: resetAiTabs,
 				shellLogs: correctedSession.shellLogs,
+				terminalTabs: restoredTerminalTabs,
+				activeTerminalTabId: restoredActiveTerminalTabId,
 				executionQueue: correctedSession.executionQueue || [],
 				activeTimeMs: correctedSession.activeTimeMs || 0,
 				agentError: undefined,

@@ -47,6 +47,7 @@ export interface UseMainPanelPropsDeps {
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
 	fontFamily: string;
+	fontSize: number;
 	isMobileLandscape: boolean;
 	activeFocus: FocusArea;
 	outputSearchOpen: boolean;
@@ -232,7 +233,11 @@ export interface UseMainPanelPropsDeps {
 	handleFileTabSelect: (tabId: string) => void;
 	handleFileTabClose: (tabId: string) => void;
 	handleFileTabEditModeChange: (tabId: string, editMode: boolean) => void;
-	handleFileTabEditContentChange: (tabId: string, editContent: string | undefined, savedContent?: string) => void;
+	handleFileTabEditContentChange: (
+		tabId: string,
+		editContent: string | undefined,
+		savedContent?: string
+	) => void;
 	handleFileTabScrollPositionChange: (tabId: string, scrollTop: number) => void;
 	handleFileTabSearchQueryChange: (tabId: string, searchQuery: string) => void;
 	handleReloadFileTab: (tabId: string) => void;
@@ -291,7 +296,12 @@ export interface UseMainPanelPropsDeps {
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
 
 	// Open saved file in tab
-	onOpenSavedFileInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void;
+	onOpenSavedFileInTab?: (file: {
+		path: string;
+		name: string;
+		content: string;
+		sshRemoteId?: string;
+	}) => void;
 
 	// Complex wizard handlers (passed through from App.tsx)
 	onWizardComplete?: () => void;
@@ -321,6 +331,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			thinkingItems: deps.thinkingItems,
 			theme: deps.theme,
 			fontFamily: deps.fontFamily,
+			fontSize: deps.fontSize,
 			isMobileLandscape: deps.isMobileLandscape,
 			activeFocus: deps.activeFocus,
 			outputSearchOpen: deps.outputSearchOpen,
@@ -545,6 +556,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.thinkingItems,
 			deps.theme,
 			deps.fontFamily,
+			deps.fontSize,
 			deps.isMobileLandscape,
 			deps.activeFocus,
 			deps.outputSearchOpen,

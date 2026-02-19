@@ -2142,6 +2142,79 @@ describe('NewInstanceModal', () => {
 	});
 
 	describe('Agent Duplication (sourceSession)', () => {
+		it('should pass source terminal shell when creating a duplicate', async () => {
+			const sourceSession: Session = {
+				id: 'session-1',
+				name: 'Original Agent',
+				toolType: 'claude-code',
+				cwd: '/test/project',
+				projectRoot: '/test/project',
+				fullPath: '/test/project',
+				state: 'idle',
+				inputMode: 'ai',
+				aiPid: 12345,
+				terminalPid: 12346,
+				terminalTabs: [
+					{
+						id: 'terminal-tab-1',
+						name: null,
+						shellType: 'fish',
+						pid: 0,
+						cwd: '/test/project',
+						createdAt: Date.now(),
+						state: 'idle',
+					},
+				],
+				activeTerminalTabId: 'terminal-tab-1',
+				closedTerminalTabHistory: [],
+				port: 3000,
+				aiTabs: [],
+				activeTabId: 'tab-1',
+				closedTabHistory: [],
+				shellLogs: [],
+				executionQueue: [],
+				contextUsage: 0,
+				workLog: [],
+				isGitRepo: false,
+				changedFiles: [],
+				fileTree: [],
+				fileExplorerExpanded: [],
+				fileExplorerScrollPos: 0,
+				isLive: false,
+			} as Session;
+
+			vi.mocked(window.maestro.agents.detect).mockResolvedValue([
+				createAgentConfig({ id: 'claude-code', name: 'Claude Code', available: true }),
+			]);
+
+			render(
+				<NewInstanceModal
+					isOpen={true}
+					onClose={onClose}
+					onCreate={onCreate}
+					theme={theme}
+					existingSessions={[]}
+					sourceSession={sourceSession}
+				/>
+			);
+
+			await waitFor(() => {
+				expect(screen.getByLabelText('Agent Name')).toHaveValue('Original Agent (Copy)');
+			});
+
+			const createButton = screen.getByText('Create Agent');
+			await act(async () => {
+				fireEvent.click(createButton);
+			});
+
+			expect(onCreate).toHaveBeenCalledTimes(1);
+			const createArgs = onCreate.mock.calls[0];
+			expect(createArgs[0]).toBe('claude-code');
+			expect(createArgs[1]).toBe('/test/project');
+			expect(createArgs[2]).toBe('Original Agent (Copy)');
+			expect(createArgs[11]).toBe('fish');
+		});
+
 		it('should pre-fill all fields when sourceSession is provided', async () => {
 			const sourceSession: Session = {
 				id: 'session-1',

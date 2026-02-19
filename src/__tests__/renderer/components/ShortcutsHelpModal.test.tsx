@@ -131,6 +131,17 @@ describe('ShortcutsHelpModal', () => {
 			expect(screen.getByText('Search Files')).toBeInTheDocument();
 		});
 
+		it('includes terminal-only shortcuts in help', () => {
+			render(
+				<TestWrapper>
+					<ShortcutsHelpModal theme={mockTheme} shortcuts={mockShortcuts} onClose={mockOnClose} />
+				</TestWrapper>
+			);
+
+			expect(screen.getByText('New Terminal Tab')).toBeInTheDocument();
+			expect(screen.getByText('Open Terminal Search')).toBeInTheDocument();
+		});
+
 		it('has proper dialog accessibility attributes', () => {
 			render(
 				<TestWrapper>

@@ -72,6 +72,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
+			// In terminal mode, Ctrl+C/Ctrl+D must go to xterm/PTy.
+			// - Ctrl+C sends SIGINT
+			// - Ctrl+D sends EOF
+			// Do not intercept either with app-level handlers.
+			if (
+				e.ctrlKey &&
+				!e.metaKey &&
+				!e.altKey &&
+				!e.shiftKey &&
+				(e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'd') &&
+				ctx.activeSession?.inputMode === 'terminal'
+			) {
+				return;
+			}
+
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
 			// - Tab: allowed for accessibility navigation
@@ -198,6 +213,116 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					}
 				}
 			};
+
+			// Terminal tab shortcuts (terminal mode only, disabled in group chat)
+			if (
+				ctx.activeSessionId &&
+				ctx.activeSession?.inputMode === 'terminal' &&
+				ctx.activeSession?.terminalTabs &&
+				!ctx.activeGroupChatId
+			) {
+				const terminalTabs = ctx.activeSession.terminalTabs;
+				const activeTerminalTabId = ctx.activeSession.activeTerminalTabId;
+
+				// Ctrl+Shift+` - New terminal tab
+				if (
+					e.ctrlKey &&
+					e.shiftKey &&
+					!e.metaKey &&
+					!e.altKey &&
+					(e.code === 'Backquote' || e.key === '`' || e.key === '~')
+				) {
+					e.preventDefault();
+					ctx.handleTerminalNewTab?.(ctx.activeSession.id);
+					trackShortcut('newTerminalTab');
+					return;
+				}
+
+				// Cmd/Ctrl+K - Clear active terminal
+				if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'k') {
+					e.preventDefault();
+					ctx.handleClearActiveTerminal?.(ctx.activeSession.id);
+					trackShortcut('clearTerminal');
+					return;
+				}
+
+				// Cmd/Ctrl+F - Open terminal search
+				if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+					if (ctx.handleOpenTerminalSearch) {
+						e.preventDefault();
+						ctx.handleOpenTerminalSearch(ctx.activeSession.id);
+						trackShortcut('openTerminalSearch');
+						return;
+					}
+				}
+
+				// Cmd/Ctrl+G - Navigate terminal search results
+				if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'g') {
+					if (ctx.terminalViewRef?.current) {
+						e.preventDefault();
+						if (e.shiftKey) {
+							ctx.terminalViewRef.current.searchPrevious();
+							trackShortcut('previousTerminalSearchResult');
+						} else {
+							ctx.terminalViewRef.current.searchNext();
+							trackShortcut('nextTerminalSearchResult');
+						}
+						return;
+					}
+				}
+
+				if (ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					const currentIndex = terminalTabs.findIndex(
+						(tab: { id: string }) => tab.id === activeTerminalTabId
+					);
+					if (currentIndex > 0) {
+						ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex - 1].id);
+						trackShortcut('prevTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'nextTab')) {
+					e.preventDefault();
+					const currentIndex = terminalTabs.findIndex(
+						(tab: { id: string }) => tab.id === activeTerminalTabId
+					);
+					if (currentIndex >= 0 && currentIndex < terminalTabs.length - 1) {
+						ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[currentIndex + 1].id);
+						trackShortcut('nextTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'closeTab')) {
+					e.preventDefault();
+					if (terminalTabs.length > 1 && activeTerminalTabId) {
+						ctx.handleTerminalTabClose?.(ctx.activeSession.id, activeTerminalTabId);
+						trackShortcut('closeTab');
+					}
+					return;
+				}
+
+				if (ctx.isTabShortcut(e, 'reopenClosedTab')) {
+					e.preventDefault();
+					ctx.handleReopenTerminalTab?.(ctx.activeSession.id);
+					trackShortcut('reopenClosedTab');
+					return;
+				}
+
+				for (let i = 1; i <= 9; i++) {
+					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
+						e.preventDefault();
+						const targetIndex = i - 1;
+						if (targetIndex < terminalTabs.length) {
+							ctx.handleTerminalTabSelect?.(ctx.activeSession.id, terminalTabs[targetIndex].id);
+							trackShortcut(`goToTab${i}`);
+						}
+						return;
+					}
+				}
+			}
 
 			// General shortcuts
 			// Only allow collapsing left sidebar when there are sessions (prevent collapse on empty state)

@@ -67,6 +67,42 @@ export interface ThemeColors {
 	warning: string;
 	/** Error state color (red tones) */
 	error: string;
+
+	/** ANSI black color for terminal rendering (optional override) */
+	ansiBlack?: string;
+	/** ANSI red color for terminal rendering (optional override) */
+	ansiRed?: string;
+	/** ANSI green color for terminal rendering (optional override) */
+	ansiGreen?: string;
+	/** ANSI yellow color for terminal rendering (optional override) */
+	ansiYellow?: string;
+	/** ANSI blue color for terminal rendering (optional override) */
+	ansiBlue?: string;
+	/** ANSI magenta color for terminal rendering (optional override) */
+	ansiMagenta?: string;
+	/** ANSI cyan color for terminal rendering (optional override) */
+	ansiCyan?: string;
+	/** ANSI white color for terminal rendering (optional override) */
+	ansiWhite?: string;
+	/** ANSI bright black color for terminal rendering (optional override) */
+	ansiBrightBlack?: string;
+	/** ANSI bright red color for terminal rendering (optional override) */
+	ansiBrightRed?: string;
+	/** ANSI bright green color for terminal rendering (optional override) */
+	ansiBrightGreen?: string;
+	/** ANSI bright yellow color for terminal rendering (optional override) */
+	ansiBrightYellow?: string;
+	/** ANSI bright blue color for terminal rendering (optional override) */
+	ansiBrightBlue?: string;
+	/** ANSI bright magenta color for terminal rendering (optional override) */
+	ansiBrightMagenta?: string;
+	/** ANSI bright cyan color for terminal rendering (optional override) */
+	ansiBrightCyan?: string;
+	/** ANSI bright white color for terminal rendering (optional override) */
+	ansiBrightWhite?: string;
+
+	/** Selection background color for terminal rendering (optional override) */
+	selection?: string;
 }
 
 /**

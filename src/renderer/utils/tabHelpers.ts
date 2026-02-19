@@ -15,6 +15,7 @@ import {
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
+import { createInitialTerminalTabState } from './terminalTabHelpers';
 
 /**
  * Get the initial name to show in the rename modal.
@@ -1529,6 +1530,8 @@ export function createMergedSession(
 
 	// Create the merged session with standard structure
 	// Matches the pattern from App.tsx createNewSession
+	const initialTerminalTabState = createInitialTerminalTabState('zsh', projectRoot);
+
 	const session: Session = {
 		id: sessionId,
 		name,
@@ -1552,6 +1555,9 @@ export function createMergedSession(
 		contextUsage: 0,
 		inputMode: toolType === 'terminal' ? 'terminal' : 'ai',
 		aiPid: 0,
+		...initialTerminalTabState,
+		// DEPRECATED: terminalPid was always 0 in legacy terminal mode.
+		// Terminal runtime state now lives in terminalTabs[].pid.
 		terminalPid: 0,
 		port: 3000 + Math.floor(Math.random() * 100),
 		isLive: false,

@@ -83,6 +83,13 @@ This codebase uses **tabs for indentation**, not spaces. Always match existing f
 
 Maestro is an Electron desktop app for managing multiple AI coding assistants simultaneously with a keyboard-first interface.
 
+### Terminal Mode
+
+- Terminal mode uses xterm.js for full terminal emulation
+- Each session can contain multiple terminal tabs via `session.terminalTabs`
+- PTY processes are managed per tab through `process:spawnTerminalTab`
+- Legacy `shellLogs` is deprecated and kept for backwards compatibility only
+
 ### Supported Agents
 
 | ID | Name | Status |

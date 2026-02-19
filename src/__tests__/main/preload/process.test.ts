@@ -19,7 +19,11 @@ vi.mock('electron', () => ({
 	},
 }));
 
-import { createProcessApi, type ProcessConfig } from '../../../main/preload/process';
+import {
+	createProcessApi,
+	type ProcessConfig,
+	type SpawnTerminalTabConfig,
+} from '../../../main/preload/process';
 
 describe('Process Preload API', () => {
 	let api: ReturnType<typeof createProcessApi>;
@@ -67,6 +71,26 @@ describe('Process Preload API', () => {
 		});
 	});
 
+	describe('spawnTerminalTab', () => {
+		it('should invoke process:spawnTerminalTab with config', async () => {
+			const config: SpawnTerminalTabConfig = {
+				sessionId: 'session-123-terminal-tab-456',
+				cwd: '/home/user/project',
+				shell: '/bin/zsh',
+				shellArgs: '--login',
+				shellEnvVars: { TERM: 'xterm-256color' },
+				cols: 120,
+				rows: 40,
+			};
+			mockInvoke.mockResolvedValue({ pid: 4567, success: true });
+
+			const result = await api.spawnTerminalTab(config);
+
+			expect(mockInvoke).toHaveBeenCalledWith('process:spawnTerminalTab', config);
+			expect(result).toEqual({ pid: 4567, success: true });
+		});
+	});
+
 	describe('write', () => {
 		it('should invoke process:write with sessionId and data', async () => {
 			mockInvoke.mockResolvedValue(true);
@@ -81,10 +105,11 @@ describe('Process Preload API', () => {
 	describe('interrupt', () => {
 		it('should invoke process:interrupt with sessionId', async () => {
 			mockInvoke.mockResolvedValue(true);
+			const terminalSessionId = 'abc123-terminal-def456';
 
-			const result = await api.interrupt('session-123');
+			const result = await api.interrupt(terminalSessionId);
 
-			expect(mockInvoke).toHaveBeenCalledWith('process:interrupt', 'session-123');
+			expect(mockInvoke).toHaveBeenCalledWith('process:interrupt', terminalSessionId);
 			expect(result).toBe(true);
 		});
 	});

@@ -87,11 +87,36 @@ describe('Data Listener', () => {
 			);
 		});
 
+		it('should preserve full terminal tab session IDs when forwarding and broadcasting', () => {
+			setupListener();
+			const handler = eventHandlers.get('data');
+
+			handler?.('abc123-terminal-def456', 'terminal tab output');
+
+			expect(mockSafeSend).toHaveBeenCalledWith(
+				'process:data',
+				'abc123-terminal-def456',
+				'terminal tab output'
+			);
+			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
+				'abc123-terminal-def456',
+				expect.objectContaining({
+					type: 'session_output',
+					sessionId: 'abc123-terminal-def456',
+					data: 'terminal tab output',
+					source: 'terminal',
+				})
+			);
+		});
+
 		it('should broadcast to web clients for AI sessions with UUID tab IDs', () => {
 			setupListener();
 			const handler = eventHandlers.get('data');
 
-			handler?.('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb', 'test output');
+			handler?.(
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb',
+				'test output'
+			);
 
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				'51cee651-6629-4de8-abdd-1c1540555f2d',
@@ -109,7 +134,10 @@ describe('Data Listener', () => {
 			setupListener();
 			const handler = eventHandlers.get('data');
 
-			handler?.('a053b4b3-95af-46cc-aaa4-3d37785038be-ai-66fc905c-3062-4192-9a84-d239af5fc826', 'test output');
+			handler?.(
+				'a053b4b3-95af-46cc-aaa4-3d37785038be-ai-66fc905c-3062-4192-9a84-d239af5fc826',
+				'test output'
+			);
 
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				'a053b4b3-95af-46cc-aaa4-3d37785038be',

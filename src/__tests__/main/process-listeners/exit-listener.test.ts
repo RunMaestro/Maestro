@@ -136,6 +136,27 @@ describe('Exit Listener', () => {
 				'session:regular-session-123'
 			);
 		});
+
+		it('should preserve full terminal tab session ID when forwarding exit and web broadcast', () => {
+			const mockWebServer = {
+				broadcastToSessionClients: vi.fn(),
+			};
+			mockDeps.getWebServer = () => mockWebServer as any;
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('abc123-terminal-def456', 130);
+
+			expect(mockDeps.safeSend).toHaveBeenCalledWith('process:exit', 'abc123-terminal-def456', 130);
+			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
+				'abc123-terminal-def456',
+				expect.objectContaining({
+					type: 'session_exit',
+					sessionId: 'abc123-terminal-def456',
+					exitCode: 130,
+				})
+			);
+		});
 	});
 
 	describe('Participant Exit', () => {

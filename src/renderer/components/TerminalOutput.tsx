@@ -31,6 +31,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { captureException } from '../utils/sentry';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -1020,6 +1021,17 @@ interface TerminalOutputProps {
 	}) => void; // Callback to open saved file in a tab
 }
 
+/**
+ * TerminalOutput - Log-based output display for AI mode
+ *
+ * This component renders conversation history as styled log entries.
+ * Used for AI agent output (Claude Code, Codex, etc.), NOT for terminal mode.
+ *
+ * Terminal mode uses XTerminal component for full terminal emulation.
+ *
+ * @see XTerminal.tsx for terminal mode rendering
+ * @see TerminalView.tsx for terminal tab management
+ */
 // PERFORMANCE: Wrap in React.memo to prevent re-renders when parent re-renders
 // but TerminalOutput's props haven't changed. This is critical because TerminalOutput
 // can render many log entries and is expensive to re-render.
@@ -1029,7 +1041,6 @@ export const TerminalOutput = memo(
 			session,
 			theme,
 			fontFamily,
-			activeFocus: _activeFocus,
 			outputSearchOpen,
 			outputSearchQuery,
 			setOutputSearchOpen,
@@ -1041,7 +1052,6 @@ export const TerminalOutput = memo(
 			maxOutputLines,
 			onDeleteLog,
 			onRemoveQueuedItem,
-			onInterrupt: _onInterrupt,
 			onScrollPositionChange,
 			onAtBottomChange,
 			initialScrollTop,
@@ -1069,11 +1079,6 @@ export const TerminalOutput = memo(
 
 		// Track which log entries are expanded (by log ID)
 		const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
-		// Use a ref to access current value without recreating LogItem callback
-		const expandedLogsRef = useRef(expandedLogs);
-		expandedLogsRef.current = expandedLogs;
-		// Counter to force re-render of LogItem when expanded state changes
-		const [_expandedTrigger, setExpandedTrigger] = useState(0);
 
 		// Track local filters per log entry (log ID -> filter query)
 		const [localFilters, setLocalFilters] = useState<Map<string, string>>(new Map());
@@ -1095,10 +1100,6 @@ export const TerminalOutput = memo(
 
 		// Delete confirmation state
 		const [deleteConfirmLogId, setDeleteConfirmLogId] = useState<string | null>(null);
-		const deleteConfirmLogIdRef = useRef(deleteConfirmLogId);
-		deleteConfirmLogIdRef.current = deleteConfirmLogId;
-		// Counter to force re-render when delete confirmation changes
-		const [_deleteConfirmTrigger, _setDeleteConfirmTrigger] = useState(0);
 
 		// Copy to clipboard notification state
 		const [showCopiedNotification, setShowCopiedNotification] = useState(false);
@@ -1137,7 +1138,13 @@ export const TerminalOutput = memo(
 				setShowCopiedNotification(true);
 				setTimeout(() => setShowCopiedNotification(false), 1500);
 			} catch (err) {
-				console.error('Failed to copy to clipboard:', err);
+				captureException(err, {
+					tags: {
+						component: 'TerminalOutput',
+						operation: 'copyToClipboard',
+					},
+				});
+				return;
 			}
 		}, []);
 
@@ -1197,8 +1204,6 @@ export const TerminalOutput = memo(
 				}
 				return newSet;
 			});
-			// Trigger re-render after state update
-			setExpandedTrigger((t) => t + 1);
 		}, []);
 
 		const toggleLocalFilter = useCallback((logId: string) => {
@@ -1400,7 +1405,13 @@ export const TerminalOutput = memo(
 					scrollSaveTimerRef.current = null;
 				}, 200);
 			}
-		}, [activeTabId, filteredLogs.length, onScrollPositionChange, onAtBottomChange, autoScrollAiMode]);
+		}, [
+			activeTabId,
+			filteredLogs.length,
+			onScrollPositionChange,
+			onAtBottomChange,
+			autoScrollAiMode,
+		]);
 
 		// PERF: Throttle at 16ms (60fps) instead of 4ms to reduce state updates during scroll
 		const handleScroll = useThrottledCallback(handleScrollInner, 16);
@@ -1531,8 +1542,8 @@ export const TerminalOutput = memo(
 			});
 
 			observer.observe(container, {
-				childList: true,   // New/removed DOM nodes (new log entries, tool events)
-				subtree: true,     // Watch all descendants, not just direct children
+				childList: true, // New/removed DOM nodes (new log entries, tool events)
+				subtree: true, // Watch all descendants, not just direct children
 				characterData: true, // Text node mutations (thinking stream text growth)
 			});
 
@@ -1793,43 +1804,62 @@ export const TerminalOutput = memo(
 
 				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
 				{/* Visible when: not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin) */}
-				{session.inputMode === 'ai' && setAutoScrollAiMode && (!isAtBottom || isAutoScrollActive) && (
-					<button
-						onClick={() => {
-							if (isAutoScrollActive && isAtBottom) {
-								// Currently pinned at bottom — unpin
-								setAutoScrollAiMode(false);
-							} else {
-								// Not pinned — jump to bottom and pin
-								setAutoScrollPaused(false);
-								setAutoScrollAiMode(true);
-								setHasNewMessages(false);
-								setNewMessageCount(0);
-								if (scrollContainerRef.current) {
-									scrollContainerRef.current.scrollTo({
-										top: scrollContainerRef.current.scrollHeight,
-										behavior: 'smooth',
-									});
+				{session.inputMode === 'ai' &&
+					setAutoScrollAiMode &&
+					(!isAtBottom || isAutoScrollActive) && (
+						<button
+							onClick={() => {
+								if (isAutoScrollActive && isAtBottom) {
+									// Currently pinned at bottom — unpin
+									setAutoScrollAiMode(false);
+								} else {
+									// Not pinned — jump to bottom and pin
+									setAutoScrollPaused(false);
+									setAutoScrollAiMode(true);
+									setHasNewMessages(false);
+									setNewMessageCount(0);
+									if (scrollContainerRef.current) {
+										scrollContainerRef.current.scrollTo({
+											top: scrollContainerRef.current.scrollHeight,
+											behavior: 'smooth',
+										});
+									}
 								}
+							}}
+							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
+							style={{
+								backgroundColor: isAutoScrollActive
+									? theme.colors.accent
+									: hasNewMessages
+										? theme.colors.accent
+										: theme.colors.bgSidebar,
+								color: isAutoScrollActive
+									? theme.colors.accentForeground
+									: hasNewMessages
+										? theme.colors.accentForeground
+										: theme.colors.textDim,
+								border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
+								animation:
+									hasNewMessages && !isAutoScrollActive
+										? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+										: undefined,
+							}}
+							title={
+								isAutoScrollActive
+									? 'Auto-scroll ON (click to unpin)'
+									: hasNewMessages
+										? 'New messages (click to pin to bottom)'
+										: 'Scroll to bottom (click to pin)'
 							}
-						}}
-						className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
-						style={{
-							backgroundColor: isAutoScrollActive ? theme.colors.accent : hasNewMessages ? theme.colors.accent : theme.colors.bgSidebar,
-							color: isAutoScrollActive ? theme.colors.accentForeground : hasNewMessages ? theme.colors.accentForeground : theme.colors.textDim,
-							border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
-							animation: hasNewMessages && !isAutoScrollActive ? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite' : undefined,
-						}}
-						title={isAutoScrollActive ? 'Auto-scroll ON (click to unpin)' : hasNewMessages ? 'New messages (click to pin to bottom)' : 'Scroll to bottom (click to pin)'}
-					>
-						<ArrowDown className="w-4 h-4" />
-						{newMessageCount > 0 && !isAutoScrollActive && (
-							<span className="text-xs font-bold">
-								{newMessageCount > 99 ? '99+' : newMessageCount}
-							</span>
-						)}
-					</button>
-				)}
+						>
+							<ArrowDown className="w-4 h-4" />
+							{newMessageCount > 0 && !isAutoScrollActive && (
+								<span className="text-xs font-bold">
+									{newMessageCount > 99 ? '99+' : newMessageCount}
+								</span>
+							)}
+						</button>
+					)}
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (

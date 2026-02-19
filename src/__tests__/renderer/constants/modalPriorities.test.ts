@@ -18,9 +18,7 @@ describe('modalPriorities', () => {
 
 		it('DOCUMENT_SELECTOR should have higher priority than BATCH_RUNNER (opens from within)', () => {
 			// DocumentSelectorModal opens from BatchRunnerModal via "+ Add Docs" button
-			expect(MODAL_PRIORITIES.DOCUMENT_SELECTOR).toBeGreaterThan(
-				MODAL_PRIORITIES.BATCH_RUNNER
-			);
+			expect(MODAL_PRIORITIES.DOCUMENT_SELECTOR).toBeGreaterThan(MODAL_PRIORITIES.BATCH_RUNNER);
 		});
 
 		it('MARKETPLACE should have higher priority than BATCH_RUNNER (opens from within)', () => {
@@ -35,9 +33,7 @@ describe('modalPriorities', () => {
 
 		it('AGENT_PROMPT_COMPOSER should have higher priority than BATCH_RUNNER (opens from within)', () => {
 			// AgentPromptComposerModal opens from BatchRunnerModal
-			expect(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER).toBeGreaterThan(
-				MODAL_PRIORITIES.BATCH_RUNNER
-			);
+			expect(MODAL_PRIORITIES.AGENT_PROMPT_COMPOSER).toBeGreaterThan(MODAL_PRIORITIES.BATCH_RUNNER);
 		});
 
 		it('PLAYBOOK_DELETE_CONFIRM should have higher priority than BATCH_RUNNER (opens from within)', () => {
@@ -54,9 +50,7 @@ describe('modalPriorities', () => {
 
 		it('AUTORUN_LIGHTBOX should have higher priority than AUTORUN_EXPANDED (opens from within)', () => {
 			// AutoRunLightbox opens from AutoRunExpandedModal
-			expect(MODAL_PRIORITIES.AUTORUN_LIGHTBOX).toBeGreaterThan(
-				MODAL_PRIORITIES.AUTORUN_EXPANDED
-			);
+			expect(MODAL_PRIORITIES.AUTORUN_LIGHTBOX).toBeGreaterThan(MODAL_PRIORITIES.AUTORUN_EXPANDED);
 		});
 
 		it('AUTORUN_RESET_TASKS should have higher priority than AUTORUN_EXPANDED (opens from within)', () => {
@@ -68,9 +62,7 @@ describe('modalPriorities', () => {
 
 		it('SYMPHONY_AGENT_CREATION should have higher priority than SYMPHONY (opens from within)', () => {
 			// Agent creation dialog opens from SymphonyModal
-			expect(MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION).toBeGreaterThan(
-				MODAL_PRIORITIES.SYMPHONY
-			);
+			expect(MODAL_PRIORITIES.SYMPHONY_AGENT_CREATION).toBeGreaterThan(MODAL_PRIORITIES.SYMPHONY);
 		});
 
 		it('WIZARD_EXIT_CONFIRM should have higher priority than WIZARD (opens from within)', () => {
@@ -98,6 +90,11 @@ describe('modalPriorities', () => {
 		it('SSH_REMOTE should have higher priority than SETTINGS (opens from within)', () => {
 			// SSH Remote config opens from Settings modal
 			expect(MODAL_PRIORITIES.SSH_REMOTE).toBeGreaterThan(MODAL_PRIORITIES.SETTINGS);
+		});
+
+		it('TERMINAL_TAB_RENAME should sit with rename modal priorities', () => {
+			expect(MODAL_PRIORITIES.TERMINAL_TAB_RENAME).toBeLessThan(MODAL_PRIORITIES.RENAME_TAB);
+			expect(MODAL_PRIORITIES.TERMINAL_TAB_RENAME).toBeGreaterThan(MODAL_PRIORITIES.RENAME_GROUP);
 		});
 	});
 

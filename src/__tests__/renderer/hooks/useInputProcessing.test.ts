@@ -735,6 +735,33 @@ describe('useInputProcessing', () => {
 			// Input should be processed as terminal command
 			expect(mockSetSessions).toHaveBeenCalled();
 		});
+
+		it('routes terminal input through runCommand and ignores terminalPid', async () => {
+			const session = createMockSession({
+				inputMode: 'terminal',
+				terminalPid: 99999,
+				shellCwd: '/test/shell-cwd',
+			});
+			const deps = createDeps({
+				activeSession: session,
+				inputValue: 'ls -la',
+				isAiMode: false,
+			});
+			const { result } = renderHook(() => useInputProcessing(deps));
+
+			await act(async () => {
+				await result.current.processInput();
+			});
+
+			expect(window.maestro.process.runCommand).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: session.id,
+					command: 'ls -la',
+					cwd: '/test/shell-cwd',
+				})
+			);
+			expect(window.maestro.process.write).not.toHaveBeenCalled();
+		});
 	});
 
 	describe('empty input handling', () => {

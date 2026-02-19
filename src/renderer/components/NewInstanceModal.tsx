@@ -43,7 +43,8 @@ interface NewInstanceModalProps {
 			enabled: boolean;
 			remoteId: string | null;
 			workingDirOverride?: string;
-		}
+		},
+		initialTerminalShellType?: string
 	) => void;
 	theme: any;
 	existingSessions: Session[];
@@ -452,6 +453,9 @@ export function NewInstanceModal({
 						workingDirOverride: sshRemoteConfig.workingDirOverride,
 					}
 				: { enabled: false, remoteId: null };
+		const sourceTerminalShellType =
+			sourceSession?.terminalTabs?.find((tab) => tab.id === sourceSession?.activeTerminalTabId)
+				?.shellType || sourceSession?.terminalTabs?.[0]?.shellType;
 
 		onCreate(
 			selectedAgent,
@@ -464,7 +468,8 @@ export function NewInstanceModal({
 			agentCustomModel,
 			agentCustomContextWindow,
 			agentCustomProviderPath,
-			sessionSshRemoteConfig
+			sessionSshRemoteConfig,
+			sourceTerminalShellType
 		);
 		onClose();
 
@@ -495,6 +500,7 @@ export function NewInstanceModal({
 		onClose,
 		expandTilde,
 		existingSessions,
+		sourceSession,
 	]);
 
 	// Check if form is valid for submission
