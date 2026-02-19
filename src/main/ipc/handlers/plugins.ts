@@ -8,6 +8,7 @@ import { ipcMain, App } from 'electron';
 import { logger } from '../../utils/logger';
 import { createIpcHandler, type CreateHandlerOptions } from '../../utils/ipcHandler';
 import { getPluginManager, createPluginManager } from '../../plugin-manager';
+import type { PluginIpcBridge } from '../../plugin-ipc-bridge';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -17,6 +18,7 @@ const LOG_CONTEXT = '[Plugins]';
 
 export interface PluginHandlerDependencies {
 	app: App;
+	ipcBridge?: PluginIpcBridge;
 }
 
 /**
@@ -47,7 +49,7 @@ function requirePluginManager() {
  * Register all Plugin-related IPC handlers.
  */
 export function registerPluginHandlers(deps: PluginHandlerDependencies): void {
-	const { app } = deps;
+	const { app, ipcBridge } = deps;
 
 	// Ensure PluginManager is created (initialization happens in main startup)
 	let manager = getPluginManager();
@@ -113,6 +115,32 @@ export function registerPluginHandlers(deps: PluginHandlerDependencies): void {
 			const pm = requirePluginManager();
 			await pm.initialize();
 			return { plugins: pm.getPlugins() };
+		})
+	);
+
+	// -------------------------------------------------------------------------
+	// plugins:bridge:invoke — invoke a handler registered by a main-process plugin
+	// -------------------------------------------------------------------------
+	ipcMain.handle(
+		'plugins:bridge:invoke',
+		createIpcHandler(handlerOpts('bridge:invoke', false), async (pluginId: string, channel: string, ...args: unknown[]) => {
+			if (!ipcBridge) {
+				throw new Error('Plugin IPC bridge not initialized');
+			}
+			return ipcBridge.invoke(pluginId, channel, ...args);
+		})
+	);
+
+	// -------------------------------------------------------------------------
+	// plugins:bridge:send — fire-and-forget message to a main-process plugin
+	// -------------------------------------------------------------------------
+	ipcMain.handle(
+		'plugins:bridge:send',
+		createIpcHandler(handlerOpts('bridge:send', false), async (pluginId: string, channel: string, ...args: unknown[]) => {
+			if (!ipcBridge) {
+				throw new Error('Plugin IPC bridge not initialized');
+			}
+			ipcBridge.send(pluginId, channel, ...args);
 		})
 	);
 

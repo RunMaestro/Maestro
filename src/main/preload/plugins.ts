@@ -10,12 +10,18 @@
 
 import { ipcRenderer } from 'electron';
 
+export interface PluginBridgeApi {
+	invoke: (pluginId: string, channel: string, ...args: unknown[]) => Promise<unknown>;
+	send: (pluginId: string, channel: string, ...args: unknown[]) => void;
+}
+
 export interface PluginsApi {
 	getAll: () => Promise<unknown>;
 	enable: (id: string) => Promise<unknown>;
 	disable: (id: string) => Promise<unknown>;
 	getDir: () => Promise<unknown>;
 	refresh: () => Promise<unknown>;
+	bridge: PluginBridgeApi;
 }
 
 /**
@@ -32,5 +38,13 @@ export function createPluginsApi(): PluginsApi {
 		getDir: () => ipcRenderer.invoke('plugins:getDir'),
 
 		refresh: () => ipcRenderer.invoke('plugins:refresh'),
+
+		bridge: {
+			invoke: (pluginId: string, channel: string, ...args: unknown[]) =>
+				ipcRenderer.invoke('plugins:bridge:invoke', pluginId, channel, ...args),
+			send: (pluginId: string, channel: string, ...args: unknown[]) => {
+				ipcRenderer.invoke('plugins:bridge:send', pluginId, channel, ...args);
+			},
+		},
 	};
 }

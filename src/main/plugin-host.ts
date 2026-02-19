@@ -10,6 +10,7 @@ import path from 'path';
 import fs from 'fs/promises';
 import { Notification, type App, type BrowserWindow } from 'electron';
 import { logger } from './utils/logger';
+import { captureException } from './utils/sentry';
 import type { ProcessManager } from './process-manager';
 import type Store from 'electron-store';
 import type { MaestroSettings } from './stores/types';
@@ -17,6 +18,7 @@ import type {
 	LoadedPlugin,
 	PluginAPI,
 	PluginContext,
+	PluginModule,
 	PluginProcessAPI,
 	PluginProcessControlAPI,
 	PluginStatsAPI,
@@ -24,9 +26,12 @@ import type {
 	PluginStorageAPI,
 	PluginNotificationsAPI,
 	PluginMaestroAPI,
+	PluginIpcBridgeAPI,
 } from '../shared/plugin-types';
 import type { StatsAggregation } from '../shared/stats-types';
 import { getStatsDB } from './stats/singleton';
+import { PluginStorage } from './plugin-storage';
+import type { PluginIpcBridge } from './plugin-ipc-bridge';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -39,6 +44,7 @@ export interface PluginHostDependencies {
 	getMainWindow: () => BrowserWindow | null;
 	settingsStore: Store<MaestroSettings>;
 	app: App;
+	ipcBridge?: PluginIpcBridge;
 }
 
 // ============================================================================
@@ -48,9 +54,78 @@ export interface PluginHostDependencies {
 export class PluginHost {
 	private deps: PluginHostDependencies;
 	private pluginContexts: Map<string, PluginContext> = new Map();
+	/**
+	 * Stores loaded plugin module references for deactivation.
+	 * TRUST BOUNDARY: Plugin modules run in the same Node.js process as Maestro.
+	 * For v1, this is acceptable because we only ship trusted/first-party plugins.
+	 * Third-party sandboxing (e.g., vm2, worker threads) is a v2 concern.
+	 */
+	private pluginModules: Map<string, PluginModule> = new Map();
+	private pluginStorages: Map<string, PluginStorage> = new Map();
 
 	constructor(deps: PluginHostDependencies) {
 		this.deps = deps;
+	}
+
+	/**
+	 * Activates a plugin by loading its main entry point and calling activate().
+	 * The plugin receives a scoped PluginAPI based on its declared permissions.
+	 */
+	async activatePlugin(plugin: LoadedPlugin): Promise<void> {
+		const pluginId = plugin.manifest.id;
+
+		try {
+			const entryPoint = path.join(plugin.path, plugin.manifest.main);
+
+			// Verify the entry point exists
+			try {
+				await fs.access(entryPoint);
+			} catch {
+				throw new Error(`Plugin entry point not found: ${plugin.manifest.main}`);
+			}
+
+			// Load the module using require() — plugins are Node.js modules for v1 simplicity
+			// eslint-disable-next-line @typescript-eslint/no-var-requires
+			const pluginModule: PluginModule = require(entryPoint);
+
+			// Create context and activate
+			const context = this.createPluginContext(plugin);
+
+			if (typeof pluginModule.activate === 'function') {
+				await pluginModule.activate(context.api);
+			}
+
+			this.pluginModules.set(pluginId, pluginModule);
+			plugin.state = 'active';
+			logger.info(`Plugin '${pluginId}' activated`, LOG_CONTEXT);
+		} catch (err) {
+			plugin.state = 'error';
+			plugin.error = err instanceof Error ? err.message : String(err);
+			logger.error(`Plugin '${pluginId}' failed to activate: ${plugin.error}`, LOG_CONTEXT);
+			await captureException(err, { pluginId });
+		}
+	}
+
+	/**
+	 * Deactivates a plugin by calling its deactivate() function and cleaning up.
+	 * Deactivation errors are logged but never propagated.
+	 */
+	async deactivatePlugin(pluginId: string): Promise<void> {
+		try {
+			const pluginModule = this.pluginModules.get(pluginId);
+			if (pluginModule && typeof pluginModule.deactivate === 'function') {
+				await pluginModule.deactivate();
+			}
+		} catch (err) {
+			logger.error(
+				`Plugin '${pluginId}' threw during deactivation: ${err instanceof Error ? err.message : String(err)}`,
+				LOG_CONTEXT
+			);
+		}
+
+		this.pluginModules.delete(pluginId);
+		this.pluginStorages.delete(pluginId);
+		this.destroyPluginContext(pluginId);
 	}
 
 	/**
@@ -67,6 +142,7 @@ export class PluginHost {
 			storage: this.createStorageAPI(plugin),
 			notifications: this.createNotificationsAPI(plugin),
 			maestro: this.createMaestroAPI(plugin),
+			ipcBridge: this.createIpcBridgeAPI(plugin),
 		};
 
 		const context: PluginContext = {
@@ -290,52 +366,35 @@ export class PluginHost {
 			return undefined;
 		}
 
-		const pluginsDir = path.join(this.deps.app.getPath('userData'), 'plugins');
-		const storageDir = path.join(pluginsDir, plugin.manifest.id, 'data');
-
-		const validateFilename = (filename: string): void => {
-			if (path.isAbsolute(filename)) {
-				throw new Error('Absolute paths are not allowed');
-			}
-			if (filename.includes('..')) {
-				throw new Error('Path traversal is not allowed');
-			}
-			const resolved = path.resolve(storageDir, filename);
-			if (!resolved.startsWith(storageDir)) {
-				throw new Error('Path traversal is not allowed');
-			}
-		};
+		const storageDir = path.join(this.deps.app.getPath('userData'), 'plugins', plugin.manifest.id, 'data');
+		const storage = new PluginStorage(plugin.manifest.id, storageDir);
+		this.pluginStorages.set(plugin.manifest.id, storage);
 
 		return {
-			read: async (filename: string) => {
-				validateFilename(filename);
-				try {
-					return await fs.readFile(path.join(storageDir, filename), 'utf-8');
-				} catch {
-					return null;
-				}
-			},
+			read: (filename: string) => storage.read(filename),
+			write: (filename: string, data: string) => storage.write(filename, data),
+			list: () => storage.list(),
+			delete: (filename: string) => storage.delete(filename),
+		};
+	}
 
-			write: async (filename: string, data: string) => {
-				validateFilename(filename);
-				await fs.mkdir(storageDir, { recursive: true });
-				await fs.writeFile(path.join(storageDir, filename), data, 'utf-8');
-			},
+	private createIpcBridgeAPI(plugin: LoadedPlugin): PluginIpcBridgeAPI | undefined {
+		const bridge = this.deps.ipcBridge;
+		if (!bridge) {
+			return undefined;
+		}
 
-			list: async () => {
-				try {
-					return await fs.readdir(storageDir);
-				} catch {
-					return [];
-				}
-			},
+		const pluginId = plugin.manifest.id;
+		const getMainWindow = this.deps.getMainWindow;
 
-			delete: async (filename: string) => {
-				validateFilename(filename);
-				try {
-					await fs.unlink(path.join(storageDir, filename));
-				} catch {
-					// Ignore if file doesn't exist
+		return {
+			onMessage: (channel: string, handler: (...args: unknown[]) => unknown) => {
+				return bridge.register(pluginId, channel, handler);
+			},
+			sendToRenderer: (channel: string, ...args: unknown[]) => {
+				const win = getMainWindow();
+				if (win) {
+					win.webContents.send(`plugin:${pluginId}:${channel}`, ...args);
 				}
 			},
 		};

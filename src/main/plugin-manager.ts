@@ -6,10 +6,12 @@
  */
 
 import type { App } from 'electron';
+import type Store from 'electron-store';
 import { logger } from './utils/logger';
 import { getPluginsDir, discoverPlugins } from './plugin-loader';
 import type { LoadedPlugin } from '../shared/plugin-types';
 import type { PluginHost } from './plugin-host';
+import type { MaestroSettings } from './stores/types';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -20,6 +22,7 @@ export class PluginManager {
 	private plugins: Map<string, LoadedPlugin> = new Map();
 	private pluginsDir: string;
 	private host: PluginHost | null = null;
+	private settingsStore: Store<MaestroSettings> | null = null;
 
 	constructor(app: App) {
 		this.pluginsDir = getPluginsDir(app);
@@ -33,7 +36,15 @@ export class PluginManager {
 	}
 
 	/**
+	 * Sets the settings store for tracking user-explicit disables.
+	 */
+	setSettingsStore(store: Store<MaestroSettings>): void {
+		this.settingsStore = store;
+	}
+
+	/**
 	 * Discover and load all plugins from the plugins directory.
+	 * First-party plugins are auto-enabled unless explicitly disabled by user.
 	 */
 	async initialize(): Promise<void> {
 		const discovered = await discoverPlugins(this.pluginsDir);
@@ -49,6 +60,31 @@ export class PluginManager {
 			`Plugin system initialized: ${okCount} valid, ${errorCount} with errors`,
 			LOG_CONTEXT
 		);
+
+		// Auto-enable first-party plugins that haven't been explicitly disabled
+		for (const plugin of discovered) {
+			if (plugin.state !== 'discovered') continue;
+			if (!this.isFirstParty(plugin)) continue;
+			if (this.isUserDisabled(plugin.manifest.id)) continue;
+
+			logger.info(`Auto-enabling first-party plugin '${plugin.manifest.id}'`, LOG_CONTEXT);
+			await this.enablePlugin(plugin.manifest.id);
+		}
+	}
+
+	/**
+	 * Checks if a plugin is first-party (auto-enable candidate).
+	 */
+	private isFirstParty(plugin: LoadedPlugin): boolean {
+		return plugin.manifest.firstParty === true || plugin.manifest.author === 'Maestro Core';
+	}
+
+	/**
+	 * Checks if a user has explicitly disabled a plugin.
+	 */
+	private isUserDisabled(pluginId: string): boolean {
+		if (!this.settingsStore) return false;
+		return this.settingsStore.get(`plugin:${pluginId}:userDisabled` as any) === true;
 	}
 
 	/**
@@ -73,8 +109,8 @@ export class PluginManager {
 	}
 
 	/**
-	 * Transitions a plugin from 'discovered' to 'active'.
-	 * Actual activation logic will be added in Phase 03.
+	 * Transitions a plugin from 'discovered' or 'disabled' to 'active'.
+	 * Calls PluginHost.activatePlugin() which loads and runs the module's activate().
 	 */
 	async enablePlugin(id: string): Promise<boolean> {
 		const plugin = this.plugins.get(id);
@@ -92,16 +128,19 @@ export class PluginManager {
 		}
 
 		if (this.host) {
-			this.host.createPluginContext(plugin);
+			await this.host.activatePlugin(plugin);
+			// activatePlugin sets state to 'active' or 'error'
+		} else {
+			plugin.state = 'active';
 		}
 
-		plugin.state = 'active';
-		logger.info(`Plugin '${id}' enabled`, LOG_CONTEXT);
-		return true;
+		logger.info(`Plugin '${id}' enabled (state: ${plugin.state})`, LOG_CONTEXT);
+		return plugin.state === 'active';
 	}
 
 	/**
 	 * Transitions a plugin from 'active' to 'disabled'.
+	 * Calls PluginHost.deactivatePlugin() which runs deactivate() and cleans up.
 	 */
 	async disablePlugin(id: string): Promise<boolean> {
 		const plugin = this.plugins.get(id);
@@ -119,10 +158,16 @@ export class PluginManager {
 		}
 
 		if (this.host) {
-			this.host.destroyPluginContext(id);
+			await this.host.deactivatePlugin(id);
 		}
 
 		plugin.state = 'disabled';
+
+		// Track user-explicit disable
+		if (this.settingsStore) {
+			this.settingsStore.set(`plugin:${id}:userDisabled` as any, true as any);
+		}
+
 		logger.info(`Plugin '${id}' disabled`, LOG_CONTEXT);
 		return true;
 	}

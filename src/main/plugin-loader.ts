@@ -74,7 +74,7 @@ export function validateManifest(manifest: unknown): manifest is PluginManifest 
 	const knownFields = new Set([
 		'id', 'name', 'version', 'description', 'author', 'authorLink',
 		'minMaestroVersion', 'main', 'renderer', 'permissions', 'ui',
-		'settings', 'tags',
+		'settings', 'tags', 'firstParty',
 	]);
 	for (const key of Object.keys(obj)) {
 		if (!knownFields.has(key)) {

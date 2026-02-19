@@ -100,6 +100,8 @@ export interface PluginManifest {
 	settings?: PluginSettingDefinition[];
 	/** Searchable keyword tags */
 	tags?: string[];
+	/** Whether this is a first-party Maestro plugin (auto-enabled on discovery) */
+	firstParty?: boolean;
 }
 
 // ============================================================================
@@ -211,6 +213,17 @@ export interface PluginNotificationsAPI {
 }
 
 /**
+ * IPC bridge API for split-architecture plugins.
+ * Allows main-process plugin components to communicate with renderer components.
+ */
+export interface PluginIpcBridgeAPI {
+	/** Register a handler for messages from the renderer component */
+	onMessage(channel: string, handler: (...args: unknown[]) => unknown): () => void;
+	/** Send a message to the renderer component */
+	sendToRenderer(channel: string, ...args: unknown[]): void;
+}
+
+/**
  * Always-available Maestro metadata API. No permission required.
  */
 export interface PluginMaestroAPI {
@@ -233,6 +246,17 @@ export interface PluginAPI {
 	storage?: PluginStorageAPI;
 	notifications?: PluginNotificationsAPI;
 	maestro: PluginMaestroAPI;
+	ipcBridge?: PluginIpcBridgeAPI;
+}
+
+/**
+ * Interface that plugin modules must conform to.
+ * The activate() function is called when the plugin is enabled.
+ * The deactivate() function is called when the plugin is disabled.
+ */
+export interface PluginModule {
+	activate(api: PluginAPI): void | Promise<void>;
+	deactivate?(): void | Promise<void>;
 }
 
 /**
