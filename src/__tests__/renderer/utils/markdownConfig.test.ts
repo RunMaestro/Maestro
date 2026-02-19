@@ -13,6 +13,9 @@ import {
 	generateAutoRunProseStyles,
 	generateTerminalProseStyles,
 	generateDiffViewStyles,
+	createWizardBubbleMarkdownComponents,
+	createReleaseNotesMarkdownComponents,
+	REMARK_GFM_PLUGINS,
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
@@ -637,5 +640,44 @@ describe('generateDiffViewStyles', () => {
 		expect(css).toContain('background-color: #aabbcc !important');
 		expect(css).toContain('color: #ddeeff !important');
 		expect(css).toContain('color: #ff00ff !important');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Shared Markdown Presets
+// ---------------------------------------------------------------------------
+
+describe('shared markdown presets', () => {
+	it('should export a shared remark-gfm plugin array', () => {
+		expect(Array.isArray(REMARK_GFM_PLUGINS)).toBe(true);
+		expect(REMARK_GFM_PLUGINS.length).toBe(1);
+	});
+
+	it('should create wizard bubble markdown components', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.pre).toBeDefined();
+		expect(components.a).toBeDefined();
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.blockquote).toBeDefined();
+	});
+
+	it('should create release notes markdown components', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.a).toBeDefined();
 	});
 });

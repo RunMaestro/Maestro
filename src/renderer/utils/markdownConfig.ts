@@ -20,6 +20,7 @@ import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import React from 'react';
+import remarkGfm from 'remark-gfm';
 import type { Theme } from '../types';
 
 // ============================================================================
@@ -62,6 +63,12 @@ export interface MarkdownComponentsOptions {
 		onMatchRendered?: (index: number, element: HTMLElement) => void;
 	};
 }
+
+/**
+ * Shared remark plugins for common markdown rendering paths.
+ * Centralized so wizard/chat surfaces don't define this inline repeatedly.
+ */
+export const REMARK_GFM_PLUGINS = [remarkGfm];
 
 // ============================================================================
 // Prose Styles Generator
@@ -453,6 +460,145 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	}
 
 	return components;
+}
+
+/**
+ * Shared markdown component overrides for wizard chat bubbles
+ * (ConversationScreen + WizardMessageBubble).
+ */
+export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Components> {
+	return {
+		p: ({ children }: any) => React.createElement('p', { className: 'mb-2 last:mb-0' }, children),
+		ul: ({ children }: any) =>
+			React.createElement('ul', { className: 'list-disc ml-4 mb-2' }, children),
+		ol: ({ children }: any) =>
+			React.createElement('ol', { className: 'list-decimal ml-4 mb-2' }, children),
+		li: ({ children }: any) => React.createElement('li', { className: 'mb-1' }, children),
+		strong: ({ children }: any) => React.createElement('strong', { className: 'font-semibold' }, children),
+		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
+		code: ({ children, className }: any) => {
+			const isInline = !className;
+			return isInline
+				? React.createElement(
+						'code',
+						{
+							className: 'px-1 py-0.5 rounded text-xs font-mono',
+							style: { backgroundColor: `${theme.colors.bgMain}80` },
+						},
+						children
+					)
+				: React.createElement('code', { className }, children);
+		},
+		pre: ({ children }: any) =>
+			React.createElement(
+				'pre',
+				{
+					className: 'p-2 rounded text-xs font-mono overflow-x-auto mb-2',
+					style: { backgroundColor: theme.colors.bgMain },
+				},
+				children
+			),
+		a: ({ href, children }: any) =>
+			React.createElement(
+				'button',
+				{
+					type: 'button',
+					className: 'underline',
+					style: { color: theme.colors.accent },
+					onClick: () => href && window.maestro.shell.openExternal(href),
+				},
+				children
+			),
+		h1: ({ children }: any) => React.createElement('h1', { className: 'text-lg font-bold mb-2' }, children),
+		h2: ({ children }: any) => React.createElement('h2', { className: 'text-base font-bold mb-2' }, children),
+		h3: ({ children }: any) => React.createElement('h3', { className: 'text-sm font-bold mb-1' }, children),
+		blockquote: ({ children }: any) =>
+			React.createElement(
+				'blockquote',
+				{
+					className: 'border-l-2 pl-2 mb-2 italic',
+					style: { borderColor: theme.colors.border },
+				},
+				children
+			),
+	};
+}
+
+/**
+ * Shared markdown component overrides for release notes
+ * (currently used by UpdateCheckModal).
+ */
+export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Components> {
+	return {
+		h1: ({ children }: any) =>
+			React.createElement(
+				'h1',
+				{
+					className: 'text-base font-bold mt-3 mb-2',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		h2: ({ children }: any) =>
+			React.createElement(
+				'h2',
+				{
+					className: 'text-sm font-bold mt-3 mb-2',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		h3: ({ children }: any) =>
+			React.createElement(
+				'h3',
+				{
+					className: 'text-xs font-bold mt-2 mb-1',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		p: ({ children }: any) =>
+			React.createElement(
+				'p',
+				{
+					className: 'my-1.5',
+					style: { color: theme.colors.textDim },
+				},
+				children
+			),
+		ul: ({ children }: any) =>
+			React.createElement('ul', { className: 'list-disc list-inside my-1.5 space-y-0.5' }, children),
+		ol: ({ children }: any) =>
+			React.createElement('ol', { className: 'list-decimal list-inside my-1.5 space-y-0.5' }, children),
+		li: ({ children }: any) =>
+			React.createElement('li', { style: { color: theme.colors.textDim } }, children),
+		code: ({ children }: any) =>
+			React.createElement(
+				'code',
+				{
+					className: 'px-1 py-0.5 rounded font-mono text-xs',
+					style: {
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.accent,
+					},
+				},
+				children
+			),
+		a: ({ href, children }: any) =>
+			React.createElement(
+				'a',
+				{
+					href,
+					onClick: (e: React.MouseEvent) => {
+						e.preventDefault();
+						if (href) window.maestro.shell.openExternal(href);
+					},
+					className: 'hover:underline cursor-pointer',
+					style: { color: theme.colors.accent },
+				},
+				children
+			),
+	};
 }
 
 // ============================================================================
