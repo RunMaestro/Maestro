@@ -580,6 +580,12 @@ const mockMaestro = {
 		onRecoveryAvailable: vi.fn().mockReturnValue(() => {}),
 		checkRecovery: vi.fn().mockResolvedValue({ recovered: [] }),
 	},
+	providers: {
+		getErrorStats: vi.fn().mockResolvedValue(null),
+		getAllErrorStats: vi.fn().mockResolvedValue({}),
+		clearSessionErrors: vi.fn().mockResolvedValue(undefined),
+		onFailoverSuggest: vi.fn().mockReturnValue(() => {}),
+	},
 	app: {
 		onQuitConfirmationRequest: vi.fn().mockReturnValue(() => {}),
 		confirmQuit: vi.fn(),

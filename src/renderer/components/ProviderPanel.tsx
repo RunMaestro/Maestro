@@ -14,13 +14,16 @@ import {
 	Plus,
 	X,
 	ArrowRightLeft,
+	RefreshCw,
 } from 'lucide-react';
-import type { Theme, Session, AgentConfig } from '../types';
+import type { Theme, Session } from '../types';
 import type { ToolType } from '../../shared/types';
 import type { ProviderSwitchConfig } from '../../shared/account-types';
 import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../../shared/account-types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../services/contextGroomer';
+import { ProviderHealthCard } from './ProviderHealthCard';
+import { useProviderHealth } from '../hooks/useProviderHealth';
 
 // ============================================================================
 // Types
@@ -29,14 +32,6 @@ import { getAgentDisplayName } from '../services/contextGroomer';
 interface ProviderPanelProps {
 	theme: Theme;
 	sessions?: Session[];
-}
-
-interface ProviderStatus {
-	id: ToolType;
-	name: string;
-	icon: string;
-	available: boolean;
-	activeSessionCount: number;
 }
 
 interface MigrationEntry {
@@ -97,37 +92,15 @@ function ordinalSuffix(n: number): string {
 // ============================================================================
 
 export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
-	const [providers, setProviders] = useState<ProviderStatus[]>([]);
+	const {
+		providers: healthProviders,
+		isLoading: healthLoading,
+		lastUpdated,
+		refresh: refreshHealth,
+		failoverThreshold,
+	} = useProviderHealth(sessions);
 	const [config, setConfig] = useState<ProviderSwitchConfig>(DEFAULT_PROVIDER_SWITCH_CONFIG);
 	const [showMoreHistory, setShowMoreHistory] = useState(false);
-
-	// ── Load providers ──────────────────────────────────────────────────
-	useEffect(() => {
-		async function detectProviders() {
-			try {
-				const agents: AgentConfig[] = await window.maestro.agents.detect();
-				const statuses: ProviderStatus[] = agents
-					.filter((a) => a.id !== 'terminal' && !a.hidden)
-					.map((agent) => {
-						const toolType = agent.id as ToolType;
-						const activeCount = sessions.filter(
-							(s) => s.toolType === toolType && !s.archivedByMigration
-						).length;
-						return {
-							id: toolType,
-							name: getAgentDisplayName(toolType),
-							icon: getAgentIcon(toolType),
-							available: agent.available,
-							activeSessionCount: activeCount,
-						};
-					});
-				setProviders(statuses);
-			} catch (err) {
-				console.error('Failed to detect agents:', err);
-			}
-		}
-		detectProviders();
-	}, [sessions]);
 
 	// ── Load failover config ────────────────────────────────────────────
 	useEffect(() => {
@@ -184,9 +157,9 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 	const hasMoreMigrations = migrations.length > MIGRATION_HISTORY_LIMIT;
 
 	// ── Fallback provider management ────────────────────────────────────
-	const availableForFallback = providers.filter(
-		(p) => !config.fallbackProviders.includes(p.id)
-	);
+	const availableForFallback = healthProviders
+		.filter((p) => !config.fallbackProviders.includes(p.toolType))
+		.map((p) => ({ id: p.toolType, name: p.displayName, icon: getAgentIcon(p.toolType), available: p.available }));
 
 	const handleAddFallback = (toolType: ToolType) => {
 		saveConfig({ fallbackProviders: [...config.fallbackProviders, toolType] });
@@ -234,65 +207,106 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 	// ── Render ───────────────────────────────────────────────────────────
 	return (
 		<div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 4 }}>
-			{/* Provider Status Grid */}
+			{/* Provider Health Dashboard */}
 			<div style={sectionStyle}>
-				<div style={sectionTitleStyle}>Provider Status</div>
-				<div
-					style={{
-						display: 'grid',
-						gridTemplateColumns: 'repeat(2, 1fr)',
-						gap: 10,
-					}}
-				>
-					{providers.map((provider) => (
-						<div
-							key={provider.id}
+				<div className="flex items-center justify-between" style={{ marginBottom: 12 }}>
+					<div style={sectionTitleStyle} className="mb-0">Provider Health</div>
+					<div className="flex items-center gap-3">
+						<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+							Auto-refresh: every 10s
+						</span>
+						<button
+							onClick={refreshHealth}
+							className="flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors"
 							style={{
-								backgroundColor: theme.colors.bgMain,
-								borderRadius: 6,
-								padding: '12px 14px',
-								border: `1px solid ${theme.colors.border}`,
+								color: theme.colors.accent,
+								backgroundColor: `${theme.colors.accent}10`,
+								border: `1px solid ${theme.colors.accent}30`,
 							}}
+							title="Refresh Now"
 						>
-							<div className="flex items-center gap-2 mb-1">
-								<span style={{ fontSize: 16 }}>{provider.icon}</span>
-								<span
-									style={{
-										color: theme.colors.textMain,
-										fontSize: 13,
-										fontWeight: 500,
-									}}
-								>
-									{provider.name}
-								</span>
-							</div>
-							<div className="flex items-center gap-3" style={dimStyle}>
-								<span className="flex items-center gap-1">
-									<span
-										style={{
-											display: 'inline-block',
-											width: 6,
-											height: 6,
-											borderRadius: '50%',
-											backgroundColor: provider.available
-												? '#22c55e'
-												: '#ef4444',
-										}}
-									/>
-									{provider.available ? 'Available' : 'Not Installed'}
-								</span>
-								<span>
-									{provider.activeSessionCount} active{' '}
-									{provider.activeSessionCount === 1 ? 'session' : 'sessions'}
-								</span>
-								<span>0 errors (5m)</span>
-							</div>
-						</div>
-					))}
-					{providers.length === 0 && (
-						<div style={dimStyle}>No providers detected</div>
-					)}
+							<RefreshCw className="w-3 h-3" />
+							Refresh
+						</button>
+					</div>
 				</div>
+
+				{healthLoading && healthProviders.length === 0 ? (
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: 'repeat(2, 1fr)',
+							gap: 10,
+						}}
+					>
+						{[0, 1].map((i) => (
+							<div
+								key={i}
+								style={{
+									backgroundColor: theme.colors.bgMain,
+									borderRadius: 8,
+									padding: '14px 16px',
+									border: `1px solid ${theme.colors.border}`,
+									minHeight: 160,
+									opacity: 0.5,
+								}}
+							>
+								<div
+									style={{
+										width: 120,
+										height: 14,
+										borderRadius: 4,
+										backgroundColor: theme.colors.bgActivity,
+										marginBottom: 8,
+									}}
+								/>
+								<div
+									style={{
+										width: 80,
+										height: 12,
+										borderRadius: 4,
+										backgroundColor: theme.colors.bgActivity,
+										marginBottom: 16,
+									}}
+								/>
+								<div
+									style={{
+										width: '100%',
+										height: 6,
+										borderRadius: 3,
+										backgroundColor: theme.colors.bgActivity,
+										marginTop: 'auto',
+									}}
+								/>
+							</div>
+						))}
+					</div>
+				) : (
+					<div
+						style={{
+							display: 'grid',
+							gridTemplateColumns: 'repeat(2, 1fr)',
+							gap: 10,
+						}}
+					>
+						{healthProviders.map((provider) => (
+							<ProviderHealthCard
+								key={provider.toolType}
+								theme={theme}
+								toolType={provider.toolType}
+								available={provider.available}
+								activeSessionCount={provider.activeSessionCount}
+								errorStats={provider.errorStats}
+								failoverThreshold={failoverThreshold}
+								healthPercent={provider.healthPercent}
+								status={provider.status}
+							/>
+						))}
+						{healthProviders.length === 0 && (
+							<div style={dimStyle}>No providers detected</div>
+						)}
+					</div>
+				)}
 			</div>
 
 			{/* Failover Configuration */}
@@ -591,7 +605,7 @@ function AddProviderDropdown({
 	onAdd,
 }: {
 	theme: Theme;
-	providers: ProviderStatus[];
+	providers: { id: ToolType; name: string; icon: string; available: boolean }[];
 	onAdd: (toolType: ToolType) => void;
 }) {
 	const [isOpen, setIsOpen] = useState(false);

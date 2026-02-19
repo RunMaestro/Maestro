@@ -14,6 +14,7 @@ import { ProviderPanel } from './ProviderPanel';
 import { VirtuosoUsageView } from './VirtuosoUsageView';
 import { Modal } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { useProviderHealth } from '../hooks/useProviderHealth';
 import type { Theme, Session } from '../types';
 
 type VirtuosoTab = 'config' | 'providers' | 'usage';
@@ -33,6 +34,7 @@ interface VirtuososModalProps {
 
 export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososModalProps) {
 	const [activeTab, setActiveTab] = useState<VirtuosoTab>('config');
+	const { hasDegradedProvider, hasFailingProvider } = useProviderHealth(sessions);
 
 	// Keyboard navigation: Cmd/Ctrl+Shift+[ and Cmd/Ctrl+Shift+]
 	useEffect(() => {
@@ -120,6 +122,16 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososMo
 						>
 							<Icon className="w-3.5 h-3.5" />
 							{tab.label}
+							{tab.value === 'providers' && hasDegradedProvider && (
+								<span
+									className="ml-1 w-2 h-2 rounded-full inline-block"
+									style={{
+										backgroundColor: hasFailingProvider
+											? theme.colors.error
+											: theme.colors.warning,
+									}}
+								/>
+							)}
 						</button>
 					);
 				})}
