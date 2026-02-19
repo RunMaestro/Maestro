@@ -20,8 +20,8 @@ import type { Components } from 'react-markdown';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import React from 'react';
-import remarkGfm from 'remark-gfm';
 import type { Theme } from '../types';
+import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 
 // ============================================================================
 // Types
@@ -48,7 +48,7 @@ export interface MarkdownComponentsOptions {
 	/** Custom code block renderer for specific languages (e.g., mermaid) */
 	customLanguageRenderers?: Record<string, React.ComponentType<{ code: string; theme: Theme }>>;
 	/** Callback when internal file link is clicked (maestro-file:// protocol) */
-	onFileClick?: (filePath: string) => void;
+	onFileClick?: (filePath: string, options?: { openInNewTab?: boolean }) => void;
 	/** Callback when external link is clicked - if not provided, uses default browser behavior */
 	onExternalLinkClick?: (href: string) => void;
 	/** Callback when anchor link is clicked (same-page #section links) */
@@ -74,9 +74,9 @@ export interface MarkdownComponentsOptions {
 
 /**
  * Shared remark plugins for common markdown rendering paths.
- * Centralized so wizard/chat surfaces don't define this inline repeatedly.
+ * Re-exported from shared so renderer and web/mobile use the same source.
  */
-export const REMARK_GFM_PLUGINS = [remarkGfm];
+export { REMARK_GFM_PLUGINS };
 
 export type InlineWizardPreviewVariant = 'document' | 'streaming';
 
@@ -445,7 +445,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						if (isMaestroFile && filePath && onFileClick) {
-							onFileClick(filePath);
+							onFileClick(filePath, { openInNewTab: e.metaKey || e.ctrlKey });
 						} else if (isAnchorLink && anchorId) {
 							// Handle anchor links - scroll to the target element
 							if (onAnchorClick) {
