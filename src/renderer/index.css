@@ -336,17 +336,69 @@ textarea::placeholder {
   display: list-item !important;
 }
 
+.prose li > p {
+  display: inline !important;
+  margin: 0 !important;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.prose li > p + ul,
+.prose li > p + ol {
+  margin-top: 0 !important;
+}
+
 /* Fix bullet alignment when first element is bold/styled */
 .prose li > strong:first-child,
 .prose li > b:first-child,
 .prose li > em:first-child,
 .prose li > code:first-child,
-.prose li > a:first-child {
+.prose li > a:first-child,
+.prose li > p > strong:first-child,
+.prose li > p > b:first-child,
+.prose li > p > em:first-child,
+.prose li > p > code:first-child,
+.prose li > p > a:first-child {
   vertical-align: baseline;
   line-height: inherit;
 }
 
 .prose li::marker {
+  font-weight: normal;
+}
+
+/* Wizard markdown lists render <li><p><strong>...</strong></p><ul>...</ul></li> */
+.wizard-markdown ol,
+.wizard-markdown ul {
+  list-style-position: outside;
+}
+
+.wizard-markdown li {
+  display: list-item;
+}
+
+.wizard-markdown li > p {
+  display: inline;
+  margin: 0;
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.wizard-markdown li > p + ul,
+.wizard-markdown li > p + ol {
+  margin-top: 0;
+}
+
+.wizard-markdown li > p > strong:first-child,
+.wizard-markdown li > p > b:first-child,
+.wizard-markdown li > p > em:first-child,
+.wizard-markdown li > p > code:first-child,
+.wizard-markdown li > p > a:first-child {
+  vertical-align: baseline;
+  line-height: inherit;
+}
+
+.wizard-markdown li::marker {
   font-weight: normal;
 }
 
