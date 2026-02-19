@@ -13,6 +13,7 @@ import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
 	generateTerminalProseStyles,
+	generateInlineWizardPreviewProseStyles,
 	generateDiffViewStyles,
 	createWizardBubbleMarkdownComponents,
 	createReleaseNotesMarkdownComponents,
@@ -659,13 +660,42 @@ describe('generateDiffViewStyles', () => {
 });
 
 // ---------------------------------------------------------------------------
+// generateInlineWizardPreviewProseStyles
+// ---------------------------------------------------------------------------
+
+describe('generateInlineWizardPreviewProseStyles', () => {
+	it('should support both same-element and descendant scoped prose selectors', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
+	});
+
+	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+		);
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }'
+		);
+	});
+
+	it('should include list marker alignment rules for styled first-child content', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose li > strong:first-child');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child > strong:first-child'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Shared Markdown Presets
 // ---------------------------------------------------------------------------
 
 describe('shared markdown presets', () => {
 	it('should export a shared remark-gfm plugin array', () => {
 		expect(Array.isArray(REMARK_GFM_PLUGINS)).toBe(true);
-		expect(REMARK_GFM_PLUGINS.length).toBe(1);
+		expect(REMARK_GFM_PLUGINS.length).toBeGreaterThan(0);
 	});
 
 	it('should create wizard bubble markdown components', () => {

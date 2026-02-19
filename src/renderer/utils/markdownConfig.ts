@@ -525,6 +525,9 @@ export function generateInlineWizardPreviewProseStyles(
     ${s} ul, ${s} ol { color: ${c.textMain}; margin: ${listMargin}; padding-left: 1.5em; }
     ${s} ul { list-style-type: disc; }
     ${s} li { margin: ${listItemMargin}; display: list-item; }
+    ${s} li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} li > p:not(:first-child) { display: block; margin: ${isStreaming ? '0.4em 0 0' : '0.5em 0 0'} !important; }
+    ${s} li > p:first-child + ul, ${s} li > p:first-child + ol { margin-top: 0 !important; }
     ${s} code { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${codePadding}; border-radius: 3px; font-size: ${codeFontSize}; }
     ${s} pre { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${prePadding}; border-radius: 6px; overflow-x: auto; }
     ${s} pre code { background: none; padding: 0; }
@@ -532,6 +535,8 @@ export function generateInlineWizardPreviewProseStyles(
     ${s} a { color: ${c.accent}; text-decoration: underline; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
+    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child,
+    ${s} li > p:first-child > strong:first-child, ${s} li > p:first-child > b:first-child, ${s} li > p:first-child > em:first-child, ${s} li > p:first-child > code:first-child, ${s} li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} input[type="checkbox"] {
       appearance: none;
       -webkit-appearance: none;
