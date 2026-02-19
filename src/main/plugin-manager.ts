@@ -9,6 +9,7 @@ import type { App } from 'electron';
 import { logger } from './utils/logger';
 import { getPluginsDir, discoverPlugins } from './plugin-loader';
 import type { LoadedPlugin } from '../shared/plugin-types';
+import type { PluginHost } from './plugin-host';
 
 const LOG_CONTEXT = '[Plugins]';
 
@@ -18,9 +19,17 @@ const LOG_CONTEXT = '[Plugins]';
 export class PluginManager {
 	private plugins: Map<string, LoadedPlugin> = new Map();
 	private pluginsDir: string;
+	private host: PluginHost | null = null;
 
 	constructor(app: App) {
 		this.pluginsDir = getPluginsDir(app);
+	}
+
+	/**
+	 * Sets the PluginHost used to create/destroy plugin contexts.
+	 */
+	setHost(host: PluginHost): void {
+		this.host = host;
 	}
 
 	/**
@@ -82,6 +91,10 @@ export class PluginManager {
 			return false;
 		}
 
+		if (this.host) {
+			this.host.createPluginContext(plugin);
+		}
+
 		plugin.state = 'active';
 		logger.info(`Plugin '${id}' enabled`, LOG_CONTEXT);
 		return true;
@@ -103,6 +116,10 @@ export class PluginManager {
 				LOG_CONTEXT
 			);
 			return false;
+		}
+
+		if (this.host) {
+			this.host.destroyPluginContext(id);
 		}
 
 		plugin.state = 'disabled';

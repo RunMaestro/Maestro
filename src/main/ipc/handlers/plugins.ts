@@ -49,16 +49,14 @@ function requirePluginManager() {
 export function registerPluginHandlers(deps: PluginHandlerDependencies): void {
 	const { app } = deps;
 
-	// Ensure PluginManager is created and initialized
+	// Ensure PluginManager is created (initialization happens in main startup)
 	let manager = getPluginManager();
 	if (!manager) {
 		manager = createPluginManager(app);
+		manager.initialize().catch((err) => {
+			logger.error(`Failed to initialize plugin manager: ${err}`, LOG_CONTEXT);
+		});
 	}
-
-	// Initialize asynchronously (discover plugins)
-	manager.initialize().catch((err) => {
-		logger.error(`Failed to initialize plugin manager: ${err}`, LOG_CONTEXT);
-	});
 
 	// -------------------------------------------------------------------------
 	// plugins:getAll — returns all LoadedPlugin[]

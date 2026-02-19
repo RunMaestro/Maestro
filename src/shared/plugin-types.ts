@@ -129,3 +129,118 @@ export interface LoadedPlugin {
 	/** Error message if state is 'error' */
 	error?: string;
 }
+
+// ============================================================================
+// Plugin API Types (Phase 03)
+// ============================================================================
+
+import type { UsageStats } from './types';
+import type { StatsAggregation } from './stats-types';
+
+/**
+ * Simplified tool execution data exposed to plugins.
+ * Mirrors the relevant fields from process-manager ToolExecution.
+ */
+export interface PluginToolExecution {
+	toolName: string;
+	state: unknown;
+	timestamp: number;
+}
+
+/**
+ * Read-only access to process data and events.
+ * Requires 'process:read' permission.
+ */
+export interface PluginProcessAPI {
+	getActiveProcesses(): Promise<Array<{ sessionId: string; toolType: string; pid: number; startTime: number }>>;
+	onData(callback: (sessionId: string, data: string) => void): () => void;
+	onUsage(callback: (sessionId: string, stats: UsageStats) => void): () => void;
+	onToolExecution(callback: (sessionId: string, tool: PluginToolExecution) => void): () => void;
+	onExit(callback: (sessionId: string, code: number) => void): () => void;
+	onThinkingChunk(callback: (sessionId: string, text: string) => void): () => void;
+}
+
+/**
+ * Write access to control processes.
+ * Requires 'process:write' permission.
+ */
+export interface PluginProcessControlAPI {
+	kill(sessionId: string): boolean;
+	write(sessionId: string, data: string): boolean;
+}
+
+/**
+ * Read-only access to usage statistics.
+ * Requires 'stats:read' permission.
+ */
+export interface PluginStatsAPI {
+	getAggregation(range: string): Promise<StatsAggregation>;
+	onStatsUpdate(callback: () => void): () => void;
+}
+
+/**
+ * Plugin-scoped settings access.
+ * Requires 'settings:read' or 'settings:write' permission.
+ * Keys are namespaced to `plugin:<id>:<key>`.
+ */
+export interface PluginSettingsAPI {
+	get(key: string): Promise<unknown>;
+	set(key: string, value: unknown): Promise<void>;
+	getAll(): Promise<Record<string, unknown>>;
+}
+
+/**
+ * Plugin-scoped file storage.
+ * Requires 'storage' permission.
+ * Files are stored under `userData/plugins/<id>/data/`.
+ */
+export interface PluginStorageAPI {
+	read(filename: string): Promise<string | null>;
+	write(filename: string, data: string): Promise<void>;
+	list(): Promise<string[]>;
+	delete(filename: string): Promise<void>;
+}
+
+/**
+ * Desktop notification capabilities.
+ * Requires 'notifications' permission.
+ */
+export interface PluginNotificationsAPI {
+	show(title: string, body: string): Promise<void>;
+	playSound(sound: string): Promise<void>;
+}
+
+/**
+ * Always-available Maestro metadata API. No permission required.
+ */
+export interface PluginMaestroAPI {
+	version: string;
+	platform: string;
+	pluginId: string;
+	pluginDir: string;
+	dataDir: string;
+}
+
+/**
+ * The scoped API object provided to plugins.
+ * Optional namespaces are present only when the plugin has the required permission.
+ */
+export interface PluginAPI {
+	process?: PluginProcessAPI;
+	processControl?: PluginProcessControlAPI;
+	stats?: PluginStatsAPI;
+	settings?: PluginSettingsAPI;
+	storage?: PluginStorageAPI;
+	notifications?: PluginNotificationsAPI;
+	maestro: PluginMaestroAPI;
+}
+
+/**
+ * Per-plugin runtime context managed by PluginHost.
+ */
+export interface PluginContext {
+	pluginId: string;
+	api: PluginAPI;
+	cleanup: () => void;
+	eventSubscriptions: Array<() => void>;
+}

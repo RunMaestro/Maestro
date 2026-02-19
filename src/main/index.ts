@@ -53,6 +53,7 @@ import {
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerWakatimeHandlers,
+	registerPluginHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -91,6 +92,8 @@ import {
 } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
+import { createPluginManager } from './plugin-manager';
+import { PluginHost } from './plugin-host';
 // Extracted modules (Phase 1 refactoring)
 import { parseParticipantSessionId } from './group-chat/session-parser';
 import { extractTextFromStreamJson } from './group-chat/output-parser';
@@ -367,6 +370,24 @@ app.whenReady().then(async () => {
 	// Set up process event listeners
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
+
+	// Initialize plugin system
+	logger.info('Initializing plugin system', 'Startup');
+	try {
+		const pluginManager = createPluginManager(app);
+		const pluginHost = new PluginHost({
+			getProcessManager: () => processManager,
+			getMainWindow: () => mainWindow,
+			settingsStore: store,
+			app,
+		});
+		pluginManager.setHost(pluginHost);
+		await pluginManager.initialize();
+		logger.info('Plugin system initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Failed to initialize plugin system: ${error}`, 'Startup');
+		logger.warn('Continuing without plugins - plugin features will be unavailable', 'Startup');
+	}
 
 	// Create main window
 	logger.info('Creating main window', 'Startup');
@@ -660,6 +681,9 @@ function setupIpcHandlers() {
 
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
+
+	// Register Plugin system IPC handlers
+	registerPluginHandlers({ app });
 }
 
 // Handle process output streaming (set up after initialization)
