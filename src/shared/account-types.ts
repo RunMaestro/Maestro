@@ -128,3 +128,30 @@ export const ACCOUNT_SWITCH_DEFAULTS: AccountSwitchConfig = {
 
 /** Default token window: 5 hours in milliseconds */
 export const DEFAULT_TOKEN_WINDOW_MS = 5 * 60 * 60 * 1000;
+
+import type { ToolType } from './types';
+
+/**
+ * Configuration for automated provider failover (Virtuosos vertical swapping).
+ * Stored in settings alongside account switch config.
+ */
+export interface ProviderSwitchConfig {
+	/** Whether auto-provider-failover is enabled */
+	enabled: boolean;
+	/** Whether to prompt user before auto-switching */
+	promptBeforeSwitch: boolean;
+	/** Consecutive error count threshold before suggesting failover */
+	errorThreshold: number;
+	/** Time window for error counting (ms) */
+	errorWindowMs: number;
+	/** Ordered list of fallback providers (tried in order) */
+	fallbackProviders: ToolType[];
+}
+
+export const DEFAULT_PROVIDER_SWITCH_CONFIG: ProviderSwitchConfig = {
+	enabled: false,
+	promptBeforeSwitch: true,
+	errorThreshold: 3,
+	errorWindowMs: 5 * 60 * 1000, // 5 minutes
+	fallbackProviders: [],
+};

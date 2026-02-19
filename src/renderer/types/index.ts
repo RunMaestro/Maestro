@@ -710,6 +710,18 @@ export interface Session {
 	accountId?: string;
 	/** Display name of the assigned account (for UI display without lookup) */
 	accountName?: string;
+
+	// Provider migration provenance (Virtuosos vertical swapping)
+	/** ID of the session this was migrated FROM (null if original) */
+	migratedFromSessionId?: string;
+	/** ID of the session this was migrated TO (set on source after switch) */
+	migratedToSessionId?: string;
+	/** Timestamp of the provider migration */
+	migratedAt?: number;
+	/** Whether this session was auto-archived after provider switch */
+	archivedByMigration?: boolean;
+	/** Migration generation counter (0 = original, increments with each switch) */
+	migrationGeneration?: number;
 }
 
 export interface AgentConfigOption {
