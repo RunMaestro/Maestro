@@ -121,6 +121,7 @@ export const SessionItem = memo(function SessionItem({
 					: isKeyboardSelected
 						? theme.colors.bgActivity + '40'
 						: 'transparent',
+				opacity: session.archivedByMigration ? 0.4 : undefined,
 			}}
 		>
 			{/* Left side: Session name and metadata */}
@@ -200,6 +201,16 @@ export const SessionItem = memo(function SessionItem({
 								{group.name}
 							</span>
 						)}
+					</div>
+				)}
+
+				{/* Migration archive indicator */}
+				{session.archivedByMigration && (
+					<div
+						className="text-[9px] truncate italic mt-0.5"
+						style={{ color: theme.colors.textDim }}
+					>
+						Provider switched — archived
 					</div>
 				)}
 			</div>
@@ -331,30 +342,34 @@ export const SessionItem = memo(function SessionItem({
 				{/* AI Status Indicator with Unread Badge - ml-auto ensures it aligns to right edge */}
 				<div className="relative ml-auto">
 					<div
-						className={`w-2 h-2 rounded-full ${session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
+						className={`w-2 h-2 rounded-full ${session.archivedByMigration ? '' : session.state === 'connecting' ? 'animate-pulse' : session.state === 'busy' || isInBatch ? 'animate-pulse' : ''}`}
 						style={
-							session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+							session.archivedByMigration
 								? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-								: {
-										backgroundColor: isInBatch
-											? theme.colors.warning
-											: getStatusColor(session.state, theme),
-									}
+								: session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+									? { border: `1.5px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
+									: {
+											backgroundColor: isInBatch
+												? theme.colors.warning
+												: getStatusColor(session.state, theme),
+										}
 						}
 						title={
-							session.toolType === 'claude-code' && !session.agentSessionId
-								? 'No active Claude session'
-								: session.state === 'idle'
-									? 'Ready and waiting'
-									: session.state === 'busy'
-										? session.cliActivity
-											? `CLI: Running playbook "${session.cliActivity.playbookName}"`
-											: 'Agent is thinking'
-										: session.state === 'connecting'
-											? 'Attempting to establish connection'
-											: session.state === 'error'
-												? 'No connection with agent'
-												: 'Waiting for input'
+							session.archivedByMigration
+								? 'Archived — provider switched'
+								: session.toolType === 'claude-code' && !session.agentSessionId
+									? 'No active Claude session'
+									: session.state === 'idle'
+										? 'Ready and waiting'
+										: session.state === 'busy'
+											? session.cliActivity
+												? `CLI: Running playbook "${session.cliActivity.playbookName}"`
+												: 'Agent is thinking'
+											: session.state === 'connecting'
+												? 'Attempting to establish connection'
+												: session.state === 'error'
+													? 'No connection with agent'
+													: 'Waiting for input'
 						}
 					/>
 					{/* Unread Notification Badge */}
