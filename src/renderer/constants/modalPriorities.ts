@@ -32,6 +32,9 @@ export const MODAL_PRIORITIES = {
 	/** Account switch confirmation modal - triggered by throttle/limit events */
 	ACCOUNT_SWITCH: 1005,
 
+	/** Provider switch modal - Virtuosos vertical swapping between agent types */
+	PROVIDER_SWITCH: 1003,
+
 	/** Confirmation dialogs - highest priority, always on top */
 	CONFIRM: 1000,
 
