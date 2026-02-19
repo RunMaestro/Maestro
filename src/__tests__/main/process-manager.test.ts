@@ -480,6 +480,59 @@ describe('process-manager.ts', () => {
 					shellEnvVars: undefined,
 				});
 			});
+
+			it('normalizes invalid terminal dimensions before spawning', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 999,
+					success: true,
+				});
+
+				processManager.spawnTerminalTab({
+					sessionId: 'terminal-with-invalid-size',
+					cwd: '/tmp',
+					cols: Number.POSITIVE_INFINITY,
+					rows: -5,
+				});
+
+				expect(spawnSpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessionId: 'terminal-with-invalid-size',
+						cols: 100,
+						rows: 30,
+					})
+				);
+			});
+
+			it('spawns SSH-backed terminal tabs when ssh config is provided', () => {
+				const spawnSpy = vi.spyOn(processManager, 'spawn').mockReturnValue({
+					pid: 123,
+					success: true,
+				});
+
+				processManager.spawnTerminalTab({
+					sessionId: 'ssh-terminal-tab',
+					cwd: '/tmp',
+					shell: 'zsh',
+					sshRemoteConfig: {
+						id: 'remote-1',
+						name: 'Remote',
+						host: 'example.com',
+						port: 22,
+						username: 'dev',
+						privateKeyPath: '~/.ssh/id_ed25519',
+						enabled: true,
+					},
+				});
+
+				expect(spawnSpy).toHaveBeenCalledWith(
+					expect.objectContaining({
+						sessionId: 'ssh-terminal-tab',
+						toolType: 'terminal',
+						command: 'ssh',
+						args: expect.arrayContaining(['-tt', 'dev@example.com', "zsh '-l' '-i'"]),
+					})
+				);
+			});
 		});
 
 		describe('spawn routing', () => {

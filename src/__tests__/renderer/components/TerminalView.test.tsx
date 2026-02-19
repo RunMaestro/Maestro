@@ -336,6 +336,55 @@ describe('TerminalView', () => {
 		});
 	});
 
+	it('uses per-tab shell and forwards session SSH config when spawning', async () => {
+		const callbacks = createCallbacks();
+		const session = createSession({
+			terminalTabs: [
+				{
+					id: 'tab-1',
+					name: null,
+					shellType: 'bash',
+					pid: 0,
+					cwd: '/workspace',
+					createdAt: Date.now(),
+					state: 'idle',
+				},
+			],
+			sessionSshRemoteConfig: {
+				enabled: true,
+				remoteId: 'remote-1',
+			},
+		});
+
+		const { root } = mount(
+			<TerminalView
+				session={session}
+				theme={theme}
+				fontFamily="Monaco"
+				defaultShell="zsh"
+				{...callbacks}
+			/>
+		);
+
+		await vi.waitFor(() => {
+			expect(spawnTerminalTab).toHaveBeenCalledWith({
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/workspace',
+				shell: 'bash',
+				shellArgs: undefined,
+				shellEnvVars: undefined,
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+		});
+
+		act(() => {
+			root.unmount();
+		});
+	});
+
 	it('refocuses the active terminal when the window regains focus', () => {
 		const callbacks = createCallbacks();
 		const session = createSession({

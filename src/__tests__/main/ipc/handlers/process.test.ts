@@ -331,6 +331,58 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawnTerminalTab).toHaveBeenCalledWith(config);
 			expect(result).toEqual({ pid: 4567, success: true });
 		});
+
+		it('should resolve and forward session SSH config for terminal tabs', async () => {
+			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 2222, success: true });
+			mockSettingsStore.get.mockImplementation((key, defaultValue) => {
+				if (key === 'sshRemotes') {
+					return [
+						{
+							id: 'remote-1',
+							name: 'Remote One',
+							host: 'example.com',
+							port: 22,
+							username: 'dev',
+							privateKeyPath: '~/.ssh/id_ed25519',
+							enabled: true,
+						},
+					];
+				}
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			const config = {
+				sessionId: 'ssh-terminal-tab',
+				cwd: '/test/project',
+				shell: '/bin/zsh',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			};
+
+			await handler!({} as any, config);
+
+			expect(mockProcessManager.spawnTerminalTab).toHaveBeenCalledWith({
+				sessionId: 'ssh-terminal-tab',
+				cwd: '/test/project',
+				shell: '/bin/zsh',
+				shellArgs: undefined,
+				shellEnvVars: undefined,
+				cols: undefined,
+				rows: undefined,
+				sshRemoteConfig: {
+					id: 'remote-1',
+					name: 'Remote One',
+					host: 'example.com',
+					port: 22,
+					username: 'dev',
+					privateKeyPath: '~/.ssh/id_ed25519',
+					enabled: true,
+				},
+			});
+		});
 	});
 
 	describe('process:spawn', () => {
@@ -1590,7 +1642,7 @@ describe('process IPC handlers', () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			vi.mocked(applyAgentConfigOverrides).mockReturnValue({
 				args: ['--print'],
-				modelSource: 'none',
+				modelSource: 'default',
 				customArgsSource: 'none',
 				customEnvSource: 'session',
 				effectiveCustomEnvVars: {

@@ -17,6 +17,8 @@ import { SshCommandRunner } from './runners/SshCommandRunner';
 import { logger } from '../utils/logger';
 import { getDefaultShell } from '../stores/defaults';
 import type { SshRemoteConfig } from '../../shared/types';
+import { expandTilde } from '../../shared/pathUtils';
+import { buildShellCommand } from '../utils/shell-escape';
 
 /**
  * ProcessManager orchestrates spawning and managing processes for sessions.
@@ -68,9 +70,56 @@ export class ProcessManager extends EventEmitter {
 		shellEnvVars?: Record<string, string>;
 		cols?: number;
 		rows?: number;
+		sshRemoteConfig?: SshRemoteConfig;
 	}): SpawnResult {
-		const { sessionId, cwd, shell, shellArgs, shellEnvVars, cols, rows } = config;
+		const { sessionId, cwd, shell, shellArgs, shellEnvVars, cols, rows, sshRemoteConfig } = config;
 		const terminalShell = shell || getDefaultShell();
+		const normalizedCols = this.normalizePtyDimension(cols, 100);
+		const normalizedRows = this.normalizePtyDimension(rows, 30);
+
+		if (sshRemoteConfig) {
+			const sshArgs: string[] = ['-tt'];
+
+			if (sshRemoteConfig.privateKeyPath && sshRemoteConfig.privateKeyPath.trim()) {
+				sshArgs.push('-i', expandTilde(sshRemoteConfig.privateKeyPath));
+			}
+
+			const sshOptions: Record<string, string> = {
+				BatchMode: 'yes',
+				StrictHostKeyChecking: 'accept-new',
+				ConnectTimeout: '10',
+				ClearAllForwardings: 'yes',
+				RequestTTY: 'force',
+				LogLevel: 'ERROR',
+			};
+			for (const [key, value] of Object.entries(sshOptions)) {
+				sshArgs.push('-o', `${key}=${value}`);
+			}
+
+			if (!sshRemoteConfig.useSshConfig || sshRemoteConfig.port !== 22) {
+				sshArgs.push('-p', sshRemoteConfig.port.toString());
+			}
+
+			if (sshRemoteConfig.username && sshRemoteConfig.username.trim()) {
+				sshArgs.push(`${sshRemoteConfig.username}@${sshRemoteConfig.host}`);
+			} else {
+				sshArgs.push(sshRemoteConfig.host);
+			}
+
+			const remoteShellArgs = ['-l', '-i', ...this.parseShellArgs(shellArgs)];
+			sshArgs.push(buildShellCommand(terminalShell, remoteShellArgs));
+
+			return this.spawn({
+				sessionId,
+				toolType: 'terminal',
+				cwd,
+				command: 'ssh',
+				args: sshArgs,
+				cols: normalizedCols,
+				rows: normalizedRows,
+				shellEnvVars,
+			});
+		}
 
 		return this.spawn({
 			sessionId,
@@ -78,11 +127,40 @@ export class ProcessManager extends EventEmitter {
 			cwd,
 			command: terminalShell,
 			args: [],
-			cols,
-			rows,
+			cols: normalizedCols,
+			rows: normalizedRows,
 			shell: terminalShell,
 			shellArgs,
 			shellEnvVars,
+		});
+	}
+
+	private normalizePtyDimension(value: number | undefined, fallback: number): number | undefined {
+		if (value === undefined) {
+			return undefined;
+		}
+
+		if (!Number.isFinite(value) || value <= 0) {
+			return fallback;
+		}
+
+		return Math.floor(value);
+	}
+
+	private parseShellArgs(shellArgs?: string): string[] {
+		if (!shellArgs || !shellArgs.trim()) {
+			return [];
+		}
+
+		const parsedArgs = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+		return parsedArgs.map((arg) => {
+			if (
+				(arg.startsWith('"') && arg.endsWith('"')) ||
+				(arg.startsWith("'") && arg.endsWith("'"))
+			) {
+				return arg.slice(1, -1);
+			}
+			return arg;
 		});
 	}
 

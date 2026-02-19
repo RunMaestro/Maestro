@@ -211,6 +211,11 @@ interface MaestroAPI {
 			shellEnvVars?: Record<string, string>;
 			cols?: number;
 			rows?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
 		}) => Promise<{ pid: number; success: boolean }>;
 		write: (sessionId: string, data: string) => Promise<boolean>;
 		interrupt: (sessionId: string) => Promise<boolean>;

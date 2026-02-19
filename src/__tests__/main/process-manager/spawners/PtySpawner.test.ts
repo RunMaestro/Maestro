@@ -34,10 +34,12 @@ vi.mock('../../../../main/utils/terminalFilter', () => ({
 
 vi.mock('../../../../main/process-manager/utils/envBuilder', () => ({
 	buildPtyTerminalEnv: vi.fn(() => ({ TERM: 'xterm-256color' })),
+	buildChildProcessEnv: vi.fn(() => ({ TERM: 'xterm-256color' })),
 }));
 
 import { PtySpawner } from '../../../../main/process-manager/spawners/PtySpawner';
 import type { ManagedProcess, ProcessConfig } from '../../../../main/process-manager/types';
+import { logger } from '../../../../main/utils/logger';
 
 function createMockPtyProcess() {
 	onDataHandler = undefined;
@@ -142,5 +144,53 @@ describe('PtySpawner', () => {
 			'filtered:agent output'
 		);
 		expect(emitted).toEqual([]);
+	});
+
+	it('normalizes invalid PTY dimensions before spawning', () => {
+		const { spawner } = createTestContext();
+
+		spawner.spawn(
+			createBaseConfig({
+				shell: 'zsh',
+				cols: Number.NaN,
+				rows: -10,
+			})
+		);
+
+		expect(mockPtySpawn).toHaveBeenCalledWith(
+			'zsh',
+			['-l', '-i'],
+			expect.objectContaining({ cols: 100, rows: 30 })
+		);
+	});
+
+	it('uses explicit terminal command args without appending login flags', () => {
+		const { spawner } = createTestContext();
+
+		spawner.spawn(
+			createBaseConfig({
+				command: 'ssh',
+				args: ['-tt', 'user@host', "zsh '-l' '-i'"],
+			})
+		);
+
+		expect(mockPtySpawn).toHaveBeenCalledWith(
+			'ssh',
+			['-tt', 'user@host', "zsh '-l' '-i'"],
+			expect.any(Object)
+		);
+	});
+
+	it('logs only terminal data metadata in PTY onData events', () => {
+		const { spawner } = createTestContext();
+
+		spawner.spawn(createBaseConfig({ sessionId: 'metadata-session' }));
+		onDataHandler?.('terminal output');
+
+		expect(logger.debug).toHaveBeenCalledWith('[ProcessManager] PTY onData', 'ProcessManager', {
+			sessionId: 'metadata-session',
+			pid: 4242,
+			dataLength: 'terminal output'.length,
+		});
 	});
 });

@@ -74,7 +74,20 @@ export interface ProcessHandlerDependencies {
 export function registerProcessHandlers(deps: ProcessHandlerDependencies): void {
 	const { getProcessManager, getAgentDetector, agentConfigsStore, settingsStore, getMainWindow } =
 		deps;
-	type SpawnTerminalTabConfig = Parameters<ProcessManager['spawnTerminalTab']>[0];
+	type SpawnTerminalTabConfig = {
+		sessionId: string;
+		cwd: string;
+		shell?: string;
+		shellArgs?: string;
+		shellEnvVars?: Record<string, string>;
+		cols?: number;
+		rows?: number;
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		};
+	};
 
 	// Spawn a new process for a session
 	// Supports agent-specific argument builders for batch mode, JSON output, resume, read-only mode, YOLO mode
@@ -568,12 +581,35 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		'process:spawnTerminalTab',
 		withIpcErrorLogging(handlerOpts('spawnTerminalTab'), async (config: SpawnTerminalTabConfig) => {
 			const processManager = requireProcessManager(getProcessManager);
+			let sshRemoteConfig: SshRemoteConfig | null = null;
+
+			if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig?.remoteId) {
+				const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
+				const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+					sessionSshConfig: config.sessionSshRemoteConfig,
+				});
+
+				if (sshResult.config) {
+					sshRemoteConfig = sshResult.config;
+				}
+			}
+
 			logger.info('Spawning terminal tab', LOG_CONTEXT, {
 				sessionId: config.sessionId,
 				cwd: config.cwd,
+				sshRemote: sshRemoteConfig?.name || null,
 			});
 
-			return processManager.spawnTerminalTab(config);
+			return processManager.spawnTerminalTab({
+				sessionId: config.sessionId,
+				cwd: config.cwd,
+				shell: config.shell,
+				shellArgs: config.shellArgs,
+				shellEnvVars: config.shellEnvVars,
+				cols: config.cols,
+				rows: config.rows,
+				...(sshRemoteConfig ? { sshRemoteConfig } : {}),
+			});
 		})
 	);
 

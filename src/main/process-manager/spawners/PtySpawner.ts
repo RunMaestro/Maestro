@@ -17,6 +17,14 @@ export class PtySpawner {
 		private bufferManager: DataBufferManager
 	) {}
 
+	private normalizeDimension(value: number | undefined, fallback: number): number {
+		if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+			return fallback;
+		}
+
+		return Math.floor(value);
+	}
+
 	/**
 	 * Spawn a PTY process for a session
 	 */
@@ -37,39 +45,46 @@ export class PtySpawner {
 
 		const isTerminal = toolType === 'terminal';
 		const isWindows = process.platform === 'win32';
+		const normalizedCols = this.normalizeDimension(cols, 100);
+		const normalizedRows = this.normalizeDimension(rows, 30);
 
 		try {
 			let ptyCommand: string;
 			let ptyArgs: string[];
 
 			if (isTerminal) {
-				// Full shell emulation for terminal mode
-				if (shell) {
-					ptyCommand = shell;
+				if (args.length > 0) {
+					ptyCommand = command;
+					ptyArgs = [...args];
 				} else {
-					ptyCommand = isWindows ? 'powershell.exe' : 'bash';
-				}
+					// Full shell emulation for terminal mode
+					if (shell) {
+						ptyCommand = shell;
+					} else {
+						ptyCommand = isWindows ? 'powershell.exe' : 'bash';
+					}
 
-				// Use -l (login) AND -i (interactive) flags for fully configured shell
-				ptyArgs = isWindows ? [] : ['-l', '-i'];
+					// Use -l (login) AND -i (interactive) flags for fully configured shell
+					ptyArgs = isWindows ? [] : ['-l', '-i'];
 
-				// Append custom shell arguments from user configuration
-				if (shellArgs && shellArgs.trim()) {
-					const customShellArgsArray = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-					const cleanedArgs = customShellArgsArray.map((arg) => {
-						if (
-							(arg.startsWith('"') && arg.endsWith('"')) ||
-							(arg.startsWith("'") && arg.endsWith("'"))
-						) {
-							return arg.slice(1, -1);
-						}
-						return arg;
-					});
-					if (cleanedArgs.length > 0) {
-						logger.debug('Appending custom shell args', 'ProcessManager', {
-							shellArgs: cleanedArgs,
+					// Append custom shell arguments from user configuration
+					if (shellArgs && shellArgs.trim()) {
+						const customShellArgsArray = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+						const cleanedArgs = customShellArgsArray.map((arg) => {
+							if (
+								(arg.startsWith('"') && arg.endsWith('"')) ||
+								(arg.startsWith("'") && arg.endsWith("'"))
+							) {
+								return arg.slice(1, -1);
+							}
+							return arg;
 						});
-						ptyArgs = [...ptyArgs, ...cleanedArgs];
+						if (cleanedArgs.length > 0) {
+							logger.debug('Appending custom shell args', 'ProcessManager', {
+								shellArgs: cleanedArgs,
+							});
+							ptyArgs = [...ptyArgs, ...cleanedArgs];
+						}
 					}
 				}
 			} else {
@@ -105,8 +120,8 @@ export class PtySpawner {
 
 			const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {
 				name: 'xterm-256color',
-				cols: cols ?? 100,
-				rows: rows ?? 30,
+				cols: normalizedCols,
+				rows: normalizedRows,
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});
@@ -131,7 +146,7 @@ export class PtySpawner {
 					logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
 						sessionId,
 						pid: ptyProcess.pid,
-						dataPreview: data.substring(0, 100),
+						dataLength: data.length,
 					});
 					this.emitter.emit('data', sessionId, data);
 					return;
@@ -143,7 +158,7 @@ export class PtySpawner {
 				logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
 					sessionId,
 					pid: ptyProcess.pid,
-					dataPreview: cleanedData.substring(0, 100),
+					dataLength: cleanedData.length,
 				});
 				// Only emit if there's actual content after filtering
 				if (cleanedData.trim()) {

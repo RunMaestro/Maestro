@@ -61,6 +61,11 @@ export interface SpawnTerminalTabConfig {
 	shellEnvVars?: Record<string, string>;
 	cols?: number;
 	rows?: number;
+	sessionSshRemoteConfig?: {
+		enabled: boolean;
+		remoteId: string | null;
+		workingDirOverride?: string;
+	};
 }
 
 /**

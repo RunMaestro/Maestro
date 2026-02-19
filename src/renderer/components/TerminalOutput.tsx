@@ -1144,7 +1144,7 @@ export const TerminalOutput = memo(
 						operation: 'copyToClipboard',
 					},
 				});
-				throw err;
+				return;
 			}
 		}, []);
 

@@ -138,13 +138,17 @@ export const TerminalView = memo(
 				}
 
 				const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+				const tabShell = tab.shellType ?? defaultShell;
 				try {
 					const result = await window.maestro.process.spawnTerminalTab({
 						sessionId: terminalSessionId,
 						cwd: tab.cwd || session.cwd,
-						shell: defaultShell,
+						shell: tabShell,
 						shellArgs,
 						shellEnvVars,
+						...(session.sessionSshRemoteConfig
+							? { sessionSshRemoteConfig: session.sessionSshRemoteConfig }
+							: {}),
 					});
 
 					if (result.success && result.pid > 0) {
@@ -179,9 +183,10 @@ export const TerminalView = memo(
 							tabId: tab.id,
 							terminalSessionId,
 							cwd: tab.cwd || session.cwd,
-							shell: defaultShell,
+							shell: tabShell,
 							hasShellArgs: Boolean(shellArgs),
 							hasShellEnvVars: Boolean(shellEnvVars && Object.keys(shellEnvVars).length > 0),
+							hasSessionSshRemoteConfig: Boolean(session.sessionSshRemoteConfig),
 						},
 					});
 
@@ -197,6 +202,7 @@ export const TerminalView = memo(
 				getLatestTab,
 				session.id,
 				session.cwd,
+				session.sessionSshRemoteConfig,
 				defaultShell,
 				shellArgs,
 				shellEnvVars,
