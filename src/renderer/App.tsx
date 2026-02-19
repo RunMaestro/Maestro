@@ -61,6 +61,9 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const PluginManagerModal = lazy(() =>
+	import('./components/PluginManager').then((m) => ({ default: m.PluginManager }))
+);
 
 // Re-import the type for SymphonyContributionData (types don't need lazy loading)
 import type { SymphonyContributionData } from './components/SymphonyModal';
@@ -133,6 +136,7 @@ import {
 import type { TabCompletionSuggestion } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { usePluginRegistry } from './hooks/usePluginRegistry';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -380,7 +384,13 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Plugin Manager Modal
+		pluginManagerOpen,
+		setPluginManagerOpen,
 	} = useModalActions();
+
+	// --- PLUGIN REGISTRY ---
+	const pluginRegistry = usePluginRegistry();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
@@ -8248,6 +8258,21 @@ You are taking over this conversation. Based on the context above, provide a bri
 					</Suspense>
 				)}
 
+				{/* --- PLUGIN MANAGER MODAL (lazy-loaded) --- */}
+				{pluginManagerOpen && (
+					<Suspense fallback={null}>
+						<PluginManagerModal
+							theme={theme}
+							plugins={pluginRegistry.plugins}
+							loading={pluginRegistry.loading}
+							onClose={() => setPluginManagerOpen(false)}
+							onEnablePlugin={pluginRegistry.enablePlugin}
+							onDisablePlugin={pluginRegistry.disablePlugin}
+							onRefresh={pluginRegistry.refreshPlugins}
+						/>
+					</Suspense>
+				)}
+
 				{/* --- GIST PUBLISH MODAL --- */}
 				{/* Supports both file preview tabs and tab context gist publishing */}
 				{gistPublishModalOpen && (activeFileTab || tabGistContent) && (
@@ -8541,7 +8566,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
 				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
 					<ErrorBoundary>
-						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+						<RightPanel ref={rightPanelRef} {...rightPanelProps} pluginTabs={pluginRegistry.getPluginTabs()} pluginList={pluginRegistry.plugins} />
 					</ErrorBoundary>
 				)}
 
@@ -8628,6 +8653,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							hasNoAgents={hasNoAgents}
 							onThemeImportError={(msg) => setFlashNotification(msg)}
 							onThemeImportSuccess={(msg) => setFlashNotification(msg)}
+							onOpenPluginManager={() => setPluginManagerOpen(true)}
 						/>
 					</Suspense>
 				)}

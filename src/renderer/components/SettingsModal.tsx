@@ -36,6 +36,7 @@ import {
 	ArrowDownToLine,
 	Clapperboard,
 	HelpCircle,
+	Puzzle,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -361,6 +362,7 @@ interface SettingsModalProps {
 	hasNoAgents?: boolean;
 	onThemeImportError?: (message: string) => void;
 	onThemeImportSuccess?: (message: string) => void;
+	onOpenPluginManager?: () => void;
 }
 
 export const SettingsModal = memo(function SettingsModal(props: SettingsModalProps) {
@@ -2438,6 +2440,30 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									)}
 								</div>
 							</div>
+
+							{/* Plugins */}
+							{props.onOpenPluginManager && (
+								<div>
+									<label className="block text-xs font-bold opacity-70 uppercase mb-1 flex items-center gap-2">
+										<Puzzle className="w-3 h-3" />
+										Plugins
+									</label>
+									<p className="text-xs opacity-50 mb-2">
+										Manage installed plugins, enable/disable them, and configure permissions.
+									</p>
+									<button
+										onClick={() => {
+											props.onOpenPluginManager?.();
+											onClose();
+										}}
+										className="flex items-center gap-2 px-3 py-2 rounded border text-sm hover:bg-white/5 transition-colors"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									>
+										<Puzzle className="w-4 h-4" style={{ color: theme.colors.accent }} />
+										Open Plugin Manager
+									</button>
+								</div>
+							)}
 						</div>
 					)}
 

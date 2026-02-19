@@ -206,6 +206,9 @@ export const MODAL_PRIORITIES = {
 	/** SSH Remote configuration modal (above settings) */
 	SSH_REMOTE: 460,
 
+	/** Plugin Manager modal */
+	PLUGIN_MANAGER: 455,
+
 	/** Settings modal */
 	SETTINGS: 450,
 

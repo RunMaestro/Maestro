@@ -308,7 +308,7 @@ export class PluginHost {
 				if (!db) {
 					throw new Error('Stats database not available');
 				}
-				return db.getAggregation(range as any);
+				return db.getAggregatedStats(range as any);
 			},
 
 			onStatsUpdate: (callback) => {

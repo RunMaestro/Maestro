@@ -127,7 +127,8 @@ export function registerPluginHandlers(deps: PluginHandlerDependencies): void {
 			if (!ipcBridge) {
 				throw new Error('Plugin IPC bridge not initialized');
 			}
-			return ipcBridge.invoke(pluginId, channel, ...args);
+			const result = await ipcBridge.invoke(pluginId, channel, ...args);
+			return { result } as Record<string, unknown>;
 		})
 	);
 
@@ -141,6 +142,7 @@ export function registerPluginHandlers(deps: PluginHandlerDependencies): void {
 				throw new Error('Plugin IPC bridge not initialized');
 			}
 			ipcBridge.send(pluginId, channel, ...args);
+			return {} as Record<string, unknown>;
 		})
 	);
 

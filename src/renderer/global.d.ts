@@ -2704,6 +2704,19 @@ interface MaestroAPI {
 		checkCli: () => Promise<{ available: boolean; version?: string }>;
 		validateApiKey: (key: string) => Promise<{ valid: boolean }>;
 	};
+
+	// Plugin system API
+	plugins: {
+		getAll: () => Promise<import('../shared/plugin-types').LoadedPlugin[]>;
+		enable: (id: string) => Promise<void>;
+		disable: (id: string) => Promise<void>;
+		getDir: () => Promise<string>;
+		refresh: () => Promise<void>;
+		bridge: {
+			invoke: (pluginId: string, channel: string, ...args: unknown[]) => Promise<unknown>;
+			send: (pluginId: string, channel: string, ...args: unknown[]) => void;
+		};
+	};
 }
 
 declare global {
