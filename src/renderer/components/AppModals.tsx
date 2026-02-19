@@ -428,6 +428,7 @@ export interface AppSessionModalsProps {
 		}
 	) => void;
 	editAgentSession: Session | null;
+	onSwitchProviderFromEdit?: () => void; // Opens SwitchProviderModal (Virtuosos)
 
 	// RenameSessionModal
 	renameSessionModalOpen: boolean;
@@ -471,6 +472,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 	onCloseEditAgentModal,
 	onSaveEditAgent,
 	editAgentSession,
+	onSwitchProviderFromEdit,
 	// RenameSessionModal
 	renameSessionModalOpen,
 	renameSessionValue,
@@ -518,6 +520,7 @@ export const AppSessionModals = memo(function AppSessionModals({
 					theme={theme}
 					session={editAgentSession}
 					existingSessions={existingSessions}
+					onSwitchProvider={onSwitchProviderFromEdit}
 				/>
 			)}
 
@@ -1892,6 +1895,7 @@ export interface AppModalsProps {
 		}
 	) => void;
 	editAgentSession: Session | null;
+	onSwitchProviderFromEdit?: () => void; // Opens SwitchProviderModal (Virtuosos)
 	renameSessionValue: string;
 	setRenameSessionValue: (value: string) => void;
 	onCloseRenameSessionModal: () => void;
@@ -2278,6 +2282,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onCloseEditAgentModal,
 		onSaveEditAgent,
 		editAgentSession,
+		onSwitchProviderFromEdit,
 		renameSessionValue,
 		setRenameSessionValue,
 		onCloseRenameSessionModal,
@@ -2557,6 +2562,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onCloseEditAgentModal={onCloseEditAgentModal}
 				onSaveEditAgent={onSaveEditAgent}
 				editAgentSession={editAgentSession}
+				onSwitchProviderFromEdit={onSwitchProviderFromEdit}
 				renameSessionModalOpen={renameSessionModalOpen}
 				renameSessionValue={renameSessionValue}
 				setRenameSessionValue={setRenameSessionValue}

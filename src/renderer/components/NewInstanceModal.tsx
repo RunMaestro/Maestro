@@ -76,6 +76,7 @@ interface EditAgentModalProps {
 	theme: any;
 	session: Session | null;
 	existingSessions: Session[];
+	onSwitchProvider?: () => void; // Opens SwitchProviderModal (Virtuosos)
 }
 
 // Supported agents that are fully implemented
@@ -1232,6 +1233,7 @@ export function EditAgentModal({
 	theme,
 	session,
 	existingSessions,
+	onSwitchProvider,
 }: EditAgentModalProps) {
 	const [instanceName, setInstanceName] = useState('');
 	const [nudgeMessage, setNudgeMessage] = useState('');

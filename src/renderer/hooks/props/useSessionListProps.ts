@@ -96,6 +96,7 @@ export interface UseSessionListPropsDeps {
 	handleDeleteWorktreeSession: (session: Session) => void;
 	handleToggleWorktreeExpanded: (sessionId: string) => void;
 	handleConfigureCue: (session: Session) => void;
+	handleSwitchProvider?: (sessionId: string) => void;
 	openWizardModal: () => void;
 	handleStartTour: () => void;
 
@@ -180,6 +181,21 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfigSession,
 			onDeleteWorktree: deps.handleDeleteWorktreeSession,
 			onConfigureCue: deps.handleConfigureCue,
+
+			// Provider switching (Virtuosos)
+			onSwitchProvider: deps.handleSwitchProvider,
+
+			// Auto mode
+			activeBatchSessionIds: deps.activeBatchSessionIds,
+
+			// Session jump shortcuts
+			showSessionJumpNumbers: deps.showSessionJumpNumbers,
+			visibleSessions: deps.visibleSessions,
+
+			// Achievement system
+			autoRunStats: deps.autoRunStats,
+
+			// Wizard
 			openWizard: deps.openWizardModal,
 			startTour: deps.handleStartTour,
 
@@ -259,6 +275,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleDeleteWorktreeSession,
 			deps.handleConfigureCue,
 			deps.handleToggleWorktreeExpanded,
+			deps.handleSwitchProvider,
 			deps.openWizardModal,
 			deps.handleStartTour,
 			deps.handleOpenGroupChat,
