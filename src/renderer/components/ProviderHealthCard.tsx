@@ -33,6 +33,7 @@ export interface ProviderHealthCardProps {
 	failoverThreshold: number;
 	healthPercent: number;
 	status: HealthStatus;
+	onSelect?: () => void;
 }
 
 // ============================================================================
@@ -119,6 +120,7 @@ export function ProviderHealthCard({
 	failoverThreshold,
 	healthPercent,
 	status,
+	onSelect,
 }: ProviderHealthCardProps) {
 	const errorCount = errorStats?.totalErrorsInWindow ?? 0;
 	const windowMs = 5 * 60 * 1000; // Default 5m window display
@@ -142,7 +144,9 @@ export function ProviderHealthCard({
 				minHeight: 160,
 				display: 'flex',
 				flexDirection: 'column',
+				cursor: onSelect ? 'pointer' : undefined,
 			}}
+			onClick={onSelect}
 			onMouseEnter={(e) => {
 				e.currentTarget.style.boxShadow = `0 2px 8px ${theme.colors.border}80`;
 			}}
@@ -264,7 +268,8 @@ export function ProviderHealthCard({
 			<div
 				style={{
 					display: 'flex',
-					justifyContent: 'flex-end',
+					justifyContent: 'space-between',
+					alignItems: 'center',
 					marginTop: 2,
 				}}
 			>
@@ -276,6 +281,21 @@ export function ProviderHealthCard({
 				>
 					{status === 'not_installed' ? 'N/A' : `${Math.round(healthPercent)}%`}
 				</span>
+				{onSelect && (
+					<span
+						style={{
+							color: theme.colors.accent,
+							fontSize: 10,
+							cursor: 'pointer',
+						}}
+						onClick={(e) => {
+							e.stopPropagation();
+							onSelect();
+						}}
+					>
+						Details →
+					</span>
+				)}
 			</div>
 		</div>
 	);

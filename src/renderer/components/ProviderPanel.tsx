@@ -24,6 +24,7 @@ import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../../shared/account-types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { getAgentDisplayName } from '../services/contextGroomer';
 import { ProviderHealthCard } from './ProviderHealthCard';
+import { ProviderDetailView } from './ProviderDetailView';
 import { useProviderHealth } from '../hooks/useProviderHealth';
 import { formatTokenCount } from '../hooks/useAccountUsage';
 
@@ -114,6 +115,7 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 	} = useProviderHealth(sessions);
 	const [config, setConfig] = useState<ProviderSwitchConfig>(DEFAULT_PROVIDER_SWITCH_CONFIG);
 	const [showMoreHistory, setShowMoreHistory] = useState(false);
+	const [selectedProvider, setSelectedProvider] = useState<ToolType | null>(null);
 
 	// ── Load failover config ────────────────────────────────────────────
 	useEffect(() => {
@@ -220,6 +222,25 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 	const timeRangeLabel = TIME_RANGE_OPTIONS.find((o) => o.value === timeRange)?.label?.toLowerCase() ?? 'today';
 
 	// ── Render ───────────────────────────────────────────────────────────
+
+	// Detail view for a selected provider
+	if (selectedProvider) {
+		return (
+			<div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 4 }}>
+				<div style={sectionStyle}>
+					<ProviderDetailView
+						theme={theme}
+						toolType={selectedProvider}
+						sessions={sessions}
+						timeRange={timeRange}
+						setTimeRange={setTimeRange}
+						onBack={() => setSelectedProvider(null)}
+					/>
+				</div>
+			</div>
+		);
+	}
+
 	return (
 		<div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: 4 }}>
 			{/* Provider Health Dashboard */}
@@ -324,6 +345,7 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 								failoverThreshold={failoverThreshold}
 								healthPercent={provider.healthPercent}
 								status={provider.status}
+								onSelect={() => setSelectedProvider(provider.toolType)}
 							/>
 						))}
 						{healthProviders.length === 0 && (
