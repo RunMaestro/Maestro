@@ -190,6 +190,7 @@ function ModelTextInput({
 										setShowDropdown(false);
 										setFilterText('');
 										setIsFiltering(false);
+										onBlur();
 									}}
 									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
 									style={{
