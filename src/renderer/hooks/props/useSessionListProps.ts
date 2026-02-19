@@ -100,7 +100,7 @@ export interface UseSessionListPropsDeps {
 	setDuplicatingSessionId: (id: string | null) => void;
 	setGroupChatsExpanded: (expanded: boolean) => void;
 	setQuickActionOpen: (open: boolean) => void;
-	setVirtuososOpen: (open: boolean) => void;
+	setVirtuososOpen?: (open: boolean) => void;
 
 	// Handlers (should be memoized with useCallback)
 	toggleGlobalLive: () => void;

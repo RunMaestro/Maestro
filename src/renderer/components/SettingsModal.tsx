@@ -35,6 +35,7 @@ import {
 	User,
 	ArrowDownToLine,
 	Clapperboard,
+	Users,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -3316,6 +3317,41 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									</div>
 									);
 								})()}
+							</div>
+
+							{/* Virtuosos Feature Section */}
+							<div
+								className="rounded-lg border"
+								style={{
+									borderColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border,
+									backgroundColor: encoreFeatures.virtuosos ? `${theme.colors.accent}08` : 'transparent',
+								}}
+							>
+								<button
+									className="w-full flex items-center justify-between p-4 text-left"
+									onClick={() => setEncoreFeatures({ ...encoreFeatures, virtuosos: !encoreFeatures.virtuosos })}
+								>
+									<div className="flex items-center gap-3">
+										<Users className="w-5 h-5" style={{ color: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.textDim }} />
+										<div>
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Virtuosos
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												Multi-account multiplexing for AI provider rate limits
+											</div>
+										</div>
+									</div>
+									<div
+										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.virtuosos ? '' : 'opacity-50'}`}
+										style={{ backgroundColor: encoreFeatures.virtuosos ? theme.colors.accent : theme.colors.border }}
+									>
+										<div
+											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+											style={{ transform: encoreFeatures.virtuosos ? 'translateX(22px)' : 'translateX(2px)' }}
+										/>
+									</div>
+								</button>
 							</div>
 						</div>
 					)}

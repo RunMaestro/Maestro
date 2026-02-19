@@ -136,6 +136,7 @@ import { useAgentListeners } from './hooks/agent/useAgentListeners';
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
 import { useNotificationStore, notifyToast } from './stores/notificationStore';
+import { useSettingsStore } from './stores/settingsStore';
 import { useModalActions, useModalStore } from './stores/modalStore';
 import { GitStatusProvider } from './contexts/GitStatusContext';
 import { InputProvider, useInputContext } from './contexts/InputContext';
@@ -1243,7 +1244,7 @@ function MaestroConsoleInner() {
 
 					// Reconcile account assignments after session restore (ACCT-MUX-13)
 					// This validates accounts still exist and updates customEnvVars accordingly
-					try {
+					if (useSettingsStore.getState().encoreFeatures.virtuosos) try {
 						const activeIds = restoredSessions.map(s => s.id);
 						const reconciliation = await window.maestro.accounts.reconcileSessions(activeIds);
 						if (reconciliation.success && reconciliation.corrections.length > 0) {
@@ -1606,6 +1607,7 @@ function MaestroConsoleInner() {
 
 	// Subscribe to account limit warning/reached events for toast notifications
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubWarning = window.maestro.accounts.onLimitWarning((data) => {
 			notifyToast({
 				type: 'warning',
@@ -1628,10 +1630,11 @@ function MaestroConsoleInner() {
 			unsubWarning();
 			unsubReached();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account recovery events for auto-resume of paused Auto Runs
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
 			notifyToast({
 				type: 'success',
@@ -1673,10 +1676,11 @@ function MaestroConsoleInner() {
 		});
 
 		return () => unsubRecovery();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to all-accounts-exhausted throttle events for Auto Run pause
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubThrottled = window.maestro.accounts.onThrottled((data) => {
 			if (!data.noAlternatives) return; // Only handle the exhausted case
 
@@ -1703,10 +1707,11 @@ function MaestroConsoleInner() {
 		});
 
 		return () => unsubThrottled();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account assignment events (update session state when main process assigns an account)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
 			setSessions((prev) =>
 				prev.map(s => {
@@ -1716,10 +1721,11 @@ function MaestroConsoleInner() {
 			);
 		});
 		return () => unsubAssigned();
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account switch events (respawn agent with new account after switch)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
 			const { sessionId: switchSessionId, toAccountId, toAccountName, configDir, lastPrompt, reason } = data;
 
@@ -1837,10 +1843,11 @@ function MaestroConsoleInner() {
 			unsubSwitchFailed();
 			unsubSwitchExecute();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account switch prompt events (user confirmation needed)
 	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
 		const unsubSwitchPrompt = window.maestro.accounts.onSwitchPrompt((data: any) => {
 			setSwitchPromptData({
 				sessionId: data.sessionId,
@@ -1867,7 +1874,7 @@ function MaestroConsoleInner() {
 			unsubSwitchPrompt();
 			unsubSwitchCompleted();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
 
 	// Keyboard navigation state
 	// Note: selectedSidebarIndex/setSelectedSidebarIndex are destructured from useUIStore() above
@@ -5666,7 +5673,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 			};
 
 			// Pre-assign account for Claude Code sessions if accounts are configured
-			if (newSession.toolType === 'claude-code') {
+			if (encoreFeatures.virtuosos && newSession.toolType === 'claude-code') {
 				try {
 					const defaultAccount = await window.maestro.accounts.getDefault() as { id: string; name: string } | null;
 					if (defaultAccount) {
@@ -8577,7 +8584,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setDuplicatingSessionId,
 		setGroupChatsExpanded,
 		setQuickActionOpen,
-		setVirtuososOpen,
+		setVirtuososOpen: encoreFeatures.virtuosos ? setVirtuososOpen : undefined,
 
 		// Handlers
 		toggleGlobalLive,
@@ -9547,7 +9554,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				)}
 
 				{/* Account Switch Confirmation Modal */}
-				{switchPromptData && (
+				{encoreFeatures.virtuosos && switchPromptData && (
 					<AccountSwitchModal
 						theme={theme}
 						isOpen={true}
@@ -9571,12 +9578,14 @@ You are taking over this conversation. Based on the context above, provide a bri
 				)}
 
 				{/* Virtuosos Modal */}
-				<VirtuososModal
-					isOpen={virtuososOpen}
-					onClose={() => setVirtuososOpen(false)}
-					theme={theme}
-					sessions={sessions}
-				/>
+				{encoreFeatures.virtuosos && (
+					<VirtuososModal
+						isOpen={virtuososOpen}
+						onClose={() => setVirtuososOpen(false)}
+						theme={theme}
+						sessions={sessions}
+					/>
+				)}
 
 				{/* --- EMPTY STATE VIEW (when no sessions) --- */}
 				{sessions.length === 0 && !isMobileLandscape ? (
