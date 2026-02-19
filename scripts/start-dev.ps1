@@ -15,7 +15,7 @@ Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdRenderer
 Write-Host "Waiting for renderer dev server to start..." -ForegroundColor Yellow
 Start-Sleep -Seconds 5
 
-$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; npm run build:prompts; npx tsc -p tsconfig.main.json; npm run build:preload; `$env:NODE_ENV='development'; npx electron ."
+$cmdBuild = "Set-Location -LiteralPath '$repoRootEscaped'; npm run build:prompts; npx tsc -p tsconfig.main.json; npm run build:encores; npm run build:preload; `$env:NODE_ENV='development'; npx electron ."
 Start-Process powershell -ArgumentList '-NoExit', '-Command', $cmdBuild
 
 Write-Host "Launched renderer and main developer windows." -ForegroundColor Green

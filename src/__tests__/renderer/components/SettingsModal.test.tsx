@@ -466,7 +466,7 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Start on Encore Features tab (last tab)
+			// Start on Encore tab (last tab)
 			expect(screen.getByText('Encore Features', { selector: 'h3' })).toBeInTheDocument();
 
 			// Press Cmd+Shift+] to wrap to general
@@ -490,7 +490,7 @@ describe('SettingsModal', () => {
 			// Start on general tab (first tab)
 			expect(screen.getByText('Default Terminal Shell')).toBeInTheDocument();
 
-			// Press Cmd+Shift+[ to wrap to Encore Features (last tab)
+			// Press Cmd+Shift+[ to wrap to Encore (last tab)
 			fireEvent.keyDown(window, { key: '[', metaKey: true, shiftKey: true });
 
 			await act(async () => {

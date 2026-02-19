@@ -61,7 +61,6 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
-
 // Re-import the type for SymphonyContributionData (types don't need lazy loading)
 import type { SymphonyContributionData } from './components/SymphonyModal';
 
@@ -133,6 +132,7 @@ import {
 import type { TabCompletionSuggestion } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
+import { useEncoreRegistry } from './hooks/useEncoreRegistry';
 
 // Import contexts
 import { useLayerStack } from './contexts/LayerStackContext';
@@ -381,6 +381,9 @@ function MaestroConsoleInner() {
 		directorNotesOpen,
 		setDirectorNotesOpen,
 	} = useModalActions();
+
+	// --- PLUGIN REGISTRY ---
+	const encoreRegistry = useEncoreRegistry();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
 	const isMobileLandscape = useMobileLandscape();
@@ -8541,7 +8544,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 				{/* --- RIGHT PANEL (hidden in mobile landscape, when no sessions, group chat is active, or log viewer is open) --- */}
 				{!isMobileLandscape && sessions.length > 0 && !activeGroupChatId && !logViewerOpen && (
 					<ErrorBoundary>
-						<RightPanel ref={rightPanelRef} {...rightPanelProps} />
+						<RightPanel ref={rightPanelRef} {...rightPanelProps} encoreTabs={encoreRegistry.getEncoreTabs()} encoreList={encoreRegistry.encores} />
 					</ErrorBoundary>
 				)}
 
@@ -8628,6 +8631,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 							hasNoAgents={hasNoAgents}
 							onThemeImportError={(msg) => setFlashNotification(msg)}
 							onThemeImportSuccess={(msg) => setFlashNotification(msg)}
+							encoreRegistry={encoreRegistry}
 						/>
 					</Suspense>
 				)}

@@ -53,6 +53,7 @@ import {
 	registerAgentErrorHandlers,
 	registerDirectorNotesHandlers,
 	registerWakatimeHandlers,
+	registerEncoreHandlers,
 	setupLoggerEventForwarding,
 	cleanupAllGroomingSessions,
 	getActiveGroomingSessionCount,
@@ -91,6 +92,9 @@ import {
 } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
+import { createEncoreManager } from './encore-manager';
+import { EncoreHost } from './encore-host';
+import { EncoreIpcBridge } from './encore-ipc-bridge';
 // Extracted modules (Phase 1 refactoring)
 import { parseParticipantSessionId } from './group-chat/session-parser';
 import { extractTextFromStreamJson } from './group-chat/output-parser';
@@ -241,6 +245,7 @@ let mainWindow: BrowserWindow | null = null;
 let processManager: ProcessManager | null = null;
 let webServer: WebServer | null = null;
 let agentDetector: AgentDetector | null = null;
+const encoreIpcBridge = new EncoreIpcBridge();
 
 // Create safeSend with dependency injection (Phase 2 refactoring)
 const safeSend = createSafeSend(() => mainWindow);
@@ -367,6 +372,27 @@ app.whenReady().then(async () => {
 	// Set up process event listeners
 	logger.debug('Setting up process event listeners', 'Startup');
 	setupProcessListeners();
+
+	// Initialize encore system
+	logger.info('Initializing encore system', 'Startup');
+	try {
+		const encoreManager = createEncoreManager(app);
+		const encoreHost = new EncoreHost({
+			getProcessManager: () => processManager,
+			getMainWindow: () => mainWindow,
+			settingsStore: store,
+			sessionsStore,
+			app,
+			ipcBridge: encoreIpcBridge,
+		});
+		encoreManager.setHost(encoreHost);
+		encoreManager.setSettingsStore(store);
+		await encoreManager.initialize();
+		logger.info('Encore system initialized', 'Startup');
+	} catch (error) {
+		logger.error(`Failed to initialize encore system: ${error}`, 'Startup');
+		logger.warn('Continuing without encores - encore features will be unavailable', 'Startup');
+	}
 
 	// Create main window
 	logger.info('Creating main window', 'Startup');
@@ -660,6 +686,9 @@ function setupIpcHandlers() {
 
 	// Register WakaTime handlers (CLI check, API key validation)
 	registerWakatimeHandlers(wakatimeManager);
+
+	// Register Plugin system IPC handlers
+	registerEncoreHandlers({ ipcBridge: encoreIpcBridge });
 }
 
 // Handle process output streaming (set up after initialization)

@@ -391,3 +391,14 @@ export interface GlobalAgentStats {
 	/** Per-provider breakdown */
 	byProvider: Record<string, ProviderStats>;
 }
+
+// ============================================================================
+// Plugin Types (re-exported from encore-types.ts)
+// ============================================================================
+
+export type {
+	EncoreManifest,
+	EncorePermission,
+	EncoreState,
+	LoadedEncore,
+} from './encore-types';

@@ -1,0 +1,16 @@
+{
+	"id": "notification-webhook",
+	"name": "Notification Webhook",
+	"version": "1.5.0",
+	"description": "Send webhook notifications when agents complete tasks or encounter errors.",
+	"author": "Maestro Core",
+	"firstParty": true,
+	"main": "index.js",
+	"permissions": ["process:read", "settings:write", "notifications", "network"],
+	"settings": [
+		{ "key": "webhookUrl", "type": "string", "label": "Webhook URL", "default": "" },
+		{ "key": "notifyOnCompletion", "type": "boolean", "label": "Notify on Agent Completion", "default": true },
+		{ "key": "notifyOnError", "type": "boolean", "label": "Notify on Agent Error", "default": true }
+	],
+	"tags": ["notifications", "webhook", "automation"]
+}

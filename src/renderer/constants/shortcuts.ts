@@ -78,6 +78,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	openEncores: {
+		id: 'openEncores',
+		label: 'Open Encore Features',
+		keys: ['Meta', 'Shift', 'x'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)

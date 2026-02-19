@@ -1561,14 +1561,14 @@ export function registerClaudeHandlers(deps: ClaudeHandlerDependencies): void {
 					const installedContent = await fs.readFile(installedPluginsPath, 'utf-8');
 					const installedPlugins = JSON.parse(installedContent);
 
-					for (const pluginId of Object.keys(enabledPlugins)) {
-						if (!enabledPlugins[pluginId]) continue;
+					for (const encoreId of Object.keys(enabledPlugins)) {
+						if (!enabledPlugins[encoreId]) continue;
 
-						const pluginInfo = installedPlugins.plugins?.[pluginId];
+						const pluginInfo = installedPlugins.encores?.[encoreId];
 						if (!pluginInfo?.installPath) continue;
 
 						const pluginCommandsDir = path.join(pluginInfo.installPath, 'commands');
-						const pluginName = pluginId.split('@')[0];
+						const pluginName = encoreId.split('@')[0];
 						await scanCommandsDir(pluginCommandsDir, pluginName);
 					}
 				} catch {

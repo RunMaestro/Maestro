@@ -1,0 +1,14 @@
+{
+	"id": "agent-status-exporter",
+	"name": "Agent Status Exporter",
+	"version": "2.0.0",
+	"description": "Exports real-time agent status (active agents, token usage, cost, tool executions) to a JSON file for external consumption.",
+	"author": "Maestro Core",
+	"firstParty": true,
+	"main": "index.js",
+	"permissions": ["process:read", "storage", "settings:read"],
+	"settings": [
+		{ "key": "outputPath", "type": "string", "label": "Output Path", "default": "" }
+	],
+	"tags": ["status", "exporter", "monitoring", "agents"]
+}

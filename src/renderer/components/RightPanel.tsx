@@ -22,9 +22,12 @@ import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
 import type { DocumentTaskCount } from './AutoRunDocumentSelector';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
+import { EncoreTabContent } from './EncoreTabContent';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
+import type { EncoreTab } from '../hooks/useEncoreRegistry';
+import type { LoadedEncore } from '../../shared/encore-types';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -143,6 +146,11 @@ interface RightPanelProps {
 	lastGraphFocusFile?: string;
 	/** Callback to open the last document graph */
 	onOpenLastDocumentGraph?: () => void;
+
+	// Plugin tabs for dynamic Right Panel extension
+	encoreTabs?: EncoreTab[];
+	/** All loaded encores (for EncoreTabContent rendering) */
+	encoreList?: LoadedEncore[];
 }
 
 export const RightPanel = memo(
@@ -210,6 +218,8 @@ export const RightPanel = memo(
 			onFocusFileInGraph,
 			lastGraphFocusFile,
 			onOpenLastDocumentGraph,
+			encoreTabs,
+			encoreList,
 		} = props;
 
 		const historyPanelRef = useRef<HistoryPanelHandle>(null);
@@ -442,6 +452,22 @@ export const RightPanel = memo(
 							{tab === 'autorun' ? 'Auto Run' : tab.charAt(0).toUpperCase() + tab.slice(1)}
 						</button>
 					))}
+					{encoreTabs?.map((pt) => {
+						const tabKey = `encore:${pt.encoreId}:${pt.tabId}`;
+						return (
+							<button
+								key={tabKey}
+								onClick={() => setActiveRightTab(tabKey)}
+								className="flex-1 text-xs font-bold border-b-2 transition-colors"
+								style={{
+									borderColor: activeRightTab === tabKey ? theme.colors.accent : 'transparent',
+									color: activeRightTab === tabKey ? theme.colors.textMain : theme.colors.textDim,
+								}}
+							>
+								{pt.label}
+							</button>
+						);
+					})}
 
 					<button
 						onClick={() => setRightPanelOpen(!rightPanelOpen)}
@@ -536,6 +562,21 @@ export const RightPanel = memo(
 							<AutoRun ref={autoRunRef} {...autoRunSharedProps} onExpand={handleExpandAutoRun} />
 						</div>
 					)}
+
+					{/* Encore tab content */}
+					{activeRightTab.startsWith('encore:') && encoreList && (() => {
+						const parts = activeRightTab.split(':');
+						const pId = parts[1];
+						const tId = parts.slice(2).join(':');
+						return (
+							<EncoreTabContent
+								encoreId={pId}
+								tabId={tId}
+								theme={theme}
+								encores={encoreList}
+							/>
+						);
+					})()}
 				</div>
 
 				{/* Auto Run Expanded Modal */}
