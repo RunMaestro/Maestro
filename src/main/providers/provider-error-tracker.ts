@@ -172,6 +172,7 @@ export class ProviderErrorTracker {
 		let totalErrorsInWindow = 0;
 		let lastErrorAt: number | null = null;
 		let sessionsWithErrors = 0;
+		const errorsByType: Partial<Record<AgentErrorType, number>> = {};
 
 		for (const state of this.sessions.values()) {
 			if (state.toolType !== toolType) continue;
@@ -186,6 +187,10 @@ export class ProviderErrorTracker {
 				if (lastErrorAt === null || latest > lastErrorAt) {
 					lastErrorAt = latest;
 				}
+				// Accumulate per-type counts
+				for (const err of active) {
+					errorsByType[err.errorType] = (errorsByType[err.errorType] ?? 0) + 1;
+				}
 			}
 		}
 
@@ -195,6 +200,7 @@ export class ProviderErrorTracker {
 			totalErrorsInWindow,
 			lastErrorAt,
 			sessionsWithErrors,
+			errorsByType,
 		};
 	}
 

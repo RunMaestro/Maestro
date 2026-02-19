@@ -8,7 +8,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Session } from '../types';
 import type { ToolType, AgentErrorType } from '../../shared/types';
-import type { ProviderErrorStats } from '../../shared/account-types';
+import type { ProviderErrorStats, ProviderSwitchConfig } from '../../shared/account-types';
+import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../../shared/account-types';
 import type { StatsTimeRange, StatsAggregation, QueryEvent } from '../../shared/stats-types';
 import type { ProviderUsageStats } from './useProviderHealth';
 import type { HealthStatus } from '../components/ProviderHealthCard';
@@ -168,34 +169,24 @@ export function useProviderDetail(
 
 	const refresh = useCallback(async () => {
 		try {
-			// Fetch all data in parallel
-			const [agents, errorStats, queryEvents, aggregation] = await Promise.all([
+			// Fetch all data in parallel — includes failover config for threshold
+			const [agents, errorStats, savedConfig, queryEvents, aggregation] = await Promise.all([
 				window.maestro.agents.detect() as Promise<Array<{ id: string; available: boolean }>>,
 				window.maestro.providers.getErrorStats(toolType) as Promise<ProviderErrorStats | null>,
-				window.maestro.stats.getStats(timeRangeRef.current, { agentType: toolType }) as Promise<Array<{
-					id: string;
-					sessionId: string;
-					agentType: string;
-					source: 'user' | 'auto';
-					startTime: number;
-					duration: number;
-					projectPath?: string;
-					isRemote?: boolean;
-					inputTokens?: number;
-					outputTokens?: number;
-					cacheReadTokens?: number;
-					cacheCreationTokens?: number;
-					costUsd?: number;
-				}>>,
+				window.maestro.settings.get('providerSwitchConfig') as Promise<Partial<ProviderSwitchConfig> | null>,
+				window.maestro.stats.getStats(timeRangeRef.current, { agentType: toolType }),
 				window.maestro.stats.getAggregation(timeRangeRef.current) as Promise<StatsAggregation>,
 			]);
 
 			if (!mountedRef.current) return;
 
+			const threshold = (savedConfig as Partial<ProviderSwitchConfig>)?.errorThreshold
+				?? DEFAULT_PROVIDER_SWITCH_CONFIG.errorThreshold;
+
 			const agent = agents.find((a) => a.id === toolType);
 			const available = agent?.available ?? false;
 
-			// Aggregate usage stats
+			// Aggregate usage stats from raw query events
 			const usage: ProviderUsageStats = { ...EMPTY_USAGE };
 			const durations: number[] = [];
 			let userQueries = 0;
@@ -205,16 +196,16 @@ export function useProviderDetail(
 
 			for (const e of queryEvents) {
 				usage.queryCount += 1;
-				usage.totalInputTokens += (e as any).inputTokens ?? 0;
-				usage.totalOutputTokens += (e as any).outputTokens ?? 0;
-				usage.totalCacheReadTokens += (e as any).cacheReadTokens ?? 0;
-				usage.totalCacheCreationTokens += (e as any).cacheCreationTokens ?? 0;
-				usage.totalCostUsd += (e as any).costUsd ?? 0;
+				usage.totalInputTokens += e.inputTokens ?? 0;
+				usage.totalOutputTokens += e.outputTokens ?? 0;
+				usage.totalCacheReadTokens += e.cacheReadTokens ?? 0;
+				usage.totalCacheCreationTokens += e.cacheCreationTokens ?? 0;
+				usage.totalCostUsd += e.costUsd ?? 0;
 				usage.totalDurationMs += e.duration ?? 0;
 				if (e.duration > 0) durations.push(e.duration);
 				if (e.source === 'user') userQueries++;
 				else autoQueries++;
-				if ((e as any).isRemote) remoteQueries++;
+				if (e.isRemote) remoteQueries++;
 				else localQueries++;
 			}
 			usage.avgDurationMs = usage.queryCount > 0
@@ -240,7 +231,7 @@ export function useProviderDetail(
 				? (errorCount / totalQueries) * 100
 				: 0;
 
-			// Determine status
+			// Determine status using config-driven threshold
 			let status: HealthStatus;
 			const activeCount = sessions.filter(
 				(s) => s.toolType === toolType && !s.archivedByMigration,
@@ -251,7 +242,7 @@ export function useProviderDetail(
 				status = 'idle';
 			} else if (errorCount === 0) {
 				status = 'healthy';
-			} else if (errorCount >= 3) { // Use default threshold
+			} else if (errorCount >= threshold) {
 				status = 'failing';
 			} else {
 				status = 'degraded';
@@ -266,8 +257,7 @@ export function useProviderDetail(
 				avgDurationMs: d.count > 0 ? Math.round(d.duration / d.count) : 0,
 			}));
 
-			// Hourly pattern — filter aggregation.byHour by this provider's events
-			// Since byHour doesn't include per-agent breakdown, compute from raw events
+			// Hourly pattern — compute from raw events (byHour lacks per-agent breakdown)
 			const hourlyMap = new Map<number, { count: number; totalDuration: number }>();
 			for (let h = 0; h < 24; h++) {
 				hourlyMap.set(h, { count: 0, totalDuration: 0 });
@@ -324,7 +314,7 @@ export function useProviderDetail(
 			}
 			migrations.sort((a, b) => b.timestamp - a.timestamp);
 
-			// P95 response time
+			// P95 response time — only meaningful with >= 20 data points
 			const p95 = durations.length >= 20
 				? computeP95(durations)
 				: usage.avgDurationMs;
@@ -349,7 +339,7 @@ export function useProviderDetail(
 					successRate,
 					errorRate,
 					totalErrors: errorCount,
-					errorsByType: {},
+					errorsByType: errorStats?.errorsByType ?? {},
 					avgResponseTimeMs: usage.avgDurationMs,
 					p95ResponseTimeMs: p95,
 				},

@@ -190,4 +190,6 @@ export interface ProviderErrorStats {
 	totalErrorsInWindow: number;
 	lastErrorAt: number | null;
 	sessionsWithErrors: number;
+	/** Error count breakdown by error type within the window */
+	errorsByType?: Partial<Record<AgentErrorType, number>>;
 }

@@ -117,6 +117,12 @@ export function createStatsApi() {
 				duration: number;
 				projectPath?: string;
 				tabId?: string;
+				isRemote?: boolean;
+				inputTokens?: number;
+				outputTokens?: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+				costUsd?: number;
 			}>
 		> => ipcRenderer.invoke('stats:get-stats', range, filters),
 

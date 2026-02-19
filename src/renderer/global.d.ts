@@ -2197,6 +2197,12 @@ interface MaestroAPI {
 				duration: number;
 				projectPath?: string;
 				tabId?: string;
+				isRemote?: boolean;
+				inputTokens?: number;
+				outputTokens?: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+				costUsd?: number;
 			}>
 		>;
 		// Get Auto Run sessions within a time range
