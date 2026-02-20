@@ -9713,6 +9713,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 						onClose={() => setVirtuososOpen(false)}
 						theme={theme}
 						sessions={sessions}
+						onSelectSession={(sessionId) => {
+							setVirtuososOpen(false);
+							setActiveSessionId(sessionId);
+						}}
 					/>
 				)}
 
