@@ -13,7 +13,7 @@ interface ListSessionsOptions {
 	json?: boolean;
 }
 
-const SUPPORTED_TYPES: ToolType[] = ['claude-code'];
+const SUPPORTED_TYPES: ToolType[] = ['claude-code', 'gemini-cli'];
 
 export function listSessions(agentIdArg: string, options: ListSessionsOptions): void {
 	try {

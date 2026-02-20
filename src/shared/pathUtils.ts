@@ -185,19 +185,21 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 
 	const home = os.homedir();
 	const detectedPaths: string[] = [];
+	const safeExistsSync =
+		typeof fs.existsSync === 'function' ? fs.existsSync.bind(fs) : () => false;
 
 	// nvm: Check for ~/.nvm and find installed node versions
 	const nvmDir = process.env.NVM_DIR || path.join(home, '.nvm');
-	if (fs.existsSync(nvmDir)) {
+	if (safeExistsSync(nvmDir)) {
 		// Check nvm/current symlink first (preferred)
 		const nvmCurrentBin = path.join(nvmDir, 'current', 'bin');
-		if (fs.existsSync(nvmCurrentBin)) {
+		if (safeExistsSync(nvmCurrentBin)) {
 			detectedPaths.push(nvmCurrentBin);
 		}
 
 		// Also check all installed versions
 		const versionsDir = path.join(nvmDir, 'versions', 'node');
-		if (fs.existsSync(versionsDir)) {
+		if (safeExistsSync(versionsDir)) {
 			try {
 				const versions = fs.readdirSync(versionsDir).filter((v) => v.startsWith('v'));
 				// Sort versions descending to check newest first
@@ -223,15 +225,15 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 		path.join(home, '.fnm'), // Legacy/custom location
 	];
 	for (const fnmDir of fnmPaths) {
-		if (fs.existsSync(fnmDir)) {
+		if (safeExistsSync(fnmDir)) {
 			// fnm uses aliases/current or node-versions/<version>
 			const fnmCurrentBin = path.join(fnmDir, 'aliases', 'default', 'bin');
-			if (fs.existsSync(fnmCurrentBin)) {
+			if (safeExistsSync(fnmCurrentBin)) {
 				detectedPaths.push(fnmCurrentBin);
 			}
 
 			const fnmNodeVersions = path.join(fnmDir, 'node-versions');
-			if (fs.existsSync(fnmNodeVersions)) {
+			if (safeExistsSync(fnmNodeVersions)) {
 				try {
 					const versions = fs.readdirSync(fnmNodeVersions).filter((v) => v.startsWith('v'));
 					versions.sort((a, b) => compareVersions(b, a));
@@ -251,13 +253,13 @@ export function detectNodeVersionManagerBinPaths(): string[] {
 
 	// volta: Uses ~/.volta/bin for shims
 	const voltaBin = path.join(home, '.volta', 'bin');
-	if (fs.existsSync(voltaBin)) {
+	if (safeExistsSync(voltaBin)) {
 		detectedPaths.push(voltaBin);
 	}
 
 	// mise (formerly rtx): Uses ~/.local/share/mise/shims
 	const miseShims = path.join(home, '.local', 'share', 'mise', 'shims');
-	if (fs.existsSync(miseShims)) {
+	if (safeExistsSync(miseShims)) {
 		detectedPaths.push(miseShims);
 	}
 
@@ -302,6 +304,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 	const isWindows = process.platform === 'win32';
 	const delimiter = path.delimiter;
 	const home = os.homedir();
+	const versionManagerPaths = detectNodeVersionManagerBinPaths();
 
 	// Start with current PATH
 	const currentPath = process.env.PATH || '';
@@ -335,6 +338,8 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			path.join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli'),
 			// Codex CLI install location (npm global)
 			path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin'),
+			// Gemini CLI install location (npm global)
+			path.join(appData, 'npm', 'node_modules', '@google', 'gemini-cli', 'bin'),
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
@@ -383,6 +388,7 @@ export function buildExpandedPath(customPaths?: string[]): string {
 			'/bin',
 			'/usr/sbin',
 			'/sbin',
+			...versionManagerPaths,
 		];
 	}
 

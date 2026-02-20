@@ -1,7 +1,13 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
-import { spawnAgent, detectClaude, detectCodex, type AgentResult } from '../services/agent-spawner';
+import {
+	spawnAgent,
+	detectClaude,
+	detectCodex,
+	detectGemini,
+	type AgentResult,
+} from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import type { ToolType } from '../../shared/types';
@@ -84,7 +90,7 @@ export async function send(agentIdArg: string, message: string, options: SendOpt
 	}
 
 	// Validate agent type is supported for CLI spawning
-	const supportedTypes: ToolType[] = ['claude-code', 'codex'];
+	const supportedTypes: ToolType[] = ['claude-code', 'codex', 'gemini-cli'];
 	if (!supportedTypes.includes(agent.toolType)) {
 		emitErrorJson(
 			`Agent type "${agent.toolType}" is not supported for send mode. Supported: ${supportedTypes.join(', ')}`,
@@ -104,6 +110,12 @@ export async function send(agentIdArg: string, message: string, options: SendOpt
 		const codex = await detectCodex();
 		if (!codex.available) {
 			emitErrorJson('Codex CLI not found. Install with: npm install -g @openai/codex', 'CODEX_NOT_FOUND');
+			process.exit(1);
+		}
+	} else if (agent.toolType === 'gemini-cli') {
+		const gemini = await detectGemini();
+		if (!gemini.available) {
+			emitErrorJson('Gemini CLI not found. Install with: npm install -g @google/gemini-cli', 'GEMINI_NOT_FOUND');
 			process.exit(1);
 		}
 	}

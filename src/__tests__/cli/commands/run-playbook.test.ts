@@ -45,6 +45,8 @@ vi.mock('../../../cli/services/batch-processor', () => ({
 // Mock the agent-spawner service
 vi.mock('../../../cli/services/agent-spawner', () => ({
 	detectClaude: vi.fn(),
+	detectCodex: vi.fn(),
+	detectGemini: vi.fn(),
 }));
 
 // Mock the jsonl output
@@ -74,7 +76,7 @@ import { runPlaybook } from '../../../cli/commands/run-playbook';
 import { getSessionById } from '../../../cli/services/storage';
 import { findPlaybookById } from '../../../cli/services/playbooks';
 import { runPlaybook as executePlaybook } from '../../../cli/services/batch-processor';
-import { detectClaude } from '../../../cli/services/agent-spawner';
+import { detectClaude, detectCodex, detectGemini } from '../../../cli/services/agent-spawner';
 import { emitError } from '../../../cli/output/jsonl';
 import {
 	formatRunEvent,
@@ -124,12 +126,14 @@ describe('run-playbook command', () => {
 				throw new Error(`process.exit(${code})`);
 			});
 
-		// Default: Claude is available
+		// Default: CLI agents are available
 		vi.mocked(detectClaude).mockResolvedValue({
 			available: true,
 			version: '1.0.0',
 			path: '/usr/local/bin/claude',
 		});
+		vi.mocked(detectCodex).mockResolvedValue({ available: true, path: '/usr/local/bin/codex' });
+		vi.mocked(detectGemini).mockResolvedValue({ available: true, path: '/usr/local/bin/gemini' });
 
 		// Default: agent is not busy
 		vi.mocked(isSessionBusyWithCli).mockReturnValue(false);
@@ -337,6 +341,39 @@ describe('run-playbook command', () => {
 			expect(emitError).toHaveBeenCalledWith(
 				'Claude Code not found. Please install claude-code CLI.',
 				'CLAUDE_NOT_FOUND'
+			);
+		});
+	});
+
+	describe('Gemini CLI not found', () => {
+		beforeEach(() => {
+			vi.mocked(findPlaybookById).mockReturnValue({
+				playbook: mockPlaybook(),
+				agentId: 'agent-gem',
+			});
+			vi.mocked(getSessionById).mockReturnValue(
+				mockSession({ id: 'agent-gem', toolType: 'gemini-cli' })
+			);
+		});
+
+		it('should error when Gemini CLI is not available (human-readable)', async () => {
+			vi.mocked(detectGemini).mockResolvedValue({ available: false });
+
+			await expect(runPlaybook('pb-123', {})).rejects.toThrow('process.exit(1)');
+
+			expect(formatError).toHaveBeenCalledWith(
+				'Gemini CLI not found. Please install @google/gemini-cli.'
+			);
+		});
+
+		it('should error when Gemini CLI is not available (JSON)', async () => {
+			vi.mocked(detectGemini).mockResolvedValue({ available: false });
+
+			await expect(runPlaybook('pb-123', { json: true })).rejects.toThrow('process.exit(1)');
+
+			expect(emitError).toHaveBeenCalledWith(
+				'Gemini CLI not found. Please install @google/gemini-cli.',
+				'GEMINI_NOT_FOUND'
 			);
 		});
 	});

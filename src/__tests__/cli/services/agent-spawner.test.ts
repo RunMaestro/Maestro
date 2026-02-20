@@ -52,6 +52,7 @@ vi.mock('fs', async (importOriginal) => {
 		...actual,
 		readFileSync: vi.fn(),
 		writeFileSync: vi.fn(),
+		existsSync: vi.fn(() => false),
 		promises: {
 			stat: vi.fn(),
 			access: vi.fn(),
@@ -675,6 +676,47 @@ Some text with [x] in it that's not a checkbox
 			Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
 
 			expect(result.available).toBe(false);
+		});
+	});
+
+	describe('detectGemini', () => {
+		beforeEach(() => {
+			vi.resetModules();
+		});
+
+		it('should detect Gemini CLI via custom path', async () => {
+			mockGetAgentCustomPath.mockImplementation((agentId: string) => {
+				if (agentId === 'gemini-cli') {
+					return '/custom/path/to/gemini';
+				}
+				return undefined;
+			});
+			vi.mocked(fs.promises.stat).mockResolvedValue({
+				isFile: () => true,
+			} as fs.Stats);
+			vi.mocked(fs.promises.access).mockResolvedValue(undefined);
+
+			const { detectGemini } = await import('../../../cli/services/agent-spawner');
+			const result = await detectGemini();
+
+			expect(result.available).toBe(true);
+			expect(result.path).toBe('/custom/path/to/gemini');
+			expect(result.source).toBe('settings');
+		});
+
+		it('should return unavailable when Gemini CLI is not found', async () => {
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+
+			const { detectGemini } = await import('../../../cli/services/agent-spawner');
+			const resultPromise = detectGemini();
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			mockChild.emit('close', 1);
+
+			const result = await resultPromise;
+			expect(result.available).toBe(false);
+			expect(result.path).toBeUndefined();
 		});
 	});
 

@@ -4,7 +4,7 @@
 import { getSessionById } from '../services/storage';
 import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
-import { detectClaude, detectCodex } from '../services/agent-spawner';
+import { detectClaude, detectCodex, detectGemini } from '../services/agent-spawner';
 import { emitError } from '../output/jsonl';
 import {
 	formatRunEvent,
@@ -165,6 +165,16 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 					emitError('Claude Code not found. Please install claude-code CLI.', 'CLAUDE_NOT_FOUND');
 				} else {
 					console.error(formatError('Claude Code not found. Please install claude-code CLI.'));
+				}
+				process.exit(1);
+			}
+		} else if (agent.toolType === 'gemini-cli') {
+			const gemini = await detectGemini();
+			if (!gemini.available) {
+				if (useJson) {
+					emitError('Gemini CLI not found. Please install @google/gemini-cli.', 'GEMINI_NOT_FOUND');
+				} else {
+					console.error(formatError('Gemini CLI not found. Please install @google/gemini-cli.'));
 				}
 				process.exit(1);
 			}

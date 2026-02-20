@@ -18,6 +18,7 @@ vi.mock('../../../cli/services/agent-spawner', () => ({
 	spawnAgent: vi.fn(),
 	detectClaude: vi.fn(),
 	detectCodex: vi.fn(),
+	detectGemini: vi.fn(),
 }));
 
 // Mock storage
@@ -32,7 +33,12 @@ vi.mock('../../../main/parsers/usage-aggregator', () => ({
 }));
 
 import { send } from '../../../cli/commands/send';
-import { spawnAgent, detectClaude, detectCodex } from '../../../cli/services/agent-spawner';
+import {
+	spawnAgent,
+	detectClaude,
+	detectCodex,
+	detectGemini,
+} from '../../../cli/services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
 import { estimateContextUsage } from '../../../main/parsers/usage-aggregator';
 
@@ -164,6 +170,27 @@ describe('send command', () => {
 		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined);
 	});
 
+	it('should work with gemini-cli agent type', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-gem-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-gem-1', toolType: 'gemini-cli' })
+		);
+		vi.mocked(detectGemini).mockResolvedValue({
+			available: true,
+			path: '/usr/local/bin/gemini',
+		});
+		vi.mocked(spawnAgent).mockResolvedValue({
+			success: true,
+			response: 'Gemini response',
+			agentSessionId: 'gem-session',
+		});
+
+		await send('agent-gem', 'Use gemini', {});
+
+		expect(detectGemini).toHaveBeenCalled();
+		expect(spawnAgent).toHaveBeenCalledWith('gemini-cli', expect.any(String), 'Use gemini', undefined);
+	});
+
 	it('should exit with error when agent ID is not found', async () => {
 		vi.mocked(resolveAgentId).mockImplementation(() => {
 			throw new Error('Agent not found: bad-id');
@@ -201,6 +228,21 @@ describe('send command', () => {
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
 		expect(output.success).toBe(false);
 		expect(output.code).toBe('CLAUDE_NOT_FOUND');
+		expect(processExitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it('should exit with error when Gemini CLI is not found', async () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-gem-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-gem-1', toolType: 'gemini-cli' })
+		);
+		vi.mocked(detectGemini).mockResolvedValue({ available: false });
+
+		await send('agent-gem', 'Hello', {});
+
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(false);
+		expect(output.code).toBe('GEMINI_NOT_FOUND');
 		expect(processExitSpy).toHaveBeenCalledWith(1);
 	});
 

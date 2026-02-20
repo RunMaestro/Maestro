@@ -43,6 +43,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 
 	// Platform-specific paths
 	let additionalPaths: string[];
+	let versionManagerPaths: string[] = [];
 
 	if (isWindows) {
 		// Windows-specific paths
@@ -67,6 +68,8 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			path.join(appData, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'cli'),
 			// Codex CLI install location (npm global)
 			path.join(appData, 'npm', 'node_modules', '@openai', 'codex', 'bin'),
+			// Gemini CLI install location (npm global)
+			path.join(appData, 'npm', 'node_modules', '@google', 'gemini-cli', 'bin'),
 			// User local programs
 			path.join(localAppData, 'Programs'),
 			path.join(localAppData, 'Microsoft', 'WindowsApps'),
@@ -102,6 +105,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 		];
 	} else {
 		// Unix-like paths (macOS/Linux)
+		versionManagerPaths = detectNodeVersionManagerBinPaths();
 		additionalPaths = [
 			'/opt/homebrew/bin', // Homebrew on Apple Silicon
 			'/opt/homebrew/sbin',
@@ -116,6 +120,7 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 			'/bin',
 			'/usr/sbin',
 			'/sbin',
+			...versionManagerPaths,
 		];
 	}
 
