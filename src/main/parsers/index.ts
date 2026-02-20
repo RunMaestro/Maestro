@@ -47,6 +47,7 @@ export {
 	CLAUDE_ERROR_PATTERNS,
 	OPENCODE_ERROR_PATTERNS,
 	CODEX_ERROR_PATTERNS,
+	GEMINI_ERROR_PATTERNS,
 } from './error-patterns';
 
 // Import parser implementations
@@ -54,6 +55,7 @@ import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
 import { CodexOutputParser } from './codex-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
+import { GeminiOutputParser } from './gemini-output-parser';
 import {
 	registerOutputParser,
 	clearParserRegistry,
@@ -66,6 +68,7 @@ export { ClaudeOutputParser } from './claude-output-parser';
 export { OpenCodeOutputParser } from './opencode-output-parser';
 export { CodexOutputParser } from './codex-output-parser';
 export { FactoryDroidOutputParser } from './factory-droid-output-parser';
+export { GeminiOutputParser } from './gemini-output-parser';
 
 const LOG_CONTEXT = '[OutputParsers]';
 
@@ -82,6 +85,7 @@ export function initializeOutputParsers(): void {
 	registerOutputParser(new OpenCodeOutputParser());
 	registerOutputParser(new CodexOutputParser());
 	registerOutputParser(new FactoryDroidOutputParser());
+	registerOutputParser(new GeminiOutputParser());
 
 	// Log registered parsers for debugging
 	const registeredParsers = getAllOutputParsers().map((p) => p.agentId);
