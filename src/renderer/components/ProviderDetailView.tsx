@@ -12,7 +12,7 @@ import type { ToolType } from '../../shared/types';
 import type { StatsTimeRange } from '../../shared/stats-types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { formatTokenCount } from '../hooks/useAccountUsage';
-import { useProviderDetail } from '../hooks/useProviderDetail';
+import { useProviderDetail, type ProviderDetail } from '../hooks/useProviderDetail';
 import type { HealthStatus } from './ProviderHealthCard';
 import { ProviderDetailCharts } from './ProviderDetailCharts';
 import { getAgentDisplayName } from '../services/contextGroomer';
@@ -28,6 +28,7 @@ interface ProviderDetailViewProps {
 	timeRange: StatsTimeRange;
 	setTimeRange: (range: StatsTimeRange) => void;
 	onBack: () => void;
+	onSelectSession?: (sessionId: string) => void;
 }
 
 // ============================================================================
@@ -92,6 +93,7 @@ export function ProviderDetailView({
 	timeRange,
 	setTimeRange,
 	onBack,
+	onSelectSession,
 }: ProviderDetailViewProps) {
 	const { detail, isLoading } = useProviderDetail(toolType, sessions, timeRange);
 
@@ -341,112 +343,21 @@ export function ProviderDetailView({
 				<ProviderDetailCharts theme={theme} detail={detail} />
 			</div>
 
+			{/* Comparison Bar */}
+			<ComparisonBar theme={theme} detail={detail} />
+
 			{/* Active Sessions */}
-			{detail.activeSessions.length > 0 && (
-				<div
-					style={{
-						backgroundColor: theme.colors.bgMain,
-						borderRadius: 6,
-						padding: '10px 14px',
-						marginBottom: 12,
-						border: `1px solid ${theme.colors.border}`,
-					}}
-				>
-					<div
-						style={{
-							color: theme.colors.textMain,
-							fontSize: 12,
-							fontWeight: 600,
-							marginBottom: 8,
-						}}
-					>
-						Active Sessions ({detail.activeSessions.length})
-					</div>
-					{detail.activeSessions.map((s) => (
-						<div
-							key={s.id}
-							className="flex items-center gap-2 py-1"
-							style={{
-								borderBottom: `1px solid ${theme.colors.border}20`,
-							}}
-						>
-							<span style={{ color: theme.colors.textMain, fontSize: 12, flex: 1 }}>
-								{s.name}
-							</span>
-							<span
-								style={{
-									color: theme.colors.textDim,
-									fontSize: 10,
-									maxWidth: 180,
-									overflow: 'hidden',
-									textOverflow: 'ellipsis',
-									whiteSpace: 'nowrap',
-								}}
-							>
-								{s.projectRoot}
-							</span>
-							<span
-								style={{
-									fontSize: 10,
-									color: s.state === 'busy'
-										? theme.colors.warning
-										: s.state === 'error'
-											? theme.colors.error
-											: theme.colors.success,
-								}}
-							>
-								● {s.state}
-							</span>
-						</div>
-					))}
-				</div>
-			)}
+			<ActiveSessionsList
+				theme={theme}
+				sessions={detail.activeSessions}
+				onSelectSession={onSelectSession}
+			/>
 
 			{/* Migration History */}
-			{detail.migrations.length > 0 && (
-				<div
-					style={{
-						backgroundColor: theme.colors.bgMain,
-						borderRadius: 6,
-						padding: '10px 14px',
-						border: `1px solid ${theme.colors.border}`,
-					}}
-				>
-					<div
-						style={{
-							color: theme.colors.textMain,
-							fontSize: 12,
-							fontWeight: 600,
-							marginBottom: 8,
-						}}
-					>
-						Migration History
-					</div>
-					{detail.migrations.slice(0, 10).map((m, i) => (
-						<div
-							key={`${m.timestamp}-${i}`}
-							className="flex items-center gap-2 py-1"
-							style={{
-								borderLeft: `2px solid ${theme.colors.accent}40`,
-								paddingLeft: 10,
-								marginBottom: 4,
-							}}
-						>
-							<span style={{ color: theme.colors.textDim, fontSize: 10, minWidth: 70 }}>
-								{formatMigrationTime(m.timestamp)}
-							</span>
-							<span style={{ color: theme.colors.textMain, fontSize: 11 }}>
-								{m.sessionName}:
-							</span>
-							<span style={{ color: theme.colors.accent, fontSize: 11 }}>
-								{m.direction === 'from' ? '→' : '←'}{' '}
-								{m.direction === 'from' ? 'Switched TO' : 'Switched FROM'}{' '}
-								{getAgentDisplayName(m.otherProvider)}
-							</span>
-						</div>
-					))}
-				</div>
-			)}
+			<MigrationTimeline
+				theme={theme}
+				migrations={detail.migrations}
+			/>
 		</div>
 	);
 }
@@ -487,6 +398,307 @@ function MetricCard({
 			>
 				{value}
 			</div>
+		</div>
+	);
+}
+
+// ============================================================================
+// ComparisonBar — benchmarks vs other providers
+// ============================================================================
+
+function ComparisonBar({
+	theme,
+	detail,
+}: {
+	theme: Theme;
+	detail: ProviderDetail;
+}) {
+	const { comparison } = detail;
+	if (comparison.totalQueriesAllProviders === 0) return null;
+
+	const fastest = comparison.avgResponseRanking[0];
+	const slowest = comparison.avgResponseRanking[comparison.avgResponseRanking.length - 1];
+	const highestReliability = comparison.reliabilityRanking[0];
+	const lowestReliability = comparison.reliabilityRanking[comparison.reliabilityRanking.length - 1];
+
+	return (
+		<div
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				borderRadius: 6,
+				padding: '10px 14px',
+				marginBottom: 12,
+				border: `1px solid ${theme.colors.border}`,
+			}}
+		>
+			<div
+				style={{
+					color: theme.colors.textMain,
+					fontSize: 12,
+					fontWeight: 600,
+					marginBottom: 10,
+				}}
+			>
+				How does {detail.displayName} compare?
+			</div>
+
+			{/* Query share progress bar */}
+			<ComparisonRow
+				theme={theme}
+				label="Queries"
+				percent={comparison.queryShare}
+				detail={`${Math.round(comparison.queryShare)}% of total`}
+			/>
+
+			{/* Cost share progress bar */}
+			<ComparisonRow
+				theme={theme}
+				label="Cost"
+				percent={comparison.costShare}
+				detail={`${Math.round(comparison.costShare)}% of total`}
+			/>
+
+			{/* Avg Response Time comparison */}
+			{comparison.avgResponseRanking.length > 1 && fastest && slowest && (
+				<div className="flex items-center gap-2 mb-2" style={{ fontSize: 11 }}>
+					<span style={{ color: theme.colors.textDim, minWidth: 80 }}>Avg Response</span>
+					<span style={{ color: theme.colors.textMain }}>
+						{formatDurationMs(detail.reliability.avgResponseTimeMs)}
+					</span>
+					<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+						(fastest: {fastest.provider} {formatDurationMs(fastest.avgMs)},
+						slowest: {slowest.provider} {formatDurationMs(slowest.avgMs)})
+					</span>
+				</div>
+			)}
+
+			{/* Reliability comparison */}
+			{comparison.reliabilityRanking.length > 1 && highestReliability && lowestReliability && (
+				<div className="flex items-center gap-2" style={{ fontSize: 11 }}>
+					<span style={{ color: theme.colors.textDim, minWidth: 80 }}>Reliability</span>
+					<span
+						style={{
+							color: detail.reliability.successRate >= 95
+								? theme.colors.success
+								: detail.reliability.successRate >= 85
+									? theme.colors.warning
+									: theme.colors.error,
+						}}
+					>
+						{detail.usage.queryCount > 0 ? `${detail.reliability.successRate.toFixed(1)}%` : 'N/A'}
+					</span>
+					<span style={{ color: theme.colors.textDim, fontSize: 10 }}>
+						(highest: {highestReliability.provider} {highestReliability.rate.toFixed(1)}%,
+						lowest: {lowestReliability.provider} {lowestReliability.rate.toFixed(1)}%)
+					</span>
+				</div>
+			)}
+		</div>
+	);
+}
+
+function ComparisonRow({
+	theme,
+	label,
+	percent,
+	detail,
+}: {
+	theme: Theme;
+	label: string;
+	percent: number;
+	detail: string;
+}) {
+	return (
+		<div className="mb-2">
+			<div className="flex items-center justify-between mb-1">
+				<span style={{ color: theme.colors.textDim, fontSize: 11 }}>{label}</span>
+				<span style={{ color: theme.colors.textMain, fontSize: 10 }}>{detail}</span>
+			</div>
+			<div
+				style={{
+					height: 6,
+					borderRadius: 3,
+					backgroundColor: theme.colors.bgActivity,
+					overflow: 'hidden',
+				}}
+			>
+				<div
+					style={{
+						height: '100%',
+						width: `${Math.min(100, Math.max(0, percent))}%`,
+						backgroundColor: theme.colors.accent,
+						borderRadius: 3,
+						transition: 'width 0.3s ease',
+					}}
+				/>
+			</div>
+		</div>
+	);
+}
+
+// ============================================================================
+// ActiveSessionsList — clickable sessions that navigate to the session
+// ============================================================================
+
+function ActiveSessionsList({
+	theme,
+	sessions,
+	onSelectSession,
+}: {
+	theme: Theme;
+	sessions: Array<{ id: string; name: string; projectRoot: string; state: string }>;
+	onSelectSession?: (sessionId: string) => void;
+}) {
+	if (sessions.length === 0) return null;
+
+	return (
+		<div
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				borderRadius: 6,
+				padding: '10px 14px',
+				marginBottom: 12,
+				border: `1px solid ${theme.colors.border}`,
+			}}
+		>
+			<div
+				style={{
+					color: theme.colors.textMain,
+					fontSize: 12,
+					fontWeight: 600,
+					marginBottom: 8,
+				}}
+			>
+				Active Sessions ({sessions.length})
+			</div>
+			{sessions.map((s) => (
+				<div
+					key={s.id}
+					className="flex items-center gap-2 py-1.5"
+					style={{
+						borderBottom: `1px solid ${theme.colors.border}20`,
+						cursor: onSelectSession ? 'pointer' : undefined,
+						borderRadius: 4,
+						paddingLeft: 4,
+						paddingRight: 4,
+						transition: 'background-color 0.1s ease',
+					}}
+					onClick={() => onSelectSession?.(s.id)}
+					onMouseEnter={(e) => {
+						if (onSelectSession) {
+							e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`;
+						}
+					}}
+					onMouseLeave={(e) => {
+						e.currentTarget.style.backgroundColor = 'transparent';
+					}}
+				>
+					<span style={{ color: theme.colors.textMain, fontSize: 12, flex: 1 }}>
+						{s.name}
+					</span>
+					<span
+						style={{
+							color: theme.colors.textDim,
+							fontSize: 10,
+							maxWidth: 180,
+							overflow: 'hidden',
+							textOverflow: 'ellipsis',
+							whiteSpace: 'nowrap',
+						}}
+					>
+						{s.projectRoot}
+					</span>
+					<span
+						style={{
+							fontSize: 10,
+							color: s.state === 'busy'
+								? theme.colors.warning
+								: s.state === 'error'
+									? theme.colors.error
+									: theme.colors.success,
+						}}
+					>
+						● {s.state}
+					</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+// ============================================================================
+// MigrationTimeline — provider-scoped migration history
+// ============================================================================
+
+function MigrationTimeline({
+	theme,
+	migrations,
+}: {
+	theme: Theme;
+	migrations: Array<{
+		timestamp: number;
+		sessionName: string;
+		direction: 'from' | 'to';
+		otherProvider: ToolType;
+		generation: number;
+	}>;
+}) {
+	if (migrations.length === 0) return null;
+
+	return (
+		<div
+			style={{
+				backgroundColor: theme.colors.bgMain,
+				borderRadius: 6,
+				padding: '10px 14px',
+				border: `1px solid ${theme.colors.border}`,
+			}}
+		>
+			<div
+				style={{
+					color: theme.colors.textMain,
+					fontSize: 12,
+					fontWeight: 600,
+					marginBottom: 8,
+				}}
+			>
+				Migration History
+			</div>
+			{migrations.slice(0, 10).map((m, i) => (
+				<div
+					key={`${m.timestamp}-${i}`}
+					className="flex items-center gap-2 py-1"
+					style={{
+						borderLeft: `2px solid ${theme.colors.accent}40`,
+						paddingLeft: 10,
+						marginBottom: 4,
+					}}
+				>
+					<span style={{ color: theme.colors.textDim, fontSize: 10, minWidth: 70 }}>
+						{formatMigrationTime(m.timestamp)}
+					</span>
+					<span style={{ color: theme.colors.textMain, fontSize: 11 }}>
+						{m.sessionName}:
+					</span>
+					<span style={{ color: theme.colors.accent, fontSize: 11 }}>
+						<ArrowRightLeft
+							className="w-3 h-3 inline-block mx-0.5"
+							style={{
+								color: theme.colors.textDim,
+								verticalAlign: 'middle',
+							}}
+						/>
+						{' '}
+						{m.direction === 'from' ? 'Switched TO' : 'Switched FROM'}{' '}
+						{getAgentDisplayName(m.otherProvider)}
+					</span>
+					{m.generation > 1 && (
+						<span style={{ color: theme.colors.textDim, fontSize: 9 }}>
+							(gen {m.generation})
+						</span>
+					)}
+				</div>
+			))}
 		</div>
 	);
 }

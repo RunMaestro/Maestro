@@ -3460,6 +3460,10 @@ function MaestroConsoleInner() {
 						onClose={() => setVirtuososOpen(false)}
 						theme={theme}
 						sessions={sessions}
+						onSelectSession={(sessionId) => {
+							setVirtuososOpen(false);
+							setActiveSessionId(sessionId);
+						}}
 					/>
 				)}
 

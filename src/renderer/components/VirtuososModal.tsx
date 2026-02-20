@@ -30,9 +30,10 @@ interface VirtuososModalProps {
 	onClose: () => void;
 	theme: Theme;
 	sessions?: Session[];
+	onSelectSession?: (sessionId: string) => void;
 }
 
-export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososModalProps) {
+export function VirtuososModal({ isOpen, onClose, theme, sessions, onSelectSession }: VirtuososModalProps) {
 	const [activeTab, setActiveTab] = useState<VirtuosoTab>('config');
 	const { hasDegradedProvider, hasFailingProvider } = useProviderHealth(sessions);
 
@@ -139,7 +140,7 @@ export function VirtuososModal({ isOpen, onClose, theme, sessions }: VirtuososMo
 
 			{/* Tab content */}
 			{activeTab === 'config' && <AccountsPanel theme={theme} />}
-			{activeTab === 'providers' && <ProviderPanel theme={theme} sessions={sessions} />}
+			{activeTab === 'providers' && <ProviderPanel theme={theme} sessions={sessions} onSelectSession={onSelectSession} />}
 			{activeTab === 'usage' && <VirtuosoUsageView theme={theme} sessions={sessions} />}
 		</Modal>
 	);

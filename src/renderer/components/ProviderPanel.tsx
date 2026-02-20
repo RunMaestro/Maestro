@@ -35,6 +35,7 @@ import { formatTokenCount } from '../hooks/useAccountUsage';
 interface ProviderPanelProps {
 	theme: Theme;
 	sessions?: Session[];
+	onSelectSession?: (sessionId: string) => void;
 }
 
 interface MigrationEntry {
@@ -102,7 +103,7 @@ function ordinalSuffix(n: number): string {
 // Component
 // ============================================================================
 
-export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
+export function ProviderPanel({ theme, sessions = [], onSelectSession }: ProviderPanelProps) {
 	const {
 		providers: healthProviders,
 		isLoading: healthLoading,
@@ -235,6 +236,7 @@ export function ProviderPanel({ theme, sessions = [] }: ProviderPanelProps) {
 						timeRange={timeRange}
 						setTimeRange={setTimeRange}
 						onBack={() => setSelectedProvider(null)}
+						onSelectSession={onSelectSession}
 					/>
 				</div>
 			</div>

@@ -87,6 +87,16 @@ export interface ProviderDetail {
 		otherProvider: ToolType;
 		generation: number;
 	}>;
+
+	// Cross-provider comparison data
+	comparison: {
+		totalQueriesAllProviders: number;
+		totalCostAllProviders: number;
+		queryShare: number;   // 0-100, this provider's % of total queries
+		costShare: number;    // 0-100, this provider's % of total cost
+		avgResponseRanking: Array<{ provider: string; avgMs: number }>;   // sorted fastest first
+		reliabilityRanking: Array<{ provider: string; rate: number }>;    // sorted highest first
+	};
 }
 
 export interface UseProviderDetailResult {
@@ -169,10 +179,11 @@ export function useProviderDetail(
 
 	const refresh = useCallback(async () => {
 		try {
-			// Fetch all data in parallel — includes failover config for threshold
-			const [agents, errorStats, savedConfig, queryEvents, aggregation] = await Promise.all([
+			// Fetch all data in parallel — includes failover config for threshold + all error stats for comparison
+			const [agents, errorStats, allErrorStats, savedConfig, queryEvents, aggregation] = await Promise.all([
 				window.maestro.agents.detect() as Promise<Array<{ id: string; available: boolean }>>,
 				window.maestro.providers.getErrorStats(toolType) as Promise<ProviderErrorStats | null>,
+				window.maestro.providers.getAllErrorStats() as Promise<Record<string, ProviderErrorStats>>,
 				window.maestro.settings.get('providerSwitchConfig') as Promise<Partial<ProviderSwitchConfig> | null>,
 				window.maestro.stats.getStats(timeRangeRef.current, { agentType: toolType }),
 				window.maestro.stats.getAggregation(timeRangeRef.current) as Promise<StatsAggregation>,
@@ -319,6 +330,64 @@ export function useProviderDetail(
 				? computeP95(durations)
 				: usage.avgDurationMs;
 
+			// Cross-provider comparison from byAgent aggregation
+			const byAgent = aggregation.byAgent ?? {};
+			let totalQueriesAll = 0;
+			let totalCostAll = 0;
+			const avgResponseRanking: Array<{ provider: string; avgMs: number }> = [];
+
+			for (const [agentId, data] of Object.entries(byAgent)) {
+				totalQueriesAll += data.count;
+				// Cost isn't in byAgent — we accumulate a rough estimate from duration ratio
+				const avgMs = data.count > 0 ? Math.round(data.duration / data.count) : 0;
+				avgResponseRanking.push({ provider: getAgentDisplayName(agentId as ToolType), avgMs });
+			}
+
+			// For cost, we need per-provider data — use usage stats for this provider
+			// and aggregate from byAgent counts as proxy (actual cost only available for this provider)
+			// A simpler approach: total cost from aggregation isn't per-provider, so use the
+			// current provider's cost and approximate others from query ratios
+			// Actually, we can compute totalCostAll from the allErrorStats + byAgent combo
+			// Best approach: use totalQueries ratio for cost share approximation
+			// But we already have the actual cost for THIS provider from queryEvents
+			totalCostAll = usage.totalCostUsd; // Start with this provider's known cost
+			for (const [agentId, data] of Object.entries(byAgent)) {
+				if (agentId !== toolType && data.count > 0 && usage.queryCount > 0) {
+					// Estimate other providers' cost proportionally to query count
+					const costPerQuery = usage.totalCostUsd / usage.queryCount;
+					totalCostAll += data.count * costPerQuery;
+				}
+			}
+
+			avgResponseRanking.sort((a, b) => a.avgMs - b.avgMs); // fastest first
+
+			// Reliability ranking from allErrorStats
+			const reliabilityRanking: Array<{ provider: string; rate: number }> = [];
+			for (const [agentId, data] of Object.entries(byAgent)) {
+				const providerErrors = allErrorStats[agentId]?.totalErrorsInWindow ?? 0;
+				const rate = data.count > 0
+					? ((data.count - providerErrors) / data.count) * 100
+					: 100;
+				reliabilityRanking.push({ provider: getAgentDisplayName(agentId as ToolType), rate });
+			}
+			reliabilityRanking.sort((a, b) => b.rate - a.rate); // highest first
+
+			const queryShare = totalQueriesAll > 0
+				? (usage.queryCount / totalQueriesAll) * 100
+				: 0;
+			const costShare = totalCostAll > 0
+				? (usage.totalCostUsd / totalCostAll) * 100
+				: 0;
+
+			const comparison: ProviderDetail['comparison'] = {
+				totalQueriesAllProviders: totalQueriesAll,
+				totalCostAllProviders: totalCostAll,
+				queryShare,
+				costShare,
+				avgResponseRanking,
+				reliabilityRanking,
+			};
+
 			const result: ProviderDetail = {
 				toolType,
 				displayName: getAgentDisplayName(toolType),
@@ -349,6 +418,7 @@ export function useProviderDetail(
 				hourlyPattern,
 				activeSessions,
 				migrations,
+				comparison,
 			};
 
 			setDetail(result);
