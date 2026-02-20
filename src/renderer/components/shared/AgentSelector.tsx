@@ -85,7 +85,11 @@ export function AgentCard({
 	isSupported = true,
 	showComingSoon,
 }: AgentCardProps) {
-	const isBetaAgent = agent.id === 'codex' || agent.id === 'opencode';
+	const isBetaAgent =
+		agent.id === 'codex' ||
+		agent.id === 'opencode' ||
+		agent.id === 'factory-droid' ||
+		agent.id === 'gemini-cli';
 
 	return (
 		<button

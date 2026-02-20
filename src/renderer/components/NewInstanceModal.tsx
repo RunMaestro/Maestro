@@ -808,10 +808,11 @@ export function NewInstanceModal({
 														/>
 													)}
 													<span className="font-medium">{agent.name}</span>
-													{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
+													{/* "Beta" badge for Codex, OpenCode, Factory Droid, Gemini */}
 													{(agent.id === 'codex' ||
 														agent.id === 'opencode' ||
-														agent.id === 'factory-droid') && (
+														agent.id === 'factory-droid' ||
+														agent.id === 'gemini-cli') && (
 														<span
 															className="text-[9px] px-1.5 py-0.5 rounded font-bold uppercase"
 															style={{

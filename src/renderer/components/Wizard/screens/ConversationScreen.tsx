@@ -1182,7 +1182,11 @@ export function ConversationScreen({
 									? 'OpenCode'
 									: state.selectedAgent === 'codex'
 										? 'Codex'
-										: state.selectedAgent || undefined
+										: state.selectedAgent === 'gemini-cli'
+											? 'Gemini'
+											: state.selectedAgent === 'factory-droid'
+												? 'Factory Droid'
+												: state.selectedAgent || undefined
 						}
 					/>
 				))}

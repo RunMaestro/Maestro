@@ -355,7 +355,11 @@ export function AgentCreationDialog({
 								{ac.detectedAgents.map((agent) => {
 									const isSelected = selectedAgent === agent.id;
 									const isExpanded = expandedAgent === agent.id;
-									const isBetaAgent = agent.id === 'codex' || agent.id === 'opencode';
+	const isBetaAgent =
+		agent.id === 'codex' ||
+		agent.id === 'opencode' ||
+		agent.id === 'factory-droid' ||
+		agent.id === 'gemini-cli';
 
 									return (
 										<div

@@ -1326,11 +1326,12 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 										</span>
 									)}
 
-									{/* "Beta" badge for Codex, OpenCode, and Factory Droid */}
+									{/* "Beta" badge for Codex, OpenCode, Factory Droid, Gemini */}
 									{isSupported &&
 										(tile.id === 'codex' ||
 											tile.id === 'opencode' ||
-											tile.id === 'factory-droid') && (
+											tile.id === 'factory-droid' ||
+											tile.id === 'gemini-cli') && (
 											<span
 												className="absolute top-2 left-2 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase"
 												style={{
