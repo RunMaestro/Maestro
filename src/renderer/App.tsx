@@ -1975,10 +1975,11 @@ function MaestroConsoleInner() {
 		const session = sessionsRef.current.find(s => s.id === sessionId);
 		if (!session || !session.archivedByMigration) return;
 
-		// Check for conflict: another non-archived session with the same toolType
+		// Check for conflict: another non-archived session with the same name AND toolType
 		const conflicting = sessionsRef.current.find(
 			s => s.id !== sessionId
 				&& s.toolType === session.toolType
+				&& s.name === session.name
 				&& !s.archivedByMigration
 		);
 
