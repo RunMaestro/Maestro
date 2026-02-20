@@ -10,12 +10,10 @@
  * 3. Activity Heatmap (24-hour bar chart)
  * 4. Token Breakdown (horizontal stacked bar)
  * 5. Source & Location Split (two donut charts)
- * 6. Reliability Score (gauge metric card)
  */
 
 import React, { useState, useMemo, useCallback } from 'react';
 import type { Theme } from '../types';
-import type { AgentErrorType } from '../../shared/types';
 import type { ProviderDetail } from '../hooks/useProviderDetail';
 import { formatTokenCount } from '../hooks/useAccountUsage';
 
@@ -57,17 +55,6 @@ function parseHexColor(hex: string): { r: number; g: number; b: number } {
 		b: parseInt(clean.slice(4, 6), 16) || 237,
 	};
 }
-
-const ERROR_TYPE_LABELS: Record<AgentErrorType, string> = {
-	auth_expired: 'Auth Expired',
-	token_exhaustion: 'Token Exhaustion',
-	rate_limited: 'Rate Limited',
-	network_error: 'Network Error',
-	agent_crashed: 'Agent Crashed',
-	permission_denied: 'Permission Denied',
-	session_not_found: 'Session Not Found',
-	unknown: 'Unknown',
-};
 
 // ============================================================================
 // Chart wrapper
@@ -970,150 +957,6 @@ function SourceLocationSplitChart({
 }
 
 // ============================================================================
-// Chart 6: Reliability Score (gauge metric card)
-// ============================================================================
-
-function ReliabilityGaugeChart({
-	theme,
-	reliability,
-	queryCount,
-}: {
-	theme: Theme;
-	reliability: ProviderDetail['reliability'];
-	queryCount: number;
-}) {
-	const gaugeColor = useMemo(() => {
-		if (queryCount === 0) return theme.colors.textDim;
-		if (reliability.successRate >= 95) return theme.colors.success;
-		if (reliability.successRate >= 85) return theme.colors.warning;
-		return theme.colors.error;
-	}, [reliability.successRate, queryCount, theme]);
-
-	const displayRate = queryCount > 0 ? `${reliability.successRate.toFixed(1)}%` : 'N/A';
-
-	// Error type breakdown
-	const errorEntries = useMemo(() => {
-		const entries: Array<{ type: AgentErrorType; count: number }> = [];
-		for (const [type, count] of Object.entries(reliability.errorsByType)) {
-			if (count && count > 0) {
-				entries.push({ type: type as AgentErrorType, count });
-			}
-		}
-		return entries.sort((a, b) => b.count - a.count);
-	}, [reliability.errorsByType]);
-
-	// SVG gauge arc
-	const gaugeSize = 80;
-	const gaugeRadius = 32;
-	const gaugeThickness = 6;
-	const cx = gaugeSize / 2;
-	const cy = gaugeSize / 2 + 4;
-	const startAngle = -Math.PI * 0.8;
-	const endAngle = Math.PI * 0.8;
-	const totalArc = endAngle - startAngle;
-	const filledAngle = startAngle + (queryCount > 0 ? (reliability.successRate / 100) : 0) * totalArc;
-
-	const bgArcStart = {
-		x: cx + gaugeRadius * Math.cos(startAngle),
-		y: cy + gaugeRadius * Math.sin(startAngle),
-	};
-	const bgArcEnd = {
-		x: cx + gaugeRadius * Math.cos(endAngle),
-		y: cy + gaugeRadius * Math.sin(endAngle),
-	};
-	const filledArcEnd = {
-		x: cx + gaugeRadius * Math.cos(filledAngle),
-		y: cy + gaugeRadius * Math.sin(filledAngle),
-	};
-	const largeArc = totalArc > Math.PI ? 1 : 0;
-	const filledLargeArc = (filledAngle - startAngle) > Math.PI ? 1 : 0;
-
-	return (
-		<div>
-			{/* Gauge */}
-			<div className="flex flex-col items-center">
-				<svg width={gaugeSize} height={gaugeSize * 0.7}>
-					{/* Background arc */}
-					<path
-						d={`M ${bgArcStart.x} ${bgArcStart.y} A ${gaugeRadius} ${gaugeRadius} 0 ${largeArc} 1 ${bgArcEnd.x} ${bgArcEnd.y}`}
-						fill="none"
-						stroke={theme.colors.border}
-						strokeWidth={gaugeThickness}
-						strokeLinecap="round"
-						strokeOpacity={0.4}
-					/>
-					{/* Filled arc */}
-					{queryCount > 0 && reliability.successRate > 0 && (
-						<path
-							d={`M ${bgArcStart.x} ${bgArcStart.y} A ${gaugeRadius} ${gaugeRadius} 0 ${filledLargeArc} 1 ${filledArcEnd.x} ${filledArcEnd.y}`}
-							fill="none"
-							stroke={gaugeColor}
-							strokeWidth={gaugeThickness}
-							strokeLinecap="round"
-						/>
-					)}
-					{/* Center text */}
-					<text
-						x={cx}
-						y={cy - 2}
-						textAnchor="middle"
-						dominantBaseline="middle"
-						fontSize={16}
-						fontWeight={700}
-						fill={gaugeColor}
-					>
-						{displayRate}
-					</text>
-					<text
-						x={cx}
-						y={cy + 12}
-						textAnchor="middle"
-						dominantBaseline="middle"
-						fontSize={8}
-						fill={theme.colors.textDim}
-					>
-						reliable
-					</text>
-				</svg>
-			</div>
-
-			{/* Error breakdown */}
-			{errorEntries.length > 0 && (
-				<div
-					className="flex flex-wrap gap-1.5 justify-center mt-2"
-					style={{ fontSize: 10 }}
-				>
-					{errorEntries.map((e) => (
-						<span
-							key={e.type}
-							style={{
-								backgroundColor: `${theme.colors.error}15`,
-								color: theme.colors.error,
-								padding: '1px 6px',
-								borderRadius: 3,
-								whiteSpace: 'nowrap',
-							}}
-						>
-							{ERROR_TYPE_LABELS[e.type] ?? e.type}: {e.count}
-						</span>
-					))}
-				</div>
-			)}
-
-			{/* Zero errors note */}
-			{reliability.totalErrors === 0 && queryCount > 0 && (
-				<div
-					className="text-center mt-2"
-					style={{ fontSize: 10, color: theme.colors.success }}
-				>
-					No errors recorded
-				</div>
-			)}
-		</div>
-	);
-}
-
-// ============================================================================
 // Main component
 // ============================================================================
 
@@ -1165,15 +1008,6 @@ export function ProviderDetailCharts({ theme, detail }: ProviderDetailChartsProp
 					theme={theme}
 					queriesBySource={detail.queriesBySource}
 					queriesByLocation={detail.queriesByLocation}
-				/>
-			</ChartPanel>
-
-			{/* Chart 6: Reliability Score */}
-			<ChartPanel theme={theme} title="Reliability">
-				<ReliabilityGaugeChart
-					theme={theme}
-					reliability={detail.reliability}
-					queryCount={detail.usage.queryCount}
 				/>
 			</ChartPanel>
 		</div>

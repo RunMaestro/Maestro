@@ -8,7 +8,7 @@
 import React, { useEffect } from 'react';
 import { ArrowLeft, ArrowRightLeft } from 'lucide-react';
 import type { Theme, Session } from '../types';
-import type { ToolType } from '../../shared/types';
+import type { ToolType, AgentErrorType } from '../../shared/types';
 import type { StatsTimeRange } from '../../shared/stats-types';
 import { getAgentIcon } from '../constants/agentIcons';
 import { formatTokenCount } from '../hooks/useAccountUsage';
@@ -338,6 +338,11 @@ export function ProviderDetailView({
 				/>
 			</div>
 
+			{/* Error type breakdown (compact inline, only when errors exist) */}
+			{detail.reliability.totalErrors > 0 && (
+				<ErrorBreakdownBar theme={theme} errorsByType={detail.reliability.errorsByType} />
+			)}
+
 			{/* Charts and visualizations */}
 			<div style={{ marginBottom: 12 }}>
 				<ProviderDetailCharts theme={theme} detail={detail} />
@@ -365,6 +370,54 @@ export function ProviderDetailView({
 // ============================================================================
 // Sub-components
 // ============================================================================
+
+const ERROR_TYPE_LABELS: Record<AgentErrorType, string> = {
+	auth_expired: 'Auth Expired',
+	token_exhaustion: 'Token Exhaustion',
+	rate_limited: 'Rate Limited',
+	network_error: 'Network Error',
+	agent_crashed: 'Agent Crashed',
+	permission_denied: 'Permission Denied',
+	session_not_found: 'Session Not Found',
+	unknown: 'Unknown',
+};
+
+function ErrorBreakdownBar({
+	theme,
+	errorsByType,
+}: {
+	theme: Theme;
+	errorsByType: Partial<Record<AgentErrorType, number>>;
+}) {
+	const entries = Object.entries(errorsByType)
+		.filter(([, count]) => count && count > 0)
+		.sort(([, a], [, b]) => (b ?? 0) - (a ?? 0)) as Array<[AgentErrorType, number]>;
+
+	if (entries.length === 0) return null;
+
+	return (
+		<div
+			className="flex flex-wrap items-center gap-1.5"
+			style={{ marginBottom: 12, fontSize: 10 }}
+		>
+			<span style={{ color: theme.colors.textDim }}>Errors:</span>
+			{entries.map(([type, count]) => (
+				<span
+					key={type}
+					style={{
+						backgroundColor: `${theme.colors.error}15`,
+						color: theme.colors.error,
+						padding: '1px 6px',
+						borderRadius: 3,
+						whiteSpace: 'nowrap',
+					}}
+				>
+					{ERROR_TYPE_LABELS[type] ?? type}: {count}
+				</span>
+			))}
+		</div>
+	);
+}
 
 function MetricCard({
 	theme,

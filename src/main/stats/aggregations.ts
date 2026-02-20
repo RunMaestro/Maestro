@@ -187,6 +187,42 @@ function queryByHour(
 	return rows;
 }
 
+function queryByAgentByHour(
+	db: Database.Database,
+	startTime: number
+): Record<string, Array<{ hour: number; count: number; duration: number }>> {
+	const perfStart = perfMetrics.start();
+	const rows = db
+		.prepare(
+			`
+      SELECT agent_type,
+             CAST(strftime('%H', start_time / 1000, 'unixepoch', 'localtime') AS INTEGER) as hour,
+             COUNT(*) as count,
+             SUM(duration) as duration
+      FROM query_events
+      WHERE start_time >= ?
+      GROUP BY agent_type, hour
+      ORDER BY agent_type, hour ASC
+    `
+		)
+		.all(startTime) as Array<{
+		agent_type: string;
+		hour: number;
+		count: number;
+		duration: number;
+	}>;
+
+	const result: Record<string, Array<{ hour: number; count: number; duration: number }>> = {};
+	for (const row of rows) {
+		if (!result[row.agent_type]) {
+			result[row.agent_type] = [];
+		}
+		result[row.agent_type].push({ hour: row.hour, count: row.count, duration: row.duration });
+	}
+	perfMetrics.end(perfStart, 'getAggregatedStats:byAgentByHour');
+	return result;
+}
+
 function querySessionStats(
 	db: Database.Database,
 	startTime: number
@@ -320,6 +356,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 	const byDay = queryByDay(db, startTime);
 	const byAgentByDay = queryByAgentByDay(db, startTime);
 	const byHour = queryByHour(db, startTime);
+	const byAgentByHour = queryByAgentByHour(db, startTime);
 	const sessionStats = querySessionStats(db, startTime);
 	const bySessionByDay = queryBySessionByDay(db, startTime);
 
@@ -348,6 +385,7 @@ export function getAggregatedStats(db: Database.Database, range: StatsTimeRange)
 		byHour,
 		...sessionStats,
 		byAgentByDay,
+		byAgentByHour,
 		bySessionByDay,
 	};
 }

@@ -107,6 +107,8 @@ export interface StatsAggregation {
 	avgSessionDuration: number;
 	/** Queries and duration by provider per day (for provider comparison) */
 	byAgentByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
+	/** Queries and duration by provider per hour of day (for provider detail hourly chart) */
+	byAgentByHour: Record<string, Array<{ hour: number; count: number; duration: number }>>;
 	/** Queries and duration by Maestro session per day (for agent usage chart) */
 	bySessionByDay: Record<string, Array<{ date: string; count: number; duration: number }>>;
 }

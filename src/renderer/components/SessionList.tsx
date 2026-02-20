@@ -39,6 +39,7 @@ import {
 	User,
 	Users,
 	ArrowRightLeft,
+	ArchiveRestore,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type {
@@ -86,6 +87,7 @@ interface SessionContextMenuProps {
 	onDeleteWorktree?: () => void; // For worktree child sessions to delete
 	onCreateGroup?: () => void; // Creates a new group from the Move to Group submenu
 	onSwitchProvider?: () => void; // Opens SwitchProviderModal (Virtuosos)
+	onUnarchive?: () => void; // Unarchive a migration-archived session (Virtuosos)
 }
 
 function SessionContextMenu({
@@ -108,6 +110,7 @@ function SessionContextMenu({
 	onDeleteWorktree,
 	onCreateGroup,
 	onSwitchProvider,
+	onUnarchive,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -227,6 +230,21 @@ function SessionContextMenu({
 				>
 					<ArrowRightLeft className="w-3.5 h-3.5" />
 					Switch Provider...
+				</button>
+			)}
+
+			{/* Unarchive (only for migration-archived sessions) */}
+			{onUnarchive && session.archivedByMigration && (
+				<button
+					onClick={() => {
+						onUnarchive();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.accent }}
+				>
+					<ArchiveRestore className="w-3.5 h-3.5" />
+					Unarchive
 				</button>
 			)}
 
@@ -1161,6 +1179,7 @@ interface SessionListProps {
 
 	// Provider switching (Virtuosos)
 	onSwitchProvider?: (sessionId: string) => void;
+	onUnarchive?: (sessionId: string) => void;
 
 	// Rename modal handlers (for context menu rename)
 	setRenameInstanceModalOpen: (open: boolean) => void;
@@ -1287,6 +1306,7 @@ function SessionListInner(props: SessionListProps) {
 		onDeleteSession,
 		onDeleteWorktreeGroup,
 		onSwitchProvider,
+		onUnarchive,
 		setRenameInstanceModalOpen,
 		setRenameInstanceValue,
 		setRenameInstanceSessionId,
@@ -3130,6 +3150,7 @@ function SessionListInner(props: SessionListProps) {
 							: createNewGroup
 					}
 					onSwitchProvider={onSwitchProvider ? () => onSwitchProvider(contextMenuSession.id) : undefined}
+					onUnarchive={onUnarchive ? () => onUnarchive(contextMenuSession.id) : undefined}
 				/>
 			)}
 		</div>

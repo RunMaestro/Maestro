@@ -44,6 +44,7 @@ import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES, getBadgeForTime } from './constants/conductorBadges';
 import { EmptyStateView } from './components/EmptyStateView';
 import { DeleteAgentConfirmModal } from './components/DeleteAgentConfirmModal';
+import { UnarchiveConflictModal } from './components/UnarchiveConflictModal';
 import { AccountSwitchModal } from './components/AccountSwitchModal';
 import { VirtuososModal } from './components/VirtuososModal';
 import { SwitchProviderModal } from './components/SwitchProviderModal';
@@ -865,6 +866,12 @@ function MaestroConsoleInner() {
 
 	// Provider Switch state
 	const [switchProviderSession, setSwitchProviderSession] = useState<Session | null>(null);
+
+	// Unarchive conflict state
+	const [unarchiveConflictState, setUnarchiveConflictState] = useState<{
+		archivedSession: Session;
+		conflictingSession: Session;
+	} | null>(null);
 
 	// Note: Git Diff State, Tour Overlay State, and Git Log Viewer State are from modalStore
 
@@ -5015,6 +5022,89 @@ You are taking over this conversation. Based on the context above, provide a bri
 		setSwitchProviderSession(null);
 	}, [switchProviderSession, switchProvider, setActiveSessionId]);
 
+	// Unarchive handlers
+	const handleUnarchive = useCallback((sessionId: string) => {
+		const session = sessionsRef.current.find(s => s.id === sessionId);
+		if (!session || !session.archivedByMigration) return;
+
+		// Check for conflict: another non-archived session with the same toolType
+		const conflicting = sessionsRef.current.find(
+			s => s.id !== sessionId
+				&& s.toolType === session.toolType
+				&& !s.archivedByMigration
+		);
+
+		if (conflicting) {
+			setUnarchiveConflictState({
+				archivedSession: session,
+				conflictingSession: conflicting,
+			});
+		} else {
+			// No conflict — directly unarchive
+			setSessions(prev => prev.map(s =>
+				s.id === sessionId
+					? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+					: s
+			));
+			notifyToast({
+				type: 'success',
+				title: 'Agent Unarchived',
+				message: `${session.name || 'Agent'} has been restored`,
+				duration: 3_000,
+			});
+		}
+	}, []);
+
+	const handleUnarchiveWithArchiveConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions(prev => prev.map(s => {
+			if (s.id === archivedSession.id) {
+				return { ...s, archivedByMigration: false, migratedToSessionId: undefined };
+			}
+			if (s.id === conflictingSession.id) {
+				return { ...s, archivedByMigration: true };
+			}
+			return s;
+		}));
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} archived`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState]);
+
+	const handleUnarchiveWithDeleteConflict = useCallback(() => {
+		if (!unarchiveConflictState) return;
+		const { archivedSession, conflictingSession } = unarchiveConflictState;
+
+		setSessions(prev => prev
+			.filter(s => s.id !== conflictingSession.id)
+			.map(s =>
+				s.id === archivedSession.id
+					? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+					: s
+			)
+		);
+
+		// Kill process for deleted session if running
+		window.maestro.process.kill(conflictingSession.id).catch(() => {});
+
+		notifyToast({
+			type: 'success',
+			title: 'Agent Unarchived',
+			message: `${archivedSession.name || 'Agent'} restored, ${conflictingSession.name || 'agent'} removed`,
+			duration: 5_000,
+		});
+
+		setUnarchiveConflictState(null);
+	}, [unarchiveConflictState]);
+
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			if (!activeSession || !renameTabId) return;
@@ -8738,6 +8828,7 @@ You are taking over this conversation. Based on the context above, provide a bri
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
 		handleSwitchProvider: encoreFeatures.virtuosos ? handleSwitchProvider : undefined,
+		handleUnarchive: encoreFeatures.virtuosos ? handleUnarchive : undefined,
 		openWizardModal,
 		handleStartTour,
 
@@ -9679,6 +9770,18 @@ You are taking over this conversation. Based on the context above, provide a bri
 						onConfirm={() => performDeleteSession(deleteAgentSession, false)}
 						onConfirmAndErase={() => performDeleteSession(deleteAgentSession, true)}
 						onClose={handleCloseDeleteAgentModal}
+					/>
+				)}
+
+				{/* Unarchive Conflict Modal */}
+				{unarchiveConflictState && (
+					<UnarchiveConflictModal
+						theme={theme}
+						archivedSession={unarchiveConflictState.archivedSession}
+						conflictingSession={unarchiveConflictState.conflictingSession}
+						onArchiveConflicting={handleUnarchiveWithArchiveConflict}
+						onDeleteConflicting={handleUnarchiveWithDeleteConflict}
+						onClose={() => setUnarchiveConflictState(null)}
 					/>
 				)}
 

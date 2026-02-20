@@ -268,21 +268,19 @@ export function useProviderDetail(
 				avgDurationMs: d.count > 0 ? Math.round(d.duration / d.count) : 0,
 			}));
 
-			// Hourly pattern — compute from raw events (byHour lacks per-agent breakdown)
-			const hourlyMap = new Map<number, { count: number; totalDuration: number }>();
+			// Hourly pattern — use per-agent aggregation from SQL (consistent with daily trend)
+			const hourlyData = aggregation.byAgentByHour?.[toolType] ?? [];
+			const hourlyMap = new Map<number, { count: number; duration: number }>();
 			for (let h = 0; h < 24; h++) {
-				hourlyMap.set(h, { count: 0, totalDuration: 0 });
+				hourlyMap.set(h, { count: 0, duration: 0 });
 			}
-			for (const e of queryEvents) {
-				const hour = new Date(e.startTime).getHours();
-				const entry = hourlyMap.get(hour)!;
-				entry.count += 1;
-				entry.totalDuration += e.duration ?? 0;
+			for (const d of hourlyData) {
+				hourlyMap.set(d.hour, { count: d.count, duration: d.duration });
 			}
 			const hourlyPattern = Array.from(hourlyMap.entries()).map(([hour, data]) => ({
 				hour,
 				queryCount: data.count,
-				avgDurationMs: data.count > 0 ? Math.round(data.totalDuration / data.count) : 0,
+				avgDurationMs: data.count > 0 ? Math.round(data.duration / data.count) : 0,
 			}));
 
 			// Active sessions
