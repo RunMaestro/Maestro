@@ -24,6 +24,7 @@ describe('GeminiOutputParser', () => {
 
 		it('should return null for lines not starting with {', () => {
 			expect(parser.parseJsonLine('[1,2,3]')).toBeNull();
+			expect(parser.parseJsonLine('[]')).toBeNull();
 			expect(parser.parseJsonLine('"hello"')).toBeNull();
 		});
 
@@ -36,14 +37,14 @@ describe('GeminiOutputParser', () => {
 				const line = JSON.stringify({
 					type: 'init',
 					timestamp: '2025-01-15T10:30:00Z',
-					session_id: '5b845adc',
+					session_id: 'abc-123',
 					model: 'gemini-2.5-flash',
 				});
 
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('init');
-				expect(event?.sessionId).toBe('5b845adc');
+				expect(event?.sessionId).toBe('abc-123');
 				expect(event?.text).toBe('Gemini CLI session started (model: gemini-2.5-flash)');
 			});
 
@@ -63,14 +64,14 @@ describe('GeminiOutputParser', () => {
 				const line = JSON.stringify({
 					type: 'message',
 					role: 'assistant',
-					content: "I'll create the file now.",
+					content: 'Hello world',
 					delta: true,
 				});
 
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('text');
-				expect(event?.text).toBe("I'll create the file now.");
+				expect(event?.text).toBe('Hello world');
 				expect(event?.isPartial).toBe(true);
 			});
 
@@ -90,7 +91,7 @@ describe('GeminiOutputParser', () => {
 				const line = JSON.stringify({
 					type: 'message',
 					role: 'user',
-					content: 'hello',
+					content: 'Do something',
 				});
 
 				expect(parser.parseJsonLine(line)).toBeNull();
@@ -101,19 +102,19 @@ describe('GeminiOutputParser', () => {
 			it('should parse tool_use event', () => {
 				const line = JSON.stringify({
 					type: 'tool_use',
-					tool_name: 'write_file',
+					tool_name: 'read_file',
 					tool_id: 'tool_123',
-					parameters: { path: 'hello.txt', content: 'Hello' },
+					parameters: { path: 'README.md' },
 				});
 
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('tool_use');
-				expect(event?.toolName).toBe('write_file');
+				expect(event?.toolName).toBe('read_file');
 				expect(event?.toolState).toEqual({
 					id: 'tool_123',
-					name: 'write_file',
-					parameters: { path: 'hello.txt', content: 'Hello' },
+					name: 'read_file',
+					parameters: { path: 'README.md' },
 					status: 'running',
 				});
 			});
@@ -125,7 +126,7 @@ describe('GeminiOutputParser', () => {
 					type: 'tool_result',
 					tool_id: 'tool_123',
 					status: 'success',
-					output: 'File written successfully',
+					output: 'file contents',
 				});
 
 				const event = parser.parseJsonLine(line);
@@ -134,7 +135,7 @@ describe('GeminiOutputParser', () => {
 				expect(event?.toolState).toEqual({
 					id: 'tool_123',
 					status: 'success',
-					output: 'File written successfully',
+					output: 'file contents',
 					error: undefined,
 				});
 				expect(event?.text).toBeUndefined();
@@ -145,17 +146,17 @@ describe('GeminiOutputParser', () => {
 					type: 'tool_result',
 					tool_id: 'tool_456',
 					status: 'error',
-					error: { type: 'permission_denied', message: 'Cannot write to read-only file' },
+					error: { type: 'io_error', message: 'Failed to open file' },
 				});
 
 				const event = parser.parseJsonLine(line);
 				expect(event?.type).toBe('tool_use');
-				expect(event?.text).toBe('Tool error: Cannot write to read-only file');
+				expect(event?.text).toBe('Tool error: Failed to open file');
 				expect(event?.toolState).toEqual({
 					id: 'tool_456',
 					status: 'error',
 					output: undefined,
-					error: { type: 'permission_denied', message: 'Cannot write to read-only file' },
+					error: { type: 'io_error', message: 'Failed to open file' },
 				});
 			});
 
@@ -206,7 +207,7 @@ describe('GeminiOutputParser', () => {
 					stats: {
 						input_tokens: 500,
 						output_tokens: 1000,
-						cached: 100,
+						cached: 50,
 						duration_ms: 3200,
 						tool_calls: 1,
 					},
@@ -219,7 +220,7 @@ describe('GeminiOutputParser', () => {
 				expect(event?.usage).toEqual({
 					inputTokens: 500,
 					outputTokens: 1000,
-					cacheReadTokens: 100,
+					cacheReadTokens: 50,
 					reasoningTokens: 0,
 				});
 			});
@@ -233,11 +234,11 @@ describe('GeminiOutputParser', () => {
 							'gemini-2.5-flash': {
 								tokens: {
 									input: 200,
-									prompt: 100,
-									candidates: 500,
+									prompt: 300,
+									candidates: 800,
 									total: 800,
-									cached: 50,
-									thoughts: 30,
+									cached: 25,
+									thoughts: 50,
 								},
 							},
 						},
@@ -247,10 +248,10 @@ describe('GeminiOutputParser', () => {
 				const event = parser.parseJsonLine(line);
 				expect(event?.type).toBe('result');
 				expect(event?.usage).toEqual({
-					inputTokens: 300, // input + prompt
-					outputTokens: 500, // candidates
-					cacheReadTokens: 50,
-					reasoningTokens: 30,
+					inputTokens: 500, // input + prompt
+					outputTokens: 800, // candidates
+					cacheReadTokens: 25,
+					reasoningTokens: 50,
 				});
 			});
 
@@ -325,6 +326,13 @@ describe('GeminiOutputParser', () => {
 			);
 			// Error results are emitted as type: 'error', but raw.type is 'result'
 			expect(parser.isResultMessage(event!)).toBe(true);
+		});
+
+		it('should return false for mid-stream error events', () => {
+			const event = parser.parseJsonLine(
+				JSON.stringify({ type: 'error', severity: 'warning', message: 'Loop detected' })
+			);
+			expect(parser.isResultMessage(event!)).toBe(false);
 		});
 
 		it('should return false for non-result events', () => {
