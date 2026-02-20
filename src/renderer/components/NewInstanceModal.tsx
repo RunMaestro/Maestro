@@ -1499,6 +1499,7 @@ export function EditAgentModal({
 		'claude-code': 'Claude Code',
 		codex: 'Codex',
 		opencode: 'OpenCode',
+		'gemini-cli': 'Gemini CLI',
 		'factory-droid': 'Factory Droid',
 	};
 	const agentName = agentNameMap[session.toolType] || session.toolType;
