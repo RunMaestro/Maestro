@@ -41,6 +41,7 @@ const VALID_TOOL_TYPES: ToolType[] = [
 	'codex',
 	'terminal',
 	'factory-droid',
+	'gemini-cli',
 ];
 
 /**

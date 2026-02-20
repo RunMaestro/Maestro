@@ -174,6 +174,26 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		binaryName: 'gemini',
 		command: 'gemini',
 		args: [],
+		batchModePrefix: [],
+		batchModeArgs: ['-y'],
+		jsonOutputArgs: ['--output-format', 'stream-json'],
+		resumeArgs: (sessionId: string) => ['--resume', sessionId],
+		readOnlyArgs: ['--approval-mode', 'plan'],
+		yoloModeArgs: ['-y'],
+		workingDirArgs: (dir: string) => ['--include-directories', dir],
+		imageArgs: undefined,
+		modelArgs: (modelId: string) => ['-m', modelId],
+		promptArgs: (prompt: string) => ['-p', prompt],
+		configOptions: [
+			{
+				key: 'contextWindow',
+				type: 'number' as const,
+				label: 'Context Window Size',
+				description:
+					'Maximum context window size in tokens. Common values: 1048576 (Gemini 2.5 Pro), 32767 (Gemini 2.5 Flash).',
+				default: 1048576,
+			},
+		],
 	},
 	{
 		id: 'qwen3-coder',

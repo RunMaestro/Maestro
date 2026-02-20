@@ -197,31 +197,31 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	},
 
 	/**
-	 * Gemini CLI - Google's Gemini model CLI
+	 * Gemini CLI - Google's Gemini model CLI (v0.29.5)
+	 * https://github.com/google-gemini/gemini-cli
 	 *
-	 * PLACEHOLDER: Most capabilities set to false until Gemini CLI is stable
-	 * and can be tested. Update this configuration when integrating the agent.
+	 * Verified capabilities based on Gemini CLI v0.29.5 flags and output format.
 	 */
 	'gemini-cli': {
-		supportsResume: false,
-		supportsReadOnlyMode: false,
-		supportsJsonOutput: false,
-		supportsSessionId: false,
-		supportsImageInput: true, // Gemini supports multimodal
-		supportsImageInputOnResume: false, // Not yet investigated
-		supportsSlashCommands: false,
-		supportsSessionStorage: false,
-		supportsCostTracking: false,
-		supportsUsageStats: false,
-		supportsBatchMode: false,
-		requiresPromptToStart: false, // Not yet investigated
-		supportsStreaming: true, // Likely streams
-		supportsResultMessages: false,
-		supportsModelSelection: false, // Not yet investigated
-		supportsStreamJsonInput: false,
-		supportsThinkingDisplay: false, // Not yet investigated
-		supportsContextMerge: false, // Not yet investigated - PLACEHOLDER
-		supportsContextExport: false, // Not yet investigated - PLACEHOLDER
+		supportsResume: true, // --resume latest|index
+		supportsReadOnlyMode: true, // --approval-mode plan
+		supportsJsonOutput: true, // --output-format json|stream-json
+		supportsSessionId: true, // session_id in JSON output
+		supportsImageInput: true, // Gemini is multimodal
+		supportsImageInputOnResume: false, // No image flag for resume
+		supportsSlashCommands: false, // Gemini uses /slash commands but not exposed in JSON
+		supportsSessionStorage: true, // ~/.gemini/tmp/project/chats/
+		supportsCostTracking: false, // Free tier / no cost data in output
+		supportsUsageStats: true, // Token stats in JSON output
+		supportsBatchMode: true, // -p flag for non-interactive
+		requiresPromptToStart: true, // Needs -p for batch mode
+		supportsStreaming: true, // stream-json output
+		supportsResultMessages: true, // 'result' event in stream-json
+		supportsModelSelection: true, // -m/--model flag
+		supportsStreamJsonInput: false, // No stdin JSON streaming
+		supportsThinkingDisplay: true, // Tracks thought tokens
+		supportsContextMerge: true, // Can receive transferred context
+		supportsContextExport: true, // Can export context for transfer
 	},
 
 	/**
