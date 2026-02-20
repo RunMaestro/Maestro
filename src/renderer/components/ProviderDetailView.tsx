@@ -14,6 +14,7 @@ import { getAgentIcon } from '../constants/agentIcons';
 import { formatTokenCount } from '../hooks/useAccountUsage';
 import { useProviderDetail } from '../hooks/useProviderDetail';
 import type { HealthStatus } from './ProviderHealthCard';
+import { ProviderDetailCharts } from './ProviderDetailCharts';
 import { getAgentDisplayName } from '../services/contextGroomer';
 
 // ============================================================================
@@ -333,6 +334,11 @@ export function ProviderDetailView({
 					label="Migrations"
 					value={`${detail.migrations.length}`}
 				/>
+			</div>
+
+			{/* Charts and visualizations */}
+			<div style={{ marginBottom: 12 }}>
+				<ProviderDetailCharts theme={theme} detail={detail} />
 			</div>
 
 			{/* Active Sessions */}
