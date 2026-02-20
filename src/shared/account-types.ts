@@ -13,7 +13,7 @@ export type AccountStatus = 'active' | 'throttled' | 'expired' | 'disabled';
 export type AccountAuthMethod = 'oauth' | 'api-key';
 
 /** Agent types that support account multiplexing */
-export type MultiplexableAgent = 'claude-code';
+export type MultiplexableAgent = 'claude-code' | 'codex' | 'opencode' | 'factory-droid' | 'gemini-cli';
 
 /** A registered account profile */
 export interface AccountProfile {

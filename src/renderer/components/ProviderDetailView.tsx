@@ -5,7 +5,7 @@
  * and navigates back to the card grid on back button or Escape key.
  */
 
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { ArrowLeft, ArrowRightLeft } from 'lucide-react';
 import type { Theme, Session } from '../types';
 import type { ToolType, AgentErrorType } from '../../shared/types';
@@ -91,7 +91,7 @@ export function ProviderDetailView({
 	toolType,
 	sessions,
 	timeRange,
-	setTimeRange,
+	setTimeRange: _setTimeRange,
 	onBack,
 	onSelectSession,
 }: ProviderDetailViewProps) {

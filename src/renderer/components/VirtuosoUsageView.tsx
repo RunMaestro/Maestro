@@ -7,7 +7,7 @@
  * C) Historical — per-account expandable history + throttle event timeline
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
 	Activity,
 	AlertTriangle,
@@ -16,7 +16,6 @@ import {
 	Clock,
 	TrendingUp,
 	Users,
-	Zap,
 	BarChart3,
 } from 'lucide-react';
 import type { Theme, Session } from '../types';

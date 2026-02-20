@@ -80,7 +80,7 @@ export function UnarchiveConflictModal({
 						className="px-3 py-1.5 rounded transition-colors outline-none focus:ring-2 focus:ring-offset-1 text-xs whitespace-nowrap"
 						style={{
 							backgroundColor: theme.colors.accent,
-							color: theme.colors.bg,
+							color: theme.colors.accentForeground,
 						}}
 					>
 						Archive &ldquo;{conflictName}&rdquo;

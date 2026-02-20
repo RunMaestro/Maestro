@@ -107,7 +107,7 @@ export function ProviderPanel({ theme, sessions = [], onSelectSession }: Provide
 	const {
 		providers: healthProviders,
 		isLoading: healthLoading,
-		lastUpdated,
+		lastUpdated: _lastUpdated,
 		timeRange,
 		setTimeRange,
 		refresh: refreshHealth,

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import type { Theme } from '../types';
 import { formatTokenCount } from '../hooks/useAccountUsage';
 

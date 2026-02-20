@@ -15,7 +15,7 @@ import type { AccountRegistry } from '../../accounts/account-registry';
 import type { AccountSwitcher } from '../../accounts/account-switcher';
 import type { AccountAuthRecovery } from '../../accounts/account-auth-recovery';
 import type { AccountRecoveryPoller } from '../../accounts/account-recovery-poller';
-import type { AccountSwitchConfig, AccountSwitchEvent } from '../../../shared/account-types';
+import type { AccountSwitchConfig, AccountSwitchEvent, MultiplexableAgent } from '../../../shared/account-types';
 import { getStatsDB } from '../../stats';
 import { logger } from '../../utils/logger';
 import {
@@ -79,7 +79,7 @@ export function registerAccountHandlers(deps: AccountHandlerDependencies): void 
 	});
 
 	ipcMain.handle('accounts:add', async (_event, params: {
-		name: string; email: string; configDir: string;
+		name: string; email: string; configDir: string; agentType?: MultiplexableAgent;
 	}) => {
 		try {
 			const profile = requireRegistry().add(params);

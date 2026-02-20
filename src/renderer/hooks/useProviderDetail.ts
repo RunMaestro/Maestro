@@ -10,7 +10,7 @@ import type { Session } from '../types';
 import type { ToolType, AgentErrorType } from '../../shared/types';
 import type { ProviderErrorStats, ProviderSwitchConfig } from '../../shared/account-types';
 import { DEFAULT_PROVIDER_SWITCH_CONFIG } from '../../shared/account-types';
-import type { StatsTimeRange, StatsAggregation, QueryEvent } from '../../shared/stats-types';
+import type { StatsTimeRange, StatsAggregation } from '../../shared/stats-types';
 import type { ProviderUsageStats } from './useProviderHealth';
 import type { HealthStatus } from '../components/ProviderHealthCard';
 import { getAgentDisplayName } from '../services/contextGroomer';

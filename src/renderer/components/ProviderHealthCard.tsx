@@ -8,7 +8,6 @@
  * - Health bar at bottom (green/yellow/red gradient)
  */
 
-import React from 'react';
 import type { Theme } from '../types';
 import type { ToolType } from '../../shared/types';
 import type { ProviderErrorStats } from '../../shared/account-types';
@@ -113,11 +112,11 @@ function formatWindowDuration(ms: number): string {
 export function ProviderHealthCard({
 	theme,
 	toolType,
-	available,
+	available: _available,
 	activeSessionCount,
 	errorStats,
 	usageStats,
-	failoverThreshold,
+	failoverThreshold: _failoverThreshold,
 	healthPercent,
 	status,
 	onSelect,

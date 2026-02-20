@@ -7,7 +7,7 @@
  * 3. Usage — VirtuosoUsageView (real-time metrics, predictions, history, throttle events)
  */
 
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Users, Settings, BarChart3, ArrowRightLeft } from 'lucide-react';
 import { AccountsPanel } from './AccountsPanel';
 import { ProviderPanel } from './ProviderPanel';

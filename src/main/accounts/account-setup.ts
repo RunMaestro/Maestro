@@ -56,42 +56,148 @@ export async function validateBaseClaudeDir(): Promise<{
 }
 
 /**
- * Discover existing Claude account directories by scanning for ~/.claude-* directories
- * that contain a .claude.json file.
+ * Provider-specific config for discovery.
+ * Each entry describes where to find accounts and how to extract identity.
+ */
+interface ProviderDiscoveryConfig {
+	agentType: string;
+	/** Directory prefix to scan in home dir (e.g., '.claude-' matches ~/.claude-work) */
+	dirPrefix?: string;
+	/** Single config dir to detect as an account (e.g., '.codex' matches ~/.codex) */
+	singleDir?: string;
+	/** Auth files to check (relative to config dir) — first found wins */
+	authFiles: string[];
+	/** Extract identity from auth/config file content */
+	extractIdentity: (content: string) => string | null;
+}
+
+const PROVIDER_DISCOVERY: ProviderDiscoveryConfig[] = [
+	{
+		agentType: 'claude-code',
+		dirPrefix: '.claude-',
+		authFiles: ['.claude.json', '.credentials.json'],
+		extractIdentity: extractEmailFromClaudeJson,
+	},
+	{
+		agentType: 'codex',
+		singleDir: '.codex',
+		authFiles: ['auth.json', 'config.toml'],
+		extractIdentity: extractCodexIdentity,
+	},
+	{
+		agentType: 'opencode',
+		singleDir: '.opencode',
+		authFiles: ['config.json', 'auth.json'],
+		extractIdentity: () => null,
+	},
+	{
+		agentType: 'gemini-cli',
+		singleDir: '.gemini',
+		authFiles: ['oauth_creds.json', 'google_accounts.json'],
+		extractIdentity: extractGeminiIdentity,
+	},
+];
+
+/**
+ * Discover existing provider account directories by scanning the home directory
+ * for known config directory patterns across all supported providers.
  */
 export async function discoverExistingAccounts(): Promise<Array<{
 	configDir: string;
 	name: string;
 	email: string | null;
 	hasAuth: boolean;
+	agentType: string;
 }>> {
 	const homeDir = os.homedir();
 	const entries = await fs.readdir(homeDir, { withFileTypes: true });
-	const accounts: Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }> = [];
+	const accounts: Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean; agentType: string }> = [];
 
-	for (const entry of entries) {
-		if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
-		if (!entry.name.startsWith('.claude-')) continue;
+	for (const provider of PROVIDER_DISCOVERY) {
+		// Scan for prefix-based directories (e.g., ~/.claude-work, ~/.claude-personal)
+		if (provider.dirPrefix) {
+			for (const entry of entries) {
+				if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+				if (!entry.name.startsWith(provider.dirPrefix)) continue;
 
-		const configDir = path.join(homeDir, entry.name);
-		const name = entry.name.replace('.claude-', '');
+				const configDir = path.join(homeDir, entry.name);
+				const name = entry.name.replace(provider.dirPrefix, '');
+				const authResult = await checkProviderAuth(configDir, provider);
 
-		// Check if it has auth tokens
-		let hasAuth = false;
-		let email: string | null = null;
-		try {
-			const authFile = path.join(configDir, '.claude.json');
-			const content = await fs.readFile(authFile, 'utf-8');
-			hasAuth = true;
-			email = extractEmailFromClaudeJson(content);
-		} catch {
-			// No auth file or unreadable
+				accounts.push({
+					configDir,
+					name,
+					email: authResult.email,
+					hasAuth: authResult.hasAuth,
+					agentType: provider.agentType,
+				});
+			}
 		}
 
-		accounts.push({ configDir, name, email, hasAuth });
+		// Check for single config directory (e.g., ~/.codex)
+		if (provider.singleDir) {
+			const configDir = path.join(homeDir, provider.singleDir);
+			try {
+				const stat = await fs.stat(configDir);
+				if (stat.isDirectory()) {
+					const authResult = await checkProviderAuth(configDir, provider);
+					accounts.push({
+						configDir,
+						name: provider.singleDir.replace('.', ''),
+						email: authResult.email,
+						hasAuth: authResult.hasAuth,
+						agentType: provider.agentType,
+					});
+				}
+			} catch {
+				// Directory doesn't exist — skip
+			}
+		}
 	}
 
 	return accounts;
+}
+
+/** Check auth files for a provider directory and extract identity */
+async function checkProviderAuth(
+	configDir: string,
+	provider: ProviderDiscoveryConfig,
+): Promise<{ hasAuth: boolean; email: string | null }> {
+	for (const authFile of provider.authFiles) {
+		try {
+			const content = await fs.readFile(path.join(configDir, authFile), 'utf-8');
+			return {
+				hasAuth: true,
+				email: provider.extractIdentity(content),
+			};
+		} catch {
+			// Try next auth file
+		}
+	}
+	return { hasAuth: false, email: null };
+}
+
+/** Extract identity from Codex auth.json or config.toml */
+function extractCodexIdentity(content: string): string | null {
+	try {
+		// auth.json has account info
+		const json = JSON.parse(content);
+		return json.email || json.user?.email || json.account?.email || null;
+	} catch {
+		// Not JSON — might be config.toml, no identity info there
+		return null;
+	}
+}
+
+/** Extract identity from Gemini google_accounts.json or oauth_creds.json */
+function extractGeminiIdentity(content: string): string | null {
+	try {
+		const json = JSON.parse(content);
+		// google_accounts.json has { active: "email@example.com" }
+		return json.active || json.email || null;
+	} catch {
+		return null;
+	}
 }
 
 /**

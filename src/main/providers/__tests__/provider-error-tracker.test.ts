@@ -17,6 +17,7 @@ describe('ProviderErrorTracker', () => {
 		errorThreshold: 3,
 		errorWindowMs: 5 * 60 * 1000, // 5 minutes
 		fallbackProviders: ['claude-code', 'opencode', 'codex'],
+		switchBehavior: 'merge-back',
 	};
 
 	beforeEach(() => {
