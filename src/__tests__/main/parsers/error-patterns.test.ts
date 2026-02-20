@@ -16,6 +16,7 @@ import {
 	CLAUDE_ERROR_PATTERNS,
 	OPENCODE_ERROR_PATTERNS,
 	CODEX_ERROR_PATTERNS,
+	GEMINI_ERROR_PATTERNS,
 	SSH_ERROR_PATTERNS,
 	type AgentErrorPatterns,
 } from '../../../main/parsers/error-patterns';
@@ -170,6 +171,38 @@ describe('error-patterns', () => {
 		it('should define agent_crashed patterns', () => {
 			expect(CODEX_ERROR_PATTERNS.agent_crashed).toBeDefined();
 			expect(CODEX_ERROR_PATTERNS.agent_crashed?.length).toBeGreaterThan(0);
+		});
+	});
+
+	describe('GEMINI_ERROR_PATTERNS', () => {
+		it('should define auth_expired patterns', () => {
+			expect(GEMINI_ERROR_PATTERNS).toBeDefined();
+			expect(GEMINI_ERROR_PATTERNS.auth_expired).toBeDefined();
+			expect(GEMINI_ERROR_PATTERNS.auth_expired?.length).toBeGreaterThan(0);
+		});
+
+		it('should match credentials expired text', () => {
+			const result = matchErrorPattern(GEMINI_ERROR_PATTERNS, 'credentials expired');
+			expect(result).not.toBeNull();
+			expect(result?.type).toBe('auth_expired');
+		});
+
+		it('should match rate limit errors', () => {
+			const result = matchErrorPattern(GEMINI_ERROR_PATTERNS, 'rate limit exceeded');
+			expect(result).not.toBeNull();
+			expect(result?.type).toBe('rate_limited');
+		});
+
+		it('should match turn limit exhaustion errors', () => {
+			const result = matchErrorPattern(GEMINI_ERROR_PATTERNS, 'FatalTurnLimitedError');
+			expect(result).not.toBeNull();
+			expect(result?.type).toBe('token_exhaustion');
+		});
+
+		it('should match fatal input errors as crashes', () => {
+			const result = matchErrorPattern(GEMINI_ERROR_PATTERNS, 'FatalInputError');
+			expect(result).not.toBeNull();
+			expect(result?.type).toBe('agent_crashed');
 		});
 	});
 
