@@ -2781,10 +2781,10 @@ You are taking over this conversation. Based on the context above, provide a bri
 
 	const {
 		switchProvider,
-		transferState: providerSwitchState,
-		progress: providerSwitchProgress,
-		error: providerSwitchError,
-		cancelSwitch: cancelProviderSwitch,
+		transferState: _providerSwitchState,
+		progress: _providerSwitchProgress,
+		error: _providerSwitchError,
+		cancelSwitch: _cancelProviderSwitch,
 		reset: resetProviderSwitch,
 	} = useProviderSwitch();
 

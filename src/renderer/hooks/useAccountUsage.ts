@@ -70,15 +70,6 @@ const EMPTY_RATE_METRICS: RateMetrics = {
 	trend: 'stable',
 };
 
-const EMPTY_PREDICTION: UsagePrediction = {
-	linearTimeToLimitMs: null,
-	weightedTimeToLimitMs: null,
-	p90TokensPerWindow: 0,
-	avgTokensPerWindow: 0,
-	confidence: 'low',
-	windowsRemainingP90: null,
-};
-
 // ============================================================================
 // P90 Prediction Calculator
 // ============================================================================

@@ -56,7 +56,7 @@ export function createAccountsApi() {
 		get: (id: string): Promise<unknown> => ipcRenderer.invoke('accounts:get', id),
 
 		/** Add a new account */
-		add: (params: { name: string; email: string; configDir: string }): Promise<unknown> =>
+		add: (params: { name: string; email: string; configDir: string; agentType?: string }): Promise<unknown> =>
 			ipcRenderer.invoke('accounts:add', params),
 
 		/** Update an existing account */
@@ -131,8 +131,8 @@ export function createAccountsApi() {
 		validateBaseDir: (): Promise<{ valid: boolean; baseDir: string; errors: string[] }> =>
 			ipcRenderer.invoke('accounts:validate-base-dir'),
 
-		/** Discover existing ~/.claude-* account directories */
-		discoverExisting: (): Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>> =>
+		/** Discover existing provider account directories */
+		discoverExisting: (): Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean; agentType: string }>> =>
 			ipcRenderer.invoke('accounts:discover-existing'),
 
 		/** Create a new account directory with symlinks */

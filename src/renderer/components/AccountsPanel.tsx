@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
 	Plus,
 	Trash2,
@@ -14,11 +14,22 @@ import {
 	History,
 } from 'lucide-react';
 import type { Theme } from '../types';
-import type { AccountProfile, AccountSwitchConfig } from '../../shared/account-types';
+import type { AccountProfile, AccountSwitchConfig, MultiplexableAgent } from '../../shared/account-types';
 import { ACCOUNT_SWITCH_DEFAULTS } from '../../shared/account-types';
 import { useAccountUsage, formatTimeRemaining, formatTokenCount } from '../hooks/useAccountUsage';
 import { AccountUsageHistory } from './AccountUsageHistory';
 import { notifyToast } from '../stores/notificationStore';
+/** Provider types that can have accounts in Virtuosos */
+const ACCOUNT_PROVIDERS: MultiplexableAgent[] = ['claude-code', 'codex', 'gemini-cli', 'opencode', 'factory-droid'];
+
+/** Display names for all multiplexable agents (extends beyond ToolType) */
+const PROVIDER_DISPLAY_NAMES: Record<MultiplexableAgent, string> = {
+	'claude-code': 'Claude Code',
+	codex: 'OpenAI Codex',
+	'gemini-cli': 'Gemini CLI',
+	opencode: 'OpenCode',
+	'factory-droid': 'Factory Droid',
+};
 
 const PLAN_PRESETS = [
 	{ label: 'Custom', tokens: 0, cost: null },
@@ -41,6 +52,7 @@ interface DiscoveredAccount {
 	name: string;
 	email: string | null;
 	hasAuth: boolean;
+	agentType: string;
 }
 
 interface ConflictingSession {
@@ -65,6 +77,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 	const [isDiscovering, setIsDiscovering] = useState(false);
 	const [isCreating, setIsCreating] = useState(false);
 	const [newAccountName, setNewAccountName] = useState('');
+	const [newAccountProvider, setNewAccountProvider] = useState<MultiplexableAgent>('claude-code');
 	const [createStep, setCreateStep] = useState<'idle' | 'created' | 'login-ready'>('idle');
 	const [createdConfigDir, setCreatedConfigDir] = useState('');
 	const [loginCommand, setLoginCommand] = useState('');
@@ -150,6 +163,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 				name: discovered.name,
 				email: discovered.email || discovered.name,
 				configDir: discovered.configDir,
+				agentType: discovered.agentType,
 			});
 			await refreshAccounts();
 			// Remove from discovered list
@@ -194,6 +208,7 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 				name: email || newAccountName.trim(),
 				email: email || newAccountName.trim(),
 				configDir: createdConfigDir,
+				agentType: newAccountProvider,
 			});
 			await refreshAccounts();
 			// Reset create flow
@@ -408,8 +423,41 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 						New&quot; below.
 					</div>
 				) : (
-					<div className="space-y-2">
-						{accounts.map((account) => (
+					<div className="space-y-4">
+						{(() => {
+							// Group accounts by provider type
+							const grouped = new Map<string, AccountProfile[]>();
+							for (const account of accounts) {
+								const key = account.agentType || 'claude-code';
+								if (!grouped.has(key)) grouped.set(key, []);
+								grouped.get(key)!.push(account);
+							}
+							// Sort providers: providers with accounts first, in ACCOUNT_PROVIDERS order
+							const orderedProviders = ACCOUNT_PROVIDERS.filter(p => grouped.has(p));
+							return orderedProviders.map((providerType) => {
+								const providerAccounts = grouped.get(providerType) || [];
+								return (
+									<div key={providerType}>
+										<div
+											className="flex items-center gap-2 mb-2 pb-1 border-b"
+											style={{ borderColor: theme.colors.border }}
+										>
+											<span className="text-xs font-bold" style={{ color: theme.colors.accent }}>
+												{PROVIDER_DISPLAY_NAMES[providerType] || providerType}
+											</span>
+											<span
+												className="text-xs px-1.5 py-0.5 rounded-full"
+												style={{
+													backgroundColor: `${theme.colors.accent}15`,
+													color: theme.colors.textDim,
+													fontSize: '10px',
+												}}
+											>
+												{providerAccounts.length} account{providerAccounts.length !== 1 ? 's' : ''}
+											</span>
+										</div>
+										<div className="space-y-2">
+											{providerAccounts.map((account) => (
 							<div
 								key={account.id}
 								style={{
@@ -840,7 +888,12 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 									</div>
 								)}
 							</div>
-						))}
+											))}
+										</div>
+									</div>
+								);
+							});
+						})()}
 					</div>
 				)}
 			</div>
@@ -898,10 +951,20 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 									>
 										<div>
 											<div
-												className="text-xs font-bold"
+												className="flex items-center gap-2 text-xs font-bold"
 												style={{ color: theme.colors.textMain }}
 											>
 												{d.email || d.name}
+												<span
+													className="px-1.5 py-0.5 rounded text-xs font-medium"
+													style={{
+														backgroundColor: `${theme.colors.accent}15`,
+														color: theme.colors.accent,
+														fontSize: '10px',
+													}}
+												>
+													{PROVIDER_DISPLAY_NAMES[d.agentType as MultiplexableAgent] || d.agentType}
+												</span>
 											</div>
 											<div
 												className="text-xs"
@@ -983,32 +1046,50 @@ export function AccountsPanel({ theme }: AccountsPanelProps) {
 					</label>
 
 					{createStep === 'idle' && (
-						<div className="flex gap-2">
-							<input
-								type="text"
-								value={newAccountName}
-								onChange={(e) => setNewAccountName(e.target.value)}
-								placeholder="Virtuoso name (e.g., work, personal)"
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
-								style={{
-									borderColor: theme.colors.border,
-									color: theme.colors.textMain,
-								}}
-								onKeyDown={(e) => e.key === 'Enter' && handleCreateAndLogin()}
-							/>
-							<button
-								onClick={handleCreateAndLogin}
-								disabled={!newAccountName.trim() || isCreating}
-								className="flex items-center gap-1 px-3 py-2 rounded text-xs font-bold transition-colors"
-								style={{
-									backgroundColor: theme.colors.accent,
-									color: theme.colors.accentForeground,
-									opacity: !newAccountName.trim() || isCreating ? 0.5 : 1,
-								}}
-							>
-								<Plus className="w-3 h-3" />
-								{isCreating ? 'Creating...' : 'Create & Login'}
-							</button>
+						<div className="space-y-2">
+							<div className="flex gap-2">
+								<select
+									value={newAccountProvider}
+									onChange={(e) => setNewAccountProvider(e.target.value as MultiplexableAgent)}
+									className="p-2 rounded border bg-transparent outline-none text-xs"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										backgroundColor: theme.colors.bgMain,
+									}}
+								>
+									{ACCOUNT_PROVIDERS.map(p => (
+										<option key={p} value={p}>
+											{PROVIDER_DISPLAY_NAMES[p] || p}
+										</option>
+									))}
+								</select>
+								<input
+									type="text"
+									value={newAccountName}
+									onChange={(e) => setNewAccountName(e.target.value)}
+									placeholder="Virtuoso name (e.g., work, personal)"
+									className="flex-1 p-2 rounded border bg-transparent outline-none text-xs font-mono"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+									}}
+									onKeyDown={(e) => e.key === 'Enter' && handleCreateAndLogin()}
+								/>
+								<button
+									onClick={handleCreateAndLogin}
+									disabled={!newAccountName.trim() || isCreating}
+									className="flex items-center gap-1 px-3 py-2 rounded text-xs font-bold transition-colors"
+									style={{
+										backgroundColor: theme.colors.accent,
+										color: theme.colors.accentForeground,
+										opacity: !newAccountName.trim() || isCreating ? 0.5 : 1,
+									}}
+								>
+									<Plus className="w-3 h-3" />
+									{isCreating ? 'Creating...' : 'Create & Login'}
+								</button>
+							</div>
 						</div>
 					)}
 

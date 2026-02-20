@@ -6,7 +6,6 @@
  * target, and action buttons to confirm, dismiss, or view the dashboard.
  */
 
-import React from 'react';
 import { AlertTriangle, ArrowRightLeft, BarChart3 } from 'lucide-react';
 import type { Theme } from '../types';
 import { Modal } from './ui/Modal';

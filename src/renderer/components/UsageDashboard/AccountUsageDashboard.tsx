@@ -6,7 +6,7 @@
  * Integrated as a tab within the existing Usage Dashboard.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
 	Users,
 	Activity,
@@ -14,7 +14,6 @@ import {
 	Zap,
 	TrendingUp,
 	ArrowRightLeft,
-	Clock,
 } from 'lucide-react';
 import { useAccountUsage } from '../../hooks/useAccountUsage';
 import { AccountTrendChart } from './AccountTrendChart';

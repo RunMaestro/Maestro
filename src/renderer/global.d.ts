@@ -2654,7 +2654,7 @@ interface MaestroAPI {
 	accounts: {
 		list: () => Promise<unknown[]>;
 		get: (id: string) => Promise<unknown>;
-		add: (params: { name: string; email: string; configDir: string }) => Promise<unknown>;
+		add: (params: { name: string; email: string; configDir: string; agentType?: string }) => Promise<unknown>;
 		update: (id: string, updates: Record<string, unknown>) => Promise<unknown>;
 		remove: (id: string) => Promise<unknown>;
 		setDefault: (id: string) => Promise<unknown>;
@@ -2672,7 +2672,7 @@ interface MaestroAPI {
 		getDefault: () => Promise<unknown>;
 		selectNext: (excludeIds?: string[]) => Promise<unknown>;
 		validateBaseDir: () => Promise<{ valid: boolean; baseDir: string; errors: string[] }>;
-		discoverExisting: () => Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean }>>;
+		discoverExisting: () => Promise<Array<{ configDir: string; name: string; email: string | null; hasAuth: boolean; agentType: string }>>;
 		createDirectory: (name: string) => Promise<{ success: boolean; configDir: string; error?: string }>;
 		validateSymlinks: (configDir: string) => Promise<{ valid: boolean; broken: string[]; missing: string[] }>;
 		repairSymlinks: (configDir: string) => Promise<{ repaired: string[]; errors: string[] }>;

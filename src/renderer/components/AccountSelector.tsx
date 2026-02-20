@@ -7,7 +7,7 @@
  * Lists all active accounts with status dots, usage bars, and a "Manage Accounts" link.
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { User, ChevronDown, Settings } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AccountProfile } from '../../shared/account-types';

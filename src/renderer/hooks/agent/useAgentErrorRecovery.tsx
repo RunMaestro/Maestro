@@ -56,7 +56,7 @@ export interface UseAgentErrorRecoveryResult {
  */
 function getRecoveryActionsForError(
 	error: AgentError,
-	agentId: ToolType,
+	_agentId: ToolType,
 	options: UseAgentErrorRecoveryOptions
 ): RecoveryAction[] {
 	const actions: RecoveryAction[] = [];
