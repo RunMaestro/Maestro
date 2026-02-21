@@ -46,6 +46,7 @@ import {
 	spawnModerator,
 	sendToModerator,
 	killModerator,
+	killAllModerators,
 	getModeratorSessionId,
 	clearAllModeratorSessions,
 	getModeratorSystemPrompt,
@@ -316,6 +317,53 @@ describe('group-chat-moderator', () => {
 
 			expect(getModeratorSessionId(chat1.id)).toBeUndefined();
 			expect(getModeratorSessionId(chat2.id)).toBeUndefined();
+		});
+	});
+
+	// ===========================================================================
+	// Test: killAllModerators kills processes and clears sessions
+	// ===========================================================================
+	describe('killAllModerators', () => {
+		it('kills all active moderator processes via processManager', async () => {
+			const chat1 = await createTestChat('Kill All 1', 'claude-code');
+			const chat2 = await createTestChat('Kill All 2', 'claude-code');
+
+			const sessionId1 = await spawnModerator(chat1, mockProcessManager);
+			const sessionId2 = await spawnModerator(chat2, mockProcessManager);
+
+			killAllModerators(mockProcessManager);
+
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId1);
+			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId2);
+			expect(mockProcessManager.kill).toHaveBeenCalledTimes(2);
+		});
+
+		it('clears all session mappings after killing', async () => {
+			const chat1 = await createTestChat('Kill Clear 1', 'claude-code');
+			const chat2 = await createTestChat('Kill Clear 2', 'claude-code');
+
+			await spawnModerator(chat1, mockProcessManager);
+			await spawnModerator(chat2, mockProcessManager);
+
+			killAllModerators(mockProcessManager);
+
+			expect(getModeratorSessionId(chat1.id)).toBeUndefined();
+			expect(getModeratorSessionId(chat2.id)).toBeUndefined();
+		});
+
+		it('works without processManager (clears sessions only)', async () => {
+			const chat1 = await createTestChat('Kill No PM', 'claude-code');
+			await spawnModerator(chat1, mockProcessManager);
+
+			// Should not throw
+			expect(() => killAllModerators()).not.toThrow();
+			expect(getModeratorSessionId(chat1.id)).toBeUndefined();
+		});
+
+		it('handles empty session map gracefully', () => {
+			// No sessions spawned
+			expect(() => killAllModerators(mockProcessManager)).not.toThrow();
+			expect(mockProcessManager.kill).not.toHaveBeenCalled();
 		});
 	});
 });

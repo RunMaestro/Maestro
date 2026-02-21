@@ -376,4 +376,74 @@ describe('app-lifecycle/quit-handler', () => {
 			expect(quitHandler.isQuitConfirmed()).toBe(true);
 		});
 	});
+
+	describe('group chat cleanup on quit', () => {
+		it('should call clearAllParticipantSessionsGlobal and killAllModerators during cleanup', async () => {
+			const mockClearParticipants = vi.fn();
+			const mockKillModerators = vi.fn();
+			const depsWithGroupChat = {
+				...deps,
+				clearAllParticipantSessionsGlobal: mockClearParticipants,
+				killAllModerators: mockKillModerators,
+			};
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(
+				depsWithGroupChat as Parameters<typeof createQuitHandler>[0]
+			);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			expect(mockClearParticipants).toHaveBeenCalled();
+			expect(mockKillModerators).toHaveBeenCalledWith(mockProcessManager);
+		});
+
+		it('should not fail if group chat cleanup functions are not provided', async () => {
+			// deps without group chat cleanup functions (backward compatibility)
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(deps as Parameters<typeof createQuitHandler>[0]);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+
+			// Should not throw
+			expect(() => beforeQuitHandler!(mockEvent)).not.toThrow();
+		});
+
+		it('should call group chat cleanup before killAll', async () => {
+			const callOrder: string[] = [];
+			const mockClearParticipants = vi.fn(() => callOrder.push('clearParticipants'));
+			const mockKillModerators = vi.fn(() => callOrder.push('killModerators'));
+			mockProcessManager.killAll = vi.fn(() => callOrder.push('killAll'));
+
+			const depsWithGroupChat = {
+				...deps,
+				clearAllParticipantSessionsGlobal: mockClearParticipants,
+				killAllModerators: mockKillModerators,
+			};
+
+			const { createQuitHandler } = await import('../../../main/app-lifecycle/quit-handler');
+
+			const quitHandler = createQuitHandler(
+				depsWithGroupChat as Parameters<typeof createQuitHandler>[0]
+			);
+			quitHandler.setup();
+			quitHandler.confirmQuit();
+
+			const mockEvent = { preventDefault: vi.fn() };
+			beforeQuitHandler!(mockEvent);
+
+			// Group chat cleanup should happen before killAll
+			expect(callOrder.indexOf('clearParticipants')).toBeLessThan(
+				callOrder.indexOf('killAll')
+			);
+			expect(callOrder.indexOf('killModerators')).toBeLessThan(callOrder.indexOf('killAll'));
+		});
+	});
 });

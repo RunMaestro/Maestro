@@ -31,6 +31,10 @@ export interface QuitHandlerDependencies {
 	closeStatsDB: () => void;
 	/** Function to stop CLI watcher (optional, may not be started yet) */
 	stopCliWatcher?: () => void;
+	/** Function to clear all group chat participant sessions (synchronous) */
+	clearAllParticipantSessionsGlobal?: () => void;
+	/** Function to kill all group chat moderator processes (synchronous) */
+	killAllModerators?: (processManager?: ProcessManager) => void;
 }
 
 /** Quit handler state */
@@ -75,6 +79,8 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		cleanupAllGroomingSessions,
 		closeStatsDB,
 		stopCliWatcher,
+		clearAllParticipantSessionsGlobal,
+		killAllModerators,
 	} = deps;
 
 	const state: QuitHandlerState = {
@@ -166,6 +172,13 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 			cleanupAllGroomingSessions(processManager).catch((err) => {
 				logger.error(`Error cleaning up grooming sessions: ${err}`, 'Shutdown');
 			});
+		}
+
+		// Clean up group chat sessions (synchronous - must run before killAll)
+		if (clearAllParticipantSessionsGlobal || killAllModerators) {
+			logger.info('Cleaning up group chat sessions', 'Shutdown');
+			clearAllParticipantSessionsGlobal?.();
+			killAllModerators?.(processManager ?? undefined);
 		}
 
 		// Clean up all running processes

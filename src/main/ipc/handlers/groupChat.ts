@@ -494,7 +494,13 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				console.log(`[GroupChat:Debug] Images: ${images?.length ?? 0}`);
 
 				const processManager = getProcessManager();
+				if (!processManager) {
+					throw new Error('Process manager not initialized');
+				}
 				const agentDetector = getAgentDetector();
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
 
 				console.log(`[GroupChat:Debug] Process manager available: ${!!processManager}`);
 				console.log(`[GroupChat:Debug] Agent detector available: ${!!agentDetector}`);
@@ -565,6 +571,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				}
 
 				const agentDetector = getAgentDetector();
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
 				const customEnvVars = getCustomEnvVars?.(agentId);
 				const agentConfigValues = getAgentConfig?.(agentId) || {};
 
@@ -575,7 +584,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					agentId,
 					processManager,
 					cwd || os.homedir(),
-					agentDetector ?? undefined,
+					agentDetector,
 					agentConfigValues,
 					customEnvVars
 				);
@@ -604,6 +613,9 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				}
 
 				const agentDetector = getAgentDetector();
+				if (!agentDetector) {
+					throw new Error('Agent detector not initialized');
+				}
 				const agentConfigValues = getAgentConfig?.(agentId) || {};
 
 				logger.info(
@@ -616,7 +628,7 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 					agentId,
 					processManager,
 					cwd || os.homedir(),
-					agentDetector ?? undefined,
+					agentDetector,
 					agentConfigValues,
 				);
 				logger.info(`Added fresh participant: ${name}`, LOG_CONTEXT);
@@ -635,7 +647,10 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 				validateParticipantName(name);
 				validateMessageContent(message);
 				const processManager = getProcessManager();
-				await sendToParticipant(id, name, message, processManager ?? undefined);
+				if (!processManager) {
+					throw new Error('Process manager not initialized');
+				}
+				await sendToParticipant(id, name, message, processManager);
 
 				logger.debug(`Sent message to participant ${name} in ${id}`, LOG_CONTEXT, {
 					messageLength: message.length,

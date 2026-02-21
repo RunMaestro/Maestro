@@ -1458,9 +1458,7 @@ Review the agent responses above. Either:
 					args: finalArgs,
 					cwd: os.homedir(),
 					prompt: synthesisPrompt,
-					customEnvVars:
-						configResolution.effectiveCustomEnvVars ??
-						getCustomEnvVarsCallback?.(chat.moderatorAgentId),
+					customEnvVars: spawnEnvVars,
 					promptArgs: agent.promptArgs,
 					noPromptSeparator: agent.noPromptSeparator,
 					agentBinaryName: agent.binaryName,
