@@ -21,6 +21,7 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import React from 'react';
 import type { Theme } from '../types';
+import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 
 // ============================================================================
 // Types
@@ -47,7 +48,7 @@ export interface MarkdownComponentsOptions {
 	/** Custom code block renderer for specific languages (e.g., mermaid) */
 	customLanguageRenderers?: Record<string, React.ComponentType<{ code: string; theme: Theme }>>;
 	/** Callback when internal file link is clicked (maestro-file:// protocol) */
-	onFileClick?: (filePath: string) => void;
+	onFileClick?: (filePath: string, options?: { openInNewTab?: boolean }) => void;
 	/** Callback when external link is clicked - if not provided, uses default browser behavior */
 	onExternalLinkClick?: (href: string) => void;
 	/** Callback when anchor link is clicked (same-page #section links) */
@@ -61,7 +62,23 @@ export interface MarkdownComponentsOptions {
 		/** Callback to track match index for scrolling */
 		onMatchRendered?: (index: number, element: HTMLElement) => void;
 	};
+	/** Optional style overrides for syntax-highlighted code blocks */
+	codeBlockStyle?: {
+		margin?: string;
+		padding?: string;
+		fontSize?: string;
+		borderRadius?: string;
+		backgroundColor?: string;
+	};
 }
+
+/**
+ * Shared remark plugins for common markdown rendering paths.
+ * Re-exported from shared so renderer and web/mobile use the same source.
+ */
+export { REMARK_GFM_PLUGINS };
+
+export type InlineWizardPreviewVariant = 'document' | 'streaming';
 
 // ============================================================================
 // Prose Styles Generator
@@ -124,8 +141,10 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} ol { list-style-type: decimal; }
     ${compactSpacing ? `${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }` : ''}
     ${s} li { margin: ${compactSpacing ? '0' : '0.25em 0'} !important; ${compactSpacing ? 'padding: 0;' : ''} line-height: 1.4; display: list-item; }
-    ${compactSpacing ? `${s} li > p { margin: 0 !important; display: inline; }` : ''}
-    ${compactSpacing ? `${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }` : ''}
+    ${s} li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }
+    ${s} li > p:first-child + ul, ${s} li > p:first-child + ol { margin-top: 0 !important; }
+    ${s} li > p:first-child > strong:first-child, ${s} li > p:first-child > b:first-child, ${s} li > p:first-child > em:first-child, ${s} li > p:first-child > code:first-child, ${s} li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { color: ${colors.textMain}; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
     ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
@@ -314,6 +333,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 		onAnchorClick,
 		containerRef,
 		searchHighlight,
+		codeBlockStyle,
 	} = options;
 
 	// Reset match counter at start of each render
@@ -376,11 +396,11 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 					language,
 					style: vscDarkPlus,
 					customStyle: {
-						margin: '0.5em 0',
-						padding: '1em',
-						background: theme.colors.bgActivity,
-						fontSize: '0.9em',
-						borderRadius: '6px',
+						margin: codeBlockStyle?.margin ?? '0.5em 0',
+						padding: codeBlockStyle?.padding ?? '1em',
+						background: codeBlockStyle?.backgroundColor ?? theme.colors.bgActivity,
+						fontSize: codeBlockStyle?.fontSize ?? '0.9em',
+						borderRadius: codeBlockStyle?.borderRadius ?? '6px',
 					},
 					PreTag: 'div',
 					children: codeContent,
@@ -426,7 +446,7 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 					onClick: (e: React.MouseEvent) => {
 						e.preventDefault();
 						if (isMaestroFile && filePath && onFileClick) {
-							onFileClick(filePath);
+							onFileClick(filePath, { openInNewTab: e.metaKey || e.ctrlKey });
 						} else if (isAnchorLink && anchorId) {
 							// Handle anchor links - scroll to the target element
 							if (onAnchorClick) {
@@ -452,6 +472,235 @@ export function createMarkdownComponents(options: MarkdownComponentsOptions): Pa
 	}
 
 	return components;
+}
+
+/**
+ * Scoped prose styles for inline wizard preview surfaces.
+ * Keeps rendering style definitions centralized for:
+ * - InlineWizard/DocumentGenerationView
+ * - InlineWizard/StreamingDocumentPreview
+ */
+export function generateInlineWizardPreviewProseStyles(
+	theme: Theme,
+	scopeSelector: string,
+	variant: InlineWizardPreviewVariant
+): string {
+	const c = theme.colors;
+	const s = scopeSelector ? `${scopeSelector}.prose, ${scopeSelector} .prose` : '.prose';
+	const isStreaming = variant === 'streaming';
+
+	const heading1Size = isStreaming ? '1.75em' : '2em';
+	const heading2Size = isStreaming ? '1.4em' : '1.5em';
+	const heading3Size = isStreaming ? '1.15em' : '1.17em';
+	const headingMargin = isStreaming ? '0.5em 0' : '0.67em 0';
+	const paragraphMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+	const listMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+	const listItemMargin = isStreaming ? '0.2em 0' : '0.25em 0';
+	const codePadding = isStreaming ? '0.15em 0.3em' : '0.2em 0.4em';
+	const codeFontSize = isStreaming ? '0.85em' : '0.9em';
+	const prePadding = isStreaming ? '0.75em' : '1em';
+	const blockquoteBorder = isStreaming ? '3px' : '4px';
+	const blockquoteMargin = isStreaming ? '0.4em 0' : '0.5em 0';
+
+	const checkboxSize = isStreaming ? '14px' : '16px';
+	const checkboxMarginRight = isStreaming ? '6px' : '8px';
+	const checkLeft = isStreaming ? '3px' : '4px';
+	const checkTop = isStreaming ? '0px' : '1px';
+	const checkWidth = isStreaming ? '4px' : '5px';
+	const checkHeight = isStreaming ? '8px' : '9px';
+
+	return `
+    ${s} h1 { color: ${c.textMain}; font-size: ${heading1Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} h2 { color: ${c.textMain}; font-size: ${heading2Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} h3 { color: ${c.textMain}; font-size: ${heading3Size}; font-weight: bold; margin: ${headingMargin}; }
+    ${s} p { color: ${c.textMain}; margin: ${paragraphMargin}; }
+    ${s} ul, ${s} ol { color: ${c.textMain}; margin: ${listMargin}; padding-left: 1.5em; }
+    ${s} ul { list-style-type: disc; }
+    ${s} li { margin: ${listItemMargin}; display: list-item; }
+    ${s} li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} li > p:not(:first-child) { display: block; margin: ${isStreaming ? '0.4em 0 0' : '0.5em 0 0'} !important; }
+    ${s} li > p:first-child + ul, ${s} li > p:first-child + ol { margin-top: 0 !important; }
+    ${s} code { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${codePadding}; border-radius: 3px; font-size: ${codeFontSize}; }
+    ${s} pre { background-color: ${c.bgActivity}; color: ${c.textMain}; padding: ${prePadding}; border-radius: 6px; overflow-x: auto; }
+    ${s} pre code { background: none; padding: 0; }
+    ${s} blockquote { border-left: ${blockquoteBorder} solid ${c.border}; padding-left: 1em; margin: ${blockquoteMargin}; color: ${c.textDim}; }
+    ${s} a { color: ${c.accent}; text-decoration: underline; }
+    ${s} strong { font-weight: bold; }
+    ${s} em { font-style: italic; }
+    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child,
+    ${s} li > p:first-child > strong:first-child, ${s} li > p:first-child > b:first-child, ${s} li > p:first-child > em:first-child, ${s} li > p:first-child > code:first-child, ${s} li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }
+    ${s} input[type="checkbox"] {
+      appearance: none;
+      -webkit-appearance: none;
+      width: ${checkboxSize};
+      height: ${checkboxSize};
+      border: 2px solid ${c.accent};
+      border-radius: 3px;
+      background-color: transparent;
+      cursor: pointer;
+      vertical-align: middle;
+      margin-right: ${checkboxMarginRight};
+      position: relative;
+    }
+    ${s} input[type="checkbox"]:checked {
+      background-color: ${c.accent};
+      border-color: ${c.accent};
+    }
+    ${s} input[type="checkbox"]:checked::after {
+      content: '';
+      position: absolute;
+      left: ${checkLeft};
+      top: ${checkTop};
+      width: ${checkWidth};
+      height: ${checkHeight};
+      border: solid ${c.bgMain};
+      border-width: 0 2px 2px 0;
+      transform: rotate(45deg);
+    }
+    ${s} li:has(> input[type="checkbox"]) {
+      list-style-type: none;
+      margin-left: -1.5em;
+    }
+  `;
+}
+
+/**
+ * Shared markdown component overrides for wizard chat bubbles
+ * (ConversationScreen + WizardMessageBubble).
+ */
+export function createWizardBubbleMarkdownComponents(theme: Theme): Partial<Components> {
+	return {
+		p: ({ children }: any) => React.createElement('p', { className: 'mb-2 last:mb-0' }, children),
+		ul: ({ children }: any) =>
+			React.createElement('ul', { className: 'list-disc ml-4 mb-2' }, children),
+		ol: ({ children }: any) =>
+			React.createElement('ol', { className: 'list-decimal ml-4 mb-2' }, children),
+		li: ({ children }: any) => React.createElement('li', { className: 'mb-1' }, children),
+		strong: ({ children }: any) => React.createElement('strong', { className: 'font-semibold' }, children),
+		em: ({ children }: any) => React.createElement('em', { className: 'italic' }, children),
+		code: ({ children, className }: any) => {
+			const isInline = !className;
+			return isInline
+				? React.createElement(
+						'code',
+						{
+							className: 'px-1 py-0.5 rounded text-xs font-mono',
+							style: { backgroundColor: `${theme.colors.bgMain}80` },
+						},
+						children
+					)
+				: React.createElement('code', { className }, children);
+		},
+		pre: ({ children }: any) =>
+			React.createElement(
+				'pre',
+				{
+					className: 'p-2 rounded text-xs font-mono overflow-x-auto mb-2',
+					style: { backgroundColor: theme.colors.bgMain },
+				},
+				children
+			),
+		a: ({ href, children }: any) =>
+			React.createElement(
+				'button',
+				{
+					type: 'button',
+					className: 'underline',
+					style: { color: theme.colors.accent },
+					onClick: () => href && window.maestro.shell.openExternal(href),
+				},
+				children
+			),
+		h1: ({ children }: any) => React.createElement('h1', { className: 'text-lg font-bold mb-2' }, children),
+		h2: ({ children }: any) => React.createElement('h2', { className: 'text-base font-bold mb-2' }, children),
+		h3: ({ children }: any) => React.createElement('h3', { className: 'text-sm font-bold mb-1' }, children),
+		blockquote: ({ children }: any) =>
+			React.createElement(
+				'blockquote',
+				{
+					className: 'border-l-2 pl-2 mb-2 italic',
+					style: { borderColor: theme.colors.border },
+				},
+				children
+			),
+	};
+}
+
+/**
+ * Shared markdown component overrides for release notes
+ * (currently used by UpdateCheckModal).
+ */
+export function createReleaseNotesMarkdownComponents(theme: Theme): Partial<Components> {
+	return {
+		h1: ({ children }: any) =>
+			React.createElement(
+				'h1',
+				{
+					className: 'text-base font-bold mt-3 mb-2',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		h2: ({ children }: any) =>
+			React.createElement(
+				'h2',
+				{
+					className: 'text-sm font-bold mt-3 mb-2',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		h3: ({ children }: any) =>
+			React.createElement(
+				'h3',
+				{
+					className: 'text-xs font-bold mt-2 mb-1',
+					style: { color: theme.colors.textMain },
+				},
+				children
+			),
+		p: ({ children }: any) =>
+			React.createElement(
+				'p',
+				{
+					className: 'my-1.5',
+					style: { color: theme.colors.textDim },
+				},
+				children
+			),
+		ul: ({ children }: any) =>
+			React.createElement('ul', { className: 'list-disc list-inside my-1.5 space-y-0.5' }, children),
+		ol: ({ children }: any) =>
+			React.createElement('ol', { className: 'list-decimal list-inside my-1.5 space-y-0.5' }, children),
+		li: ({ children }: any) =>
+			React.createElement('li', { style: { color: theme.colors.textDim } }, children),
+		code: ({ children }: any) =>
+			React.createElement(
+				'code',
+				{
+					className: 'px-1 py-0.5 rounded font-mono text-xs',
+					style: {
+						backgroundColor: theme.colors.bgMain,
+						color: theme.colors.accent,
+					},
+				},
+				children
+			),
+		a: ({ href, children }: any) =>
+			React.createElement(
+				'a',
+				{
+					href,
+					onClick: (e: React.MouseEvent) => {
+						e.preventDefault();
+						if (href) window.maestro.shell.openExternal(href);
+					},
+					className: 'hover:underline cursor-pointer',
+					style: { color: theme.colors.accent },
+				},
+				children
+			),
+	};
 }
 
 // ============================================================================
@@ -501,8 +750,9 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} > ul, ${s} > ol { color: ${c.textMain}; margin: 0.25em 0 !important; padding-left: 2em; list-style-position: outside; }
     ${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }
     ${s} li { margin: 0 !important; padding: 0; line-height: 1.4; display: list-item; }
-    ${s} li > p { margin: 0 !important; display: inline; }
-    ${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }
+    ${s} li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }
+    ${s} li > p:first-child + ul, ${s} li > p:first-child + ol { margin-top: 0 !important; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
     ${s} code { background-color: ${c.bgSidebar}; color: ${c.textMain}; padding: 0.15em 0.3em; border-radius: 3px; font-size: 0.9em; }
     ${s} pre { background-color: ${c.bgSidebar}; color: ${c.textMain}; padding: 0.5em; border-radius: 6px; overflow-x: auto; margin: 0.35em 0 !important; }
@@ -515,7 +765,8 @@ export function generateTerminalProseStyles(theme: Theme, scopeSelector: string)
     ${s} th { background-color: ${c.bgSidebar}; font-weight: bold; }
     ${s} strong { font-weight: bold; }
     ${s} em { font-style: italic; }
-    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child { vertical-align: baseline; line-height: inherit; }
+    ${s} li > strong:first-child, ${s} li > b:first-child, ${s} li > em:first-child, ${s} li > code:first-child, ${s} li > a:first-child,
+    ${s} li > p:first-child > strong:first-child, ${s} li > p:first-child > b:first-child, ${s} li > p:first-child > em:first-child, ${s} li > p:first-child > code:first-child, ${s} li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { font-weight: normal; }
   `;
 }

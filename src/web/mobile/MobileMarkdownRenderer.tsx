@@ -16,11 +16,11 @@
 
 import React, { memo, useCallback, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus, vs } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useThemeColors, useTheme } from '../components/ThemeProvider';
 import { triggerHaptic, HAPTIC_PATTERNS } from './constants';
+import { REMARK_GFM_PLUGINS } from '../../shared/markdownPlugins';
 
 /**
  * Props for MobileMarkdownRenderer
@@ -193,6 +193,7 @@ export const MobileMarkdownRenderer = memo(
 
 		return (
 			<div
+				className="mobile-markdown-content"
 				style={{
 					fontSize: `${fontSize}px`,
 					lineHeight: 1.6,
@@ -200,8 +201,28 @@ export const MobileMarkdownRenderer = memo(
 					wordBreak: 'break-word',
 				}}
 			>
+				<style>{`
+          .mobile-markdown-content li > p:first-of-type {
+            display: inline;
+            margin: 0;
+            vertical-align: baseline;
+            line-height: inherit;
+          }
+          .mobile-markdown-content li > p:not(:first-of-type) {
+            display: block;
+            margin: 0.5em 0 0;
+          }
+          .mobile-markdown-content li > p:first-of-type > strong:first-child,
+          .mobile-markdown-content li > p:first-of-type > b:first-child,
+          .mobile-markdown-content li > p:first-of-type > em:first-child,
+          .mobile-markdown-content li > p:first-of-type > code:first-child,
+          .mobile-markdown-content li > p:first-of-type > a:first-child {
+            vertical-align: baseline;
+            line-height: inherit;
+          }
+        `}</style>
 				<ReactMarkdown
-					remarkPlugins={[remarkGfm]}
+					remarkPlugins={REMARK_GFM_PLUGINS}
 					components={{
 						// Links open in new tab
 						a: ({ href, children }) => (

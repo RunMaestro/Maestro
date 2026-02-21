@@ -12,7 +12,11 @@ import {
 	generateProseStyles,
 	generateAutoRunProseStyles,
 	generateTerminalProseStyles,
+	generateInlineWizardPreviewProseStyles,
 	generateDiffViewStyles,
+	createWizardBubbleMarkdownComponents,
+	createReleaseNotesMarkdownComponents,
+	REMARK_GFM_PLUGINS,
 } from '../../../renderer/utils/markdownConfig';
 import type { Theme } from '../../../shared/theme-types';
 
@@ -211,6 +215,23 @@ describe('generateProseStyles', () => {
 		it('should include nested list margin override when true', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
 			expect(css).toContain('.prose li ul, .prose li ol { margin: 0 !important');
+		});
+
+		it('should include baseline alignment selectors for styled first-child content inside list-item paragraphs', () => {
+			const css = generateProseStyles({ theme: mockTheme, compactSpacing: true });
+			expect(css).toContain(
+				'.prose li > p:first-child > strong:first-child, .prose li > p:first-child > b:first-child, .prose li > p:first-child > em:first-child, .prose li > p:first-child > code:first-child, .prose li > p:first-child > a:first-child { vertical-align: baseline; line-height: inherit; }'
+			);
+		});
+
+		it('should normalize only first list-item paragraph inline and keep subsequent paragraphs block-level', () => {
+			const css = generateProseStyles({ theme: mockTheme, compactSpacing: false });
+			expect(css).toContain(
+				'.prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+			);
+			expect(css).toContain(
+				'.prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }'
+			);
 		});
 
 		it('should use 3px border-left on blockquote when compact', () => {
@@ -512,7 +533,12 @@ describe('generateTerminalProseStyles', () => {
 
 	it('should include li inline styling rules', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
-		expect(css).toContain(`${scopeSelector} .prose li > p { margin: 0 !important; display: inline; }`);
+		expect(css).toContain(
+			`${scopeSelector} .prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }`
+		);
+		expect(css).toContain(
+			`${scopeSelector} .prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }`
+		);
 	});
 
 	it('should include marker styling for list items', () => {
@@ -520,9 +546,10 @@ describe('generateTerminalProseStyles', () => {
 		expect(css).toContain(`${scopeSelector} .prose li::marker { font-weight: normal; }`);
 	});
 
-	it('should include extra vertical-align rule for first-child strong/b/em/code/a in li', () => {
+	it('should include extra vertical-align rule for styled first-child content in list items', () => {
 		const css = generateTerminalProseStyles(mockTheme, scopeSelector);
 		expect(css).toContain(`${scopeSelector} .prose li > strong:first-child`);
+		expect(css).toContain(`${scopeSelector} .prose li > p:first-child > strong:first-child`);
 		expect(css).toContain('vertical-align: baseline');
 	});
 
@@ -620,5 +647,73 @@ describe('generateDiffViewStyles', () => {
 		expect(css).toContain('background-color: #aabbcc !important');
 		expect(css).toContain('color: #ddeeff !important');
 		expect(css).toContain('color: #ff00ff !important');
+	});
+});
+
+// ---------------------------------------------------------------------------
+// generateInlineWizardPreviewProseStyles
+// ---------------------------------------------------------------------------
+
+describe('generateInlineWizardPreviewProseStyles', () => {
+	it('should support both same-element and descendant scoped prose selectors', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose');
+	});
+
+	it('should normalize list item first paragraph inline and preserve subsequent paragraphs as blocks', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+		);
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:not(:first-child) { display: block; margin: 0.5em 0 0 !important; }'
+		);
+	});
+
+	it('should include list marker alignment rules for styled first-child content', () => {
+		const css = generateInlineWizardPreviewProseStyles(mockTheme, '.doc-gen-view', 'document');
+		expect(css).toContain('.doc-gen-view.prose, .doc-gen-view .prose li > strong:first-child');
+		expect(css).toContain(
+			'.doc-gen-view.prose, .doc-gen-view .prose li > p:first-child > strong:first-child'
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Shared Markdown Presets
+// ---------------------------------------------------------------------------
+
+describe('shared markdown presets', () => {
+	it('should export a shared remark-gfm plugin array', () => {
+		expect(Array.isArray(REMARK_GFM_PLUGINS)).toBe(true);
+		expect(REMARK_GFM_PLUGINS.length).toBeGreaterThan(0);
+	});
+
+	it('should create wizard bubble markdown components', () => {
+		const components = createWizardBubbleMarkdownComponents(mockTheme);
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.pre).toBeDefined();
+		expect(components.a).toBeDefined();
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.blockquote).toBeDefined();
+	});
+
+	it('should create release notes markdown components', () => {
+		const components = createReleaseNotesMarkdownComponents(mockTheme);
+		expect(components.h1).toBeDefined();
+		expect(components.h2).toBeDefined();
+		expect(components.h3).toBeDefined();
+		expect(components.p).toBeDefined();
+		expect(components.ul).toBeDefined();
+		expect(components.ol).toBeDefined();
+		expect(components.li).toBeDefined();
+		expect(components.code).toBeDefined();
+		expect(components.a).toBeDefined();
 	});
 });

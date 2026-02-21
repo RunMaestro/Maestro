@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
 	X,
 	Download,
@@ -17,6 +17,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import ReactMarkdown from 'react-markdown';
 import { Modal } from './ui/Modal';
 import { useSettings } from '../hooks';
+import { createReleaseNotesMarkdownComponents } from '../utils/markdownConfig';
 
 interface Release {
 	tag_name: string;
@@ -67,6 +68,10 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 	// Auto-updater state
 	const [downloadStatus, setDownloadStatus] = useState<UpdateStatus>({ status: 'idle' });
 	const [downloadError, setDownloadError] = useState<string | null>(null);
+	const releaseNotesMarkdownComponents = useMemo(
+		() => createReleaseNotesMarkdownComponents(theme),
+		[theme]
+	);
 
 	// Check for updates on mount
 	useEffect(() => {
@@ -343,76 +348,7 @@ export function UpdateCheckModal({ theme, onClose }: UpdateCheckModalProps) {
 												className="py-3 px-5 border-t text-xs prose prose-sm prose-invert max-w-none"
 												style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 											>
-												<ReactMarkdown
-													components={{
-														h1: ({ children }) => (
-															<h1
-																className="text-base font-bold mt-3 mb-2"
-																style={{ color: theme.colors.textMain }}
-															>
-																{children}
-															</h1>
-														),
-														h2: ({ children }) => (
-															<h2
-																className="text-sm font-bold mt-3 mb-2"
-																style={{ color: theme.colors.textMain }}
-															>
-																{children}
-															</h2>
-														),
-														h3: ({ children }) => (
-															<h3
-																className="text-xs font-bold mt-2 mb-1"
-																style={{ color: theme.colors.textMain }}
-															>
-																{children}
-															</h3>
-														),
-														p: ({ children }) => (
-															<p className="my-1.5" style={{ color: theme.colors.textDim }}>
-																{children}
-															</p>
-														),
-														ul: ({ children }) => (
-															<ul className="list-disc list-inside my-1.5 space-y-0.5">
-																{children}
-															</ul>
-														),
-														ol: ({ children }) => (
-															<ol className="list-decimal list-inside my-1.5 space-y-0.5">
-																{children}
-															</ol>
-														),
-														li: ({ children }) => (
-															<li style={{ color: theme.colors.textDim }}>{children}</li>
-														),
-														code: ({ children }) => (
-															<code
-																className="px-1 py-0.5 rounded font-mono text-xs"
-																style={{
-																	backgroundColor: theme.colors.bgMain,
-																	color: theme.colors.accent,
-																}}
-															>
-																{children}
-															</code>
-														),
-														a: ({ href, children }) => (
-															<a
-																href={href}
-																onClick={(e) => {
-																	e.preventDefault();
-																	if (href) window.maestro.shell.openExternal(href);
-																}}
-																className="hover:underline cursor-pointer"
-																style={{ color: theme.colors.accent }}
-															>
-																{children}
-															</a>
-														),
-													}}
-												>
+												<ReactMarkdown components={releaseNotesMarkdownComponents}>
 													{release.body || 'No release notes available.'}
 												</ReactMarkdown>
 											</div>

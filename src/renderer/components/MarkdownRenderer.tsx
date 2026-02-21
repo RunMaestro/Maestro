@@ -1,6 +1,5 @@
 import React, { memo, useMemo, useState, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import DOMPurify from 'dompurify';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -11,6 +10,7 @@ import type { FileNode } from '../types/fileTree';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 import remarkFrontmatter from 'remark-frontmatter';
 import { remarkFrontmatterTable } from '../utils/remarkFrontmatterTable';
+import { REMARK_GFM_PLUGINS } from '../utils/markdownConfig';
 
 // ============================================================================
 // LocalImage - Loads local images via IPC
@@ -267,7 +267,7 @@ export const MarkdownRenderer = memo(
 
 		// Memoize remark plugins to avoid recreating on every render
 		const remarkPlugins = useMemo(() => {
-			const plugins: any[] = [remarkGfm, remarkFrontmatter, remarkFrontmatterTable];
+			const plugins: any[] = [...REMARK_GFM_PLUGINS, remarkFrontmatter, remarkFrontmatterTable];
 			// Add remarkFileLinks if we have file tree for relative paths,
 			// OR if we have projectRoot for absolute paths (even with empty file tree)
 			if ((fileTree && fileTree.length > 0 && cwd !== undefined) || projectRoot) {

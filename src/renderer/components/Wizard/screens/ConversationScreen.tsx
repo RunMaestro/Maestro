@@ -13,9 +13,8 @@
  * - Structured output parsing (confidence, ready, message)
  */
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Brain } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { useWizard, type WizardMessage } from '../WizardContext';
@@ -35,6 +34,10 @@ import { AUTO_RUN_FOLDER_NAME, wizardDebugLogger } from '../services/phaseGenera
 import { getNextFillerPhrase } from '../services/fillerPhrases';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import {
+	REMARK_GFM_PLUGINS,
+	createWizardBubbleMarkdownComponents,
+} from '../../../utils/markdownConfig';
 
 interface ConversationScreenProps {
 	theme: Theme;
@@ -138,11 +141,13 @@ function MessageBubble({
 	theme,
 	agentName,
 	providerName,
+	wizardMarkdownComponents,
 }: {
 	message: WizardMessage;
 	theme: Theme;
 	agentName: string;
 	providerName?: string;
+	wizardMarkdownComponents: ReturnType<typeof createWizardBubbleMarkdownComponents>;
 }): JSX.Element {
 	const isUser = message.role === 'user';
 	const isSystem = message.role === 'system';
@@ -202,60 +207,7 @@ function MessageBubble({
 					{isUser ? (
 						<span className="whitespace-pre-wrap">{message.content}</span>
 					) : (
-						<ReactMarkdown
-							remarkPlugins={[remarkGfm]}
-							components={{
-								// Style markdown elements to match theme
-								p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-								ul: ({ children }) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
-								ol: ({ children }) => <ol className="list-decimal ml-4 mb-2">{children}</ol>,
-								li: ({ children }) => <li className="mb-1">{children}</li>,
-								strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
-								em: ({ children }) => <em className="italic">{children}</em>,
-								code: ({ children, className }) => {
-									const isInline = !className;
-									return isInline ? (
-										<code
-											className="px-1 py-0.5 rounded text-xs font-mono"
-											style={{ backgroundColor: `${theme.colors.bgMain}80` }}
-										>
-											{children}
-										</code>
-									) : (
-										<code className={className}>{children}</code>
-									);
-								},
-								pre: ({ children }) => (
-									<pre
-										className="p-2 rounded text-xs font-mono overflow-x-auto mb-2"
-										style={{ backgroundColor: theme.colors.bgMain }}
-									>
-										{children}
-									</pre>
-								),
-								a: ({ href, children }) => (
-									<button
-										type="button"
-										className="underline"
-										style={{ color: theme.colors.accent }}
-										onClick={() => href && window.maestro.shell.openExternal(href)}
-									>
-										{children}
-									</button>
-								),
-								h1: ({ children }) => <h1 className="text-lg font-bold mb-2">{children}</h1>,
-								h2: ({ children }) => <h2 className="text-base font-bold mb-2">{children}</h2>,
-								h3: ({ children }) => <h3 className="text-sm font-bold mb-1">{children}</h3>,
-								blockquote: ({ children }) => (
-									<blockquote
-										className="border-l-2 pl-2 mb-2 italic"
-										style={{ borderColor: theme.colors.border }}
-									>
-										{children}
-									</blockquote>
-								),
-							}}
-						>
+						<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={wizardMarkdownComponents}>
 							{message.content}
 						</ReactMarkdown>
 					)}
@@ -521,6 +473,11 @@ export function ConversationScreen({
 	showThinking,
 	setShowThinking,
 }: ConversationScreenProps): JSX.Element {
+	const wizardMarkdownComponents = useMemo(
+		() => createWizardBubbleMarkdownComponents(theme),
+		[theme]
+	);
+
 	const {
 		state,
 		addMessage,
@@ -1312,6 +1269,7 @@ export function ConversationScreen({
 						message={message}
 						theme={theme}
 						agentName={state.agentName || 'Agent'}
+						wizardMarkdownComponents={wizardMarkdownComponents}
 						providerName={
 							state.selectedAgent === 'claude-code'
 								? 'Claude'

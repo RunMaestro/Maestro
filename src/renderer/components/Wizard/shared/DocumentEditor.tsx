@@ -17,18 +17,16 @@
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import rehypeSlug from 'rehype-slug';
 import { Eye, Edit, ChevronDown, ChevronRight, X, Loader2 } from 'lucide-react';
 import type { Theme } from '../../../types';
 import { MermaidRenderer } from '../../MermaidRenderer';
 import type { GeneratedDocument } from '../WizardContext';
 import { DocumentSelector } from './DocumentSelector';
-import { generateProseStyles, createMarkdownComponents } from '../../../utils/markdownConfig';
+import { REMARK_GFM_PLUGINS, generateProseStyles, createMarkdownComponents } from '../../../utils/markdownConfig';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
 
 // Memoize plugin arrays - they never change
-const REMARK_PLUGINS = [remarkGfm];
 const REHYPE_PLUGINS = [rehypeSlug];
 
 /**
@@ -676,7 +674,7 @@ export function DocumentEditor({
 						<style>{proseStyles}</style>
 						<div className="prose prose-sm max-w-none">
 							<ReactMarkdown
-								remarkPlugins={REMARK_PLUGINS}
+								remarkPlugins={REMARK_GFM_PLUGINS}
 								rehypePlugins={REHYPE_PLUGINS}
 								components={markdownComponents}
 							>

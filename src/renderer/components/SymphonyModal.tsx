@@ -13,7 +13,6 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import {
 	Music,
 	RefreshCw,
@@ -57,7 +56,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useSymphony } from '../hooks/symphony';
 import { useContributorStats, type Achievement } from '../hooks/symphony/useContributorStats';
 import { AgentCreationDialog, type AgentCreationConfig } from './AgentCreationDialog';
-import { generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
+import { REMARK_GFM_PLUGINS, generateProseStyles, createMarkdownComponents } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 
 // ============================================================================
@@ -878,7 +877,7 @@ function RepositoryDetailView({
 										className="prose prose-sm max-w-none"
 										style={{ color: theme.colors.textMain }}
 									>
-										<ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+										<ReactMarkdown remarkPlugins={REMARK_GFM_PLUGINS} components={markdownComponents}>
 											{documentPreview}
 										</ReactMarkdown>
 									</div>
