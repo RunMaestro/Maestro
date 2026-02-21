@@ -476,7 +476,7 @@ describe('StdoutHandler', () => {
 
 		it('should route non-partial Gemini text through data path for immediate display', () => {
 			const parser = createGeminiParser();
-			const { handler, emitter, bufferManager, sessionId } = createTestContext({
+			const { handler, emitter, bufferManager, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
 				toolType: 'gemini-cli',
 				outputParser: parser as any,
@@ -495,6 +495,8 @@ describe('StdoutHandler', () => {
 			// Non-partial text should go through BOTH thinking-chunk AND data path
 			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from Gemini!');
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Hello from Gemini!');
+			// Non-partial text should NOT accumulate in streamedText
+			expect(proc.streamedText).toBe('');
 		});
 
 		it('should route partial/delta Gemini text through thinking-chunk only', () => {
@@ -520,6 +522,128 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			// Should accumulate in streamedText for result-time emission
 			expect(proc.streamedText).toBe('streaming...');
+		});
+
+		it('should use accumulated streamedText as fallback in result event after partial streaming', () => {
+			// Parser that returns partial text events, then a result event
+			const parser = {
+				agentId: 'gemini-cli',
+				parseJsonLine: vi.fn((line: string) => {
+					try {
+						const parsed = JSON.parse(line);
+						if (parsed.type === 'result') {
+							return { type: 'result' as const, text: '' }; // empty text on result
+						}
+						if (parsed.type === 'message' && parsed.role === 'assistant') {
+							return {
+								type: 'text' as const,
+								text: parsed.content,
+								isPartial: parsed.delta === true,
+							};
+						}
+						return null;
+					} catch {
+						return null;
+					}
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn((event: any) => event.type === 'result'),
+				detectErrorFromLine: vi.fn(() => null),
+			};
+
+			const { handler, emitter, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'gemini-cli',
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Send partial streaming chunks
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'Hello ',
+				delta: true,
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'from Gemini!',
+				delta: true,
+			});
+
+			// Verify partial chunks accumulated
+			expect(proc.streamedText).toBe('Hello from Gemini!');
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+
+			// Send result event with empty text — should fall back to streamedText
+			sendJsonLine(handler, sessionId, { type: 'result' });
+
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Hello from Gemini!');
+		});
+
+		it('should not affect Claude Code partial text routing (non-Gemini agent unaffected)', () => {
+			const parser = {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn((line: string) => {
+					try {
+						const parsed = JSON.parse(line);
+						if (parsed.type === 'assistant' && parsed.content) {
+							return {
+								type: 'text' as const,
+								text: parsed.content,
+								isPartial: parsed.partial === true,
+							};
+						}
+						return null;
+					} catch {
+						return null;
+					}
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn(() => false),
+				detectErrorFromLine: vi.fn(() => null),
+			};
+
+			const { handler, emitter, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			// Send partial text for Claude Code
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				content: 'thinking about your question...',
+				partial: true,
+			});
+
+			// Partial text should still go through thinking-chunk and accumulate in streamedText
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'thinking about your question...');
+			expect(proc.streamedText).toBe('thinking about your question...');
+			// Partial text should NOT be emitted via data path
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+
+			// Send non-partial text for Claude Code
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				content: 'Here is my answer.',
+				partial: false,
+			});
+
+			// Non-partial Claude text also goes through thinking-chunk AND data path
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Here is my answer.');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Here is my answer.');
 		});
 	});
 
