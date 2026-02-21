@@ -46,6 +46,15 @@ vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
 	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
+// Mock getVisibleAgentDefinitions to control agent type fallback behavior in tests
+vi.mock('../../../main/agents', async () => {
+	const actual = await vi.importActual('../../../main/agents');
+	return {
+		...(actual as object),
+		getVisibleAgentDefinitions: vi.fn().mockReturnValue([]),
+	};
+});
+
 import {
 	extractMentions,
 	routeUserMessage,
@@ -72,7 +81,7 @@ import {
 	GroupChatParticipant,
 } from '../../../main/group-chat/group-chat-storage';
 import { readLog } from '../../../main/group-chat/group-chat-log';
-import { AgentDetector } from '../../../main/agents';
+import { AgentDetector, getVisibleAgentDefinitions } from '../../../main/agents';
 
 describe('group-chat-router', () => {
 	let mockProcessManager: IProcessManager;
@@ -901,6 +910,213 @@ describe('group-chat-router', () => {
 
 			// SSH wrapper should NOT be called for local sessions
 			expect(mockWrapSpawnWithSsh).not.toHaveBeenCalled();
+		});
+	});
+
+	// ===========================================================================
+	// Test 5.8: Agent type fallback in routeUserMessage and routeModeratorResponse
+	// ===========================================================================
+	describe('agent type fallback', () => {
+		const mockAgentDefinitions = [
+			{
+				id: 'claude-code',
+				name: 'Claude Code',
+				binaryName: 'claude',
+				command: 'claude',
+				args: ['--print', '--verbose', '--output-format', 'stream-json'],
+				hidden: false,
+			},
+			{
+				id: 'codex',
+				name: 'Codex',
+				binaryName: 'codex',
+				command: 'codex',
+				args: [],
+				hidden: false,
+			},
+			{
+				id: 'opencode',
+				name: 'OpenCode',
+				binaryName: 'opencode',
+				command: 'opencode',
+				args: [],
+				hidden: false,
+			},
+		];
+
+		beforeEach(() => {
+			vi.mocked(getVisibleAgentDefinitions).mockReturnValue(mockAgentDefinitions as any);
+			setGetSessionsCallback(() => []); // No sessions by default
+		});
+
+		afterEach(() => {
+			setGetSessionsCallback(() => []);
+			vi.mocked(getVisibleAgentDefinitions).mockReturnValue([]);
+		});
+
+		it('resolves @mention to existing session first (backward compatible)', async () => {
+			const chat = await createTestChatWithModerator('Session Priority Test');
+
+			// Session named "Codex" with a specific cwd — should take priority over agent type
+			const session: SessionInfo = {
+				id: 'ses-codex',
+				name: 'Codex',
+				toolType: 'codex',
+				cwd: '/specific/project/path',
+			};
+			setGetSessionsCallback(() => [session]);
+
+			await routeUserMessage(chat.id, '@Codex: help me', mockProcessManager, mockAgentDetector);
+
+			// Should use addParticipant (session-based) with the session's specific cwd
+			// not os.homedir() which addFreshParticipant would use
+			const updatedChat = await loadGroupChat(chat.id);
+			const codexParticipant = updatedChat?.participants.find((p) => p.name === 'Codex');
+			expect(codexParticipant).toBeDefined();
+
+			// Verify the spawn used the session's cwd, proving session lookup won
+			const spawnCalls = mockProcessManager.spawn.mock.calls;
+			const participantSpawn = spawnCalls.find(
+				(call) =>
+					call[0]?.sessionId?.includes('participant') &&
+					call[0]?.sessionId?.includes('Codex')
+			);
+			expect(participantSpawn).toBeDefined();
+			expect(participantSpawn?.[0].cwd).toBe('/specific/project/path');
+		});
+
+		it('falls back to agent type when no matching session exists', async () => {
+			const chat = await createTestChatWithModerator('Agent Type Fallback Test');
+
+			// No sessions available
+			setGetSessionsCallback(() => []);
+
+			await routeUserMessage(chat.id, '@Codex: help me', mockProcessManager, mockAgentDetector);
+
+			// The participant should have been added via agent type fallback
+			const updatedChat = await loadGroupChat(chat.id);
+			const codexParticipant = updatedChat?.participants.find((p) => p.name === 'Codex');
+			expect(codexParticipant).toBeDefined();
+			expect(codexParticipant?.agentId).toBe('codex');
+		});
+
+		it('spawns fresh participant from agent type with default cwd of os.homedir()', async () => {
+			const chat = await createTestChatWithModerator('Default CWD Test');
+			setGetSessionsCallback(() => []);
+
+			await routeUserMessage(chat.id, '@Codex: help', mockProcessManager, mockAgentDetector);
+
+			// Find the participant spawn call
+			const spawnCalls = mockProcessManager.spawn.mock.calls;
+			const participantSpawn = spawnCalls.find(
+				(call) =>
+					call[0]?.sessionId?.includes('participant') &&
+					call[0]?.sessionId?.includes('Codex')
+			);
+			expect(participantSpawn).toBeDefined();
+			expect(participantSpawn?.[0].cwd).toBe(os.homedir());
+		});
+
+		it('ignores mentions of unavailable/uninstalled agent types', async () => {
+			const chat = await createTestChatWithModerator('Unavailable Agent Test');
+			setGetSessionsCallback(() => []);
+
+			// Make the agent detector return available for moderator (claude-code)
+			// but unavailable for the mentioned agent type (codex)
+			const selectiveDetector = {
+				getAgent: vi.fn().mockImplementation(async (agentId: string) => {
+					if (agentId === 'claude-code') {
+						return {
+							id: 'claude-code',
+							name: 'Claude Code',
+							binaryName: 'claude',
+							command: 'claude',
+							args: ['--print', '--verbose', '--output-format', 'stream-json'],
+							available: true,
+							path: '/usr/local/bin/claude',
+							capabilities: {},
+						};
+					}
+					return {
+						id: agentId,
+						name: 'Codex',
+						binaryName: 'codex',
+						command: 'codex',
+						args: [],
+						available: false,
+						path: '',
+						capabilities: {},
+					};
+				}),
+				detectAgents: vi.fn().mockResolvedValue([]),
+				clearCache: vi.fn(),
+				setCustomPaths: vi.fn(),
+				getCustomPaths: vi.fn().mockReturnValue({}),
+				discoverModels: vi.fn().mockResolvedValue([]),
+				clearModelCache: vi.fn(),
+			} as unknown as AgentDetector;
+
+			await routeUserMessage(
+				chat.id,
+				'@Codex: help',
+				mockProcessManager,
+				selectiveDetector
+			);
+
+			// Should NOT have added a participant
+			const updatedChat = await loadGroupChat(chat.id);
+			expect(updatedChat?.participants).toHaveLength(0);
+		});
+
+		it('handles both agent id and agent name mentions via mentionMatches()', async () => {
+			// Test with agent ID: "claude-code"
+			const chat1 = await createTestChatWithModerator('ID Mention Test');
+			setGetSessionsCallback(() => []);
+
+			await routeUserMessage(
+				chat1.id,
+				'@claude-code: help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updated1 = await loadGroupChat(chat1.id);
+			const participant1 = updated1?.participants.find((p) => p.name === 'Claude Code');
+			expect(participant1).toBeDefined();
+			expect(participant1?.agentId).toBe('claude-code');
+
+			// Test with hyphenated name "Claude-Code" (matches "Claude Code" via mentionMatches)
+			const chat2 = await createTestChatWithModerator('Name Mention Test');
+
+			await routeUserMessage(
+				chat2.id,
+				'@Claude-Code: help',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			const updated2 = await loadGroupChat(chat2.id);
+			const participant2 = updated2?.participants.find((p) => p.name === 'Claude Code');
+			expect(participant2).toBeDefined();
+			expect(participant2?.agentId).toBe('claude-code');
+		});
+
+		it('moderator @mention in routeModeratorResponse() also uses agent type fallback', async () => {
+			const chat = await createTestChatWithModerator('Moderator Fallback Test');
+			setGetSessionsCallback(() => []);
+
+			await routeModeratorResponse(
+				chat.id,
+				'@Codex: implement this feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// The participant should have been added via agent type fallback
+			const updatedChat = await loadGroupChat(chat.id);
+			const codexParticipant = updatedChat?.participants.find((p) => p.name === 'Codex');
+			expect(codexParticipant).toBeDefined();
+			expect(codexParticipant?.agentId).toBe('codex');
 		});
 	});
 });
