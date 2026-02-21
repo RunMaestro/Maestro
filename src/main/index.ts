@@ -71,7 +71,9 @@ import {
 	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
 	respawnParticipantWithRecovery,
+	getPendingParticipants,
 } from './group-chat/group-chat-router';
+import { releaseChatLock, clearSynthesisInProgress } from './group-chat/group-chat-lock';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
@@ -680,6 +682,11 @@ function setupProcessListeners() {
 				spawnModeratorSynthesis,
 				getGroupChatReadOnlyState,
 				respawnParticipantWithRecovery,
+				getPendingParticipants,
+			},
+			groupChatLock: {
+				releaseChatLock,
+				clearSynthesisInProgress,
 			},
 			groupChatStorage: {
 				loadGroupChat,
