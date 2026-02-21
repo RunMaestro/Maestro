@@ -164,10 +164,17 @@ export function getGroupChatsDir(): string {
 }
 
 /**
- * Get the directory path for a specific group chat
+ * Get the directory path for a specific group chat.
+ * Includes a path containment check to prevent directory traversal.
  */
 export function getGroupChatDir(id: string): string {
-	return path.join(getGroupChatsDir(), id);
+	const dir = path.join(getGroupChatsDir(), id);
+	const resolved = path.resolve(dir);
+	const parent = path.resolve(getGroupChatsDir());
+	if (!resolved.startsWith(parent + path.sep) && resolved !== parent) {
+		throw new Error('Invalid group chat ID: path traversal detected');
+	}
+	return dir;
 }
 
 /**
