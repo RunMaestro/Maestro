@@ -60,8 +60,8 @@ describe('stores/instances', () => {
 		it('should initialize all stores', () => {
 			const result = initializeStores({ productionDataPath: '/mock/production/path' });
 
-			// Should create 8 stores
-			expect(mockStoreConstructorCalls).toHaveLength(8);
+			// Should create 9 stores (including gemini-session-stats)
+			expect(mockStoreConstructorCalls).toHaveLength(9);
 
 			// Should return syncPath and bootstrapStore
 			expect(result.syncPath).toBe('/mock/user/data');

@@ -262,11 +262,17 @@ function accumulateGeminiTokens(source: unknown): GeminiTokenAccumulator {
 }
 
 /**
- * Parse a Gemini CLI session file and extract stats
+ * Parse a Gemini CLI session file and extract stats.
+ * When message-level token extraction yields 0 (which is typical for Gemini
+ * session files that don't embed token data), falls back to persistedStats
+ * captured during live execution.
+ *
+ * @internal Exported for testing only
  */
-function parseGeminiSessionContent(
+export function parseGeminiSessionContent(
 	content: string,
-	sizeBytes: number
+	sizeBytes: number,
+	persistedStats?: { inputTokens: number; outputTokens: number; cacheReadTokens: number; reasoningTokens: number }
 ): Omit<CachedSessionStats, 'fileMtimeMs'> {
 	let messageCount = 0;
 	let inputTokens = 0;
@@ -301,6 +307,13 @@ function parseGeminiSessionContent(
 		}
 	} catch {
 		// Caller handles parse errors; treat as zeroed stats
+	}
+
+	// Fall back to persisted stats from live session if message-level extraction yielded nothing
+	if (inputTokens === 0 && outputTokens === 0 && persistedStats) {
+		inputTokens = persistedStats.inputTokens;
+		outputTokens = persistedStats.outputTokens;
+		cachedInputTokens = persistedStats.cacheReadTokens;
 	}
 
 	return {
@@ -1153,12 +1166,23 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				}
 			}
 
+			// Load persisted Gemini token stats from live sessions
+			const allGeminiPersistedStats = geminiStatsStore?.get('stats', {}) ?? {};
+
 			// Process Gemini sessions incrementally
 			for (const file of geminiToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
 					const fileStat = await fs.stat(file.filePath);
-					const stats = parseGeminiSessionContent(content, fileStat.size);
+
+					// Extract sessionId from the session JSON to look up persisted stats
+					let persistedStats: { inputTokens: number; outputTokens: number; cacheReadTokens: number; reasoningTokens: number } | undefined;
+					const sessionIdMatch = content.match(/"sessionId"\s*:\s*"([^"]+)"/);
+					if (sessionIdMatch?.[1] && allGeminiPersistedStats[sessionIdMatch[1]]) {
+						persistedStats = allGeminiPersistedStats[sessionIdMatch[1]];
+					}
+
+					const stats = parseGeminiSessionContent(content, fileStat.size, persistedStats);
 
 					cache.providers['gemini-cli'].sessions[file.sessionKey] = {
 						...stats,

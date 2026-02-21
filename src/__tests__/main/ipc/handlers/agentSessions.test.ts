@@ -10,6 +10,7 @@ import { ipcMain } from 'electron';
 import {
 	registerAgentSessionsHandlers,
 	getGeminiStatsStore,
+	parseGeminiSessionContent,
 } from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
 
@@ -490,6 +491,98 @@ describe('agentSessions IPC handlers', () => {
 			});
 
 			expect(getGeminiStatsStore()).toBe(mockStore);
+		});
+	});
+
+	describe('parseGeminiSessionContent', () => {
+		it('should parse messages and return zeroed tokens when no token data in session', () => {
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'user' },
+					{ type: 'gemini' },
+					{ type: 'user' },
+					{ type: 'gemini' },
+				],
+			});
+			const result = parseGeminiSessionContent(content, 1024);
+			expect(result.messages).toBe(4);
+			expect(result.inputTokens).toBe(0);
+			expect(result.outputTokens).toBe(0);
+			expect(result.cachedInputTokens).toBe(0);
+			expect(result.sizeBytes).toBe(1024);
+		});
+
+		it('should fall back to persistedStats when message-level tokens are 0', () => {
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'user' },
+					{ type: 'gemini' },
+				],
+			});
+			const persistedStats = {
+				inputTokens: 500,
+				outputTokens: 1200,
+				cacheReadTokens: 100,
+				reasoningTokens: 50,
+			};
+			const result = parseGeminiSessionContent(content, 2048, persistedStats);
+			expect(result.messages).toBe(2);
+			expect(result.inputTokens).toBe(500);
+			expect(result.outputTokens).toBe(1200);
+			expect(result.cachedInputTokens).toBe(100);
+			expect(result.sizeBytes).toBe(2048);
+		});
+
+		it('should NOT fall back to persistedStats when message-level tokens are non-zero', () => {
+			// Hypothetical: if Gemini ever adds token data to messages
+			const content = JSON.stringify({
+				messages: [
+					{ type: 'user', tokens: { input: 10, output: 20 } },
+				],
+			});
+			const persistedStats = {
+				inputTokens: 500,
+				outputTokens: 1200,
+				cacheReadTokens: 100,
+				reasoningTokens: 50,
+			};
+			const result = parseGeminiSessionContent(content, 512, persistedStats);
+			// Should use the message-level data, not the persisted fallback
+			expect(result.inputTokens).toBe(10);
+			expect(result.outputTokens).toBe(20);
+		});
+
+		it('should handle empty/invalid JSON gracefully with persistedStats fallback', () => {
+			const persistedStats = {
+				inputTokens: 300,
+				outputTokens: 600,
+				cacheReadTokens: 50,
+				reasoningTokens: 0,
+			};
+			const result = parseGeminiSessionContent('not valid json', 100, persistedStats);
+			expect(result.messages).toBe(0);
+			// Parse failed, tokens are 0, so persisted stats should be used
+			expect(result.inputTokens).toBe(300);
+			expect(result.outputTokens).toBe(600);
+			expect(result.cachedInputTokens).toBe(50);
+		});
+
+		it('should handle missing messages array', () => {
+			const content = JSON.stringify({ sessionId: 'abc-123' });
+			const result = parseGeminiSessionContent(content, 50);
+			expect(result.messages).toBe(0);
+			expect(result.inputTokens).toBe(0);
+			expect(result.outputTokens).toBe(0);
+		});
+
+		it('should not use persistedStats when undefined', () => {
+			const content = JSON.stringify({
+				messages: [{ type: 'user' }],
+			});
+			const result = parseGeminiSessionContent(content, 100);
+			expect(result.inputTokens).toBe(0);
+			expect(result.outputTokens).toBe(0);
+			expect(result.cachedInputTokens).toBe(0);
 		});
 	});
 });
