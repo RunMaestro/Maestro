@@ -61,6 +61,8 @@ function ModelTextInput({
 	const inputRef = useRef<HTMLInputElement>(null);
 	// Keep track of the committed value (what was actually selected/saved)
 	const committedValueRef = useRef(value);
+	// Track whether a dropdown selection was just made (to prevent blur from overwriting it)
+	const selectionMadeRef = useRef(false);
 
 	// Update committed value when value prop changes from outside
 	useEffect(() => {
@@ -127,6 +129,11 @@ function ModelTextInput({
 						onBlur={() => {
 							// Delay to allow click on dropdown item
 							setTimeout(() => {
+								// If a dropdown item was clicked, skip blur logic — the click handler already committed the value
+								if (selectionMadeRef.current) {
+									selectionMadeRef.current = false;
+									return;
+								}
 								setShowDropdown(false);
 								if (isFiltering) {
 									// If user was filtering but didn't select, keep the filter text as the value
@@ -177,11 +184,13 @@ function ModelTextInput({
 									type="button"
 									onClick={(e) => {
 										e.stopPropagation();
+										selectionMadeRef.current = true;
 										onChange(model);
 										committedValueRef.current = model;
 										setShowDropdown(false);
 										setFilterText('');
 										setIsFiltering(false);
+										onBlur();
 									}}
 									className="w-full text-left px-3 py-2 text-xs font-mono hover:bg-white/10 transition-colors"
 									style={{
