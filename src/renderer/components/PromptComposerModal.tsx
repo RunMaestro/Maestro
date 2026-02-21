@@ -10,6 +10,8 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 
+const EMPTY_STAGED_IMAGES: string[] = [];
+
 interface PromptComposerModalProps {
 	isOpen: boolean;
 	onClose: () => void;
@@ -43,7 +45,7 @@ export function PromptComposerModal({
 	onSubmit,
 	onSend,
 	sessionName = 'Claude',
-	stagedImages = [],
+	stagedImages = EMPTY_STAGED_IMAGES,
 	setStagedImages,
 	onImageAttachBlocked,
 	onOpenLightbox,
@@ -57,7 +59,7 @@ export function PromptComposerModal({
 	enterToSend = false,
 	onToggleEnterToSend,
 }: PromptComposerModalProps) {
-	const [value, setValue] = useState(initialValue);
+	const [value, setValue] = useState('');
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const { registerLayer, unregisterLayer } = useLayerStack();
@@ -235,18 +237,19 @@ export function PromptComposerModal({
 	const tokenCount = estimateTokenCount(value);
 
 	return (
-		<div
-			className="fixed inset-0 z-50 flex items-center justify-center"
-			style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}
-			onClick={(e) => {
-				if (e.target === e.currentTarget) {
+		<div className="fixed inset-0 z-50 flex items-center justify-center" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }}>
+			<button
+				type="button"
+				className="absolute inset-0"
+				tabIndex={-1}
+				onMouseDown={() => {
 					onSubmit(value);
 					onClose();
-				}
-			}}
-		>
+				}}
+				aria-label="Close prompt composer"
+			/>
 			<div
-				className="w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
+				className="relative z-10 w-[90vw] h-[80vh] max-w-5xl rounded-xl border shadow-2xl flex flex-col overflow-hidden"
 				style={{
 					backgroundColor: theme.colors.bgMain,
 					borderColor: theme.colors.border,
@@ -286,19 +289,28 @@ export function PromptComposerModal({
 						className="flex gap-2 px-4 py-3 overflow-x-auto overflow-y-visible scrollbar-thin border-b"
 						style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgSidebar }}
 					>
-						{stagedImages.map((img, idx) => (
-							<div key={idx} className="relative group shrink-0">
-								<img
-									src={img}
+							{stagedImages.map((img, idx) => (
+								<div key={img} className="relative group shrink-0">
+									<img
+										src={img}
+										alt={`Prompt composer staged image ${idx + 1}`}
 									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
 									style={{
 										borderColor: theme.colors.border,
-										objectFit: 'contain',
-										maxWidth: '200px',
-									}}
-									onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
-									title={`Click to view (${formatShortcutKeys(['Meta', 'Shift', 'l'])})`}
-								/>
+											objectFit: 'contain',
+											maxWidth: '200px',
+										}}
+										role="button"
+										tabIndex={0}
+										onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												onOpenLightbox?.(img, stagedImages, 'staged');
+											}
+										}}
+										title={`Click to view (${formatShortcutKeys(['Meta', 'Shift', 'l'])})`}
+									/>
 								{setStagedImages && (
 									<button
 										onClick={(e) => {

@@ -805,7 +805,6 @@ describe('SendToAgentModal', () => {
 					isOpen={true}
 					sourceSession={mockSession}
 					sourceTabId="tab-1"
-					allSessions={mockSessions}
 					allSessions={busySessions}
 					onClose={mockOnClose}
 					onSend={mockOnSend}

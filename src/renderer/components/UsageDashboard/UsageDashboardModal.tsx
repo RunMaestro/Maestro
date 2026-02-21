@@ -135,15 +135,17 @@ const VIEW_MODE_TABS: { value: ViewMode; label: string }[] = [
 	{ value: 'autorun', label: 'Auto Run' },
 ];
 
+const EMPTY_SESSIONS: Session[] = [];
+
 export function UsageDashboardModal({
 	isOpen,
 	onClose,
 	theme,
 	colorBlindMode = false,
 	defaultTimeRange = 'week',
-	sessions = [],
+	sessions = EMPTY_SESSIONS,
 }: UsageDashboardModalProps) {
-	const [timeRange, setTimeRange] = useState<StatsTimeRange>(defaultTimeRange);
+	const [timeRange, setTimeRange] = useState<StatsTimeRange>('week');
 	const [viewMode, setViewMode] = useState<ViewMode>('overview');
 	const [data, setData] = useState<StatsAggregation | null>(null);
 	const [loading, setLoading] = useState(true);
@@ -262,6 +264,11 @@ export function UsageDashboardModal({
 		}
 	}, [isOpen]);
 
+	const switchViewMode = useCallback((mode: ViewMode) => {
+		setViewMode(mode);
+		setFocusedSection(null);
+	}, []);
+
 	// Handle Cmd+Shift+[ and Cmd+Shift+] for tab navigation
 	useEffect(() => {
 		if (!isOpen) return;
@@ -277,19 +284,18 @@ export function UsageDashboardModal({
 				if (e.key === '[') {
 					// Previous tab
 					const prevIndex = currentIndex > 0 ? currentIndex - 1 : VIEW_MODE_TABS.length - 1;
-					setViewMode(VIEW_MODE_TABS[prevIndex].value);
+					switchViewMode(VIEW_MODE_TABS[prevIndex].value);
 				} else {
 					// Next tab
 					const nextIndex = currentIndex < VIEW_MODE_TABS.length - 1 ? currentIndex + 1 : 0;
-					setViewMode(VIEW_MODE_TABS[nextIndex].value);
+					switchViewMode(VIEW_MODE_TABS[nextIndex].value);
 				}
-				setFocusedSection(null);
 			}
 		};
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [isOpen, viewMode]);
+	}, [isOpen, switchViewMode, viewMode]);
 
 	// Track container width for responsive layout
 	useEffect(() => {
@@ -386,13 +392,11 @@ export function UsageDashboardModal({
 			if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
 				event.preventDefault();
 				const prevIndex = currentIndex > 0 ? currentIndex - 1 : VIEW_MODE_TABS.length - 1;
-				setViewMode(VIEW_MODE_TABS[prevIndex].value);
-				setFocusedSection(null);
+				switchViewMode(VIEW_MODE_TABS[prevIndex].value);
 			} else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
 				event.preventDefault();
 				const nextIndex = currentIndex < VIEW_MODE_TABS.length - 1 ? currentIndex + 1 : 0;
-				setViewMode(VIEW_MODE_TABS[nextIndex].value);
-				setFocusedSection(null);
+				switchViewMode(VIEW_MODE_TABS[nextIndex].value);
 			} else if (event.key === 'Tab' && !event.shiftKey) {
 				// Tab into content area - focus first section
 				if (currentSections.length > 0 && data) {
@@ -401,7 +405,7 @@ export function UsageDashboardModal({
 				}
 			}
 		},
-		[viewMode, currentSections, data, navigateToSection]
+		[viewMode, switchViewMode, currentSections, data, navigateToSection]
 	);
 
 	// Handle keyboard navigation for chart sections
@@ -451,11 +455,6 @@ export function UsageDashboardModal({
 		[]
 	);
 
-	// Reset focused section when view mode changes
-	useEffect(() => {
-		setFocusedSection(null);
-	}, [viewMode]);
-
 	// Handle export to CSV
 	const handleExport = async () => {
 		setIsExporting(true);
@@ -488,15 +487,15 @@ export function UsageDashboardModal({
 	return (
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
-			onClick={onClose}
 		>
+			<button type="button" className="absolute inset-0" tabIndex={-1} onClick={onClose} aria-label="Close usage dashboard" />
 			<div
 				ref={containerRef}
 				tabIndex={-1}
 				role="dialog"
 				aria-modal="true"
 				aria-label="Usage Dashboard"
-				className="rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
+				className="relative z-10 rounded-xl shadow-2xl border overflow-hidden flex flex-col outline-none"
 				style={{
 					backgroundColor: theme.colors.bgActivity,
 					borderColor: theme.colors.border,
@@ -505,7 +504,6 @@ export function UsageDashboardModal({
 					height: '85vh',
 					maxHeight: '900px',
 				}}
-				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Header */}
 				<div
@@ -634,11 +632,11 @@ export function UsageDashboardModal({
 					onKeyDown={handleTabKeyDown}
 					data-testid="view-mode-tabs"
 				>
-					{VIEW_MODE_TABS.map((tab) => (
-						<button
-							key={tab.value}
-							onClick={() => setViewMode(tab.value)}
-							className="px-4 py-2 rounded-lg text-sm font-medium transition-colors outline-none"
+						{VIEW_MODE_TABS.map((tab) => (
+							<button
+								key={tab.value}
+								onClick={() => switchViewMode(tab.value)}
+								className="px-4 py-2 rounded-lg text-sm font-medium transition-colors outline-none"
 							style={{
 								backgroundColor:
 									viewMode === tab.value ? `${theme.colors.accent}20` : 'transparent',

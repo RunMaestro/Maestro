@@ -389,15 +389,20 @@ export function MergeSessionModal({
 		enableNumberHotkeys: false,
 	});
 
+	const handleViewModeChange = useCallback((mode: ViewMode) => {
+		setViewMode(mode);
+		setSelectedIndex(0);
+	}, [setSelectedIndex]);
+
+	const handleSearchChange = useCallback((value: string) => {
+		setSearchQuery(value);
+		setSelectedIndex(0);
+	}, [setSelectedIndex]);
+
 	// Scroll selected item into view
 	useEffect(() => {
 		selectedItemRef.current?.scrollIntoView({ block: 'nearest' });
 	}, [selectedIndex]);
-
-	// Reset selection when filter changes
-	useEffect(() => {
-		setSelectedIndex(0);
-	}, [searchQuery, viewMode, setSelectedIndex]);
 
 	// Announce search results to screen readers
 	useEffect(() => {
@@ -465,28 +470,28 @@ export function MergeSessionModal({
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			// Tab to switch view modes
-			if (e.key === 'Tab' && !e.shiftKey) {
-				e.preventDefault();
-				const modes: ViewMode[] = ['paste', 'search'];
-				const currentIndex = modes.indexOf(viewMode);
-				setViewMode(modes[(currentIndex + 1) % modes.length]);
-				return;
-			}
+				if (e.key === 'Tab' && !e.shiftKey) {
+					e.preventDefault();
+					const modes: ViewMode[] = ['paste', 'search'];
+					const currentIndex = modes.indexOf(viewMode);
+					handleViewModeChange(modes[(currentIndex + 1) % modes.length]);
+					return;
+				}
 
 			// Shift+Tab to switch view modes backwards
-			if (e.key === 'Tab' && e.shiftKey) {
-				e.preventDefault();
-				const modes: ViewMode[] = ['paste', 'search'];
-				const currentIndex = modes.indexOf(viewMode);
-				setViewMode(modes[(currentIndex - 1 + modes.length) % modes.length]);
-				return;
-			}
+				if (e.key === 'Tab' && e.shiftKey) {
+					e.preventDefault();
+					const modes: ViewMode[] = ['paste', 'search'];
+					const currentIndex = modes.indexOf(viewMode);
+					handleViewModeChange(modes[(currentIndex - 1 + modes.length) % modes.length]);
+					return;
+				}
 
-			// Cmd+V to switch to paste mode
-			if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
-				setViewMode('paste');
-				return;
-			}
+				// Cmd+V to switch to paste mode
+				if ((e.metaKey || e.ctrlKey) && e.key === 'v') {
+					handleViewModeChange('paste');
+					return;
+				}
 
 			// Arrow left/right to expand/collapse in search mode
 			if (viewMode === 'search') {
@@ -537,11 +542,12 @@ export function MergeSessionModal({
 			selectedTarget,
 			pastedIdValid,
 			pastedIdMatch,
-			handleMerge,
-			handleSelectItem,
-			listKeyDown,
-		]
-	);
+				handleMerge,
+				handleSelectItem,
+				handleViewModeChange,
+				listKeyDown,
+			]
+		);
 
 	// Calculate estimated merged size
 	const estimatedMergedTokens = useMemo(() => {
@@ -585,7 +591,6 @@ export function MergeSessionModal({
 					borderColor: theme.colors.border,
 					maxHeight: 'calc(100vh - 128px)',
 				}}
-				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Header */}
 				<div
@@ -636,11 +641,11 @@ export function MergeSessionModal({
 					].map(({ mode, label, icon: Icon }) => (
 						<button
 							key={mode}
-							role="tab"
-							aria-selected={viewMode === mode}
-							aria-controls={`merge-tabpanel-${mode}`}
-							onClick={() => setViewMode(mode)}
-							className="px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors"
+								role="tab"
+								aria-selected={viewMode === mode}
+								aria-controls={`merge-tabpanel-${mode}`}
+								onClick={() => handleViewModeChange(mode)}
+								className="px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-1.5 transition-colors"
 							style={{
 								backgroundColor: viewMode === mode ? theme.colors.accent : 'transparent',
 								color: viewMode === mode ? theme.colors.accentForeground : theme.colors.textDim,
@@ -770,7 +775,7 @@ export function MergeSessionModal({
 										type="text"
 										placeholder="Search open tabs across all agents..."
 										value={searchQuery}
-										onChange={(e) => setSearchQuery(e.target.value)}
+										onChange={(e) => handleSearchChange(e.target.value)}
 										aria-controls="session-list"
 										className="w-full pl-9 pr-3 py-2 rounded-lg border text-sm outline-none"
 										style={{

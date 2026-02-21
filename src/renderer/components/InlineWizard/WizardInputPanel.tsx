@@ -182,18 +182,27 @@ export const WizardInputPanel = React.memo(function WizardInputPanel({
 			{/* Staged images display */}
 			{!isTerminalMode && stagedImages.length > 0 && (
 				<div className="flex gap-2 mb-3 pb-2 overflow-x-auto overflow-y-visible scrollbar-thin">
-					{stagedImages.map((img, idx) => (
-						<div key={idx} className="relative group shrink-0">
-							<img
-								src={img}
-								className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
+						{stagedImages.map((img, idx) => (
+							<div key={img} className="relative group shrink-0">
+								<img
+									src={img}
+									alt={`Staged wizard image ${idx + 1}`}
+									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
 								style={{
 									borderColor: theme.colors.border,
-									objectFit: 'contain',
-									maxWidth: '200px',
-								}}
-								onClick={() => setLightboxImage?.(img, stagedImages, 'staged')}
-							/>
+										objectFit: 'contain',
+										maxWidth: '200px',
+									}}
+									role="button"
+									tabIndex={0}
+									onClick={() => setLightboxImage?.(img, stagedImages, 'staged')}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											setLightboxImage?.(img, stagedImages, 'staged');
+										}
+									}}
+								/>
 							<button
 								onClick={(e) => {
 									e.stopPropagation();

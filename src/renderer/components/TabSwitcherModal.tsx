@@ -211,6 +211,8 @@ function ContextGauge({
 
 type ViewMode = 'open' | 'all-named' | 'starred';
 
+const EMPTY_FILE_TABS: FilePreviewTab[] = [];
+
 /**
  * Tab Switcher Modal - Quick navigation between AI and file tabs with fuzzy search.
  * Shows context window consumption, cost, custom name, and UUID pill for AI tabs.
@@ -220,7 +222,7 @@ type ViewMode = 'open' | 'all-named' | 'starred';
 export function TabSwitcherModal({
 	theme,
 	tabs,
-	fileTabs = [],
+	fileTabs = EMPTY_FILE_TABS,
 	activeTabId,
 	activeFileTabId,
 	projectRoot,
@@ -242,6 +244,18 @@ export function TabSwitcherModal({
 	const scrollContainerRef = useRef<HTMLDivElement>(null);
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
+
+	const handleSearchChange = useCallback((value: string) => {
+		setSearch(value);
+		setSelectedIndex(0);
+		setFirstVisibleIndex(0);
+	}, []);
+
+	const handleViewModeChange = useCallback((mode: ViewMode) => {
+		setViewMode(mode);
+		setSelectedIndex(0);
+		setFirstVisibleIndex(0);
+	}, []);
 
 	// Keep onClose ref up to date
 	useEffect(() => {
@@ -530,13 +544,9 @@ export function TabSwitcherModal({
 		selectedItemRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 	}, [selectedIndex]);
 
-	// Reset selection and scroll tracking when search or mode changes
-	useEffect(() => {
+	const toggleViewMode = useCallback((reverse = false) => {
 		setSelectedIndex(0);
 		setFirstVisibleIndex(0);
-	}, [search, viewMode, setSelectedIndex]);
-
-	const toggleViewMode = useCallback((reverse = false) => {
 		setViewMode((prev) => {
 			if (reverse) {
 				if (prev === 'open') return 'starred';
@@ -592,12 +602,12 @@ export function TabSwitcherModal({
 								: viewMode === 'starred'
 									? 'Search starred sessions...'
 									: 'Search named sessions...'
-						}
-						style={{ color: theme.colors.textMain }}
-						value={search}
-						onChange={(e) => setSearch(e.target.value)}
-						onKeyDown={handleKeyDown}
-					/>
+							}
+							style={{ color: theme.colors.textMain }}
+							value={search}
+							onChange={(e) => handleSearchChange(e.target.value)}
+							onKeyDown={handleKeyDown}
+						/>
 					<div className="flex items-center gap-2">
 						{shortcut && (
 							<span
@@ -621,9 +631,9 @@ export function TabSwitcherModal({
 					className="px-4 py-2 flex items-center gap-2 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-					<button
-						onClick={() => setViewMode('open')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+						<button
+							onClick={() => handleViewModeChange('open')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: viewMode === 'open' ? theme.colors.accent : theme.colors.bgMain,
 							color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
@@ -631,9 +641,9 @@ export function TabSwitcherModal({
 					>
 						Open Tabs ({tabs.length + fileTabs.length})
 					</button>
-					<button
-						onClick={() => setViewMode('all-named')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+						<button
+							onClick={() => handleViewModeChange('all-named')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: viewMode === 'all-named' ? theme.colors.accent : theme.colors.bgMain,
 							color:
@@ -652,9 +662,9 @@ export function TabSwitcherModal({
 							}).length}
 						)
 					</button>
-					<button
-						onClick={() => setViewMode('starred')}
-						className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
+						<button
+							onClick={() => handleViewModeChange('starred')}
+							className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
 						style={{
 							backgroundColor: viewMode === 'starred' ? theme.colors.accent : theme.colors.bgMain,
 							color: viewMode === 'starred' ? theme.colors.accentForeground : theme.colors.textDim,

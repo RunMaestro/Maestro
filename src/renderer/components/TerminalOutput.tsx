@@ -199,16 +199,16 @@ const LogItemComponent = memo(
 			let searchIndex = 0;
 
 			while (searchIndex < lowerText.length) {
-				const idx = lowerText.indexOf(lowerQuery, searchIndex);
-				if (idx === -1) break;
+				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
+				if (matchStart === -1) break;
 
-				if (idx > lastIndex) {
-					parts.push(text.substring(lastIndex, idx));
+				if (matchStart > lastIndex) {
+					parts.push(text.substring(lastIndex, matchStart));
 				}
 
 				parts.push(
 					<span
-						key={`match-${idx}`}
+						key={`match-${matchStart}`}
 						style={{
 							backgroundColor: theme.colors.warning,
 							color: theme.mode === 'light' ? '#fff' : '#000',
@@ -216,11 +216,11 @@ const LogItemComponent = memo(
 							borderRadius: '2px',
 						}}
 					>
-						{text.substring(idx, idx + query.length)}
+						{text.substring(matchStart, matchStart + query.length)}
 					</span>
 				);
 
-				lastIndex = idx + query.length;
+				lastIndex = matchStart + query.length;
 				searchIndex = lastIndex;
 			}
 
@@ -242,15 +242,15 @@ const LogItemComponent = memo(
 			let searchIndex = 0;
 
 			while (searchIndex < lowerText.length) {
-				const idx = lowerText.indexOf(lowerQuery, searchIndex);
-				if (idx === -1) break;
+				const matchStart = lowerText.indexOf(lowerQuery, searchIndex);
+				if (matchStart === -1) break;
 
-				result += text.substring(lastIndex, idx);
+				result += text.substring(lastIndex, matchStart);
 				result += `<mark style="background-color: ${theme.colors.warning}; color: ${theme.mode === 'light' ? '#fff' : '#000'}; padding: 1px 2px; border-radius: 2px;">`;
-				result += text.substring(idx, idx + query.length);
+				result += text.substring(matchStart, matchStart + query.length);
 				result += '</mark>';
 
-				lastIndex = idx + query.length;
+				lastIndex = matchStart + query.length;
 				searchIndex = lastIndex;
 			}
 
@@ -424,22 +424,31 @@ const LogItemComponent = memo(
 							/>
 						</div>
 					)}
-					{log.images && log.images.length > 0 && (
-						<div
-							className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
-							style={{ overscrollBehavior: 'contain' }}
-						>
-							{log.images.map((img, imgIdx) => (
-								<img
-									key={imgIdx}
-									src={img}
-									className="h-20 rounded border cursor-zoom-in shrink-0"
-									style={{ objectFit: 'contain', maxWidth: '200px' }}
-									onClick={() => setLightboxImage(img, log.images, 'history')}
-								/>
-							))}
-						</div>
-					)}
+						{log.images && log.images.length > 0 && (
+							<div
+								className="flex gap-2 mb-2 overflow-x-auto scrollbar-thin"
+								style={{ overscrollBehavior: 'contain' }}
+							>
+								{log.images.map((img, imgIdx) => (
+									<img
+										key={img}
+										src={img}
+										alt={`Terminal output image ${imgIdx + 1}`}
+										className="h-20 rounded border cursor-zoom-in shrink-0"
+										style={{ objectFit: 'contain', maxWidth: '200px' }}
+										role="button"
+										tabIndex={0}
+										onClick={() => setLightboxImage(img, log.images, 'history')}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												setLightboxImage(img, log.images, 'history');
+											}
+										}}
+									/>
+								))}
+							</div>
+						)}
 					{log.source === 'stderr' && (
 						<div className="mb-2">
 							<span
@@ -942,10 +951,10 @@ LogItemComponent.displayName = 'LogItemComponent';
 
 // Separate component for elapsed time to prevent re-renders of the entire list
 const ElapsedTimeDisplay = memo(
-	({ thinkingStartTime, textColor }: { thinkingStartTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(
-			Math.floor((Date.now() - thinkingStartTime) / 1000)
-		);
+		({ thinkingStartTime, textColor }: { thinkingStartTime: number; textColor: string }) => {
+			const [elapsedSeconds, setElapsedSeconds] = useState(
+				() => Math.floor((Date.now() - thinkingStartTime) / 1000)
+			);
 
 		useEffect(() => {
 			// Update every second
@@ -1603,11 +1612,13 @@ export const TerminalOutput = memo(
 
 		const isAutoScrollActive = autoScrollAiMode && !autoScrollPaused;
 
-		return (
-			<div
-				ref={terminalOutputRef}
-				tabIndex={0}
-				className="terminal-output flex-1 flex flex-col overflow-hidden transition-colors outline-none relative"
+			return (
+				<div
+					ref={terminalOutputRef}
+					tabIndex={0}
+					role="region"
+					aria-label="Terminal output"
+					className="terminal-output flex-1 flex flex-col overflow-hidden transition-colors outline-none relative"
 				style={{
 					backgroundColor:
 						session.inputMode === 'ai' ? theme.colors.bgMain : theme.colors.bgActivity,
@@ -1683,13 +1694,12 @@ export const TerminalOutput = memo(
 								isAIMode ? 'Filter output... (Esc to close)' : 'Search output... (Esc to close)'
 							}
 							className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-							style={{
-								borderColor: theme.colors.accent,
-								color: theme.colors.textMain,
-								backgroundColor: theme.colors.bgSidebar,
-							}}
-							autoFocus
-						/>
+								style={{
+									borderColor: theme.colors.accent,
+									color: theme.colors.textMain,
+									backgroundColor: theme.colors.bgSidebar,
+								}}
+							/>
 					</div>
 				)}
 				{/* Prose styles for markdown rendering - injected once at container level for performance */}

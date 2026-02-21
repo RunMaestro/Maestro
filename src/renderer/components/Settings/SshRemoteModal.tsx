@@ -230,10 +230,10 @@ export function SshRemoteModal({
 		);
 	});
 
-	// Reset highlight index when filter changes
-	useEffect(() => {
+	const handleSshConfigFilterChange = useCallback((value: string) => {
+		setSshConfigFilter(value);
 		setSshConfigHighlightIndex(0);
-	}, [sshConfigFilter]);
+	}, []);
 
 	// Handle keyboard navigation in dropdown
 	const handleDropdownKeyDown = (e: React.KeyboardEvent) => {
@@ -567,23 +567,25 @@ export function SshRemoteModal({
 								)}
 								<ChevronDown className="w-4 h-4" style={{ color: theme.colors.textDim }} />
 							</button>
-							{showSshConfigDropdown && (
-								<div
-									className="absolute top-full left-0 right-0 mt-1 rounded border shadow-lg z-10"
-									style={{
-										backgroundColor: theme.colors.bgMain,
-										borderColor: theme.colors.border,
-									}}
-									onKeyDown={handleDropdownKeyDown}
-								>
+								{showSshConfigDropdown && (
+									<div
+										className="absolute top-full left-0 right-0 mt-1 rounded border shadow-lg z-10"
+										style={{
+											backgroundColor: theme.colors.bgMain,
+											borderColor: theme.colors.border,
+										}}
+										onKeyDown={handleDropdownKeyDown}
+										role="listbox"
+										aria-label="SSH config hosts"
+									>
 									{/* Filter input */}
 									<div className="p-2 border-b" style={{ borderColor: theme.colors.border }}>
-										<input
-											ref={filterInputRef}
-											type="text"
-											value={sshConfigFilter}
-											onChange={(e) => setSshConfigFilter(e.target.value)}
-											onKeyDown={handleDropdownKeyDown}
+											<input
+												ref={filterInputRef}
+												type="text"
+												value={sshConfigFilter}
+												onChange={(e) => handleSshConfigFilterChange(e.target.value)}
+												onKeyDown={handleDropdownKeyDown}
 											placeholder="Type to filter..."
 											className="w-full px-2 py-1 rounded text-sm bg-transparent outline-none"
 											style={{
@@ -716,15 +718,15 @@ export function SshRemoteModal({
 					helperText="Leave empty to use SSH config or ssh-agent"
 				/>
 
-				{/* Environment Variables */}
-				<div>
-					<div className="flex items-center justify-between mb-2">
-						<label
-							className="text-xs font-bold opacity-70 uppercase"
-							style={{ color: theme.colors.textMain }}
-						>
-							Environment Variables (optional)
-						</label>
+					{/* Environment Variables */}
+					<div>
+						<div className="flex items-center justify-between mb-2">
+							<div
+								className="text-xs font-bold opacity-70 uppercase"
+								style={{ color: theme.colors.textMain }}
+							>
+								Environment Variables (optional)
+							</div>
 						<button
 							type="button"
 							onClick={addEnvVar}

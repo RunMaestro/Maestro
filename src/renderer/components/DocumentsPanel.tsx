@@ -411,14 +411,17 @@ function DocumentSelectorModal({
 	}, [selectedDocs, taskCounts]);
 
 	return (
-		<div
-			className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000]"
-			onClick={onClose}
-		>
+		<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000]">
+			<button
+				type="button"
+				className="absolute inset-0"
+				tabIndex={-1}
+				onClick={onClose}
+				aria-label="Close document selector"
+			/>
 			<div
-				className="w-[550px] max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
+				className="relative z-10 w-[550px] max-h-[70vh] border rounded-lg shadow-2xl overflow-hidden flex flex-col"
 				style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
-				onClick={(e) => e.stopPropagation()}
 			>
 				{/* Selector Header */}
 				<div
@@ -607,7 +610,7 @@ export function DocumentsPanel({
 	const [showDocSelector, setShowDocSelector] = useState(false);
 
 	// Loop mode state
-	const [showMaxLoopsSlider, setShowMaxLoopsSlider] = useState(maxLoops != null);
+	const showMaxLoopsSlider = maxLoops != null;
 
 	// Drag state for reordering
 	const [draggedId, setDraggedId] = useState<string | null>(null);
@@ -809,17 +812,12 @@ export function DocumentsPanel({
 		resetDragState();
 	}, [performDropOperation, resetDragState]);
 
-	// Sync showMaxLoopsSlider when maxLoops prop changes externally
-	useEffect(() => {
-		setShowMaxLoopsSlider(maxLoops != null);
-	}, [maxLoops]);
-
-	return (
-		<div className="mb-6">
-			<div className="flex items-center justify-between mb-3">
-				<label className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
-					Documents to Run
-				</label>
+		return (
+			<div className="mb-6">
+				<div className="flex items-center justify-between mb-3">
+					<div className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+						Documents to Run
+					</div>
 				<button
 					onClick={handleOpenDocSelector}
 					className="flex items-center gap-1 text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors"
@@ -1197,12 +1195,11 @@ export function DocumentsPanel({
 								className="flex items-center rounded-lg border overflow-hidden"
 								style={{ borderColor: theme.colors.border }}
 							>
-								{/* Infinity Toggle */}
-								<button
-									onClick={() => {
-										setShowMaxLoopsSlider(false);
-										setMaxLoops(null);
-									}}
+									{/* Infinity Toggle */}
+									<button
+										onClick={() => {
+											setMaxLoops(null);
+										}}
 									className={`px-2.5 py-1 text-xs font-medium transition-colors ${
 										!showMaxLoopsSlider ? 'bg-white/10' : 'hover:bg-white/5'
 									}`}
@@ -1213,13 +1210,12 @@ export function DocumentsPanel({
 								>
 									<span className="text-xl leading-none">∞</span>
 								</button>
-								{/* Max Toggle */}
-								<button
-									onClick={() => {
-										setShowMaxLoopsSlider(true);
-										if (maxLoops === null) {
-											setMaxLoops(5);
-										}
+									{/* Max Toggle */}
+									<button
+										onClick={() => {
+											if (maxLoops === null) {
+												setMaxLoops(5);
+											}
 									}}
 									className={`px-2.5 py-1 text-xs font-medium transition-colors border-l ${
 										showMaxLoopsSlider ? 'bg-white/10' : 'hover:bg-white/5'

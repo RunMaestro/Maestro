@@ -82,7 +82,7 @@ function HistoryCard({ entry, onSelect }: HistoryCardProps) {
 				width: '100%',
 				textAlign: 'left',
 				cursor: 'pointer',
-				transition: 'all 0.15s ease',
+				transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
 				touchAction: 'manipulation',
 				WebkitTapHighlightColor: 'transparent',
 				outline: 'none',
@@ -875,37 +875,36 @@ export function MobileHistoryPanel({
 	const containerRef = useRef<HTMLDivElement>(null);
 	const searchInputRef = useRef<HTMLInputElement>(null);
 
-	// Fetch history entries on mount
-	useEffect(() => {
-		const fetchHistory = async () => {
-			setIsLoading(true);
-			setError(null);
-			try {
-				// Build query params
-				const params = new URLSearchParams();
-				if (projectPath) params.set('projectPath', projectPath);
-				if (sessionId) params.set('sessionId', sessionId);
+	const fetchHistory = useCallback(async () => {
+		setIsLoading(true);
+		setError(null);
+		try {
+			const params = new URLSearchParams();
+			if (projectPath) params.set('projectPath', projectPath);
+			if (sessionId) params.set('sessionId', sessionId);
 
-				const queryString = params.toString();
-				const apiUrl = buildApiUrl(`/history${queryString ? `?${queryString}` : ''}`);
+			const queryString = params.toString();
+			const apiUrl = buildApiUrl(`/history${queryString ? `?${queryString}` : ''}`);
 
-				const response = await fetch(apiUrl);
-				if (!response.ok) {
-					throw new Error(`Failed to fetch history: ${response.statusText}`);
-				}
-				const data = await response.json();
-				setEntries(data.entries || []);
-				webLogger.debug(`Fetched ${data.entries?.length || 0} history entries`, 'MobileHistory');
-			} catch (err: any) {
-				webLogger.error('Failed to fetch history', 'MobileHistory', err);
-				setError(err.message || 'Failed to load history');
-			} finally {
-				setIsLoading(false);
+			const response = await fetch(apiUrl);
+			if (!response.ok) {
+				throw new Error(`Failed to fetch history: ${response.statusText}`);
 			}
-		};
-
-		fetchHistory();
+			const data = await response.json();
+			setEntries(data.entries || []);
+			webLogger.debug(`Fetched ${data.entries?.length || 0} history entries`, 'MobileHistory');
+		} catch (err: any) {
+			webLogger.error('Failed to fetch history', 'MobileHistory', err);
+			setError(err.message || 'Failed to load history');
+		} finally {
+			setIsLoading(false);
+		}
 	}, [projectPath, sessionId]);
+
+	// Fetch history entries when source identifiers change
+	useEffect(() => {
+		void fetchHistory();
+	}, [fetchHistory]);
 
 	// Filter entries based on selected filter and search query
 	const filteredEntries = useMemo(() => {
@@ -1123,7 +1122,7 @@ export function MobileHistoryPanel({
 								touchAction: 'manipulation',
 								WebkitTapHighlightColor: 'transparent',
 								flexShrink: 0,
-								transition: 'all 0.15s ease',
+								transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
 							}}
 							aria-label="Search history"
 							aria-pressed={isSearchOpen}
@@ -1190,12 +1189,13 @@ export function MobileHistoryPanel({
 										fontSize: '12px',
 										fontWeight: 600,
 										textTransform: 'uppercase',
-										cursor: 'pointer',
-										touchAction: 'manipulation',
-										WebkitTapHighlightColor: 'transparent',
-										opacity: isActive ? 1 : 0.6,
-										transition: 'all 0.15s ease',
-									}}
+											cursor: 'pointer',
+											touchAction: 'manipulation',
+											WebkitTapHighlightColor: 'transparent',
+											opacity: isActive ? 1 : 0.6,
+											transition:
+												'opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+										}}
 									aria-pressed={isActive}
 								>
 									{displayLabel}

@@ -249,6 +249,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onToggleWizardShowThinking,
 	} = props;
 
+	const commandHistoryFilterRef = React.useRef<HTMLInputElement>(null);
+
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
 
@@ -329,17 +331,17 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	);
 
 	// Use scroll-into-view hooks for all dropdown lists
-	const slashCommandItemRefs = useScrollIntoView<HTMLDivElement>(
+	const slashCommandItemRefs = useScrollIntoView<HTMLButtonElement>(
 		slashCommandOpen,
 		safeSelectedIndex,
 		filteredSlashCommands.length
 	);
-	const tabCompletionItemRefs = useScrollIntoView<HTMLDivElement>(
+	const tabCompletionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		tabCompletionOpen,
 		selectedTabCompletionIndex,
 		tabCompletionSuggestions.length
 	);
-	const atMentionItemRefs = useScrollIntoView<HTMLDivElement>(
+	const atMentionItemRefs = useScrollIntoView<HTMLButtonElement>(
 		atMentionOpen,
 		selectedAtMentionIndex,
 		atMentionSuggestions.length
@@ -354,6 +356,12 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			.reverse()
 			.slice(0, 10);
 	}, [currentCommandHistory, commandHistoryFilterLower]);
+
+	useEffect(() => {
+		if (commandHistoryOpen) {
+			setTimeout(() => commandHistoryFilterRef.current?.focus(), 0);
+		}
+	}, [commandHistoryOpen]);
 
 	// Auto-resize textarea to match content height.
 	// Fires on tab switch AND inputValue changes (handles external updates like session restore,
@@ -453,20 +461,29 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			)}
 
 			{/* Only show staged images in AI mode */}
-			{session.inputMode === 'ai' && stagedImages.length > 0 && (
-				<div className="flex gap-2 mb-3 pb-2 overflow-x-auto overflow-y-visible scrollbar-thin">
-					{stagedImages.map((img, idx) => (
-						<div key={idx} className="relative group shrink-0">
-							<img
-								src={img}
-								className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
+				{session.inputMode === 'ai' && stagedImages.length > 0 && (
+					<div className="flex gap-2 mb-3 pb-2 overflow-x-auto overflow-y-visible scrollbar-thin">
+						{stagedImages.map((img, idx) => (
+							<div key={img} className="relative group shrink-0">
+								<img
+									src={img}
+									alt={`Staged image ${idx + 1}`}
+									className="h-16 rounded border cursor-pointer hover:opacity-80 transition-opacity"
 								style={{
 									borderColor: theme.colors.border,
-									objectFit: 'contain',
-									maxWidth: '200px',
-								}}
-								onClick={() => setLightboxImage(img, stagedImages, 'staged')}
-							/>
+										objectFit: 'contain',
+										maxWidth: '200px',
+									}}
+									role="button"
+									tabIndex={0}
+									onClick={() => setLightboxImage(img, stagedImages, 'staged')}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											setLightboxImage(img, stagedImages, 'staged');
+										}
+									}}
+								/>
 							<button
 								onClick={(e) => {
 									e.stopPropagation();
@@ -487,19 +504,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 					className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl overflow-hidden"
 					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
 				>
-					<div
-						className="overflow-y-auto max-h-64 scrollbar-thin"
-						style={{ overscrollBehavior: 'contain' }}
-					>
-						{filteredSlashCommands.map((cmd, idx) => (
-							<div
-								key={cmd.command}
-								ref={(el) => (slashCommandItemRefs.current[idx] = el)}
-								className={`px-4 py-3 cursor-pointer transition-colors ${
-									idx === safeSelectedIndex ? 'font-semibold' : ''
-								}`}
-								style={{
-									backgroundColor: idx === safeSelectedIndex ? theme.colors.accent : 'transparent',
+						<div
+							className="overflow-y-auto max-h-64 scrollbar-thin"
+							style={{ overscrollBehavior: 'contain' }}
+						>
+							{filteredSlashCommands.map((cmd, idx) => (
+								<button
+									type="button"
+									key={cmd.command}
+									ref={(el) => (slashCommandItemRefs.current[idx] = el)}
+									className={`w-full px-4 py-3 text-left transition-colors ${
+										idx === safeSelectedIndex ? 'font-semibold' : ''
+									}`}
+									style={{
+										backgroundColor: idx === safeSelectedIndex ? theme.colors.accent : 'transparent',
 									color: idx === safeSelectedIndex ? theme.colors.bgMain : theme.colors.textMain,
 								}}
 								onClick={() => {
@@ -511,27 +529,27 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 									setInputValue(cmd.command);
 									setSlashCommandOpen(false);
 									inputRef.current?.focus();
-								}}
-								onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
-							>
-								<div className="font-mono text-sm">{cmd.command}</div>
-								<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
-							</div>
-						))}
+									}}
+									onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
+								>
+									<div className="font-mono text-sm">{cmd.command}</div>
+									<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
+								</button>
+							))}
+						</div>
 					</div>
-				</div>
-			)}
+				)}
 
 			{/* Command History Modal */}
 			{commandHistoryOpen && (
 				<div
 					className="absolute bottom-full left-0 right-0 mb-2 border rounded-lg shadow-2xl max-h-64 overflow-hidden"
 					style={{ backgroundColor: theme.colors.bgSidebar, borderColor: theme.colors.border }}
-				>
-					<div className="p-2">
-						<input
-							autoFocus
-							type="text"
+					>
+						<div className="p-2">
+							<input
+								ref={commandHistoryFilterRef}
+								type="text"
 							className="w-full bg-transparent outline-none text-sm p-2 border-b"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
 							placeholder={isTerminalMode ? 'Filter commands...' : 'Filter messages...'}
@@ -569,15 +587,16 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 						/>
 					</div>
 					<div className="max-h-48 overflow-y-auto scrollbar-thin">
-						{filteredCommandHistory.slice(0, 5).map((cmd, idx) => {
-							const isSelected = idx === commandHistorySelectedIndex;
-							const isMostRecent = idx === 0;
+							{filteredCommandHistory.slice(0, 5).map((cmd, idx) => {
+								const isSelected = idx === commandHistorySelectedIndex;
+								const isMostRecent = idx === 0;
 
-							return (
-								<div
-									key={idx}
-									className={`px-3 py-2 cursor-pointer text-sm font-mono ${isSelected ? 'ring-1 ring-inset' : ''} ${isMostRecent ? 'font-semibold' : ''}`}
-									style={
+								return (
+									<button
+										type="button"
+										key={cmd}
+										className={`w-full px-3 py-2 text-left text-sm font-mono ${isSelected ? 'ring-1 ring-inset' : ''} ${isMostRecent ? 'font-semibold' : ''}`}
+										style={
 										{
 											backgroundColor: isSelected
 												? theme.colors.bgActivity
@@ -594,13 +613,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										setCommandHistoryOpen(false);
 										setCommandHistoryFilter('');
 										inputRef.current?.focus();
-									}}
-									onMouseEnter={() => setCommandHistorySelectedIndex(idx)}
-								>
-									{cmd}
-								</div>
-							);
-						})}
+										}}
+										onMouseEnter={() => setCommandHistorySelectedIndex(idx)}
+									>
+										{cmd}
+									</button>
+								);
+							})}
 						{filteredCommandHistory.length === 0 && (
 							<div className="px-3 py-4 text-center text-sm opacity-50">
 								{isTerminalMode ? 'No matching commands' : 'No matching messages'}
@@ -692,10 +711,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 								const typeLabel = suggestion.type;
 
 								return (
-									<div
+									<button
+										type="button"
 										key={`${suggestion.type}-${suggestion.value}`}
 										ref={(el) => (tabCompletionItemRefs.current[idx] = el)}
-										className={`px-3 py-2 cursor-pointer text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
+										className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
 										style={
 											{
 												backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
@@ -727,7 +747,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										/>
 										<span className="flex-1 truncate">{suggestion.displayText}</span>
 										<span className="text-[10px] opacity-40 flex-shrink-0">{typeLabel}</span>
-									</div>
+									</button>
 								);
 							})
 						) : (
@@ -770,10 +790,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 							const IconComponent = suggestion.type === 'folder' ? Folder : File;
 
 							return (
-								<div
+								<button
+									type="button"
 									key={`${suggestion.type}-${suggestion.value}`}
 									ref={(el) => (atMentionItemRefs.current[idx] = el)}
-									className={`px-3 py-2 cursor-pointer text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
+									className={`w-full px-3 py-2 text-left text-sm font-mono flex items-center gap-2 ${isSelected ? 'ring-1 ring-inset' : ''}`}
 									style={
 										{
 											backgroundColor: isSelected ? theme.colors.bgActivity : 'transparent',
@@ -815,7 +836,7 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 										</span>
 									)}
 									<span className="text-[10px] opacity-40 flex-shrink-0">{suggestion.type}</span>
-								</div>
+								</button>
 							);
 						})}
 					</div>

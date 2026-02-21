@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback } from 'react';
+import { useMemo, useState, useCallback } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../types';
 
@@ -32,9 +32,10 @@ export function ContextWarningSash({
 	onSummarizeClick,
 	tabId,
 }: ContextWarningSashProps) {
-	// Track dismissal state per-tab
-	const [dismissedAtUsage, setDismissedAtUsage] = useState<number | null>(null);
-	const [dismissedLevel, setDismissedLevel] = useState<'yellow' | 'red' | null>(null);
+	const tabKey = tabId ?? '__default__';
+	const [dismissedByTab, setDismissedByTab] = useState<
+		Record<string, { usage: number; level: 'yellow' | 'red' }>
+	>({});
 
 	// Determine warning level
 	const warningLevel = useMemo(() => {
@@ -43,11 +44,7 @@ export function ContextWarningSash({
 		return null;
 	}, [contextUsage, yellowThreshold, redThreshold]);
 
-	// Reset dismissal when tab changes
-	useEffect(() => {
-		setDismissedAtUsage(null);
-		setDismissedLevel(null);
-	}, [tabId]);
+	const currentDismissal = dismissedByTab[tabKey];
 
 	// Check if warning should be shown based on dismissal rules
 	const shouldShowWarning = useMemo(() => {
@@ -55,22 +52,25 @@ export function ContextWarningSash({
 		if (!enabled || !warningLevel) return false;
 
 		// Show if never dismissed for this tab
-		if (dismissedAtUsage === null) return true;
+		if (!currentDismissal) return true;
 
 		// Show again if usage has increased by 10% or more since dismissal
-		if (contextUsage >= dismissedAtUsage + 10) return true;
+		if (contextUsage >= currentDismissal.usage + 10) return true;
 
 		// Show again if crossed from yellow to red threshold
-		if (dismissedLevel === 'yellow' && warningLevel === 'red') return true;
+		if (currentDismissal.level === 'yellow' && warningLevel === 'red') return true;
 
 		return false;
-	}, [enabled, warningLevel, dismissedAtUsage, dismissedLevel, contextUsage]);
+	}, [enabled, warningLevel, currentDismissal, contextUsage]);
 
 	// Handle dismiss action
 	const handleDismiss = useCallback(() => {
-		setDismissedAtUsage(contextUsage);
-		setDismissedLevel(warningLevel);
-	}, [contextUsage, warningLevel]);
+		if (!warningLevel) return;
+		setDismissedByTab((prev) => ({
+			...prev,
+			[tabKey]: { usage: contextUsage, level: warningLevel },
+		}));
+	}, [contextUsage, warningLevel, tabKey]);
 
 	// Don't render if warning shouldn't be shown
 	if (!shouldShowWarning) return null;
