@@ -273,6 +273,24 @@ export function clearAllModeratorSessions(): void {
 }
 
 /**
+ * Kills all active moderator processes and clears session tracking.
+ * Used during application shutdown to prevent zombie processes.
+ *
+ * @param processManager - The process manager for killing processes (optional)
+ */
+export function killAllModerators(processManager?: IProcessManager): void {
+	for (const [groupChatId, sessionId] of activeModeratorSessions) {
+		if (processManager) {
+			processManager.kill(sessionId);
+		}
+		// Remove power block reason for each moderator
+		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
+	}
+	activeModeratorSessions.clear();
+	sessionActivityTimestamps.clear();
+}
+
+/**
  * Gets the chat log for the group chat.
  * This is useful for providing context to the moderator.
  *

@@ -77,6 +77,8 @@ import { releaseChatLock, clearSynthesisInProgress } from './group-chat/group-ch
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { clearAllParticipantSessionsGlobal } from './group-chat/group-chat-agent';
+import { killAllModerators } from './group-chat/group-chat-moderator';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -419,6 +421,8 @@ const quitHandler = createQuitHandler({
 	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => cliWatcher.stop(),
+	clearAllParticipantSessionsGlobal,
+	killAllModerators,
 });
 quitHandler.setup();
 
