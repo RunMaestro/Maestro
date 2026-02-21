@@ -21,6 +21,7 @@ import {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	getGeminiSessionStatsStore,
 	getSshRemoteById,
 } from './stores';
 import {
@@ -232,6 +233,7 @@ const agentConfigsStore = getAgentConfigsStore();
 const windowStateStore = getWindowStateStore();
 const claudeSessionOriginsStore = getClaudeSessionOriginsStore();
 const agentSessionOriginsStore = getAgentSessionOriginsStore();
+const geminiSessionStatsStore = getGeminiSessionStatsStore();
 
 // Note: History storage is now handled by HistoryManager which uses per-session files
 // in the history/ directory. The legacy maestro-history.json file is migrated automatically.
@@ -510,7 +512,7 @@ function setupIpcHandlers() {
 	// This provides the new window.maestro.agentSessions.* API
 	// Pass the shared claudeSessionOriginsStore so session names/stars are consistent
 	initializeSessionStorages({ claudeSessionOriginsStore });
-	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore });
+	registerAgentSessionsHandlers({ getMainWindow: () => mainWindow, agentSessionOriginsStore, geminiSessionStatsStore });
 
 	// Helper to get agent config values (custom args/env vars, model, etc.)
 	const getAgentConfigForAgent = (agentId: string): Record<string, any> => {

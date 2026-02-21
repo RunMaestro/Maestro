@@ -46,6 +46,7 @@ import type {
 } from '../../agents';
 import type { GlobalAgentStats, ProviderStats, SshRemoteConfig } from '../../../shared/types';
 import type { MaestroSettings } from './persistence';
+import type { GeminiSessionStatsData } from '../../stores/types';
 
 // Re-export for backwards compatibility
 export type { GlobalAgentStats, ProviderStats };
@@ -74,10 +75,23 @@ export interface AgentSessionsHandlerDependencies {
 	agentSessionOriginsStore?: Store<AgentSessionOriginsData>;
 	/** Settings store for SSH remote configuration lookup */
 	settingsStore?: Store<MaestroSettings>;
+	/** Gemini session stats store for persisting live token usage */
+	geminiSessionStatsStore?: Store<GeminiSessionStatsData>;
 }
 
 // Module-level reference to settings store (set during registration)
 let agentSessionsSettingsStore: Store<MaestroSettings> | undefined;
+
+// Module-level reference to gemini session stats store (set during registration)
+let geminiStatsStore: Store<GeminiSessionStatsData> | undefined;
+
+/**
+ * Get the Gemini session stats store instance.
+ * Returns undefined if not yet initialized.
+ */
+export function getGeminiStatsStore(): Store<GeminiSessionStatsData> | undefined {
+	return geminiStatsStore;
+}
 
 /**
  * Get SSH remote configuration by ID from the settings store.
@@ -527,6 +541,9 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 	// Store settings reference for SSH remote lookups
 	agentSessionsSettingsStore = deps?.settingsStore;
+
+	// Store gemini session stats reference for token persistence
+	geminiStatsStore = deps?.geminiSessionStatsStore;
 
 	// ============ List Sessions ============
 

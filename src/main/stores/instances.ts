@@ -22,6 +22,7 @@ import type {
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
+	GeminiSessionStatsData,
 } from './types';
 
 import {
@@ -32,6 +33,7 @@ import {
 	WINDOW_STATE_DEFAULTS,
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
+	GEMINI_SESSION_STATS_DEFAULTS,
 } from './defaults';
 
 import { getCustomSyncPath } from './utils';
@@ -48,6 +50,7 @@ let _agentConfigsStore: Store<AgentConfigsData> | null = null;
 let _windowStateStore: Store<WindowState> | null = null;
 let _claudeSessionOriginsStore: Store<ClaudeSessionOriginsData> | null = null;
 let _agentSessionOriginsStore: Store<AgentSessionOriginsData> | null = null;
+let _geminiSessionStatsStore: Store<GeminiSessionStatsData> | null = null;
 
 // Cached paths after initialization
 let _syncPath: string | null = null;
@@ -137,6 +140,13 @@ export function initializeStores(options: StoreInitOptions): {
 		defaults: AGENT_SESSION_ORIGINS_DEFAULTS,
 	});
 
+	// Gemini session stats - persists cumulative token usage from live sessions
+	_geminiSessionStatsStore = new Store<GeminiSessionStatsData>({
+		name: 'gemini-session-stats',
+		cwd: _syncPath,
+		defaults: GEMINI_SESSION_STATS_DEFAULTS,
+	});
+
 	return {
 		syncPath: _syncPath,
 		bootstrapStore: _bootstrapStore,
@@ -163,6 +173,7 @@ export function getStoreInstances() {
 		windowStateStore: _windowStateStore,
 		claudeSessionOriginsStore: _claudeSessionOriginsStore,
 		agentSessionOriginsStore: _agentSessionOriginsStore,
+		geminiSessionStatsStore: _geminiSessionStatsStore,
 	};
 }
 

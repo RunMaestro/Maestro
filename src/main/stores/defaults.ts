@@ -15,6 +15,7 @@ import type {
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
+	GeminiSessionStatsData,
 } from './types';
 
 // ============================================================================
@@ -95,4 +96,8 @@ export const CLAUDE_SESSION_ORIGINS_DEFAULTS: ClaudeSessionOriginsData = {
 
 export const AGENT_SESSION_ORIGINS_DEFAULTS: AgentSessionOriginsData = {
 	origins: {},
+};
+
+export const GEMINI_SESSION_STATS_DEFAULTS: GeminiSessionStatsData = {
+	stats: {},
 };

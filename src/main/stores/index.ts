@@ -46,6 +46,7 @@ export {
 	getWindowStateStore,
 	getClaudeSessionOriginsStore,
 	getAgentSessionOriginsStore,
+	getGeminiSessionStatsStore,
 	getSyncPath,
 	getProductionDataPath,
 	getSshRemoteById,
@@ -69,4 +70,5 @@ export {
 	WINDOW_STATE_DEFAULTS,
 	CLAUDE_SESSION_ORIGINS_DEFAULTS,
 	AGENT_SESSION_ORIGINS_DEFAULTS,
+	GEMINI_SESSION_STATS_DEFAULTS,
 } from './defaults';

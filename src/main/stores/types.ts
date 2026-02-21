@@ -146,3 +146,20 @@ export interface AgentSessionOriginsData {
 		>
 	>;
 }
+
+// ============================================================================
+// Gemini Session Stats Store
+// ============================================================================
+
+export interface GeminiSessionTokenStats {
+	inputTokens: number;
+	outputTokens: number;
+	cacheReadTokens: number;
+	reasoningTokens: number;
+	lastUpdatedMs: number;
+}
+
+export interface GeminiSessionStatsData {
+	// Keyed by Gemini session_id (UUID from init event)
+	stats: Record<string, GeminiSessionTokenStats>;
+}

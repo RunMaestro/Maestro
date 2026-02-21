@@ -16,6 +16,7 @@ import type {
 	WindowState,
 	ClaudeSessionOriginsData,
 	AgentSessionOriginsData,
+	GeminiSessionStatsData,
 } from './types';
 import type { SshRemoteConfig } from '../../shared/types';
 
@@ -76,6 +77,11 @@ export function getClaudeSessionOriginsStore(): Store<ClaudeSessionOriginsData> 
 export function getAgentSessionOriginsStore(): Store<AgentSessionOriginsData> {
 	ensureInitialized();
 	return getStoreInstances().agentSessionOriginsStore!;
+}
+
+export function getGeminiSessionStatsStore(): Store<GeminiSessionStatsData> {
+	ensureInitialized();
+	return getStoreInstances().geminiSessionStatsStore!;
 }
 
 // ============================================================================

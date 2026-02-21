@@ -7,7 +7,10 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerAgentSessionsHandlers } from '../../../../main/ipc/handlers/agentSessions';
+import {
+	registerAgentSessionsHandlers,
+	getGeminiStatsStore,
+} from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
 
 // Mock electron's ipcMain
@@ -464,6 +467,29 @@ describe('agentSessions IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual(['claude-code', 'opencode']);
+		});
+	});
+
+	describe('gemini session stats store', () => {
+		it('should return undefined when no store is provided', () => {
+			// Default registration (no deps) should leave gemini stats store undefined
+			expect(getGeminiStatsStore()).toBeUndefined();
+		});
+
+		it('should store reference when geminiSessionStatsStore is provided via deps', () => {
+			const mockStore = {
+				get: vi.fn(),
+				set: vi.fn(),
+				store: { stats: {} },
+			};
+
+			// Re-register with the mock store
+			registerAgentSessionsHandlers({
+				getMainWindow: () => null,
+				geminiSessionStatsStore: mockStore as any,
+			});
+
+			expect(getGeminiStatsStore()).toBe(mockStore);
 		});
 	});
 });
