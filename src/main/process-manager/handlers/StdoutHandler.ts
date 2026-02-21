@@ -380,7 +380,10 @@ export class StdoutHandler {
 				});
 				this.emitter.emit('thinking-chunk', sessionId, event.text);
 			} else {
-				// Complete message: emit directly as stdout data for immediate UI display
+				// Complete message: emit as thinking-chunk for thinking display
+				// (renderer drops this when showThinking is 'off')...
+				this.emitter.emit('thinking-chunk', sessionId, event.text);
+				// ...AND as stdout data for always-visible display
 				logger.debug('[ProcessManager] Emitting non-partial text as data', 'ProcessManager', {
 					sessionId,
 					textLength: event.text.length,
