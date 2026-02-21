@@ -4,6 +4,8 @@
  * Verifies:
  * - deleteMessagePair: index-based and content-based message deletion
  * - readSessionMessages: UUID uses original array index
+ * - getAllNamedSessions: named session aggregation from origins store
+ * - listSessions: origin metadata enrichment (names, stars)
  * - Edge cases: missing file, missing message, no paired response, backup/restore
  */
 
@@ -378,6 +380,179 @@ describe('GeminiSessionStorage', () => {
 			expect(new Date(writtenSession.lastUpdated).getTime()).toBeGreaterThan(
 				new Date('2026-01-01T01:00:00.000Z').getTime()
 			);
+		});
+	});
+
+	describe('getAllNamedSessions', () => {
+		function createMockOriginsStore(data: Record<string, unknown> = {}) {
+			return {
+				get: vi.fn().mockReturnValue(data),
+				set: vi.fn(),
+			} as never;
+		}
+
+		it('should return empty array when no origins store is provided', async () => {
+			const storageNoStore = new GeminiSessionStorage();
+			const result = await storageNoStore.getAllNamedSessions();
+			expect(result).toEqual([]);
+		});
+
+		it('should return empty array when no gemini-cli origins exist', async () => {
+			const store = createMockOriginsStore({ origins: {} });
+			const storageWithStore = new GeminiSessionStorage(store);
+			const result = await storageWithStore.getAllNamedSessions();
+			expect(result).toEqual([]);
+		});
+
+		it('should return named sessions from origins store', async () => {
+			const store = createMockOriginsStore({
+				'gemini-cli': {
+					'/test/project': {
+						'session-1': { sessionName: 'My Session', starred: true },
+						'session-2': { sessionName: 'Other Session' },
+						'session-3': { origin: 'auto' }, // no sessionName — should be skipped
+					},
+				},
+			});
+			// Mock findSessionFile to return null (no file on disk)
+			(fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+			(fs.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+
+			const storageWithStore = new GeminiSessionStorage(store);
+			const result = await storageWithStore.getAllNamedSessions();
+
+			expect(result).toHaveLength(2);
+			expect(result).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						agentSessionId: 'session-1',
+						projectPath: '/test/project',
+						sessionName: 'My Session',
+						starred: true,
+					}),
+					expect.objectContaining({
+						agentSessionId: 'session-2',
+						projectPath: '/test/project',
+						sessionName: 'Other Session',
+					}),
+				])
+			);
+		});
+
+		it('should include lastActivityAt when session file exists', async () => {
+			const mtimeMs = new Date('2026-02-15T10:00:00Z').getTime();
+			const store = createMockOriginsStore({
+				'gemini-cli': {
+					'/test/project': {
+						'test-session-id': { sessionName: 'Named Session' },
+					},
+				},
+			});
+
+			// Mock findSessionFile to succeed
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				return Promise.resolve('{}');
+			});
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 500,
+				mtimeMs,
+				mtime: new Date(mtimeMs),
+				isDirectory: () => true,
+			});
+
+			const storageWithStore = new GeminiSessionStorage(store);
+			const result = await storageWithStore.getAllNamedSessions();
+
+			expect(result).toHaveLength(1);
+			expect(result[0].lastActivityAt).toBe(mtimeMs);
+		});
+	});
+
+	describe('listSessions with origin metadata enrichment', () => {
+		function createMockOriginsStore(data: Record<string, unknown> = {}) {
+			return {
+				get: vi.fn().mockReturnValue(data),
+				set: vi.fn(),
+			} as never;
+		}
+
+		it('should enrich sessions with sessionName and starred from origins store', async () => {
+			const sessionContent = buildSessionJson(
+				[
+					{ type: 'user', content: 'Hello' },
+					{ type: 'gemini', content: 'Hi!' },
+				],
+				'test-session-id'
+			);
+
+			const store = createMockOriginsStore({
+				'gemini-cli': {
+					'/test/project': {
+						'test-session-id': { sessionName: 'Custom Name', starred: true, origin: 'user' },
+					},
+				},
+			});
+
+			const storageWithStore = new GeminiSessionStorage(store);
+
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				return Promise.resolve(sessionContent);
+			});
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 1000,
+				mtimeMs: Date.now(),
+				isDirectory: () => true,
+			});
+
+			const sessions = await storageWithStore.listSessions('/test/project');
+
+			expect(sessions).toHaveLength(1);
+			expect(sessions[0].sessionName).toBe('Custom Name');
+			expect(sessions[0].starred).toBe(true);
+			expect(sessions[0].origin).toBe('user');
+		});
+
+		it('should work without origins store (no enrichment)', async () => {
+			const sessionContent = buildSessionJson(
+				[
+					{ type: 'user', content: 'Hello' },
+					{ type: 'gemini', content: 'Hi!' },
+				],
+				'test-session-id'
+			);
+
+			const storageNoStore = new GeminiSessionStorage();
+
+			(fs.access as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+			(fs.readFile as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+				if (filePath.endsWith('.project_root')) {
+					return Promise.resolve('/test/project');
+				}
+				return Promise.resolve(sessionContent);
+			});
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+				size: 1000,
+				mtimeMs: Date.now(),
+				isDirectory: () => true,
+			});
+
+			const sessions = await storageNoStore.listSessions('/test/project');
+
+			expect(sessions).toHaveLength(1);
+			// sessionName should be from the parsed file (summary or first message), not from origins
+			expect(sessions[0].starred).toBeUndefined();
+			expect(sessions[0].origin).toBeUndefined();
 		});
 	});
 });

@@ -46,6 +46,8 @@ import type {
 	SessionMessage,
 } from '../agents';
 import type { ToolType, SshRemoteConfig } from '../../shared/types';
+import type { AgentSessionOriginsData } from '../stores/types';
+import Store from 'electron-store';
 
 const LOG_CONTEXT = 'gemini-session-storage';
 
@@ -168,6 +170,11 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
  */
 	export class GeminiSessionStorage implements AgentSessionStorage {
 	readonly agentId: ToolType = 'gemini-cli' as ToolType;
+	private originsStore?: Store<AgentSessionOriginsData>;
+
+	constructor(originsStore?: Store<AgentSessionOriginsData>) {
+		this.originsStore = originsStore;
+	}
 
 	get displayName(): string {
 		return '~/.gemini/history';
@@ -351,6 +358,21 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 			} catch (error) {
 				logger.error(`Error stating Gemini session file: ${filename}`, LOG_CONTEXT, error);
 				captureException(error, { operation: 'geminiStorage:statSessionFile', filename });
+			}
+		}
+
+		// Enrich with origin metadata (names, stars) from the origins store
+		if (this.originsStore) {
+			const resolvedPath = path.resolve(projectPath);
+			const allOrigins = this.originsStore.get('origins', {});
+			const projectOrigins = allOrigins['gemini-cli']?.[resolvedPath] || {};
+			for (const session of sessions) {
+				const meta = projectOrigins[session.sessionId];
+				if (meta) {
+					if (meta.sessionName) session.sessionName = meta.sessionName;
+					if (meta.starred) session.starred = meta.starred;
+					if (meta.origin) session.origin = meta.origin;
+				}
 			}
 		}
 
@@ -738,5 +760,60 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 		}
 
 		return null;
+	}
+
+	/**
+	 * Get all named sessions across all projects.
+	 * Used by the aggregated named sessions view (agentSessions:getAllNamedSessions).
+	 */
+	async getAllNamedSessions(): Promise<
+		Array<{
+			agentSessionId: string;
+			projectPath: string;
+			sessionName: string;
+			starred?: boolean;
+			lastActivityAt?: number;
+		}>
+	> {
+		if (!this.originsStore) {
+			return [];
+		}
+
+		const allOrigins = this.originsStore.get('origins', {});
+		const geminiOrigins = allOrigins['gemini-cli'] || {};
+		const namedSessions: Array<{
+			agentSessionId: string;
+			projectPath: string;
+			sessionName: string;
+			starred?: boolean;
+			lastActivityAt?: number;
+		}> = [];
+
+		for (const [projectPath, sessions] of Object.entries(geminiOrigins)) {
+			for (const [sessionId, info] of Object.entries(sessions)) {
+				if (typeof info === 'object' && info.sessionName) {
+					let lastActivityAt: number | undefined;
+					try {
+						const sessionFilePath = await this.findSessionFile(projectPath, sessionId);
+						if (sessionFilePath) {
+							const stats = await fs.stat(sessionFilePath);
+							lastActivityAt = stats.mtime.getTime();
+						}
+					} catch {
+						// Session file doesn't exist or is inaccessible — still include the entry
+					}
+
+					namedSessions.push({
+						agentSessionId: sessionId,
+						projectPath,
+						sessionName: info.sessionName,
+						starred: info.starred,
+						lastActivityAt,
+					});
+				}
+			}
+		}
+
+		return namedSessions;
 	}
 }
