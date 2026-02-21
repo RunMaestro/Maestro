@@ -30,6 +30,7 @@ export function setupExitListener(
 		| 'groupChatEmitters'
 		| 'groupChatRouter'
 		| 'groupChatStorage'
+		| 'groupChatLock'
 		| 'sessionRecovery'
 		| 'debugLog'
 		| 'logger'
@@ -49,6 +50,7 @@ export function setupExitListener(
 		groupChatEmitters,
 		groupChatRouter,
 		groupChatStorage,
+		groupChatLock,
 		sessionRecovery,
 		debugLog,
 		logger,
@@ -143,6 +145,15 @@ export function setupExitListener(
 									ad ?? undefined,
 									readOnly
 								)
+								.then(() => {
+									// After routing, check if this was a final response (no new pending participants)
+									const pending = groupChatRouter.getPendingParticipants(groupChatId);
+									if (!pending || pending.size === 0) {
+										groupChatLock.releaseChatLock(groupChatId);
+									}
+									// Clear synthesis flag (no-op if synthesis wasn't in progress)
+									groupChatLock.clearSynthesisInProgress(groupChatId);
+								})
 								.catch((err) => {
 									debugLog('GroupChat:Debug', ` ERROR routing moderator response:`, err);
 									logger.error(
@@ -150,6 +161,9 @@ export function setupExitListener(
 										'ProcessListener',
 										{ error: String(err) }
 									);
+									// Release lock on error - conversation round failed
+									groupChatLock.releaseChatLock(groupChatId);
+									groupChatLock.clearSynthesisInProgress(groupChatId);
 								});
 						} else {
 							debugLog('GroupChat:Debug', ` WARNING: Parsed text is empty!`);

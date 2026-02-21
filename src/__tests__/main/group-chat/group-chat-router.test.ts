@@ -65,6 +65,7 @@ import {
 	setSshStore,
 	type SessionInfo,
 } from '../../../main/group-chat/group-chat-router';
+import { releaseChatLock } from '../../../main/group-chat/group-chat-lock';
 import {
 	spawnModerator,
 	clearAllModeratorSessions,
@@ -133,6 +134,11 @@ describe('group-chat-router', () => {
 	});
 
 	afterEach(async () => {
+		// Release any chat locks held from tests
+		for (const id of createdChats) {
+			releaseChatLock(id);
+		}
+
 		// Clean up any created chats
 		for (const id of createdChats) {
 			try {
@@ -630,6 +636,9 @@ describe('group-chat-router', () => {
 				true
 			);
 			expect(getGroupChatReadOnlyState(chat.id)).toBe(true);
+
+			// Release chat lock before sending next message (in production, the moderator exit handler does this)
+			releaseChatLock(chat.id);
 
 			// After sending non-read-only message, state should be false
 			await routeUserMessage(
