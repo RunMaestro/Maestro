@@ -92,6 +92,19 @@ describe('estimateContextUsage', () => {
 			expect(result).toBe(1);
 		});
 
+		it('should calculate 70% for gemini-cli with 500k input + 200k output against 1M window', () => {
+			const stats = createStats({
+				inputTokens: 500000,
+				outputTokens: 200000,
+				cacheReadInputTokens: 0,
+				cacheCreationInputTokens: 0,
+				contextWindow: 1000000,
+			});
+			const result = estimateContextUsage(stats, 'gemini-cli');
+			// Combined: (500000 + 200000 + 0) / 1000000 = 70%
+			expect(result).toBe(70);
+		});
+
 		it('should use opencode default context window (128k)', () => {
 			const stats = createStats({ contextWindow: 0 });
 			const result = estimateContextUsage(stats, 'opencode');
@@ -435,6 +448,19 @@ describe('calculateContextDisplay', () => {
 		// Codex: (50000 + 20000 + 30000) / 200000 = 50%
 		expect(result.tokens).toBe(100000);
 		expect(result.percentage).toBe(50);
+	});
+
+	it('should use Gemini combined semantics (includes output tokens) against 1M window', () => {
+		const result = calculateContextDisplay(
+			{ inputTokens: 500000, outputTokens: 200000, cacheCreationInputTokens: 0 },
+			1048576,
+			'gemini-cli'
+		);
+		// Gemini combined: (500000 + 200000 + 0) = 700000
+		// 700000 / 1048576 = 66.8% -> 67%
+		expect(result.tokens).toBe(700000);
+		expect(result.percentage).toBe(67);
+		expect(result.contextWindow).toBe(1048576);
 	});
 
 	it('should handle history entries with accumulated tokens and preserved contextUsage', () => {
