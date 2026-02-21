@@ -282,7 +282,7 @@ export async function routeUserMessage(
 
 	if (!isModeratorActive(groupChatId)) {
 		console.log(`[GroupChat:Debug] ERROR: Moderator is not active!`);
-		throw new Error(`Moderator is not active for group chat: ${groupChatId}`);
+		throw new Error(`Moderator is not active for this group chat. Try restarting the moderator.`);
 	}
 
 	console.log(`[GroupChat:Debug] Moderator is active: true`);
@@ -473,7 +473,7 @@ export async function routeUserMessage(
 
 			if (!agent || !agent.available) {
 				console.log(`[GroupChat:Debug] ERROR: Agent not available!`);
-				throw new Error(`Agent '${chat.moderatorAgentId}' is not available`);
+				throw new Error(`Agent '${chat.moderatorAgentId}' is not installed or unavailable. Install it or use an available agent.`);
 			}
 
 			// Use custom path from moderator config if set, otherwise use resolved path
@@ -663,7 +663,7 @@ ${message}${imageContext}`;
 				// Remove power block reason on error since we're going idle
 				powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 				throw new Error(
-					`Failed to spawn moderator: ${error instanceof Error ? error.message : String(error)}`
+					`Failed to start ${chat.moderatorAgentId}. Check that it's properly configured and accessible.`
 				);
 			}
 		} else {
@@ -1525,7 +1525,7 @@ export async function respawnParticipantWithRecovery(
 	// Get the agent configuration
 	const agent = await agentDetector.getAgent(participant.agentId);
 	if (!agent || !agent.available) {
-		throw new Error(`Agent not available: ${participant.agentId}`);
+		throw new Error(`Agent '${participant.agentId}' is not installed or unavailable. Install it or use an available agent.`);
 	}
 
 	// Build recovery context with the agent's prior statements

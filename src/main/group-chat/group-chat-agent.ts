@@ -120,7 +120,7 @@ export async function addParticipant(
 	if (!isModeratorActive(groupChatId)) {
 		console.log(`[GroupChat:Debug] ERROR: Moderator not active!`);
 		throw new Error(
-			`Moderator must be active before adding participants to group chat: ${groupChatId}`
+			`Moderator is not active for this group chat. Try restarting the moderator.`
 		);
 	}
 
@@ -144,7 +144,7 @@ export async function addParticipant(
 		);
 		if (!agentConfig || !agentConfig.available) {
 			console.log(`[GroupChat:Debug] ERROR: Agent not available!`);
-			throw new Error(`Agent '${agentId}' is not available`);
+			throw new Error(`Agent '${agentId}' is not installed or unavailable. Install it or use an available agent.`);
 		}
 		command = agentConfig.path || agentConfig.command;
 		args = [...agentConfig.args];
@@ -248,7 +248,7 @@ export async function addParticipant(
 
 	if (!result.success) {
 		console.log(`[GroupChat:Debug] ERROR: Spawn failed!`);
-		throw new Error(`Failed to spawn participant '${name}' for group chat ${groupChatId}`);
+		throw new Error(`Failed to start '${name}'. Check that it's properly configured and accessible.`);
 	}
 
 	// Create participant record

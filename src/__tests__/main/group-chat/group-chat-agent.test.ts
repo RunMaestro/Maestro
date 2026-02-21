@@ -201,7 +201,7 @@ describe('group-chat-agent', () => {
 
 			await expect(
 				addParticipant(chat.id, 'Client', 'claude-code', failingProcessManager)
-			).rejects.toThrow(/Failed to spawn participant/);
+			).rejects.toThrow(/Failed to start/);
 		});
 
 		it('throws when moderator is not active', async () => {
@@ -210,7 +210,7 @@ describe('group-chat-agent', () => {
 
 			await expect(
 				addParticipant(chat.id, 'Client', 'claude-code', mockProcessManager)
-			).rejects.toThrow(/Moderator must be active/);
+			).rejects.toThrow(/Moderator is not active for this group chat/);
 		});
 
 		it('can add multiple participants', async () => {
@@ -552,7 +552,7 @@ describe('group-chat-agent', () => {
 
 			await expect(
 				addFreshParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager)
-			).rejects.toThrow(/Moderator must be active/);
+			).rejects.toThrow(/Moderator is not active for this group chat/);
 		});
 
 		it('throws if agent is not available', async () => {
@@ -586,7 +586,7 @@ describe('group-chat-agent', () => {
 					os.homedir(),
 					mockAgentDetector
 				)
-			).rejects.toThrow(/not available/i);
+			).rejects.toThrow(/is not installed or unavailable/);
 		});
 
 		it('uses os.homedir() as default cwd', async () => {
