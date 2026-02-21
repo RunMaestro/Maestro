@@ -66,6 +66,13 @@ export function createAgentsApi() {
 			ipcRenderer.invoke('agents:detect', sshRemoteId),
 
 		/**
+		 * Get available (installed, non-hidden) agent types.
+		 * Lightweight endpoint for UI features like @mention autocomplete.
+		 */
+		getAvailable: (): Promise<Array<{ id: string; name: string; available: boolean }>> =>
+			ipcRenderer.invoke('agents:getAvailable'),
+
+		/**
 		 * Refresh agent detection (optionally for a specific agent)
 		 */
 		refresh: (agentId?: string, sshRemoteId?: string): Promise<AgentRefreshResult> =>

@@ -270,6 +270,7 @@ const mockMaestro = {
 	},
 	agents: {
 		detect: vi.fn().mockResolvedValue([]),
+		getAvailable: vi.fn().mockResolvedValue([]),
 		get: vi.fn().mockResolvedValue(null),
 		config: vi.fn().mockResolvedValue({}),
 		getConfig: vi.fn().mockResolvedValue({}),

@@ -142,6 +142,7 @@ describe('agents IPC handlers', () => {
 		it('should register all agents handlers', () => {
 			const expectedChannels = [
 				'agents:detect',
+				'agents:getAvailable',
 				'agents:refresh',
 				'agents:get',
 				'agents:getCapabilities',
