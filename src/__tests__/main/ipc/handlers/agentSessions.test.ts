@@ -73,6 +73,7 @@ describe('agentSessions IPC handlers', () => {
 				'agentSessions:deleteMessagePair',
 				'agentSessions:hasStorage',
 				'agentSessions:getAvailableStorages',
+				'agentSessions:getAllNamedSessions',
 			];
 
 			for (const channel of expectedChannels) {
@@ -470,6 +471,105 @@ describe('agentSessions IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual(['claude-code', 'opencode']);
+		});
+	});
+
+	describe('agentSessions:getAllNamedSessions', () => {
+		it('should aggregate named sessions from all storages that support getAllNamedSessions', async () => {
+			const mockGeminiStorage = {
+				agentId: 'gemini-cli',
+				getAllNamedSessions: vi.fn().mockResolvedValue([
+					{ agentSessionId: 'gem-1', projectPath: '/project', sessionName: 'Gemini Chat', starred: true },
+				]),
+			};
+
+			const mockClaudeStorage = {
+				agentId: 'claude-code',
+				getAllNamedSessions: vi.fn().mockResolvedValue([
+					{ agentSessionId: 'claude-1', projectPath: '/project', sessionName: 'Claude Chat' },
+					{ agentSessionId: 'claude-2', projectPath: '/other', sessionName: 'Claude Debug', starred: false },
+				]),
+			};
+
+			// A storage without getAllNamedSessions (e.g., terminal)
+			const mockTerminalStorage = {
+				agentId: 'terminal',
+			};
+
+			vi.mocked(agentSessionStorage.getAllSessionStorages).mockReturnValue(
+				[mockGeminiStorage, mockClaudeStorage, mockTerminalStorage] as unknown as agentSessionStorage.AgentSessionStorage[]
+			);
+
+			const handler = handlers.get('agentSessions:getAllNamedSessions');
+			const result = await handler!({} as any);
+
+			// Should have 3 total (1 gemini + 2 claude), terminal excluded
+			expect(result).toHaveLength(3);
+
+			// Verify agentId is added to each session
+			expect(result).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						agentId: 'gemini-cli',
+						agentSessionId: 'gem-1',
+						sessionName: 'Gemini Chat',
+						starred: true,
+					}),
+					expect.objectContaining({
+						agentId: 'claude-code',
+						agentSessionId: 'claude-1',
+						sessionName: 'Claude Chat',
+					}),
+					expect.objectContaining({
+						agentId: 'claude-code',
+						agentSessionId: 'claude-2',
+						sessionName: 'Claude Debug',
+						starred: false,
+					}),
+				])
+			);
+		});
+
+		it('should return empty array when no storages support getAllNamedSessions', async () => {
+			const mockStorage = {
+				agentId: 'terminal',
+				// No getAllNamedSessions method
+			};
+
+			vi.mocked(agentSessionStorage.getAllSessionStorages).mockReturnValue(
+				[mockStorage] as unknown as agentSessionStorage.AgentSessionStorage[]
+			);
+
+			const handler = handlers.get('agentSessions:getAllNamedSessions');
+			const result = await handler!({} as any);
+
+			expect(result).toEqual([]);
+		});
+
+		it('should continue aggregating if one storage throws an error', async () => {
+			const mockFailingStorage = {
+				agentId: 'codex',
+				getAllNamedSessions: vi.fn().mockRejectedValue(new Error('Storage error')),
+			};
+
+			const mockWorkingStorage = {
+				agentId: 'gemini-cli',
+				getAllNamedSessions: vi.fn().mockResolvedValue([
+					{ agentSessionId: 'gem-1', projectPath: '/project', sessionName: 'Gemini Session' },
+				]),
+			};
+
+			vi.mocked(agentSessionStorage.getAllSessionStorages).mockReturnValue(
+				[mockFailingStorage, mockWorkingStorage] as unknown as agentSessionStorage.AgentSessionStorage[]
+			);
+
+			const handler = handlers.get('agentSessions:getAllNamedSessions');
+			const result = await handler!({} as any);
+
+			// Should still return the working storage's sessions
+			expect(result).toHaveLength(1);
+			expect(result[0].agentId).toBe('gemini-cli');
+			expect(result[0].agentSessionId).toBe('gem-1');
 		});
 	});
 
