@@ -40,6 +40,7 @@ vi.mock('electron-store', () => {
 
 import {
 	addParticipant,
+	addFreshParticipant,
 	sendToParticipant,
 	removeParticipant,
 	getParticipantSessionId,
@@ -48,6 +49,7 @@ import {
 	clearAllParticipantSessionsGlobal,
 	getParticipantSystemPrompt,
 } from '../../../main/group-chat/group-chat-agent';
+import type { AgentDetector } from '../../../main/agents';
 import {
 	spawnModerator,
 	clearAllModeratorSessions,
@@ -488,6 +490,116 @@ describe('group-chat-agent', () => {
 
 			expect(getActiveParticipants(chat1.id)).toEqual([]);
 			expect(getActiveParticipants(chat2.id)).toEqual([]);
+		});
+	});
+
+	// ===========================================================================
+	// Test: addFreshParticipant
+	// ===========================================================================
+	describe('addFreshParticipant', () => {
+		it('spawns a fresh agent with default config (no session overrides)', async () => {
+			const chat = await createTestChatWithModerator('Fresh Default Test');
+
+			const participant = await addFreshParticipant(
+				chat.id,
+				'FreshAgent',
+				'claude-code',
+				mockProcessManager
+			);
+
+			expect(participant.name).toBe('FreshAgent');
+			expect(participant.agentId).toBe('claude-code');
+			expect(participant.sshRemoteName).toBeUndefined();
+
+			// Verify spawn was called without session overrides (no custom env, no SSH)
+			expect(mockProcessManager.spawn).toHaveBeenCalledTimes(1);
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					toolType: 'claude-code',
+					readOnlyMode: false,
+				})
+			);
+		});
+
+		it('generates unique session ID with group-chat- prefix', async () => {
+			const chat = await createTestChatWithModerator('Fresh ID Test');
+
+			const participant = await addFreshParticipant(
+				chat.id,
+				'Worker',
+				'claude-code',
+				mockProcessManager
+			);
+
+			expect(participant.sessionId).toMatch(/^group-chat-/);
+			expect(participant.sessionId).toContain('participant');
+			expect(participant.sessionId).toContain('Worker');
+		});
+
+		it('rejects duplicate participant names', async () => {
+			const chat = await createTestChatWithModerator('Fresh Dup Test');
+
+			await addFreshParticipant(chat.id, 'Duplicate', 'claude-code', mockProcessManager);
+
+			await expect(
+				addFreshParticipant(chat.id, 'Duplicate', 'opencode', mockProcessManager)
+			).rejects.toThrow(/already exists/i);
+		});
+
+		it('requires moderator to be active', async () => {
+			const chat = await createTestChat('Fresh No Mod Test');
+			// Don't spawn moderator
+
+			await expect(
+				addFreshParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager)
+			).rejects.toThrow(/Moderator must be active/);
+		});
+
+		it('throws if agent is not available', async () => {
+			const chat = await createTestChatWithModerator('Fresh Unavailable Test');
+
+			const mockAgentDetector = {
+				getAgent: vi.fn().mockResolvedValue({
+					id: 'unavailable-agent',
+					name: 'Unavailable Agent',
+					binaryName: 'unavailable',
+					command: 'unavailable',
+					args: [],
+					available: false,
+					path: '',
+					capabilities: {},
+				}),
+				detectAgents: vi.fn(),
+				setCustomPaths: vi.fn(),
+				getCustomPaths: vi.fn(),
+				clearCache: vi.fn(),
+				clearModelCache: vi.fn(),
+				discoverModels: vi.fn(),
+			} as unknown as AgentDetector;
+
+			await expect(
+				addFreshParticipant(
+					chat.id,
+					'Worker',
+					'unavailable-agent',
+					mockProcessManager,
+					os.homedir(),
+					mockAgentDetector
+				)
+			).rejects.toThrow(/not available/i);
+		});
+
+		it('uses os.homedir() as default cwd', async () => {
+			const chat = await createTestChatWithModerator('Fresh CWD Test');
+
+			await addFreshParticipant(chat.id, 'DefaultCwd', 'claude-code', mockProcessManager);
+
+			// The spawn should use the default cwd (os.homedir())
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					cwd: os.homedir(),
+				})
+			);
 		});
 	});
 
