@@ -439,6 +439,66 @@ describe('GeminiSessionStorage', () => {
 			);
 		});
 
+		it('should NOT include sessions from other agents (e.g., codex)', async () => {
+			const store = createMockOriginsStore({
+				'gemini-cli': {
+					'/test/project': {
+						'gemini-session-1': { sessionName: 'Gemini Session' },
+					},
+				},
+				'codex': {
+					'/test/project': {
+						'codex-session-1': { sessionName: 'Codex Session' },
+					},
+				},
+				'claude-code': {
+					'/other/project': {
+						'claude-session-1': { sessionName: 'Claude Session' },
+					},
+				},
+			});
+			// Mock findSessionFile to fail (no files on disk)
+			(fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+			(fs.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+
+			const storageWithStore = new GeminiSessionStorage(store);
+			const result = await storageWithStore.getAllNamedSessions();
+
+			expect(result).toHaveLength(1);
+			expect(result[0].agentSessionId).toBe('gemini-session-1');
+			expect(result[0].sessionName).toBe('Gemini Session');
+			// Ensure no codex or claude sessions leak through
+			expect(result.find(s => s.agentSessionId === 'codex-session-1')).toBeUndefined();
+			expect(result.find(s => s.agentSessionId === 'claude-session-1')).toBeUndefined();
+		});
+
+		it('should pass through starred status correctly (true, false, undefined)', async () => {
+			const store = createMockOriginsStore({
+				'gemini-cli': {
+					'/test/project': {
+						'session-starred': { sessionName: 'Starred', starred: true },
+						'session-unstarred': { sessionName: 'Unstarred', starred: false },
+						'session-no-star': { sessionName: 'No Star Field' },
+					},
+				},
+			});
+			(fs.access as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+			(fs.readdir as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('ENOENT'));
+
+			const storageWithStore = new GeminiSessionStorage(store);
+			const result = await storageWithStore.getAllNamedSessions();
+
+			expect(result).toHaveLength(3);
+
+			const starred = result.find(s => s.agentSessionId === 'session-starred');
+			const unstarred = result.find(s => s.agentSessionId === 'session-unstarred');
+			const noStar = result.find(s => s.agentSessionId === 'session-no-star');
+
+			expect(starred?.starred).toBe(true);
+			expect(unstarred?.starred).toBe(false);
+			expect(noStar?.starred).toBeUndefined();
+		});
+
 		it('should include lastActivityAt when session file exists', async () => {
 			const mtimeMs = new Date('2026-02-15T10:00:00Z').getTime();
 			const store = createMockOriginsStore({
