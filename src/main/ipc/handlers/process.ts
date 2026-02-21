@@ -113,6 +113,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Stats tracking options
 				querySource?: 'user' | 'auto'; // Whether this query is user-initiated or from Auto Run
 				tabId?: string; // Tab ID for multi-tab tracking
+				additionalWorkspaceDirs?: string[];
 			}) => {
 				const processManager = requireProcessManager(getProcessManager);
 				const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
@@ -162,6 +163,21 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					yoloMode: config.yoloMode,
 					agentSessionId: config.agentSessionId,
 				});
+
+				// Append approved workspace directories for Gemini CLI sandbox
+				// Each directory gets its own --include-directories flag
+				if (config.additionalWorkspaceDirs?.length && agent?.workingDirArgs) {
+					for (const dir of config.additionalWorkspaceDirs) {
+						if (dir && dir.trim()) {
+							finalArgs = [...finalArgs, ...agent.workingDirArgs(dir.trim())];
+						}
+					}
+					logger.debug('Appending workspace directories', LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						directories: config.additionalWorkspaceDirs,
+						toolType: config.toolType,
+					});
+				}
 
 				// ========================================================================
 				// Apply agent config options and session overrides
