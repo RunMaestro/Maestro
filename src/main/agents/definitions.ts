@@ -203,6 +203,25 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		promptArgs: (prompt: string) => ['-p', prompt],
 		configOptions: [
 			{
+				key: 'model',
+				type: 'select' as const,
+				label: 'Model',
+				description: 'Model to use. Auto lets Gemini route between Pro and Flash based on task complexity.',
+				options: [
+					'',
+					'auto',
+					'pro',
+					'flash',
+					'flash-lite',
+					'gemini-2.5-pro',
+					'gemini-2.5-flash',
+					'gemini-3-pro-preview',
+					'gemini-3-flash-preview',
+				],
+				default: '',
+				argBuilder: (value: string) => (value && value.trim() ? ['-m', value.trim()] : []),
+			},
+			{
 				key: 'contextWindow',
 				type: 'number' as const,
 				label: 'Context Window Size',

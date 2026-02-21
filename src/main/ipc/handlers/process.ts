@@ -516,7 +516,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					// When using SSH, env vars are passed in the stdin script, not locally
 					customEnvVars: customEnvVarsToPass,
 					imageArgs: agent?.imageArgs, // Function to build image CLI args (for Codex, OpenCode)
-					promptArgs: agent?.promptArgs, // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
+					promptArgs: agent?.promptArgs,
 					noPromptSeparator: agent?.noPromptSeparator, // Some agents don't support '--' before prompt
 					// Stats tracking: use cwd as projectPath if not explicitly provided
 					projectPath: config.cwd,

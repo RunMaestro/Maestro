@@ -746,6 +746,11 @@ export const GEMINI_ERROR_PATTERNS: AgentErrorPatterns = {
 			message: 'Gemini CLI crashed unexpectedly. Check logs for details.',
 			recoverable: false,
 		},
+		{
+			pattern: /\[Function: paramsSerializer\]|streamGenerateContent.*error|cloudcode-pa\.googleapis\.com.*error/i,
+			message: 'Gemini CLI internal API error. Try again or check your model/auth configuration.',
+			recoverable: true,
+		},
 	],
 };
 

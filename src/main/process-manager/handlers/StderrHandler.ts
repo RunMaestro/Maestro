@@ -107,6 +107,66 @@ export class StderrHandler {
 				return;
 			}
 
+			// Gemini CLI writes informational status messages to stderr during startup
+			// (e.g., "YOLO mode is enabled", "Loaded cached credentials").
+			// It also dumps raw Axios error objects when internal subagents hit API
+			// failures — these contain "[Function: ...]" references and full request
+			// payloads that are noise in the UI.
+			if (toolType === 'gemini-cli') {
+				const geminiInfoPatterns = [
+					/YOLO mode is enabled/i,
+					/All tool calls will be automatically approved/i,
+					/Loaded cached credentials/i,
+					/Loading configuration/i,
+					/Connecting to/i,
+				];
+
+				// Detect raw Axios/API error dumps (internal subagent crashes)
+				const isAxiosDump =
+					/\[Function: \w+\]/.test(cleanedStderr) ||
+					/paramsSerializer|validateStatus|errorRedactor/.test(cleanedStderr) ||
+					/cloudcode-pa\.googleapis\.com/.test(cleanedStderr) ||
+					/streamGenerateContent/.test(cleanedStderr);
+
+				if (isAxiosDump) {
+					logger.warn(
+						'[ProcessManager] Suppressing Gemini CLI internal API error dump',
+						'ProcessManager',
+						{
+							sessionId,
+							dumpLength: cleanedStderr.length,
+							preview: cleanedStderr.substring(0, 300),
+						}
+					);
+					// Emit a clean error message instead of the raw dump
+					this.emitter.emit(
+						'stderr',
+						sessionId,
+						'Gemini CLI encountered an internal API error. This may be a transient issue — try again or check your model/auth configuration.'
+					);
+					return;
+				}
+
+				const lines = cleanedStderr.split('\n');
+				const nonInfoLines = lines.filter(
+					(line) => line.trim() && !geminiInfoPatterns.some((p) => p.test(line))
+				);
+				if (nonInfoLines.length === 0) {
+					logger.debug(
+						'[ProcessManager] Suppressing Gemini CLI info stderr',
+						'ProcessManager',
+						{
+							sessionId,
+							message: cleanedStderr.substring(0, 200),
+						}
+					);
+					return;
+				}
+				// Re-emit only non-informational lines
+				this.emitter.emit('stderr', sessionId, nonInfoLines.join('\n'));
+				return;
+			}
+
 			// Codex writes both Rust tracing diagnostics and actual responses to stderr.
 			// Strip tracing lines (e.g. "2026-02-08T04:39:23Z ERROR codex_core::rollout::list: ...")
 			// and the "Reading prompt from stdin..." prefix, then re-emit any remaining

@@ -262,8 +262,9 @@ describe('conversationManager (Onboarding Wizard)', () => {
 
 			await new Promise((resolve) => setTimeout(resolve, 10));
 
-			// Verify onThinkingChunk listener was NOT set up
-			expect(mockMaestro.process.onThinkingChunk).not.toHaveBeenCalled();
+			// onThinkingChunk is always set up (for thinkingBuffer accumulation),
+			// even when no onThinkingChunk callback is provided
+			expect(mockMaestro.process.onThinkingChunk).toHaveBeenCalled();
 
 			// Clean up
 			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];

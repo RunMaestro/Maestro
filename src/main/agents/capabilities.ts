@@ -207,8 +207,8 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsReadOnlyMode: true, // --approval-mode plan
 		supportsJsonOutput: true, // --output-format json|stream-json
 		supportsSessionId: true, // session_id in JSON output
-		supportsImageInput: true, // Gemini is multimodal
-		supportsImageInputOnResume: false, // No image flag for resume
+		supportsImageInput: false, // Gemini is multimodal but CLI has no image input flag
+		supportsImageInputOnResume: false, // No image flag
 		supportsSlashCommands: false, // Gemini uses /slash commands but not exposed in JSON
 		supportsSessionStorage: true, // ~/.gemini/tmp/project/chats/
 		supportsCostTracking: false, // Free tier / no cost data in output

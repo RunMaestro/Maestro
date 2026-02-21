@@ -398,6 +398,25 @@ function extractResultFromStreamJson(output: string, agentType: ToolType): strin
 	try {
 		const lines = output.split('\n');
 
+		// For Gemini CLI: concatenate all assistant message content
+		if (agentType === 'gemini-cli') {
+			const textParts: string[] = [];
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				try {
+					const msg = JSON.parse(line);
+					if (msg.type === 'message' && msg.role === 'assistant' && msg.content) {
+						textParts.push(msg.content);
+					}
+				} catch {
+					// Ignore non-JSON lines
+				}
+			}
+			if (textParts.length > 0) {
+				return textParts.join('');
+			}
+		}
+
 		// For OpenCode: concatenate all text parts
 		if (agentType === 'opencode') {
 			const textParts: string[] = [];
@@ -511,6 +530,28 @@ function buildArgsForAgent(agent: any): string[] {
 			return args;
 		}
 
+		case 'gemini-cli': {
+			// Gemini CLI requires stream-json output for structured response parsing
+			const args = [...(agent.args || [])];
+
+			// Ensure stream-json output format for proper parsing
+			if (!args.includes('--output-format')) {
+				args.push('--output-format', 'stream-json');
+			}
+
+			// Add auto-approve for batch mode
+			if (agent.batchModeArgs) {
+				args.push(...agent.batchModeArgs);
+			}
+
+			// Add read-only mode for wizard conversations (--approval-mode plan)
+			if (agent.readOnlyArgs) {
+				args.push(...agent.readOnlyArgs);
+			}
+
+			return args;
+		}
+
 		default: {
 			return [...(agent.args || [])];
 		}
@@ -601,6 +642,7 @@ export async function sendWizardMessage(
 		// Spawn agent and collect output
 		const result = await new Promise<InlineWizardSendResult>((resolve) => {
 			let outputBuffer = '';
+			let thinkingBuffer = '';
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
 
@@ -680,23 +722,26 @@ export async function sendWizardMessage(
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
-			if (callbacks?.onThinkingChunk) {
-				thinkingListenerCleanup = window.maestro.process.onThinkingChunk(
-					(receivedSessionId: string, content: string) => {
-						if (receivedSessionId === session.sessionId && content) {
-							resetTimeout();
-							try {
-								callbacks.onThinkingChunk!(content);
-							} catch (err) {
-								logger.error('onThinkingChunk callback threw error', '[InlineWizardConversation]', {
-									sessionId: session.sessionId,
-									error: (err as Error)?.message || 'Unknown error',
-								});
-							}
+			// IMPORTANT: Always capture thinking chunks in thinkingBuffer (not just when callback exists)
+			// Agents like Gemini CLI send response text as delta/streaming message events which
+			// the StdoutHandler emits as thinking-chunk events, NOT data events. If the outputBuffer
+			// is empty at exit, thinkingBuffer is the fallback for response parsing.
+			thinkingListenerCleanup = window.maestro.process.onThinkingChunk(
+				(receivedSessionId: string, content: string) => {
+					if (receivedSessionId === session.sessionId && content) {
+						resetTimeout();
+						thinkingBuffer += content;
+						try {
+							callbacks?.onThinkingChunk?.(content);
+						} catch (err) {
+							logger.error('onThinkingChunk callback threw error', '[InlineWizardConversation]', {
+								sessionId: session.sessionId,
+								error: (err as Error)?.message || 'Unknown error',
+							});
 						}
 					}
-				);
-			}
+				}
+			);
 
 			// Set up tool execution listener - shows tool use (Read, Write, etc.) when showThinking is enabled
 			// This is important because in batch mode, we don't get streaming assistant messages,
@@ -734,9 +779,14 @@ export async function sendWizardMessage(
 						const agentSessionId = extractAgentSessionIdFromOutput(outputBuffer);
 
 						if (code === 0) {
+							// If outputBuffer is empty, fall back to thinkingBuffer.
+							// Agents like Gemini CLI send response text as delta/streaming events
+							// which reach the renderer as thinking-chunk, not data events.
+							const effectiveOutput = outputBuffer.trim() ? outputBuffer : (thinkingBuffer || outputBuffer);
+
 							// Extract result from stream-json format
-							const extractedResult = extractResultFromStreamJson(outputBuffer, session.agentType);
-							const textToParse = extractedResult || outputBuffer;
+							const extractedResult = extractResultFromStreamJson(effectiveOutput, session.agentType);
+							const textToParse = extractedResult || effectiveOutput;
 
 							// Parse the wizard response
 							const parsedResponse = parseWizardResponse(textToParse);

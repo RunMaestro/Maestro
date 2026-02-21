@@ -103,8 +103,13 @@ interface ConversationSession {
 	isActive: boolean;
 	/** System prompt used for this session */
 	systemPrompt: string;
-	/** Accumulated output buffer for parsing */
+	/** Accumulated output buffer for parsing (from process:data events) */
 	outputBuffer: string;
+	/** Accumulated thinking buffer (from process:thinking-chunk events)
+	 * Used as fallback when outputBuffer is empty — agents like Gemini CLI send
+	 * response text as delta/streaming message events which the StdoutHandler
+	 * emits as thinking-chunk, not data events. */
+	thinkingBuffer: string;
 	/** Resolve function for pending message */
 	pendingResolve?: (result: SendMessageResult) => void;
 	/** Callbacks for the conversation */
@@ -177,6 +182,7 @@ class ConversationManager {
 			isActive: true,
 			systemPrompt,
 			outputBuffer: '',
+			thinkingBuffer: '',
 			sshRemoteConfig: config.sshRemoteConfig,
 		};
 
@@ -224,6 +230,7 @@ class ConversationManager {
 		// Update callbacks
 		this.session.callbacks = callbacks;
 		this.session.outputBuffer = '';
+		this.session.thinkingBuffer = '';
 
 		// Log message send
 		wizardDebugLogger.log('info', 'Sending message to agent', {
@@ -434,16 +441,19 @@ class ConversationManager {
 
 			// Set up thinking chunk listener - uses the dedicated event from process-manager
 			// This receives parsed thinking content (isPartial text) that's already extracted
-			if (this.session!.callbacks?.onThinkingChunk) {
-				this.session!.thinkingListenerCleanup = window.maestro.process.onThinkingChunk?.(
-					(sessionId: string, content: string) => {
-						if (sessionId === this.session?.sessionId && content) {
-							this.session.resetResponseTimeout?.();
-							this.session.callbacks?.onThinkingChunk?.(content);
-						}
+			// IMPORTANT: Always capture thinking chunks in thinkingBuffer (not just when callback exists)
+			// Agents like Gemini CLI send response text as delta/streaming message events which
+			// the StdoutHandler emits as thinking-chunk events, NOT data events. If the result
+			// event doesn't carry the text or streamedText is empty, thinkingBuffer is the fallback.
+			this.session!.thinkingListenerCleanup = window.maestro.process.onThinkingChunk?.(
+				(sessionId: string, content: string) => {
+					if (sessionId === this.session?.sessionId && content) {
+						this.session.resetResponseTimeout?.();
+						this.session.thinkingBuffer = (this.session.thinkingBuffer || '') + content;
+						this.session.callbacks?.onThinkingChunk?.(content);
 					}
-				);
-			}
+				}
+			);
 
 			// Set up tool execution listener - shows tool use (Read, Write, etc.) when showThinking is enabled
 			// This is important because in batch mode, we don't get streaming assistant messages,
@@ -477,7 +487,29 @@ class ConversationManager {
 						this.cleanupListeners();
 
 						if (code === 0) {
+							// DEBUG: Trace Gemini wizard response data flow
+							console.log('[WizardConversation] Exit code 0 — parsing response', {
+								agentType: this.session?.agentType,
+								outputBufferLength: this.session?.outputBuffer?.length || 0,
+								outputBufferPreview: this.session?.outputBuffer?.slice(0, 200) || '(empty)',
+								thinkingBufferLength: this.session?.thinkingBuffer?.length || 0,
+								thinkingBufferPreview: this.session?.thinkingBuffer?.slice(0, 200) || '(empty)',
+							});
+
 							const parsedResponse = this.parseAgentOutput();
+
+							// DEBUG: Show parsed result
+							console.log('[WizardConversation] Parsed response', {
+								parseSuccess: parsedResponse.parseSuccess,
+								hasStructured: !!parsedResponse.structured,
+								confidence: parsedResponse.structured?.confidence,
+								ready: parsedResponse.structured?.ready,
+								messageLength: parsedResponse.structured?.message?.length || 0,
+								messagePreview: parsedResponse.structured?.message?.slice(0, 200) || '(none)',
+								rawTextLength: parsedResponse.rawText?.length || 0,
+								rawTextPreview: parsedResponse.rawText?.slice(0, 200) || '(empty)',
+							});
+
 							wizardDebugLogger.log('data', 'Parsed agent response', {
 								parseSuccess: parsedResponse.parseSuccess,
 								hasStructured: !!parsedResponse.structured,
@@ -738,6 +770,23 @@ class ConversationManager {
 				return args;
 			}
 
+			case 'gemini-cli': {
+				// Gemini CLI requires stream-json output for structured response parsing
+				const args = [...(agent.args || [])];
+
+				// Ensure stream-json output format for proper parsing
+				if (!args.includes('--output-format')) {
+					args.push('--output-format', 'stream-json');
+				}
+
+				// Add auto-approve for batch mode
+				if (agent.batchModeArgs) {
+					args.push(...agent.batchModeArgs);
+				}
+
+				return args;
+			}
+
 			default: {
 				// For unknown agents, use base args
 				return [...(agent.args || [])];
@@ -758,10 +807,26 @@ class ConversationManager {
 			};
 		}
 
-		const output = this.session.outputBuffer;
+		let output = this.session.outputBuffer;
+
+		// If outputBuffer is empty, fall back to thinkingBuffer.
+		// This handles agents like Gemini CLI that send response text as delta/streaming
+		// message events — the StdoutHandler emits these as thinking-chunk (not data) events,
+		// so the outputBuffer stays empty while thinkingBuffer captures the response.
+		if (!output.trim() && this.session.thinkingBuffer?.trim()) {
+			wizardDebugLogger.log('data', 'outputBuffer empty, using thinkingBuffer fallback', {
+				outputBufferLength: output.length,
+				thinkingBufferLength: this.session.thinkingBuffer.length,
+				thinkingBufferPreview: this.session.thinkingBuffer.slice(0, 300),
+			});
+			output = this.session.thinkingBuffer;
+		}
+
 		wizardDebugLogger.log('data', 'Raw output buffer details', {
 			bufferLength: output.length,
 			bufferPreview: output.slice(-500),
+			usedThinkingFallback: output === this.session.thinkingBuffer,
+			thinkingBufferLength: this.session.thinkingBuffer?.length || 0,
 		});
 
 		// Try to extract the result from stream-json format
@@ -792,12 +857,32 @@ class ConversationManager {
 	 * - Claude Code: stream-json with { type: 'result', result: '...' }
 	 * - OpenCode: JSONL with { type: 'text', part: { text: '...' } }
 	 * - Codex: JSONL with { type: 'message', content: '...' } or similar
+	 * - Gemini: NDJSON with { type: 'message', role: 'assistant', content: '...' }
 	 */
 	private extractResultFromStreamJson(output: string): string | null {
 		const agentType = this.session?.agentType;
 
 		try {
 			const lines = output.split('\n');
+
+			// For Gemini CLI: concatenate all assistant message content
+			if (agentType === 'gemini-cli') {
+				const textParts: string[] = [];
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const msg = JSON.parse(line);
+						if (msg.type === 'message' && msg.role === 'assistant' && msg.content) {
+							textParts.push(msg.content);
+						}
+					} catch {
+						// Ignore non-JSON lines
+					}
+				}
+				if (textParts.length > 0) {
+					return textParts.join('');
+				}
+			}
 
 			// For OpenCode: concatenate all text parts
 			if (agentType === 'opencode') {

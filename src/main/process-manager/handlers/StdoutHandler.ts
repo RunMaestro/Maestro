@@ -210,6 +210,22 @@ export class StdoutHandler {
 				this.handleLegacyMessage(sessionId, managedProcess, msg);
 			}
 		} catch {
+			// Gemini CLI can dump raw Axios error objects (with [Function: ...] refs)
+			// when internal subagents hit API failures. Suppress these instead of
+			// rendering them as agent output in the UI.
+			if (
+				toolType === 'gemini-cli' &&
+				(/\[Function: \w+\]/.test(line) ||
+					/paramsSerializer|validateStatus|errorRedactor/.test(line) ||
+					/streamGenerateContent/.test(line))
+			) {
+				logger.warn(
+					'[ProcessManager] Suppressing Gemini CLI API dump from stdout',
+					'ProcessManager',
+					{ sessionId, lineLength: line.length, preview: line.substring(0, 200) }
+				);
+				return;
+			}
 			this.bufferManager.emitDataBuffered(sessionId, line);
 		}
 	}
@@ -306,14 +322,40 @@ export class StdoutHandler {
 			});
 		}
 
-		// Handle streaming text events (OpenCode, Codex reasoning)
-		if (event.type === 'text' && event.isPartial && event.text) {
-			logger.debug('[ProcessManager] Emitting thinking-chunk', 'ProcessManager', {
-				sessionId,
-				textLength: event.text.length,
-			});
-			this.emitter.emit('thinking-chunk', sessionId, event.text);
-			managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+		// Handle streaming text events (OpenCode, Codex reasoning, Gemini messages)
+		// Two paths based on whether the event is a streaming delta or a complete message:
+		//
+		// 1. Partial/delta events (isPartial === true):
+		//    Accumulate in streamedText for the result event to emit later.
+		//    Also emit as thinking-chunk for live streaming display (when showThinking is on).
+		//    Used by: Claude Code, OpenCode.
+		//
+		// 2. Complete/non-delta events (isPartial === false or undefined):
+		//    Emit directly as data via emitDataBuffered for immediate UI display.
+		//    NOT accumulated in streamedText — the data is already emitted.
+		//    Used by: Gemini CLI (sends complete message events, not streaming deltas).
+		//
+		// This distinction is critical because thinking-chunk events are dropped by the
+		// renderer when showThinking is 'off' (the default). Agents that send complete
+		// messages (not deltas) would have invisible output if we only used thinking-chunk.
+		if (event.type === 'text' && event.text) {
+			if (event.isPartial) {
+				// Streaming delta: accumulate for result event, emit thinking-chunk for live display
+				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
+				logger.debug('[ProcessManager] Emitting thinking-chunk', 'ProcessManager', {
+					sessionId,
+					textLength: event.text.length,
+				});
+				this.emitter.emit('thinking-chunk', sessionId, event.text);
+			} else {
+				// Complete message: emit directly as stdout data for immediate UI display
+				logger.debug('[ProcessManager] Emitting non-partial text as data', 'ProcessManager', {
+					sessionId,
+					textLength: event.text.length,
+					toolType: managedProcess.toolType,
+				});
+				this.bufferManager.emitDataBuffered(sessionId, event.text);
+			}
 		}
 
 		// Handle tool execution events (OpenCode, Codex)
@@ -371,6 +413,9 @@ export class StdoutHandler {
 		}
 
 		// Handle result
+		// Emit text from the result event or from accumulated partial (delta) text.
+		// Non-partial text was already emitted directly in the text handler above,
+		// so streamedText only contains partial/delta text that needs deferred emission.
 		if (
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
