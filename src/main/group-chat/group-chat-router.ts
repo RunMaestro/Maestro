@@ -510,16 +510,20 @@ export async function routeUserMessage(
 				.map((m) => `[${m.from}]: ${m.content}`)
 				.join('\n');
 
+			// Wrap untrusted content in XML boundary markers to prevent prompt injection
+			const boundedHistory = '<chat-history>\n' + historyContext + '\n</chat-history>';
+			const boundedMessage = '<user-message>\n' + message + '\n</user-message>';
+
 			const fullPrompt = `${getModeratorSystemPrompt()}
 
 ## Current Participants:
 ${participantContext}${availableSessionsContext}
 
 ## Chat History:
-${historyContext}
+${boundedHistory}
 
 ## User Request${readOnly ? ' (READ-ONLY MODE - do not make changes)' : ''}:
-${message}`;
+${boundedMessage}`;
 
 			// Get the base args from the agent configuration
 			const args = [...agent.args];
@@ -902,6 +906,10 @@ export async function routeModeratorResponse(
 			)
 			.join('\n');
 
+		// Wrap untrusted content in XML boundary markers to prevent prompt injection
+		const boundedHistory = '<chat-history>\n' + historyContext + '\n</chat-history>';
+		const boundedMessage = '<moderator-delegation>\n' + message + '\n</moderator-delegation>';
+
 		for (const participantName of mentions) {
 			console.log(`[GroupChat:Debug] --- Spawning participant: @${participantName} ---`);
 
@@ -954,9 +962,9 @@ export async function routeModeratorResponse(
 				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
 				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
 				.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
-				.replace(/\{\{HISTORY_CONTEXT\}\}/g, historyContext)
+				.replace(/\{\{HISTORY_CONTEXT\}\}/g, boundedHistory)
 				.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
-				.replace(/\{\{MESSAGE\}\}/g, message)
+				.replace(/\{\{MESSAGE\}\}/g, boundedMessage)
 				.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
 
 			// Create a unique session ID for this batch process
@@ -1342,8 +1350,17 @@ export async function spawnModeratorSynthesis(
 
 	const historyContext = chatHistory
 		.slice(-30)
-		.map((m) => `[${m.from}]: ${m.content}`)
+		.map((m) => {
+			// Wrap agent responses in boundary tags to prevent prompt injection
+			if (m.from !== 'user' && m.from !== 'moderator' && m.from !== 'system') {
+				return `[${m.from}]: <agent-response>${m.content}</agent-response>`;
+			}
+			return `[${m.from}]: ${m.content}`;
+		})
 		.join('\n');
+
+	// Wrap full history in boundary tags
+	const boundedHistory = '<chat-history>\n' + historyContext + '\n</chat-history>';
 
 	// Build participant context for potential follow-up @mentions
 	// Use normalized names (spaces → hyphens) so moderator can @mention them properly
@@ -1362,7 +1379,7 @@ ${getModeratorSynthesisPrompt()}
 ${participantContext}
 
 ## Recent Chat History (including participant responses):
-${historyContext}
+${boundedHistory}
 
 ## Your Task:
 Review the agent responses above. Either:
