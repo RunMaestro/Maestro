@@ -25,7 +25,7 @@ export const DEFAULT_CONTEXT_WINDOWS: Record<ToolType, number> = {
  * OpenAI models (Codex, o3, o4-mini) have a single context window that includes
  * both input and output tokens, unlike Claude which has separate limits.
  */
-const COMBINED_CONTEXT_AGENTS: Set<ToolType> = new Set(['codex']);
+const COMBINED_CONTEXT_AGENTS: Set<ToolType> = new Set(['codex', 'gemini-cli']);
 
 /** Minimum growth percentage per accumulated turn */
 const MIN_GROWTH_PERCENT = 1;

@@ -85,6 +85,13 @@ describe('estimateContextUsage', () => {
 			expect(result).toBe(8);
 		});
 
+		it('should use gemini-cli default context window (1M) and include output tokens', () => {
+			const stats = createStats({ contextWindow: 0 });
+			const result = estimateContextUsage(stats, 'gemini-cli');
+			// Gemini includes output tokens: (10000 + 5000 + 0) / 1048576 = 1.4% -> 1%
+			expect(result).toBe(1);
+		});
+
 		it('should use opencode default context window (128k)', () => {
 			const stats = createStats({ contextWindow: 0 });
 			const result = estimateContextUsage(stats, 'opencode');
@@ -227,10 +234,17 @@ describe('calculateContextTokens', () => {
 		});
 	});
 
-	describe('OpenAI agents (includes output tokens)', () => {
+	describe('Combined context agents (includes output tokens)', () => {
 		it('should include input, output, and cacheCreation tokens for codex', () => {
 			const stats = createStats();
 			const result = calculateContextTokens(stats, 'codex');
+			// 10000 + 5000 + 1000 = 16000 (input + output + cacheCreation, excludes cacheRead)
+			expect(result).toBe(16000);
+		});
+
+		it('should include input, output, and cacheCreation tokens for gemini-cli', () => {
+			const stats = createStats();
+			const result = calculateContextTokens(stats, 'gemini-cli');
 			// 10000 + 5000 + 1000 = 16000 (input + output + cacheCreation, excludes cacheRead)
 			expect(result).toBe(16000);
 		});
@@ -451,6 +465,7 @@ describe('DEFAULT_CONTEXT_WINDOWS', () => {
 		expect(DEFAULT_CONTEXT_WINDOWS['codex']).toBe(200000);
 		expect(DEFAULT_CONTEXT_WINDOWS['opencode']).toBe(128000);
 		expect(DEFAULT_CONTEXT_WINDOWS['factory-droid']).toBe(200000);
+		expect(DEFAULT_CONTEXT_WINDOWS['gemini-cli']).toBe(1048576);
 		expect(DEFAULT_CONTEXT_WINDOWS['terminal']).toBe(0);
 	});
 });

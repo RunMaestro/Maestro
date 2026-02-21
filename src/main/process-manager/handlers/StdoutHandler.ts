@@ -285,13 +285,6 @@ export class StdoutHandler {
 		// Extract usage
 		const usage = outputParser.extractUsage(event);
 		if (usage) {
-			// DEBUG: Log usage extracted from parser
-			console.log('[StdoutHandler] Usage from parser (line 255 path)', {
-				sessionId,
-				toolType: managedProcess.toolType,
-				parsedUsage: usage,
-			});
-
 			const usageStats = this.buildUsageStats(managedProcess, usage);
 			// Claude Code's modelUsage reports the ACTUAL context used for each API call:
 			// - inputTokens: new input for this turn
@@ -306,12 +299,6 @@ export class StdoutHandler {
 				managedProcess.toolType === 'codex' || managedProcess.toolType === 'claude-code'
 					? normalizeUsageToDelta(managedProcess, usageStats)
 					: usageStats;
-
-			// DEBUG: Log normalized stats being emitted
-			console.log('[StdoutHandler] Emitting usage (line 255 path)', {
-				sessionId,
-				normalizedUsageStats,
-			});
 
 			this.emitter.emit('usage', sessionId, normalizedUsageStats);
 
@@ -346,57 +333,26 @@ export class StdoutHandler {
 			this.emitter.emit('slash-commands', sessionId, slashCommands);
 		}
 
-		// DEBUG: Log thinking-chunk emission conditions
-		if (event.type === 'text') {
-			logger.debug('[ProcessManager] Checking thinking-chunk conditions', 'ProcessManager', {
-				sessionId,
-				eventType: event.type,
-				isPartial: event.isPartial,
-				hasText: !!event.text,
-				textLength: event.text?.length,
-				textPreview: event.text?.substring(0, 100),
-			});
-		}
-
 		// Handle streaming text events (OpenCode, Codex reasoning, Gemini messages)
-		// Three paths based on partial flag and agent type:
+		// Two paths based on partial flag:
 		//
 		// 1. Partial/delta events (isPartial === true):
 		//    Accumulate in streamedText for the result event to emit later.
 		//    Also emit as thinking-chunk for live streaming display (when showThinking is on).
 		//    Used by: Claude Code, OpenCode, Gemini CLI (delta: true).
 		//
-		// 2. Complete/non-delta events from Gemini CLI (isPartial === false):
-		//    Same as partial: accumulate in streamedText + emit thinking-chunk.
-		//    Text is deferred to result time (via streamedText fallback) or exit time
-		//    (ExitHandler). This keeps Gemini text flowing through the same pipeline as
-		//    partial events — thinking entries persist in chat history when showThinking
-		//    is 'on' or 'sticky', and text appears as stdout at result/exit time.
-		//
-		// 3. Complete/non-delta events from other agents:
+		// 2. Complete/non-delta events (isPartial === false):
 		//    Emit as thinking-chunk (for thinking display) AND as data via emitDataBuffered
-		//    (for immediate display). The thinking entry may be cleared quickly by the data
-		//    flush, but for most agents non-partial text is rare.
+		//    (for immediate display). This applies to all agents including Gemini CLI,
+		//    so complete message blocks display immediately as regular output.
 		if (event.type === 'text' && event.text) {
-			if (event.isPartial || managedProcess.toolType === 'gemini-cli') {
-				// Streaming delta OR Gemini complete message:
-				// Accumulate for result-time emission, emit thinking-chunk for live display
+			if (event.isPartial) {
+				// Streaming delta: accumulate for result-time emission, emit thinking-chunk for live display
 				managedProcess.streamedText = (managedProcess.streamedText || '') + event.text;
-				logger.debug('[ProcessManager] Emitting thinking-chunk', 'ProcessManager', {
-					sessionId,
-					textLength: event.text.length,
-					isPartial: event.isPartial,
-					toolType: managedProcess.toolType,
-				});
 				this.emitter.emit('thinking-chunk', sessionId, event.text);
 			} else {
-				// Other agents' non-partial text: emit both thinking-chunk and data
+				// Complete/non-delta text: emit both thinking-chunk and data for immediate display
 				this.emitter.emit('thinking-chunk', sessionId, event.text);
-				logger.debug('[ProcessManager] Emitting non-partial text as data', 'ProcessManager', {
-					sessionId,
-					textLength: event.text.length,
-					toolType: managedProcess.toolType,
-				});
 				this.bufferManager.emitDataBuffered(sessionId, event.text);
 			}
 		}
@@ -476,10 +432,9 @@ export class StdoutHandler {
 
 		// Handle result
 		// Emit text from the result event or from accumulated streamedText.
-		// For partial/delta text and Gemini CLI non-partial text, content is accumulated
-		// in streamedText during streaming (emitted as thinking-chunks for live display)
-		// and deferred here for final data emission. Other agents' non-partial text was
-		// already emitted directly via emitDataBuffered in the text handler above.
+		// Partial/delta text is accumulated in streamedText during streaming (emitted as
+		// thinking-chunks for live display) and deferred here for final data emission.
+		// Non-partial text was already emitted directly via emitDataBuffered above.
 		if (
 			managedProcess.toolType !== 'codex' &&
 			outputParser.isResultMessage(event) &&
@@ -552,25 +507,11 @@ export class StdoutHandler {
 		}
 
 		if (msgRecord.modelUsage || msgRecord.usage || msgRecord.total_cost_usd !== undefined) {
-			// DEBUG: Log raw usage data from Claude Code before aggregation
-			console.log('[StdoutHandler] Raw usage data from Claude Code', {
-				sessionId,
-				modelUsage: msgRecord.modelUsage,
-				usage: msgRecord.usage,
-				totalCostUsd: msgRecord.total_cost_usd,
-			});
-
 			const usageStats = aggregateModelUsage(
 				msgRecord.modelUsage as Record<string, ModelStats> | undefined,
 				(msgRecord.usage as Record<string, unknown>) || {},
 				(msgRecord.total_cost_usd as number) || 0
 			);
-
-			// DEBUG: Log aggregated result
-			console.log('[StdoutHandler] Aggregated usage stats', {
-				sessionId,
-				usageStats,
-			});
 
 			this.emitter.emit('usage', sessionId, usageStats);
 		}

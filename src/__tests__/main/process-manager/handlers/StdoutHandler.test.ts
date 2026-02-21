@@ -445,6 +445,84 @@ describe('StdoutHandler', () => {
 		});
 	});
 
+	// ── Gemini text routing ───────────────────────────────────────────────
+
+	describe('Gemini text routing', () => {
+		function createGeminiParser() {
+			return {
+				agentId: 'gemini-cli',
+				parseJsonLine: vi.fn((line: string) => {
+					try {
+						const parsed = JSON.parse(line);
+						if (parsed.type === 'message' && parsed.role === 'assistant') {
+							return {
+								type: 'text' as const,
+								text: parsed.content,
+								isPartial: parsed.delta === true,
+							};
+						}
+						return null;
+					} catch {
+						return null;
+					}
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn(() => false),
+				detectErrorFromLine: vi.fn(() => null),
+			};
+		}
+
+		it('should route non-partial Gemini text through data path for immediate display', () => {
+			const parser = createGeminiParser();
+			const { handler, emitter, bufferManager, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'gemini-cli',
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'Hello from Gemini!',
+				// no delta field => isPartial = false
+			});
+
+			// Non-partial text should go through BOTH thinking-chunk AND data path
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'Hello from Gemini!');
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Hello from Gemini!');
+		});
+
+		it('should route partial/delta Gemini text through thinking-chunk only', () => {
+			const parser = createGeminiParser();
+			const { handler, emitter, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'gemini-cli',
+				outputParser: parser as any,
+			});
+
+			const thinkingSpy = vi.fn();
+			emitter.on('thinking-chunk', thinkingSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'message',
+				role: 'assistant',
+				content: 'streaming...',
+				delta: true,
+			});
+
+			// Partial text should go through thinking-chunk only, NOT data
+			expect(thinkingSpy).toHaveBeenCalledWith(sessionId, 'streaming...');
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			// Should accumulate in streamedText for result-time emission
+			expect(proc.streamedText).toBe('streaming...');
+		});
+	});
+
 	// ── normalizeUsageToDelta (tested via outputParser path) ───────────────
 
 	describe('normalizeUsageToDelta (via outputParser stream-JSON path)', () => {
