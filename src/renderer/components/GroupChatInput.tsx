@@ -3,7 +3,7 @@
  *
  * Input area for the Group Chat view. Supports:
  * - Text input with Enter to send
- * - @mention autocomplete for all agents (sessions)
+ * - @mention autocomplete for sessions, participants, and agent types
  * - Read-only mode toggle (styled like direct agent chat)
  * - Attach image button
  * - Prompt composer button
@@ -13,13 +13,12 @@
  */
 
 import React, { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { ArrowUp, ImageIcon, Eye, Keyboard, PenLine, Users } from 'lucide-react';
+import { ArrowUp, ImageIcon, Eye, Keyboard, PenLine } from 'lucide-react';
 import type {
 	Theme,
 	GroupChatParticipant,
 	GroupChatState,
 	Session,
-	Group,
 	QueuedItem,
 	Shortcut,
 } from '../types';
@@ -37,16 +36,18 @@ const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 /** Allowed image MIME types */
 const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 
-/** Union type for items shown in the @ mention dropdown */
-type MentionItem =
-	| { type: 'agent'; name: string; mentionName: string; agentId: string; sessionId: string }
-	| {
-			type: 'group';
-			group: Group;
-			mentionName: string;
-			memberCount: number;
-			memberMentions: string[];
-	  };
+/** Mention item type for categorized autocomplete */
+type MentionItemType = 'participant' | 'session' | 'agent-type';
+
+/** Mentionable item in the autocomplete dropdown */
+interface MentionableItem {
+	name: string;
+	mentionName: string;
+	agentId: string;
+	/** Session ID for session-backed items, agent type ID for agent-type items */
+	id: string;
+	type: MentionItemType;
+}
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -54,7 +55,6 @@ interface GroupChatInputProps {
 	onSend: (content: string, images?: string[], readOnly?: boolean) => void;
 	participants: GroupChatParticipant[];
 	sessions: Session[];
-	groups?: Group[];
 	groupChatId: string;
 	draftMessage?: string;
 	onDraftChange?: (draft: string) => void;
@@ -92,7 +92,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	onSend,
 	participants: _participants,
 	sessions,
-	groups,
 	groupChatId,
 	draftMessage,
 	onDraftChange,
@@ -134,59 +133,75 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	const selectedMentionRef = useRef<HTMLButtonElement>(null);
 	const prevGroupChatIdRef = useRef(groupChatId);
 
-	// Build list of mentionable items: groups first, then individual agents
-	// Groups expand into all their member @mentions when selected
-	const mentionItems = useMemo(() => {
-		const items: MentionItem[] = [];
+	// Fetch available agent types from IPC (for "New" agent type mentions)
+	const [availableAgentTypes, setAvailableAgentTypes] = useState<
+		Array<{ id: string; name: string; available: boolean }>
+	>([]);
+	useEffect(() => {
+		let cancelled = false;
+		window.maestro.agents.getAvailable().then((agents) => {
+			if (!cancelled) setAvailableAgentTypes(agents);
+		}).catch(() => {
+			// Silently fail - agent types just won't appear in autocomplete
+		});
+		return () => { cancelled = true; };
+	}, []);
 
-		// Add groups (only those with at least 1 non-terminal member)
-		if (groups) {
-			for (const group of groups) {
-				const members = sessions.filter((s) => s.groupId === group.id && s.toolType !== 'terminal');
-				if (members.length > 0) {
-					items.push({
-						type: 'group',
-						group,
-						mentionName: normalizeMentionName(group.name),
-						memberCount: members.length,
-						memberMentions: members.map((m) => `@${normalizeMentionName(m.name)}`),
-					});
-				}
-			}
+	// Build list of mentionable items from sessions + agent types
+	// Three categories: participant (already in chat), session (available to add), agent-type (spawn fresh)
+	const mentionableAgents = useMemo(() => {
+		const items: MentionableItem[] = [];
+		const participantSessionIds = new Set(_participants.map((p) => p.sessionId));
+		const sessionAgentTypes = new Set<string>();
+
+		// (1) Sessions: mark as 'participant' if already in chat, 'session' otherwise
+		for (const s of sessions) {
+			if (s.toolType === 'terminal') continue;
+			sessionAgentTypes.add(s.toolType);
+			items.push({
+				name: s.name,
+				mentionName: normalizeMentionName(s.name),
+				agentId: s.toolType,
+				id: s.id,
+				type: participantSessionIds.has(s.id) ? 'participant' : 'session',
+			});
 		}
 
-		// Add individual agents (excluding terminal-only)
-		for (const s of sessions) {
-			if (s.toolType !== 'terminal') {
+		// (2) Agent types: add as 'agent-type' only if no session of that type already exists
+		for (const agent of availableAgentTypes) {
+			if (!sessionAgentTypes.has(agent.id)) {
 				items.push({
-					type: 'agent',
-					name: s.name,
-					mentionName: normalizeMentionName(s.name),
-					agentId: s.toolType,
-					sessionId: s.id,
+					name: agent.name,
+					mentionName: normalizeMentionName(agent.name),
+					agentId: agent.id,
+					id: agent.id,
+					type: 'agent-type',
 				});
 			}
 		}
 
 		return items;
-	}, [sessions, groups]);
+	}, [sessions, _participants, availableAgentTypes]);
 
-	// Filter mention items based on filter text
-	const filteredMentions = useMemo(() => {
-		if (!mentionFilter) return mentionItems;
-		return mentionItems.filter((item) => {
-			if (item.type === 'group') {
-				return (
-					item.group.name.toLowerCase().includes(mentionFilter) ||
-					item.mentionName.toLowerCase().includes(mentionFilter)
-				);
-			}
-			return (
-				item.name.toLowerCase().includes(mentionFilter) ||
-				item.mentionName.toLowerCase().includes(mentionFilter)
-			);
+	// Filter and sort: selectable items first, then participants (disabled)
+	const filteredAgents = useMemo(() => {
+		const filtered = mentionableAgents.filter(
+			(a) =>
+				a.name.toLowerCase().includes(mentionFilter) ||
+				a.mentionName.toLowerCase().includes(mentionFilter)
+		);
+		// Sort: sessions first, then agent-types, then participants (disabled) last
+		return filtered.sort((a, b) => {
+			const order: Record<MentionItemType, number> = { session: 0, 'agent-type': 1, participant: 2 };
+			return order[a.type] - order[b.type];
 		});
-	}, [mentionItems, mentionFilter]);
+	}, [mentionableAgents, mentionFilter]);
+
+	// Count of selectable items (non-participant) for keyboard navigation bounds
+	const selectableAgents = useMemo(
+		() => filteredAgents.filter((a) => a.type !== 'participant'),
+		[filteredAgents]
+	);
 
 	// Scroll selected mention into view when selection changes
 	useEffect(() => {
@@ -263,23 +278,23 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 				return;
 			}
 
-			if (showMentions && filteredMentions.length > 0) {
+			if (showMentions && selectableAgents.length > 0) {
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					e.stopPropagation();
-					setSelectedMentionIndex((prev) => (prev < filteredMentions.length - 1 ? prev + 1 : 0));
+					setSelectedMentionIndex((prev) => (prev < selectableAgents.length - 1 ? prev + 1 : 0));
 					return;
 				}
 				if (e.key === 'ArrowUp') {
 					e.preventDefault();
 					e.stopPropagation();
-					setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : filteredMentions.length - 1));
+					setSelectedMentionIndex((prev) => (prev > 0 ? prev - 1 : selectableAgents.length - 1));
 					return;
 				}
 				if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
 					e.preventDefault();
 					e.stopPropagation();
-					insertMention(filteredMentions[selectedMentionIndex]);
+					insertMention(selectableAgents[selectedMentionIndex].mentionName);
 					return;
 				}
 				if (e.key === 'Escape') {
@@ -301,7 +316,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[
 			handleSend,
 			showMentions,
-			filteredMentions,
+			selectableAgents,
 			selectedMentionIndex,
 			enterToSend,
 			readOnlyMode,
@@ -340,17 +355,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	);
 
 	const insertMention = useCallback(
-		(item: MentionItem) => {
+		(name: string) => {
 			const lastAtIndex = message.lastIndexOf('@');
-			const prefix = message.slice(0, lastAtIndex);
-			let insertion: string;
-			if (item.type === 'group') {
-				// Expand group into all member @mentions
-				insertion = item.memberMentions.join(' ') + ' ';
-			} else {
-				insertion = `@${item.mentionName} `;
-			}
-			const newMessage = prefix + insertion;
+			const newMessage = message.slice(0, lastAtIndex) + `@${name} `;
 			setMessage(newMessage);
 			onDraftChange?.(newMessage);
 			setShowMentions(false);
@@ -430,12 +437,21 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		[showFlashNotification]
 	);
 
-	const removeImage = useCallback((img: string) => {
-		setStagedImages((prev) => prev.filter((x) => x !== img));
+	const removeImage = useCallback((index: number) => {
+		setStagedImages((prev) => prev.filter((_, i) => i !== index));
 	}, []);
 
 	const isBusy = state !== 'idle';
 	const hasQueuedItems = executionQueue && executionQueue.length > 0;
+
+	// Build section-aware rendering data for the dropdown
+	const hasSessionItems = filteredAgents.some((a) => a.type === 'session');
+	const hasAgentTypeItems = filteredAgents.some((a) => a.type === 'agent-type');
+	const hasParticipantItems = filteredAgents.some((a) => a.type === 'participant');
+	const showSectionHeaders = (hasSessionItems || hasAgentTypeItems) && hasParticipantItems;
+
+	// Track selectable index for keyboard navigation (skips participants)
+	let selectableIndex = 0;
 
 	return (
 		<div
@@ -453,7 +469,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 			)}
 
 			{/* Mention dropdown */}
-			{showMentions && filteredMentions.length > 0 && (
+			{showMentions && filteredAgents.length > 0 && (
 				<div
 					ref={mentionListRef}
 					className="mb-2 rounded-lg border p-1 max-h-48 overflow-y-auto"
@@ -462,65 +478,113 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 						borderColor: theme.colors.border,
 					}}
 				>
-					{filteredMentions.map((item, index) => (
-						<button
-							key={item.type === 'group' ? `group-${item.group.id}` : item.sessionId}
-							ref={index === selectedMentionIndex ? selectedMentionRef : null}
-							onClick={() => insertMention(item)}
-							className="w-full text-left px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-2"
-							style={{
-								color: theme.colors.textMain,
-								backgroundColor:
-									index === selectedMentionIndex ? `${theme.colors.accent}20` : 'transparent',
-							}}
-						>
-							{item.type === 'group' ? (
-								<>
-									<Users className="w-3.5 h-3.5 shrink-0" style={{ color: theme.colors.accent }} />
-									<span>{item.group.emoji}</span>
-									<span>@{item.mentionName}</span>
-									<span
-										className="ml-auto text-[10px] px-1.5 py-0.5 rounded-full"
+					{filteredAgents.map((agent, index) => {
+						const isParticipant = agent.type === 'participant';
+						const isAgentType = agent.type === 'agent-type';
+						const currentSelectableIndex = !isParticipant ? selectableIndex++ : -1;
+						const isSelected = !isParticipant && currentSelectableIndex === selectedMentionIndex;
+
+						// Section headers
+						const prevAgent = index > 0 ? filteredAgents[index - 1] : null;
+						const showSessionHeader = showSectionHeaders && index === 0 && !isParticipant;
+						const showAgentTypeHeader = showSectionHeaders && isAgentType && prevAgent?.type !== 'agent-type';
+						const showParticipantHeader = showSectionHeaders && isParticipant && prevAgent?.type !== 'participant';
+
+						return (
+							<React.Fragment key={`${agent.type}-${agent.id}`}>
+								{showSessionHeader && hasSessionItems && (
+									<div
+										className="px-3 py-1 text-[10px] uppercase tracking-wider"
+										style={{ color: theme.colors.textDim }}
+									>
+										Sessions
+									</div>
+								)}
+								{showAgentTypeHeader && (
+									<div
+										className="px-3 py-1 text-[10px] uppercase tracking-wider"
+										style={{ color: theme.colors.textDim }}
+									>
+										New Agent
+									</div>
+								)}
+								{showParticipantHeader && (
+									<div
+										className="px-3 py-1 text-[10px] uppercase tracking-wider"
+										style={{ color: theme.colors.textDim }}
+									>
+										Already Added
+									</div>
+								)}
+								{isParticipant ? (
+									// Participant items: disabled, reduced opacity
+									<div
+										className="w-full text-left px-3 py-1.5 rounded text-sm opacity-40 cursor-default"
+										style={{ color: theme.colors.textMain }}
+									>
+										@{agent.mentionName}
+										{agent.name !== agent.mentionName && (
+											<span className="ml-1 text-xs" style={{ color: theme.colors.textDim }}>
+												({agent.name})
+											</span>
+										)}
+										<span className="ml-2 text-xs" style={{ color: `${theme.colors.textDim}80` }}>
+											already added
+										</span>
+									</div>
+								) : (
+									// Session and agent-type items: selectable
+									<button
+										ref={isSelected ? selectedMentionRef : null}
+										onClick={() => insertMention(agent.mentionName)}
+										className="w-full text-left px-3 py-1.5 rounded text-sm transition-colors"
 										style={{
-											backgroundColor: `${theme.colors.accent}20`,
-											color: theme.colors.accent,
+											color: theme.colors.textMain,
+											backgroundColor: isSelected
+												? `${theme.colors.accent}20`
+												: 'transparent',
 										}}
 									>
-										group · {item.memberCount}
-									</span>
-								</>
-							) : (
-								<>
-									<span>@{item.mentionName}</span>
-									{item.name !== item.mentionName && (
-										<span className="text-xs" style={{ color: theme.colors.textDim }}>
-											({item.name})
-										</span>
-									)}
-									<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
-										{item.agentId}
-									</span>
-								</>
-							)}
-						</button>
-					))}
+										@{agent.mentionName}
+										{agent.name !== agent.mentionName && (
+											<span className="ml-1 text-xs" style={{ color: theme.colors.textDim }}>
+												({agent.name})
+											</span>
+										)}
+										{isAgentType ? (
+											<span
+												className="ml-2 text-xs font-medium"
+												style={{ color: '#4ade80' }}
+											>
+												New
+											</span>
+										) : (
+											<span className="ml-2 text-xs" style={{ color: theme.colors.textDim }}>
+												{agent.agentId}
+											</span>
+										)}
+									</button>
+								)}
+							</React.Fragment>
+						);
+					})}
 				</div>
 			)}
 
 			{/* Staged images preview */}
 			{stagedImages.length > 0 && (
 				<div className="flex gap-2 mb-2 flex-wrap">
-					{stagedImages.map((img) => (
-						<div key={img} className="relative group">
+					{stagedImages.map((img, index) => (
+						<div key={index} className="relative group">
 							<img
 								src={img}
-								alt="Staged image"
+								alt={`Staged ${index + 1}`}
 								className="w-16 h-16 object-cover rounded border cursor-pointer hover:opacity-80 transition-opacity"
 								style={{ borderColor: theme.colors.border }}
 								onClick={() => onOpenLightbox?.(img, stagedImages, 'staged')}
 							/>
 							<button
-								onClick={() => removeImage(img)}
+								onClick={() => removeImage(index)}
 								className="absolute -top-1 -right-1 w-4 h-4 rounded-full flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
 								style={{
 									backgroundColor: theme.colors.error,
