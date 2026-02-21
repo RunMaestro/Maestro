@@ -585,4 +585,73 @@ describe('agentSessions IPC handlers', () => {
 			expect(result.cachedInputTokens).toBe(0);
 		});
 	});
+
+	describe('sessionId extraction regex (used in getGlobalStats)', () => {
+		// This regex is used in getGlobalStats() to extract the sessionId from
+		// Gemini session JSON files and look up persisted token stats by UUID.
+		const SESSION_ID_REGEX = /"sessionId"\s*:\s*"([^"]+)"/;
+
+		it('should extract sessionId from a realistic Gemini session JSON', () => {
+			const content = JSON.stringify({
+				sessionId: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+				messages: [
+					{ type: 'user', content: 'Hello' },
+					{ type: 'gemini', content: 'Hi there' },
+				],
+				startTime: '2026-02-21T10:00:00Z',
+				lastUpdated: '2026-02-21T10:05:00Z',
+			});
+			const match = content.match(SESSION_ID_REGEX);
+			expect(match).not.toBeNull();
+			expect(match![1]).toBe('a1b2c3d4-e5f6-7890-abcd-ef1234567890');
+		});
+
+		it('should match the same UUID format emitted by init events', () => {
+			// The init event emits session_id (snake_case), parser maps to sessionId (camelCase).
+			// The session file stores sessionId (camelCase). Both should contain the same UUID.
+			const uuid = 'abc-123-def-456';
+			const sessionFile = JSON.stringify({ sessionId: uuid, messages: [] });
+			const match = sessionFile.match(SESSION_ID_REGEX);
+			expect(match).not.toBeNull();
+			expect(match![1]).toBe(uuid);
+		});
+
+		it('should not match when sessionId field is absent', () => {
+			const content = JSON.stringify({ messages: [{ type: 'user' }] });
+			const match = content.match(SESSION_ID_REGEX);
+			expect(match).toBeNull();
+		});
+
+		it('should handle whitespace variations in JSON formatting', () => {
+			// JSON.stringify uses no spaces, but manually-formatted JSON might
+			const content = '{"sessionId" : "spaced-uuid-123", "messages": []}';
+			const match = content.match(SESSION_ID_REGEX);
+			expect(match).not.toBeNull();
+			expect(match![1]).toBe('spaced-uuid-123');
+		});
+
+		it('should enable correct persisted stats lookup', () => {
+			// End-to-end: extract sessionId from file, look up in persisted stats, pass to parser
+			const uuid = 'live-session-uuid-789';
+			const sessionContent = JSON.stringify({
+				sessionId: uuid,
+				messages: [{ type: 'user' }, { type: 'gemini' }],
+			});
+
+			const allPersistedStats: Record<string, { inputTokens: number; outputTokens: number; cacheReadTokens: number; reasoningTokens: number }> = {
+				[uuid]: { inputTokens: 1000, outputTokens: 2000, cacheReadTokens: 300, reasoningTokens: 100 },
+				'other-uuid': { inputTokens: 50, outputTokens: 50, cacheReadTokens: 0, reasoningTokens: 0 },
+			};
+
+			// Extract sessionId (mirrors getGlobalStats logic)
+			const match = sessionContent.match(SESSION_ID_REGEX);
+			const persistedStats = match?.[1] ? allPersistedStats[match[1]] : undefined;
+
+			// Pass to parser (mirrors getGlobalStats logic)
+			const result = parseGeminiSessionContent(sessionContent, 512, persistedStats);
+			expect(result.inputTokens).toBe(1000);
+			expect(result.outputTokens).toBe(2000);
+			expect(result.cachedInputTokens).toBe(300);
+		});
+	});
 });
