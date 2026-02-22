@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { GitBranch } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { GitBranch, Info } from 'lucide-react';
 import type { Theme, Session, WorktreeRunTarget } from '../types';
 import { gitService } from '../services/git';
+import { getStatusColor } from '../utils/theme';
 
 interface WorktreeRunSectionProps {
 	theme: Theme;
@@ -217,6 +218,19 @@ export function WorktreeRunSection({
 		[isEnabled, selectedValue, emitChange]
 	);
 
+	// Resolve the currently selected open agent for the state indicator
+	const selectedOpenAgent = useMemo(() => {
+		if (!selectedValue || selectedValue === '__create_new__' || selectedValue.startsWith('__closed__:')) return null;
+		return worktreeChildren.find((s) => s.id === selectedValue) || null;
+	}, [selectedValue, worktreeChildren]);
+
+	// Compute worktree path preview for create-new mode
+	const worktreePathPreview = useMemo(() => {
+		const basePath = activeSession.worktreeConfig?.basePath;
+		if (!basePath || selectedValue !== '__create_new__' || !newBranchName.trim()) return null;
+		return `${basePath}/${newBranchName.trim()}`;
+	}, [activeSession.worktreeConfig?.basePath, selectedValue, newBranchName]);
+
 	// Not-configured state
 	if (!isConfigured) {
 		return (
@@ -234,41 +248,49 @@ export function WorktreeRunSection({
 
 	return (
 		<div className="mb-6 flex flex-col gap-3">
-			{/* Toggle */}
-			<button
-				onClick={handleToggle}
-				className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors self-start ${
-					isEnabled ? 'border-accent' : 'border-border hover:bg-white/5'
-				}`}
-				style={{
-					borderColor: isEnabled ? theme.colors.accent : theme.colors.border,
-					backgroundColor: isEnabled
-						? theme.colors.accent + '15'
-						: 'transparent',
-				}}
-			>
-				<GitBranch
-					className="w-3.5 h-3.5"
+			{/* Toggle with info icon */}
+			<div className="flex items-center gap-2 self-start">
+				<button
+					onClick={handleToggle}
+					className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors ${
+						isEnabled ? 'border-accent' : 'border-border hover:bg-white/5'
+					}`}
 					style={{
-						color: isEnabled
-							? theme.colors.accent
-							: theme.colors.textDim,
-					}}
-				/>
-				<span
-					className="text-xs font-medium"
-					style={{
-						color: isEnabled
-							? theme.colors.accent
-							: theme.colors.textMain,
+						borderColor: isEnabled ? theme.colors.accent : theme.colors.border,
+						backgroundColor: isEnabled
+							? theme.colors.accent + '15'
+							: 'transparent',
 					}}
 				>
-					Run in Worktree
+					<GitBranch
+						className="w-3.5 h-3.5"
+						style={{
+							color: isEnabled
+								? theme.colors.accent
+								: theme.colors.textDim,
+						}}
+					/>
+					<span
+						className="text-xs font-medium"
+						style={{
+							color: isEnabled
+								? theme.colors.accent
+								: theme.colors.textMain,
+						}}
+					>
+						Run in Worktree
+					</span>
+				</button>
+				<span title="Dispatch this Auto Run to a separate worktree agent instead of the current one">
+					<Info
+						className="w-3.5 h-3.5 shrink-0"
+						style={{ color: theme.colors.textDim }}
+					/>
 				</span>
-			</button>
+			</div>
 
 			{isEnabled && (
-				<>
+				<div className="flex flex-col gap-3 animate-slide-down">
 					{/* Agent selector */}
 					<select
 						value={selectedValue}
@@ -319,6 +341,34 @@ export function WorktreeRunSection({
 						)}
 						<option value="__create_new__">Create New Worktree</option>
 					</select>
+
+					{/* State color indicator for selected open agent */}
+					{selectedOpenAgent && (
+						<div className="flex items-center gap-1.5 pl-1" data-testid="agent-state-indicator">
+							<div
+								className={`w-2 h-2 rounded-full shrink-0 ${
+									selectedOpenAgent.state === 'busy' || selectedOpenAgent.state === 'connecting'
+										? 'animate-pulse'
+										: ''
+								}`}
+								style={{
+									backgroundColor: getStatusColor(selectedOpenAgent.state, theme),
+								}}
+							/>
+							<span
+								className="text-[11px]"
+								style={{ color: theme.colors.textDim }}
+							>
+								{selectedOpenAgent.name} — {
+									selectedOpenAgent.state === 'idle' ? 'ready' :
+									selectedOpenAgent.state === 'busy' ? 'busy' :
+									selectedOpenAgent.state === 'connecting' ? 'connecting' :
+									selectedOpenAgent.state === 'error' ? 'error' :
+									'waiting'
+								}
+							</span>
+						</div>
+					)}
 
 					{/* Create New inputs */}
 					{selectedValue === '__create_new__' && (
@@ -386,6 +436,15 @@ export function WorktreeRunSection({
 										Branch name is required
 									</span>
 								)}
+								{worktreePathPreview && (
+									<span
+										className="text-[10px] font-mono truncate"
+										style={{ color: theme.colors.textDim, opacity: 0.7 }}
+										title={worktreePathPreview}
+									>
+										{worktreePathPreview}
+									</span>
+								)}
 							</label>
 						</div>
 					)}
@@ -394,6 +453,9 @@ export function WorktreeRunSection({
 					<label className="flex items-center gap-2 cursor-pointer">
 						<div
 							className="w-4 h-4 rounded border flex items-center justify-center shrink-0"
+							role="checkbox"
+							aria-checked={createPROnCompletion}
+							tabIndex={0}
 							style={{
 								borderColor: createPROnCompletion
 									? theme.colors.accent
@@ -405,6 +467,12 @@ export function WorktreeRunSection({
 							onClick={(e) => {
 								e.preventDefault();
 								handlePRChange(!createPROnCompletion);
+							}}
+							onKeyDown={(e) => {
+								if (e.key === 'Enter' || e.key === ' ') {
+									e.preventDefault();
+									handlePRChange(!createPROnCompletion);
+								}
 							}}
 						>
 							{createPROnCompletion && (
@@ -431,7 +499,7 @@ export function WorktreeRunSection({
 							Automatically create PR when complete
 						</span>
 					</label>
-				</>
+				</div>
 			)}
 		</div>
 	);

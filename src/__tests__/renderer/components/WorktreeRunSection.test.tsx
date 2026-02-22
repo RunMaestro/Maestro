@@ -774,4 +774,188 @@ describe('WorktreeRunSection', () => {
 		// Should show validation message
 		expect(screen.getByText('Branch name is required')).toBeTruthy();
 	});
+
+	// -----------------------------------------------------------------------
+	// UX Polish: Info icon, state indicator, path preview, keyboard nav
+	// -----------------------------------------------------------------------
+
+	it('renders info icon with tooltip next to the toggle button', () => {
+		const session = createMockSession();
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={null}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Info icon should be present (rendered as an SVG with a title attribute)
+		const infoIcon = document.querySelector('[title*="Dispatch this Auto Run"]');
+		expect(infoIcon).toBeTruthy();
+	});
+
+	it('shows agent state color indicator when an open agent is selected', () => {
+		const session = createMockSession();
+		const idleChild = createWorktreeChild({ id: 'child-idle', name: 'Idle Agent', state: 'idle' });
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session, idleChild]}
+				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-idle', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Select the idle child to set internal selectedValue
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		fireEvent.change(select, { target: { value: 'child-idle' } });
+
+		// State indicator should be visible
+		const indicator = screen.getByTestId('agent-state-indicator');
+		expect(indicator).toBeTruthy();
+		expect(indicator.textContent).toContain('Idle Agent');
+		expect(indicator.textContent).toContain('ready');
+	});
+
+	it('shows worktree path preview when creating a new worktree with a branch name', async () => {
+		const session = createMockSession();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Select "Create New Worktree"
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: '__create_new__' } });
+		});
+
+		// Wait for branch inputs to load
+		await waitFor(() => {
+			expect(screen.getByText('Branch Name')).toBeTruthy();
+		});
+
+		// Path preview should show basePath/branchName
+		const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
+		await waitFor(() => {
+			expect(screen.getByText(`/project/worktrees/auto-run-main-${mmdd}`)).toBeTruthy();
+		});
+	});
+
+	it('hides path preview when branch name is cleared', async () => {
+		const session = createMockSession();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+		vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Select "Create New Worktree"
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		await act(async () => {
+			fireEvent.change(select, { target: { value: '__create_new__' } });
+		});
+
+		await waitFor(() => {
+			expect(screen.getByText('Branch Name')).toBeTruthy();
+		});
+
+		// Clear branch name
+		const branchInput = screen.getByDisplayValue(/auto-run-/) as HTMLInputElement;
+		await act(async () => {
+			fireEvent.change(branchInput, { target: { value: '' } });
+		});
+
+		// Path preview should not be visible (no text matching the basePath pattern)
+		expect(screen.queryByText(/\/project\/worktrees\//)).toBeNull();
+	});
+
+	it('PR checkbox is keyboard accessible with Enter and Space', () => {
+		const session = createMockSession();
+		const child = createWorktreeChild();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session, child]}
+				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Select the child to set internal state
+		const select = screen.getAllByRole('combobox')[0] as HTMLSelectElement;
+		fireEvent.change(select, { target: { value: child.id } });
+
+		const checkbox = screen.getByRole('checkbox');
+		expect(checkbox).toBeTruthy();
+		expect(checkbox.getAttribute('tabindex')).toBe('0');
+
+		// Press Enter to toggle
+		fireEvent.keyDown(checkbox, { key: 'Enter' });
+		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(
+			expect.objectContaining({ createPROnCompletion: true })
+		);
+
+		mockOnWorktreeTargetChange.mockClear();
+
+		// Press Space to toggle back
+		fireEvent.keyDown(checkbox, { key: ' ' });
+		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(
+			expect.objectContaining({ createPROnCompletion: false })
+		);
+	});
+
+	it('expanded section has animation class', () => {
+		const session = createMockSession();
+		const child = createWorktreeChild();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		const { container } = render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session, child]}
+				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// The expanded content wrapper should have the animation class
+		const animatedDiv = container.querySelector('.animate-slide-down');
+		expect(animatedDiv).toBeTruthy();
+	});
 });
