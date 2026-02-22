@@ -453,8 +453,6 @@ function MaestroConsoleInner() {
 		setTabShortcuts,
 		customAICommands,
 		setCustomAICommands,
-		globalStats: _globalStats,
-		updateGlobalStats,
 		totalActiveTimeMs,
 		addTotalActiveTimeMs,
 		autoRunStats,
@@ -798,12 +796,10 @@ function MaestroConsoleInner() {
 	const mainPanelRef = useRef<MainPanelHandle>(null);
 
 	// Refs for accessing latest values in event handlers
-	const updateGlobalStatsRef = useRef(updateGlobalStats);
 	const customAICommandsRef = useRef(customAICommands);
 	const speckitCommandsRef = useRef(speckitCommands);
 	const openspecCommandsRef = useRef(openspecCommands);
 	const fileTabAutoRefreshEnabledRef = useRef(fileTabAutoRefreshEnabled);
-	updateGlobalStatsRef.current = updateGlobalStats;
 	customAICommandsRef.current = customAICommands;
 	speckitCommandsRef.current = speckitCommands;
 	openspecCommandsRef.current = openspecCommands;
@@ -1543,7 +1539,6 @@ function MaestroConsoleInner() {
 		spawnBackgroundSynopsisRef,
 		getBatchStateRef,
 		pauseBatchOnErrorRef,
-		updateGlobalStatsRef,
 		rightPanelRef,
 		processQueuedItemRef,
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
@@ -3279,8 +3274,6 @@ function MaestroConsoleInner() {
 			};
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
-			// Track session creation in global stats
-			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
 			window.maestro.stats.recordSessionCreated({
 				sessionId: newId,
@@ -3449,7 +3442,6 @@ function MaestroConsoleInner() {
 			// Add session and make it active
 			setSessions((prev) => [...prev, newSession]);
 			setActiveSessionId(newId);
-			updateGlobalStats({ totalSessions: 1 });
 			// Record session lifecycle for Usage Dashboard
 			window.maestro.stats.recordSessionCreated({
 				sessionId: newId,
@@ -3514,7 +3506,6 @@ function MaestroConsoleInner() {
 			defaultSaveToHistory,
 			setSessions,
 			setActiveSessionId,
-			updateGlobalStats,
 			clearResumeState,
 			completeWizard,
 			setActiveRightTab,
@@ -6018,7 +6009,6 @@ function MaestroConsoleInner() {
 									});
 
 								// Track stats
-								updateGlobalStats({ totalSessions: 1 });
 								window.maestro.stats.recordSessionCreated({
 									sessionId: newId,
 									agentType: data.agentType,

@@ -334,18 +334,6 @@ export interface BatchRunState {
 	errorTaskDescription?: string; // Description of the task that failed (for UI display)
 }
 
-// Persistent global statistics (survives app restarts)
-export interface GlobalStats {
-	totalSessions: number;
-	totalMessages: number;
-	totalInputTokens: number;
-	totalOutputTokens: number;
-	totalCacheReadTokens: number;
-	totalCacheCreationTokens: number;
-	totalCostUsd: number;
-	totalActiveTimeMs: number;
-}
-
 // Badge unlock record for history tracking
 export interface BadgeUnlockRecord {
 	level: number;

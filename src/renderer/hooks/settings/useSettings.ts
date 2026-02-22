@@ -17,7 +17,6 @@ import type {
 	ThemeColors,
 	Shortcut,
 	CustomAICommand,
-	GlobalStats,
 	AutoRunStats,
 	MaestroUsageStats,
 	OnboardingStats,
@@ -150,11 +149,6 @@ export interface UseSettingsReturn {
 	totalActiveTimeMs: number;
 	setTotalActiveTimeMs: (value: number) => void;
 	addTotalActiveTimeMs: (delta: number) => void;
-
-	// Global Stats (persistent across restarts)
-	globalStats: GlobalStats;
-	setGlobalStats: (value: GlobalStats) => void;
-	updateGlobalStats: (delta: Partial<GlobalStats>) => void;
 
 	// Auto-run Stats (persistent across restarts)
 	autoRunStats: AutoRunStats;

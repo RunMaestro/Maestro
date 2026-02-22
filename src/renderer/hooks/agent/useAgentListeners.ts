@@ -25,7 +25,6 @@ import type {
 	AgentError,
 	GroupChatMessage,
 	UsageStats,
-	GlobalStats,
 } from '../../types';
 import { notifyToast } from '../../stores/notificationStore';
 import type { HistoryEntryInput } from './useAgentSessionManagement';
@@ -116,8 +115,6 @@ export interface UseAgentListenersDeps {
 	pauseBatchOnErrorRef: React.RefObject<
 		((sessionId: string, error: AgentError, docIndex: number, context?: string) => void) | null
 	>;
-	/** Global stats updater */
-	updateGlobalStatsRef: React.RefObject<((stats: Partial<GlobalStats>) => void) | null>;
 	/** Right panel ref for refreshing history */
 	rightPanelRef: React.RefObject<RightPanelHandle | null>;
 	/** Process queued item callback */
@@ -1097,13 +1094,6 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 			}
 			deps.batchedUpdater.updateCycleTokens(actualSessionId, usageStats.outputTokens);
 
-			deps.updateGlobalStatsRef.current?.({
-				totalInputTokens: usageStats.inputTokens,
-				totalOutputTokens: usageStats.outputTokens,
-				totalCacheReadTokens: usageStats.cacheReadInputTokens,
-				totalCacheCreationTokens: usageStats.cacheCreationInputTokens,
-				totalCostUsd: usageStats.totalCostUsd,
-			});
 		});
 
 		// ================================================================
