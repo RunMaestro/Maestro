@@ -264,6 +264,46 @@ describe('WorktreeRunSection', () => {
 		});
 	});
 
+	it('shows Scanning indicator while worktrees are loading', async () => {
+		const session = createMockSession();
+		// Create a scan mock that doesn't resolve immediately
+		let resolveScan: (value: { gitSubdirs: Array<{ path: string; name: string; branch: string | null }> }) => void;
+		const scanPromise = new Promise<{ gitSubdirs: Array<{ path: string; name: string; branch: string | null }> }>((resolve) => {
+			resolveScan = resolve;
+		});
+		const scanMock = vi.fn().mockReturnValue(scanPromise);
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		// Should show "Scanning..." while loading
+		await waitFor(() => {
+			expect(screen.getByText('Scanning...')).toBeTruthy();
+		});
+
+		// Resolve the scan
+		await act(async () => {
+			resolveScan!({ gitSubdirs: [{ path: '/project/worktrees/wt1', name: 'wt1', branch: 'wt1' }] });
+		});
+
+		// "Scanning..." should disappear
+		await waitFor(() => {
+			expect(screen.queryByText('Scanning...')).toBeNull();
+		});
+
+		// The worktree should appear
+		expect(screen.getByText('wt1')).toBeTruthy();
+	});
+
 	it('passes sshRemoteId when scanning', async () => {
 		const session = createMockSession({
 			sshRemoteId: 'ssh-remote-1',

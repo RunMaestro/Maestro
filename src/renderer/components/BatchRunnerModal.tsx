@@ -13,6 +13,7 @@ import {
 	Download,
 	Upload,
 	LayoutGrid,
+	Loader2,
 } from 'lucide-react';
 import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
@@ -39,7 +40,7 @@ export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../ho
 interface BatchRunnerModalProps {
 	theme: Theme;
 	onClose: () => void;
-	onGo: (config: BatchRunConfig) => void;
+	onGo: (config: BatchRunConfig) => void | Promise<void>;
 	onSave: (prompt: string) => void;
 	initialPrompt?: string;
 	lastModifiedAt?: number;
@@ -101,6 +102,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 
 	// Worktree run target state
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
+	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore((state) => state.sessions.find((s) => s.id === sessionId));
 	const sessions = useSessionStore((state) => state.sessions);
 
@@ -352,7 +354,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		initialPromptRef.current = prompt;
 	};
 
-	const handleGo = () => {
+	const handleGo = async () => {
 		// Also save when running
 		onSave(prompt);
 
@@ -373,7 +375,21 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			documentsCount: validDocuments.length,
 		});
 
-		onGo(config);
+		// Worktree creation/opening requires async work — show loading state
+		const needsWorktreePrep =
+			worktreeTarget?.mode === 'create-new' || worktreeTarget?.mode === 'existing-closed';
+
+		if (needsWorktreePrep) {
+			setIsPreparingWorktree(true);
+			try {
+				await onGo(config);
+			} finally {
+				setIsPreparingWorktree(false);
+			}
+		} else {
+			onGo(config);
+		}
+
 		onClose();
 	};
 
@@ -827,6 +843,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						<button
 							onClick={handleGo}
 							disabled={
+								isPreparingWorktree ||
 								hasNoTasks ||
 								documents.length === 0 ||
 								documents.length === missingDocCount ||
@@ -836,6 +853,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							className="flex items-center gap-2 px-4 py-2 rounded text-white font-bold disabled:opacity-40 disabled:cursor-not-allowed"
 							style={{
 								backgroundColor:
+									isPreparingWorktree ||
 									hasNoTasks ||
 									documents.length === 0 ||
 									documents.length === missingDocCount ||
@@ -845,21 +863,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										: theme.colors.accent,
 							}}
 							title={
-								isPromptEmpty
-									? 'Agent prompt cannot be empty'
-									: !hasValidPrompt
-										? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-										: documents.length === 0
-											? 'No documents selected'
-											: documents.length === missingDocCount
-												? 'All selected documents are missing'
-												: hasNoTasks
-													? 'No unchecked tasks in documents'
-													: 'Start auto-run'
+								isPreparingWorktree
+									? 'Preparing worktree...'
+									: isPromptEmpty
+										? 'Agent prompt cannot be empty'
+										: !hasValidPrompt
+											? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+											: documents.length === 0
+												? 'No documents selected'
+												: documents.length === missingDocCount
+													? 'All selected documents are missing'
+													: hasNoTasks
+														? 'No unchecked tasks in documents'
+														: 'Start auto-run'
 							}
 						>
-							<Play className="w-4 h-4" />
-							Go
+							{isPreparingWorktree ? (
+								<Loader2 className="w-4 h-4 animate-spin" />
+							) : (
+								<Play className="w-4 h-4" />
+							)}
+							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
 						</button>
 					</div>
 				</div>
