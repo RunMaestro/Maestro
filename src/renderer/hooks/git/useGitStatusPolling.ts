@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { Session } from '../../types';
 import { gitService } from '../../services/git';
+import { subscribeToActivity } from '../../utils/activityBus';
 
 /**
  * Extended git status data for a session.
@@ -414,6 +415,8 @@ export function useGitStatusPolling(
 
 	// Listen for user activity to restart polling if inactive
 	// Uses debouncing to avoid excessive callback execution on rapid events
+	// Activity events come from the shared activity bus (passive listeners shared with
+	// useActivityTracker and useHandsOnTimeTracker)
 	useEffect(() => {
 		const handleActivity = () => {
 			// Clear any pending debounce timer
@@ -435,16 +438,10 @@ export function useGitStatusPolling(
 			}, 100);
 		};
 
-		window.addEventListener('keydown', handleActivity);
-		window.addEventListener('mousedown', handleActivity);
-		window.addEventListener('wheel', handleActivity);
-		window.addEventListener('touchstart', handleActivity);
+		const unsubscribe = subscribeToActivity(handleActivity);
 
 		return () => {
-			window.removeEventListener('keydown', handleActivity);
-			window.removeEventListener('mousedown', handleActivity);
-			window.removeEventListener('wheel', handleActivity);
-			window.removeEventListener('touchstart', handleActivity);
+			unsubscribe();
 			// Clean up any pending debounce timer
 			if (activityDebounceRef.current) {
 				clearTimeout(activityDebounceRef.current);

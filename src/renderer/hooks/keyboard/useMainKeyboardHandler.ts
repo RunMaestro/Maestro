@@ -745,10 +745,15 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 	}, []); // Empty dependencies - handler reads from ref
 
 	// Track Opt+Cmd modifier keys to show session jump number badges
+	// Uses ref to read current state without adding it to deps (avoids re-registering
+	// listeners every time the modifier state toggles)
+	const showSessionJumpNumbersRef = useRef(false);
+	showSessionJumpNumbersRef.current = showSessionJumpNumbers;
+
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
 			// Show number badges when Opt+Cmd is held (but no number pressed yet)
-			if (e.altKey && (e.metaKey || e.ctrlKey) && !showSessionJumpNumbers) {
+			if (e.altKey && (e.metaKey || e.ctrlKey) && !showSessionJumpNumbersRef.current) {
 				setShowSessionJumpNumbers(true);
 			}
 		};
@@ -773,7 +778,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			window.removeEventListener('keyup', handleKeyUp);
 			window.removeEventListener('blur', handleBlur);
 		};
-	}, [showSessionJumpNumbers]);
+	}, []); // Empty deps - reads state via ref
 
 	return {
 		keyboardHandlerRef,

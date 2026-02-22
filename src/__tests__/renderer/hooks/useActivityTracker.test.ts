@@ -450,31 +450,45 @@ describe('useActivityTracker', () => {
 		});
 	});
 
-	describe('global event listeners', () => {
-		it('adds event listeners on mount', () => {
+	describe('global event listeners (via shared activity bus)', () => {
+		it('registers passive activity listeners on mount', () => {
 			const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
 
 			renderHook(() => useActivityTracker('session-1', mockSetSessions));
 
-			expect(addEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
-			expect(addEventListenerSpy).toHaveBeenCalledWith('mousedown', expect.any(Function));
+			// Activity listeners are registered through the shared activity bus
+			// with passive option (they never call preventDefault, so browser can optimize)
+			expect(addEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function), {
+				passive: true,
+			});
+			expect(addEventListenerSpy).toHaveBeenCalledWith('mousedown', expect.any(Function), {
+				passive: true,
+			});
 			// Note: mousemove is intentionally NOT listened to (CPU performance optimization)
-			expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
-			expect(addEventListenerSpy).toHaveBeenCalledWith('touchstart', expect.any(Function));
+			expect(addEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function), {
+				passive: true,
+			});
+			expect(addEventListenerSpy).toHaveBeenCalledWith('touchstart', expect.any(Function), {
+				passive: true,
+			});
+			expect(addEventListenerSpy).toHaveBeenCalledWith('click', expect.any(Function), {
+				passive: true,
+			});
 		});
 
-		it('removes event listeners on unmount', () => {
+		it('removes activity listeners on unmount', () => {
 			const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
 
 			const { unmount } = renderHook(() => useActivityTracker('session-1', mockSetSessions));
 
 			unmount();
 
+			// Shared activity bus detaches all listeners when last subscriber unsubscribes
 			expect(removeEventListenerSpy).toHaveBeenCalledWith('keydown', expect.any(Function));
 			expect(removeEventListenerSpy).toHaveBeenCalledWith('mousedown', expect.any(Function));
-			// Note: mousemove is intentionally NOT listened to (CPU performance optimization)
 			expect(removeEventListenerSpy).toHaveBeenCalledWith('wheel', expect.any(Function));
 			expect(removeEventListenerSpy).toHaveBeenCalledWith('touchstart', expect.any(Function));
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('click', expect.any(Function));
 		});
 
 		it('responds to keydown events', () => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { Session } from '../../types';
+import { subscribeToActivity } from '../../utils/activityBus';
 
 const ACTIVITY_TIMEOUT_MS = 60000; // 1 minute of inactivity = idle
 const TICK_INTERVAL_MS = 1000; // Update every second
@@ -142,7 +143,9 @@ export function useActivityTracker(
 		}
 	}, [startInterval]);
 
-	// Listen to global activity events
+	// Listen to global activity events via shared activity bus
+	// (Consolidates keydown/mousedown/wheel/touchstart into a single set of passive listeners
+	// shared with useHandsOnTimeTracker and useGitStatusPolling)
 	useEffect(() => {
 		const handleActivity = () => {
 			lastActivityRef.current = Date.now();
@@ -155,20 +158,7 @@ export function useActivityTracker(
 			}
 		};
 
-		// Listen for various user interactions
-		// Note: mousemove is intentionally excluded - it fires hundreds of times per second
-		// and would cause excessive CPU usage. mousedown/keydown are sufficient for activity detection.
-		window.addEventListener('keydown', handleActivity);
-		window.addEventListener('mousedown', handleActivity);
-		window.addEventListener('wheel', handleActivity);
-		window.addEventListener('touchstart', handleActivity);
-
-		return () => {
-			window.removeEventListener('keydown', handleActivity);
-			window.removeEventListener('mousedown', handleActivity);
-			window.removeEventListener('wheel', handleActivity);
-			window.removeEventListener('touchstart', handleActivity);
-		};
+		return subscribeToActivity(handleActivity);
 	}, [startInterval]);
 
 	return { onActivity };

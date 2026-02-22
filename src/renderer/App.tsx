@@ -4739,12 +4739,12 @@ function MaestroConsoleInner() {
 		// Merge session modal and send to agent modal
 		setMergeSessionModalOpen,
 		setSendToAgentModalOpen,
-		// Summarize and continue
-		canSummarizeActiveTab: (() => {
+		// Summarize and continue (getter: evaluated lazily only when shortcut fires)
+		get canSummarizeActiveTab() {
 			if (!activeSession || !activeSession.activeTabId) return false;
 			const activeTab = activeSession.aiTabs.find((t) => t.id === activeSession.activeTabId);
 			return canSummarize(activeSession.contextUsage, activeTab?.logs);
-		})(),
+		},
 		summarizeAndContinue: handleSummarizeAndContinue,
 
 		// Keyboard mastery gamification
