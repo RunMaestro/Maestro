@@ -101,6 +101,9 @@ let getSessionsCallback: GetSessionsCallback | null = null;
 let getCustomEnvVarsCallback: GetCustomEnvVarsCallback | null = null;
 let getAgentConfigCallback: GetAgentConfigCallback | null = null;
 
+// Module-level callback for conductor profile lookup
+let getConductorProfileCallback: (() => string) | null = null;
+
 // Module-level SSH store for remote execution support
 let sshStore: SshRemoteSettingsStore | null = null;
 
@@ -181,6 +184,14 @@ export function setGetCustomEnvVarsCallback(callback: GetCustomEnvVarsCallback):
 
 export function setGetAgentConfigCallback(callback: GetAgentConfigCallback): void {
 	getAgentConfigCallback = callback;
+}
+
+/**
+ * Sets the callback for getting the conductor profile.
+ * Called from index.ts during initialization.
+ */
+export function setGetConductorProfileCallback(callback: () => string): void {
+	getConductorProfileCallback = callback;
 }
 
 /**
@@ -365,8 +376,7 @@ export async function routeUserMessage(
 						if (agent?.available) {
 							const participantName = agentDef.name;
 							const defaultCwd = os.homedir();
-							const agentConfigValues =
-								getAgentConfigCallback?.(agentDef.id) || {};
+							const agentConfigValues = getAgentConfigCallback?.(agentDef.id) || {};
 							await addFreshParticipant(
 								groupChatId,
 								participantName,
@@ -374,7 +384,7 @@ export async function routeUserMessage(
 								processManager,
 								defaultCwd,
 								agentDetector,
-								agentConfigValues,
+								agentConfigValues
 							);
 							existingParticipantNames.add(participantName);
 
@@ -439,7 +449,9 @@ export async function routeUserMessage(
 			const agent = await agentDetector.getAgent(chat.moderatorAgentId);
 
 			if (!agent || !agent.available) {
-				throw new Error(`Agent '${chat.moderatorAgentId}' is not installed or unavailable. Install it or use an available agent.`);
+				throw new Error(
+					`Agent '${chat.moderatorAgentId}' is not installed or unavailable. Install it or use an available agent.`
+				);
 			}
 
 			// Use custom path from moderator config if set, otherwise use resolved path
@@ -464,41 +476,95 @@ export async function routeUserMessage(
 				);
 				if (availableSessions.length > 0) {
 					// Use normalized names (spaces → hyphens) so moderator can @mention them properly
-					availableSessionsContext = `\n\n## Available Maestro Sessions (can be added via @mention):\n${availableSessions.map((s) => `- @${normalizeMentionName(s.name)} (${s.toolType})`).join('\n')}`;
+					availableSessionsContext = `\n\n## Available Maestro Sessions (EXISTING agents with project context, add via @mention):\n${availableSessions.map((s) => `- @${normalizeMentionName(s.name)} (${s.toolType}) — has existing project context`).join('\n')}`;
 				}
 			}
 
-			// Build the prompt with context
-			const chatHistory = await readLog(chat.logPath);
-
-			const historyContext = chatHistory
-				.slice(-20)
-				.map((m) => `[${m.from}]: ${m.content}`)
-				.join('\n');
+			// Build available agent types context (installed agents that can be spawned as fresh participants)
+			// Show ALL available agent types even if sessions of the same type exist —
+			// the moderator prompt instructs it to ask the user which they prefer when both exist
+			let availableAgentTypesContext = '';
+			if (agentDetector) {
+				const agentDefs = getVisibleAgentDefinitions();
+				const participantNames = new Set(chat.participants.map((p) => p.name));
+				const freshAgentTypes: string[] = [];
+				for (const def of agentDefs) {
+					// Skip if already a participant with this exact name
+					if (participantNames.has(def.name)) continue;
+					try {
+						const agentInfo = await agentDetector.getAgent(def.id);
+						if (agentInfo?.available) {
+							freshAgentTypes.push(
+								`- @${normalizeMentionName(def.name)} (${def.id}) — spawns a new instance`
+							);
+						}
+					} catch {
+						// Skip unavailable agents
+					}
+				}
+				if (freshAgentTypes.length > 0) {
+					availableAgentTypesContext = `\n\n## Available Agent Types (spawn a NEW instance via @mention):\n${freshAgentTypes.join('\n')}`;
+				}
+			}
 
 			// Wrap untrusted content in XML boundary markers to prevent prompt injection
-			const boundedHistory = '<chat-history>\n' + historyContext + '\n</chat-history>';
 			const boundedMessage = '<user-message>\n' + message + '\n</user-message>';
 
-			const fullPrompt = `${getModeratorSystemPrompt()}
+			// Check if we can resume the moderator's prior session (token savings)
+			const canResumeModerator = !!(chat.moderatorAgentSessionId && agent.resumeArgs);
+
+			let promptToSend: string;
+			if (canResumeModerator) {
+				// Resume mode: send only new message + current context (skip system prompt + history)
+				// The agent CLI loads its prior conversation from disk automatically
+				let resumePrompt = `## New User Message${readOnly ? ' (READ-ONLY MODE - do not make changes)' : ''}:\n${boundedMessage}\n\n## Current Participants:\n${participantContext}`;
+				if (availableSessionsContext) {
+					resumePrompt += availableSessionsContext;
+				}
+				if (availableAgentTypesContext) {
+					resumePrompt += availableAgentTypesContext;
+				}
+				promptToSend = resumePrompt;
+				logger.debug('Moderator resuming session', LOG_CONTEXT, {
+					groupChatId,
+					agentSessionId: chat.moderatorAgentSessionId,
+				});
+			} else {
+				// Full prompt mode: include system prompt + full history (first turn or no resume support)
+				const chatHistory = await readLog(chat.logPath);
+				const historyContext = chatHistory
+					.slice(-20)
+					.map((m) => `[${m.from}]: ${m.content}`)
+					.join('\n');
+				const boundedHistory = '<chat-history>\n' + historyContext + '\n</chat-history>';
+
+				const conductorProfile = getConductorProfileCallback?.() || '';
+				const systemPrompt = getModeratorSystemPrompt().replace(
+					'{{CONDUCTOR_PROFILE}}',
+					conductorProfile
+				);
+
+				promptToSend = `${systemPrompt}
 
 ## Current Participants:
-${participantContext}${availableSessionsContext}
+${participantContext}${availableSessionsContext}${availableAgentTypesContext}
 
 ## Chat History:
 ${boundedHistory}
 
 ## User Request${readOnly ? ' (READ-ONLY MODE - do not make changes)' : ''}:
 ${boundedMessage}`;
+			}
 
 			// Get the base args from the agent configuration
 			const args = [...agent.args];
 			const agentConfigValues = getAgentConfigCallback?.(chat.moderatorAgentId) || {};
 			const baseArgs = buildAgentArgs(agent, {
 				baseArgs: args,
-				prompt: fullPrompt,
+				prompt: promptToSend,
 				cwd: os.homedir(),
 				readOnlyMode: true,
+				agentSessionId: canResumeModerator ? chat.moderatorAgentSessionId : undefined,
 			});
 			const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 				agentConfigValues,
@@ -521,7 +587,7 @@ ${boundedMessage}`;
 				let spawnCommand = command;
 				let spawnArgs = finalArgs;
 				let spawnCwd = os.homedir();
-				let spawnPrompt: string | undefined = fullPrompt;
+				let spawnPrompt: string | undefined = promptToSend;
 				let spawnEnvVars =
 					configResolution.effectiveCustomEnvVars ??
 					getCustomEnvVarsCallback?.(chat.moderatorAgentId);
@@ -535,7 +601,7 @@ ${boundedMessage}`;
 							command,
 							args: finalArgs,
 							cwd: os.homedir(),
-							prompt: fullPrompt,
+							prompt: promptToSend,
 							customEnvVars:
 								configResolution.effectiveCustomEnvVars ??
 								getCustomEnvVarsCallback?.(chat.moderatorAgentId),
@@ -667,6 +733,15 @@ export async function routeModeratorResponse(
 
 	const existingParticipantNames = new Set(chat.participants.map((p) => p.name));
 
+	// Track which agent types have been added in THIS response to prevent duplicates.
+	// E.g., if an existing claude-code session is added, don't also spawn a fresh claude-code instance.
+	const addedAgentTypes = new Set<string>();
+
+	// Also collect the agent types already present as participants
+	for (const p of chat.participants) {
+		addedAgentTypes.add(p.agentId);
+	}
+
 	// Check for mentions that aren't already participants but match available sessions
 	if (processManager && getSessionsCallback) {
 		const sessions = getSessionsCallback();
@@ -686,6 +761,15 @@ export async function routeModeratorResponse(
 			);
 
 			if (matchingSession) {
+				// Skip if we already added an agent of this type in this response
+				if (addedAgentTypes.has(matchingSession.toolType)) {
+					logger.debug(
+						`Skipping duplicate agent type ${matchingSession.toolType} (session: ${matchingSession.name})`,
+						LOG_CONTEXT,
+						{ groupChatId }
+					);
+					continue;
+				}
 				try {
 					// Use the original session name as the participant name
 					const participantName = matchingSession.name;
@@ -713,6 +797,7 @@ export async function routeModeratorResponse(
 						sshStore ?? undefined
 					);
 					existingParticipantNames.add(participantName);
+					addedAgentTypes.add(matchingSession.toolType);
 
 					// Emit participant changed event so UI updates
 					const updatedChatForEmit = await loadGroupChat(groupChatId);
@@ -742,13 +827,21 @@ export async function routeModeratorResponse(
 						def.id.toLowerCase() === mentionedName.toLowerCase()
 				);
 				if (agentDef) {
+					// Skip if we already added an agent of this type in this response
+					if (addedAgentTypes.has(agentDef.id)) {
+						logger.debug(
+							`Skipping duplicate agent type ${agentDef.id} (fresh spawn: ${agentDef.name})`,
+							LOG_CONTEXT,
+							{ groupChatId }
+						);
+						continue;
+					}
 					try {
 						const agent = await agentDetector.getAgent(agentDef.id);
 						if (agent?.available) {
 							const participantName = agentDef.name;
 							const defaultCwd = os.homedir();
-							const agentConfigValues =
-								getAgentConfigCallback?.(agentDef.id) || {};
+							const agentConfigValues = getAgentConfigCallback?.(agentDef.id) || {};
 							await addFreshParticipant(
 								groupChatId,
 								participantName,
@@ -756,9 +849,10 @@ export async function routeModeratorResponse(
 								processManager,
 								defaultCwd,
 								agentDetector,
-								agentConfigValues,
+								agentConfigValues
 							);
 							existingParticipantNames.add(participantName);
+							addedAgentTypes.add(agentDef.id);
 
 							// Emit participant changed event so UI updates
 							const updatedChatForEmit = await loadGroupChat(groupChatId);
@@ -821,7 +915,10 @@ export async function routeModeratorResponse(
 			// Find the participant info
 			const participant = updatedChat.participants.find((p) => p.name === participantName);
 			if (!participant) {
-				logger.warn('Participant not found in chat, skipping', LOG_CONTEXT, { participantName, groupChatId });
+				logger.warn('Participant not found in chat, skipping', LOG_CONTEXT, {
+					participantName,
+					groupChatId,
+				});
 				continue;
 			}
 
@@ -835,32 +932,52 @@ export async function routeModeratorResponse(
 			const agent = await agentDetector.getAgent(participant.agentId);
 
 			if (!agent || !agent.available) {
-				logger.error('Agent not available for participant', LOG_CONTEXT, { agentId: participant.agentId, participantName });
+				logger.error('Agent not available for participant', LOG_CONTEXT, {
+					agentId: participant.agentId,
+					participantName,
+				});
 				continue;
 			}
 
-			// Build the prompt with context for this participant
-			// Uses template from src/prompts/group-chat-participant-request.md
-			const readOnlyNote = readOnly
-				? '\n\n**READ-ONLY MODE:** Do not make any file changes. Only analyze, review, or provide information.'
-				: '';
-			const readOnlyLabel = readOnly ? ' (READ-ONLY MODE)' : '';
-			const readOnlyInstruction = readOnly
-				? ' Remember: READ-ONLY mode is active, do not modify any files.'
-				: ' If you need to perform any actions, do so and report your findings.';
+			// Check if we can resume this participant's prior session (token savings)
+			const canResumeParticipant = !!(participant.agentSessionId && agent.resumeArgs);
 
-			// Get the group chat folder path for file access permissions
-			const groupChatFolder = getGroupChatDir(groupChatId);
+			let participantPrompt: string;
+			if (canResumeParticipant) {
+				// Resume mode: send only the new delegation (skip system prompt + history)
+				const readOnlyLabel = readOnly ? ' (READ-ONLY MODE)' : '';
+				const readOnlyInstruction = readOnly
+					? ' Remember: READ-ONLY mode is active, do not modify any files.'
+					: ' If you need to perform any actions, do so and report your findings.';
+				participantPrompt = `## New Task in Group Chat "${updatedChat.name}"${readOnlyLabel}:\n${boundedMessage}\n${readOnlyInstruction}`;
+				logger.debug('Participant resuming session', LOG_CONTEXT, {
+					groupChatId,
+					participantName,
+					agentSessionId: participant.agentSessionId,
+				});
+			} else {
+				// Full prompt mode (first delegation or no resume support)
+				const readOnlyNote = readOnly
+					? '\n\n**READ-ONLY MODE:** Do not make any file changes. Only analyze, review, or provide information.'
+					: '';
+				const readOnlyLabel = readOnly ? ' (READ-ONLY MODE)' : '';
+				const readOnlyInstruction = readOnly
+					? ' Remember: READ-ONLY mode is active, do not modify any files.'
+					: ' If you need to perform any actions, do so and report your findings.';
 
-			const participantPrompt = groupChatParticipantRequestPrompt
-				.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
-				.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
-				.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
-				.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
-				.replace(/\{\{HISTORY_CONTEXT\}\}/g, boundedHistory)
-				.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
-				.replace(/\{\{MESSAGE\}\}/g, boundedMessage)
-				.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
+				// Get the group chat folder path for file access permissions
+				const groupChatFolder = getGroupChatDir(groupChatId);
+
+				participantPrompt = groupChatParticipantRequestPrompt
+					.replace(/\{\{PARTICIPANT_NAME\}\}/g, participantName)
+					.replace(/\{\{GROUP_CHAT_NAME\}\}/g, updatedChat.name)
+					.replace(/\{\{READ_ONLY_NOTE\}\}/g, readOnlyNote)
+					.replace(/\{\{GROUP_CHAT_FOLDER\}\}/g, groupChatFolder)
+					.replace(/\{\{HISTORY_CONTEXT\}\}/g, boundedHistory)
+					.replace(/\{\{READ_ONLY_LABEL\}\}/g, readOnlyLabel)
+					.replace(/\{\{MESSAGE\}\}/g, boundedMessage)
+					.replace(/\{\{READ_ONLY_INSTRUCTION\}\}/g, readOnlyInstruction);
+			}
 
 			// Create a unique session ID for this batch process
 			const sessionId = `group-chat-${groupChatId}-participant-${participantName}-${Date.now()}`;
@@ -953,7 +1070,11 @@ export async function routeModeratorResponse(
 					sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
 				});
 
-				logger.debug('Participant process spawned', LOG_CONTEXT, { groupChatId, participantName, sessionId });
+				logger.debug('Participant process spawned', LOG_CONTEXT, {
+					groupChatId,
+					participantName,
+					sessionId,
+				});
 
 				// Track this participant as pending response
 				participantsToRespond.add(participantName);
@@ -1197,12 +1318,66 @@ export async function spawnModeratorSynthesis(
 					.join('\n')
 			: '(No agents currently in this group chat)';
 
-	const synthesisPrompt = `${getModeratorSystemPrompt()}
+	// Build available agent types context for synthesis (installed agents that can be spawned as fresh participants)
+	// Show ALL available types — moderator prompt instructs asking user when both session + type exist
+	let synthesisAgentTypesContext = '';
+	const participantNames = new Set(chat.participants.map((p) => p.name));
+	const agentDefs = getVisibleAgentDefinitions();
+	const freshAgentTypes: string[] = [];
+	for (const def of agentDefs) {
+		if (participantNames.has(def.name)) continue;
+		try {
+			const agentInfo = await agentDetector.getAgent(def.id);
+			if (agentInfo?.available) {
+				freshAgentTypes.push(
+					`- @${normalizeMentionName(def.name)} (${def.id}) — spawns a new instance`
+				);
+			}
+		} catch {
+			// Skip unavailable agents
+		}
+	}
+	if (freshAgentTypes.length > 0) {
+		synthesisAgentTypesContext = `\n\n## Available Agent Types (spawn a NEW instance via @mention):\n${freshAgentTypes.join('\n')}`;
+	}
+
+	// Check if we can resume the moderator's prior session for synthesis (token savings)
+	const canResumeSynthesis = !!(chat.moderatorAgentSessionId && agent.resumeArgs);
+
+	let synthesisPrompt: string;
+	if (canResumeSynthesis) {
+		// Resume mode: moderator already has system prompt + prior context
+		// Just send new participant responses + synthesis instruction
+		synthesisPrompt = `${getModeratorSynthesisPrompt()}
+
+## Current Participants (you can @mention these for follow-up):
+${participantContext}${synthesisAgentTypesContext}
+
+## Recent Participant Responses:
+${boundedHistory}
+
+## Your Task:
+Review the agent responses above. Either:
+1. Synthesize into a final answer for the user (NO @mentions) if the question is fully answered
+2. @mention specific agents for follow-up if you need more information`;
+		logger.debug('Synthesis resuming moderator session', LOG_CONTEXT, {
+			groupChatId,
+			agentSessionId: chat.moderatorAgentSessionId,
+		});
+	} else {
+		// Full prompt mode: include system prompt (first synthesis or no resume support)
+		const conductorProfile = getConductorProfileCallback?.() || '';
+		const synthesisSystemPrompt = getModeratorSystemPrompt().replace(
+			'{{CONDUCTOR_PROFILE}}',
+			conductorProfile
+		);
+
+		synthesisPrompt = `${synthesisSystemPrompt}
 
 ${getModeratorSynthesisPrompt()}
 
 ## Current Participants (you can @mention these for follow-up):
-${participantContext}
+${participantContext}${synthesisAgentTypesContext}
 
 ## Recent Chat History (including participant responses):
 ${boundedHistory}
@@ -1211,6 +1386,7 @@ ${boundedHistory}
 Review the agent responses above. Either:
 1. Synthesize into a final answer for the user (NO @mentions) if the question is fully answered
 2. @mention specific agents for follow-up if you need more information`;
+	}
 
 	const agentConfigValues = getAgentConfigCallback?.(chat.moderatorAgentId) || {};
 	const baseArgs = buildAgentArgs(agent, {
@@ -1218,6 +1394,7 @@ Review the agent responses above. Either:
 		prompt: synthesisPrompt,
 		cwd: os.homedir(),
 		readOnlyMode: true,
+		agentSessionId: canResumeSynthesis ? chat.moderatorAgentSessionId : undefined,
 	});
 	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
 		agentConfigValues,
@@ -1239,8 +1416,7 @@ Review the agent responses above. Either:
 		let spawnCwd = os.homedir();
 		let spawnPrompt: string | undefined = synthesisPrompt;
 		let spawnEnvVars =
-			configResolution.effectiveCustomEnvVars ??
-			getCustomEnvVarsCallback?.(chat.moderatorAgentId);
+			configResolution.effectiveCustomEnvVars ?? getCustomEnvVarsCallback?.(chat.moderatorAgentId);
 
 		// Apply SSH wrapping if configured
 		if (sshStore && chat.moderatorConfig?.sshRemoteConfig) {
@@ -1335,7 +1511,9 @@ export async function respawnParticipantWithRecovery(
 	// Get the agent configuration
 	const agent = await agentDetector.getAgent(participant.agentId);
 	if (!agent || !agent.available) {
-		throw new Error(`Agent '${participant.agentId}' is not installed or unavailable. Install it or use an available agent.`);
+		throw new Error(
+			`Agent '${participant.agentId}' is not installed or unavailable. Install it or use an available agent.`
+		);
 	}
 
 	// Build recovery context with the agent's prior statements
@@ -1467,5 +1645,9 @@ export async function respawnParticipantWithRecovery(
 		sendPromptViaStdinRaw: winConfig.sendPromptViaStdinRaw,
 	});
 
-	logger.debug('Recovery process spawned', LOG_CONTEXT, { groupChatId, participantName, sessionId });
+	logger.debug('Recovery process spawned', LOG_CONTEXT, {
+		groupChatId,
+		participantName,
+		sessionId,
+	});
 }
