@@ -385,6 +385,82 @@ describe('StdoutHandler', () => {
 	});
 
 	describe('codex multi-message turn handling', () => {
+		it('should reset resultEmitted on new agent_message so subsequent flush captures latest text', () => {
+			// Reproduces the bug where Codex tool calls cause an interim flush,
+			// then a second agent_message with @mentions arrives but the buffer
+			// is never updated because resultEmitted was already true.
+			const parser = {
+				agentId: 'codex',
+				parseJsonLine: vi.fn((line: string) => {
+					const parsed = JSON.parse(line);
+					if (parsed.type === 'agent') {
+						return { type: 'result', text: parsed.text };
+					}
+					if (parsed.type === 'done') {
+						return {
+							type: 'usage',
+							usage: {
+								inputTokens: 100,
+								outputTokens: 50,
+								cacheReadTokens: 0,
+								cacheCreationTokens: 0,
+								contextWindow: 400000,
+							},
+						};
+					}
+					return { type: 'system' };
+				}),
+				extractUsage: vi.fn((event: any) => event.usage || null),
+				extractSessionId: vi.fn(() => null),
+				extractSlashCommands: vi.fn(() => null),
+				isResultMessage: vi.fn((event: any) => event.type === 'result' && !!event.text),
+				detectErrorFromLine: vi.fn(() => null),
+			};
+
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: parser as any,
+			});
+
+			// Step 1: First agent_message (reasoning)
+			sendJsonLine(handler, sessionId, {
+				type: 'agent',
+				text: '**Adding new Claude and Codex agents**',
+			});
+			expect(proc.streamedText).toBe('**Adding new Claude and Codex agents**');
+			expect(proc.resultEmitted).toBe(false);
+
+			// Step 2: Usage event flushes the reasoning text
+			sendJsonLine(handler, sessionId, { type: 'done' });
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(1);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'**Adding new Claude and Codex agents**'
+			);
+
+			// Step 3: Second agent_message with @mentions (the real answer)
+			sendJsonLine(handler, sessionId, {
+				type: 'agent',
+				text: 'Spawning fresh Claude and Codex agents now. @Claude-Code @Codex',
+			});
+			// resultEmitted should be reset so the next usage flush works
+			expect(proc.resultEmitted).toBe(false);
+			expect(proc.streamedText).toBe(
+				'Spawning fresh Claude and Codex agents now. @Claude-Code @Codex'
+			);
+
+			// Step 4: Final usage event should flush the updated text
+			sendJsonLine(handler, sessionId, { type: 'done' });
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledTimes(2);
+			expect(bufferManager.emitDataBuffered).toHaveBeenLastCalledWith(
+				sessionId,
+				'Spawning fresh Claude and Codex agents now. @Claude-Code @Codex'
+			);
+		});
+
 		it('should emit only the final Codex result at turn completion', () => {
 			const parser = {
 				agentId: 'codex',
