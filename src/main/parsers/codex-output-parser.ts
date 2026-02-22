@@ -33,6 +33,78 @@ import * as path from 'path';
 import * as os from 'os';
 
 /**
+ * OpenAI model pricing per million tokens (USD)
+ * Source: https://openai.com/api/pricing/ (updated 2026-02-21)
+ */
+interface ModelPricing {
+	inputPerM: number;
+	cachedInputPerM: number;
+	outputPerM: number;
+}
+
+const MODEL_PRICING: Record<string, ModelPricing> = {
+	// GPT-4o family
+	'gpt-4o': { inputPerM: 2.5, cachedInputPerM: 1.25, outputPerM: 10.0 },
+	'gpt-4o-mini': { inputPerM: 0.15, cachedInputPerM: 0.075, outputPerM: 0.6 },
+	// o-series reasoning models
+	o1: { inputPerM: 15.0, cachedInputPerM: 7.5, outputPerM: 60.0 },
+	'o1-mini': { inputPerM: 1.1, cachedInputPerM: 0.55, outputPerM: 4.4 },
+	o3: { inputPerM: 2.0, cachedInputPerM: 0.5, outputPerM: 8.0 },
+	'o3-mini': { inputPerM: 1.1, cachedInputPerM: 0.55, outputPerM: 4.4 },
+	'o4-mini': { inputPerM: 1.1, cachedInputPerM: 0.275, outputPerM: 4.4 },
+	// GPT-5 family
+	'gpt-5-mini': { inputPerM: 0.25, cachedInputPerM: 0.025, outputPerM: 2.0 },
+	'gpt-5': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1-codex': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1-codex-max': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.2': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.2-codex': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.2-codex-max': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3-codex': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3-codex-max': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	// GPT-4 Turbo
+	'gpt-4-turbo': { inputPerM: 10.0, cachedInputPerM: 5.0, outputPerM: 30.0 },
+	// Default fallback (assumes GPT-5.2-codex pricing)
+	default: { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+};
+
+/**
+ * Get pricing for a given model
+ */
+function getModelPricing(model: string): ModelPricing {
+	if (MODEL_PRICING[model]) {
+		return MODEL_PRICING[model];
+	}
+	for (const [prefix, pricing] of Object.entries(MODEL_PRICING)) {
+		if (model.startsWith(prefix)) {
+			return pricing;
+		}
+	}
+	return MODEL_PRICING['default'];
+}
+
+/**
+ * Calculate cost in USD from token counts and model pricing
+ * Note: cached_input_tokens is a SUBSET of input_tokens for OpenAI (already included)
+ * So cost = (input - cached) * inputRate + cached * cachedRate + output * outputRate
+ */
+function calculateCost(
+	pricing: ModelPricing,
+	inputTokens: number,
+	outputTokens: number,
+	cachedInputTokens: number
+): number {
+	const uncachedInput = Math.max(0, inputTokens - cachedInputTokens);
+	return (
+		(uncachedInput / 1_000_000) * pricing.inputPerM +
+		(cachedInputTokens / 1_000_000) * pricing.cachedInputPerM +
+		(outputTokens / 1_000_000) * pricing.outputPerM
+	);
+}
+
+/**
  * Known OpenAI model context window sizes (in tokens)
  * Source: https://platform.openai.com/docs/models
  */
@@ -228,9 +300,10 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
 export class CodexOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'codex';
 
-	// Cached context window - read once from config
+	// Cached context window and pricing - read once from config
 	private contextWindow: number;
 	private model: string;
+	private pricing: ModelPricing;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
@@ -244,6 +317,7 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
 		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+		this.pricing = getModelPricing(this.model);
 	}
 
 	/**
@@ -369,13 +443,13 @@ export class CodexOutputParser implements AgentOutputParser {
 				if (msg.model_context_window) {
 					this.contextWindow = msg.model_context_window;
 				}
-				// Don't generate a synthetic session ID here — synthetic IDs (codex-0-*)
-				// can't be used with `codex exec resume` and silently start a new session
-				// instead of erroring. Real session IDs come from thread.started events
-				// (legacy format). If Codex emits both formats, thread.started will
-				// provide the real ID. If only wrapped format is used, resume won't be
-				// attempted (safe fallback to full prompt each turn).
-				return { type: 'init', raw };
+				// Generate a display-only session ID for UI (so participant card doesn't show "pending").
+				// Prefixed with 'codex-0-' to signal it's NOT resumable — synthetic IDs silently
+				// start new sessions with `codex exec resume` instead of erroring.
+				// Real resumable IDs come from thread.started events (legacy format).
+				// The resume logic in group-chat-router.ts checks for this prefix and skips resume.
+				const displaySessionId = `codex-0-${Date.now()}`;
+				return { type: 'init', sessionId: displaySessionId, raw };
 			}
 
 			case 'agent_reasoning_section_break':
@@ -584,7 +658,7 @@ export class CodexOutputParser implements AgentOutputParser {
 	/**
 	 * Extract usage statistics from raw Codex message
 	 * Codex usage structure: { input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens }
-	 * Note: Cost tracking is not supported - Codex doesn't provide cost and pricing varies by model
+	 * Cost is calculated from token counts using model-specific pricing.
 	 */
 	private extractUsageFromRaw(msg: CodexRawMessage): ParsedEvent['usage'] | null {
 		if (!msg.usage) {
@@ -611,7 +685,8 @@ export class CodexOutputParser implements AgentOutputParser {
 			cacheReadTokens: cachedInputTokens,
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
-			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
+			// Cost calculated from token counts using model-specific pricing
+			costUsd: calculateCost(this.pricing, inputTokens, totalOutputTokens, cachedInputTokens),
 			// Context window from Codex config (~/.codex/config.toml) or model lookup table
 			contextWindow: this.contextWindow,
 			// Store reasoning tokens separately for UI display
@@ -650,6 +725,7 @@ export class CodexOutputParser implements AgentOutputParser {
 			outputTokens: totalOutputTokens,
 			cacheReadTokens: cachedInputTokens,
 			cacheCreationTokens: 0,
+			costUsd: calculateCost(this.pricing, inputTokens, totalOutputTokens, cachedInputTokens),
 			contextWindow: this.contextWindow,
 			reasoningTokens: reasoningOutputTokens,
 		};

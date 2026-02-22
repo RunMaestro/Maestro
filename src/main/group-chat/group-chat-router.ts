@@ -511,7 +511,10 @@ export async function routeUserMessage(
 			const boundedMessage = '<user-message>\n' + message + '\n</user-message>';
 
 			// Check if we can resume the moderator's prior session (token savings)
-			const canResumeModerator = !!(chat.moderatorAgentSessionId && agent.resumeArgs);
+			// Skip synthetic Codex session IDs (codex-0-*) — they silently start new sessions
+			const hasResumableModeratorSession =
+				chat.moderatorAgentSessionId && !chat.moderatorAgentSessionId.startsWith('codex-0-');
+			const canResumeModerator = !!(hasResumableModeratorSession && agent.resumeArgs);
 
 			let promptToSend: string;
 			if (canResumeModerator) {
@@ -940,7 +943,10 @@ export async function routeModeratorResponse(
 			}
 
 			// Check if we can resume this participant's prior session (token savings)
-			const canResumeParticipant = !!(participant.agentSessionId && agent.resumeArgs);
+			// Skip synthetic Codex session IDs (codex-0-*) — they silently start new sessions
+			const hasResumableParticipantSession =
+				participant.agentSessionId && !participant.agentSessionId.startsWith('codex-0-');
+			const canResumeParticipant = !!(hasResumableParticipantSession && agent.resumeArgs);
 
 			let participantPrompt: string;
 			if (canResumeParticipant) {
@@ -1342,7 +1348,10 @@ export async function spawnModeratorSynthesis(
 	}
 
 	// Check if we can resume the moderator's prior session for synthesis (token savings)
-	const canResumeSynthesis = !!(chat.moderatorAgentSessionId && agent.resumeArgs);
+	// Skip synthetic Codex session IDs (codex-0-*) — they silently start new sessions
+	const hasResumableSynthesisSession =
+		chat.moderatorAgentSessionId && !chat.moderatorAgentSessionId.startsWith('codex-0-');
+	const canResumeSynthesis = !!(hasResumableSynthesisSession && agent.resumeArgs);
 
 	let synthesisPrompt: string;
 	if (canResumeSynthesis) {

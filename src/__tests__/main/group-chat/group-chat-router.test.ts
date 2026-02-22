@@ -110,6 +110,7 @@ describe('group-chat-router', () => {
 			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
+			killByPrefix: vi.fn().mockReturnValue(0),
 		};
 
 		// Create a mock agent detector that returns a mock agent config

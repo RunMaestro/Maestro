@@ -44,6 +44,8 @@ export interface IProcessManager {
 	write(sessionId: string, data: string): boolean;
 
 	kill(sessionId: string): boolean;
+
+	killByPrefix(prefix: string): number;
 }
 
 /**
@@ -223,10 +225,13 @@ export async function killModerator(
 	groupChatId: string,
 	processManager?: IProcessManager
 ): Promise<void> {
-	const sessionId = activeModeratorSessions.get(groupChatId);
+	const sessionIdPrefix = activeModeratorSessions.get(groupChatId);
 
-	if (sessionId && processManager) {
-		processManager.kill(sessionId);
+	if (sessionIdPrefix && processManager) {
+		// Kill by prefix because batch mode spawns processes with timestamp suffixes
+		// (e.g., "group-chat-{id}-moderator-1771743188276") while the active sessions
+		// map stores the prefix ("group-chat-{id}-moderator").
+		processManager.killByPrefix(sessionIdPrefix);
 	}
 
 	activeModeratorSessions.delete(groupChatId);

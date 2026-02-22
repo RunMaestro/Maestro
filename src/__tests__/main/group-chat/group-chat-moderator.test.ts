@@ -83,6 +83,7 @@ describe('group-chat-moderator', () => {
 			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
+			killByPrefix: vi.fn().mockReturnValue(0),
 		};
 
 		// Clear any leftover sessions from previous tests
@@ -229,13 +230,13 @@ describe('group-chat-moderator', () => {
 	// Test 3.4: killModerator terminates session
 	// ===========================================================================
 	describe('killModerator', () => {
-		it('kills moderator session', async () => {
+		it('kills moderator session by prefix', async () => {
 			const chat = await createTestChat('Kill Test', 'claude-code');
-			const sessionId = await spawnModerator(chat, mockProcessManager);
+			const sessionIdPrefix = await spawnModerator(chat, mockProcessManager);
 
 			await killModerator(chat.id, mockProcessManager);
 
-			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId);
+			expect(mockProcessManager.killByPrefix).toHaveBeenCalledWith(sessionIdPrefix);
 		});
 
 		it('removes session from active sessions', async () => {

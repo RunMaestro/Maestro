@@ -128,6 +128,7 @@ describe('groupChat IPC handlers', () => {
 			spawn: vi.fn().mockReturnValue({ pid: 12345, success: true }),
 			write: vi.fn().mockReturnValue(true),
 			kill: vi.fn().mockReturnValue(true),
+			killByPrefix: vi.fn().mockReturnValue(0),
 		};
 
 		// Setup mock agent detector
