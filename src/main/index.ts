@@ -68,6 +68,7 @@ import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
 	setGetAgentConfigCallback,
+	setGetConductorProfileCallback,
 	setSshStore,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
@@ -711,6 +712,7 @@ function setupIpcHandlers() {
 	// Set up callback for group chat router to lookup custom env vars for agents
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
+	setGetConductorProfileCallback(() => (store.get('conductorProfile') as string) || '');
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));

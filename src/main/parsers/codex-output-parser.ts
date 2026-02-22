@@ -2,22 +2,25 @@
  * Codex CLI Output Parser
  *
  * Parses JSON output from OpenAI Codex CLI (`codex exec --json`).
- * Codex outputs JSONL with the following message types:
+ * Supports two output formats:
  *
- * - thread.started: Thread initialization (contains thread_id for resume)
- * - turn.started: Beginning of a turn (agent is processing)
- * - item.completed: Completed item (reasoning, agent_message, tool_call, tool_result)
- * - turn.completed: End of turn (contains usage stats)
+ * **Legacy format (v0.73.0+):**
+ * - { type: 'thread.started', thread_id: 'uuid' }
+ * - { type: 'turn.started' }
+ * - { type: 'item.completed', item: { id, type, text|tool|args|output } }
+ * - { type: 'turn.completed', usage: { input_tokens, output_tokens, cached_input_tokens } }
  *
- * Key schema details:
- * - Session IDs are called thread_id (not session_id like Claude)
- * - Text content is in item.text for reasoning and agent_message items
- * - Token stats are in usage: { input_tokens, output_tokens, cached_input_tokens }
- * - reasoning_output_tokens tracked separately from output_tokens
- * - Tool calls have item.type: "tool_call" with tool name and args
- * - Tool results have item.type: "tool_result" with output
+ * **New format (v0.103.0+):**
+ * Events wrapped in { id: 'N', msg: { type, ... } }:
+ * - { id: '0', msg: { type: 'task_started', model_context_window: N } }
+ * - { id: '0', msg: { type: 'agent_reasoning', text: '...' } }
+ * - { id: '0', msg: { type: 'agent_message', message: '...' } }
+ * - { id: '0', msg: { type: 'token_count', info: { total_token_usage: {...} }, rate_limits: {...} } }
  *
- * Verified against Codex CLI v0.73.0+ output schema
+ * Also handles config/prompt echo lines:
+ * - { provider: 'openai', ... } (config echo, ignored)
+ * - { prompt: '...' } (prompt echo, ignored)
+ *
  * @see https://github.com/openai/codex
  */
 
@@ -123,8 +126,7 @@ function readCodexConfig(): { model?: string; contextWindow?: number } {
 }
 
 /**
- * Raw message structure from Codex JSON output
- * Based on verified Codex CLI v0.73.0+ output
+ * Raw message structure from Codex JSON output (legacy v0.73.0+ format)
  */
 interface CodexRawMessage {
 	type?:
@@ -141,7 +143,51 @@ interface CodexRawMessage {
 }
 
 /**
- * Item structure for item.completed events
+ * New wrapped message format from Codex CLI v0.103.0+
+ * Events are wrapped in { id: 'N', msg: { type, ... } }
+ */
+interface CodexWrappedMessage {
+	id?: string;
+	msg?: CodexNewMsg;
+	// Config/prompt echo lines
+	provider?: string;
+	prompt?: string;
+}
+
+/**
+ * Inner message from the new wrapped format (v0.103.0+)
+ */
+interface CodexNewMsg {
+	type?: string;
+	// task_started
+	model_context_window?: number;
+	// agent_message
+	message?: string;
+	// agent_reasoning
+	text?: string;
+	// token_count
+	info?: CodexTokenInfo | null;
+	rate_limits?: Record<string, unknown>;
+	// tool_call (new format)
+	tool?: string;
+	args?: Record<string, unknown>;
+	// tool_result (new format)
+	output?: string | number[];
+	// error
+	error?: string | { message?: string; type?: string };
+}
+
+/**
+ * Token usage info from the new format's token_count events
+ */
+interface CodexTokenInfo {
+	total_token_usage?: CodexUsage & { total_tokens?: number };
+	last_token_usage?: CodexUsage & { total_tokens?: number };
+	model_context_window?: number;
+}
+
+/**
+ * Item structure for item.completed events (legacy format)
  */
 interface CodexItem {
 	id?: string;
@@ -154,7 +200,7 @@ interface CodexItem {
 }
 
 /**
- * Usage statistics from turn.completed events
+ * Usage statistics from turn.completed / token_count events
  */
 interface CodexUsage {
 	input_tokens?: number;
@@ -202,13 +248,16 @@ export class CodexOutputParser implements AgentOutputParser {
 
 	/**
 	 * Parse a single JSON line from Codex output.
-	 * Delegates to parseJsonObject after JSON.parse.
+	 * Handles both legacy (v0.73.0+) and new wrapped (v0.103.0+) formats.
 	 *
-	 * Codex message types (verified v0.73.0+):
+	 * Legacy Codex message types (v0.73.0+):
 	 * - { type: 'thread.started', thread_id: 'uuid' }
 	 * - { type: 'turn.started' }
 	 * - { type: 'item.completed', item: { id, type, text|tool|args|output } }
 	 * - { type: 'turn.completed', usage: { input_tokens, output_tokens, cached_input_tokens } }
+	 *
+	 * Wrapped format (v0.103.0+):
+	 * - { id: 'N', msg: { type, ... } }
 	 */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
@@ -216,7 +265,23 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			return this.parseJsonObject(JSON.parse(line));
+			const parsed = JSON.parse(line);
+
+			// Detect new wrapped format: { id: 'N', msg: { type, ... } }
+			if (parsed.id !== undefined && parsed.msg && typeof parsed.msg === 'object') {
+				return this.transformWrappedMessage(parsed as CodexWrappedMessage, parsed);
+			}
+
+			// Detect config/prompt echo lines (new format preamble)
+			if (parsed.provider || parsed.prompt) {
+				return {
+					type: 'system',
+					raw: parsed,
+				};
+			}
+
+			// Legacy format: { type: '...', ... }
+			return this.transformMessage(parsed as CodexRawMessage);
 		} catch {
 			// Not valid JSON - return as raw text event
 			return {
@@ -307,6 +372,101 @@ export class CodexOutputParser implements AgentOutputParser {
 			type: 'system',
 			raw: msg,
 		};
+	}
+
+	/**
+	 * Transform a new wrapped format message (v0.103.0+).
+	 * Events are { id: 'N', msg: { type: '...', ... } }
+	 */
+	private transformWrappedMessage(wrapped: CodexWrappedMessage, raw: unknown): ParsedEvent {
+		const msg = wrapped.msg;
+		if (!msg || !msg.type) {
+			return { type: 'system', raw };
+		}
+
+		switch (msg.type) {
+			case 'task_started': {
+				// Update context window from the actual model value if provided
+				if (msg.model_context_window) {
+					this.contextWindow = msg.model_context_window;
+				}
+				// New format doesn't have thread_id like legacy format,
+				// so generate a session ID from the wrapper id + timestamp
+				const generatedSessionId = `codex-${wrapped.id || '0'}-${Date.now()}`;
+				return { type: 'init', sessionId: generatedSessionId, raw };
+			}
+
+			case 'agent_reasoning_section_break':
+				return { type: 'system', raw };
+
+			case 'agent_reasoning':
+				// Reasoning shows model's thinking process — emit as partial text
+				return {
+					type: 'text',
+					text: this.formatReasoningText(msg.text || ''),
+					isPartial: true,
+					raw,
+				};
+
+			case 'agent_message':
+				// Final text response — the new format uses 'message' field instead of 'text'
+				return {
+					type: 'result',
+					text: msg.message || msg.text || '',
+					isPartial: false,
+					raw,
+				};
+
+			case 'tool_call':
+				this.lastToolName = msg.tool || null;
+				return {
+					type: 'tool_use',
+					toolName: msg.tool,
+					toolState: {
+						status: 'running',
+						input: msg.args,
+					},
+					raw,
+				};
+
+			case 'tool_result': {
+				const toolName = this.lastToolName || undefined;
+				this.lastToolName = null;
+				return {
+					type: 'tool_use',
+					toolName,
+					toolState: {
+						status: 'completed',
+						output: this.decodeToolOutput(msg.output),
+					},
+					raw,
+				};
+			}
+
+			case 'token_count': {
+				// token_count with usage info serves as the turn completion signal
+				const event: ParsedEvent = {
+					type: 'usage',
+					raw,
+				};
+				const usage = this.extractUsageFromTokenCount(msg);
+				if (usage) {
+					event.usage = usage;
+				}
+				return event;
+			}
+
+			case 'error':
+			case 'turn.failed':
+				return {
+					type: 'error',
+					text: extractErrorText(msg.error, msg.text || 'Unknown error'),
+					raw,
+				};
+
+			default:
+				return { type: 'system', raw };
+		}
 	}
 
 	/**
@@ -478,6 +638,42 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Extract usage stats from new format token_count events.
+	 * New format: { type: 'token_count', info: { total_token_usage: {...}, last_token_usage: {...} } }
+	 */
+	private extractUsageFromTokenCount(msg: CodexNewMsg): ParsedEvent['usage'] | null {
+		if (!msg.info) {
+			return null;
+		}
+
+		// Use last_token_usage for per-turn deltas, fall back to total_token_usage
+		const tokenUsage = msg.info.last_token_usage || msg.info.total_token_usage;
+		if (!tokenUsage) {
+			return null;
+		}
+
+		const inputTokens = tokenUsage.input_tokens || 0;
+		const outputTokens = tokenUsage.output_tokens || 0;
+		const cachedInputTokens = tokenUsage.cached_input_tokens || 0;
+		const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
+		const totalOutputTokens = outputTokens + reasoningOutputTokens;
+
+		// Update context window if provided in token_count
+		if (msg.info.model_context_window) {
+			this.contextWindow = msg.info.model_context_window;
+		}
+
+		return {
+			inputTokens,
+			outputTokens: totalOutputTokens,
+			cacheReadTokens: cachedInputTokens,
+			cacheCreationTokens: 0,
+			contextWindow: this.contextWindow,
+			reasoningTokens: reasoningOutputTokens,
+		};
+	}
+
+	/**
 	 * Check if an event is a final result message
 	 * For Codex, agent_message items contain the actual response text
 	 * We check for 'result' type which agent_message events are now marked as
@@ -548,6 +744,16 @@ export class CodexOutputParser implements AgentOutputParser {
 			parsedJson = parsed;
 			errorText = extractErrorText(obj.error as CodexRawMessage['error']);
 			if (errorText === 'Unknown error') errorText = null;
+		}
+
+		// Check new wrapped format: { id: 'N', msg: { type: 'error', ... } }
+		if (!errorText && obj.msg && typeof obj.msg === 'object') {
+			const msg = obj.msg as Record<string, unknown>;
+			if (msg.type === 'error' || msg.type === 'turn.failed' || msg.error) {
+				parsedJson = parsed;
+				errorText = extractErrorText((msg.error || msg.text) as CodexRawMessage['error']);
+				if (errorText === 'Unknown error') errorText = null;
+			}
 		}
 
 		if (!errorText) {
