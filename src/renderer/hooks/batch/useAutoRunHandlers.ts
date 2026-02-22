@@ -195,6 +195,7 @@ export function useAutoRunHandlers(
 				worktreeEnabled: config.worktree?.enabled,
 				worktreePath: config.worktree?.path,
 				worktreeBranch: config.worktree?.branchName,
+				worktreeTargetMode: config.worktreeTarget?.mode,
 			});
 			if (!activeSession || !activeSession.autoRunFolderPath) {
 				window.maestro.logger.log(
@@ -204,12 +205,27 @@ export function useAutoRunHandlers(
 				);
 				return;
 			}
+
+			// Determine target session ID — may differ from activeSession when running in a worktree
+			let targetSessionId = activeSession.id;
+			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
+				targetSessionId = config.worktreeTarget.sessionId;
+			} else if (config.worktreeTarget?.mode === 'create-new') {
+				// TODO (Phase 2): Spawn new worktree agent and use its session ID
+				console.warn('[AutoRunHandlers] create-new worktree mode not yet implemented, falling back to active session');
+			} else if (config.worktreeTarget?.mode === 'existing-closed') {
+				// TODO (Phase 2): Open closed worktree as agent and use its session ID
+				console.warn('[AutoRunHandlers] existing-closed worktree mode not yet implemented, falling back to active session');
+			}
+
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {
-				sessionId: activeSession.id,
+				sessionId: targetSessionId,
 				folderPath: activeSession.autoRunFolderPath,
+				isWorktreeTarget: targetSessionId !== activeSession.id,
 			});
 			setBatchRunnerModalOpen(false);
-			startBatchRun(activeSession.id, config, activeSession.autoRunFolderPath);
+			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
+			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
 		},
 		[activeSession, startBatchRun, setBatchRunnerModalOpen]
 	);

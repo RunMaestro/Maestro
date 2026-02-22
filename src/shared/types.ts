@@ -107,6 +107,16 @@ export interface WorktreeConfig {
 	prTargetBranch: string;
 }
 
+// Target specification for dispatching Auto Run to a worktree agent
+export interface WorktreeRunTarget {
+	mode: 'existing-open' | 'existing-closed' | 'create-new';
+	sessionId?: string;
+	worktreePath?: string;
+	baseBranch?: string;
+	newBranchName?: string;
+	createPROnCompletion: boolean;
+}
+
 // Configuration for starting a batch run
 export interface BatchRunConfig {
 	documents: BatchDocumentEntry[];
@@ -114,6 +124,7 @@ export interface BatchRunConfig {
 	loopEnabled: boolean;
 	maxLoops?: number | null;
 	worktree?: WorktreeConfig;
+	worktreeTarget?: WorktreeRunTarget;
 }
 
 // Agent configuration

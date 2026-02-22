@@ -592,7 +592,10 @@ export function useBatchProcessor({
 	const readDocAndCountTasks = documentProcessor.readDocAndCountTasks;
 
 	/**
-	 * Start a batch processing run for a specific session with multi-document support
+	 * Start a batch processing run for a specific session with multi-document support.
+	 * Note: sessionId and folderPath can belong to different sessions when running
+	 * in a worktree — the parent session owns the Auto Run documents (folderPath)
+	 * while the worktree agent (sessionId) executes the tasks.
 	 */
 	const startBatchRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {

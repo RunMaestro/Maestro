@@ -19,6 +19,7 @@ export type {
 	PlaybookDocumentEntry,
 	Playbook,
 	ThinkingMode,
+	WorktreeRunTarget,
 } from '../../shared/types';
 
 // Re-export Symphony types for session metadata
@@ -29,6 +30,7 @@ import type { SymphonySessionMetadata } from '../../shared/symphony-types';
 // Import for extension in this file
 import type {
 	WorktreeConfig as BaseWorktreeConfig,
+	WorktreeRunTarget,
 	BatchDocumentEntry,
 	UsageStats,
 	ToolType,
@@ -272,6 +274,7 @@ export interface BatchRunConfig {
 	loopEnabled: boolean; // Loop back to first doc when done
 	maxLoops?: number | null; // Max loop iterations (null/undefined = infinite)
 	worktree?: WorktreeConfig; // Optional worktree configuration
+	worktreeTarget?: WorktreeRunTarget; // Optional target for dispatching to a worktree agent
 }
 
 // Import BatchProcessingState for state machine integration

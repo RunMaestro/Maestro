@@ -14,7 +14,7 @@ import {
 	Upload,
 	LayoutGrid,
 } from 'lucide-react';
-import type { Theme, BatchDocumentEntry, BatchRunConfig } from '../types';
+import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
@@ -22,6 +22,9 @@ import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
+import { WorktreeRunSection } from './WorktreeRunSection';
+import { useSessionStore } from '../stores/sessionStore';
+import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
 	DEFAULT_BATCH_PROMPT,
@@ -95,6 +98,16 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		sessionId,
 		onOpenMarketplace,
 	} = props;
+
+	// Worktree run target state
+	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
+	const activeSession = useSessionStore((state) => state.sessions.find((s) => s.id === sessionId));
+	const sessions = useSessionStore((state) => state.sessions);
+
+	const handleOpenWorktreeConfig = useCallback(() => {
+		onClose();
+		getModalActions().setWorktreeConfigModalOpen(true);
+	}, [onClose]);
 
 	// Document list state
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
@@ -352,6 +365,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			...(worktreeTarget && { worktreeTarget }),
 		};
 
 		console.log('[BatchRunnerModal] handleGo - calling onGo with config:', config);
@@ -592,6 +606,21 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						documentTree={documentTree as import('./DocumentsPanel').DocTreeNode[] | undefined}
 						onRefreshDocuments={onRefreshDocuments}
 					/>
+
+					{/* Divider */}
+					<div className="border-t mb-6" style={{ borderColor: theme.colors.border }} />
+
+					{/* Run in Worktree Section */}
+					{activeSession && (
+						<WorktreeRunSection
+							theme={theme}
+							activeSession={activeSession}
+							sessions={sessions}
+							worktreeTarget={worktreeTarget}
+							onWorktreeTargetChange={setWorktreeTarget}
+							onOpenWorktreeConfig={handleOpenWorktreeConfig}
+						/>
+					)}
 
 					{/* Divider */}
 					<div className="border-t mb-6" style={{ borderColor: theme.colors.border }} />
