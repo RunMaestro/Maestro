@@ -660,7 +660,7 @@ describe('CodexOutputParser', () => {
 		});
 
 		describe('task_started events', () => {
-			it('should parse task_started as init event with generated session ID', () => {
+			it('should parse task_started as init event without synthetic session ID', () => {
 				const line = JSON.stringify({
 					id: '0',
 					msg: { type: 'task_started', model_context_window: 272000 },
@@ -668,7 +668,10 @@ describe('CodexOutputParser', () => {
 				const event = parser.parseJsonLine(line);
 				expect(event).not.toBeNull();
 				expect(event?.type).toBe('init');
-				expect(event?.sessionId).toMatch(/^codex-0-\d+$/);
+				// task_started should NOT generate a synthetic session ID —
+				// synthetic IDs can't be used with `codex exec resume` and silently
+				// start new sessions. Real IDs come from thread.started events.
+				expect(event?.sessionId).toBeUndefined();
 			});
 		});
 
@@ -852,9 +855,9 @@ describe('CodexOutputParser', () => {
 				// Config and prompt are system
 				expect(events[0].type).toBe('system');
 				expect(events[1].type).toBe('system');
-				// task_started is init with generated session ID
+				// task_started is init without synthetic session ID
 				expect(events[2].type).toBe('init');
-				expect(events[2].sessionId).toMatch(/^codex-0-\d+$/);
+				expect(events[2].sessionId).toBeUndefined();
 				// First token_count (no info) is usage
 				expect(events[3].type).toBe('usage');
 				expect(events[3].usage).toBeUndefined();

@@ -369,10 +369,13 @@ export class CodexOutputParser implements AgentOutputParser {
 				if (msg.model_context_window) {
 					this.contextWindow = msg.model_context_window;
 				}
-				// New format doesn't have thread_id like legacy format,
-				// so generate a session ID from the wrapper id + timestamp
-				const generatedSessionId = `codex-${wrapped.id || '0'}-${Date.now()}`;
-				return { type: 'init', sessionId: generatedSessionId, raw };
+				// Don't generate a synthetic session ID here — synthetic IDs (codex-0-*)
+				// can't be used with `codex exec resume` and silently start a new session
+				// instead of erroring. Real session IDs come from thread.started events
+				// (legacy format). If Codex emits both formats, thread.started will
+				// provide the real ID. If only wrapped format is used, resume won't be
+				// attempted (safe fallback to full prompt each turn).
+				return { type: 'init', raw };
 			}
 
 			case 'agent_reasoning_section_break':
