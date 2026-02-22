@@ -1018,8 +1018,8 @@ describe('MainPanel', () => {
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			// Label shows "Context" or "Context Window" depending on panel width
-			expect(screen.queryByText(/^Context( Window)?$/)).not.toBeInTheDocument();
+			// Target the full "Context Window" label (compact "Context" label is also rendered but hidden via CSS)
+			expect(screen.queryByText('Context Window')).not.toBeInTheDocument();
 		});
 
 		it('should not display context window widget when agent does not support usage stats', () => {
