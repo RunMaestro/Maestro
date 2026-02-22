@@ -1849,6 +1849,211 @@ describe('group-chat-router', () => {
 				expect(partPrompt).toContain('## New Task in Group Chat');
 			});
 
+			// ===========================================================================
+			// Test 6.2: SSH remote + session resume
+			// ===========================================================================
+			describe('SSH remote + session resume', () => {
+				const sshRemoteConfig = {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/home/user/project',
+				};
+
+				const mockSshStore = {
+					getSshRemotes: vi
+						.fn()
+						.mockReturnValue([
+							{ id: 'remote-1', name: 'PedTome', host: 'pedtome.local', user: 'user' },
+						]),
+				};
+
+				beforeEach(() => {
+					// Configure the SSH wrapping mock to dynamically include the args it receives
+					// This lets us verify resume args are passed through
+					mockWrapSpawnWithSsh.mockImplementation(async (config: any) => ({
+						command: 'ssh',
+						args: ['-t', 'user@pedtome.local', 'claude', ...config.args],
+						cwd: '/home/user/project',
+						prompt: config.prompt,
+						customEnvVars: {},
+						sshRemoteUsed: { name: 'PedTome' },
+					}));
+
+					setSshStore(mockSshStore);
+				});
+
+				afterEach(() => {
+					setGetSessionsCallback(() => []);
+					setSshStore(null as any);
+					mockWrapSpawnWithSsh.mockReset();
+				});
+
+				it('moderator resume args pass through SSH wrapper correctly', async () => {
+					// Create chat with SSH-enabled moderator config
+					const chat = await createGroupChat('SSH Resume Mod Test', 'claude-code', {
+						sshRemoteConfig,
+					});
+					createdChats.push(chat.id);
+					await spawnModerator(chat, mockProcessManager);
+
+					// Simulate first turn completed — store session ID
+					await updateGroupChat(chat.id, { moderatorAgentSessionId: 'ssh-mod-session-001' });
+
+					mockProcessManager.spawn.mockClear();
+					mockWrapSpawnWithSsh.mockClear();
+
+					// Send follow-up message — should trigger resume + SSH wrapping
+					await routeUserMessage(
+						chat.id,
+						'SSH follow-up message',
+						mockProcessManager,
+						resumeAgentDetector
+					);
+
+					// Verify wrapSpawnWithSsh was called
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+
+					// Verify the args passed to the SSH wrapper include resume flags
+					const sshCallArgs = mockWrapSpawnWithSsh.mock.calls[0][0];
+					expect(sshCallArgs.args).toContain('--resume');
+					expect(sshCallArgs.args).toContain('ssh-mod-session-001');
+
+					// Verify the final spawn uses SSH-wrapped command
+					const spawnCall = mockProcessManager.spawn.mock.calls[0];
+					expect(spawnCall[0].command).toBe('ssh');
+					// Args should include resume flags (passed through from SSH wrapper)
+					expect(spawnCall[0].args).toContain('--resume');
+					expect(spawnCall[0].args).toContain('ssh-mod-session-001');
+				});
+
+				it('participant resume args pass through SSH wrapper correctly', async () => {
+					const chat = await createGroupChat('SSH Resume Part Test', 'claude-code', {
+						sshRemoteConfig,
+					});
+					createdChats.push(chat.id);
+					await spawnModerator(chat, mockProcessManager);
+
+					// Set up a session with SSH config for the participant
+					const sshSession: SessionInfo = {
+						id: 'ses-ssh-resume',
+						name: 'SSHWorker',
+						toolType: 'claude-code',
+						cwd: '/home/user/project',
+						sshRemoteName: 'PedTome',
+						sshRemoteConfig,
+					};
+					setGetSessionsCallback(() => [sshSession]);
+
+					// Add participant via SSH session
+					await addParticipant(
+						chat.id,
+						'SSHWorker',
+						'claude-code',
+						mockProcessManager,
+						'/home/user/project',
+						resumeAgentDetector,
+						{},
+						undefined,
+						{ sshRemoteName: 'PedTome', sshRemoteConfig },
+						mockSshStore
+					);
+
+					// Simulate first delegation completed — store participant session ID
+					await updateParticipant(chat.id, 'SSHWorker', {
+						agentSessionId: 'ssh-part-session-002',
+					});
+
+					mockProcessManager.spawn.mockClear();
+					mockWrapSpawnWithSsh.mockClear();
+
+					// Delegate to participant — should trigger resume + SSH wrapping
+					await routeModeratorResponse(
+						chat.id,
+						'@SSHWorker: Second task via SSH',
+						mockProcessManager,
+						resumeAgentDetector
+					);
+
+					// Verify wrapSpawnWithSsh was called for the participant
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalled();
+
+					// Find the SSH call for the participant (may be the only one or last one)
+					const sshCalls = mockWrapSpawnWithSsh.mock.calls;
+					const participantSshCall = sshCalls.find(
+						(call: any) =>
+							call[0].args.includes('--resume') && call[0].args.includes('ssh-part-session-002')
+					);
+					expect(participantSshCall).toBeDefined();
+
+					// Verify the final spawn uses SSH-wrapped args with resume
+					const participantSpawn = mockProcessManager.spawn.mock.calls.find((call) =>
+						call[0]?.sessionId?.includes('participant')
+					);
+					expect(participantSpawn).toBeDefined();
+					expect(participantSpawn?.[0].command).toBe('ssh');
+					expect(participantSpawn?.[0].args).toContain('--resume');
+					expect(participantSpawn?.[0].args).toContain('ssh-part-session-002');
+				});
+
+				it('synthesis resume args pass through SSH wrapper correctly', async () => {
+					const chat = await createGroupChat('SSH Resume Synth Test', 'claude-code', {
+						sshRemoteConfig,
+					});
+					createdChats.push(chat.id);
+					await spawnModerator(chat, mockProcessManager);
+					await addParticipant(chat.id, 'Worker', 'claude-code', mockProcessManager);
+
+					// Store moderator session ID for synthesis resume
+					await updateGroupChat(chat.id, { moderatorAgentSessionId: 'ssh-synth-session-003' });
+
+					mockProcessManager.spawn.mockClear();
+					mockWrapSpawnWithSsh.mockClear();
+
+					// Spawn synthesis — should resume with SSH wrapping
+					await spawnModeratorSynthesis(chat.id, mockProcessManager, resumeAgentDetector);
+
+					// Verify wrapSpawnWithSsh was called
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+
+					// Verify resume args passed to SSH wrapper
+					const sshCallArgs = mockWrapSpawnWithSsh.mock.calls[0][0];
+					expect(sshCallArgs.args).toContain('--resume');
+					expect(sshCallArgs.args).toContain('ssh-synth-session-003');
+
+					// Verify final spawn uses SSH-wrapped command with resume
+					const synthSpawn = mockProcessManager.spawn.mock.calls[0];
+					expect(synthSpawn[0].command).toBe('ssh');
+					expect(synthSpawn[0].args).toContain('--resume');
+					expect(synthSpawn[0].args).toContain('ssh-synth-session-003');
+				});
+
+				it('SSH moderator first turn does NOT include resume args', async () => {
+					const chat = await createGroupChat('SSH No Resume First Test', 'claude-code', {
+						sshRemoteConfig,
+					});
+					createdChats.push(chat.id);
+					await spawnModerator(chat, mockProcessManager);
+
+					// No moderatorAgentSessionId set — first turn
+					mockProcessManager.spawn.mockClear();
+					mockWrapSpawnWithSsh.mockClear();
+
+					await routeUserMessage(
+						chat.id,
+						'First SSH message',
+						mockProcessManager,
+						resumeAgentDetector
+					);
+
+					// SSH wrapper should be called (SSH is enabled)
+					expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+
+					// But args should NOT include resume flags
+					const sshCallArgs = mockWrapSpawnWithSsh.mock.calls[0][0];
+					expect(sshCallArgs.args).not.toContain('--resume');
+				});
+			});
+
 			it('first turn uses full prompt for both agent types, subsequent turns use resume', async () => {
 				const chat = await createTestChatWithModerator('Mixed First+Resume Test');
 				await addParticipant(chat.id, 'CodexWorker', 'codex', mockProcessManager);
