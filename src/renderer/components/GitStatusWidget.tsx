@@ -11,8 +11,6 @@ interface GitStatusWidgetProps {
 	theme: Theme;
 	onViewDiff: () => void;
 	onViewLog?: () => void;
-	/** Use compact mode - just show file count without breakdown */
-	compact?: boolean;
 }
 
 /**
@@ -33,7 +31,6 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 	theme,
 	onViewDiff,
 	onViewLog,
-	compact = false,
 }: GitStatusWidgetProps) {
 	// Tooltip hover state with timeout for smooth UX
 	const [tooltipOpen, setTooltipOpen] = useState(false);
@@ -89,41 +86,39 @@ export const GitStatusWidget = memo(function GitStatusWidget({
 				onClick={onViewDiff}
 				className="flex items-center gap-2 px-2 py-1 rounded text-xs transition-colors hover:bg-white/5"
 				style={{ color: theme.colors.textMain }}
-				title={compact ? `+${additions} −${deletions} ~${modified}` : undefined}
+				title={`+${additions} −${deletions} ~${modified}`}
 			>
-				{compact ? (
-					// Compact mode: just show file count
-					<span className="flex items-center gap-1">
-						<FileDiff className="w-3 h-3" style={{ color: theme.colors.textDim }} />
-						<span style={{ color: theme.colors.textDim }}>{fileCount}</span>
-					</span>
-				) : (
-					// Full mode: show breakdown by type
-					<>
-						<GitBranch className="w-3 h-3" />
+				{/* Compact mode: just show file count - shown at narrow widths via CSS */}
+				<span className="header-git-status-compact flex items-center gap-1">
+					<FileDiff className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+					<span style={{ color: theme.colors.textDim }}>{fileCount}</span>
+				</span>
 
-						{additions > 0 && (
-							<span className="flex items-center gap-0.5 text-green-500">
-								<Plus className="w-3 h-3" />
-								{additions}
-							</span>
-						)}
+				{/* Full mode: show breakdown by type - shown at wider widths via CSS */}
+				<span className="header-git-status-full flex items-center gap-2">
+					<GitBranch className="w-3 h-3" />
 
-						{deletions > 0 && (
-							<span className="flex items-center gap-0.5 text-red-500">
-								<Minus className="w-3 h-3" />
-								{deletions}
-							</span>
-						)}
+					{additions > 0 && (
+						<span className="flex items-center gap-0.5 text-green-500">
+							<Plus className="w-3 h-3" />
+							{additions}
+						</span>
+					)}
 
-						{modified > 0 && (
-							<span className="flex items-center gap-0.5 text-orange-500">
-								<FileEdit className="w-3 h-3" />
-								{modified}
-							</span>
-						)}
-					</>
-				)}
+					{deletions > 0 && (
+						<span className="flex items-center gap-0.5 text-red-500">
+							<Minus className="w-3 h-3" />
+							{deletions}
+						</span>
+					)}
+
+					{modified > 0 && (
+						<span className="flex items-center gap-0.5 text-orange-500">
+							<FileEdit className="w-3 h-3" />
+							{modified}
+						</span>
+					)}
+				</span>
 			</button>
 
 			{/* Hover tooltip showing file list with GitHub-style diff bars */}

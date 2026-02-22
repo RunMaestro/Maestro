@@ -485,8 +485,6 @@ export const MainPanel = React.memo(
 		// Hover tooltip state using reusable hook
 		const gitTooltip = useHoverTooltip(150);
 		const contextTooltip = useHoverTooltip(150);
-		// Panel width for responsive hiding of widgets
-		const [panelWidth, setPanelWidth] = useState(Infinity); // Start with Infinity so widgets show by default
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
@@ -624,73 +622,6 @@ export const MainPanel = React.memo(
 			activeTabContextWindow,
 			activeSession?.contextUsage,
 		]);
-
-		// PERF: Track panel width for responsive widget hiding with threshold-based updates
-		// Only update state when width crosses a meaningful threshold (20px) to prevent
-		// unnecessary re-renders during window resize animations
-		useEffect(() => {
-			const header = headerRef.current;
-			if (!header) return;
-
-			// Get initial width immediately, but only if it's a reasonable value
-			// (protects against measuring during layout/animation when width might be 0)
-			const initialWidth = header.offsetWidth;
-			let lastSetWidth = 0;
-			if (initialWidth > 100) {
-				setPanelWidth(initialWidth);
-				lastSetWidth = initialWidth;
-			}
-
-			// Threshold for triggering state updates - prevents flicker during resize
-			const WIDTH_THRESHOLD = 20;
-			let rafId: number | null = null;
-			let pendingWidth: number | null = null;
-
-			const resizeObserver = new ResizeObserver((entries) => {
-				for (const entry of entries) {
-					// Only accept reasonable width values (protects against mid-animation measurements)
-					if (entry.contentRect.width > 100) {
-						pendingWidth = entry.contentRect.width;
-					}
-				}
-				// Use requestAnimationFrame to batch updates, but only if change exceeds threshold
-				if (rafId === null && pendingWidth !== null) {
-					rafId = requestAnimationFrame(() => {
-						if (pendingWidth !== null && Math.abs(pendingWidth - lastSetWidth) >= WIDTH_THRESHOLD) {
-							setPanelWidth(pendingWidth);
-							lastSetWidth = pendingWidth;
-						}
-						pendingWidth = null;
-						rafId = null;
-					});
-				}
-			});
-
-			resizeObserver.observe(header);
-			return () => {
-				resizeObserver.disconnect();
-				if (rafId !== null) {
-					cancelAnimationFrame(rafId);
-				}
-			};
-		}, []);
-
-		// Responsive breakpoints for hiding/simplifying widgets (progressive reduction as space shrinks)
-		// When AUTO mode is active, the center button takes ~120px, so we shift thresholds higher
-		// At widest: full display with "CONTEXT WINDOW" label and wide gauge (w-24)
-		// Below 700px: "CONTEXT" label + narrow gauge (w-16) together
-		// Below 550px: compact git widget (file count only)
-		// Below 500px: git branch shows icon only (no text)
-		// Below 400px: hide UUID pill
-		// Below 350px: hide cost widget
-		// Below 300px: hide session name (shown in menu bar anyway)
-		const autoModeOffset = isCurrentSessionAutoMode ? 150 : 0; // Extra space needed when AUTO button is visible
-		const showSessionName = panelWidth > 300 + autoModeOffset;
-		const showCostWidget = panelWidth > 350 + autoModeOffset;
-		const showUuidPill = panelWidth > 400 + autoModeOffset;
-		const useIconOnlyGitBranch = panelWidth < 500 + autoModeOffset;
-		const useCompactGitWidget = panelWidth < 550 + autoModeOffset;
-		const useCompactContext = panelWidth < 700 + autoModeOffset; // Both label and gauge shrink together
 
 		// Git status from focused contexts (reduces cascade re-renders)
 		// Branch info: branch name, remote, ahead/behind - rarely changes
@@ -956,19 +887,17 @@ export const MainPanel = React.memo(
 						{!isMobileLandscape && (
 							<div
 								ref={headerRef}
-								className="h-16 border-b flex items-center justify-between px-6 shrink-0"
+								className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
 								style={{
 									borderColor: theme.colors.border,
 									backgroundColor: theme.colors.bgSidebar,
 								}}
 								data-tour="header-controls"
 							>
-								<div className="flex items-center gap-4 min-w-0">
-									<div className="flex items-center gap-2 text-sm font-medium min-w-0">
-										{/* Session name - hidden at narrow widths (also shown in menu bar) */}
-										{showSessionName && (
-											<span className="shrink-0 truncate">{activeSession.name}</span>
-										)}
+								<div className="flex items-center gap-4 min-w-0 overflow-hidden">
+									<div className="flex items-center gap-2 text-sm font-medium min-w-0 overflow-hidden">
+										{/* Session name - hidden at narrow widths via CSS container query */}
+										<span className="header-session-name truncate max-w-[150px]">{activeSession.name}</span>
 										<div
 											className="relative shrink-0"
 											onMouseEnter={
@@ -1017,10 +946,8 @@ export const MainPanel = React.memo(
 													{activeSession.isGitRepo ? (
 														<>
 															<GitBranch className="w-3 h-3 shrink-0" />
-															{/* Hide branch name text at narrow widths, show on hover via title */}
-															{!useIconOnlyGitBranch && (
-																<span className="truncate">{gitInfo?.branch || 'GIT'}</span>
-															)}
+															{/* Hide branch name text at narrow widths via CSS container query */}
+															<span className="header-git-branch-text truncate">{gitInfo?.branch || 'GIT'}</span>
 														</>
 													) : (
 														'LOCAL'
@@ -1212,14 +1139,13 @@ export const MainPanel = React.memo(
 										</div>
 									</div>
 
-									{/* Git Status Widget */}
+									{/* Git Status Widget - compact mode handled via CSS container queries */}
 									<GitStatusWidget
 										sessionId={activeSession.id}
 										isGitRepo={activeSession.isGitRepo}
 										theme={theme}
 										onViewDiff={handleViewGitDiff}
 										onViewLog={() => setGitLogOpen?.(true)}
-										compact={useCompactGitWidget}
 									/>
 								</div>
 
@@ -1232,7 +1158,7 @@ export const MainPanel = React.memo(
 											onStopBatchRun?.(activeSession.id);
 										}}
 										disabled={isCurrentSessionStopping}
-										className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition-all ${isCurrentSessionStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
+										className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg font-bold text-xs transition-all shrink-0 ${isCurrentSessionStopping ? 'cursor-not-allowed' : 'hover:opacity-90 cursor-pointer'}`}
 										style={{
 											backgroundColor: isCurrentSessionStopping
 												? theme.colors.warning
@@ -1272,15 +1198,14 @@ export const MainPanel = React.memo(
 								)}
 
 								<div className="flex items-center gap-3 justify-end shrink-0">
-									{/* Session UUID Pill - click to copy full UUID, left-most of session stats, hidden at narrow widths */}
+									{/* Session UUID Pill - click to copy full UUID, hidden at narrow widths via CSS container query */}
 									{/* Hide when file preview tab is focused - session stats are only relevant for AI tabs */}
-									{showUuidPill &&
-										activeSession.inputMode === 'ai' &&
+									{activeSession.inputMode === 'ai' &&
 										!activeFileTabId &&
 										activeTab?.agentSessionId &&
 										hasCapability('supportsSessionId') && (
 											<button
-												className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border transition-colors hover:opacity-80"
+												className="header-uuid-pill text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border transition-colors hover:opacity-80"
 												style={{
 													backgroundColor: theme.colors.accent + '20',
 													color: theme.colors.accent,
@@ -1303,14 +1228,13 @@ export const MainPanel = React.memo(
 											</button>
 										)}
 
-									{/* Cost Tracker - styled as pill (hidden when panel is narrow or agent doesn't support cost tracking) - shows active tab's cost */}
+									{/* Cost Tracker - styled as pill, hidden at narrow widths via CSS container query */}
 									{/* Hide when file preview tab is focused - cost tracking is only relevant for AI tabs */}
-									{showCostWidget &&
-										activeSession.inputMode === 'ai' &&
+									{activeSession.inputMode === 'ai' &&
 										!activeFileTabId &&
 										(activeTab?.agentSessionId || activeTab?.usageStats) &&
 										hasCapability('supportsCostTracking') && (
-											<span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
+											<span className="header-cost-widget text-xs font-mono font-bold px-2 py-0.5 rounded-full border border-green-500/30 text-green-500 bg-green-500/10">
 												${(activeTab?.usageStats?.totalCostUsd ?? 0).toFixed(2)}
 											</span>
 										)}
@@ -1323,18 +1247,25 @@ export const MainPanel = React.memo(
 										hasCapability('supportsUsageStats') &&
 										activeTabContextWindow > 0 && (
 											<div
-												className="flex flex-col items-end mr-2 relative cursor-pointer"
+												className="header-context-widget flex flex-col items-end mr-2 relative cursor-pointer"
 												{...contextTooltip.triggerHandlers}
 											>
+												{/* Full label shown at wide widths, compact label shown at narrow widths via CSS */}
 												<span
-													className="text-[10px] font-bold uppercase"
+													className="header-context-label-full text-[10px] font-bold uppercase"
 													style={{ color: theme.colors.textDim }}
 												>
-													{useCompactContext ? 'Context' : 'Context Window'}
+													Context Window
 												</span>
-												{/* Gauge width: w-24 (96px) normally, w-16 (64px) when compact - both change together */}
+												<span
+													className="header-context-label-compact text-[10px] font-bold uppercase hidden"
+													style={{ color: theme.colors.textDim }}
+												>
+													Context
+												</span>
+												{/* Gauge width controlled via CSS container query */}
 												<div
-													className={`${useCompactContext ? 'w-16' : 'w-24'} h-1.5 rounded-full mt-1 overflow-hidden`}
+													className="header-context-gauge w-24 h-1.5 rounded-full mt-1 overflow-hidden"
 													style={{ backgroundColor: theme.colors.border }}
 												>
 													<div

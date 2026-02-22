@@ -449,6 +449,140 @@ svg.wand-sparkle-active path:nth-child(8) { animation-delay: 1.2s; }
 }
 
 /* Reduced motion preference - accessibility best practice */
+/* ==========================================
+   Header Bar Container Queries
+   ==========================================
+   CSS-only responsive behavior for the main panel header.
+   Uses container queries to show/hide elements based on header width.
+   This replaces JavaScript-based panelWidth detection for reliability.
+*/
+
+/* Define the header as a container query context */
+.header-container {
+  container-type: inline-size;
+  container-name: header;
+}
+
+/* Default: all elements visible */
+.header-session-name,
+.header-cost-widget,
+.header-uuid-pill,
+.header-context-widget,
+.header-git-branch-text,
+.header-git-status-full {
+  display: flex;
+}
+
+/* Git status compact mode hidden by default (shown at narrow widths) */
+.header-git-status-compact {
+  display: none;
+}
+
+/* At narrower widths, progressively hide elements */
+/* Below 700px: Use compact context display (handled by compact class) */
+@container header (max-width: 700px) {
+  .header-context-label-full {
+    display: none;
+  }
+  .header-context-label-compact {
+    display: block;
+  }
+  .header-context-gauge {
+    width: 4rem; /* w-16 */
+  }
+}
+
+/* Below 550px: Show compact git status (file count only), hide full breakdown */
+@container header (max-width: 550px) {
+  .header-git-status-full {
+    display: none;
+  }
+  .header-git-status-compact {
+    display: flex;
+  }
+}
+
+/* Below 500px: Hide git branch text, show icon only */
+@container header (max-width: 500px) {
+  .header-git-branch-text {
+    display: none;
+  }
+}
+
+/* Below 400px: Hide UUID pill */
+@container header (max-width: 400px) {
+  .header-uuid-pill {
+    display: none;
+  }
+}
+
+/* Below 350px: Hide cost widget */
+@container header (max-width: 350px) {
+  .header-cost-widget {
+    display: none;
+  }
+}
+
+/* Below 300px: Hide session name */
+@container header (max-width: 300px) {
+  .header-session-name {
+    display: none;
+  }
+}
+
+/* When AUTO mode button is visible, we need earlier breakpoints.
+   Use a modifier class on the container to shift thresholds. */
+.header-container.header-auto-mode .header-context-label-full {
+  display: none;
+}
+.header-container.header-auto-mode .header-context-label-compact {
+  display: block;
+}
+
+@container header (max-width: 880px) {
+  .header-container.header-auto-mode .header-context-gauge {
+    width: 4rem;
+  }
+}
+
+/* Below 730px in auto-mode: Show compact git status */
+@container header (max-width: 730px) {
+  .header-container.header-auto-mode .header-git-status-full {
+    display: none;
+  }
+  .header-container.header-auto-mode .header-git-status-compact {
+    display: flex;
+  }
+}
+
+@container header (max-width: 680px) {
+  .header-container.header-auto-mode .header-git-branch-text {
+    display: none;
+  }
+}
+
+@container header (max-width: 580px) {
+  .header-container.header-auto-mode .header-uuid-pill {
+    display: none;
+  }
+}
+
+@container header (max-width: 530px) {
+  .header-container.header-auto-mode .header-cost-widget {
+    display: none;
+  }
+}
+
+@container header (max-width: 480px) {
+  .header-container.header-auto-mode .header-session-name {
+    display: none;
+  }
+}
+
+/* ==========================================
+   End Header Bar Container Queries
+   ========================================== */
+
 @media (prefers-reduced-motion: reduce) {
   .animate-pulse,
   .animate-spin,
