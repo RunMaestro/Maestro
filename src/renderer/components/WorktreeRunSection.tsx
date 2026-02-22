@@ -72,7 +72,7 @@ export function WorktreeRunSection({
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedValue, activeSession.cwd]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [selectedValue, activeSession.cwd]);
 
 	// Scan for available worktrees on disk when toggle is enabled
 	useEffect(() => {
@@ -106,7 +106,7 @@ export function WorktreeRunSection({
 		return () => {
 			cancelled = true;
 		};
-	}, [isEnabled, activeSession.worktreeConfig?.basePath, sshRemoteId, worktreeChildren.length]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [isEnabled, activeSession.worktreeConfig?.basePath, sshRemoteId, worktreeChildren.length]);
 
 	// Detect when no worktrees are available and auto-select "Create New Worktree"
 	const hasNoWorktrees = isEnabled && !isScanning && worktreeChildren.length === 0 && availableWorktrees.length === 0;
@@ -118,7 +118,7 @@ export function WorktreeRunSection({
 				createPROnCompletion: createPROnCompletion,
 			});
 		}
-	}, [hasNoWorktrees]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [hasNoWorktrees]);
 
 	// Update branch name when base branch changes
 	const handleBaseBranchChange = useCallback(
@@ -170,7 +170,7 @@ export function WorktreeRunSection({
 				createPROnCompletion: createPROnCompletion,
 			});
 		}
-	}, [baseBranch, newBranchName]); // eslint-disable-line react-hooks/exhaustive-deps
+	}, [baseBranch, newBranchName]);
 
 	const handleToggle = useCallback(() => {
 		if (isEnabled) {
