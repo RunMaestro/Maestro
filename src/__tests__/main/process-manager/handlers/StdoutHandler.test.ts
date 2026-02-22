@@ -1109,6 +1109,192 @@ describe('StdoutHandler', () => {
 		});
 	});
 
+	// ── Session ID extraction via outputParser ──────────────────────────
+
+	describe('session-id emission via outputParser (Claude Code stream-json)', () => {
+		/**
+		 * These tests verify that StdoutHandler correctly emits the 'session-id'
+		 * event when the outputParser extracts a session_id from stream-json output.
+		 * This is the code path used by Claude Code in group chat for session resume.
+		 *
+		 * Flow: stream-json line → outputParser.parseJsonLine() → extractSessionId()
+		 *       → emitter.emit('session-id', sessionId, agentSessionId)
+		 */
+
+		function createSessionIdOutputParser(sessionIdToReturn: string | null) {
+			return {
+				agentId: 'claude-code',
+				parseJsonLine: vi.fn((line: string) => {
+					try {
+						const parsed = JSON.parse(line);
+						return {
+							type:
+								parsed.type === 'system' && parsed.subtype === 'init'
+									? 'init'
+									: parsed.type || 'message',
+							text: parsed.result || parsed.text,
+							sessionId: parsed.session_id || undefined,
+							isPartial: parsed.type === 'assistant',
+							slashCommands: parsed.slash_commands,
+						};
+					} catch {
+						return null;
+					}
+				}),
+				extractUsage: vi.fn(() => null),
+				extractSessionId: vi.fn((event: any) => event?.sessionId || sessionIdToReturn),
+				extractSlashCommands: vi.fn((event: any) => event?.slashCommands || null),
+				isResultMessage: vi.fn((event: any) => event?.type === 'result'),
+				detectErrorFromLine: vi.fn(() => null),
+			};
+		}
+
+		it('should emit session-id from init message via outputParser', () => {
+			const parser = createSessionIdOutputParser(null);
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Claude Code init message with session_id
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				subtype: 'init',
+				session_id: 'session-abc-12345',
+				slash_commands: ['/help', '/compact'],
+			});
+
+			expect(proc.sessionIdEmitted).toBe(true);
+			expect(sessionIdSpy).toHaveBeenCalledTimes(1);
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'session-abc-12345');
+		});
+
+		it('should emit session-id from result message via outputParser', () => {
+			const parser = createSessionIdOutputParser(null);
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Claude Code result message with session_id
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				result: 'Here is the moderator routing decision.',
+				session_id: 'session-xyz-67890',
+			});
+
+			expect(proc.sessionIdEmitted).toBe(true);
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'session-xyz-67890');
+		});
+
+		it('should emit session-id only once even with multiple messages containing session_id', () => {
+			const parser = createSessionIdOutputParser(null);
+			const { handler, emitter, sessionId } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Init message with session_id
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				subtype: 'init',
+				session_id: 'session-first-id',
+			});
+
+			// Assistant message with same session_id
+			sendJsonLine(handler, sessionId, {
+				type: 'assistant',
+				session_id: 'session-first-id',
+				message: { content: 'thinking...' },
+			});
+
+			// Result message with same session_id
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				result: 'Done',
+				session_id: 'session-first-id',
+			});
+
+			// Should only emit once (the first time)
+			expect(sessionIdSpy).toHaveBeenCalledTimes(1);
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'session-first-id');
+		});
+
+		it('should NOT emit session-id when outputParser returns null sessionId', () => {
+			const parser = createSessionIdOutputParser(null);
+			// Override extractSessionId to always return null
+			parser.extractSessionId.mockReturnValue(null);
+
+			const { handler, emitter, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'system',
+				subtype: 'init',
+				// No session_id field
+			});
+
+			expect(proc.sessionIdEmitted).toBe(false);
+			expect(sessionIdSpy).not.toHaveBeenCalled();
+		});
+
+		it('should use the Maestro session ID as first arg and agent session ID as second arg', () => {
+			// This test verifies the exact event signature used by session-id-listener:
+			// emitter.emit('session-id', sessionId, eventSessionId)
+			// where sessionId = Maestro's routing session ID (e.g., group-chat-xxx-moderator-yyy)
+			// and eventSessionId = the agent CLI's real session ID (e.g., session-abc-123)
+			const parser = createSessionIdOutputParser(null);
+			const maestroSessionId = 'group-chat-test-123-moderator-1709000000000';
+			const agentSessionId = 'session-real-agent-id-xyz';
+
+			const processes = new Map();
+			const emitter = new EventEmitter();
+			const bufferManager = createMockBufferManager();
+			const proc = createMockProcess({
+				sessionId: maestroSessionId,
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: parser as any,
+			});
+			processes.set(maestroSessionId, proc);
+
+			const handler = new StdoutHandler({
+				processes,
+				emitter,
+				bufferManager: bufferManager as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			sendJsonLine(handler, maestroSessionId, {
+				type: 'system',
+				subtype: 'init',
+				session_id: agentSessionId,
+			});
+
+			expect(sessionIdSpy).toHaveBeenCalledWith(maestroSessionId, agentSessionId);
+		});
+	});
+
 	// ── buildUsageStats (indirectly tested via defaults) ───────────────────
 
 	describe('buildUsageStats defaults', () => {
@@ -1291,6 +1477,177 @@ describe('StdoutHandler', () => {
 			// msgRecord.result is undefined which is falsy, so resultEmitted stays false
 			expect(proc.resultEmitted).toBe(false);
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+		});
+	});
+
+	// ── Integration: real ClaudeOutputParser → session-id emission ───────
+
+	describe('integration: ClaudeOutputParser session-id extraction', () => {
+		/**
+		 * Uses the real ClaudeOutputParser (not a mock) to verify the full pipeline:
+		 * raw stream-json line → ClaudeOutputParser.parseJsonLine() →
+		 * extractSessionId() → StdoutHandler emits 'session-id' event.
+		 *
+		 * This covers the manual test checklist item:
+		 * "Claude Code moderator: verify session ID extracted from stream-json output"
+		 */
+
+		// Import the real parser
+		let realParser: InstanceType<
+			typeof import('../../../../main/parsers/claude-output-parser').ClaudeOutputParser
+		>;
+
+		beforeEach(async () => {
+			const { ClaudeOutputParser } = await import('../../../../main/parsers/claude-output-parser');
+			realParser = new ClaudeOutputParser();
+		});
+
+		it('should extract session_id from Claude Code init message (real parser)', () => {
+			const processes = new Map<string, ManagedProcess>();
+			const emitter = new EventEmitter();
+			const bufferManager = createMockBufferManager();
+			const moderatorSessionId = 'group-chat-chat-001-moderator-1709000000000';
+
+			const proc = createMockProcess({
+				sessionId: moderatorSessionId,
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: realParser as any,
+			});
+			processes.set(moderatorSessionId, proc);
+
+			const handler = new StdoutHandler({
+				processes,
+				emitter,
+				bufferManager: bufferManager as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Simulate real Claude Code stream-json init message
+			const initLine = JSON.stringify({
+				type: 'system',
+				subtype: 'init',
+				session_id: '01234567-abcd-ef01-2345-6789abcdef00',
+				slash_commands: ['/help', '/compact', '/clear', '/exit'],
+			});
+
+			handler.handleData(moderatorSessionId, initLine + '\n');
+
+			expect(proc.sessionIdEmitted).toBe(true);
+			expect(sessionIdSpy).toHaveBeenCalledTimes(1);
+			expect(sessionIdSpy).toHaveBeenCalledWith(
+				moderatorSessionId,
+				'01234567-abcd-ef01-2345-6789abcdef00'
+			);
+		});
+
+		it('should extract session_id from Claude Code result message (real parser)', () => {
+			const processes = new Map<string, ManagedProcess>();
+			const emitter = new EventEmitter();
+			const bufferManager = createMockBufferManager();
+			const sessionId = 'group-chat-chat-002-moderator-1709000000001';
+
+			const proc = createMockProcess({
+				sessionId,
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: realParser as any,
+			});
+			processes.set(sessionId, proc);
+
+			const handler = new StdoutHandler({
+				processes,
+				emitter,
+				bufferManager: bufferManager as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Simulate real Claude Code result message (this is what moderator returns)
+			const resultLine = JSON.stringify({
+				type: 'result',
+				result: '@Claude-Code Please implement the feature described above.',
+				session_id: 'session-1709000000000',
+				modelUsage: {
+					'claude-sonnet-4-20250514': {
+						inputTokens: 2200,
+						outputTokens: 150,
+						cacheReadInputTokens: 1800,
+						cacheCreationInputTokens: 400,
+						contextWindow: 200000,
+					},
+				},
+				total_cost_usd: 0.0035,
+			});
+
+			handler.handleData(sessionId, resultLine + '\n');
+
+			expect(proc.sessionIdEmitted).toBe(true);
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'session-1709000000000');
+		});
+
+		it('should handle full Claude Code conversation lifecycle (init → assistant → result)', () => {
+			const processes = new Map<string, ManagedProcess>();
+			const emitter = new EventEmitter();
+			const bufferManager = createMockBufferManager();
+			const sessionId = 'group-chat-chat-003-moderator-1709000000002';
+
+			const proc = createMockProcess({
+				sessionId,
+				isStreamJsonMode: true,
+				toolType: 'claude-code',
+				outputParser: realParser as any,
+			});
+			processes.set(sessionId, proc);
+
+			const handler = new StdoutHandler({
+				processes,
+				emitter,
+				bufferManager: bufferManager as any,
+			});
+
+			const sessionIdSpy = vi.fn();
+			emitter.on('session-id', sessionIdSpy);
+
+			// Full lifecycle: init → assistant (partial) → result
+			const lines = [
+				JSON.stringify({
+					type: 'system',
+					subtype: 'init',
+					session_id: 'session-lifecycle-test',
+					slash_commands: ['/help'],
+				}),
+				JSON.stringify({
+					type: 'assistant',
+					session_id: 'session-lifecycle-test',
+					message: {
+						role: 'assistant',
+						content: [{ type: 'thinking', thinking: 'Analyzing the request...' }],
+					},
+				}),
+				JSON.stringify({
+					type: 'result',
+					result: '@Claude-Code implement the feature',
+					session_id: 'session-lifecycle-test',
+				}),
+			];
+
+			// Send all lines at once (realistic: they often arrive in a batch)
+			handler.handleData(sessionId, lines.join('\n') + '\n');
+
+			// Session ID should be emitted exactly once (from the init message)
+			expect(sessionIdSpy).toHaveBeenCalledTimes(1);
+			expect(sessionIdSpy).toHaveBeenCalledWith(sessionId, 'session-lifecycle-test');
+
+			// Result should also be emitted
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				'@Claude-Code implement the feature'
+			);
 		});
 	});
 });
