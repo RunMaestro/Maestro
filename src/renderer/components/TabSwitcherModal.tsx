@@ -9,7 +9,7 @@ import { getContextColor } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { formatTokensCompact, formatRelativeTime, formatCost } from '../utils/formatters';
 import { calculateContextDisplay } from '../utils/contextUsage';
-import { getColorBlindExtensionColor } from '../constants/colorblindPalettes';
+import { getExtensionColor } from '../utils/extensionColors';
 
 /** Named session from the store (not currently open) */
 interface NamedSession {
@@ -111,49 +111,6 @@ function getUuidPill(agentSessionId: string | undefined | null): string | null {
  * When colorBlindMode is enabled, uses Wong's colorblind-safe palette.
  * (Synchronized with TabBar.tsx for consistency)
  */
-function getExtensionColor(
-	extension: string,
-	theme: Theme,
-	colorBlindMode?: boolean
-): { bg: string; text: string } {
-	const isLightTheme = theme.mode === 'light';
-
-	// Use colorblind-safe colors when enabled
-	if (colorBlindMode) {
-		const colorBlindColors = getColorBlindExtensionColor(extension, isLightTheme);
-		if (colorBlindColors) {
-			return colorBlindColors;
-		}
-		// Fall through to default for unknown extensions
-		return { bg: theme.colors.border, text: theme.colors.textDim };
-	}
-
-	// Standard color scheme (dark theme only for backward compatibility)
-	const ext = extension.toLowerCase();
-	// TypeScript/JavaScript - blue tones
-	if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
-		return { bg: 'rgba(59, 130, 246, 0.3)', text: 'rgba(147, 197, 253, 0.9)' };
-	}
-	// Markdown/Docs - green tones
-	if (['.md', '.mdx', '.txt', '.rst'].includes(ext)) {
-		return { bg: 'rgba(34, 197, 94, 0.3)', text: 'rgba(134, 239, 172, 0.9)' };
-	}
-	// JSON/Config - yellow tones
-	if (['.json', '.yaml', '.yml', '.toml', '.ini', '.env'].includes(ext)) {
-		return { bg: 'rgba(234, 179, 8, 0.3)', text: 'rgba(253, 224, 71, 0.9)' };
-	}
-	// CSS/Styles - purple tones
-	if (['.css', '.scss', '.sass', '.less', '.styl'].includes(ext)) {
-		return { bg: 'rgba(168, 85, 247, 0.3)', text: 'rgba(216, 180, 254, 0.9)' };
-	}
-	// HTML/Templates - orange tones
-	if (['.html', '.htm', '.xml', '.svg'].includes(ext)) {
-		return { bg: 'rgba(249, 115, 22, 0.3)', text: 'rgba(253, 186, 116, 0.9)' };
-	}
-	// Default - use theme's dim colors
-	return { bg: theme.colors.border, text: theme.colors.textDim };
-}
-
 /**
  * Circular progress gauge component
  */

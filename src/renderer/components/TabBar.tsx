@@ -24,7 +24,7 @@ import {
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
-import { getColorBlindExtensionColor } from '../constants/colorblindPalettes';
+import { getExtensionColor } from '../utils/extensionColors';
 import { getRevealLabel } from '../utils/platformUtils';
 
 interface TabBarProps {
@@ -963,90 +963,6 @@ interface FileTabProps {
 	tabIndex?: number;
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
-}
-
-/**
- * Get color for file extension badge.
- * Returns a muted color based on file type for visual differentiation.
- * Colors are adapted for both light and dark themes for good contrast.
- * When colorBlindMode is enabled, uses Wong's colorblind-safe palette.
- */
-function getExtensionColor(
-	extension: string,
-	theme: Theme,
-	colorBlindMode?: boolean
-): { bg: string; text: string } {
-	const isLightTheme = theme.mode === 'light';
-
-	// Use colorblind-safe colors when enabled
-	if (colorBlindMode) {
-		const colorBlindColors = getColorBlindExtensionColor(extension, isLightTheme);
-		if (colorBlindColors) {
-			return colorBlindColors;
-		}
-		// Fall through to default for unknown extensions
-		return { bg: theme.colors.border, text: theme.colors.textDim };
-	}
-
-	// Standard color scheme
-	const ext = extension.toLowerCase();
-
-	// TypeScript/JavaScript - blue tones
-	if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(37, 99, 235, 0.15)', text: 'rgba(29, 78, 216, 0.9)' }
-			: { bg: 'rgba(59, 130, 246, 0.3)', text: 'rgba(147, 197, 253, 0.9)' };
-	}
-	// Markdown/Docs - green tones
-	if (['.md', '.mdx', '.txt', '.rst'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(22, 163, 74, 0.15)', text: 'rgba(21, 128, 61, 0.9)' }
-			: { bg: 'rgba(34, 197, 94, 0.3)', text: 'rgba(134, 239, 172, 0.9)' };
-	}
-	// JSON/Config - yellow/amber tones
-	if (['.json', '.yaml', '.yml', '.toml', '.ini', '.env'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(217, 119, 6, 0.15)', text: 'rgba(180, 83, 9, 0.9)' }
-			: { bg: 'rgba(234, 179, 8, 0.3)', text: 'rgba(253, 224, 71, 0.9)' };
-	}
-	// CSS/Styles - purple tones
-	if (['.css', '.scss', '.sass', '.less', '.styl'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(147, 51, 234, 0.15)', text: 'rgba(126, 34, 206, 0.9)' }
-			: { bg: 'rgba(168, 85, 247, 0.3)', text: 'rgba(216, 180, 254, 0.9)' };
-	}
-	// HTML/Templates - orange tones
-	if (['.html', '.htm', '.xml', '.svg'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(234, 88, 12, 0.15)', text: 'rgba(194, 65, 12, 0.9)' }
-			: { bg: 'rgba(249, 115, 22, 0.3)', text: 'rgba(253, 186, 116, 0.9)' };
-	}
-	// Python - teal/cyan tones
-	if (['.py', '.pyw', '.pyi'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(13, 148, 136, 0.15)', text: 'rgba(15, 118, 110, 0.9)' }
-			: { bg: 'rgba(20, 184, 166, 0.3)', text: 'rgba(94, 234, 212, 0.9)' };
-	}
-	// Rust - rust/orange-red tones
-	if (['.rs'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(185, 28, 28, 0.15)', text: 'rgba(153, 27, 27, 0.9)' }
-			: { bg: 'rgba(239, 68, 68, 0.3)', text: 'rgba(252, 165, 165, 0.9)' };
-	}
-	// Go - cyan tones
-	if (['.go'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(8, 145, 178, 0.15)', text: 'rgba(14, 116, 144, 0.9)' }
-			: { bg: 'rgba(6, 182, 212, 0.3)', text: 'rgba(103, 232, 249, 0.9)' };
-	}
-	// Shell scripts - gray/slate tones
-	if (['.sh', '.bash', '.zsh', '.fish'].includes(ext)) {
-		return isLightTheme
-			? { bg: 'rgba(71, 85, 105, 0.15)', text: 'rgba(51, 65, 85, 0.9)' }
-			: { bg: 'rgba(100, 116, 139, 0.3)', text: 'rgba(203, 213, 225, 0.9)' };
-	}
-	// Default - use theme's dim colors
-	return { bg: theme.colors.border, text: theme.colors.textDim };
 }
 
 /**
