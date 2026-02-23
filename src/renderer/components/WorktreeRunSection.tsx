@@ -234,77 +234,81 @@ export function WorktreeRunSection({
 	}, [activeSession.worktreeConfig?.basePath, selectedValue, newBranchName]);
 
 	return (
-		<div
-			className="mb-6 rounded-lg border transition-colors"
-			style={{
-				borderColor: isEnabled && isConfigured ? theme.colors.accent + '40' : theme.colors.border,
-				backgroundColor: isEnabled && isConfigured ? theme.colors.accent + '08' : 'transparent',
-			}}
-		>
-			{/* Header row — always visible */}
-			<button
-				onClick={isConfigured ? handleToggle : undefined}
-				disabled={!isConfigured}
-				className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg transition-colors ${
-					!isConfigured
-						? 'opacity-40 cursor-not-allowed'
-						: 'cursor-pointer hover:bg-white/5'
-				}`}
-			>
-				<GitBranch
-					className="w-3.5 h-3.5 shrink-0"
-					style={{
-						color: isEnabled && isConfigured
-							? theme.colors.accent
-							: theme.colors.textDim,
-					}}
-				/>
-				<span
-					className="text-xs font-medium"
-					style={{
-						color: isEnabled && isConfigured
-							? theme.colors.accent
-							: theme.colors.textMain,
-					}}
-				>
+		<div className="mb-6">
+			{/* Section header — matches "DOCUMENTS TO RUN" / "AGENT PROMPT" style */}
+			<div className="flex items-center justify-between mb-3">
+				<label className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
 					Run in Worktree
-				</span>
+				</label>
 				{!isConfigured && (
 					<span
-						className="text-[11px] ml-auto"
-						style={{ color: theme.colors.textDim }}
-						onClick={(e) => {
-							e.stopPropagation();
-							onOpenWorktreeConfig();
-						}}
+						className="text-xs cursor-pointer hover:underline"
+						style={{ color: theme.colors.accent }}
+						onClick={onOpenWorktreeConfig}
 					>
-						<span className="hover:underline cursor-pointer" style={{ color: theme.colors.accent }}>
-							Configure →
-						</span>
+						Configure →
 					</span>
 				)}
-				{isConfigured && !isEnabled && (
+			</div>
+
+			{/* Toggle container */}
+			<div
+				className="rounded-lg border transition-colors"
+				style={{
+					borderColor: isEnabled && isConfigured ? theme.colors.accent + '40' : theme.colors.border,
+					backgroundColor: isEnabled && isConfigured ? theme.colors.accent + '08' : 'transparent',
+				}}
+			>
+				{/* Toggle row */}
+				<button
+					onClick={isConfigured ? handleToggle : undefined}
+					disabled={!isConfigured}
+					className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-lg transition-colors ${
+						!isConfigured
+							? 'opacity-40 cursor-not-allowed'
+							: 'cursor-pointer hover:bg-white/5'
+					}`}
+				>
+					<GitBranch
+						className="w-3.5 h-3.5 shrink-0"
+						style={{
+							color: isEnabled && isConfigured
+								? theme.colors.accent
+								: theme.colors.textDim,
+						}}
+					/>
 					<span
-						className="text-[11px] ml-auto"
-						style={{ color: theme.colors.textDim }}
+						className="text-xs font-medium"
+						style={{
+							color: isEnabled && isConfigured
+								? theme.colors.accent
+								: theme.colors.textMain,
+						}}
 					>
 						Dispatch to a separate worktree
 					</span>
-				)}
-				{isConfigured && isEnabled && (
-					<span
-						className="text-[11px] ml-auto font-medium"
-						style={{ color: theme.colors.accent }}
-					>
-						Enabled
-					</span>
-				)}
-				<Info
-					className="w-3.5 h-3.5 shrink-0"
-					style={{ color: theme.colors.textDim, opacity: 0.5 }}
-					title="Dispatch this Auto Run to a separate worktree agent instead of the current one"
-				/>
-			</button>
+					{isConfigured && !isEnabled && (
+						<span
+							className="text-[11px] ml-auto"
+							style={{ color: theme.colors.textDim }}
+						>
+							Off
+						</span>
+					)}
+					{isConfigured && isEnabled && (
+						<span
+							className="text-[11px] ml-auto font-medium"
+							style={{ color: theme.colors.accent }}
+						>
+							Enabled
+						</span>
+					)}
+					<Info
+						className="w-3.5 h-3.5 shrink-0"
+						style={{ color: theme.colors.textDim, opacity: 0.5 }}
+						title="Dispatch this Auto Run to a separate worktree agent instead of the current one"
+					/>
+				</button>
 
 			{isConfigured && isEnabled && (
 				<div className="flex flex-col gap-3 animate-slide-down px-3 pb-3">
@@ -518,6 +522,7 @@ export function WorktreeRunSection({
 					</label>
 				</div>
 			)}
+			</div>
 		</div>
 	);
 }

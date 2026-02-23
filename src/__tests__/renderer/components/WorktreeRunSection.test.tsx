@@ -96,7 +96,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 		// Toggle should render but be disabled
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		expect(toggle).toBeTruthy();
 		const toggleButton = toggle.closest('button')!;
 		expect(toggleButton.disabled).toBe(true);
@@ -125,7 +125,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 		// Toggle should be enabled (not disabled)
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		const toggleButton = toggle.closest('button')!;
 		expect(toggleButton.disabled).toBe(false);
 		// Configure link should NOT appear
@@ -149,13 +149,13 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 		// Toggle should be enabled because children exist
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		const toggleButton = toggle.closest('button')!;
 		expect(toggleButton.disabled).toBe(false);
 		expect(screen.queryByText(/Configure →/)).toBeNull();
 	});
 
-	it('shows toggle in off state with no selector when worktreeTarget is null', () => {
+	it('shows section header and toggle in off state with no selector when worktreeTarget is null', () => {
 		const session = createMockSession();
 		render(
 			<WorktreeRunSection
@@ -167,7 +167,10 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
+		// Section header should be present
 		expect(screen.getByText('Run in Worktree')).toBeTruthy();
+		// Toggle button text
+		expect(screen.getByText('Dispatch to a separate worktree')).toBeTruthy();
 		// Selector dropdown should NOT be visible when toggle is off
 		expect(screen.queryByRole('combobox')).toBeNull();
 	});
@@ -591,7 +594,7 @@ describe('WorktreeRunSection', () => {
 		);
 
 		// Click toggle to turn on — this sets internal selectedValue
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		await act(async () => {
 			fireEvent.click(toggle);
 		});
@@ -669,7 +672,7 @@ describe('WorktreeRunSection', () => {
 		);
 
 		// Click the toggle to turn off
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		fireEvent.click(toggle);
 
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith(null);
@@ -693,7 +696,7 @@ describe('WorktreeRunSection', () => {
 		);
 
 		// Click the toggle to turn on
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		fireEvent.click(toggle);
 
 		// Should always default to create-new, even when idle children exist
@@ -720,7 +723,7 @@ describe('WorktreeRunSection', () => {
 		);
 
 		// Click the toggle to turn on — no children exist
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		fireEvent.click(toggle);
 
 		expect(mockOnWorktreeTargetChange).toHaveBeenCalledWith({
@@ -759,7 +762,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 
-		const toggle = screen.getByText('Run in Worktree');
+		const toggle = screen.getByText('Dispatch to a separate worktree');
 		fireEvent.click(toggle);
 		// Should not have been called because button is disabled
 		expect(mockOnWorktreeTargetChange).not.toHaveBeenCalled();
@@ -884,7 +887,7 @@ describe('WorktreeRunSection', () => {
 	// UX Polish: Info icon, state indicator, path preview, keyboard nav
 	// -----------------------------------------------------------------------
 
-	it('shows description text in off state and "Enabled" badge in on state', () => {
+	it('shows "Off" badge in off state and "Enabled" badge in on state', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -900,8 +903,8 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 
-		// Off state should show description
-		expect(screen.getByText('Dispatch to a separate worktree')).toBeTruthy();
+		// Off state should show "Off" badge
+		expect(screen.getByText('Off')).toBeTruthy();
 		expect(screen.queryByText('Enabled')).toBeNull();
 
 		// On state should show "Enabled"
@@ -916,7 +919,7 @@ describe('WorktreeRunSection', () => {
 			/>
 		);
 		expect(screen.getByText('Enabled')).toBeTruthy();
-		expect(screen.queryByText('Dispatch to a separate worktree')).toBeNull();
+		expect(screen.queryByText('Off')).toBeNull();
 	});
 
 	it('renders info icon with tooltip next to the toggle button', () => {
