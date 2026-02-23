@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	X,
 	RotateCcw,
@@ -104,8 +104,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
 	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore((state) => state.sessions.find((s) => s.id === sessionId));
-	const worktreeChildren = useSessionStore(
-		useCallback((state) => state.sessions.filter((s) => s.parentSessionId === sessionId), [sessionId])
+	const sessions = useSessionStore((state) => state.sessions);
+	const worktreeChildren = useMemo(
+		() => sessions.filter((s) => s.parentSessionId === sessionId),
+		[sessions, sessionId]
 	);
 
 	const handleOpenWorktreeConfig = useCallback(() => {
