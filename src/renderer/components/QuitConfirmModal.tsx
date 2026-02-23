@@ -144,9 +144,9 @@ export function QuitConfirmModal({
 							Active Agents
 						</div>
 						<div className="flex flex-wrap gap-2">
-							{displayNames.map((name) => (
+							{displayNames.map((name, index) => (
 								<span
-									key={name}
+									key={`${name}-${index}`}
 									className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium"
 									style={{
 										backgroundColor: `${theme.colors.warning}15`,
