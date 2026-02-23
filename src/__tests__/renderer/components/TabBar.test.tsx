@@ -4813,8 +4813,8 @@ describe('Extension badge styling across themes', () => {
 
 		const badge = screen.getByText('XYZ');
 		expect(badge).toBeInTheDocument();
-		// Uses theme border color for unknown extensions
-		expect(badge).toHaveStyle({ backgroundColor: darkTheme.colors.border });
+		// Unknown extensions use accent-derived color for visibility
+		expect(badge).toHaveStyle({ backgroundColor: 'rgba(189, 147, 249, 0.3)' });
 	});
 
 	it('renders consistent tab name truncation for file tabs (max-w-[120px])', () => {
@@ -5268,8 +5268,8 @@ describe('File tab extension badge colorblind mode', () => {
 
 		const badge = screen.getByText('XYZ');
 		expect(badge).toBeInTheDocument();
-		// Falls back to theme border color for unknown extensions
-		expect(badge).toHaveStyle({ backgroundColor: darkTheme.colors.border });
+		// Colorblind mode also uses accent-derived fallback for unknown extensions
+		expect(badge).toHaveStyle({ backgroundColor: 'rgba(189, 147, 249, 0.3)' });
 	});
 });
 
