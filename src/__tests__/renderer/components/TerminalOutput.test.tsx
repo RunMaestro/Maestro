@@ -1991,6 +1991,192 @@ describe('TerminalOutput', () => {
 		});
 	});
 
+	describe('auto-scroll when at bottom', () => {
+		it('auto-scrolls to bottom when user is at bottom and new content arrives (no autoScrollAiMode)', async () => {
+			// isAtBottom starts as true (initial state), so auto-scroll should work
+			// even when autoScrollAiMode preference is OFF
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Hi there', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				autoScrollAiMode: false, // Auto-scroll preference is OFF
+			});
+			const { container, rerender } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			scrollToSpy.mockClear();
+
+			// Add a new user message (simulating message send while at bottom)
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'user-2', text: 'Follow up question', source: 'user' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+			};
+
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+
+			// MutationObserver fires on DOM change, RAF needs time to execute
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// scrollTo should have been called — user was at bottom, auto-scroll kicks in
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('does NOT auto-scroll when user has scrolled up and autoScrollAiMode is off', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+				createLogEntry({ id: 'resp-1', text: 'Response', source: 'stdout' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				autoScrollAiMode: false,
+			});
+			const { container, rerender } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			// Simulate NOT at bottom (user scrolled up)
+			Object.defineProperty(scrollContainer, 'scrollHeight', { value: 1000, configurable: true });
+			Object.defineProperty(scrollContainer, 'scrollTop', { value: 0, configurable: true });
+			Object.defineProperty(scrollContainer, 'clientHeight', { value: 400, configurable: true });
+			// scrollHeight(1000) - scrollTop(0) - clientHeight(400) = 600 > 50 → NOT at bottom
+
+			fireEvent.scroll(scrollContainer);
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			scrollToSpy.mockClear();
+
+			// Add new content
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'resp-2', text: 'New response', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+			};
+
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// scrollTo should NOT have been called — user scrolled up, no auto-scroll
+			expect(scrollToSpy).not.toHaveBeenCalled();
+		});
+
+		it('auto-scrolls when autoScrollAiMode is on and not paused', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({
+				session,
+				autoScrollAiMode: true,
+				setAutoScrollAiMode: vi.fn(),
+			});
+			const { container, rerender } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			scrollToSpy.mockClear();
+
+			// Add new content
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'resp-1', text: 'AI response', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
+			};
+
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: true, setAutoScrollAiMode: vi.fn() })} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+
+		it('always auto-scrolls in terminal mode regardless of autoScrollAiMode', async () => {
+			const logs: LogEntry[] = [
+				createLogEntry({ id: 'cmd-1', text: 'ls', source: 'user' }),
+			];
+
+			const session = createDefaultSession({
+				inputMode: 'terminal',
+				shellLogs: logs,
+			});
+
+			const props = createDefaultProps({
+				session,
+				autoScrollAiMode: false,
+			});
+			const { container, rerender } = render(<TerminalOutput {...props} />);
+
+			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
+			const scrollToSpy = vi.fn();
+			scrollContainer.scrollTo = scrollToSpy;
+
+			scrollToSpy.mockClear();
+
+			// Add terminal output
+			const newLogs = [
+				...logs,
+				createLogEntry({ id: 'out-1', text: 'file1.txt\nfile2.txt', source: 'stdout' }),
+			];
+			const newSession = {
+				...session,
+				shellLogs: newLogs,
+			};
+
+			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+
+			await act(async () => {
+				vi.advanceTimersByTime(50);
+			});
+
+			// Terminal mode always auto-scrolls
+			expect(scrollToSpy).toHaveBeenCalled();
+		});
+	});
+
 	describe('scroll position persistence', () => {
 		it('calls onScrollPositionChange when scrolling (throttled)', async () => {
 			const onScrollPositionChange = vi.fn();

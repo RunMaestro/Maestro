@@ -1113,6 +1113,9 @@ export const TerminalOutput = memo(
 		const lastLogCountRef = useRef(0);
 		// Track previous isAtBottom to detect changes for callback
 		const prevIsAtBottomRef = useRef(true);
+		// Ref mirror of isAtBottom for MutationObserver closure (avoids stale state)
+		const isAtBottomRef = useRef(true);
+		isAtBottomRef.current = isAtBottom;
 		// Track whether auto-scroll is paused because user scrolled up (state so button re-renders)
 		const [autoScrollPaused, setAutoScrollPaused] = useState(false);
 		// Guard flag: prevents the scroll handler from pausing auto-scroll
@@ -1499,7 +1502,8 @@ export const TerminalOutput = memo(
 
 			const shouldAutoScroll = () =>
 				session.inputMode === 'terminal' ||
-				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused);
+				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused) ||
+				(session.inputMode === 'ai' && isAtBottomRef.current);
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
