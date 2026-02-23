@@ -83,7 +83,7 @@ describe('WorktreeRunSection', () => {
 		mockOnOpenWorktreeConfig = vi.fn();
 	});
 
-	it('shows configure link and no toggle when worktreeConfig is not set', () => {
+	it('shows disabled toggle and configure link when worktreeConfig is not set', () => {
 		const session = createMockSession({ worktreeConfig: undefined });
 		render(
 			<WorktreeRunSection
@@ -95,9 +95,64 @@ describe('WorktreeRunSection', () => {
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
+		// Toggle should render but be disabled
+		const toggle = screen.getByText('Run in Worktree');
+		expect(toggle).toBeTruthy();
+		const toggleButton = toggle.closest('button')!;
+		expect(toggleButton.disabled).toBe(true);
+		expect(toggleButton.className).toContain('opacity-40');
+		expect(toggleButton.className).toContain('cursor-not-allowed');
+		// Configure link should also render
 		expect(screen.getByText(/Configure Worktrees/)).toBeTruthy();
-		// Toggle button should NOT render
-		expect(screen.queryByText('Run in Worktree')).toBeNull();
+	});
+
+	it('treats session as configured when legacy worktreeParentPath is set', () => {
+		const session = createMockSession({
+			worktreeConfig: undefined,
+			worktreeParentPath: '/project/worktrees',
+		});
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={null}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+		// Toggle should be enabled (not disabled)
+		const toggle = screen.getByText('Run in Worktree');
+		const toggleButton = toggle.closest('button')!;
+		expect(toggleButton.disabled).toBe(false);
+		// Configure link should NOT appear
+		expect(screen.queryByText(/Configure Worktrees/)).toBeNull();
+	});
+
+	it('treats session as configured when child worktree sessions exist', () => {
+		const session = createMockSession({ worktreeConfig: undefined });
+		const child = createWorktreeChild();
+		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
+
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session, child]}
+				worktreeTarget={null}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+		// Toggle should be enabled because children exist
+		const toggle = screen.getByText('Run in Worktree');
+		const toggleButton = toggle.closest('button')!;
+		expect(toggleButton.disabled).toBe(false);
+		expect(screen.queryByText(/Configure Worktrees/)).toBeNull();
 	});
 
 	it('shows toggle in off state with no selector when worktreeTarget is null', () => {
@@ -658,6 +713,25 @@ describe('WorktreeRunSection', () => {
 
 		fireEvent.click(screen.getByText(/Configure Worktrees/));
 		expect(mockOnOpenWorktreeConfig).toHaveBeenCalledOnce();
+	});
+
+	it('disabled toggle does not fire toggle handler when clicked', () => {
+		const session = createMockSession({ worktreeConfig: undefined });
+		render(
+			<WorktreeRunSection
+				theme={theme}
+				activeSession={session}
+				sessions={[session]}
+				worktreeTarget={null}
+				onWorktreeTargetChange={mockOnWorktreeTargetChange}
+				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
+			/>
+		);
+
+		const toggle = screen.getByText('Run in Worktree');
+		fireEvent.click(toggle);
+		// Should not have been called because button is disabled
+		expect(mockOnWorktreeTargetChange).not.toHaveBeenCalled();
 	});
 
 	// -----------------------------------------------------------------------

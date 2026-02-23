@@ -21,7 +21,17 @@ export function WorktreeRunSection({
 	onWorktreeTargetChange,
 	onOpenWorktreeConfig,
 }: WorktreeRunSectionProps) {
-	const isConfigured = !!activeSession.worktreeConfig;
+	// Worktree children of the active session
+	const worktreeChildren = sessions.filter(
+		(s) => s.parentSessionId === activeSession.id
+	);
+
+	// Detect configuration via new worktreeConfig, legacy worktreeParentPath, or existing children
+	const isConfigured = !!(
+		activeSession.worktreeConfig ||
+		activeSession.worktreeParentPath ||
+		worktreeChildren.length > 0
+	);
 	const isEnabled = worktreeTarget !== null;
 
 	const [createPROnCompletion, setCreatePROnCompletion] = useState(false);
@@ -32,11 +42,6 @@ export function WorktreeRunSection({
 	const [availableWorktrees, setAvailableWorktrees] = useState<Array<{ path: string; name: string; branch: string | null }>>([]);
 	const [isScanning, setIsScanning] = useState(false);
 	const [branchLoadError, setBranchLoadError] = useState(false);
-
-	// Worktree children of the active session
-	const worktreeChildren = sessions.filter(
-		(s) => s.parentSessionId === activeSession.id
-	);
 
 	const sshRemoteId = activeSession.sshRemoteId || activeSession.sessionSshRemoteConfig?.remoteId || undefined;
 
@@ -231,33 +236,23 @@ export function WorktreeRunSection({
 		return `${basePath}/${newBranchName.trim()}`;
 	}, [activeSession.worktreeConfig?.basePath, selectedValue, newBranchName]);
 
-	// Not-configured state
-	if (!isConfigured) {
-		return (
-			<div className="mb-6">
-				<span
-					className="text-sm cursor-pointer hover:underline"
-					style={{ color: theme.colors.accent }}
-					onClick={onOpenWorktreeConfig}
-				>
-					Configure Worktrees to enable this feature →
-				</span>
-			</div>
-		);
-	}
-
 	return (
 		<div className="mb-6 flex flex-col gap-3">
 			{/* Toggle with info icon */}
 			<div className="flex items-center gap-2 self-start">
 				<button
-					onClick={handleToggle}
+					onClick={isConfigured ? handleToggle : undefined}
+					disabled={!isConfigured}
 					className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-colors ${
-						isEnabled ? 'border-accent' : 'border-border hover:bg-white/5'
+						!isConfigured
+							? 'opacity-40 cursor-not-allowed'
+							: isEnabled
+								? 'border-accent'
+								: 'border-border hover:bg-white/5'
 					}`}
 					style={{
-						borderColor: isEnabled ? theme.colors.accent : theme.colors.border,
-						backgroundColor: isEnabled
+						borderColor: isEnabled && isConfigured ? theme.colors.accent : theme.colors.border,
+						backgroundColor: isEnabled && isConfigured
 							? theme.colors.accent + '15'
 							: 'transparent',
 					}}
@@ -265,7 +260,7 @@ export function WorktreeRunSection({
 					<GitBranch
 						className="w-3.5 h-3.5"
 						style={{
-							color: isEnabled
+							color: isEnabled && isConfigured
 								? theme.colors.accent
 								: theme.colors.textDim,
 						}}
@@ -273,7 +268,7 @@ export function WorktreeRunSection({
 					<span
 						className="text-xs font-medium"
 						style={{
-							color: isEnabled
+							color: isEnabled && isConfigured
 								? theme.colors.accent
 								: theme.colors.textMain,
 						}}
@@ -289,7 +284,18 @@ export function WorktreeRunSection({
 				</span>
 			</div>
 
-			{isEnabled && (
+			{/* Configure prompt when worktrees aren't set up */}
+			{!isConfigured && (
+				<span
+					className="text-xs cursor-pointer hover:underline pl-1"
+					style={{ color: theme.colors.accent }}
+					onClick={onOpenWorktreeConfig}
+				>
+					Configure Worktrees to enable this feature →
+				</span>
+			)}
+
+			{isConfigured && isEnabled && (
 				<div className="flex flex-col gap-3 animate-slide-down">
 					{/* Agent selector */}
 					<select
