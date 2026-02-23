@@ -167,11 +167,21 @@ export function getExtensionColor(
 ): { bg: string; text: string } {
 	const isLightTheme = theme.mode === 'light';
 
-	// Colorblind-safe path
+	// Colorblind-safe path — never fall through to non-colorblind-safe colors
 	if (colorBlindMode) {
 		const cbColors = getColorBlindExtensionColor(extension, isLightTheme);
 		if (cbColors) return cbColors;
-		// Fall through to accent-based default below
+		// Unknown extension in colorblind mode: skip the regular palette and
+		// jump straight to the theme accent so we never serve unsafe colors.
+		const accentRgb = hexToRgb(theme.colors.accent);
+		if (accentRgb) {
+			return isLightTheme
+				? { bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.15)`, text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)` }
+				: { bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.3)`, text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)` };
+		}
+		return isLightTheme
+			? { bg: 'rgba(107, 114, 128, 0.15)', text: 'rgba(75, 85, 99, 0.9)' }
+			: { bg: 'rgba(156, 163, 175, 0.3)', text: 'rgba(209, 213, 219, 0.9)' };
 	}
 
 	// Look up extension in the map
