@@ -430,22 +430,19 @@ const LogItemComponent = memo(
 							style={{ overscrollBehavior: 'contain' }}
 						>
 							{log.images.map((img, imgIdx) => (
-								<img
-									key={img}
-									src={img}
-									alt={`Terminal output image ${imgIdx + 1}`}
-									className="h-20 rounded border cursor-zoom-in shrink-0 outline-none focus:ring-2 focus:ring-accent"
-									style={{ objectFit: 'contain', maxWidth: '200px' }}
-									role="button"
-									tabIndex={0}
+								<button
+									key={`${img}-${imgIdx}`}
+									type="button"
+									className="shrink-0 p-0 bg-transparent outline-none focus:ring-2 focus:ring-accent rounded"
 									onClick={() => setLightboxImage(img, log.images, 'history')}
-									onKeyDown={(e) => {
-										if (e.key === 'Enter' || e.key === ' ') {
-											e.preventDefault();
-											setLightboxImage(img, log.images, 'history');
-										}
-									}}
-								/>
+								>
+									<img
+										src={img}
+										alt={`Terminal output image ${imgIdx + 1}`}
+										className="h-20 rounded border cursor-zoom-in block"
+										style={{ objectFit: 'contain', maxWidth: '200px' }}
+									/>
+								</button>
 							))}
 						</div>
 					)}
@@ -1831,7 +1828,7 @@ export const TerminalOutput = memo(
 									}
 								}
 							}}
-							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
+							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
 							style={{
 								backgroundColor: isAutoScrollActive
 									? theme.colors.accent

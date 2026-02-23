@@ -168,6 +168,8 @@ export function UsageDashboardModal({
 	const { registerLayer, unregisterLayer } = useLayerStack();
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
+	const viewModeRef = useRef(viewMode);
+	viewModeRef.current = viewMode;
 
 	// Reset time range to default when modal opens
 	useEffect(() => {
@@ -284,7 +286,7 @@ export function UsageDashboardModal({
 				e.preventDefault();
 				e.stopPropagation();
 
-				const currentIndex = VIEW_MODE_TABS.findIndex((tab) => tab.value === viewMode);
+				const currentIndex = VIEW_MODE_TABS.findIndex((tab) => tab.value === viewModeRef.current);
 
 				if (e.key === '[') {
 					// Previous tab
@@ -300,7 +302,7 @@ export function UsageDashboardModal({
 
 		window.addEventListener('keydown', handleKeyDown, true);
 		return () => window.removeEventListener('keydown', handleKeyDown, true);
-	}, [isOpen, switchViewMode, viewMode]);
+	}, [isOpen, switchViewMode]);
 
 	// Track container width for responsive layout
 	useEffect(() => {

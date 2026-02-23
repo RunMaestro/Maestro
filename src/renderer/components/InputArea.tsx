@@ -249,7 +249,11 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 		onToggleWizardShowThinking,
 	} = props;
 
-	const commandHistoryFilterRef = React.useRef<HTMLInputElement>(null);
+	const setCommandHistoryFilterRef = React.useCallback((el: HTMLInputElement | null) => {
+		if (el) {
+			el.focus();
+		}
+	}, []);
 
 	// Get agent capabilities for conditional feature rendering
 	const { hasCapability } = useAgentCapabilities(session.toolType);
@@ -356,12 +360,6 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			.reverse()
 			.slice(0, 10);
 	}, [currentCommandHistory, commandHistoryFilterLower]);
-
-	useEffect(() => {
-		if (commandHistoryOpen) {
-			setTimeout(() => commandHistoryFilterRef.current?.focus(), 0);
-		}
-	}, [commandHistoryOpen]);
 
 	// Auto-resize textarea to match content height.
 	// Fires on tab switch AND inputValue changes (handles external updates like session restore,
@@ -548,7 +546,8 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 				>
 					<div className="p-2">
 						<input
-							ref={commandHistoryFilterRef}
+							ref={setCommandHistoryFilterRef}
+							tabIndex={0}
 							type="text"
 							className="w-full bg-transparent outline-none text-sm p-2 border-b"
 							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
