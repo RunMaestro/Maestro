@@ -3,11 +3,12 @@ import { GitBranch, Info } from 'lucide-react';
 import type { Theme, Session, WorktreeRunTarget } from '../types';
 import { gitService } from '../services/git';
 import { getStatusColor } from '../utils/theme';
+import { captureException } from '../utils/sentry';
 
 interface WorktreeRunSectionProps {
 	theme: Theme;
 	activeSession: Session;
-	sessions: Session[];
+	worktreeChildren: Session[];
 	worktreeTarget: WorktreeRunTarget | null;
 	onWorktreeTargetChange: (target: WorktreeRunTarget | null) => void;
 	onOpenWorktreeConfig: () => void;
@@ -16,15 +17,11 @@ interface WorktreeRunSectionProps {
 export function WorktreeRunSection({
 	theme,
 	activeSession,
-	sessions,
+	worktreeChildren,
 	worktreeTarget,
 	onWorktreeTargetChange,
 	onOpenWorktreeConfig,
 }: WorktreeRunSectionProps) {
-	// Worktree children of the active session
-	const worktreeChildren = sessions.filter(
-		(s) => s.parentSessionId === activeSession.id
-	);
 
 	// Detect configuration via new worktreeConfig, legacy worktreeParentPath, or existing children
 	const isConfigured = !!(
@@ -76,8 +73,9 @@ export function WorktreeRunSection({
 				const mmdd = `${String(new Date().getMonth() + 1).padStart(2, '0')}${String(new Date().getDate()).padStart(2, '0')}`;
 				setNewBranchName(`auto-run-${defaultBranch}-${mmdd}`);
 			}
-		}).catch(() => {
+		}).catch((err) => {
 			if (!cancelled) {
+				captureException(err, { extra: { cwd: activeSession.cwd, sshRemoteId } });
 				setBranchLoadError(true);
 				setBranches([]);
 			}
@@ -86,7 +84,7 @@ export function WorktreeRunSection({
 		return () => {
 			cancelled = true;
 		};
-	}, [selectedValue, activeSession.cwd]);
+	}, [selectedValue, activeSession.cwd, sshRemoteId]);
 
 	// Scan for available worktrees on disk when toggle is enabled
 	useEffect(() => {
@@ -110,8 +108,9 @@ export function WorktreeRunSection({
 			);
 			setAvailableWorktrees(filtered);
 			setIsScanning(false);
-		}).catch(() => {
+		}).catch((err) => {
 			if (!cancelled) {
+				captureException(err, { extra: { basePath: activeSession.worktreeConfig?.basePath, sshRemoteId } });
 				setAvailableWorktrees([]);
 				setIsScanning(false);
 			}
@@ -132,7 +131,7 @@ export function WorktreeRunSection({
 				createPROnCompletion: createPROnCompletion,
 			});
 		}
-	}, [hasNoWorktrees]);
+	}, [hasNoWorktrees, selectedValue, onWorktreeTargetChange, createPROnCompletion]);
 
 	// Update branch name when base branch changes
 	const handleBaseBranchChange = useCallback(
@@ -184,7 +183,7 @@ export function WorktreeRunSection({
 				createPROnCompletion: createPROnCompletion,
 			});
 		}
-	}, [baseBranch, newBranchName]);
+	}, [baseBranch, newBranchName, selectedValue, isEnabled, onWorktreeTargetChange, createPROnCompletion]);
 
 	const handleToggle = useCallback(() => {
 		if (isEnabled) {
@@ -241,13 +240,13 @@ export function WorktreeRunSection({
 					Run in Worktree
 				</label>
 				{!isConfigured && (
-					<span
-						className="text-xs cursor-pointer hover:underline"
+					<button
+						className="text-xs cursor-pointer hover:underline outline-none bg-transparent border-none p-0"
 						style={{ color: theme.colors.accent }}
 						onClick={onOpenWorktreeConfig}
 					>
 						Configure →
-					</span>
+					</button>
 				)}
 			</div>
 
@@ -472,7 +471,7 @@ export function WorktreeRunSection({
 					{/* PR Checkbox */}
 					<label className="flex items-center gap-2 cursor-pointer">
 						<div
-							className="w-4 h-4 rounded border flex items-center justify-center shrink-0"
+							className="w-4 h-4 rounded border flex items-center justify-center shrink-0 outline-none"
 							role="checkbox"
 							aria-checked={createPROnCompletion}
 							tabIndex={0}

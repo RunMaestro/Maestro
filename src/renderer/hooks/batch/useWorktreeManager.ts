@@ -9,6 +9,7 @@
 
 import { useCallback } from 'react';
 import type { BatchDocumentEntry } from '../../types';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Configuration for worktree operations
@@ -356,8 +357,9 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 					if (logResult.entries && logResult.entries.length > 0) {
 						commitSubjects = logResult.entries.map((e) => e.subject);
 					}
-				} catch {
+				} catch (err) {
 					// Non-fatal — commit log is nice-to-have
+					captureException(err, { extra: { worktreePath, operation: 'git.log' } });
 				}
 
 				// Generate intelligent PR title and body

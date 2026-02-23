@@ -339,13 +339,12 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			const deps = createMockDeps();
 
 			// Add a busy session to the store
-			const busySession = {
-				...session,
+			const busySession = createMockSession({
 				id: 'busy-child',
 				name: 'Busy Child',
-				state: 'busy',
+				state: 'busy' as const,
 				parentSessionId: session.id,
-			};
+			});
 			useSessionStore.setState({
 				sessions: [session, busySession],
 				activeSessionId: session.id,

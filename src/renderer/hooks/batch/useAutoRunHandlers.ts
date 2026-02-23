@@ -5,6 +5,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { buildWorktreeSession } from '../../utils/worktreeSession';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -131,8 +132,9 @@ async function spawnWorktreeAgentAndDispatch(
 	let gitBranches: string[] | undefined;
 	try {
 		gitBranches = await gitService.getBranches(worktreePath, sshRemoteId);
-	} catch {
+	} catch (err) {
 		// Non-fatal — git info is nice-to-have
+		captureException(err, { extra: { worktreePath, sshRemoteId } });
 	}
 
 	// Determine current branch from fetched branches or fallback

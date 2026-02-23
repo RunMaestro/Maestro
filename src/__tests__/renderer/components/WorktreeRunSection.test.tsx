@@ -91,7 +91,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -120,7 +120,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -144,7 +144,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -163,7 +163,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -191,7 +191,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -225,7 +225,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, openChild]}
+				worktreeChildren={[openChild]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -260,7 +260,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -293,7 +293,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -316,7 +316,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -343,7 +343,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -380,7 +380,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -402,7 +402,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -424,7 +424,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child1, child2]}
+				worktreeChildren={[child1, child2]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-1', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -449,7 +449,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, idleChild, busyChild]}
+				worktreeChildren={[idleChild, busyChild]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-idle', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -477,7 +477,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -515,7 +515,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -546,7 +546,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -588,7 +588,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -609,7 +609,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={lastCall}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -638,7 +638,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-1', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -666,7 +666,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -690,7 +690,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, idleChild]}
+				worktreeChildren={[idleChild]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -717,7 +717,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -740,7 +740,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -757,7 +757,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -783,7 +783,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -818,7 +818,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -857,7 +857,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -898,7 +898,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -914,7 +914,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -930,7 +930,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={null}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -953,7 +953,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, idleChild]}
+				worktreeChildren={[idleChild]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-idle', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -981,7 +981,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -1016,7 +1016,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session]}
+				worktreeChildren={[]}
 				worktreeTarget={{ mode: 'create-new', createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -1053,7 +1053,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
@@ -1093,7 +1093,7 @@ describe('WorktreeRunSection', () => {
 			<WorktreeRunSection
 				theme={theme}
 				activeSession={session}
-				sessions={[session, child]}
+				worktreeChildren={[child]}
 				worktreeTarget={{ mode: 'existing-open', sessionId: child.id, createPROnCompletion: false }}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}

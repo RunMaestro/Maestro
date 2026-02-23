@@ -2388,6 +2388,11 @@ describe('Escape Handler Priority', () => {
 });
 
 describe('Worktree Loading State', () => {
+	afterEach(async () => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
 	it('shows Preparing Worktree text when onGo is async and worktree mode is active', async () => {
 		// Setup session store with a session that has worktreeConfig
 		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');

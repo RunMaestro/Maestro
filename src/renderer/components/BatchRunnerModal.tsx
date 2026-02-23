@@ -104,7 +104,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
 	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
 	const activeSession = useSessionStore((state) => state.sessions.find((s) => s.id === sessionId));
-	const sessions = useSessionStore((state) => state.sessions);
+	const worktreeChildren = useSessionStore(
+		useCallback((state) => state.sessions.filter((s) => s.parentSessionId === sessionId), [sessionId])
+	);
 
 	const handleOpenWorktreeConfig = useCallback(() => {
 		onClose();
@@ -387,14 +389,16 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			setIsPreparingWorktree(true);
 			try {
 				await onGo(config);
+				onClose();
+			} catch {
+				// Keep modal open so the user can adjust config and retry
 			} finally {
 				setIsPreparingWorktree(false);
 			}
 		} else {
 			onGo(config);
+			onClose();
 		}
-
-		onClose();
 	};
 
 	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
@@ -632,7 +636,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						<WorktreeRunSection
 							theme={theme}
 							activeSession={activeSession}
-							sessions={sessions}
+							worktreeChildren={worktreeChildren}
 							worktreeTarget={worktreeTarget}
 							onWorktreeTargetChange={setWorktreeTarget}
 							onOpenWorktreeConfig={handleOpenWorktreeConfig}

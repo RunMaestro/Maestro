@@ -674,10 +674,10 @@ export function useBatchProcessor({
 
 			// When dispatching to a worktree agent via "Run in Worktree", the agent is already
 			// in the worktree directory. Mark worktree as active so PR creation fires on completion.
-			if (config.worktreeTarget && config.worktree?.createPROnCompletion) {
+			if (config.worktreeTarget) {
 				worktreeActive = true;
 				worktreePath = session.cwd;
-				worktreeBranch = session.worktreeBranch || config.worktree.branchName;
+				worktreeBranch = session.worktreeBranch || config.worktree?.branchName;
 			}
 
 			// Get git branch for template variable substitution
