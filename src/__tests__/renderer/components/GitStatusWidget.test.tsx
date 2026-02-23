@@ -227,8 +227,9 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// Component displays modifiedCount with FileEdit icon
-			expect(screen.getByText('2')).toBeInTheDocument();
+			// Component displays modifiedCount in both compact (fileCount) and full (modifiedCount) views
+			// Both show '2' here, so use getAllByText to handle the responsive dual-render
+			expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('should calculate totals from multiple files', () => {
@@ -259,7 +260,8 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			expect(screen.getByText('1')).toBeInTheDocument();
+			// fileCount and default modifiedCount are both 1, appearing in compact + full views
+			expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('should handle untracked files (?)', () => {
@@ -723,7 +725,8 @@ describe('GitStatusWidget', () => {
 			// Check that additions/deletions/modifiedCount are displayed
 			expect(screen.getByText('190')).toBeInTheDocument();
 			expect(screen.getByText('27')).toBeInTheDocument();
-			expect(screen.getByText('20')).toBeInTheDocument();
+			// '20' appears in both compact (fileCount) and full (modifiedCount) views
+			expect(screen.getAllByText('20').length).toBeGreaterThanOrEqual(1);
 		});
 
 		it('should handle very large numbers', () => {
