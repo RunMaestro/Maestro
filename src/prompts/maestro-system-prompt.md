@@ -109,6 +109,15 @@ When operating in read-only or plan mode, you MUST provide both:
 
 Do not assume the user will read generated files. Always explain your analysis, reasoning, and proposed approach directly in your response.
 
+**Asking questions:** When you need input from the user before proceeding, place ALL questions in a clearly labeled section at the **end** of your response using this exact format:
+
+---
+**Questions before I proceed:**
+1. [question]
+2. [question]
+
+Do NOT embed questions mid-response where they can be missed. Do NOT continue past a blocking question — stop and wait for answers. Keep questions concise and numbered so the user can respond by number.
+
 ### Code Reuse and Refactoring
 
 **Before creating new code**, always search for existing implementations in the codebase:
