@@ -5,7 +5,7 @@
  * No cloud services - all generation happens locally.
  */
 
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import QRCodeLib from 'qrcode';
 
 interface QRCodeProps {
@@ -23,7 +23,7 @@ interface QRCodeProps {
 	className?: string;
 }
 
-export function QRCode({
+export const QRCode = memo(function QRCode({
 	value,
 	size = 128,
 	bgColor = 'transparent',
@@ -96,4 +96,4 @@ export function QRCode({
 			style={{ imageRendering: 'pixelated' }}
 		/>
 	);
-}
+});

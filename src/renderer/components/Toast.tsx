@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import type { Theme } from '../types';
 import { useNotificationStore, type Toast as ToastType } from '../stores/notificationStore';
 
@@ -26,7 +26,7 @@ function formatDuration(ms: number): string {
 	return parts.join(' ') || '0s';
 }
 
-function ToastItem({
+const ToastItem = memo(function ToastItem({
 	toast,
 	theme,
 	onRemove,
@@ -296,9 +296,9 @@ function ToastItem({
       `}</style>
 		</div>
 	);
-}
+});
 
-export function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
+export const ToastContainer = memo(function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
 
@@ -322,4 +322,4 @@ export function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
 			</div>
 		</div>
 	);
-}
+});

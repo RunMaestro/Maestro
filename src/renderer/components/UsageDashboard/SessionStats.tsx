@@ -11,7 +11,7 @@
  * - Remote (SSH) vs local breakdown
  */
 
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { Monitor, GitBranch, Folder, Laptop } from 'lucide-react';
 import type { Theme, Session, ToolType } from '../../types';
 import { COLORBLIND_AGENT_PALETTE } from '../../constants/colorblindPalettes';
@@ -99,7 +99,7 @@ function formatAgentName(toolType: ToolType): string {
 	return names[toolType] || toolType;
 }
 
-export function SessionStats({ sessions, theme, colorBlindMode = false }: SessionStatsProps) {
+export const SessionStats = memo(function SessionStats({ sessions, theme, colorBlindMode = false }: SessionStatsProps) {
 	// Filter out terminal-only sessions for meaningful stats
 	const agentSessions = useMemo(
 		() => sessions.filter((s) => s.toolType !== 'terminal'),
@@ -292,6 +292,6 @@ export function SessionStats({ sessions, theme, colorBlindMode = false }: Sessio
 			</div>
 		</div>
 	);
-}
+});
 
 export default SessionStats;

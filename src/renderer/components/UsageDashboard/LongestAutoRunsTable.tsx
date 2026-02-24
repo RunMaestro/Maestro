@@ -13,7 +13,7 @@
  * - Project (last path segment)
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
@@ -118,7 +118,7 @@ function formatTime(timestamp: number): string {
 	});
 }
 
-export function LongestAutoRunsTable({ timeRange, theme }: LongestAutoRunsTableProps) {
+export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({ timeRange, theme }: LongestAutoRunsTableProps) {
 	const [sessions, setSessions] = useState<AutoRunSession[]>([]);
 	const [loading, setLoading] = useState(true);
 
@@ -289,6 +289,6 @@ export function LongestAutoRunsTable({ timeRange, theme }: LongestAutoRunsTableP
 			</div>
 		</div>
 	);
-}
+});
 
 export default LongestAutoRunsTable;

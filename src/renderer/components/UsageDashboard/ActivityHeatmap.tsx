@@ -14,7 +14,7 @@
  * - Month labels above the grid for navigation
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback } from 'react';
 import { format, subDays, startOfWeek, addDays, getDay } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
@@ -419,7 +419,7 @@ function getIntensityColor(intensity: number, theme: Theme, colorBlindMode?: boo
 	}
 }
 
-export function ActivityHeatmap({
+export const ActivityHeatmap = memo(function ActivityHeatmap({
 	data,
 	timeRange,
 	theme,
@@ -970,6 +970,6 @@ export function ActivityHeatmap({
 				})()}
 		</div>
 	);
-}
+});
 
 export default ActivityHeatmap;

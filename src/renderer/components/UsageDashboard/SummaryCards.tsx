@@ -17,7 +17,7 @@
  * - Formatted values for readability
  */
 
-import React, { useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { MessageSquare, Clock, Timer, Bot, Users, Layers, Sunrise, Globe, Zap, PanelTop } from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
@@ -126,7 +126,7 @@ function formatHour(hour: number): string {
 	return `${displayHour} ${suffix}`;
 }
 
-export function SummaryCards({ data, theme, columns = 3, sessions }: SummaryCardsProps) {
+export const SummaryCards = memo(function SummaryCards({ data, theme, columns = 3, sessions }: SummaryCardsProps) {
 	// Count agent sessions (exclude terminal-only sessions) for accurate total
 	const agentCount = useMemo(() => {
 		if (sessions) {
@@ -259,6 +259,6 @@ export function SummaryCards({ data, theme, columns = 3, sessions }: SummaryCard
 			))}
 		</div>
 	);
-}
+});
 
 export default SummaryCards;

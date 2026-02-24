@@ -12,7 +12,7 @@
  * - Reduced motion support for accessibility
  */
 
-import React from 'react';
+import React, { memo } from 'react';
 import type { Theme } from '../../types';
 
 interface SkeletonProps {
@@ -44,7 +44,7 @@ function SkeletonBox({
 /**
  * Summary Cards skeleton - 5 cards in a row
  */
-export function SummaryCardsSkeleton({ theme, columns = 5 }: SkeletonProps & { columns?: number }) {
+export const SummaryCardsSkeleton = memo(function SummaryCardsSkeleton({ theme, columns = 5 }: SkeletonProps & { columns?: number }) {
 	return (
 		<div
 			className="grid gap-4"
@@ -71,12 +71,12 @@ export function SummaryCardsSkeleton({ theme, columns = 5 }: SkeletonProps & { c
 			))}
 		</div>
 	);
-}
+});
 
 /**
  * Agent Comparison Chart skeleton - horizontal bar chart layout
  */
-export function AgentComparisonChartSkeleton({ theme }: SkeletonProps) {
+export const AgentComparisonChartSkeleton = memo(function AgentComparisonChartSkeleton({ theme }: SkeletonProps) {
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -116,12 +116,12 @@ export function AgentComparisonChartSkeleton({ theme }: SkeletonProps) {
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Source Distribution Chart skeleton - pie/donut chart layout
  */
-export function SourceDistributionChartSkeleton({ theme }: SkeletonProps) {
+export const SourceDistributionChartSkeleton = memo(function SourceDistributionChartSkeleton({ theme }: SkeletonProps) {
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -159,12 +159,12 @@ export function SourceDistributionChartSkeleton({ theme }: SkeletonProps) {
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Activity Heatmap skeleton - grid of cells
  */
-export function ActivityHeatmapSkeleton({ theme }: SkeletonProps) {
+export const ActivityHeatmapSkeleton = memo(function ActivityHeatmapSkeleton({ theme }: SkeletonProps) {
 	const cellSize = 12;
 	const cellGap = 3;
 	const rows = 7; // Days of week
@@ -243,12 +243,12 @@ export function ActivityHeatmapSkeleton({ theme }: SkeletonProps) {
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Duration Trends Chart skeleton - line/area chart layout
  */
-export function DurationTrendsChartSkeleton({ theme }: SkeletonProps) {
+export const DurationTrendsChartSkeleton = memo(function DurationTrendsChartSkeleton({ theme }: SkeletonProps) {
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -308,12 +308,12 @@ export function DurationTrendsChartSkeleton({ theme }: SkeletonProps) {
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Auto Run Stats skeleton - summary cards for Auto Run view
  */
-export function AutoRunStatsSkeleton({ theme, columns = 6 }: SkeletonProps & { columns?: number }) {
+export const AutoRunStatsSkeleton = memo(function AutoRunStatsSkeleton({ theme, columns = 6 }: SkeletonProps & { columns?: number }) {
 	return (
 		<div
 			className="grid gap-4"
@@ -334,13 +334,13 @@ export function AutoRunStatsSkeleton({ theme, columns = 6 }: SkeletonProps & { c
 			))}
 		</div>
 	);
-}
+});
 
 /**
  * Full dashboard skeleton - combines all chart skeletons for initial load
  * Matches the overview layout of the actual dashboard
  */
-export function DashboardSkeleton({
+export const DashboardSkeleton = memo(function DashboardSkeleton({
 	theme,
 	viewMode = 'overview',
 	chartGridCols = 2,
@@ -383,6 +383,6 @@ export function DashboardSkeleton({
 			{viewMode === 'autorun' && <AutoRunStatsSkeleton theme={theme} columns={autoRunStatsCols} />}
 		</div>
 	);
-}
+});
 
 export default DashboardSkeleton;

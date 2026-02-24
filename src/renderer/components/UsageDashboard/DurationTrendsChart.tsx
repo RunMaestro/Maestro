@@ -12,7 +12,7 @@
  * - Theme-aware line color and grid
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
@@ -143,7 +143,7 @@ function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
 	}
 }
 
-export function DurationTrendsChart({
+export const DurationTrendsChart = memo(function DurationTrendsChart({
 	data,
 	timeRange,
 	theme,
@@ -544,6 +544,6 @@ export function DurationTrendsChart({
 			</div>
 		</div>
 	);
-}
+});
 
 export default DurationTrendsChart;
