@@ -100,6 +100,7 @@
             "pages": [
               "releases",
               "achievements",
+              "performance-profiling",
               "troubleshooting"
             ],
             "icon": "life-ring"
