@@ -16,10 +16,8 @@
  */
 
 import { useCallback, useEffect } from 'react';
-import type { Session, AITab } from '../../types';
-import type { ToolType } from '../../../shared/types';
+import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
-import { generateId } from '../../utils/ids';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -50,7 +48,6 @@ export interface SessionLifecycleReturn {
 	handleSaveEditAgent: (
 		sessionId: string,
 		name: string,
-		toolType?: ToolType,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
@@ -110,7 +107,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		(
 			sessionId: string,
 			name: string,
-			toolType?: ToolType,
 			nudgeMessage?: string,
 			customPath?: string,
 			customArgs?: string,
@@ -126,8 +122,8 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
-
-					const updatedFields: Partial<Session> = {
+					return {
+						...s,
 						name,
 						nudgeMessage,
 						customPath,
@@ -137,52 +133,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 						customContextWindow,
 						sessionSshRemoteConfig,
 					};
-
-					// If provider changed, reset tabs and provider-specific config
-					if (toolType && toolType !== s.toolType) {
-						const newTabId = generateId();
-						const freshTab: AITab = {
-							id: newTabId,
-							agentSessionId: null,
-							name: null,
-							starred: false,
-							logs: [],
-							inputValue: '',
-							stagedImages: [],
-							createdAt: Date.now(),
-							state: 'idle',
-							saveToHistory: true,
-						};
-
-						Object.assign(updatedFields, {
-							toolType,
-							aiTabs: [freshTab],
-							activeTabId: newTabId,
-							closedTabHistory: [],
-							// Clear provider-specific overrides
-							customPath: undefined,
-							customArgs: undefined,
-							customEnvVars: undefined,
-							customModel: undefined,
-							customContextWindow: undefined,
-							// Reset file preview tabs and unified tab order
-							filePreviewTabs: [],
-							activeFileTabId: null,
-							unifiedTabOrder: [{ type: 'ai' as const, id: newTabId }],
-							unifiedClosedTabHistory: [],
-							// Reset agent runtime state
-							state: 'idle' as const,
-							aiPid: 0,
-							executionQueue: [],
-						});
-
-						// Kill the existing AI process for this session
-						window.maestro.process.kill(`${sessionId}-ai`).catch(() => {
-							// Process may not exist — that's fine
-						});
-					}
-
-					return { ...s, ...updatedFields };
 				})
 			);
 		},
