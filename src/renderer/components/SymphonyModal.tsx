@@ -303,14 +303,15 @@ function IssueCard({
 	);
 	const isAvailable = issue.status === 'available' && !isBlocked;
 	const isClaimed = issue.status === 'in_progress';
+	const isSelectable = isAvailable || isBlocked;
 
 	return (
 		<div
 			role="button"
-			tabIndex={isAvailable ? 0 : -1}
-			onClick={isAvailable ? onSelect : undefined}
+			tabIndex={isSelectable ? 0 : -1}
+			onClick={isSelectable ? onSelect : undefined}
 			onKeyDown={
-				isAvailable
+				isSelectable
 					? (e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
@@ -320,7 +321,7 @@ function IssueCard({
 					: undefined
 			}
 			className={`w-full p-3 rounded-lg border text-left transition-all ${
-				!isAvailable ? 'opacity-60' : 'hover:bg-white/5 cursor-pointer'
+				isBlocked ? 'opacity-75 hover:bg-white/5 cursor-pointer' : !isAvailable ? 'opacity-60' : 'hover:bg-white/5 cursor-pointer'
 			} ${isSelected ? 'ring-2' : ''}`}
 			style={{
 				backgroundColor: isSelected ? theme.colors.bgActivity : theme.colors.bgMain,
