@@ -14,7 +14,6 @@
 import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
-import { captureException } from '../../utils/sentry';
 
 /**
  * Auto Run task data shape from the API
@@ -82,7 +81,7 @@ export const TasksByHourChart = memo(function TasksByHourChart({
 			const taskResults = await Promise.all(taskPromises);
 			setTasks(taskResults.flat());
 		} catch (err) {
-			captureException(err);
+			console.error('Failed to fetch Auto Run tasks:', err);
 			setError(err instanceof Error ? err.message : 'Failed to load tasks');
 		} finally {
 			setLoading(false);

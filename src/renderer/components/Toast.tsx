@@ -34,7 +34,7 @@ const ToastItem = memo(function ToastItem({
 }: {
 	toast: ToastType;
 	theme: Theme;
-	onRemove: (toastId: string) => void;
+	onRemove: () => void;
 	onSessionClick?: (sessionId: string, tabId?: string) => void;
 }) {
 	const [isExiting, setIsExiting] = useState(false);
@@ -59,7 +59,7 @@ const ToastItem = memo(function ToastItem({
 	const handleClose = (e?: React.MouseEvent) => {
 		e?.stopPropagation();
 		setIsExiting(true);
-		setTimeout(() => onRemove(toast.id), 300);
+		setTimeout(onRemove, 300);
 	};
 
 	// Handle click on toast to navigate to session
@@ -318,7 +318,7 @@ export const ToastContainer = memo(function ToastContainer({
 						key={toast.id}
 						toast={toast}
 						theme={theme}
-						onRemove={removeToast}
+						onRemove={() => removeToast(toast.id)}
 						onSessionClick={onSessionClick}
 					/>
 				))}
