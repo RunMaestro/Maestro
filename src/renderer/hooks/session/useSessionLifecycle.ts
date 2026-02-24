@@ -18,11 +18,12 @@
 import { useCallback, useEffect } from 'react';
 import type { Session } from '../../types';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
+import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
-import { useNavigationHistory } from './useNavigationHistory';
+import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 
 // ============================================================================
@@ -34,6 +35,8 @@ export interface SessionLifecycleDeps {
 	flushSessionPersistence: () => void;
 	/** Track removed worktree paths to prevent re-discovery (from useWorktreeHandlers) */
 	setRemovedWorktreePaths: React.Dispatch<React.SetStateAction<Set<string>>>;
+	/** Push a navigation entry to the shared history stack */
+	pushNavigation: (entry: NavHistoryEntry) => void;
 }
 
 // ============================================================================
@@ -87,7 +90,7 @@ const selectActiveSessionId = (s: ReturnType<typeof useSessionStore.getState>) =
 // ============================================================================
 
 export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycleReturn {
-	const { flushSessionPersistence, setRemovedWorktreePaths } = deps;
+	const { flushSessionPersistence, setRemovedWorktreePaths, pushNavigation } = deps;
 
 	// --- Store subscriptions ---
 	const activeSession = useSessionStore(selectActiveSession);
@@ -95,9 +98,6 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const groups = useSessionStore(selectGroups);
 	const initialLoadComplete = useSessionStore(selectInitialLoadComplete);
 	const activeSessionId = useSessionStore(selectActiveSessionId);
-
-	// --- Internal hooks ---
-	const { pushNavigation } = useNavigationHistory();
 
 	// ====================================================================
 	// Callbacks
@@ -404,8 +404,13 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	}, [groups, initialLoadComplete]);
 
 	// Track navigation history when session or AI tab changes
+	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
+
 	useEffect(() => {
-		if (activeSession) {
+		// Group chat navigation takes precedence when a group chat is open
+		if (activeGroupChatId) {
+			pushNavigation({ groupChatId: activeGroupChatId });
+		} else if (activeSession) {
 			pushNavigation({
 				sessionId: activeSession.id,
 				tabId:
@@ -419,6 +424,7 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 		activeSession?.activeTabId,
 		activeSession?.inputMode,
 		activeSession?.aiTabs?.length,
+		activeGroupChatId,
 	]);
 
 	return {

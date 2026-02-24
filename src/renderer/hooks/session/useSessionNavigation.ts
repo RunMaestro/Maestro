@@ -16,6 +16,8 @@ export interface UseSessionNavigationDeps {
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	/** Ref for tracking cycle position during session cycling */
 	cyclePositionRef: MutableRefObject<number>;
+	/** Navigate to a group chat (loads messages, starts moderator) */
+	onNavigateToGroupChat?: (id: string) => Promise<void>;
 }
 
 /**
@@ -52,61 +54,58 @@ export function useSessionNavigation(
 	sessions: Session[],
 	deps: UseSessionNavigationDeps
 ): UseSessionNavigationReturn {
-	const { navigateBack, navigateForward, setActiveSessionId, setSessions, cyclePositionRef } = deps;
+	const {
+		navigateBack,
+		navigateForward,
+		setActiveSessionId,
+		setSessions,
+		cyclePositionRef,
+		onNavigateToGroupChat,
+	} = deps;
 
-	// Navigate back in history (through sessions and tabs)
+	// Shared logic for navigating to a history entry
+	const navigateToEntry = useCallback(
+		(entry: NavHistoryEntry) => {
+			// Group chat entry
+			if (entry.groupChatId) {
+				onNavigateToGroupChat?.(entry.groupChatId);
+				return;
+			}
+
+			// Session entry
+			if (!entry.sessionId) return;
+			const sessionExists = sessions.some((s) => s.id === entry.sessionId);
+			if (!sessionExists) return;
+
+			setActiveSessionId(entry.sessionId);
+			cyclePositionRef.current = -1;
+
+			if (entry.tabId) {
+				const targetTabId = entry.tabId;
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id === entry.sessionId && s.aiTabs?.some((t) => t.id === targetTabId)) {
+							return { ...s, activeTabId: targetTabId };
+						}
+						return s;
+					})
+				);
+			}
+		},
+		[sessions, setActiveSessionId, cyclePositionRef, setSessions, onNavigateToGroupChat]
+	);
+
+	// Navigate back in history (through sessions, tabs, and group chats)
 	const handleNavBack = useCallback(() => {
 		const entry = navigateBack();
-		if (entry) {
-			// Check if session still exists
-			const sessionExists = sessions.some((s) => s.id === entry.sessionId);
-			if (sessionExists) {
-				// Navigate to the session
-				setActiveSessionId(entry.sessionId);
-				cyclePositionRef.current = -1;
+		if (entry) navigateToEntry(entry);
+	}, [navigateBack, navigateToEntry]);
 
-				// If there's a tab ID, also switch to that tab
-				if (entry.tabId) {
-					const targetTabId = entry.tabId; // Capture in variable to satisfy TypeScript narrowing
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id === entry.sessionId && s.aiTabs?.some((t) => t.id === targetTabId)) {
-								return { ...s, activeTabId: targetTabId };
-							}
-							return s;
-						})
-					);
-				}
-			}
-		}
-	}, [navigateBack, sessions, setActiveSessionId, cyclePositionRef, setSessions]);
-
-	// Navigate forward in history (through sessions and tabs)
+	// Navigate forward in history (through sessions, tabs, and group chats)
 	const handleNavForward = useCallback(() => {
 		const entry = navigateForward();
-		if (entry) {
-			// Check if session still exists
-			const sessionExists = sessions.some((s) => s.id === entry.sessionId);
-			if (sessionExists) {
-				// Navigate to the session
-				setActiveSessionId(entry.sessionId);
-				cyclePositionRef.current = -1;
-
-				// If there's a tab ID, also switch to that tab
-				if (entry.tabId) {
-					const targetTabId = entry.tabId; // Capture in variable to satisfy TypeScript narrowing
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id === entry.sessionId && s.aiTabs?.some((t) => t.id === targetTabId)) {
-								return { ...s, activeTabId: targetTabId };
-							}
-							return s;
-						})
-					);
-				}
-			}
-		}
-	}, [navigateForward, sessions, setActiveSessionId, cyclePositionRef, setSessions]);
+		if (entry) navigateToEntry(entry);
+	}, [navigateForward, navigateToEntry]);
 
 	return {
 		handleNavBack,

@@ -14,19 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
-// Mock useNavigationHistory before any imports that use it
 const mockPushNavigation = vi.fn();
-vi.mock('../../../renderer/hooks/session/useNavigationHistory', () => ({
-	useNavigationHistory: vi.fn(() => ({
-		pushNavigation: mockPushNavigation,
-		navigateBack: vi.fn(() => null),
-		navigateForward: vi.fn(() => null),
-		canGoBack: vi.fn(() => false),
-		canGoForward: vi.fn(() => false),
-		clearHistory: vi.fn(),
-		updateCurrentTab: vi.fn(),
-	})),
-}));
 
 import {
 	useSessionLifecycle,
@@ -106,6 +94,7 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 	return {
 		flushSessionPersistence: mockFlushSessionPersistence,
 		setRemovedWorktreePaths: mockSetRemovedWorktreePaths,
+		pushNavigation: mockPushNavigation,
 		...overrides,
 	};
 }
