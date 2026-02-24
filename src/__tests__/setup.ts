@@ -228,6 +228,7 @@ const mockMaestro = {
 		onExit: vi.fn().mockReturnValue(() => {}),
 	},
 	git: {
+		branch: vi.fn().mockResolvedValue({ stdout: 'main' }),
 		status: vi.fn().mockResolvedValue({ files: [], branch: 'main', stdout: '' }),
 		diff: vi.fn().mockResolvedValue(''),
 		isRepo: vi.fn().mockResolvedValue(true),
@@ -245,6 +246,7 @@ const mockMaestro = {
 		commitCount: vi.fn().mockResolvedValue({ count: 0, error: null }),
 		show: vi.fn().mockResolvedValue({ stdout: '', stderr: '', exitCode: 0 }),
 		getRemoteUrl: vi.fn().mockResolvedValue(null),
+		scanWorktreeDirectory: vi.fn().mockResolvedValue({ gitSubdirs: [] }),
 		info: vi.fn().mockResolvedValue({
 			branch: 'main',
 			remote: '',

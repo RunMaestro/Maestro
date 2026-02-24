@@ -1,5 +1,11 @@
 import { useCallback } from 'react';
 import type { Session, BatchRunConfig } from '../../types';
+import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+import { gitService } from '../../services/git';
+import { notifyToast } from '../../stores/notificationStore';
+import { buildWorktreeSession } from '../../utils/worktreeSession';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Tree node structure for Auto Run document tree
@@ -41,7 +47,7 @@ export interface UseAutoRunHandlersReturn {
 	/** Handle folder selection from Auto Run setup modal */
 	handleAutoRunFolderSelected: (folderPath: string) => Promise<void>;
 	/** Start a batch run with the given configuration */
-	handleStartBatchRun: (config: BatchRunConfig) => void;
+	handleStartBatchRun: (config: BatchRunConfig) => Promise<void>;
 	/** Get the number of unchecked tasks in a document */
 	getDocumentTaskCount: (filename: string) => Promise<number>;
 	/** Handle content changes in the Auto Run editor */
@@ -75,6 +81,99 @@ export interface UseAutoRunHandlersReturn {
 function getSshRemoteId(session: Session | null): string | undefined {
 	if (!session) return undefined;
 	return session.sshRemoteId || session.sessionSshRemoteConfig?.remoteId || undefined;
+}
+
+/**
+ * Spawn a worktree agent session and prepare config for dispatch.
+ * Handles both 'create-new' (creates worktree on disk first) and
+ * 'existing-closed' (worktree already on disk, just needs a session).
+ *
+ * Returns the new session ID, or null if an error occurred (toast shown).
+ */
+async function spawnWorktreeAgentAndDispatch(
+	parentSession: Session,
+	config: BatchRunConfig
+): Promise<string | null> {
+	const sshRemoteId = getSshRemoteId(parentSession);
+	const target = config.worktreeTarget!;
+	let worktreePath: string;
+	let branchName: string;
+
+	if (target.mode === 'create-new') {
+		// Step 1: Resolve worktree path
+		const basePath =
+			parentSession.worktreeConfig?.basePath ||
+			parentSession.cwd.replace(/\/[^/]+$/, '') + '/worktrees';
+		worktreePath = basePath + '/' + target.newBranchName;
+		branchName = target.newBranchName!;
+
+		// Step 2: Create worktree on disk
+		const result = await window.maestro.git.worktreeSetup(
+			parentSession.cwd,
+			worktreePath,
+			branchName,
+			sshRemoteId
+		);
+		if (!result.success) {
+			notifyToast({
+				type: 'error',
+				title: 'Failed to Create Worktree',
+				message: result.error || 'Unknown error',
+			});
+			return null;
+		}
+	} else {
+		// existing-closed: worktree already on disk
+		worktreePath = target.worktreePath!;
+		branchName = worktreePath.split('/').pop() || 'worktree';
+	}
+
+	// Step 3: Fetch git info for the worktree
+	let gitBranches: string[] | undefined;
+	try {
+		gitBranches = await gitService.getBranches(worktreePath, sshRemoteId);
+	} catch (err) {
+		// Non-fatal — git info is nice-to-have
+		captureException(err, { extra: { worktreePath, sshRemoteId } });
+	}
+
+	// Determine current branch from fetched branches or fallback
+	if (!branchName && gitBranches && gitBranches.length > 0) {
+		branchName = gitBranches[0];
+	}
+
+	// Step 4: Build the session
+	const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
+	const newSession = buildWorktreeSession({
+		parentSession,
+		path: worktreePath,
+		branch: branchName,
+		name: branchName,
+		gitBranches,
+		defaultSaveToHistory,
+		defaultShowThinking,
+	});
+
+	// Step 5: Add session to store and expand parent's worktrees
+	useSessionStore.getState().setSessions((prev) => [
+		...prev.map((s) =>
+			s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s
+		),
+		newSession,
+	]);
+
+	// Step 6: Populate config.worktree for PR creation if requested
+	if (target.createPROnCompletion) {
+		config.worktree = {
+			enabled: true,
+			path: worktreePath,
+			branchName,
+			createPROnCompletion: true,
+			prTargetBranch: target.baseBranch || 'main',
+		};
+	}
+
+	return newSession.id;
 }
 
 /**
@@ -187,7 +286,7 @@ export function useAutoRunHandlers(
 
 	// Handler to start batch run from modal with multi-document support
 	const handleStartBatchRun = useCallback(
-		(config: BatchRunConfig) => {
+		async (config: BatchRunConfig) => {
 			window.maestro.logger.log('info', 'handleStartBatchRun called', 'AutoRunHandlers', {
 				hasActiveSession: !!activeSession,
 				sessionId: activeSession?.id,
@@ -195,6 +294,7 @@ export function useAutoRunHandlers(
 				worktreeEnabled: config.worktree?.enabled,
 				worktreePath: config.worktree?.path,
 				worktreeBranch: config.worktree?.branchName,
+				worktreeTargetMode: config.worktreeTarget?.mode,
 			});
 			if (!activeSession || !activeSession.autoRunFolderPath) {
 				window.maestro.logger.log(
@@ -204,12 +304,91 @@ export function useAutoRunHandlers(
 				);
 				return;
 			}
+
+			// Determine target session ID — may differ from activeSession when running in a worktree
+			let targetSessionId = activeSession.id;
+			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
+				// Verify the target session still exists (could have been removed while modal was open)
+				const targetSession = useSessionStore.getState().sessions.find(
+					(s) => s.id === config.worktreeTarget!.sessionId
+				);
+				if (!targetSession) {
+					window.maestro.logger.log(
+						'warn',
+						`Target worktree session no longer exists: ${config.worktreeTarget.sessionId}. Falling back to active session.`,
+						'AutoRunHandlers'
+					);
+					notifyToast({
+						type: 'warning',
+						title: 'Worktree Agent Not Found',
+						message: 'The selected worktree agent was removed. Running on the active agent instead.',
+					});
+					// Fall back to active session
+					targetSessionId = activeSession.id;
+				} else if (targetSession.state === 'busy' || targetSession.state === 'connecting') {
+					// Race condition: agent became busy after user selected it
+					window.maestro.logger.log(
+						'warn',
+						`Target worktree session is busy: ${config.worktreeTarget.sessionId}`,
+						'AutoRunHandlers'
+					);
+					notifyToast({
+						type: 'warning',
+						title: 'Target Agent Busy',
+						message: 'Target agent is busy. Please try again.',
+					});
+					return;
+				} else {
+					targetSessionId = config.worktreeTarget.sessionId;
+
+					// Populate config.worktree for PR creation when using existing-open worktree.
+					// spawnWorktreeAgentAndDispatch does this for create-new/existing-closed,
+					// but existing-open skips that function entirely.
+					if (config.worktreeTarget.createPROnCompletion) {
+						config.worktree = {
+							enabled: true,
+							path: targetSession.cwd,
+							branchName: targetSession.worktreeBranch || targetSession.cwd.split('/').pop() || 'worktree',
+							createPROnCompletion: true,
+							prTargetBranch: config.worktreeTarget.baseBranch || 'main',
+						};
+					}
+				}
+			} else if (
+				config.worktreeTarget?.mode === 'create-new' ||
+				config.worktreeTarget?.mode === 'existing-closed'
+			) {
+				// Spawn a worktree agent and dispatch to it
+				try {
+					const newSessionId = await spawnWorktreeAgentAndDispatch(
+						activeSession,
+						config
+					);
+					if (!newSessionId) return; // Error already shown via toast
+					targetSessionId = newSessionId;
+				} catch (err) {
+					window.maestro.logger.log(
+						'error',
+						`Failed to spawn worktree agent: ${err instanceof Error ? err.message : String(err)}`,
+						'AutoRunHandlers'
+					);
+					notifyToast({
+						type: 'error',
+						title: 'Worktree Error',
+						message: err instanceof Error ? err.message : String(err),
+					});
+					return;
+				}
+			}
+
 			window.maestro.logger.log('info', 'Starting batch run', 'AutoRunHandlers', {
-				sessionId: activeSession.id,
+				sessionId: targetSessionId,
 				folderPath: activeSession.autoRunFolderPath,
+				isWorktreeTarget: targetSessionId !== activeSession.id,
 			});
 			setBatchRunnerModalOpen(false);
-			startBatchRun(activeSession.id, config, activeSession.autoRunFolderPath);
+			// Documents stay with the parent session's autoRunFolderPath; execution targets the worktree agent
+			startBatchRun(targetSessionId, config, activeSession.autoRunFolderPath);
 		},
 		[activeSession, startBatchRun, setBatchRunnerModalOpen]
 	);

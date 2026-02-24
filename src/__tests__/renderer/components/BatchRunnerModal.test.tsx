@@ -2386,3 +2386,113 @@ describe('Escape Handler Priority', () => {
 		});
 	});
 });
+
+describe('Worktree Loading State', () => {
+	afterEach(async () => {
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		useSessionStore.setState({ sessions: [], activeSessionId: '' });
+	});
+
+	it('shows Preparing Worktree text when onGo is async and worktree mode is active', async () => {
+		// Setup session store with a session that has worktreeConfig
+		const { useSessionStore } = await import('../../../renderer/stores/sessionStore');
+		const sessionWithWorktreeConfig = {
+			id: 'session-123',
+			name: 'Test Agent',
+			toolType: 'claude-code',
+			cwd: '/project',
+			fullPath: '/project',
+			projectRoot: '/project',
+			state: 'idle',
+			tabs: [],
+			activeTabIndex: 0,
+			isGitRepo: true,
+			isLive: false,
+			changedFiles: [],
+			fileTree: [],
+			fileExplorerExpanded: [],
+			fileExplorerScrollPos: 0,
+			worktreeConfig: {
+				basePath: '/project/worktrees',
+				watchEnabled: false,
+			},
+		};
+
+		useSessionStore.setState({
+			sessions: [sessionWithWorktreeConfig as never],
+			activeSessionId: 'session-123',
+		});
+
+		// Mock scanWorktreeDirectory
+		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = vi
+			.fn()
+			.mockResolvedValue({ gitSubdirs: [] });
+
+		// Create a slow async onGo that we can control
+		let resolveOnGo: () => void;
+		const onGoPromise = new Promise<void>((resolve) => {
+			resolveOnGo = resolve;
+		});
+		const props = createDefaultProps();
+		props.onGo = vi.fn().mockReturnValue(onGoPromise);
+
+		render(<BatchRunnerModal {...props} />);
+
+		// Wait for tasks to load
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		// Enable worktree toggle (should be visible since session has worktreeConfig)
+		const toggleButton = screen.getByText('Dispatch to a separate worktree');
+		fireEvent.click(toggleButton);
+
+		// The select should now be visible with "Create New Worktree" as default
+		await waitFor(() => {
+			expect(screen.getByText('Create New Worktree')).toBeInTheDocument();
+		});
+
+		// Click Go — should show "Preparing Worktree..." since mode is create-new
+		const goButton = screen.getByRole('button', { name: /Go/ });
+		await act(async () => {
+			fireEvent.click(goButton);
+		});
+
+		// The button should now show "Preparing Worktree..." text
+		await waitFor(() => {
+			expect(screen.getByText('Preparing Worktree...')).toBeInTheDocument();
+		});
+
+		// The button should be disabled during preparation
+		const preparingButton = screen.getByRole('button', { name: /Preparing Worktree/ });
+		expect(preparingButton).toBeDisabled();
+
+		// Resolve the promise to complete the async operation
+		await act(async () => {
+			resolveOnGo!();
+		});
+
+		// onGo should have been called
+		expect(props.onGo).toHaveBeenCalled();
+	});
+
+	it('does not show loading state for non-worktree Go clicks', async () => {
+		const props = createDefaultProps();
+		props.onGo = vi.fn();
+
+		render(<BatchRunnerModal {...props} />);
+
+		await waitFor(() => {
+			expect(screen.getByText('5')).toBeInTheDocument();
+		});
+
+		// Click Go without worktree enabled — should call onGo and onClose immediately
+		fireEvent.click(screen.getByRole('button', { name: /Go/ }));
+
+		expect(props.onGo).toHaveBeenCalled();
+		expect(props.onClose).toHaveBeenCalled();
+
+		// Should NOT show "Preparing Worktree..." text
+		expect(screen.queryByText('Preparing Worktree...')).not.toBeInTheDocument();
+	});
+});

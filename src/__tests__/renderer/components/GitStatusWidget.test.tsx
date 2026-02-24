@@ -227,9 +227,10 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// Component displays modifiedCount in both compact (fileCount) and full (modifiedCount) views
-			// Both show '2' here, so use getAllByText to handle the responsive dual-render
-			expect(screen.getAllByText('2').length).toBeGreaterThanOrEqual(1);
+			// Component displays modifiedCount in full mode (orange text) and fileCount in compact mode
+			// When values match, multiple elements exist — scope to the full-mode span
+			const fullMode = document.querySelector('.header-git-status-full')!;
+			expect(within(fullMode).getByText('2')).toBeInTheDocument();
 		});
 
 		it('should calculate totals from multiple files', () => {
@@ -260,8 +261,9 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// fileCount and default modifiedCount are both 1, appearing in compact + full views
-			expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(1);
+			// fileCount (compact) and modifiedCount (full) are both 1 — scope to compact span
+			const compact = document.querySelector('.header-git-status-compact')!;
+			expect(within(compact).getByText('1')).toBeInTheDocument();
 		});
 
 		it('should handle untracked files (?)', () => {
@@ -722,12 +724,11 @@ describe('GitStatusWidget', () => {
 				})
 			);
 			render(<GitStatusWidget {...defaultProps} />);
-			// Check that additions/deletions/modifiedCount are displayed
-			// Both compact (fileCount=20) and full mode (modifiedCount=20) show '20'
-			expect(screen.getByText('190')).toBeInTheDocument();
-			expect(screen.getByText('27')).toBeInTheDocument();
-			// '20' appears in both compact (fileCount) and full (modifiedCount) views
-			expect(screen.getAllByText('20').length).toBeGreaterThanOrEqual(1);
+			// fileCount (compact) and modifiedCount (full) are both 20 — scope queries
+			const fullMode = document.querySelector('.header-git-status-full')!;
+			expect(within(fullMode).getByText('190')).toBeInTheDocument();
+			expect(within(fullMode).getByText('27')).toBeInTheDocument();
+			expect(within(fullMode).getByText('20')).toBeInTheDocument();
 		});
 
 		it('should handle very large numbers', () => {

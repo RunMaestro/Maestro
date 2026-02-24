@@ -19,6 +19,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useAutoRunHandlers } from '../../../renderer/hooks';
 import type { Session, BatchRunConfig } from '../../../renderer/types';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+
+// Mock gitService for worktree operations
+vi.mock('../../../renderer/services/git', () => ({
+	gitService: {
+		getBranches: vi.fn().mockResolvedValue(['main', 'develop']),
+		getTags: vi.fn().mockResolvedValue([]),
+	},
+}));
+
+// Mock notifyToast
+vi.mock('../../../renderer/stores/notificationStore', async () => {
+	const actual = await vi.importActual('../../../renderer/stores/notificationStore');
+	return { ...actual, notifyToast: vi.fn() };
+});
+
+import { gitService } from '../../../renderer/services/git';
+import { notifyToast } from '../../../renderer/stores/notificationStore';
 
 // ============================================================================
 // Test Helpers
@@ -82,6 +101,12 @@ describe('useAutoRunHandlers', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
+		// Reset Zustand stores for worktree tests
+		useSessionStore.setState({ sessions: [], activeSessionId: '' } as any);
+		useSettingsStore.setState({
+			defaultSaveToHistory: true,
+			defaultShowThinking: 'off',
+		} as any);
 	});
 
 	afterEach(() => {
@@ -1055,7 +1080,7 @@ describe('useAutoRunHandlers', () => {
 	// ============================================================================
 
 	describe('handleStartBatchRun', () => {
-		it('should start batch run with config', () => {
+		it('should start batch run with config', async () => {
 			const mockSession = createMockSession();
 			const mockDeps = createMockDeps();
 
@@ -1067,8 +1092,8 @@ describe('useAutoRunHandlers', () => {
 
 			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
 
-			act(() => {
-				result.current.handleStartBatchRun(config);
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
 			});
 
 			expect(mockDeps.setBatchRunnerModalOpen).toHaveBeenCalledWith(false);
@@ -1079,7 +1104,7 @@ describe('useAutoRunHandlers', () => {
 			);
 		});
 
-		it('should do nothing when activeSession is null', () => {
+		it('should do nothing when activeSession is null', async () => {
 			const mockDeps = createMockDeps();
 
 			const config: BatchRunConfig = {
@@ -1090,14 +1115,14 @@ describe('useAutoRunHandlers', () => {
 
 			const { result } = renderHook(() => useAutoRunHandlers(null, mockDeps));
 
-			act(() => {
-				result.current.handleStartBatchRun(config);
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
 			});
 
 			expect(mockDeps.startBatchRun).not.toHaveBeenCalled();
 		});
 
-		it('should do nothing when autoRunFolderPath is not set', () => {
+		it('should do nothing when autoRunFolderPath is not set', async () => {
 			const mockSession = createMockSession({ autoRunFolderPath: undefined });
 			const mockDeps = createMockDeps();
 
@@ -1109,11 +1134,359 @@ describe('useAutoRunHandlers', () => {
 
 			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
 
-			act(() => {
-				result.current.handleStartBatchRun(config);
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
 			});
 
 			expect(mockDeps.startBatchRun).not.toHaveBeenCalled();
+		});
+
+		it('should use existing-open worktree session ID when mode is existing-open', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			// Populate store with the target worktree session so existence check passes
+			useSessionStore.setState({
+				sessions: [
+					mockSession,
+					createMockSession({
+						id: 'worktree-session-123',
+						state: 'idle',
+						parentSessionId: mockSession.id,
+					}),
+				],
+				activeSessionId: mockSession.id,
+			} as any);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-open',
+					sessionId: 'worktree-session-123',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(mockDeps.startBatchRun).toHaveBeenCalledWith(
+				'worktree-session-123',
+				config,
+				'/test/autorun'
+			);
+		});
+
+		it('should create new worktree and dispatch when mode is create-new', async () => {
+			const mockSession = createMockSession({
+				worktreeConfig: { basePath: '/projects/worktrees' },
+			});
+			const mockDeps = createMockDeps();
+
+			// Set up stores
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'auto-run-main-0222']);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'auto-run-main-0222',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Should have called worktreeSetup to create the worktree
+			expect(window.maestro.git.worktreeSetup).toHaveBeenCalledWith(
+				'/test/project',
+				'/projects/worktrees/auto-run-main-0222',
+				'auto-run-main-0222',
+				undefined // no SSH
+			);
+
+			// Should have dispatched batch run to the new session (not the parent)
+			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
+			const [targetId] = mockDeps.startBatchRun.mock.calls[0];
+			expect(targetId).not.toBe('test-session-1'); // Not the parent session
+
+			// New session should be in the store
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.worktreeBranch === 'auto-run-main-0222');
+			expect(newSession).toBeDefined();
+			expect(newSession?.parentSessionId).toBe('test-session-1');
+			expect(newSession?.cwd).toBe('/projects/worktrees/auto-run-main-0222');
+		});
+
+		it('should populate config.worktree when createPROnCompletion is true', async () => {
+			const mockSession = createMockSession({
+				worktreeConfig: { basePath: '/projects/worktrees' },
+			});
+			const mockDeps = createMockDeps();
+
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'feature-branch',
+					baseBranch: 'develop',
+					createPROnCompletion: true,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// config.worktree should be populated for PR creation
+			expect(config.worktree).toEqual({
+				enabled: true,
+				path: '/projects/worktrees/feature-branch',
+				branchName: 'feature-branch',
+				createPROnCompletion: true,
+				prTargetBranch: 'develop',
+			});
+		});
+
+		it('should show toast and return early when worktree creation fails', async () => {
+			const mockSession = createMockSession({
+				worktreeConfig: { basePath: '/projects/worktrees' },
+			});
+			const mockDeps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: false,
+				error: 'branch already exists',
+			});
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'existing-branch',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Should show error toast
+			expect(notifyToast).toHaveBeenCalledWith(
+				expect.objectContaining({
+					type: 'error',
+					title: 'Failed to Create Worktree',
+					message: 'branch already exists',
+				})
+			);
+
+			// Should NOT start batch run
+			expect(mockDeps.startBatchRun).not.toHaveBeenCalled();
+		});
+
+		it('should fallback to parent dir + /worktrees when worktreeConfig.basePath is not set', async () => {
+			const mockSession = createMockSession(); // no worktreeConfig
+			const mockDeps = createMockDeps();
+
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: true,
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue([]);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'my-branch',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// /test/project -> parent is /test, so basePath = /test/worktrees
+			expect(window.maestro.git.worktreeSetup).toHaveBeenCalledWith(
+				'/test/project',
+				'/test/worktrees/my-branch',
+				'my-branch',
+				undefined
+			);
+		});
+
+		it('should handle existing-closed worktree mode', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'feature-old']);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/projects/worktrees/feature-old',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Should NOT call worktreeSetup (worktree already exists on disk)
+			expect(window.maestro.git.worktreeSetup).not.toHaveBeenCalled();
+
+			// Should dispatch batch run to a new session
+			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
+			const [targetId] = mockDeps.startBatchRun.mock.calls[0];
+			expect(targetId).not.toBe('test-session-1');
+
+			// New session should have correct cwd
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/feature-old');
+			expect(newSession).toBeDefined();
+			expect(newSession?.parentSessionId).toBe('test-session-1');
+		});
+
+		it('should populate config.worktree for existing-closed with createPROnCompletion', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'feature-pr']);
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/projects/worktrees/feature-pr',
+					baseBranch: 'develop',
+					createPROnCompletion: true,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// config.worktree should be populated for PR creation
+			expect(config.worktree).toEqual({
+				enabled: true,
+				path: '/projects/worktrees/feature-pr',
+				branchName: 'feature-pr',
+				createPROnCompletion: true,
+				prTargetBranch: 'develop',
+			});
+
+			// Should dispatch to a new session
+			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
+			const [targetId] = mockDeps.startBatchRun.mock.calls[0];
+			expect(targetId).not.toBe('test-session-1');
+		});
+
+		it('should handle existing-closed worktree exception gracefully', async () => {
+			const mockSession = createMockSession();
+			const mockDeps = createMockDeps();
+
+			useSettingsStore.setState({
+				defaultSaveToHistory: true,
+				defaultShowThinking: 'off',
+			} as any);
+
+			// Simulate getBranches throwing an error
+			vi.mocked(gitService.getBranches).mockRejectedValue(new Error('Network error'));
+
+			const config: BatchRunConfig = {
+				documents: [{ id: '1', filename: 'Phase 1', resetOnCompletion: false, isDuplicate: false }],
+				prompt: 'Test prompt',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/projects/worktrees/feature-broken',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(mockSession, mockDeps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Should still dispatch — getBranches failure is non-fatal
+			expect(mockDeps.startBatchRun).toHaveBeenCalledTimes(1);
+
+			// Session should still be created with path-derived branch name
+			const sessions = useSessionStore.getState().sessions;
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/feature-broken');
+			expect(newSession).toBeDefined();
+			expect(newSession?.worktreeBranch).toBe('feature-broken');
 		});
 	});
 

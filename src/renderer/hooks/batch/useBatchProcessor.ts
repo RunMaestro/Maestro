@@ -592,7 +592,10 @@ export function useBatchProcessor({
 	const readDocAndCountTasks = documentProcessor.readDocAndCountTasks;
 
 	/**
-	 * Start a batch processing run for a specific session with multi-document support
+	 * Start a batch processing run for a specific session with multi-document support.
+	 * Note: sessionId and folderPath can belong to different sessions when running
+	 * in a worktree — the parent session owns the Auto Run documents (folderPath)
+	 * while the worktree agent (sessionId) executes the tasks.
 	 */
 	const startBatchRun = useCallback(
 		async (sessionId: string, config: BatchRunConfig, folderPath: string) => {
@@ -606,11 +609,24 @@ export function useBatchProcessor({
 			// Use sessionsRef to get latest sessions (handles case where session was just created)
 			const session = sessionsRef.current.find((s) => s.id === sessionId);
 			if (!session) {
+				const worktreeInfo = config.worktreeTarget
+					? ` (worktree mode: ${config.worktreeTarget.mode}, path: ${
+							config.worktreeTarget.mode === 'existing-closed'
+								? config.worktreeTarget.worktreePath
+								: config.worktreeTarget.mode === 'create-new'
+									? config.worktreeTarget.newBranchName
+									: config.worktreeTarget.sessionId
+						})`
+					: '';
 				window.maestro.logger.log(
 					'error',
-					'Session not found for batch processing',
+					`Session not found for batch processing${worktreeInfo}`,
 					'BatchProcessor',
-					{ sessionId }
+					{
+						sessionId,
+						worktreeTargetMode: config.worktreeTarget?.mode,
+						availableSessionIds: sessionsRef.current.map((s) => s.id),
+					}
 				);
 				return;
 			}
@@ -653,7 +669,16 @@ export function useBatchProcessor({
 				return;
 			}
 
-			const { effectiveCwd, worktreeActive, worktreePath, worktreeBranch } = worktreeResult;
+			const { effectiveCwd } = worktreeResult;
+			let { worktreeActive, worktreePath, worktreeBranch } = worktreeResult;
+
+			// When dispatching to a worktree agent via "Run in Worktree", the agent is already
+			// in the worktree directory. Mark worktree as active so PR creation fires on completion.
+			if (config.worktreeTarget) {
+				worktreeActive = true;
+				worktreePath = session.cwd;
+				worktreeBranch = session.worktreeBranch || config.worktree?.branchName;
+			}
 
 			// Get git branch for template variable substitution
 			let gitBranch: string | undefined;
@@ -1473,9 +1498,15 @@ export function useBatchProcessor({
 				totalCompletedTasks > 0 &&
 				worktreePath
 			) {
+				// For worktree-dispatched runs, the main repo is the parent session's cwd
+				const mainRepoCwd = config.worktreeTarget
+					? (sessionsRef.current.find((s) => s.id === session.parentSessionId)?.cwd ||
+						session.cwd)
+					: session.cwd;
+
 				const prResult = await worktreeManager.createPR({
 					worktreePath,
-					mainRepoCwd: session.cwd,
+					mainRepoCwd,
 					worktree,
 					documents,
 					totalCompletedTasks,

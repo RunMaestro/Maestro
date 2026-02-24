@@ -882,7 +882,7 @@ export interface AppUtilityModalsProps {
 	// BatchRunnerModal
 	batchRunnerModalOpen: boolean;
 	onCloseBatchRunner: () => void;
-	onStartBatchRun: (config: BatchRunConfig) => void;
+	onStartBatchRun: (config: BatchRunConfig) => void | Promise<void>;
 	onSaveBatchPrompt: (prompt: string) => void;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	autoRunDocumentList: string[];
@@ -1984,7 +1984,7 @@ export interface AppModalsProps {
 	onAutoRunFolderSelected: (folderPath: string) => void;
 	batchRunnerModalOpen: boolean;
 	onCloseBatchRunner: () => void;
-	onStartBatchRun: (config: BatchRunConfig) => void;
+	onStartBatchRun: (config: BatchRunConfig) => void | Promise<void>;
 	onSaveBatchPrompt: (prompt: string) => void;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
 	autoRunDocumentList: string[];

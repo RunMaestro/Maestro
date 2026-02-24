@@ -9,6 +9,7 @@
 
 import { useCallback } from 'react';
 import type { BatchDocumentEntry } from '../../types';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Configuration for worktree operations
@@ -87,8 +88,10 @@ export interface UseWorktreeManagerReturn {
 	) => Promise<WorktreeSetupResult>;
 	/** Create a pull request after batch completion */
 	createPR: (options: CreatePROptions) => Promise<PRCreationResult>;
-	/** Generate PR body from document list and task count */
-	generatePRBody: (documents: BatchDocumentEntry[], totalTasksCompleted: number) => string;
+	/** Generate PR title from branch name and document names */
+	generatePRTitle: (branchName: string | undefined, documents: BatchDocumentEntry[], totalTasksCompleted: number) => string;
+	/** Generate PR body from document list, task count, and commit history */
+	generatePRBody: (documents: BatchDocumentEntry[], totalTasksCompleted: number, commitSubjects?: string[]) => string;
 }
 
 /**
@@ -96,20 +99,64 @@ export interface UseWorktreeManagerReturn {
  */
 export function useWorktreeManager(): UseWorktreeManagerReturn {
 	/**
-	 * Generate PR body from completed tasks
+	 * Generate PR title from branch name and document names.
+	 * Produces a concise, descriptive title like:
+	 *   "feature/auth: 12 tasks across login-flow, signup"
+	 */
+	const generatePRTitle = useCallback(
+		(branchName: string | undefined, documents: BatchDocumentEntry[], totalTasksCompleted: number): string => {
+			const prefix = branchName || 'Auto Run';
+			const taskWord = totalTasksCompleted === 1 ? 'task' : 'tasks';
+
+			if (documents.length === 1) {
+				return `${prefix}: ${totalTasksCompleted} ${taskWord} completed in ${documents[0].filename}`;
+			}
+
+			const docNames = documents.map((d) => d.filename);
+			if (docNames.length <= 2) {
+				return `${prefix}: ${totalTasksCompleted} ${taskWord} across ${docNames.join(', ')}`;
+			}
+
+			return `${prefix}: ${totalTasksCompleted} ${taskWord} across ${docNames[0]}, ${docNames[1]} +${docNames.length - 2} more`;
+		},
+		[]
+	);
+
+	/**
+	 * Generate PR body from completed tasks and commit history.
+	 * Includes document list, task count, and git commit log.
 	 */
 	const generatePRBody = useCallback(
-		(documents: BatchDocumentEntry[], totalTasksCompleted: number): string => {
+		(
+			documents: BatchDocumentEntry[],
+			totalTasksCompleted: number,
+			commitSubjects?: string[]
+		): string => {
 			const docList = documents.map((d) => `- ${d.filename}`).join('\n');
-			return `## Auto Run Summary
 
-**Documents processed:**
-${docList}
+			const sections: string[] = [
+				`## Auto Run Summary`,
+				'',
+				`**Documents processed:**`,
+				docList,
+				'',
+				`**Total tasks completed:** ${totalTasksCompleted}`,
+			];
 
-**Total tasks completed:** ${totalTasksCompleted}
+			if (commitSubjects && commitSubjects.length > 0) {
+				sections.push('', `## Changes`, '');
+				for (const subject of commitSubjects) {
+					sections.push(`- ${subject}`);
+				}
+			}
 
----
-*This PR was automatically created by Maestro Auto Run.*`;
+			sections.push(
+				'',
+				'---',
+				'*This PR was automatically created by [Maestro](https://runmaestro.ai) Auto Run.*'
+			);
+
+			return sections.join('\n');
 		},
 		[]
 	);
@@ -282,7 +329,8 @@ ${docList}
 	 * Create a pull request after batch completion
 	 *
 	 * - Gets default branch if prTargetBranch not specified
-	 * - Generates PR body with document list and task count
+	 * - Fetches git commit log for the PR body
+	 * - Generates intelligent PR title from branch name and documents
 	 * - Creates the PR using gh CLI
 	 */
 	const createPR = useCallback(
@@ -302,9 +350,21 @@ ${docList}
 							: 'main';
 				}
 
-				// Generate PR title and body
-				const prTitle = `Auto Run: ${documents.length} document(s) processed`;
-				const prBody = generatePRBody(documents, totalCompletedTasks);
+				// Fetch recent commit log from the worktree for the PR body
+				let commitSubjects: string[] = [];
+				try {
+					const logResult = await window.maestro.git.log(worktreePath, { limit: 50 });
+					if (logResult.entries && logResult.entries.length > 0) {
+						commitSubjects = logResult.entries.map((e) => e.subject);
+					}
+				} catch (err) {
+					// Non-fatal — commit log is nice-to-have
+					captureException(err, { extra: { worktreePath, operation: 'git.log' } });
+				}
+
+				// Generate intelligent PR title and body
+				const prTitle = generatePRTitle(worktree.branchName, documents, totalCompletedTasks);
+				const prBody = generatePRBody(documents, totalCompletedTasks, commitSubjects);
 
 				// Create the PR (pass ghPath if configured)
 				const prResult = await window.maestro.git.createPR(
@@ -336,12 +396,13 @@ ${docList}
 				};
 			}
 		},
-		[generatePRBody]
+		[generatePRTitle, generatePRBody]
 	);
 
 	return {
 		setupWorktree,
 		createPR,
+		generatePRTitle,
 		generatePRBody,
 	};
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
 	X,
 	RotateCcw,
@@ -13,8 +13,9 @@ import {
 	Download,
 	Upload,
 	LayoutGrid,
+	Loader2,
 } from 'lucide-react';
-import type { Theme, BatchDocumentEntry, BatchRunConfig } from '../types';
+import type { Theme, BatchDocumentEntry, BatchRunConfig, WorktreeRunTarget } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { TEMPLATE_VARIABLES } from '../utils/templateVariables';
@@ -22,6 +23,9 @@ import { PlaybookDeleteConfirmModal } from './PlaybookDeleteConfirmModal';
 import { PlaybookNameModal } from './PlaybookNameModal';
 import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
+import { WorktreeRunSection } from './WorktreeRunSection';
+import { useSessionStore } from '../stores/sessionStore';
+import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
 	DEFAULT_BATCH_PROMPT,
@@ -36,7 +40,7 @@ export { DEFAULT_BATCH_PROMPT, validateAgentPromptHasTaskReference } from '../ho
 interface BatchRunnerModalProps {
 	theme: Theme;
 	onClose: () => void;
-	onGo: (config: BatchRunConfig) => void;
+	onGo: (config: BatchRunConfig) => void | Promise<void>;
 	onSave: (prompt: string) => void;
 	initialPrompt?: string;
 	lastModifiedAt?: number;
@@ -95,6 +99,25 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		sessionId,
 		onOpenMarketplace,
 	} = props;
+
+	// Worktree run target state
+	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
+	const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
+	const activeSession = useSessionStore((state) => state.sessions.find((s) => s.id === sessionId));
+	const sessions = useSessionStore((state) => state.sessions);
+	const worktreeChildren = useMemo(
+		() => sessions.filter((s) => s.parentSessionId === sessionId),
+		[sessions, sessionId]
+	);
+
+	const handleOpenWorktreeConfig = useCallback(() => {
+		onClose();
+		// Defer opening the config modal to the next frame so the batch runner
+		// fully unmounts first — avoids state-batching race with the layer stack.
+		requestAnimationFrame(() => {
+			getModalActions().setWorktreeConfigModalOpen(true);
+		});
+	}, [onClose]);
 
 	// Document list state
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {
@@ -339,7 +362,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		initialPromptRef.current = prompt;
 	};
 
-	const handleGo = () => {
+	const handleGo = async () => {
 		// Also save when running
 		onSave(prompt);
 
@@ -352,6 +375,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			prompt,
 			loopEnabled,
 			maxLoops: loopEnabled ? maxLoops : null,
+			...(worktreeTarget && { worktreeTarget }),
 		};
 
 		console.log('[BatchRunnerModal] handleGo - calling onGo with config:', config);
@@ -359,8 +383,24 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 			documentsCount: validDocuments.length,
 		});
 
-		onGo(config);
-		onClose();
+		// Worktree creation/opening requires async work — show loading state
+		const needsWorktreePrep =
+			worktreeTarget?.mode === 'create-new' || worktreeTarget?.mode === 'existing-closed';
+
+		if (needsWorktreePrep) {
+			setIsPreparingWorktree(true);
+			try {
+				await onGo(config);
+				onClose();
+			} catch {
+				// Keep modal open so the user can adjust config and retry
+			} finally {
+				setIsPreparingWorktree(false);
+			}
+		} else {
+			onGo(config);
+			onClose();
+		}
 	};
 
 	const isModified = prompt !== DEFAULT_BATCH_PROMPT;
@@ -593,8 +633,17 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						onRefreshDocuments={onRefreshDocuments}
 					/>
 
-					{/* Divider */}
-					<div className="border-t mb-6" style={{ borderColor: theme.colors.border }} />
+					{/* Run in Worktree Section — hidden for non-git repos since worktrees require git */}
+					{activeSession?.isGitRepo && (
+						<WorktreeRunSection
+							theme={theme}
+							activeSession={activeSession}
+							worktreeChildren={worktreeChildren}
+							worktreeTarget={worktreeTarget}
+							onWorktreeTargetChange={setWorktreeTarget}
+							onOpenWorktreeConfig={handleOpenWorktreeConfig}
+						/>
+					)}
 
 					{/* Agent Prompt Section */}
 					<div className="flex flex-col gap-2">
@@ -798,6 +847,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 						<button
 							onClick={handleGo}
 							disabled={
+								isPreparingWorktree ||
 								hasNoTasks ||
 								documents.length === 0 ||
 								documents.length === missingDocCount ||
@@ -807,6 +857,7 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 							className="flex items-center gap-2 px-4 py-2 rounded text-white font-bold disabled:opacity-40 disabled:cursor-not-allowed"
 							style={{
 								backgroundColor:
+									isPreparingWorktree ||
 									hasNoTasks ||
 									documents.length === 0 ||
 									documents.length === missingDocCount ||
@@ -816,21 +867,27 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 										: theme.colors.accent,
 							}}
 							title={
-								isPromptEmpty
-									? 'Agent prompt cannot be empty'
-									: !hasValidPrompt
-										? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
-										: documents.length === 0
-											? 'No documents selected'
-											: documents.length === missingDocCount
-												? 'All selected documents are missing'
-												: hasNoTasks
-													? 'No unchecked tasks in documents'
-													: 'Start auto-run'
+								isPreparingWorktree
+									? 'Preparing worktree...'
+									: isPromptEmpty
+										? 'Agent prompt cannot be empty'
+										: !hasValidPrompt
+											? 'Agent prompt must reference Markdown tasks (e.g., checkbox syntax "- [ ]")'
+											: documents.length === 0
+												? 'No documents selected'
+												: documents.length === missingDocCount
+													? 'All selected documents are missing'
+													: hasNoTasks
+														? 'No unchecked tasks in documents'
+														: 'Start auto-run'
 							}
 						>
-							<Play className="w-4 h-4" />
-							Go
+							{isPreparingWorktree ? (
+								<Loader2 className="w-4 h-4 animate-spin" />
+							) : (
+								<Play className="w-4 h-4" />
+							)}
+							{isPreparingWorktree ? 'Preparing Worktree...' : 'Go'}
 						</button>
 					</div>
 				</div>
