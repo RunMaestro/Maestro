@@ -508,22 +508,21 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 			recoverable: true,
 		},
 		{
-			// OpenCode provider/model configuration errors
-			// Matches errors like "provider not found", "unknown model", etc.
-			pattern: /provider(?:s)?(?:\s+not\s+found|\s+\w+\s+not\s+found|ID)/i,
-			message:
-				'Invalid model or provider. Check the model setting in session or agent configuration.',
+			// OpenAI model not found: "The model `xyz` does not exist"
+			pattern: /model.*does not exist/i,
+			message: 'Model not found. Check the model setting in session or agent configuration.',
 			recoverable: true,
 		},
 		{
-			// Match fuzzysort suggestions (indicates failed lookup)
-			pattern: /fuzzysort/i,
-			message: 'Invalid model or provider. Check the model setting in configuration.',
+			// OpenAI model access denied: "you do not have access to model"
+			pattern: /do not have access to model/i,
+			message: 'No access to the specified model. Check your OpenAI plan or model setting.',
 			recoverable: true,
 		},
 		{
-			pattern: /unknown\s+(model|provider)/i,
-			message: 'Unknown model or provider. Check the model setting in configuration.',
+			// Codex stream disconnection (via turn.failed)
+			pattern: /stream disconnected/i,
+			message: 'Stream disconnected. The response may have been interrupted.',
 			recoverable: true,
 		},
 	],
@@ -532,6 +531,11 @@ export const CODEX_ERROR_PATTERNS: AgentErrorPatterns = {
 		{
 			pattern: /session.*not found/i,
 			message: 'Session not found. Starting fresh conversation.',
+			recoverable: true,
+		},
+		{
+			pattern: /thread.*not found/i,
+			message: 'Thread not found. Starting fresh conversation.',
 			recoverable: true,
 		},
 		{

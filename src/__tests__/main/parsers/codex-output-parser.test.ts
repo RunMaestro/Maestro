@@ -565,7 +565,8 @@ describe('CodexOutputParser', () => {
 			});
 			const error = parser.detectErrorFromLine(line);
 			expect(error).not.toBeNull();
-			expect(error?.type).toBe('unknown');
+			// Matches "model.*does not exist" pattern in agent_crashed
+			expect(error?.type).toBe('agent_crashed');
 			expect(error?.agentId).toBe('codex');
 			expect(error?.recoverable).toBe(true);
 			expect(error?.parsedJson).toBeDefined();
@@ -630,6 +631,249 @@ describe('CodexOutputParser', () => {
 				exitCode: 1,
 				stderr: 'error stderr',
 				stdout: 'output stdout',
+			});
+		});
+	});
+
+	// ===== New wrapped format (v0.103.0+) tests =====
+
+	describe('new wrapped format (v0.103.0+)', () => {
+		describe('config and prompt echo lines', () => {
+			it('should parse config echo as system event', () => {
+				const line = JSON.stringify({
+					provider: 'openai',
+					workdir: '/home/user',
+					sandbox: 'read-only',
+					model: 'gpt-5-codex',
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('system');
+			});
+
+			it('should parse prompt echo as system event', () => {
+				const line = JSON.stringify({ prompt: 'Do something' });
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('task_started events', () => {
+			it('should parse task_started as init event without synthetic session ID', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'task_started', model_context_window: 272000 },
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('init');
+				// task_started generates a display-only synthetic session ID (codex-0-*)
+				// so the UI shows something instead of "pending". Resume logic in
+				// group-chat-router.ts skips IDs with this prefix.
+				expect(event?.sessionId).toBeDefined();
+				expect(event?.sessionId).toMatch(/^codex-0-\d+$/);
+			});
+		});
+
+		describe('agent_reasoning events', () => {
+			it('should parse agent_reasoning as partial text', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'agent_reasoning', text: '**Deciding on response approach**' },
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('text');
+				expect(event?.isPartial).toBe(true);
+				expect(event?.text).toContain('Deciding on response approach');
+			});
+		});
+
+		describe('agent_reasoning_section_break events', () => {
+			it('should parse section break as system event', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'agent_reasoning_section_break' },
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('system');
+			});
+		});
+
+		describe('agent_message events', () => {
+			it('should parse agent_message with message field as result', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'agent_message', message: 'Hey there! How can I help you today?' },
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('result');
+				expect(event?.text).toBe('Hey there! How can I help you today?');
+				expect(event?.isPartial).toBe(false);
+			});
+
+			it('should be recognized as result message by isResultMessage', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'agent_message', message: 'Hello' },
+				});
+				const event = parser.parseJsonLine(line)!;
+				expect(parser.isResultMessage(event)).toBe(true);
+			});
+		});
+
+		describe('token_count events', () => {
+			it('should parse token_count with usage info as usage event', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: {
+						type: 'token_count',
+						info: {
+							total_token_usage: {
+								input_tokens: 3292,
+								cached_input_tokens: 0,
+								output_tokens: 32,
+								reasoning_output_tokens: 0,
+								total_tokens: 3324,
+							},
+							last_token_usage: {
+								input_tokens: 3292,
+								cached_input_tokens: 0,
+								output_tokens: 32,
+								reasoning_output_tokens: 0,
+								total_tokens: 3324,
+							},
+							model_context_window: 272000,
+						},
+						rate_limits: {},
+					},
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('usage');
+				expect(event?.usage?.inputTokens).toBe(3292);
+				expect(event?.usage?.outputTokens).toBe(32);
+				expect(event?.usage?.cacheReadTokens).toBe(0);
+			});
+
+			it('should parse token_count with null info as usage event without stats', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'token_count', info: null, rate_limits: {} },
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event).not.toBeNull();
+				expect(event?.type).toBe('usage');
+				expect(event?.usage).toBeUndefined();
+			});
+
+			it('should include reasoning_output_tokens in output total', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: {
+						type: 'token_count',
+						info: {
+							last_token_usage: {
+								input_tokens: 1000,
+								output_tokens: 100,
+								reasoning_output_tokens: 50,
+							},
+						},
+					},
+				});
+				const event = parser.parseJsonLine(line);
+				expect(event?.usage?.outputTokens).toBe(150);
+				expect(event?.usage?.reasoningTokens).toBe(50);
+			});
+		});
+
+		describe('tool events in new format', () => {
+			it('should parse tool_call in wrapped format', () => {
+				const p = new CodexOutputParser();
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'tool_call', tool: 'shell', args: { command: ['ls'] } },
+				});
+				const event = p.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolName).toBe('shell');
+				expect(event?.toolState?.status).toBe('running');
+			});
+
+			it('should parse tool_result in wrapped format', () => {
+				const p = new CodexOutputParser();
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'tool_result', output: 'file1.txt' },
+				});
+				const event = p.parseJsonLine(line);
+				expect(event?.type).toBe('tool_use');
+				expect(event?.toolState?.status).toBe('completed');
+				expect(event?.toolState?.output).toBe('file1.txt');
+			});
+		});
+
+		describe('error events in new format', () => {
+			it('should detect error from wrapped format in detectErrorFromLine', () => {
+				const line = JSON.stringify({
+					id: '0',
+					msg: { type: 'error', error: 'rate limit exceeded' },
+				});
+				const error = parser.detectErrorFromLine(line);
+				expect(error).not.toBeNull();
+				expect(error?.type).toBe('rate_limited');
+			});
+		});
+
+		describe('full session simulation', () => {
+			it('should correctly parse a complete new-format session', () => {
+				const p = new CodexOutputParser();
+				const lines = [
+					JSON.stringify({ provider: 'openai', model: 'gpt-5-codex' }),
+					JSON.stringify({ prompt: 'Say hi' }),
+					JSON.stringify({ id: '0', msg: { type: 'task_started', model_context_window: 272000 } }),
+					JSON.stringify({ id: '0', msg: { type: 'token_count', info: null, rate_limits: {} } }),
+					JSON.stringify({ id: '0', msg: { type: 'agent_reasoning_section_break' } }),
+					JSON.stringify({ id: '0', msg: { type: 'agent_reasoning', text: '**Thinking**' } }),
+					JSON.stringify({ id: '0', msg: { type: 'agent_message', message: 'Hello!' } }),
+					JSON.stringify({
+						id: '0',
+						msg: {
+							type: 'token_count',
+							info: {
+								total_token_usage: { input_tokens: 100, output_tokens: 10 },
+								model_context_window: 272000,
+							},
+						},
+					}),
+				];
+
+				const events = lines.map((l) => p.parseJsonLine(l)!);
+
+				// Config and prompt are system
+				expect(events[0].type).toBe('system');
+				expect(events[1].type).toBe('system');
+				// task_started is init with display-only synthetic session ID
+				expect(events[2].type).toBe('init');
+				expect(events[2].sessionId).toMatch(/^codex-0-\d+$/);
+				// First token_count (no info) is usage
+				expect(events[3].type).toBe('usage');
+				expect(events[3].usage).toBeUndefined();
+				// Section break is system
+				expect(events[4].type).toBe('system');
+				// Reasoning is partial text
+				expect(events[5].type).toBe('text');
+				expect(events[5].isPartial).toBe(true);
+				// Agent message is result
+				expect(events[6].type).toBe('result');
+				expect(events[6].text).toBe('Hello!');
+				expect(p.isResultMessage(events[6])).toBe(true);
+				// Final token_count is usage with stats
+				expect(events[7].type).toBe('usage');
+				expect(events[7].usage?.inputTokens).toBe(100);
 			});
 		});
 	});

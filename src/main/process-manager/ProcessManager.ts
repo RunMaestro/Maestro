@@ -192,6 +192,22 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
+	 * Kill all processes whose session ID starts with a given prefix.
+	 * Used by group chat to kill batch-spawned processes (moderator/participant)
+	 * whose session IDs have timestamp/UUID suffixes.
+	 */
+	killByPrefix(prefix: string): number {
+		let killed = 0;
+		for (const [sessionId] of this.processes) {
+			if (sessionId.startsWith(prefix)) {
+				this.kill(sessionId);
+				killed++;
+			}
+		}
+		return killed;
+	}
+
+	/**
 	 * Kill all managed processes
 	 */
 	killAll(): void {

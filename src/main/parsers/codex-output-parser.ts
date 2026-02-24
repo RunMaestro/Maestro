@@ -2,22 +2,25 @@
  * Codex CLI Output Parser
  *
  * Parses JSON output from OpenAI Codex CLI (`codex exec --json`).
- * Codex outputs JSONL with the following message types:
+ * Supports two output formats:
  *
- * - thread.started: Thread initialization (contains thread_id for resume)
- * - turn.started: Beginning of a turn (agent is processing)
- * - item.completed: Completed item (reasoning, agent_message, tool_call, tool_result)
- * - turn.completed: End of turn (contains usage stats)
+ * **Legacy format (v0.73.0+):**
+ * - { type: 'thread.started', thread_id: 'uuid' }
+ * - { type: 'turn.started' }
+ * - { type: 'item.completed', item: { id, type, text|tool|args|output } }
+ * - { type: 'turn.completed', usage: { input_tokens, output_tokens, cached_input_tokens } }
  *
- * Key schema details:
- * - Session IDs are called thread_id (not session_id like Claude)
- * - Text content is in item.text for reasoning and agent_message items
- * - Token stats are in usage: { input_tokens, output_tokens, cached_input_tokens }
- * - reasoning_output_tokens tracked separately from output_tokens
- * - Tool calls have item.type: "tool_call" with tool name and args
- * - Tool results have item.type: "tool_result" with output
+ * **New format (v0.103.0+):**
+ * Events wrapped in { id: 'N', msg: { type, ... } }:
+ * - { id: '0', msg: { type: 'task_started', model_context_window: N } }
+ * - { id: '0', msg: { type: 'agent_reasoning', text: '...' } }
+ * - { id: '0', msg: { type: 'agent_message', message: '...' } }
+ * - { id: '0', msg: { type: 'token_count', info: { total_token_usage: {...} }, rate_limits: {...} } }
  *
- * Verified against Codex CLI v0.73.0+ output schema
+ * Also handles config/prompt echo lines:
+ * - { provider: 'openai', ... } (config echo, ignored)
+ * - { prompt: '...' } (prompt echo, ignored)
+ *
  * @see https://github.com/openai/codex
  */
 
@@ -28,6 +31,78 @@ import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+/**
+ * OpenAI model pricing per million tokens (USD)
+ * Source: https://openai.com/api/pricing/ (updated 2026-02-21)
+ */
+interface ModelPricing {
+	inputPerM: number;
+	cachedInputPerM: number;
+	outputPerM: number;
+}
+
+const MODEL_PRICING: Record<string, ModelPricing> = {
+	// GPT-4o family
+	'gpt-4o': { inputPerM: 2.5, cachedInputPerM: 1.25, outputPerM: 10.0 },
+	'gpt-4o-mini': { inputPerM: 0.15, cachedInputPerM: 0.075, outputPerM: 0.6 },
+	// o-series reasoning models
+	o1: { inputPerM: 15.0, cachedInputPerM: 7.5, outputPerM: 60.0 },
+	'o1-mini': { inputPerM: 1.1, cachedInputPerM: 0.55, outputPerM: 4.4 },
+	o3: { inputPerM: 2.0, cachedInputPerM: 0.5, outputPerM: 8.0 },
+	'o3-mini': { inputPerM: 1.1, cachedInputPerM: 0.55, outputPerM: 4.4 },
+	'o4-mini': { inputPerM: 1.1, cachedInputPerM: 0.275, outputPerM: 4.4 },
+	// GPT-5 family
+	'gpt-5-mini': { inputPerM: 0.25, cachedInputPerM: 0.025, outputPerM: 2.0 },
+	'gpt-5': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1-codex': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.1-codex-max': { inputPerM: 1.25, cachedInputPerM: 0.125, outputPerM: 10.0 },
+	'gpt-5.2': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.2-codex': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.2-codex-max': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3-codex': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	'gpt-5.3-codex-max': { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+	// GPT-4 Turbo
+	'gpt-4-turbo': { inputPerM: 10.0, cachedInputPerM: 5.0, outputPerM: 30.0 },
+	// Default fallback (assumes GPT-5.2-codex pricing)
+	default: { inputPerM: 1.75, cachedInputPerM: 0.175, outputPerM: 14.0 },
+};
+
+/**
+ * Get pricing for a given model
+ */
+function getModelPricing(model: string): ModelPricing {
+	if (MODEL_PRICING[model]) {
+		return MODEL_PRICING[model];
+	}
+	for (const [prefix, pricing] of Object.entries(MODEL_PRICING)) {
+		if (model.startsWith(prefix)) {
+			return pricing;
+		}
+	}
+	return MODEL_PRICING['default'];
+}
+
+/**
+ * Calculate cost in USD from token counts and model pricing
+ * Note: cached_input_tokens is a SUBSET of input_tokens for OpenAI (already included)
+ * So cost = (input - cached) * inputRate + cached * cachedRate + output * outputRate
+ */
+function calculateCost(
+	pricing: ModelPricing,
+	inputTokens: number,
+	outputTokens: number,
+	cachedInputTokens: number
+): number {
+	const uncachedInput = Math.max(0, inputTokens - cachedInputTokens);
+	return (
+		(uncachedInput / 1_000_000) * pricing.inputPerM +
+		(cachedInputTokens / 1_000_000) * pricing.cachedInputPerM +
+		(outputTokens / 1_000_000) * pricing.outputPerM
+	);
+}
 
 /**
  * Known OpenAI model context window sizes (in tokens)
@@ -123,8 +198,7 @@ function readCodexConfig(): { model?: string; contextWindow?: number } {
 }
 
 /**
- * Raw message structure from Codex JSON output
- * Based on verified Codex CLI v0.73.0+ output
+ * Raw message structure from Codex JSON output (legacy v0.73.0+ format)
  */
 interface CodexRawMessage {
 	type?:
@@ -141,19 +215,64 @@ interface CodexRawMessage {
 }
 
 /**
- * Item structure for item.completed events
+ * New wrapped message format from Codex CLI v0.103.0+
+ * Events are wrapped in { id: 'N', msg: { type, ... } }
+ */
+interface CodexWrappedMessage {
+	id?: string;
+	msg?: CodexNewMsg;
+	// Config/prompt echo lines
+	provider?: string;
+	prompt?: string;
+}
+
+/**
+ * Inner message from the new wrapped format (v0.103.0+)
+ */
+interface CodexNewMsg {
+	type?: string;
+	// task_started
+	model_context_window?: number;
+	// agent_message
+	message?: string;
+	// agent_reasoning
+	text?: string;
+	// token_count
+	info?: CodexTokenInfo | null;
+	rate_limits?: Record<string, unknown>;
+	// tool_call (new format)
+	tool?: string;
+	args?: Record<string, unknown>;
+	// tool_result (new format)
+	output?: string | number[];
+	// error
+	error?: string | { message?: string; type?: string };
+}
+
+/**
+ * Token usage info from the new format's token_count events
+ */
+interface CodexTokenInfo {
+	total_token_usage?: CodexUsage & { total_tokens?: number };
+	last_token_usage?: CodexUsage & { total_tokens?: number };
+	model_context_window?: number;
+}
+
+/**
+ * Item structure for item.completed events (legacy format)
  */
 interface CodexItem {
 	id?: string;
-	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result';
+	type?: 'reasoning' | 'agent_message' | 'tool_call' | 'tool_result' | 'error';
 	text?: string;
+	message?: string;
 	tool?: string;
 	args?: Record<string, unknown>;
 	output?: string | number[];
 }
 
 /**
- * Usage statistics from turn.completed events
+ * Usage statistics from turn.completed / token_count events
  */
 interface CodexUsage {
 	input_tokens?: number;
@@ -181,9 +300,10 @@ function extractErrorText(error: CodexRawMessage['error'], fallback = 'Unknown e
 export class CodexOutputParser implements AgentOutputParser {
 	readonly agentId: ToolType = 'codex';
 
-	// Cached context window - read once from config
+	// Cached context window and pricing - read once from config
 	private contextWindow: number;
 	private model: string;
+	private pricing: ModelPricing;
 
 	// Track tool name from tool_call to carry over to tool_result
 	// (Codex emits tool_call and tool_result as separate item.completed events,
@@ -197,16 +317,12 @@ export class CodexOutputParser implements AgentOutputParser {
 
 		// Priority: 1) explicit model_context_window in config, 2) lookup by model name
 		this.contextWindow = config.contextWindow || getModelContextWindow(this.model);
+		this.pricing = getModelPricing(this.model);
 	}
 
 	/**
-	 * Parse a single JSON line from Codex output
-	 *
-	 * Codex message types (verified v0.73.0+):
-	 * - { type: 'thread.started', thread_id: 'uuid' }
-	 * - { type: 'turn.started' }
-	 * - { type: 'item.completed', item: { id, type, text|tool|args|output } }
-	 * - { type: 'turn.completed', usage: { input_tokens, output_tokens, cached_input_tokens } }
+	 * Parse a single JSON line from Codex output.
+	 * Handles both legacy (v0.73.0+) and new wrapped (v0.103.0+) formats.
 	 */
 	parseJsonLine(line: string): ParsedEvent | null {
 		if (!line.trim()) {
@@ -214,8 +330,23 @@ export class CodexOutputParser implements AgentOutputParser {
 		}
 
 		try {
-			const msg: CodexRawMessage = JSON.parse(line);
-			return this.transformMessage(msg);
+			const parsed = JSON.parse(line);
+
+			// Detect new wrapped format: { id: 'N', msg: { type, ... } }
+			if (parsed.id !== undefined && parsed.msg && typeof parsed.msg === 'object') {
+				return this.transformWrappedMessage(parsed as CodexWrappedMessage, parsed);
+			}
+
+			// Detect config/prompt echo lines (new format preamble)
+			if (parsed.provider || parsed.prompt) {
+				return {
+					type: 'system',
+					raw: parsed,
+				};
+			}
+
+			// Legacy format: { type: '...', ... }
+			return this.transformMessage(parsed as CodexRawMessage);
 		} catch {
 			// Not valid JSON - return as raw text event
 			return {
@@ -297,6 +428,104 @@ export class CodexOutputParser implements AgentOutputParser {
 	}
 
 	/**
+	 * Transform a new wrapped format message (v0.103.0+).
+	 * Events are { id: 'N', msg: { type: '...', ... } }
+	 */
+	private transformWrappedMessage(wrapped: CodexWrappedMessage, raw: unknown): ParsedEvent {
+		const msg = wrapped.msg;
+		if (!msg || !msg.type) {
+			return { type: 'system', raw };
+		}
+
+		switch (msg.type) {
+			case 'task_started': {
+				// Update context window from the actual model value if provided
+				if (msg.model_context_window) {
+					this.contextWindow = msg.model_context_window;
+				}
+				// Generate a display-only session ID for UI (so participant card doesn't show "pending").
+				// Prefixed with 'codex-0-' to signal it's NOT resumable — synthetic IDs silently
+				// start new sessions with `codex exec resume` instead of erroring.
+				// Real resumable IDs come from thread.started events (legacy format).
+				// The resume logic in group-chat-router.ts checks for this prefix and skips resume.
+				const displaySessionId = `codex-0-${Date.now()}`;
+				return { type: 'init', sessionId: displaySessionId, raw };
+			}
+
+			case 'agent_reasoning_section_break':
+				return { type: 'system', raw };
+
+			case 'agent_reasoning':
+				// Reasoning shows model's thinking process — emit as partial text
+				return {
+					type: 'text',
+					text: this.formatReasoningText(msg.text || ''),
+					isPartial: true,
+					raw,
+				};
+
+			case 'agent_message':
+				// Final text response — the new format uses 'message' field instead of 'text'
+				return {
+					type: 'result',
+					text: msg.message || msg.text || '',
+					isPartial: false,
+					raw,
+				};
+
+			case 'tool_call':
+				this.lastToolName = msg.tool || null;
+				return {
+					type: 'tool_use',
+					toolName: msg.tool,
+					toolState: {
+						status: 'running',
+						input: msg.args,
+					},
+					raw,
+				};
+
+			case 'tool_result': {
+				const toolName = this.lastToolName || undefined;
+				this.lastToolName = null;
+				return {
+					type: 'tool_use',
+					toolName,
+					toolState: {
+						status: 'completed',
+						output: this.decodeToolOutput(msg.output),
+					},
+					raw,
+				};
+			}
+
+			case 'token_count': {
+				// token_count with usage info serves as the turn completion signal
+				const event: ParsedEvent = {
+					type: 'usage',
+					raw,
+				};
+				const usage = this.extractUsageFromTokenCount(msg);
+				if (usage) {
+					event.usage = usage;
+				}
+				return event;
+			}
+
+			case 'error':
+			case 'turn.failed':
+				return {
+					type: 'error',
+					text: extractErrorText(msg.error, msg.text || 'Unknown error'),
+					raw,
+				};
+
+			default:
+				return { type: 'system', raw };
+		}
+	}
+
+	/**
 	 * Transform an item.completed event based on item type
 	 */
 	private transformItemCompleted(item: CodexItem, msg: CodexRawMessage): ParsedEvent {
@@ -350,6 +579,15 @@ export class CodexOutputParser implements AgentOutputParser {
 					raw: msg,
 				};
 			}
+
+			case 'error':
+				// Error items from Codex (e.g., account warnings, sandbox violations)
+				// Surface as error events so they can be displayed in group chat UI
+				return {
+					type: 'error',
+					text: item.message || item.text || 'Unknown item error',
+					raw: msg,
+				};
 
 			default:
 				// Unknown item type - preserve as system event
@@ -420,7 +658,7 @@ export class CodexOutputParser implements AgentOutputParser {
 	/**
 	 * Extract usage statistics from raw Codex message
 	 * Codex usage structure: { input_tokens, output_tokens, cached_input_tokens, reasoning_output_tokens }
-	 * Note: Cost tracking is not supported - Codex doesn't provide cost and pricing varies by model
+	 * Cost is calculated from token counts using model-specific pricing.
 	 */
 	private extractUsageFromRaw(msg: CodexRawMessage): ParsedEvent['usage'] | null {
 		if (!msg.usage) {
@@ -447,10 +685,48 @@ export class CodexOutputParser implements AgentOutputParser {
 			cacheReadTokens: cachedInputTokens,
 			// Note: Codex doesn't report cache creation tokens
 			cacheCreationTokens: 0,
-			// Note: costUsd omitted - Codex doesn't provide cost and pricing varies by model
+			// Cost calculated from token counts using model-specific pricing
+			costUsd: calculateCost(this.pricing, inputTokens, totalOutputTokens, cachedInputTokens),
 			// Context window from Codex config (~/.codex/config.toml) or model lookup table
 			contextWindow: this.contextWindow,
 			// Store reasoning tokens separately for UI display
+			reasoningTokens: reasoningOutputTokens,
+		};
+	}
+
+	/**
+	 * Extract usage stats from new format token_count events.
+	 * New format: { type: 'token_count', info: { total_token_usage: {...}, last_token_usage: {...} } }
+	 */
+	private extractUsageFromTokenCount(msg: CodexNewMsg): ParsedEvent['usage'] | null {
+		if (!msg.info) {
+			return null;
+		}
+
+		// Use last_token_usage for per-turn deltas, fall back to total_token_usage
+		const tokenUsage = msg.info.last_token_usage || msg.info.total_token_usage;
+		if (!tokenUsage) {
+			return null;
+		}
+
+		const inputTokens = tokenUsage.input_tokens || 0;
+		const outputTokens = tokenUsage.output_tokens || 0;
+		const cachedInputTokens = tokenUsage.cached_input_tokens || 0;
+		const reasoningOutputTokens = tokenUsage.reasoning_output_tokens || 0;
+		const totalOutputTokens = outputTokens + reasoningOutputTokens;
+
+		// Update context window if provided in token_count
+		if (msg.info.model_context_window) {
+			this.contextWindow = msg.info.model_context_window;
+		}
+
+		return {
+			inputTokens,
+			outputTokens: totalOutputTokens,
+			cacheReadTokens: cachedInputTokens,
+			cacheCreationTokens: 0,
+			costUsd: calculateCost(this.pricing, inputTokens, totalOutputTokens, cachedInputTokens),
+			contextWindow: this.contextWindow,
 			reasoningTokens: reasoningOutputTokens,
 		};
 	}
@@ -512,12 +788,22 @@ export class CodexOutputParser implements AgentOutputParser {
 		let parsedJson: unknown = null;
 		try {
 			const parsed = JSON.parse(line);
-			// Check for error type messages
-			// Codex uses type: 'error' for some errors and type: 'turn.failed' for others
+
+			// Check legacy format: { type: 'error', error: '...' } or { type: 'turn.failed', ... }
 			if (parsed.type === 'error' || parsed.type === 'turn.failed' || parsed.error) {
 				parsedJson = parsed;
 				errorText = extractErrorText(parsed.error);
 				if (errorText === 'Unknown error') errorText = null; // No useful info to match
+			}
+
+			// Check new wrapped format: { id: 'N', msg: { type: 'error', ... } }
+			if (!errorText && parsed.msg && typeof parsed.msg === 'object') {
+				const msg = parsed.msg;
+				if (msg.type === 'error' || msg.type === 'turn.failed' || msg.error) {
+					parsedJson = parsed;
+					errorText = extractErrorText(msg.error || msg.text, 'Unknown error');
+					if (errorText === 'Unknown error') errorText = null;
+				}
 			}
 			// If no error field in JSON, this is normal output - don't check it
 		} catch {

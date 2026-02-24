@@ -338,6 +338,7 @@ function MaestroConsoleInner() {
 		showRenameGroupChatModal,
 		showEditGroupChatModal,
 		showGroupChatInfo,
+		showAddGroupChatParticipantModal,
 		// Git Diff Viewer
 		gitDiffPreview,
 		setGitDiffPreview,
@@ -1034,6 +1035,10 @@ function MaestroConsoleInner() {
 		handleRenameGroupChatFromModal,
 		handleCloseEditGroupChatModal,
 		handleCloseGroupChatInfo,
+		handleOpenAddParticipantModal,
+		handleCloseAddParticipantModal,
+		handleAddExistingParticipant,
+		handleAddFreshParticipant,
 	} = useGroupChatHandlers();
 
 	// --- MODAL HANDLERS (open/close, error recovery, lightbox, celebrations) ---
@@ -5752,6 +5757,10 @@ function MaestroConsoleInner() {
 					groupChatMessages={groupChatMessages}
 					onCloseGroupChatInfo={handleCloseGroupChatInfo}
 					onOpenModeratorSession={handleOpenModeratorSession}
+					showAddParticipantModal={showAddGroupChatParticipantModal}
+					onCloseAddParticipantModal={handleCloseAddParticipantModal}
+					onAddExistingParticipant={handleAddExistingParticipant}
+					onAddFreshParticipant={handleAddFreshParticipant}
 					// AppAgentModals props
 					leaderboardRegistrationOpen={leaderboardRegistrationOpen}
 					onCloseLeaderboardRegistration={handleCloseLeaderboardRegistration}
@@ -6352,6 +6361,9 @@ function MaestroConsoleInner() {
 								onTabChange={handleGroupChatRightTabChange}
 								onJumpToMessage={handleJumpToGroupChatMessage}
 								onColorsComputed={setGroupChatParticipantColors}
+								onAddParticipant={() =>
+									activeGroupChatId && handleOpenAddParticipantModal(activeGroupChatId)
+								}
 							/>
 						</>
 					)}

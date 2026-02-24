@@ -68,6 +68,9 @@ export const MODAL_PRIORITIES = {
 	/** Rename group chat modal */
 	RENAME_GROUP_CHAT: 640,
 
+	/** Add participant to group chat modal */
+	ADD_GROUP_CHAT_PARTICIPANT: 635,
+
 	/** Group chat info overlay */
 	GROUP_CHAT_INFO: 630,
 

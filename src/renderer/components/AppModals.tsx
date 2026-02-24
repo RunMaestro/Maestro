@@ -98,6 +98,7 @@ import { DeleteGroupChatModal } from './DeleteGroupChatModal';
 import { RenameGroupChatModal } from './RenameGroupChatModal';
 import { EditGroupChatModal } from './EditGroupChatModal';
 import { GroupChatInfoOverlay } from './GroupChatInfoOverlay';
+import { AddParticipantModal } from './AddParticipantModal';
 
 // Agent/Transfer Modal Components
 import { AgentErrorModal, type RecoveryAction } from './AgentErrorModal';
@@ -1419,6 +1420,13 @@ export interface AppGroupChatModalsProps {
 	groupChatMessages: GroupChatMessage[];
 	onCloseGroupChatInfo: () => void;
 	onOpenModeratorSession: (moderatorSessionId: string) => void;
+
+	// AddParticipantModal
+	showAddParticipantModal: string | null;
+	sessions: Session[];
+	onCloseAddParticipantModal: () => void;
+	onAddExistingParticipant: (sessionId: string, name: string, agentId: string, cwd: string) => void;
+	onAddFreshParticipant: (agentId: string, name: string) => void;
 }
 
 /**
@@ -1456,6 +1464,12 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 	groupChatMessages,
 	onCloseGroupChatInfo,
 	onOpenModeratorSession,
+	// AddParticipantModal
+	showAddParticipantModal,
+	sessions,
+	onCloseAddParticipantModal,
+	onAddExistingParticipant,
+	onAddFreshParticipant,
 }: AppGroupChatModalsProps) {
 	// Find group chats by ID for modal props
 	const deleteGroupChat = showDeleteGroupChatModal
@@ -1530,6 +1544,25 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 					onOpenModeratorSession={onOpenModeratorSession}
 				/>
 			)}
+
+			{/* --- ADD PARTICIPANT MODAL --- */}
+			{showAddParticipantModal && (() => {
+				const addParticipantGroupChat = groupChats.find(
+					(c) => c.id === showAddParticipantModal
+				);
+				return (
+					<AddParticipantModal
+						theme={theme}
+						isOpen={!!showAddParticipantModal}
+						groupChatId={showAddParticipantModal}
+						sessions={sessions}
+						participants={addParticipantGroupChat?.participants || []}
+						onClose={onCloseAddParticipantModal}
+						onAddExisting={onAddExistingParticipant}
+						onAddFresh={onAddFreshParticipant}
+					/>
+				);
+			})()}
 		</>
 	);
 });
@@ -2074,6 +2107,10 @@ export interface AppModalsProps {
 	groupChatMessages: GroupChatMessage[];
 	onCloseGroupChatInfo: () => void;
 	onOpenModeratorSession: (moderatorSessionId: string) => void;
+	showAddParticipantModal: string | null;
+	onCloseAddParticipantModal: () => void;
+	onAddExistingParticipant: (sessionId: string, name: string, agentId: string, cwd: string) => void;
+	onAddFreshParticipant: (agentId: string, name: string) => void;
 
 	// --- AppAgentModals props ---
 	leaderboardRegistrationOpen: boolean;
@@ -2378,6 +2415,10 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		groupChatMessages,
 		onCloseGroupChatInfo,
 		onOpenModeratorSession,
+		showAddParticipantModal,
+		onCloseAddParticipantModal,
+		onAddExistingParticipant,
+		onAddFreshParticipant,
 		// Agent modals
 		leaderboardRegistrationOpen,
 		onCloseLeaderboardRegistration,
@@ -2697,6 +2738,11 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				groupChatMessages={groupChatMessages}
 				onCloseGroupChatInfo={onCloseGroupChatInfo}
 				onOpenModeratorSession={onOpenModeratorSession}
+				showAddParticipantModal={showAddParticipantModal}
+				sessions={sessions}
+				onCloseAddParticipantModal={onCloseAddParticipantModal}
+				onAddExistingParticipant={onAddExistingParticipant}
+				onAddFreshParticipant={onAddFreshParticipant}
 			/>
 
 			{/* Agent/Transfer Modals */}

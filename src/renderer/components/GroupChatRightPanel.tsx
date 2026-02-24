@@ -7,7 +7,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { PanelRightClose } from 'lucide-react';
+import { PanelRightClose, Plus } from 'lucide-react';
 import type { Theme, GroupChatParticipant, SessionState, Shortcut } from '../types';
 import type { GroupChatHistoryEntry } from '../../shared/group-chat-types';
 import { ParticipantCard } from './ParticipantCard';
@@ -56,6 +56,8 @@ interface GroupChatRightPanelProps {
 	onJumpToMessage?: (timestamp: number) => void;
 	/** Callback when participant colors are computed (for sharing with other components) */
 	onColorsComputed?: (colors: Record<string, string>) => void;
+	/** Callback to open the Add Participant modal */
+	onAddParticipant?: () => void;
 }
 
 export function GroupChatRightPanel({
@@ -79,6 +81,7 @@ export function GroupChatRightPanel({
 	onTabChange,
 	onJumpToMessage,
 	onColorsComputed,
+	onAddParticipant,
 }: GroupChatRightPanelProps): JSX.Element | null {
 	// Color preferences state
 	const [colorPreferences, setColorPreferences] = useState<Record<string, number>>({});
@@ -275,6 +278,15 @@ export function GroupChatRightPanel({
 					</button>
 				))}
 
+				{onAddParticipant && (
+					<button
+						onClick={onAddParticipant}
+						className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors w-10 shrink-0"
+						title="Add participant"
+					>
+						<Plus className="w-4 h-4 opacity-50" />
+					</button>
+				)}
 				<button
 					onClick={onToggle}
 					className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors w-12 shrink-0"

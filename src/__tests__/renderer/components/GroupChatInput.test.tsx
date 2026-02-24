@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, act } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import type { Theme, Session, GroupChatParticipant } from '../../../renderer/types';
 
@@ -417,6 +417,135 @@ describe('GroupChatInput', () => {
 
 			// Should find the PascalCase session
 			expect(screen.getByText('@MyAgent')).toBeInTheDocument();
+		});
+	});
+
+	describe('enhanced @mention autocomplete', () => {
+		beforeEach(() => {
+			// Reset IPC mock for agent types
+			vi.mocked(window.maestro.agents.getAvailable).mockResolvedValue([]);
+		});
+
+		it('shows existing sessions in dropdown', () => {
+			const sessions = [
+				createMockSession('session-1', 'Claude Agent', 'claude-code'),
+				createMockSession('session-2', 'Codex Agent', 'codex'),
+			];
+
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+
+			// Both sessions should appear (mentionName normalizes spaces to hyphens)
+			expect(screen.getByText('@Claude-Agent')).toBeInTheDocument();
+			expect(screen.getByText('@Codex-Agent')).toBeInTheDocument();
+			// Agent type IDs should be shown for session items
+			expect(screen.getByText('claude-code')).toBeInTheDocument();
+			expect(screen.getByText('codex')).toBeInTheDocument();
+		});
+
+		it('shows available agent types with "New" indicator when no session of that type exists', async () => {
+			// Mock available agent types from IPC
+			vi.mocked(window.maestro.agents.getAvailable).mockResolvedValue([
+				{ id: 'opencode', name: 'OpenCode', available: true },
+				{ id: 'factory-droid', name: 'Factory Droid', available: true },
+			]);
+
+			const sessions = [
+				createMockSession('session-1', 'MyClaudeAgent', 'claude-code'),
+			];
+
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			// Flush the microtask from getAvailable() resolving
+			await act(async () => {});
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+
+			// Existing session should appear
+			expect(screen.getByText('@MyClaudeAgent')).toBeInTheDocument();
+			// Agent types should appear with normalized names
+			expect(screen.getByText('@OpenCode')).toBeInTheDocument();
+			expect(screen.getByText('@Factory-Droid')).toBeInTheDocument();
+			// Agent type items should show "New" badge
+			const newBadges = screen.getAllByText('New');
+			expect(newBadges.length).toBe(2);
+		});
+
+		it('marks already-added participants as disabled with "already added" text', () => {
+			const sessions = [
+				createMockSession('session-1', 'Claude Agent', 'claude-code'),
+				createMockSession('session-2', 'Codex Agent', 'codex'),
+			];
+			const participants = [
+				createMockParticipant('Claude Agent', 'claude-code'),
+			];
+			// Fix participant sessionId to match the session
+			participants[0].sessionId = 'session-1';
+
+			render(<GroupChatInput {...createDefaultProps({ sessions, participants })} />);
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+
+			// Participant should show "already added" text
+			expect(screen.getByText('already added')).toBeInTheDocument();
+			// Non-participant session should still be selectable (shown as button)
+			const codexMention = screen.getByText('@Codex-Agent');
+			// The codex mention should be inside a button (selectable)
+			expect(codexMention.closest('button')).toBeTruthy();
+			// The participant mention should NOT be inside a button (it's a div)
+			const claudeMention = screen.getByText('@Claude-Agent');
+			expect(claudeMention.closest('button')).toBeNull();
+		});
+
+		it('does not duplicate entries when a session exists for an agent type', async () => {
+			// Agent type "claude-code" is available AND a session of that type exists
+			vi.mocked(window.maestro.agents.getAvailable).mockResolvedValue([
+				{ id: 'claude-code', name: 'Claude Code', available: true },
+				{ id: 'opencode', name: 'OpenCode', available: true },
+			]);
+
+			const sessions = [
+				createMockSession('session-1', 'MyClaude', 'claude-code'),
+			];
+
+			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+
+			// Flush the microtask from getAvailable() resolving
+			await act(async () => {});
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@');
+
+			// OpenCode should appear as agent-type (since no session of that type exists)
+			expect(screen.getByText('@OpenCode')).toBeInTheDocument();
+			// "claude-code" agent type should NOT appear separately since a session of that type exists
+			// Only the session item "MyClaude" should appear, not a duplicate "Claude Code"
+			expect(screen.getByText('@MyClaude')).toBeInTheDocument();
+			expect(screen.queryByText('@Claude-Code')).not.toBeInTheDocument();
+		});
+
+		it('filters agent type items as user types', async () => {
+			vi.mocked(window.maestro.agents.getAvailable).mockResolvedValue([
+				{ id: 'opencode', name: 'OpenCode', available: true },
+				{ id: 'factory-droid', name: 'Factory Droid', available: true },
+			]);
+
+			render(<GroupChatInput {...createDefaultProps()} />);
+
+			// Flush the microtask from getAvailable() resolving
+			await act(async () => {});
+
+			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
+			typeInTextarea(textarea, '@open');
+
+			// Only matching agent type should appear
+			expect(screen.getByText('@OpenCode')).toBeInTheDocument();
+			// Non-matching agent type should be filtered out
+			expect(screen.queryByText('@Factory-Droid')).not.toBeInTheDocument();
 		});
 	});
 });

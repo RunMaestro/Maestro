@@ -353,6 +353,19 @@ export function registerAgentsHandlers(deps: AgentsHandlerDependencies): void {
 		})
 	);
 
+	// Get available (installed, non-hidden) agent types for UI features like @mention autocomplete
+	// Returns lightweight { id, name, available }[] without full config details
+	ipcMain.handle(
+		'agents:getAvailable',
+		withIpcErrorLogging(handlerOpts('getAvailable'), async () => {
+			const agentDetector = requireDependency(getAgentDetector, 'Agent detector');
+			const agents = await agentDetector.detectAgents();
+			return agents
+				.filter((a) => a.available && !a.hidden && a.id !== 'terminal')
+				.map((a) => ({ id: a.id, name: a.name, available: a.available }));
+		})
+	);
+
 	// Refresh agent detection with debug info (clears cache and returns detailed error info)
 	ipcMain.handle(
 		'agents:refresh',

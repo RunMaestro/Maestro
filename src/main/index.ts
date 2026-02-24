@@ -65,16 +65,21 @@ import {
 	setGetSessionsCallback,
 	setGetCustomEnvVarsCallback,
 	setGetAgentConfigCallback,
+	setGetConductorProfileCallback,
 	setSshStore,
 	setGetCustomShellPathCallback,
 	markParticipantResponded,
 	spawnModeratorSynthesis,
 	getGroupChatReadOnlyState,
 	respawnParticipantWithRecovery,
+	getPendingParticipants,
 } from './group-chat/group-chat-router';
+import { releaseChatLock, clearSynthesisInProgress } from './group-chat/group-chat-lock';
 import { createSshRemoteStoreAdapter } from './utils/ssh-remote-resolver';
 import { updateParticipant, loadGroupChat, updateGroupChat } from './group-chat/group-chat-storage';
 import { needsSessionRecovery, initiateSessionRecovery } from './group-chat/session-recovery';
+import { clearAllParticipantSessionsGlobal } from './group-chat/group-chat-agent';
+import { killAllModerators } from './group-chat/group-chat-moderator';
 import { initializeSessionStorages } from './storage';
 import { initializeOutputParsers } from './parsers';
 import { calculateContextTokens } from './parsers/usage-aggregator';
@@ -417,6 +422,8 @@ const quitHandler = createQuitHandler({
 	cleanupAllGroomingSessions,
 	closeStatsDB,
 	stopCliWatcher: () => cliWatcher.stop(),
+	clearAllParticipantSessionsGlobal,
+	killAllModerators,
 });
 quitHandler.setup();
 
@@ -611,6 +618,7 @@ function setupIpcHandlers() {
 	// Set up callback for group chat router to lookup custom env vars for agents
 	setGetCustomEnvVarsCallback(getCustomEnvVarsForAgent);
 	setGetAgentConfigCallback(getAgentConfigForAgent);
+	setGetConductorProfileCallback(() => (store.get('conductorProfile') as string) || '');
 
 	// Set up SSH store for group chat SSH remote execution support
 	setSshStore(createSshRemoteStoreAdapter(store));
@@ -683,6 +691,11 @@ function setupProcessListeners() {
 				spawnModeratorSynthesis,
 				getGroupChatReadOnlyState,
 				respawnParticipantWithRecovery,
+				getPendingParticipants,
+			},
+			groupChatLock: {
+				releaseChatLock,
+				clearSynthesisInProgress,
 			},
 			groupChatStorage: {
 				loadGroupChat,

@@ -7,7 +7,7 @@
  */
 
 import { useMemo, useCallback } from 'react';
-import { PanelRightClose } from 'lucide-react';
+import { PanelRightClose, Plus } from 'lucide-react';
 import type { Theme, GroupChatParticipant, SessionState, Shortcut } from '../types';
 import { ParticipantCard } from './ParticipantCard';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -35,6 +35,8 @@ interface GroupChatParticipantsProps {
 	moderatorState: SessionState;
 	/** Moderator usage stats (context, cost, tokens) */
 	moderatorUsage?: { contextUsage: number; totalCost: number; tokenCount: number } | null;
+	/** Callback to open the Add Participant modal */
+	onAddParticipant?: () => void;
 }
 
 export function GroupChatParticipants({
@@ -52,6 +54,7 @@ export function GroupChatParticipants({
 	moderatorAgentSessionId,
 	moderatorState,
 	moderatorUsage,
+	onAddParticipant,
 }: GroupChatParticipantsProps): JSX.Element | null {
 	const { panelRef, onResizeStart, transitionClass } = useResizablePanel({
 		width,
@@ -127,13 +130,24 @@ export function GroupChatParticipants({
 				<h2 className="text-sm font-semibold" style={{ color: theme.colors.textMain }}>
 					Participants
 				</h2>
-				<button
-					onClick={onToggle}
-					className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors"
-					title={`Collapse Participants (${formatShortcutKeys(shortcuts.toggleRightPanel.keys)})`}
-				>
-					<PanelRightClose className="w-4 h-4 opacity-50" />
-				</button>
+				<div className="flex items-center gap-1">
+					{onAddParticipant && (
+						<button
+							onClick={onAddParticipant}
+							className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors"
+							title="Add participant"
+						>
+							<Plus className="w-4 h-4 opacity-50" />
+						</button>
+					)}
+					<button
+						onClick={onToggle}
+						className="flex items-center justify-center p-2 rounded hover:bg-white/5 transition-colors"
+						title={`Collapse Participants (${formatShortcutKeys(shortcuts.toggleRightPanel.keys)})`}
+					>
+						<PanelRightClose className="w-4 h-4 opacity-50" />
+					</button>
+				</div>
 			</div>
 
 			<div className="flex-1 overflow-y-auto p-3 space-y-3">

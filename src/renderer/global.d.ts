@@ -623,6 +623,7 @@ interface MaestroAPI {
 	};
 	agents: {
 		detect: (sshRemoteId?: string) => Promise<AgentConfig[]>;
+		getAvailable: () => Promise<Array<{ id: string; name: string; available: boolean }>>;
 		refresh: (
 			agentId?: string,
 			sshRemoteId?: string
@@ -1766,6 +1767,17 @@ interface MaestroAPI {
 			id: string,
 			name: string,
 			agentId: string,
+			cwd?: string
+		) => Promise<{
+			name: string;
+			agentId: string;
+			sessionId: string;
+			addedAt: number;
+		}>;
+		addFreshParticipant: (
+			id: string,
+			agentId: string,
+			name: string,
 			cwd?: string
 		) => Promise<{
 			name: string;

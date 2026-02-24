@@ -190,6 +190,10 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			groupChatState: 'idle' as GroupChatState,
 			participantStates: new Map(),
 			groupChatError: null,
+			moderatorUsage: null,
+			groupChatExecutionQueue: [],
+			groupChatStagedImages: [],
+			groupChatReadOnlyMode: false,
 		}),
 }));
 

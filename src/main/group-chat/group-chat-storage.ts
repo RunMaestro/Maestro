@@ -164,10 +164,17 @@ export function getGroupChatsDir(): string {
 }
 
 /**
- * Get the directory path for a specific group chat
+ * Get the directory path for a specific group chat.
+ * Includes a path containment check to prevent directory traversal.
  */
 export function getGroupChatDir(id: string): string {
-	return path.join(getGroupChatsDir(), id);
+	const dir = path.join(getGroupChatsDir(), id);
+	const resolved = path.resolve(dir);
+	const parent = path.resolve(getGroupChatsDir());
+	if (!resolved.startsWith(parent + path.sep) && resolved !== parent) {
+		throw new Error('Invalid group chat ID: path traversal detected');
+	}
+	return dir;
 }
 
 /**
@@ -609,46 +616,48 @@ export async function getGroupChatHistory(groupChatId: string): Promise<GroupCha
  * @param entryId - The ID of the entry to delete
  * @returns True if the entry was deleted, false if not found
  */
-export async function deleteGroupChatHistoryEntry(
+export function deleteGroupChatHistoryEntry(
 	groupChatId: string,
 	entryId: string
 ): Promise<boolean> {
-	const historyPath = getHistoryPath(groupChatId);
+	return enqueueWrite(groupChatId, async () => {
+		const historyPath = getHistoryPath(groupChatId);
 
-	try {
-		const content = await fs.readFile(historyPath, 'utf-8');
-		const lines = content.trim().split('\n');
-		let found = false;
+		try {
+			const content = await fs.readFile(historyPath, 'utf-8');
+			const lines = content.trim().split('\n');
+			let found = false;
 
-		const filteredLines = lines.filter((line) => {
-			if (!line.trim()) return false;
-			try {
-				const entry = JSON.parse(line) as GroupChatHistoryEntry;
-				if (entry.id === entryId) {
-					found = true;
-					return false;
+			const filteredLines = lines.filter((line) => {
+				if (!line.trim()) return false;
+				try {
+					const entry = JSON.parse(line) as GroupChatHistoryEntry;
+					if (entry.id === entryId) {
+						found = true;
+						return false;
+					}
+					return true;
+				} catch {
+					return true; // Keep malformed lines
 				}
-				return true;
-			} catch {
-				return true; // Keep malformed lines
+			});
+
+			if (found) {
+				await fs.writeFile(
+					historyPath,
+					filteredLines.join('\n') + (filteredLines.length > 0 ? '\n' : ''),
+					'utf-8'
+				);
 			}
-		});
 
-		if (found) {
-			await fs.writeFile(
-				historyPath,
-				filteredLines.join('\n') + (filteredLines.length > 0 ? '\n' : ''),
-				'utf-8'
-			);
+			return found;
+		} catch (error: unknown) {
+			if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+				return false;
+			}
+			throw error;
 		}
-
-		return found;
-	} catch (error: unknown) {
-		if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-			return false;
-		}
-		throw error;
-	}
+	});
 }
 
 /**
@@ -656,17 +665,19 @@ export async function deleteGroupChatHistoryEntry(
  *
  * @param groupChatId - The ID of the group chat
  */
-export async function clearGroupChatHistory(groupChatId: string): Promise<void> {
-	const historyPath = getHistoryPath(groupChatId);
+export function clearGroupChatHistory(groupChatId: string): Promise<void> {
+	return enqueueWrite(groupChatId, async () => {
+		const historyPath = getHistoryPath(groupChatId);
 
-	try {
-		await fs.writeFile(historyPath, '', 'utf-8');
-	} catch (error: unknown) {
-		if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-			throw error;
+		try {
+			await fs.writeFile(historyPath, '', 'utf-8');
+		} catch (error: unknown) {
+			if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+				throw error;
+			}
+			// File doesn't exist, nothing to clear
 		}
-		// File doesn't exist, nothing to clear
-	}
+	});
 }
 
 /**

@@ -105,6 +105,12 @@ export interface ProcessListenerDependencies {
 			processManager: ProcessManager,
 			agentDetector: AgentDetector
 		) => Promise<void>;
+		getPendingParticipants: (groupChatId: string) => Set<string>;
+	};
+	/** Group chat lock functions */
+	groupChatLock: {
+		releaseChatLock: (chatId: string) => void;
+		clearSynthesisInProgress: (chatId: string) => void;
 	};
 	/** Group chat storage functions */
 	groupChatStorage: {

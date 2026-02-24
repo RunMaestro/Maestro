@@ -82,6 +82,7 @@ export interface GroupChatHandlersReturn {
 	handleEditGroupChat: (id: string) => void;
 	handleOpenRenameGroupChatModal: (id: string) => void;
 	handleOpenDeleteGroupChatModal: (id: string) => void;
+	handleOpenAddParticipantModal: (id: string) => void;
 
 	// Modal closers (for AppGroupChatModals component)
 	handleCloseNewGroupChatModal: () => void;
@@ -91,6 +92,16 @@ export interface GroupChatHandlersReturn {
 	handleRenameGroupChatFromModal: (newName: string) => void;
 	handleCloseEditGroupChatModal: () => void;
 	handleCloseGroupChatInfo: () => void;
+	handleCloseAddParticipantModal: () => void;
+
+	// Add participant handlers
+	handleAddExistingParticipant: (
+		sessionId: string,
+		name: string,
+		agentId: string,
+		cwd: string
+	) => Promise<void>;
+	handleAddFreshParticipant: (agentId: string, name: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +600,10 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		useModalStore.getState().openModal('deleteGroupChat', { groupChatId: id });
 	}, []);
 
+	const handleOpenAddParticipantModal = useCallback((id: string) => {
+		useModalStore.getState().openModal('addGroupChatParticipant', { groupChatId: id });
+	}, []);
+
 	// =======================================================================
 	// Modal closers (stable callbacks for AppGroupChatModals component)
 	// =======================================================================
@@ -632,6 +647,56 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		useModalStore.getState().closeModal('groupChatInfo');
 	}, []);
 
+	const handleCloseAddParticipantModal = useCallback(() => {
+		useModalStore.getState().closeModal('addGroupChatParticipant');
+	}, []);
+
+	// =======================================================================
+	// Add participant handlers
+	// =======================================================================
+
+	const handleAddExistingParticipant = useCallback(
+		async (sessionId: string, name: string, agentId: string, cwd: string) => {
+			const { activeGroupChatId } = useGroupChatStore.getState();
+			const id = activeGroupChatId;
+			if (!id) return;
+
+			try {
+				await window.maestro.groupChat.addParticipant(id, name, agentId, cwd);
+				useModalStore.getState().closeModal('addGroupChatParticipant');
+			} catch (err) {
+				notifyToast({
+					type: 'error',
+					title: 'Group Chat',
+					message: err instanceof Error ? err.message : 'Failed to add participant',
+				});
+				throw err; // Re-throw so the modal can display the error
+			}
+		},
+		[]
+	);
+
+	const handleAddFreshParticipant = useCallback(
+		async (agentId: string, name: string) => {
+			const { activeGroupChatId } = useGroupChatStore.getState();
+			const id = activeGroupChatId;
+			if (!id) return;
+
+			try {
+				await window.maestro.groupChat.addFreshParticipant(id, agentId, name);
+				useModalStore.getState().closeModal('addGroupChatParticipant');
+			} catch (err) {
+				notifyToast({
+					type: 'error',
+					title: 'Group Chat',
+					message: err instanceof Error ? err.message : 'Failed to add participant',
+				});
+				throw err; // Re-throw so the modal can display the error
+			}
+		},
+		[]
+	);
+
 	// =======================================================================
 	// Return
 	// =======================================================================
@@ -673,6 +738,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleEditGroupChat,
 		handleOpenRenameGroupChatModal,
 		handleOpenDeleteGroupChatModal,
+		handleOpenAddParticipantModal,
 
 		// Modal closers
 		handleCloseNewGroupChatModal,
@@ -682,5 +748,10 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleRenameGroupChatFromModal,
 		handleCloseEditGroupChatModal,
 		handleCloseGroupChatInfo,
+		handleCloseAddParticipantModal,
+
+		// Add participant
+		handleAddExistingParticipant,
+		handleAddFreshParticipant,
 	};
 }

@@ -190,6 +190,7 @@ export type ModalId =
 	| 'renameGroupChat'
 	| 'editGroupChat'
 	| 'groupChatInfo'
+	| 'addGroupChatParticipant'
 	// Git
 	| 'gitDiff'
 	| 'gitLog'
@@ -243,6 +244,7 @@ export interface ModalDataMap {
 	deleteGroupChat: GroupChatModalData;
 	renameGroupChat: GroupChatModalData;
 	editGroupChat: GroupChatModalData;
+	addGroupChatParticipant: GroupChatModalData;
 	gitDiff: GitDiffModalData;
 	tour: TourModalData;
 	standingOvation: StandingOvationData;
@@ -732,6 +734,10 @@ export function getModalActions() {
 			id ? openModal('editGroupChat', { groupChatId: id }) : closeModal('editGroupChat'),
 		setShowGroupChatInfo: (open: boolean) =>
 			open ? openModal('groupChatInfo') : closeModal('groupChatInfo'),
+		setShowAddGroupChatParticipantModal: (id: string | null) =>
+			id
+				? openModal('addGroupChatParticipant', { groupChatId: id })
+				: closeModal('addGroupChatParticipant'),
 
 		// Git Diff Viewer
 		setGitDiffPreview: (diff: string | null) =>
@@ -839,6 +845,9 @@ export function useModalActions() {
 	const renameGroupChatData = useModalStore(selectModalData('renameGroupChat'));
 	const editGroupChatData = useModalStore(selectModalData('editGroupChat'));
 	const groupChatInfoOpen = useModalStore(selectModalOpen('groupChatInfo'));
+	const addGroupChatParticipantData = useModalStore(
+		selectModalData('addGroupChatParticipant')
+	);
 	const gitDiffData = useModalStore(selectModalData('gitDiff'));
 	const gitLogOpen = useModalStore(selectModalOpen('gitLog'));
 	const tourOpen = useModalStore(selectModalOpen('tour'));
@@ -994,6 +1003,7 @@ export function useModalActions() {
 		showRenameGroupChatModal: renameGroupChatData?.groupChatId ?? null,
 		showEditGroupChatModal: editGroupChatData?.groupChatId ?? null,
 		showGroupChatInfo: groupChatInfoOpen,
+		showAddGroupChatParticipantModal: addGroupChatParticipantData?.groupChatId ?? null,
 
 		// Git Diff Viewer
 		gitDiffPreview: gitDiffData?.diff ?? null,

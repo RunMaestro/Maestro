@@ -119,9 +119,7 @@ export async function addParticipant(
 	// Check if moderator is active
 	if (!isModeratorActive(groupChatId)) {
 		console.log(`[GroupChat:Debug] ERROR: Moderator not active!`);
-		throw new Error(
-			`Moderator must be active before adding participants to group chat: ${groupChatId}`
-		);
+		throw new Error(`Moderator is not active for this group chat. Try restarting the moderator.`);
 	}
 
 	console.log(`[GroupChat:Debug] Moderator is active: true`);
@@ -144,7 +142,9 @@ export async function addParticipant(
 		);
 		if (!agentConfig || !agentConfig.available) {
 			console.log(`[GroupChat:Debug] ERROR: Agent not available!`);
-			throw new Error(`Agent '${agentId}' is not available`);
+			throw new Error(
+				`Agent '${agentId}' is not installed or unavailable. Install it or use an available agent.`
+			);
 		}
 		command = agentConfig.path || agentConfig.command;
 		args = [...agentConfig.args];
@@ -245,7 +245,9 @@ export async function addParticipant(
 
 	if (!result.success) {
 		console.log(`[GroupChat:Debug] ERROR: Spawn failed!`);
-		throw new Error(`Failed to spawn participant '${name}' for group chat ${groupChatId}`);
+		throw new Error(
+			`Failed to start '${name}'. Check that it's properly configured and accessible.`
+		);
 	}
 
 	// Create participant record
@@ -267,6 +269,46 @@ export async function addParticipant(
 	console.log(`[GroupChat:Debug] =====================================`);
 
 	return participant;
+}
+
+/**
+ * Adds a fresh participant to a group chat by agent type, without any session overrides.
+ *
+ * Unlike `addParticipant()`, this creates a participant from an agent type definition
+ * alone (no session reference). The agent spawns with pure defaults — no custom model,
+ * custom args, custom env vars, or SSH remote config.
+ *
+ * @param groupChatId - The ID of the group chat
+ * @param name - The participant's name (must be unique within the chat)
+ * @param agentId - The agent type to use (e.g., 'claude-code')
+ * @param processManager - The process manager to use for spawning
+ * @param cwd - Working directory for the agent (defaults to home directory)
+ * @param agentDetector - Optional agent detector for resolving agent paths
+ * @param agentConfigValues - Optional agent config values (from config store)
+ * @returns The created participant
+ */
+export async function addFreshParticipant(
+	groupChatId: string,
+	name: string,
+	agentId: string,
+	processManager: IProcessManager,
+	cwd: string = os.homedir(),
+	agentDetector?: AgentDetector,
+	agentConfigValues?: Record<string, any>
+): Promise<GroupChatParticipant> {
+	// Delegate to addParticipant with no session overrides, no custom env vars, no SSH
+	return addParticipant(
+		groupChatId,
+		name,
+		agentId,
+		processManager,
+		cwd,
+		agentDetector,
+		agentConfigValues,
+		undefined, // no customEnvVars
+		undefined, // no sessionOverrides
+		undefined // no sshStore
+	);
 }
 
 /**
@@ -405,13 +447,17 @@ export async function clearAllParticipantSessions(
 	const prefix = `${groupChatId}:`;
 	const keysToDelete: string[] = [];
 
-	for (const [key, sessionId] of activeParticipantSessions.entries()) {
+	for (const [key] of activeParticipantSessions.entries()) {
 		if (key.startsWith(prefix)) {
-			if (processManager) {
-				processManager.kill(sessionId);
-			}
 			keysToDelete.push(key);
 		}
+	}
+
+	if (processManager) {
+		// Kill all batch-spawned participant processes by prefix.
+		// This catches processes with timestamp suffixes that differ from the
+		// UUID-suffixed IDs stored in activeParticipantSessions.
+		processManager.killByPrefix(`group-chat-${groupChatId}-participant-`);
 	}
 
 	for (const key of keysToDelete) {
