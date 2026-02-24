@@ -182,6 +182,17 @@ interface LoadingState {
 	isRemote: boolean;
 }
 
+/** Default local ignore patterns (used when no user-configured patterns are provided) */
+export const LOCAL_IGNORE_DEFAULTS = ['node_modules', '__pycache__'];
+
+/** Options for local (non-SSH) file tree loading */
+export interface LocalFileTreeOptions {
+	/** Glob patterns to ignore. When provided, replaces LOCAL_IGNORE_DEFAULTS. */
+	ignorePatterns?: string[];
+	/** Whether to parse and honor the root .gitignore file (default: false). */
+	honorGitignore?: boolean;
+}
+
 /**
  * Load file tree from directory recursively
  * @param dirPath - The directory path to load
@@ -189,10 +200,7 @@ interface LoadingState {
  * @param currentDepth - Current recursion depth (internal use)
  * @param sshContext - Optional SSH context for remote file operations
  * @param onProgress - Optional callback for progress updates (useful for SSH)
- * @param localIgnorePatterns - Optional glob patterns to ignore for local (non-SSH) scans.
- *   When provided, replaces the hardcoded defaults. Comes from the localIgnorePatterns setting.
- * @param localHonorGitignore - Whether to parse and honor local .gitignore files (default: false).
- *   When true, patterns from the root .gitignore are merged with localIgnorePatterns.
+ * @param localOptions - Optional configuration for local (non-SSH) scans
  */
 export async function loadFileTree(
 	dirPath: string,
@@ -200,8 +208,7 @@ export async function loadFileTree(
 	currentDepth = 0,
 	sshContext?: SshContext,
 	onProgress?: FileTreeProgressCallback,
-	localIgnorePatterns?: string[],
-	localHonorGitignore?: boolean
+	localOptions?: LocalFileTreeOptions
 ): Promise<FileTreeNode[]> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
@@ -226,15 +233,17 @@ export async function loadFileTree(
 		}
 	} else {
 		// For local: use configurable patterns from settings, falling back to hardcoded defaults
-		ignorePatterns = localIgnorePatterns ?? ['node_modules', '__pycache__'];
+		ignorePatterns = localOptions?.ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
 
 		// If honor gitignore is enabled, try to parse the local .gitignore
-		if (localHonorGitignore) {
+		if (localOptions?.honorGitignore) {
 			try {
-				const gitignorePatterns = await fetchLocalGitignorePatterns(dirPath);
-				ignorePatterns = [...ignorePatterns, ...gitignorePatterns];
+				const content = await window.maestro.fs.readFile(`${dirPath}/.gitignore`);
+				if (content) {
+					ignorePatterns = [...ignorePatterns, ...parseGitignoreContent(content)];
+				}
 			} catch {
-				// Silently ignore - .gitignore may not exist or be readable
+				// .gitignore may not exist or be readable — not an error
 			}
 		}
 	}
@@ -297,52 +306,6 @@ async function fetchRemoteGitignorePatterns(
 	try {
 		const content = await window.maestro.fs.readFile(`${dirPath}/.gitignore`, sshRemoteId);
 		return content ? parseGitignoreContent(content) : [];
-	} catch {
-		return [];
-	}
-}
-
-/**
- * Fetch and parse .gitignore patterns from a local directory.
- * Reuses the same parsing logic as the remote variant but reads via local fs.
- * @param dirPath - The local directory path
- * @returns Array of gitignore patterns (simplified name-based matching)
- */
-async function fetchLocalGitignorePatterns(dirPath: string): Promise<string[]> {
-	try {
-		const gitignorePath = `${dirPath}/.gitignore`;
-		const content = await window.maestro.fs.readFile(gitignorePath);
-
-		if (!content) {
-			return [];
-		}
-
-		const patterns: string[] = [];
-		const lines = content.split('\n');
-
-		for (const line of lines) {
-			const trimmed = line.trim();
-
-			if (!trimmed || trimmed.startsWith('#')) {
-				continue;
-			}
-
-			if (trimmed.startsWith('!')) {
-				continue;
-			}
-
-			let pattern = trimmed.startsWith('/') ? trimmed.slice(1) : trimmed;
-
-			if (pattern.endsWith('/')) {
-				pattern = pattern.slice(0, -1);
-			}
-
-			if (pattern) {
-				patterns.push(pattern);
-			}
-		}
-
-		return patterns;
 	} catch {
 		return [];
 	}

@@ -402,7 +402,9 @@ describe('fileExplorer utils', () => {
 				.mockResolvedValue([]);
 
 			// Pass localIgnorePatterns that includes .git and node_modules
-			const result = await loadFileTree('/project', 10, 0, undefined, undefined, ['.git', 'node_modules']);
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				ignorePatterns: ['.git', 'node_modules'],
+			});
 
 			expect(result).toHaveLength(2);
 			expect(result.find((n) => n.name === '.git')).toBeUndefined();
@@ -411,7 +413,7 @@ describe('fileExplorer utils', () => {
 			expect(result.find((n) => n.name === 'README.md')).toBeDefined();
 		});
 
-		it('falls back to default ignore patterns when localIgnorePatterns is undefined', async () => {
+		it('falls back to default ignore patterns when localOptions is undefined', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: '.git', isFile: false, isDirectory: true },
@@ -421,7 +423,7 @@ describe('fileExplorer utils', () => {
 				])
 				.mockResolvedValue([]);
 
-			// No localIgnorePatterns — should use defaults (node_modules, __pycache__)
+			// No localOptions — should use defaults (node_modules, __pycache__)
 			const result = await loadFileTree('/project');
 
 			// .git should be included (not in defaults), node_modules and __pycache__ excluded
@@ -432,7 +434,7 @@ describe('fileExplorer utils', () => {
 			expect(result.find((n) => n.name === '__pycache__')).toBeUndefined();
 		});
 
-		it('does not apply localIgnorePatterns to SSH contexts', async () => {
+		it('does not apply localOptions to SSH contexts', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
 					{ name: '.git', isFile: false, isDirectory: true },
@@ -445,9 +447,11 @@ describe('fileExplorer utils', () => {
 				sshRemoteId: 'remote-1',
 				ignorePatterns: ['build'],
 			};
-			const result = await loadFileTree('/project', 10, 0, sshContext, undefined, ['.git']);
+			const result = await loadFileTree('/project', 10, 0, sshContext, undefined, {
+				ignorePatterns: ['.git'],
+			});
 
-			// .git should NOT be ignored — SSH uses its own ignorePatterns, not localIgnorePatterns
+			// .git should NOT be ignored — SSH uses its own ignorePatterns, not localOptions
 			expect(result).toHaveLength(2);
 			expect(result.find((n) => n.name === '.git')).toBeDefined();
 			expect(result.find((n) => n.name === 'src')).toBeDefined();

@@ -88,8 +88,8 @@ export function IgnorePatternsSection({
 		[ignorePatterns, onIgnorePatternsChange]
 	);
 
-	// Handle key press in input (Enter to add)
-	const handleKeyPress = useCallback(
+	// Handle key down in input (Enter to add)
+	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent<HTMLInputElement>) => {
 			if (e.key === 'Enter') {
 				e.preventDefault();
@@ -132,6 +132,8 @@ export function IgnorePatternsSection({
 						<label className="flex items-center gap-2 cursor-pointer">
 							<button
 								type="button"
+								role="checkbox"
+								aria-checked={honorGitignore}
 								onClick={() => onHonorGitignoreChange(!honorGitignore)}
 								className="w-5 h-5 rounded border flex items-center justify-center transition-colors"
 								style={{
@@ -211,7 +213,7 @@ export function IgnorePatternsSection({
 								setNewPattern(e.target.value);
 								setInputError(null);
 							}}
-							onKeyPress={handleKeyPress}
+							onKeyDown={handleKeyDown}
 							placeholder="Enter glob pattern (e.g., node_modules, *.log)"
 							className="w-full px-3 py-2 rounded text-sm font-mono outline-none"
 							style={{
