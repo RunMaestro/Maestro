@@ -68,7 +68,7 @@ export const getFileIcon = (type: FileChangeType | undefined, theme: Theme): JSX
 		case 'modified':
 			return <FileCode className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />;
 		default:
-			return <FileText className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
+			return <FileText className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 };
 
@@ -194,7 +194,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Lock
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.accent) }}
 			/>
 		);
 	}
@@ -202,7 +202,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Settings
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.accent) }}
 			/>
 		);
 	}
@@ -226,7 +226,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Package
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.accent) }}
 			/>
 		);
 	}
@@ -257,7 +257,7 @@ export const getExplorerFileIcon = (
 	return (
 		<File
 			className="w-3.5 h-3.5"
-			style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
+			style={{ ...style, color: fileTypeColor(type, theme.colors.accent) }}
 		/>
 	);
 };
@@ -270,7 +270,7 @@ export const getExplorerFolderIcon = (
 	const normalized = normalizeName(folderName);
 
 	if (normalized === '.git') {
-		return <GitBranch className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
+		return <GitBranch className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (DOC_FOLDER_NAMES.has(normalized)) {
 		return <BookOpen className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
@@ -279,13 +279,13 @@ export const getExplorerFolderIcon = (
 		return <FlaskConical className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (CONFIG_FOLDER_NAMES.has(normalized)) {
-		return <Settings className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
+		return <Settings className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (ASSET_FOLDER_NAMES.has(normalized)) {
 		return <ImageIcon className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (DEP_FOLDER_NAMES.has(normalized)) {
-		return <Package className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
+		return <Package className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (DATA_FOLDER_NAMES.has(normalized)) {
 		return <Database className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;

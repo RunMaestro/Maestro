@@ -947,7 +947,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					style={{
 						height: `${virtualRow.size}px`,
 						transform: `translateY(${virtualRow.start}px)`,
-						paddingLeft: `${8 + depth * 16}px`,
+						paddingLeft: `${8 + (isFolder ? depth : Math.max(0, depth - 1)) * 16}px`,
 						color: change ? theme.colors.textMain : theme.colors.textDim,
 						borderLeftColor: isKeyboardSelected ? theme.colors.accent : 'transparent',
 						backgroundColor: isKeyboardSelected
@@ -981,12 +981,15 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 					onContextMenu={(e) => handleContextMenu(e, node, fullPath, globalIndex)}
 				>
 					{indentGuides}
-					{isFolder &&
-						(isExpanded ? (
+					{isFolder ? (
+						isExpanded ? (
 							<ChevronDown className="w-3 h-3 flex-shrink-0" />
 						) : (
 							<ChevronRight className="w-3 h-3 flex-shrink-0" />
-						))}
+						)
+					) : (
+						<span className="w-3 h-3 flex-shrink-0" />
+					)}
 					<span className="flex-shrink-0">
 						{isFolder
 							? getExplorerFolderIcon(node.name, isExpanded, theme)
