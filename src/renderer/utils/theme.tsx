@@ -194,7 +194,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Lock
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.warning) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
 			/>
 		);
 	}
@@ -202,7 +202,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Settings
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.warning) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
 			/>
 		);
 	}
@@ -226,7 +226,7 @@ export const getExplorerFileIcon = (
 		return (
 			<Package
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.warning) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.textDim) }}
 			/>
 		);
 	}
@@ -234,7 +234,7 @@ export const getExplorerFileIcon = (
 		return (
 			<FlaskConical
 				className="w-3.5 h-3.5"
-				style={{ ...style, color: fileTypeColor(type, theme.colors.warning) }}
+				style={{ ...style, color: fileTypeColor(type, theme.colors.accent) }}
 			/>
 		);
 	}
@@ -270,22 +270,22 @@ export const getExplorerFolderIcon = (
 	const normalized = normalizeName(folderName);
 
 	if (normalized === '.git') {
-		return <GitBranch className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />;
+		return <GitBranch className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
 	}
 	if (DOC_FOLDER_NAMES.has(normalized)) {
 		return <BookOpen className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (TEST_FOLDER_NAMES.has(normalized)) {
-		return <FlaskConical className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />;
+		return <FlaskConical className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (CONFIG_FOLDER_NAMES.has(normalized)) {
-		return <Settings className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />;
+		return <Settings className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
 	}
 	if (ASSET_FOLDER_NAMES.has(normalized)) {
 		return <ImageIcon className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
 	}
 	if (DEP_FOLDER_NAMES.has(normalized)) {
-		return <Package className="w-3.5 h-3.5" style={{ color: theme.colors.warning }} />;
+		return <Package className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />;
 	}
 	if (DATA_FOLDER_NAMES.has(normalized)) {
 		return <Database className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />;
