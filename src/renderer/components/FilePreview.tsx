@@ -989,6 +989,12 @@ export const FilePreview = React.memo(
 		// Extract directory path without filename
 		const directoryPath = file ? file.path.substring(0, file.path.lastIndexOf('/')) : '';
 
+		// Icon-only buttons size up when path isn't consuming vertical space
+		const headerIconClass = directoryPath ? 'w-4 h-4' : 'w-5 h-5';
+		const headerBtnClass = directoryPath
+			? 'p-2 rounded hover:bg-white/10 transition-colors'
+			: 'p-2.5 rounded hover:bg-white/10 transition-colors';
+
 		// Fetch file stats when file changes
 		useEffect(() => {
 			if (file?.path) {
@@ -1833,27 +1839,27 @@ export const FilePreview = React.memo(
 							{isMarkdown && !markdownEditMode && (
 								<button
 									onClick={() => setShowRemoteImages(!showRemoteImages)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									className={headerBtnClass}
 									style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
 									title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
 								>
-									<Globe className="w-4 h-4" />
+									<Globe className={headerIconClass} />
 								</button>
 							)}
 							{/* Toggle between edit and preview/view mode - for any editable text file */}
 							{isEditableText && (
 								<button
 									onClick={() => setMarkdownEditMode(!markdownEditMode)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									className={headerBtnClass}
 									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
 									title={`${markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'} (${formatShortcut('toggleMarkdownMode')})`}
 								>
-									{markdownEditMode ? <Eye className="w-4 h-4" /> : <Edit className="w-4 h-4" />}
+									{markdownEditMode ? <Eye className={headerIconClass} /> : <Edit className={headerIconClass} />}
 								</button>
 							)}
 							<button
 								onClick={copyContentToClipboard}
-								className="p-2 rounded hover:bg-white/10 transition-colors"
+								className={headerBtnClass}
 								style={{ color: theme.colors.textDim }}
 								title={
 									isImage
@@ -1861,47 +1867,47 @@ export const FilePreview = React.memo(
 										: 'Copy content to clipboard'
 								}
 							>
-								<Clipboard className="w-4 h-4" />
+								<Clipboard className={headerIconClass} />
 							</button>
 							{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
 							{ghCliAvailable && !markdownEditMode && onPublishGist && !isImage && (
 								<button
 									onClick={onPublishGist}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									className={headerBtnClass}
 									style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
 									title={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
 								>
-									<Share2 className="w-4 h-4" />
+									<Share2 className={headerIconClass} />
 								</button>
 							)}
 							{/* Document Graph button - show for markdown files when callback is available */}
 							{isMarkdown && onOpenInGraph && (
 								<button
 									onClick={onOpenInGraph}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									className={headerBtnClass}
 									style={{ color: theme.colors.textDim }}
 									title={`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`}
 								>
-									<GitGraph className="w-4 h-4" />
+									<GitGraph className={headerIconClass} />
 								</button>
 							)}
 							{!sshRemoteId && (
 								<button
 									onClick={() => window.maestro?.shell?.openPath(file.path)}
-									className="p-2 rounded hover:bg-white/10 transition-colors"
+									className={headerBtnClass}
 									style={{ color: theme.colors.textDim }}
 									title="Open in Default App"
 								>
-									<ExternalLink className="w-4 h-4" />
+									<ExternalLink className={headerIconClass} />
 								</button>
 							)}
 							<button
 								onClick={copyPathToClipboard}
-								className="p-2 rounded hover:bg-white/10 transition-colors"
+								className={headerBtnClass}
 								style={{ color: theme.colors.textDim }}
 								title="Copy full path to clipboard"
 							>
-								<FolderOpen className="w-4 h-4" />
+								<FolderOpen className={headerIconClass} />
 							</button>
 						</div>
 						</div>
