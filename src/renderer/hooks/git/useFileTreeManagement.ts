@@ -8,7 +8,6 @@ import {
 	type FileTreeChanges,
 	type SshContext,
 	type FileTreeProgress,
-	type LocalFileTreeOptions,
 } from '../../utils/fileExplorer';
 import { fuzzyMatch } from '../../utils/search';
 import { gitService } from '../../services/git';
@@ -103,8 +102,6 @@ export interface UseFileTreeManagementDeps {
 	sshRemoteHonorGitignore?: boolean;
 	/** Local file indexing ignore patterns (glob patterns) */
 	localIgnorePatterns?: string[];
-	/** Whether to honor local .gitignore files */
-	localHonorGitignore?: boolean;
 }
 
 /**
@@ -144,7 +141,6 @@ export function useFileTreeManagement(
 		sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 		localIgnorePatterns,
-		localHonorGitignore,
 	} = deps;
 
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
@@ -156,15 +152,6 @@ export function useFileTreeManagement(
 			honorGitignore: sshRemoteHonorGitignore,
 		}),
 		[sshRemoteIgnorePatterns, sshRemoteHonorGitignore]
-	);
-
-	// Build local file tree options from settings
-	const localOptions: LocalFileTreeOptions | undefined = useMemo(
-		() =>
-			localIgnorePatterns || localHonorGitignore !== undefined
-				? { ignorePatterns: localIgnorePatterns, honorGitignore: localHonorGitignore }
-				: undefined,
-		[localIgnorePatterns, localHonorGitignore]
 	);
 
 	/**
@@ -197,7 +184,7 @@ export function useFileTreeManagement(
 						return undefined;
 					});
 
-				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
+				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns);
 				const stats = await statsPromise;
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, newTree);
@@ -231,7 +218,7 @@ export function useFileTreeManagement(
 				return undefined;
 			}
 		},
-		[sessionsRef, setSessions, sshContextOptions, localOptions]
+		[sessionsRef, setSessions, sshContextOptions, localIgnorePatterns]
 	);
 
 	/**
@@ -271,7 +258,7 @@ export function useFileTreeManagement(
 
 				// Refresh file tree and git repo status in parallel
 				const [tree, isGitRepo] = await Promise.all([
-					loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions),
+					loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns),
 					gitService.isRepo(gitRoot, sshContext?.sshRemoteId),
 				]);
 
@@ -323,7 +310,7 @@ export function useFileTreeManagement(
 				});
 			}
 		},
-		[sessions, setSessions, rightPanelRef, sshContextOptions, localOptions]
+		[sessions, setSessions, rightPanelRef, sshContextOptions, localIgnorePatterns]
 	);
 
 	// Ref to track pending retry timers per session
@@ -409,8 +396,8 @@ export function useFileTreeManagement(
 
 			// Load tree with progress callback for SSH sessions
 			const treePromise = sshContext
-				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localOptions)
-				: loadFileTree(treeRoot, 10, 0, sshContext, undefined, localOptions);
+				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localIgnorePatterns)
+				: loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns);
 
 			// Fetch stats independently — a directorySize failure (e.g., `du` timeout
 			// on large repos over SSH) should not prevent the file tree from loading.
@@ -470,7 +457,7 @@ export function useFileTreeManagement(
 					);
 				});
 		}
-	}, [activeSessionId, sessions, setSessions, sshContextOptions, localOptions]);
+	}, [activeSessionId, sessions, setSessions, sshContextOptions, localIgnorePatterns]);
 
 	// Cleanup retry timers on unmount
 	useEffect(() => {
@@ -480,20 +467,20 @@ export function useFileTreeManagement(
 		};
 	}, []);
 
-	// Re-scan file tree when local ignore patterns or honor-gitignore setting changes
+	// Re-scan file tree when local ignore patterns change
 	// for sessions that have already loaded their tree (the initial-load effect won't re-run
 	// because hasLoadedOnce short-circuits it).
-	const prevLocalOptionsRef = useRef(localOptions);
+	const prevLocalIgnorePatternsRef = useRef(localIgnorePatterns);
 	useEffect(() => {
-		if (prevLocalOptionsRef.current === localOptions) return;
-		prevLocalOptionsRef.current = localOptions;
+		if (prevLocalIgnorePatternsRef.current === localIgnorePatterns) return;
+		prevLocalIgnorePatternsRef.current = localIgnorePatterns;
 
 		if (!activeSessionId) return;
 		const session = sessions.find((s) => s.id === activeSessionId);
 		if (!session || !session.fileTreeStats) return; // only re-scan already-loaded sessions
 
 		refreshFileTree(activeSessionId);
-	}, [activeSessionId, sessions, localOptions, refreshFileTree]);
+	}, [activeSessionId, sessions, localIgnorePatterns, refreshFileTree]);
 
 	/**
 	 * Migration: Fetch stats for sessions that have a file tree but no stats.

@@ -64,7 +64,6 @@ import { NotificationsPanel } from './NotificationsPanel';
 import { SshRemotesSection } from './Settings/SshRemotesSection';
 import { SshRemoteIgnoreSection } from './Settings/SshRemoteIgnoreSection';
 import { IgnorePatternsSection } from './Settings/IgnorePatternsSection';
-import { DEFAULT_LOCAL_IGNORE_PATTERNS } from '../stores/settingsStore';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 
@@ -415,8 +414,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		// Local file indexing ignore patterns
 		localIgnorePatterns,
 		setLocalIgnorePatterns,
-		localHonorGitignore,
-		setLocalHonorGitignore,
 		// SSH Remote file indexing settings
 		sshRemoteIgnorePatterns,
 		setSshRemoteIgnorePatterns,
@@ -2962,11 +2959,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								description="Configure glob patterns for folders to exclude when indexing local files in the file explorer. Excluding large directories (like .git) reduces memory usage and speeds up file tree loading."
 								ignorePatterns={localIgnorePatterns}
 								onIgnorePatternsChange={setLocalIgnorePatterns}
-								defaultPatterns={DEFAULT_LOCAL_IGNORE_PATTERNS}
-								showHonorGitignore
-								honorGitignore={localHonorGitignore}
-								onHonorGitignoreChange={setLocalHonorGitignore}
-								onReset={() => setLocalHonorGitignore(true)}
+								defaultPatterns={['.git', 'node_modules', '__pycache__']}
 							/>
 						</div>
 					)}
