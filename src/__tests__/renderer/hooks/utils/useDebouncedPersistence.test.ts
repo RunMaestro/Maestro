@@ -552,6 +552,55 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].sshConnectionFailed).toBeUndefined();
 			});
+
+			it('should remove filePreviewHistory', () => {
+				const session = makeSession({
+					filePreviewHistory: [
+						{ name: 'test.ts', content: 'console.log("hello")', path: '/test/test.ts' },
+					],
+					filePreviewHistoryIndex: 0,
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() =>
+					useDebouncedPersistence([session], initialLoadRef)
+				);
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].filePreviewHistory).toBeUndefined();
+				expect(persisted[0].filePreviewHistoryIndex).toBeUndefined();
+			});
+
+			it('should clear fileTree to empty array', () => {
+				const session = makeSession({
+					fileTree: [
+						{ name: 'src', type: 'folder', children: [{ name: 'index.ts', type: 'file' }] },
+						{ name: 'README.md', type: 'file' },
+					],
+					fileTreeStats: { fileCount: 2, folderCount: 1, totalSize: 1024 },
+					fileTreeLoading: false,
+					fileTreeLastScanTime: Date.now(),
+				});
+
+				const initialLoadRef = makeInitialLoadRef(true);
+				const { result } = renderHook(() =>
+					useDebouncedPersistence([session], initialLoadRef)
+				);
+
+				act(() => {
+					result.current.flushNow();
+				});
+
+				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+				expect(persisted[0].fileTree).toEqual([]);
+				expect(persisted[0].fileTreeStats).toBeUndefined();
+				expect(persisted[0].fileTreeLoading).toBeUndefined();
+				expect(persisted[0].fileTreeLastScanTime).toBeUndefined();
+			});
 		});
 
 		describe('session runtime state reset', () => {

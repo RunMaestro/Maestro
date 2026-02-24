@@ -189,13 +189,16 @@ interface LoadingState {
  * @param currentDepth - Current recursion depth (internal use)
  * @param sshContext - Optional SSH context for remote file operations
  * @param onProgress - Optional callback for progress updates (useful for SSH)
+ * @param localIgnorePatterns - Optional glob patterns to ignore for local (non-SSH) scans.
+ *   When provided, replaces the hardcoded defaults. Comes from the localIgnorePatterns setting.
  */
 export async function loadFileTree(
 	dirPath: string,
 	maxDepth = 10,
 	currentDepth = 0,
 	sshContext?: SshContext,
-	onProgress?: FileTreeProgressCallback
+	onProgress?: FileTreeProgressCallback,
+	localIgnorePatterns?: string[]
 ): Promise<FileTreeNode[]> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
@@ -219,8 +222,8 @@ export async function loadFileTree(
 			}
 		}
 	} else {
-		// For local: use default hardcoded patterns (backward compatible)
-		ignorePatterns = ['node_modules', '__pycache__'];
+		// For local: use configurable patterns from settings, falling back to hardcoded defaults
+		ignorePatterns = localIgnorePatterns ?? ['node_modules', '__pycache__'];
 	}
 
 	// Initialize loading state at the top level

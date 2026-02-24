@@ -88,6 +88,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		agentErrorPaused: _agentErrorPaused,
 		agentErrorTabId: _agentErrorTabId,
 		sshConnectionFailed: _sshConnectionFailed,
+		filePreviewHistory: _filePreviewHistory,
 		...sessionWithoutRuntimeFields
 	} = session;
 
@@ -113,7 +114,24 @@ const prepareSessionForPersistence = (session: Session): Session => {
 		sshRemote: undefined,
 		sshRemoteId: undefined,
 		remoteCwd: undefined,
-	} as Session;
+		// Don't persist file tree — it's ephemeral cache data, not state.
+		// Trees re-scan automatically on session activation via useFileTreeManagement.
+		// For users with large working directories (100K+ files), persisting the tree
+		// caused sessions.json to balloon to 300MB+.
+		fileTree: [],
+		fileTreeStats: undefined,
+		fileTreeTruncated: undefined,
+		fileTreeLoading: undefined,
+		fileTreeLoadingProgress: undefined,
+		fileTreeLastScanTime: undefined,
+		// Don't persist file preview history — stores full file content that can be
+		// re-read from disk on demand. Another major contributor to session file bloat.
+		filePreviewHistory: undefined,
+		filePreviewHistoryIndex: undefined,
+		// Type assertion: this function deliberately strips runtime-only and cache
+		// fields from Session for persistence. The resulting object is a valid
+		// persisted session but missing non-persisted fields.
+	} as unknown as Session;
 };
 
 export interface UseDebouncedPersistenceReturn {

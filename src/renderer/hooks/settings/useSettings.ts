@@ -252,6 +252,10 @@ export interface UseSettingsReturn {
 	disableConfetti: boolean;
 	setDisableConfetti: (value: boolean) => void;
 
+	// Local file indexing ignore patterns
+	localIgnorePatterns: string[];
+	setLocalIgnorePatterns: (value: string[]) => void;
+
 	// SSH Remote file indexing settings
 	sshRemoteIgnorePatterns: string[];
 	setSshRemoteIgnorePatterns: (value: string[]) => void;

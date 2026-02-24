@@ -224,6 +224,7 @@ export interface SettingsStoreState {
 	preventSleepEnabled: boolean;
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
+	localIgnorePatterns: string[];
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
 	automaticTabNamingEnabled: boolean;
@@ -291,6 +292,7 @@ export interface SettingsStoreActions {
 	setDefaultStatsTimeRange: (value: 'day' | 'week' | 'month' | 'year' | 'all') => void;
 	setDisableGpuAcceleration: (value: boolean) => void;
 	setDisableConfetti: (value: boolean) => void;
+	setLocalIgnorePatterns: (value: string[]) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
@@ -434,6 +436,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	preventSleepEnabled: false,
 	disableGpuAcceleration: false,
 	disableConfetti: false,
+	localIgnorePatterns: ['.git', 'node_modules', '__pycache__'],
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
 	automaticTabNamingEnabled: true,
@@ -708,6 +711,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setDisableConfetti: (value) => {
 		set({ disableConfetti: value });
 		window.maestro.settings.set('disableConfetti', value);
+	},
+
+	setLocalIgnorePatterns: (value) => {
+		set({ localIgnorePatterns: value });
+		window.maestro.settings.set('localIgnorePatterns', value);
 	},
 
 	setSshRemoteIgnorePatterns: (value) => {
@@ -1601,6 +1609,14 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['disableConfetti'] !== undefined)
 			patch.disableConfetti = allSettings['disableConfetti'] as boolean;
 
+		// Local file indexing ignore patterns (with array validation)
+		if (
+			allSettings['localIgnorePatterns'] !== undefined &&
+			Array.isArray(allSettings['localIgnorePatterns'])
+		) {
+			patch.localIgnorePatterns = allSettings['localIgnorePatterns'] as string[];
+		}
+
 		// SSH Remote settings (with array validation)
 		if (
 			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
@@ -1753,6 +1769,7 @@ export function getSettingsActions() {
 		setPreventSleepEnabled: state.setPreventSleepEnabled,
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
+		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
