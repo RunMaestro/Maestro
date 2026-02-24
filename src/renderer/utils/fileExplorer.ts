@@ -182,17 +182,6 @@ interface LoadingState {
 	isRemote: boolean;
 }
 
-/** Default local ignore patterns (used when no user-configured patterns are provided) */
-export const LOCAL_IGNORE_DEFAULTS = ['node_modules', '__pycache__'];
-
-/** Options for local (non-SSH) file tree loading */
-export interface LocalFileTreeOptions {
-	/** Glob patterns to ignore. When provided, replaces LOCAL_IGNORE_DEFAULTS. */
-	ignorePatterns?: string[];
-	/** Whether to parse and honor the root .gitignore file (default: false). */
-	honorGitignore?: boolean;
-}
-
 /**
  * Load file tree from directory recursively
  * @param dirPath - The directory path to load
@@ -200,7 +189,8 @@ export interface LocalFileTreeOptions {
  * @param currentDepth - Current recursion depth (internal use)
  * @param sshContext - Optional SSH context for remote file operations
  * @param onProgress - Optional callback for progress updates (useful for SSH)
- * @param localOptions - Optional configuration for local (non-SSH) scans
+ * @param localIgnorePatterns - Optional glob patterns to ignore for local (non-SSH) scans.
+ *   When provided, replaces the hardcoded defaults. Comes from the localIgnorePatterns setting.
  */
 export async function loadFileTree(
 	dirPath: string,
@@ -208,7 +198,7 @@ export async function loadFileTree(
 	currentDepth = 0,
 	sshContext?: SshContext,
 	onProgress?: FileTreeProgressCallback,
-	localOptions?: LocalFileTreeOptions
+	localIgnorePatterns?: string[]
 ): Promise<FileTreeNode[]> {
 	const isRemote = Boolean(sshContext?.sshRemoteId);
 
@@ -233,19 +223,7 @@ export async function loadFileTree(
 		}
 	} else {
 		// For local: use configurable patterns from settings, falling back to hardcoded defaults
-		ignorePatterns = localOptions?.ignorePatterns ?? LOCAL_IGNORE_DEFAULTS;
-
-		// If honor gitignore is enabled, try to parse the local .gitignore
-		if (localOptions?.honorGitignore) {
-			try {
-				const content = await window.maestro.fs.readFile(`${dirPath}/.gitignore`);
-				if (content) {
-					ignorePatterns = [...ignorePatterns, ...parseGitignoreContent(content)];
-				}
-			} catch {
-				// .gitignore may not exist or be readable — not an error
-			}
-		}
+		ignorePatterns = localIgnorePatterns ?? ['node_modules', '__pycache__'];
 	}
 
 	// Initialize loading state at the top level

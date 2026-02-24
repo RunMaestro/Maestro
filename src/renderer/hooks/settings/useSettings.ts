@@ -255,8 +255,6 @@ export interface UseSettingsReturn {
 	// Local file indexing ignore patterns
 	localIgnorePatterns: string[];
 	setLocalIgnorePatterns: (value: string[]) => void;
-	localHonorGitignore: boolean;
-	setLocalHonorGitignore: (value: boolean) => void;
 
 	// SSH Remote file indexing settings
 	sshRemoteIgnorePatterns: string[];
