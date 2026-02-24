@@ -1806,6 +1806,7 @@ export function getSettingsActions() {
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
+		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
 	};

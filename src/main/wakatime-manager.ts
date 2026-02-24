@@ -679,14 +679,18 @@ export class WakaTimeManager {
 			return obj;
 		});
 
-		await execFileNoThrow(
+		const result = await execFileNoThrow(
 			this.cliPath!,
 			args,
 			projectCwd,
 			extraFiles.length > 0 ? { input: JSON.stringify(extraArray) } : undefined
 		);
 
-		logger.info('Sent file heartbeats', LOG_CONTEXT, { count: files.length });
+		if (result.exitCode === 0) {
+			logger.info('Sent file heartbeats', LOG_CONTEXT, { count: files.length });
+		} else {
+			logger.warn(`File heartbeats failed: ${result.stderr}`, LOG_CONTEXT, { count: files.length });
+		}
 	}
 
 	/** Get the resolved CLI path (null if not yet detected/installed) */

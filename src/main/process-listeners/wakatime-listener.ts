@@ -57,7 +57,7 @@ export function setupWakaTimeListener(
 	// Cache detailed tracking state for file-level heartbeats
 	let detailedEnabled = settingsStore.get('wakatimeDetailedTracking', false) as boolean;
 	settingsStore.onDidChange('wakatimeDetailedTracking', (val: unknown) => {
-		detailedEnabled = val as boolean;
+		detailedEnabled = !!val;
 	});
 
 	// Per-session accumulator for file paths from tool-execution events.

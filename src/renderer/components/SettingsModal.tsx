@@ -2218,7 +2218,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											</div>
 											<button
 												onClick={() => setWakatimeDetailedTracking(!wakatimeDetailedTracking)}
-												className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
+												className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+												tabIndex={0}
 												style={{
 													backgroundColor: wakatimeDetailedTracking
 														? theme.colors.accent
