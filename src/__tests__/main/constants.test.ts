@@ -166,7 +166,11 @@ describe('main/constants', () => {
 		it('should match session IDs with -ai- suffix and any tab ID format', () => {
 			expect('session-123-ai-tab1'.match(REGEX_AI_SUFFIX)).not.toBeNull();
 			expect('session-123-ai-abc123def'.match(REGEX_AI_SUFFIX)).not.toBeNull();
-			expect('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_SUFFIX)).not.toBeNull();
+			expect(
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(
+					REGEX_AI_SUFFIX
+				)
+			).not.toBeNull();
 		});
 
 		it('should not match session IDs without -ai- suffix', () => {
@@ -175,7 +179,8 @@ describe('main/constants', () => {
 		});
 
 		it('should correctly strip -ai- suffix to extract base session ID', () => {
-			const sessionId = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
+			const sessionId =
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
 			expect(sessionId.replace(REGEX_AI_SUFFIX, '')).toBe('51cee651-6629-4de8-abdd-1c1540555f2d');
 		});
 	});
@@ -188,7 +193,10 @@ describe('main/constants', () => {
 		});
 
 		it('should extract UUID tab ID from session ID', () => {
-			const match = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_TAB_ID);
+			const match =
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(
+					REGEX_AI_TAB_ID
+				);
 			expect(match).not.toBeNull();
 			expect(match![1]).toBe('73aaeb23-6673-45a4-8fdf-c769802f79bb');
 		});

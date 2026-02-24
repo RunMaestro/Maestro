@@ -602,12 +602,12 @@ export function TabSwitcherModal({
 								: viewMode === 'starred'
 									? 'Search starred sessions...'
 									: 'Search named sessions...'
-							}
-							style={{ color: theme.colors.textMain }}
-							value={search}
-							onChange={(e) => handleSearchChange(e.target.value)}
-							onKeyDown={handleKeyDown}
-						/>
+						}
+						style={{ color: theme.colors.textMain }}
+						value={search}
+						onChange={(e) => handleSearchChange(e.target.value)}
+						onKeyDown={handleKeyDown}
+					/>
 					<div className="flex items-center gap-2">
 						{shortcut && (
 							<span
@@ -631,9 +631,9 @@ export function TabSwitcherModal({
 					className="px-4 py-2 flex items-center gap-2 border-b"
 					style={{ borderColor: theme.colors.border }}
 				>
-						<button
-							onClick={() => handleViewModeChange('open')}
-							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+					<button
+						onClick={() => handleViewModeChange('open')}
+						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: viewMode === 'open' ? theme.colors.accent : theme.colors.bgMain,
 							color: viewMode === 'open' ? theme.colors.accentForeground : theme.colors.textDim,
@@ -641,9 +641,9 @@ export function TabSwitcherModal({
 					>
 						Open Tabs ({tabs.length + fileTabs.length})
 					</button>
-						<button
-							onClick={() => handleViewModeChange('all-named')}
-							className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
+					<button
+						onClick={() => handleViewModeChange('all-named')}
+						className="px-3 py-1 rounded-full text-xs font-medium transition-colors"
 						style={{
 							backgroundColor: viewMode === 'all-named' ? theme.colors.accent : theme.colors.bgMain,
 							color:
@@ -662,9 +662,9 @@ export function TabSwitcherModal({
 							}).length}
 						)
 					</button>
-						<button
-							onClick={() => handleViewModeChange('starred')}
-							className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
+					<button
+						onClick={() => handleViewModeChange('starred')}
+						className="px-3 py-1 rounded-full text-xs font-medium transition-colors flex items-center gap-1"
 						style={{
 							backgroundColor: viewMode === 'starred' ? theme.colors.accent : theme.colors.bgMain,
 							color: viewMode === 'starred' ? theme.colors.accentForeground : theme.colors.textDim,

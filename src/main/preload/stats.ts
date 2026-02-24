@@ -150,8 +150,9 @@ export function createStatsApi() {
 		> => ipcRenderer.invoke('stats:get-autorun-tasks', autoRunSessionId),
 
 		// Get aggregated stats for dashboard display
-		getAggregation: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'): Promise<StatsAggregation> =>
-			ipcRenderer.invoke('stats:get-aggregation', range),
+		getAggregation: (
+			range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'
+		): Promise<StatsAggregation> => ipcRenderer.invoke('stats:get-aggregation', range),
 
 		// Export query events to CSV
 		exportCsv: (range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'all'): Promise<string> =>

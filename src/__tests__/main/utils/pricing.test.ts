@@ -57,11 +57,13 @@ describe('pricing utilities', () => {
 
 			const expectedInput = (500_000 / TOKENS_PER_MILLION) * CLAUDE_PRICING.INPUT_PER_MILLION; // 1.5
 			const expectedOutput = (200_000 / TOKENS_PER_MILLION) * CLAUDE_PRICING.OUTPUT_PER_MILLION; // 3.0
-			const expectedCacheRead = (300_000 / TOKENS_PER_MILLION) * CLAUDE_PRICING.CACHE_READ_PER_MILLION; // 0.09
+			const expectedCacheRead =
+				(300_000 / TOKENS_PER_MILLION) * CLAUDE_PRICING.CACHE_READ_PER_MILLION; // 0.09
 			const expectedCacheCreation =
 				(100_000 / TOKENS_PER_MILLION) * CLAUDE_PRICING.CACHE_CREATION_PER_MILLION; // 0.375
 
-			const expectedTotal = expectedInput + expectedOutput + expectedCacheRead + expectedCacheCreation;
+			const expectedTotal =
+				expectedInput + expectedOutput + expectedCacheRead + expectedCacheCreation;
 			expect(cost).toBeCloseTo(expectedTotal, 10);
 		});
 	});
@@ -300,10 +302,7 @@ describe('pricing utilities', () => {
 			};
 
 			// Call with custom pricing
-			calculateCost(
-				{ inputTokens: 1_000_000, outputTokens: 1_000_000 },
-				customPricing
-			);
+			calculateCost({ inputTokens: 1_000_000, outputTokens: 1_000_000 }, customPricing);
 
 			// Call without custom pricing should still use defaults
 			const defaultCost = calculateCost({

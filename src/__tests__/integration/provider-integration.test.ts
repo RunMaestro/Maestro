@@ -940,9 +940,11 @@ async function runProviderViaSshStdin(
 	console.log(`🌐 SSH Stdin Command: ${sshCommand.command} ${sshCommand.args.join(' ')}`);
 	if (sshCommand.stdinScript) {
 		// Show script preview (truncate large base64 data)
-		const preview = sshCommand.stdinScript.length > 500
-			? sshCommand.stdinScript.substring(0, 500) + `... (${sshCommand.stdinScript.length} total bytes)`
-			: sshCommand.stdinScript;
+		const preview =
+			sshCommand.stdinScript.length > 500
+				? sshCommand.stdinScript.substring(0, 500) +
+					`... (${sshCommand.stdinScript.length} total bytes)`
+				: sshCommand.stdinScript;
 		console.log(`📜 Stdin script preview:\n${preview}`);
 	}
 
@@ -2002,9 +2004,7 @@ Rules:
 						if (hasReadTool) {
 							console.log(`   ✓ Found file read tool in executions`);
 						} else {
-							console.log(
-								`   ⚠️  No obvious file read tool found - tool names may differ`
-							);
+							console.log(`   ⚠️  No obvious file read tool found - tool names may differ`);
 						}
 					} else {
 						// For other providers, tool event parsing is informational only
@@ -2276,8 +2276,12 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 						console.log(
 							`⚠️  Path/environment error on remote - local working directory may not exist on ${sshConfig!.host}`
 						);
-						console.log(`   SSH communication is working correctly - the remote environment differs from local.`);
-						console.log(`   This is expected when the local project path doesn't exist on the remote machine.`);
+						console.log(
+							`   SSH communication is working correctly - the remote environment differs from local.`
+						);
+						console.log(
+							`   This is expected when the local project path doesn't exist on the remote machine.`
+						);
 						return; // Don't fail the test for path/environment issues
 					}
 
@@ -2333,7 +2337,9 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 						"What is 2 + 2? Say just the number. Don't explain. $PATH should be ignored.";
 					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing special characters via SSH for ${provider.name} (stdin passthrough)`);
+					console.log(
+						`\n🌐 Testing special characters via SSH for ${provider.name} (stdin passthrough)`
+					);
 
 					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
 						stdinInput: prompt,
@@ -2398,7 +2404,9 @@ describe.skipIf(SKIP_SSH_INTEGRATION)('SSH Provider Integration Tests', () => {
 Reply with just the two numbers separated by a comma.`;
 					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing multi-line prompt via SSH for ${provider.name} (stdin passthrough)`);
+					console.log(
+						`\n🌐 Testing multi-line prompt via SSH for ${provider.name} (stdin passthrough)`
+					);
 
 					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
 						stdinInput: prompt,
@@ -2456,7 +2464,9 @@ Reply with just the two numbers separated by a comma.`;
 					const prompt = 'Say "test" briefly.';
 					const args = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing session ID parsing for ${provider.name} via SSH (stdin passthrough)`);
+					console.log(
+						`\n🌐 Testing session ID parsing for ${provider.name} via SSH (stdin passthrough)`
+					);
 
 					const result = await runProviderViaSshStdin(provider, sshConfig, args, {
 						stdinInput: prompt,
@@ -2506,7 +2516,9 @@ Reply with just the two numbers separated by a comma.`;
 					const initialPrompt = 'Remember the word "BANANA". Say only "Got it."';
 					const initialArgs = provider.buildSshArgs();
 
-					console.log(`\n🌐 Testing session resume via SSH for ${provider.name} (stdin passthrough)`);
+					console.log(
+						`\n🌐 Testing session resume via SSH for ${provider.name} (stdin passthrough)`
+					);
 					console.log(`📤 Initial message...`);
 
 					const initialResult = await runProviderViaSshStdin(provider, sshConfig, initialArgs, {
@@ -2518,7 +2530,9 @@ Reply with just the two numbers separated by a comma.`;
 						console.log(
 							`⚠️  Path error on remote - local working directory may not exist on ${sshConfig!.host}`
 						);
-						console.log(`   SSH communication is working correctly - the path needs to exist on remote.`);
+						console.log(
+							`   SSH communication is working correctly - the path needs to exist on remote.`
+						);
 						return;
 					}
 
@@ -2618,7 +2632,9 @@ Reply with just the two numbers separated by a comma.`;
 					const prompt =
 						'What word is shown in this image? Reply with ONLY the single word shown, nothing else.';
 
-					console.log(`\n🖼️  Testing image processing via SSH for ${provider.name} (production path)`);
+					console.log(
+						`\n🖼️  Testing image processing via SSH for ${provider.name} (production path)`
+					);
 					console.log(`📁 Local image path: ${TEST_IMAGE_PATH}`);
 					console.log(`📥 Image size: ${imageBase64.length} base64 bytes`);
 
@@ -2646,7 +2662,9 @@ Reply with just the two numbers separated by a comma.`;
 
 						const args = provider.buildSshArgs();
 
-						console.log(`🚀 Running via SSH (file-based images): ${provider.command} ${args.join(' ')}`);
+						console.log(
+							`🚀 Running via SSH (file-based images): ${provider.command} ${args.join(' ')}`
+						);
 						console.log(`📦 Images decoded on remote via heredoc + base64 -d in SSH script`);
 
 						result = await runProviderViaSshStdin(provider, sshConfig, args, {
@@ -2667,7 +2685,9 @@ Reply with just the two numbers separated by a comma.`;
 						console.log(
 							`⚠️  Authentication error on remote - agent needs re-authentication on ${sshConfig!.host}`
 						);
-						console.log(`   SSH communication is working correctly - the error is from the remote agent.`);
+						console.log(
+							`   SSH communication is working correctly - the error is from the remote agent.`
+						);
 						return;
 					}
 
@@ -2676,7 +2696,9 @@ Reply with just the two numbers separated by a comma.`;
 						console.log(
 							`⚠️  Model/provider configuration error on remote - vision model may not be available on ${sshConfig!.host}`
 						);
-						console.log(`   SSH communication is working correctly - the agent config needs attention.`);
+						console.log(
+							`   SSH communication is working correctly - the agent config needs attention.`
+						);
 						return;
 					}
 

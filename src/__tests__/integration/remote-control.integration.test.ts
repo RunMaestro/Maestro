@@ -727,30 +727,32 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 	describe('Full Round-Trip: Command Execution Cycle', () => {
 		it('should complete: web sends command → desktop processes → all web clients receive output', async () => {
 			// Set up desktop to process command and broadcast response
-			const desktopCallback = vi.fn().mockImplementation(async (sessionId: string, command: string) => {
-				// Simulate desktop processing: broadcast state change and output
-				server.broadcastSessionStateChange(sessionId, 'busy', {
-					name: 'Test Session',
-					toolType: 'claude-code',
-				});
+			const desktopCallback = vi
+				.fn()
+				.mockImplementation(async (sessionId: string, command: string) => {
+					// Simulate desktop processing: broadcast state change and output
+					server.broadcastSessionStateChange(sessionId, 'busy', {
+						name: 'Test Session',
+						toolType: 'claude-code',
+					});
 
-				// Simulate agent response after processing
-				await new Promise((r) => setTimeout(r, 50));
-				server.broadcastToWebClients({
-					type: 'session_output',
-					sessionId,
-					data: `Response to: ${command}`,
-					source: 'agent',
-					timestamp: Date.now(),
-				});
+					// Simulate agent response after processing
+					await new Promise((r) => setTimeout(r, 50));
+					server.broadcastToWebClients({
+						type: 'session_output',
+						sessionId,
+						data: `Response to: ${command}`,
+						source: 'agent',
+						timestamp: Date.now(),
+					});
 
-				server.broadcastSessionStateChange(sessionId, 'idle', {
-					name: 'Test Session',
-					toolType: 'claude-code',
-				});
+					server.broadcastSessionStateChange(sessionId, 'idle', {
+						name: 'Test Session',
+						toolType: 'claude-code',
+					});
 
-				return true;
-			});
+					return true;
+				});
 			server.setExecuteCommandCallback(desktopCallback);
 
 			// Connect two web clients
@@ -781,15 +783,17 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 		});
 
 		it('should complete: web selects tab → desktop updates → all web clients receive tab change', async () => {
-			const desktopCallback = vi.fn().mockImplementation(async (sessionId: string, tabId: string) => {
-				// Desktop processes tab selection and broadcasts update
-				const updatedTabs = TEST_TABS.map((tab) => ({
-					...tab,
-					state: tab.id === tabId ? 'busy' : 'idle',
-				}));
-				server.broadcastTabsChange(sessionId, updatedTabs, tabId);
-				return true;
-			});
+			const desktopCallback = vi
+				.fn()
+				.mockImplementation(async (sessionId: string, tabId: string) => {
+					// Desktop processes tab selection and broadcasts update
+					const updatedTabs = TEST_TABS.map((tab) => ({
+						...tab,
+						state: tab.id === tabId ? 'busy' : 'idle',
+					}));
+					server.broadcastTabsChange(sessionId, updatedTabs, tabId);
+					return true;
+				});
 			server.setSelectTabCallback(desktopCallback);
 
 			const client1 = await createWebClient();
@@ -979,11 +983,7 @@ describe.skipIf(!runTests)('Remote Control Integration Tests', () => {
 			const desktopCallback = vi.fn().mockResolvedValue(true);
 			server.setExecuteCommandCallback(desktopCallback);
 
-			const clients = await Promise.all([
-				createWebClient(),
-				createWebClient(),
-				createWebClient(),
-			]);
+			const clients = await Promise.all([createWebClient(), createWebClient(), createWebClient()]);
 
 			await Promise.all(clients.map((c) => waitForConnection(c)));
 

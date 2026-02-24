@@ -1609,7 +1609,16 @@ export function MindMap({
 				});
 			}
 		},
-		[focusedNodeId, nodesWithState, onNodeSelect, onNodeDoubleClick, onNodePreview, onOpenFile, width, height]
+		[
+			focusedNodeId,
+			nodesWithState,
+			onNodeSelect,
+			onNodeDoubleClick,
+			onNodePreview,
+			onOpenFile,
+			width,
+			height,
+		]
 	);
 
 	return (

@@ -40,10 +40,7 @@ import {
 
 import { getErrorPatterns, matchErrorPattern } from '../../../main/parsers/error-patterns';
 import { readLog } from '../../../main/group-chat/group-chat-log';
-import {
-	loadGroupChat,
-	updateParticipant,
-} from '../../../main/group-chat/group-chat-storage';
+import { loadGroupChat, updateParticipant } from '../../../main/group-chat/group-chat-storage';
 
 const mockedGetErrorPatterns = vi.mocked(getErrorPatterns);
 const mockedMatchErrorPattern = vi.mocked(matchErrorPattern);
@@ -127,13 +124,11 @@ describe('group-chat/session-recovery', () => {
 			mockedGetErrorPatterns.mockReturnValue(mockPatterns);
 
 			// Return null for first line, session_not_found for second line
-			mockedMatchErrorPattern
-				.mockReturnValueOnce(null)
-				.mockReturnValueOnce({
-					type: 'session_not_found',
-					message: 'Session not found.',
-					recoverable: true,
-				});
+			mockedMatchErrorPattern.mockReturnValueOnce(null).mockReturnValueOnce({
+				type: 'session_not_found',
+				message: 'Session not found.',
+				recoverable: true,
+			});
 
 			const output = 'First line of output\nSession not found for id xyz';
 			expect(detectSessionNotFoundError(output)).toBe(true);
@@ -338,7 +333,11 @@ describe('group-chat/session-recovery', () => {
 				imagesDir: '/tmp/images',
 			});
 			mockedReadLog.mockResolvedValue([
-				{ timestamp: '2025-01-15T10:00:00.000Z', from: 'Alice', content: 'I think we should use TypeScript' },
+				{
+					timestamp: '2025-01-15T10:00:00.000Z',
+					from: 'Alice',
+					content: 'I think we should use TypeScript',
+				},
 				{ timestamp: '2025-01-15T10:01:00.000Z', from: 'Bob', content: 'Good idea' },
 				{ timestamp: '2025-01-15T10:02:00.000Z', from: 'Alice', content: 'Let me explain further' },
 			]);
@@ -560,7 +559,11 @@ describe('group-chat/session-recovery', () => {
 			});
 
 			mockedReadLog.mockResolvedValue([
-				{ timestamp: '2025-01-15T10:00:00.000Z', from: 'Alice', content: 'Short message from Alice' },
+				{
+					timestamp: '2025-01-15T10:00:00.000Z',
+					from: 'Alice',
+					content: 'Short message from Alice',
+				},
 				{ timestamp: '2025-01-15T10:01:00.000Z', from: 'Bob', content: 'Short message from Bob' },
 			]);
 

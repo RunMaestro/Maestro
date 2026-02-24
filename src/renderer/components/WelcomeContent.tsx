@@ -24,21 +24,17 @@ interface WelcomeContentProps {
  * - Non-interactive mode behavior
  * - Read-Only mode option
  */
-export function WelcomeContent({ theme, showGetStarted = false }: WelcomeContentProps): JSX.Element {
+export function WelcomeContent({
+	theme,
+	showGetStarted = false,
+}: WelcomeContentProps): JSX.Element {
 	return (
 		<div className="flex flex-col items-center text-center max-w-xl">
 			{/* Maestro Icon */}
-			<img
-				src={maestroWandIcon}
-				alt="Maestro"
-				className="w-20 h-20 mb-6 opacity-90"
-			/>
+			<img src={maestroWandIcon} alt="Maestro" className="w-20 h-20 mb-6 opacity-90" />
 
 			{/* Heading */}
-			<h1
-				className="text-2xl font-bold mb-4"
-				style={{ color: theme.colors.textMain }}
-			>
+			<h1 className="text-2xl font-bold mb-4" style={{ color: theme.colors.textMain }}>
 				Welcome to Maestro
 			</h1>
 
@@ -62,8 +58,8 @@ export function WelcomeContent({ theme, showGetStarted = false }: WelcomeContent
 						<strong style={{ color: theme.colors.textMain }}>
 							Manage multiple AI agents in parallel
 						</strong>{' '}
-						— Run several coding assistants simultaneously, each in their own
-						session, switching between them effortlessly.
+						— Run several coding assistants simultaneously, each in their own session, switching
+						between them effortlessly.
 					</p>
 				</div>
 
@@ -81,8 +77,8 @@ export function WelcomeContent({ theme, showGetStarted = false }: WelcomeContent
 						<strong style={{ color: theme.colors.textMain }}>
 							Enable unattended automation via Auto Run
 						</strong>{' '}
-						— Queue up task lists in markdown documents and let your agents
-						execute them while you step away.
+						— Queue up task lists in markdown documents and let your agents execute them while you
+						step away.
 					</p>
 				</div>
 			</div>
@@ -96,13 +92,13 @@ export function WelcomeContent({ theme, showGetStarted = false }: WelcomeContent
 				}}
 			>
 				<p>
-					<strong style={{ color: theme.colors.textMain }}>How it works:</strong>{' '}
-					Maestro is a pass-through to your AI provider. Your MCP tools, skills,
-					and permissions work exactly as they do when running the provider directly.
+					<strong style={{ color: theme.colors.textMain }}>How it works:</strong> Maestro is a
+					pass-through to your AI provider. Your MCP tools, skills, and permissions work exactly as
+					they do when running the provider directly.
 				</p>
 				<p>
-					Agents run in auto-approve mode with tool calls accepted automatically.
-					Toggle Read-Only mode for guardrails.
+					Agents run in auto-approve mode with tool calls accepted automatically. Toggle Read-Only
+					mode for guardrails.
 				</p>
 			</div>
 

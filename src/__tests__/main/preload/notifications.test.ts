@@ -105,7 +105,11 @@ describe('Notification Preload API', () => {
 			const curlCommand = 'curl -X POST -d @- https://webhook.example.com';
 			const result = await api.speak('notification payload', curlCommand);
 
-			expect(mockInvoke).toHaveBeenCalledWith('notification:speak', 'notification payload', curlCommand);
+			expect(mockInvoke).toHaveBeenCalledWith(
+				'notification:speak',
+				'notification payload',
+				curlCommand
+			);
 			expect(result.success).toBe(true);
 		});
 	});

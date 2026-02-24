@@ -220,8 +220,7 @@ export function LongestAutoRunsTable({ timeRange, theme }: LongestAutoRunsTableP
 									key={session.id}
 									className="transition-colors"
 									style={{
-										backgroundColor:
-											index % 2 === 0 ? 'transparent' : `${theme.colors.border}10`,
+										backgroundColor: index % 2 === 0 ? 'transparent' : `${theme.colors.border}10`,
 									}}
 									onMouseEnter={(e) => {
 										e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`;

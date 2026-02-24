@@ -3120,7 +3120,13 @@ describe('DocumentGraphView', () => {
 			it('keyboard handler only responds to unmodified arrow keys', () => {
 				// Should handle: ArrowLeft, ArrowRight without modifiers
 				// Should ignore: Cmd/Ctrl/Alt/Shift + arrows
-				const shouldHandle = (e: { key: string; metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; shiftKey?: boolean }) => {
+				const shouldHandle = (e: {
+					key: string;
+					metaKey?: boolean;
+					ctrlKey?: boolean;
+					altKey?: boolean;
+					shiftKey?: boolean;
+				}) => {
 					if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return false;
 					return e.key === 'ArrowLeft' || e.key === 'ArrowRight';
 				};

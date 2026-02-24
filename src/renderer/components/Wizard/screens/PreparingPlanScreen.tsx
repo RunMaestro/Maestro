@@ -726,7 +726,7 @@ export function PreparingPlanScreen({ theme }: PreparingPlanScreenProps): JSX.El
 					projectName: state.agentName || 'My Project',
 					conversationHistory: state.conversationHistory,
 					subfolder: 'Initiation',
-          			sshRemoteConfig: state.sessionSshRemoteConfig,
+					sshRemoteConfig: state.sessionSshRemoteConfig,
 				},
 				{
 					onStart: () => {

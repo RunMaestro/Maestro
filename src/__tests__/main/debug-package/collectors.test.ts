@@ -181,7 +181,8 @@ describe('Debug Package Collectors', () => {
 
 	describe('sanitizeLogMessage', () => {
 		it('should truncate messages over 500 chars', async () => {
-			const { sanitizeLogMessage } = await import('../../../main/debug-package/collectors/sanitize');
+			const { sanitizeLogMessage } =
+				await import('../../../main/debug-package/collectors/sanitize');
 
 			const longMessage = 'A'.repeat(600);
 			const sanitized = sanitizeLogMessage(longMessage);
@@ -191,7 +192,8 @@ describe('Debug Package Collectors', () => {
 		});
 
 		it('should sanitize paths in messages', async () => {
-			const { sanitizeLogMessage } = await import('../../../main/debug-package/collectors/sanitize');
+			const { sanitizeLogMessage } =
+				await import('../../../main/debug-package/collectors/sanitize');
 
 			const homeDir = os.homedir();
 			const message = `Process started in ${homeDir}/Projects/test`;

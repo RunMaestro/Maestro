@@ -47,7 +47,18 @@ export function needsWindowsShell(command: string): boolean {
 	// This prevents issues like % being interpreted as environment variables on Windows
 	// Extract basename to handle full paths like 'C:\Program Files\Git\bin\git'
 	// Use regex to handle both Unix (/) and Windows (\) path separators
-	const knownExeCommands = new Set(['git', 'node', 'npm', 'npx', 'yarn', 'pnpm', 'python', 'python3', 'pip', 'pip3']);
+	const knownExeCommands = new Set([
+		'git',
+		'node',
+		'npm',
+		'npx',
+		'yarn',
+		'pnpm',
+		'python',
+		'python3',
+		'pip',
+		'pip3',
+	]);
 	const commandBaseName = lowerCommand.split(/[\\/]/).pop() || lowerCommand;
 	if (knownExeCommands.has(commandBaseName)) {
 		return false;

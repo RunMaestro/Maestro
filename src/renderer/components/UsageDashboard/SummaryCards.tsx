@@ -18,7 +18,18 @@
  */
 
 import React, { useMemo } from 'react';
-import { MessageSquare, Clock, Timer, Bot, Users, Layers, Sunrise, Globe, Zap, PanelTop } from 'lucide-react';
+import {
+	MessageSquare,
+	Clock,
+	Timer,
+	Bot,
+	Users,
+	Layers,
+	Sunrise,
+	Globe,
+	Zap,
+	PanelTop,
+} from 'lucide-react';
 import type { Theme, Session } from '../../types';
 import type { StatsAggregation } from '../../hooks/stats/useStats';
 

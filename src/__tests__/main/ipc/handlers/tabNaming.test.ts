@@ -92,7 +92,13 @@ describe('Tab Naming IPC Handlers', () => {
 		name: 'Claude Code',
 		command: 'claude',
 		path: '/usr/local/bin/claude',
-		args: ['--print', '--verbose', '--output-format', 'stream-json', '--dangerously-skip-permissions'],
+		args: [
+			'--print',
+			'--verbose',
+			'--output-format',
+			'stream-json',
+			'--dangerously-skip-permissions',
+		],
 		batchModeArgs: ['--print'],
 		readOnlyArgs: ['--permission-mode', 'plan'],
 	};
@@ -182,10 +188,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			// Start the handler but don't await it yet
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
@@ -223,10 +231,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Help me with something',
@@ -264,10 +274,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Fix the authentication bug',
@@ -291,10 +303,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Add a dark mode toggle',
@@ -318,10 +332,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Hello',
@@ -369,10 +385,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test cleanup',
@@ -399,10 +417,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'My specific request',
@@ -431,10 +451,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Something complex',
@@ -447,7 +469,8 @@ describe('Tab Naming IPC Handlers', () => {
 			});
 
 			// Simulate a very long tab name (over 40 chars) - gets filtered out
-			const longName = 'This Is A Very Long Tab Name That Should Be Truncated Because It Exceeds The Maximum Length';
+			const longName =
+				'This Is A Very Long Tab Name That Should Be Truncated Because It Exceeds The Maximum Length';
 			onDataCallback?.('tab-naming-mock-uuid-1234', longName);
 			onExitCallback?.('tab-naming-mock-uuid-1234');
 
@@ -462,10 +485,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Something with quotes',
@@ -490,10 +515,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Something with quotes',
@@ -531,7 +558,12 @@ describe('Tab Naming IPC Handlers', () => {
 			// Mock buildSshCommand to return SSH-wrapped command
 			(buildSshCommand as Mock).mockResolvedValue({
 				command: '/usr/bin/ssh',
-				args: ['-o', 'BatchMode=yes', 'test.example.com', 'claude --print --input-format stream-json'],
+				args: [
+					'-o',
+					'BatchMode=yes',
+					'test.example.com',
+					'claude --print --input-format stream-json',
+				],
 			});
 
 			// Update mock agent to support stream-json input
@@ -546,10 +578,12 @@ describe('Tab Naming IPC Handlers', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Help me with SSH remote feature',
@@ -708,10 +742,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -734,10 +770,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -760,10 +798,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -776,7 +816,10 @@ describe('extractTabName utility', () => {
 			});
 
 			// Agent might output explanatory text before the actual name
-			onDataCallback?.('tab-naming-mock-uuid-1234', 'Here is a suggested tab name.\nActual Tab Name');
+			onDataCallback?.(
+				'tab-naming-mock-uuid-1234',
+				'Here is a suggested tab name.\nActual Tab Name'
+			);
 			onExitCallback?.('tab-naming-mock-uuid-1234');
 
 			const result = await resultPromise;
@@ -787,10 +830,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -813,10 +858,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -839,10 +886,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -865,10 +914,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -893,10 +944,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',
@@ -910,10 +963,7 @@ describe('extractTabName utility', () => {
 
 			// Agent might echo back example text before giving the actual name
 			// The function splits on periods, so use period to separate lines
-			onDataCallback?.(
-				'tab-naming-mock-uuid-1234',
-				'Example: Dark Mode. Actual Tab Name'
-			);
+			onDataCallback?.('tab-naming-mock-uuid-1234', 'Example: Dark Mode. Actual Tab Name');
 			onExitCallback?.('tab-naming-mock-uuid-1234');
 
 			const result = await resultPromise;
@@ -926,10 +976,12 @@ describe('extractTabName utility', () => {
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
-			mockProcessManager.on.mockImplementation((event: string, callback: (...args: any[]) => void) => {
-				if (event === 'data') onDataCallback = callback;
-				if (event === 'exit') onExitCallback = callback;
-			});
+			mockProcessManager.on.mockImplementation(
+				(event: string, callback: (...args: any[]) => void) => {
+					if (event === 'data') onDataCallback = callback;
+					if (event === 'exit') onExitCallback = callback;
+				}
+			);
 
 			const resultPromise = invokeHandler('tabNaming:generateTabName', {
 				userMessage: 'Test',

@@ -344,9 +344,9 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 					</div>
 					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 						<p>
-							A <strong style={{ color: theme.colors.textMain }}>Playbook</strong> is a collection of
-							Auto Run documents configured to run together. Save your batch run configurations for
-							quick reuse. A playbook stores:
+							A <strong style={{ color: theme.colors.textMain }}>Playbook</strong> is a collection
+							of Auto Run documents configured to run together. Save your batch run configurations
+							for quick reuse. A playbook stores:
 						</p>
 						<ul className="list-disc ml-4 space-y-1">
 							<li>Document selection and order</li>
@@ -361,9 +361,8 @@ export function AutoRunnerHelpModal({ theme, onClose }: AutoRunnerHelpModalProps
 						<p>
 							<strong style={{ color: theme.colors.textMain }}>Sharing Playbooks:</strong> Export
 							playbooks as ZIP files to share with others, or import playbooks you've received.
-							Browse the{' '}
-							<strong style={{ color: theme.colors.textMain }}>Playbook Exchange</strong> to discover
-							and download community-contributed playbooks for common workflows.
+							Browse the <strong style={{ color: theme.colors.textMain }}>Playbook Exchange</strong>{' '}
+							to discover and download community-contributed playbooks for common workflows.
 						</p>
 					</div>
 				</section>

@@ -22,11 +22,7 @@ import fs from 'fs/promises';
 import { logger } from '../../utils/logger';
 import { withIpcErrorLogging } from '../../utils/ipcHandler';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import {
-	getSessionStorage,
-	hasSessionStorage,
-	getAllSessionStorages,
-} from '../../agents';
+import { getSessionStorage, hasSessionStorage, getAllSessionStorages } from '../../agents';
 import { calculateClaudeCost } from '../../utils/pricing';
 import {
 	loadGlobalStatsCache,

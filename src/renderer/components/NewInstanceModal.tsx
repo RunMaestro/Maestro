@@ -327,11 +327,11 @@ export function NewInstanceModal({
 				}
 			}
 
-				// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
-				if (source) {
-					handleWorkingDirChange(source.cwd);
-					setInstanceName(`${source.name} (Copy)`);
-					setNudgeMessage(source.nudgeMessage || '');
+			// Pre-fill form fields AFTER agents are loaded (ensures no race condition)
+			if (source) {
+				handleWorkingDirChange(source.cwd);
+				setInstanceName(`${source.name} (Copy)`);
+				setNudgeMessage(source.nudgeMessage || '');
 
 				// Pre-fill custom agent configuration
 				setCustomAgentPaths((prev) => ({
@@ -366,12 +366,12 @@ export function NewInstanceModal({
 		}
 	};
 
-		const handleSelectFolder = React.useCallback(async () => {
-			const folder = await window.maestro.dialog.selectFolder();
-			if (folder) {
-				handleWorkingDirChange(folder);
-			}
-		}, [handleWorkingDirChange]);
+	const handleSelectFolder = React.useCallback(async () => {
+		const folder = await window.maestro.dialog.selectFolder();
+		if (folder) {
+			handleWorkingDirChange(folder);
+		}
+	}, [handleWorkingDirChange]);
 
 	const handleRefreshAgent = React.useCallback(async (agentId: string) => {
 		setRefreshingAgent(agentId);
@@ -466,12 +466,12 @@ export function NewInstanceModal({
 			agentCustomProviderPath,
 			sessionSshRemoteConfig
 		);
-			onClose();
+		onClose();
 
-			// Reset
-			setInstanceName('');
-			handleWorkingDirChange('');
-			setNudgeMessage('');
+		// Reset
+		setInstanceName('');
+		handleWorkingDirChange('');
+		setNudgeMessage('');
 		// Reset per-agent config for selected agent
 		setCustomAgentPaths((prev) => ({ ...prev, [selectedAgent]: '' }));
 		setCustomAgentArgs((prev) => ({ ...prev, [selectedAgent]: '' }));
@@ -489,14 +489,14 @@ export function NewInstanceModal({
 		customAgentPaths,
 		customAgentArgs,
 		customAgentEnvVars,
-			agentConfigs,
-			agentSshRemoteConfigs,
-			onCreate,
-			onClose,
-			expandTilde,
-			handleWorkingDirChange,
-			existingSessions,
-		]);
+		agentConfigs,
+		agentSshRemoteConfigs,
+		onCreate,
+		onClose,
+		expandTilde,
+		handleWorkingDirChange,
+		existingSessions,
+	]);
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
@@ -686,13 +686,13 @@ export function NewInstanceModal({
 					/>
 
 					{/* Agent Selection */}
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Agent Provider
-							</div>
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Agent Provider
+						</div>
 						{loading ? (
 							<div className="text-sm opacity-50">Loading agents...</div>
 						) : sshConnectionError ? (
@@ -725,34 +725,34 @@ export function NewInstanceModal({
 									const isExpanded = expandedAgent === agent.id;
 									const isSelected = selectedAgent === agent.id;
 
-										const handleAgentHeaderActivate = () => {
-											if (isSupported) {
-												// Toggle expansion
-												const nowExpanded = !isExpanded;
-												setExpandedAgent(nowExpanded ? agent.id : null);
-												// Always select when clicking a supported agent (even if not available)
-												// User can configure a custom path to make it usable
-												setSelectedAgent(agent.id);
-												// Transfer pending SSH config to the newly selected agent if it doesn't have one
-												setAgentSshRemoteConfigs((prev) => {
-													const pendingConfig = prev['_pending_'];
-													if (pendingConfig && !prev[agent.id]) {
-														return {
-															...prev,
-															[agent.id]: pendingConfig,
-														};
-													}
-													return prev;
-												});
-												// Load models when expanding an agent that supports model selection
-												if (nowExpanded && agent.capabilities?.supportsModelSelection) {
-													loadModelsForAgent(agent.id);
+									const handleAgentHeaderActivate = () => {
+										if (isSupported) {
+											// Toggle expansion
+											const nowExpanded = !isExpanded;
+											setExpandedAgent(nowExpanded ? agent.id : null);
+											// Always select when clicking a supported agent (even if not available)
+											// User can configure a custom path to make it usable
+											setSelectedAgent(agent.id);
+											// Transfer pending SSH config to the newly selected agent if it doesn't have one
+											setAgentSshRemoteConfigs((prev) => {
+												const pendingConfig = prev['_pending_'];
+												if (pendingConfig && !prev[agent.id]) {
+													return {
+														...prev,
+														[agent.id]: pendingConfig,
+													};
 												}
+												return prev;
+											});
+											// Load models when expanding an agent that supports model selection
+											if (nowExpanded && agent.capabilities?.supportsModelSelection) {
+												loadModelsForAgent(agent.id);
 											}
-										};
+										}
+									};
 
-										return (
-											<div
+									return (
+										<div
 											key={agent.id}
 											className={`rounded border transition-all overflow-hidden ${
 												isSelected ? 'ring-2' : ''
@@ -765,15 +765,15 @@ export function NewInstanceModal({
 												} as React.CSSProperties
 											}
 										>
-												{/* Collapsed header row */}
-												<div
-													onClick={handleAgentHeaderActivate}
-													onKeyDown={(e) => {
-														if (e.key === 'Enter' || e.key === ' ') {
-															e.preventDefault();
-															handleAgentHeaderActivate();
-														}
-													}}
+											{/* Collapsed header row */}
+											<div
+												onClick={handleAgentHeaderActivate}
+												onKeyDown={(e) => {
+													if (e.key === 'Enter' || e.key === ' ') {
+														e.preventDefault();
+														handleAgentHeaderActivate();
+													}
+												}}
 												className={`w-full text-left px-3 py-2 flex items-center justify-between ${
 													!isSupported
 														? 'opacity-40 cursor-not-allowed'
@@ -1021,11 +1021,11 @@ export function NewInstanceModal({
 									<div>
 										<span className="opacity-50">PATH:</span>
 									</div>
-										<div className="pl-2 break-all text-[10px]">
-											{debugInfo.envPath.split(':').map((p) => (
-												<div key={`${debugInfo.platform}-${p}`}>{p}</div>
-											))}
-										</div>
+									<div className="pl-2 break-all text-[10px]">
+										{debugInfo.envPath.split(':').map((p) => (
+											<div key={`${debugInfo.platform}-${p}`}>{p}</div>
+										))}
+									</div>
 								</div>
 								<button
 									onClick={() => setDebugInfo(null)}
@@ -1039,11 +1039,11 @@ export function NewInstanceModal({
 					</div>
 
 					{/* Working Directory */}
-						<FormInput
-							theme={theme}
-							label="Working Directory"
-							value={workingDir}
-							onChange={handleWorkingDirChange}
+					<FormInput
+						theme={theme}
+						label="Working Directory"
+						value={workingDir}
+						onChange={handleWorkingDirChange}
 						placeholder={
 							isSshEnabled
 								? `Enter remote path${sshRemoteHost ? ` on ${sshRemoteHost}` : ''} (e.g., /home/user/project)`
@@ -1158,14 +1158,14 @@ export function NewInstanceModal({
 						/>
 					)}
 
-						{/* Nudge Message */}
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Nudge Message <span className="font-normal opacity-50">(optional)</span>
-							</div>
+					{/* Nudge Message */}
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Nudge Message <span className="font-normal opacity-50">(optional)</span>
+						</div>
 						<textarea
 							value={nudgeMessage}
 							onChange={(e) => setNudgeMessage(e.target.value.slice(0, NUDGE_MESSAGE_MAX_LENGTH))}
@@ -1582,14 +1582,14 @@ export function EditAgentModal({
 						heightClass="p-2"
 					/>
 
-						{/* Agent Provider (read-only) */}
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Agent Provider
-							</div>
+					{/* Agent Provider (read-only) */}
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Agent Provider
+						</div>
 						<div
 							className="p-2 rounded border text-sm"
 							style={{
@@ -1605,14 +1605,14 @@ export function EditAgentModal({
 						</p>
 					</div>
 
-						{/* Working Directory (read-only) */}
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Working Directory
-							</div>
+					{/* Working Directory (read-only) */}
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Working Directory
+						</div>
 						<div
 							className="p-2 rounded border font-mono text-sm overflow-hidden text-ellipsis"
 							style={{
@@ -1660,14 +1660,14 @@ export function EditAgentModal({
 						)}
 					</div>
 
-						{/* Nudge Message */}
-						<div>
-							<div
-								className="block text-xs font-bold opacity-70 uppercase mb-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								Nudge Message <span className="font-normal opacity-50">(optional)</span>
-							</div>
+					{/* Nudge Message */}
+					<div>
+						<div
+							className="block text-xs font-bold opacity-70 uppercase mb-2"
+							style={{ color: theme.colors.textMain }}
+						>
+							Nudge Message <span className="font-normal opacity-50">(optional)</span>
+						</div>
 						<textarea
 							value={nudgeMessage}
 							onChange={(e) => setNudgeMessage(e.target.value.slice(0, NUDGE_MESSAGE_MAX_LENGTH))}
@@ -1688,14 +1688,14 @@ export function EditAgentModal({
 
 					{/* Agent Configuration (custom path, args, env vars, agent-specific settings) */}
 					{/* Per-session config (path, args, env vars) saved on modal save, not on blur */}
-						{agent && (
-							<div>
-								<div
-									className="block text-xs font-bold opacity-70 uppercase mb-2"
-									style={{ color: theme.colors.textMain }}
-								>
-									{agentName} Settings
-								</div>
+					{agent && (
+						<div>
+							<div
+								className="block text-xs font-bold opacity-70 uppercase mb-2"
+								style={{ color: theme.colors.textMain }}
+							>
+								{agentName} Settings
+							</div>
 							<AgentConfigPanel
 								theme={theme}
 								agent={agent}

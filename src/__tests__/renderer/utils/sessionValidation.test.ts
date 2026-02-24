@@ -299,7 +299,11 @@ describe('sessionValidation', () => {
 						projectRoot: '/path/two',
 						toolType: 'claude-code',
 					}),
-					createMockSession({ name: 'Session 3', projectRoot: '/path/three', toolType: 'factory-droid' }),
+					createMockSession({
+						name: 'Session 3',
+						projectRoot: '/path/three',
+						toolType: 'factory-droid',
+					}),
 				];
 
 				// Unique name and directory - no warning

@@ -13,7 +13,11 @@ import { ipcMain } from 'electron';
 import Store from 'electron-store';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../../utils/logger';
-import { withIpcErrorLogging, requireDependency, CreateHandlerOptions } from '../../utils/ipcHandler';
+import {
+	withIpcErrorLogging,
+	requireDependency,
+	CreateHandlerOptions,
+} from '../../utils/ipcHandler';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
 import { buildSshCommand } from '../../utils/ssh-command-builder';
@@ -154,13 +158,11 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							// Use the agent's command (not path) for remote execution
 							// since the path is local and remote host has its own binary location
 							const remoteCommand = agent.command;
-							const remoteCwd =
-								config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
+							const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
 
 							// For agents that support stream-json input, use stdin for the prompt
 							// This completely avoids shell escaping issues with multi-layer SSH commands
-							const agentSupportsStreamJson =
-								agent.capabilities?.supportsStreamJsonInput ?? false;
+							const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
 							if (agentSupportsStreamJson) {
 								// Add --input-format stream-json to args so agent reads from stdin
 								const hasStreamJsonInput =

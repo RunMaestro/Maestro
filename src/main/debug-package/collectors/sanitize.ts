@@ -48,4 +48,3 @@ export function sanitizeLogMessage(message: string): string {
 	}
 	return sanitized;
 }
-

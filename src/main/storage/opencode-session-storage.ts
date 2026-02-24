@@ -188,10 +188,7 @@ async function readJsonFileRemote<T>(
 /**
  * List all JSON files in a remote directory via SSH
  */
-async function listJsonFilesRemote(
-	dirPath: string,
-	sshConfig: SshRemoteConfig
-): Promise<string[]> {
+async function listJsonFilesRemote(dirPath: string, sshConfig: SshRemoteConfig): Promise<string[]> {
 	try {
 		const result = await readDirRemote(dirPath, sshConfig);
 		if (!result.success || !result.data) {
@@ -352,10 +349,7 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 		// Normalize project path for comparison (remove trailing slashes)
 		// Note: On remote, we don't resolve paths since the remote may have different filesystem
 		const normalizedPath = projectPath.replace(/\/+$/, '');
-		logger.info(
-			`Looking for OpenCode project for path on remote: ${normalizedPath}`,
-			LOG_CONTEXT
-		);
+		logger.info(`Looking for OpenCode project for path on remote: ${normalizedPath}`, LOG_CONTEXT);
 
 		for (const file of projectFiles) {
 			// Skip global.json - we'll use it as fallback
@@ -556,10 +550,7 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 			const messageFiles = await listJsonFilesRemote(messageDir, sshConfig);
 
 			for (const file of messageFiles) {
-				const msg = await readJsonFileRemote<OpenCodeMessage>(
-					`${messageDir}/${file}`,
-					sshConfig
-				);
+				const msg = await readJsonFileRemote<OpenCodeMessage>(`${messageDir}/${file}`, sshConfig);
 				if (msg) {
 					messages.push(msg);
 
@@ -789,10 +780,7 @@ export class OpenCodeSessionStorage implements AgentSessionStorage {
 			if (!sessionData) continue;
 
 			// For global project, filter by the session's directory field
-			if (
-				isGlobalProject &&
-				!this.sessionMatchesPathRemote(sessionData.directory, projectPath)
-			) {
+			if (isGlobalProject && !this.sessionMatchesPathRemote(sessionData.directory, projectPath)) {
 				continue;
 			}
 

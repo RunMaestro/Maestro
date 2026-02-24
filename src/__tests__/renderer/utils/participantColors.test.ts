@@ -249,25 +249,19 @@ describe('participantColors', () => {
 
 			it('saturation should not go below 25', () => {
 				// Round 3: 55 - 30 = 25 (clamped), Round 4: 55 - 40 = 15 => clamped to 25
-				const round4 = parseHSL(
-					generateParticipantColor(4 * COLOR_PALETTE_SIZE, darkTheme)
-				);
+				const round4 = parseHSL(generateParticipantColor(4 * COLOR_PALETTE_SIZE, darkTheme));
 				expect(round4.saturation).toBe(25);
 			});
 
 			it('dark theme lightness should not go below 40', () => {
 				// Round 3: 60 - 24 = 36 => clamped to 40
-				const round3 = parseHSL(
-					generateParticipantColor(3 * COLOR_PALETTE_SIZE, darkTheme)
-				);
+				const round3 = parseHSL(generateParticipantColor(3 * COLOR_PALETTE_SIZE, darkTheme));
 				expect(round3.lightness).toBe(40);
 			});
 
 			it('light theme lightness should not go above 70', () => {
 				// Round 4: 45 + 32 = 77 => clamped to 70
-				const round4 = parseHSL(
-					generateParticipantColor(4 * COLOR_PALETTE_SIZE, lightTheme)
-				);
+				const round4 = parseHSL(generateParticipantColor(4 * COLOR_PALETTE_SIZE, lightTheme));
 				expect(round4.lightness).toBe(70);
 			});
 
@@ -347,14 +341,8 @@ describe('participantColors', () => {
 				{ name: 'Moderator' },
 				{ name: 'Alice', sessionPath: '/path/alice' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
-			expect(colors['Moderator']).toBe(
-				generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme)
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
+			expect(colors['Moderator']).toBe(generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme));
 		});
 
 		it('should identify Moderator only when name is "Moderator" and no sessionPath', () => {
@@ -362,11 +350,7 @@ describe('participantColors', () => {
 				{ name: 'Moderator', sessionPath: '/path/mod' }, // has sessionPath, not the real Moderator
 				{ name: 'Alice', sessionPath: '/path/alice' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			// "Moderator" with sessionPath is NOT treated as the Moderator
 			// It should get a regular non-zero index
 			expect(colors['Moderator']).not.toBe(
@@ -402,13 +386,9 @@ describe('participantColors', () => {
 				preferences
 			);
 			// Alice should NOT get index 0
-			expect(colors['Alice']).not.toBe(
-				generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme)
-			);
+			expect(colors['Alice']).not.toBe(generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme));
 			// Moderator should still have index 0
-			expect(colors['Moderator']).toBe(
-				generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme)
-			);
+			expect(colors['Moderator']).toBe(generateParticipantColor(MODERATOR_COLOR_INDEX, darkTheme));
 		});
 
 		it('should assign remaining participants from index 1 onward', () => {
@@ -417,11 +397,7 @@ describe('participantColors', () => {
 				{ name: 'Alice', sessionPath: '/path/alice' },
 				{ name: 'Bob', sessionPath: '/path/bob' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			// Alice gets index 1, Bob gets index 2
 			expect(colors['Alice']).toBe(generateParticipantColor(1, darkTheme));
 			expect(colors['Bob']).toBe(generateParticipantColor(2, darkTheme));
@@ -495,22 +471,14 @@ describe('participantColors', () => {
 				{ name: 'Alice', sessionPath: '/path/alice' },
 				{ name: 'Bob', sessionPath: '/path/bob' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			// Without Moderator, index 0 is still skipped (nextIndex starts at 1)
 			expect(colors['Alice']).toBe(generateParticipantColor(1, darkTheme));
 			expect(colors['Bob']).toBe(generateParticipantColor(2, darkTheme));
 		});
 
 		it('should handle empty participants array', () => {
-			const { colors, newPreferences } = buildParticipantColorMapWithPreferences(
-				[],
-				darkTheme,
-				{}
-			);
+			const { colors, newPreferences } = buildParticipantColorMapWithPreferences([], darkTheme, {});
 			expect(colors).toEqual({});
 			expect(newPreferences).toEqual({});
 		});
@@ -521,11 +489,7 @@ describe('participantColors', () => {
 				{ name: 'Alice', sessionPath: '/path/alice1' },
 				{ name: 'Alice', sessionPath: '/path/alice2' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			// First Alice gets index 1; second Alice is skipped because colors['Alice'] already exists
 			expect(colors['Alice']).toBe(generateParticipantColor(1, darkTheme));
 		});
@@ -554,14 +518,8 @@ describe('participantColors', () => {
 				{ name: 'Moderator' },
 				{ name: 'Alice', sessionPath: '/path/alice' },
 			];
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				lightTheme,
-				{}
-			);
-			expect(colors['Moderator']).toBe(
-				generateParticipantColor(MODERATOR_COLOR_INDEX, lightTheme)
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, lightTheme, {});
+			expect(colors['Moderator']).toBe(generateParticipantColor(MODERATOR_COLOR_INDEX, lightTheme));
 			expect(colors['Alice']).toBe(generateParticipantColor(1, lightTheme));
 		});
 
@@ -570,11 +528,7 @@ describe('participantColors', () => {
 			for (let i = 0; i < 25; i++) {
 				participants.push({ name: `Agent${i}`, sessionPath: `/path/agent${i}` });
 			}
-			const { colors } = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const { colors } = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			// All 26 participants should have colors
 			expect(Object.keys(colors).length).toBe(26);
 			// All colors should be valid HSL
@@ -630,9 +584,7 @@ describe('participantColors', () => {
 		});
 
 		it('should return empty object on error', async () => {
-			vi.mocked(window.maestro.settings.get).mockRejectedValue(
-				new Error('Settings unavailable')
-			);
+			vi.mocked(window.maestro.settings.get).mockRejectedValue(new Error('Settings unavailable'));
 
 			const result = await loadColorPreferences();
 			expect(result).toEqual({});
@@ -661,29 +613,19 @@ describe('participantColors', () => {
 			const prefs = { '/path/alice': 3, '/path/bob': 5 };
 			await saveColorPreferences(prefs);
 
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'groupChatColorPreferences',
-				prefs
-			);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatColorPreferences', prefs);
 		});
 
 		it('should save empty preferences', async () => {
 			await saveColorPreferences({});
 
-			expect(window.maestro.settings.set).toHaveBeenCalledWith(
-				'groupChatColorPreferences',
-				{}
-			);
+			expect(window.maestro.settings.set).toHaveBeenCalledWith('groupChatColorPreferences', {});
 		});
 
 		it('should propagate errors from settings.set', async () => {
-			vi.mocked(window.maestro.settings.set).mockRejectedValue(
-				new Error('Write failed')
-			);
+			vi.mocked(window.maestro.settings.set).mockRejectedValue(new Error('Write failed'));
 
-			await expect(saveColorPreferences({ '/path/alice': 1 })).rejects.toThrow(
-				'Write failed'
-			);
+			await expect(saveColorPreferences({ '/path/alice': 1 })).rejects.toThrow('Write failed');
 		});
 	});
 
@@ -725,11 +667,7 @@ describe('participantColors', () => {
 			];
 
 			// First build: no existing preferences
-			const first = buildParticipantColorMapWithPreferences(
-				participants,
-				darkTheme,
-				{}
-			);
+			const first = buildParticipantColorMapWithPreferences(participants, darkTheme, {});
 			expect(first.colors['Alice']).toBe(generateParticipantColor(1, darkTheme));
 			expect(first.colors['Bob']).toBe(generateParticipantColor(2, darkTheme));
 
@@ -746,11 +684,7 @@ describe('participantColors', () => {
 				{ name: 'Charlie', sessionPath: '/path/charlie' },
 				{ name: 'Bob', sessionPath: '/path/bob' },
 			];
-			const second = buildParticipantColorMapWithPreferences(
-				participants2,
-				darkTheme,
-				loadedPrefs
-			);
+			const second = buildParticipantColorMapWithPreferences(participants2, darkTheme, loadedPrefs);
 
 			// Alice and Bob should retain their preferred colors from first build
 			expect(second.colors['Alice']).toBe(first.colors['Alice']);

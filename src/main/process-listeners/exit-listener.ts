@@ -99,11 +99,10 @@ export function setupExitListener(
 							return await groupChatStorage.loadGroupChat(groupChatId);
 						} catch (firstErr) {
 							debugLog('GroupChat:Debug', ` First chat load failed, retrying after 100ms...`);
-							logger.warn(
-								'[GroupChat] Chat load failed, retrying once',
-								'ProcessListener',
-								{ error: String(firstErr), groupChatId }
-							);
+							logger.warn('[GroupChat] Chat load failed, retrying once', 'ProcessListener', {
+								error: String(firstErr),
+								groupChatId,
+							});
 							// Wait 100ms and retry once for transient I/O issues
 							await new Promise((resolve) => setTimeout(resolve, 100));
 							return await groupChatStorage.loadGroupChat(groupChatId);
@@ -433,10 +432,7 @@ export function setupExitListener(
 		const webServer = getWebServer();
 		if (webServer) {
 			// Extract base session ID from formats: {id}-ai-{tabId}, {id}-terminal, {id}-batch-{timestamp}, {id}-synopsis-{timestamp}
-			const baseSessionId = sessionId.replace(
-				/-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/,
-				''
-			);
+			const baseSessionId = sessionId.replace(/-ai-.+$|-terminal$|-batch-\d+$|-synopsis-\d+$/, '');
 			webServer.broadcastToSessionClients(baseSessionId, {
 				type: 'session_exit',
 				sessionId: baseSessionId,

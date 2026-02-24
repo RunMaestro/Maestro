@@ -126,10 +126,14 @@ export class ExitHandler {
 		// Some agents (like Factory Droid) don't send explicit "done" events, they just exit
 		if (isStreamJsonMode && !managedProcess.resultEmitted && managedProcess.streamedText) {
 			managedProcess.resultEmitted = true;
-			logger.debug('[ProcessManager] Emitting streamed text at exit (no result event)', 'ProcessManager', {
-				sessionId,
-				streamedTextLength: managedProcess.streamedText.length,
-			});
+			logger.debug(
+				'[ProcessManager] Emitting streamed text at exit (no result event)',
+				'ProcessManager',
+				{
+					sessionId,
+					streamedTextLength: managedProcess.streamedText.length,
+				}
+			);
 			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
 		}
 
@@ -203,13 +207,17 @@ export class ExitHandler {
 				this.emitter.emit('agent-error', sessionId, agentError);
 			} else if (code !== 0) {
 				// Log SSH failures even if no pattern matched, to help debug
-				logger.warn('[ProcessManager] SSH command failed without matching error pattern', 'ProcessManager', {
-					sessionId,
-					exitCode: code,
-					sshRemoteId: managedProcess.sshRemoteId,
-					stdoutPreview: stdoutToCheck.substring(0, 500),
-					stderrPreview: stderrToCheck.substring(0, 500),
-				});
+				logger.warn(
+					'[ProcessManager] SSH command failed without matching error pattern',
+					'ProcessManager',
+					{
+						sessionId,
+						exitCode: code,
+						sshRemoteId: managedProcess.sshRemoteId,
+						stdoutPreview: stdoutToCheck.substring(0, 500),
+						stderrPreview: stderrToCheck.substring(0, 500),
+					}
+				);
 			}
 		}
 
