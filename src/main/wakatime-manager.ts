@@ -590,6 +590,94 @@ export class WakaTimeManager {
 		}
 	}
 
+	/**
+	 * Send file-level heartbeats for files modified during a query.
+	 * The first file is sent as the primary heartbeat via CLI args;
+	 * remaining files are batched via --extra-heartbeats on stdin.
+	 */
+	async sendFileHeartbeats(
+		files: Array<{ filePath: string; timestamp: number }>,
+		projectName: string,
+		projectCwd?: string
+	): Promise<void> {
+		if (files.length === 0) return;
+
+		const enabled = this.settingsStore.get('wakatimeEnabled', false);
+		if (!enabled) return;
+
+		const detailedTracking = this.settingsStore.get('wakatimeDetailedTracking', false);
+		if (!detailedTracking) return;
+
+		let apiKey = this.settingsStore.get('wakatimeApiKey', '') as string;
+		if (!apiKey) {
+			apiKey = this.readApiKeyFromConfig();
+		}
+		if (!apiKey) return;
+
+		if (!(await this.ensureCliInstalled())) return;
+
+		const branch = projectCwd
+			? await this.detectBranch('file-heartbeat', projectCwd)
+			: null;
+
+		const primary = files[0];
+		const args = [
+			'--key',
+			apiKey,
+			'--entity',
+			primary.filePath,
+			'--entity-type',
+			'file',
+			'--write',
+			'--project',
+			projectName,
+			'--plugin',
+			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
+			'--category',
+			'coding',
+			'--time',
+			String(primary.timestamp / 1000),
+		];
+
+		const primaryLanguage = detectLanguageFromPath(primary.filePath);
+		if (primaryLanguage) {
+			args.push('--language', primaryLanguage);
+		}
+
+		if (branch) {
+			args.push('--alternate-branch', branch);
+		}
+
+		const extraFiles = files.slice(1);
+		if (extraFiles.length > 0) {
+			args.push('--extra-heartbeats');
+		}
+
+		const extraArray = extraFiles.map((f) => {
+			const obj: Record<string, unknown> = {
+				entity: f.filePath,
+				type: 'file',
+				is_write: true,
+				time: f.timestamp / 1000,
+				category: 'coding',
+				project: projectName,
+			};
+			const lang = detectLanguageFromPath(f.filePath);
+			if (lang) obj.language = lang;
+			if (branch) obj.branch = branch;
+			return obj;
+		});
+
+		await execFileNoThrow(
+			this.cliPath!,
+			args,
+			projectCwd,
+			extraFiles.length > 0 ? { input: JSON.stringify(extraArray) } : undefined
+		);
+
+		logger.info('Sent file heartbeats', LOG_CONTEXT, { count: files.length });
+	}
+
 	/** Get the resolved CLI path (null if not yet detected/installed) */
 	getCliPath(): string | null {
 		return this.cliPath;

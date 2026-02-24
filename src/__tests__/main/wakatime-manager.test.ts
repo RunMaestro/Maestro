@@ -879,4 +879,296 @@ describe('WakaTimeManager', () => {
 			expect(detectLanguageFromPath('/project/styles.module.css')).toBe('CSS');
 		});
 	});
+
+	describe('sendFileHeartbeats', () => {
+		beforeEach(() => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return 'test-api-key-123';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+			// CLI detected on PATH
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+		});
+
+		it('should early return when files array is empty', async () => {
+			await manager.sendFileHeartbeats([], 'My Project');
+			// Only the detectCli mock is set up; no calls should have been made
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when wakatimeEnabled is false', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return false;
+				return defaultVal;
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when wakatimeDetailedTracking is false', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return 'test-api-key-123';
+				if (key === 'wakatimeDetailedTracking') return false;
+				return defaultVal;
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when no API key is available', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			// No heartbeat call should have been made (only the pre-set detectCli mock exists)
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should send a single file heartbeat with correct CLI args', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			// Second call (after detectCli) is the heartbeat
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			expect(heartbeatCall[1]).toEqual([
+				'--key', 'test-api-key-123',
+				'--entity', '/project/src/index.ts',
+				'--entity-type', 'file',
+				'--write',
+				'--project', 'My Project',
+				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
+				'--category', 'coding',
+				'--time', String(1708700000000 / 1000),
+				'--language', 'TypeScript',
+			]);
+			// No --extra-heartbeats for single file
+			expect(heartbeatCall[1]).not.toContain('--extra-heartbeats');
+			// No stdin input for single file
+			expect(heartbeatCall[3]).toBeUndefined();
+		});
+
+		it('should send multiple files with --extra-heartbeats via stdin', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.py', timestamp: 1708700001000 },
+				{ filePath: '/project/src/main.go', timestamp: 1708700002000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+
+			// Primary file is index.ts
+			expect(args).toContain('--entity');
+			expect(args[args.indexOf('--entity') + 1]).toBe('/project/src/index.ts');
+			expect(args).toContain('--extra-heartbeats');
+			expect(args).toContain('--language');
+			expect(args[args.indexOf('--language') + 1]).toBe('TypeScript');
+
+			// stdin should contain extra heartbeats JSON
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			expect(stdinOpts).toBeDefined();
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray).toHaveLength(2);
+			expect(extraArray[0].entity).toBe('/project/src/utils.py');
+			expect(extraArray[0].language).toBe('Python');
+			expect(extraArray[0].type).toBe('file');
+			expect(extraArray[0].is_write).toBe(true);
+			expect(extraArray[0].category).toBe('coding');
+			expect(extraArray[0].project).toBe('My Project');
+			expect(extraArray[0].time).toBe(1708700001000 / 1000);
+			expect(extraArray[1].entity).toBe('/project/src/main.go');
+			expect(extraArray[1].language).toBe('Go');
+		});
+
+		it('should include branch info when projectCwd is provided', async () => {
+			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
+			vi.mocked(execFileNoThrow).mockReset().mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 0, stdout: 'feat/my-branch\n', stderr: '' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				'/project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).toContain('--alternate-branch');
+			expect(args[args.indexOf('--alternate-branch') + 1]).toBe('feat/my-branch');
+		});
+
+		it('should include branch in extra heartbeats when available', async () => {
+			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
+			vi.mocked(execFileNoThrow).mockReset().mockImplementation(async (cmd: any, args: any) => {
+				if (args?.[0] === '--version') {
+					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+				}
+				if (cmd === 'git') {
+					return { exitCode: 0, stdout: 'main\n', stderr: '' };
+				}
+				return { exitCode: 0, stdout: '', stderr: '' };
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.ts', timestamp: 1708700001000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project', '/project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray[0].branch).toBe('main');
+		});
+
+		it('should omit language for files with unknown extensions', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/data.xyz', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).not.toContain('--language');
+		});
+
+		it('should log success with file count', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[
+					{ filePath: '/project/src/a.ts', timestamp: 1708700000000 },
+					{ filePath: '/project/src/b.ts', timestamp: 1708700001000 },
+				],
+				'My Project'
+			);
+
+			expect(logger.info).toHaveBeenCalledWith(
+				'Sent file heartbeats',
+				'[WakaTime]',
+				{ count: 2 }
+			);
+		});
+
+		it('should convert timestamps to seconds for WakaTime CLI', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const timestamp = 1708700000000; // milliseconds
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			const timeIndex = args.indexOf('--time');
+			expect(args[timeIndex + 1]).toBe(String(timestamp / 1000));
+		});
+
+		it('should fall back to ~/.wakatime.cfg for API key', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => {
+				return String(p).endsWith('.wakatime.cfg');
+			});
+			vi.mocked(fs.readFileSync).mockReturnValue('[settings]\napi_key = cfg-key-456\n');
+
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).toContain('cfg-key-456');
+		});
+	});
 });
