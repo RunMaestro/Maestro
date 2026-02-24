@@ -96,6 +96,7 @@ export interface AgentConfig {
 	promptArgs?: (prompt: string) => string[]; // Function to build prompt args (e.g., ['-p', prompt] for OpenCode)
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
+	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
 }
 
 /**
@@ -223,6 +224,12 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		defaultEnvVars: {
 			OPENCODE_CONFIG_CONTENT:
 				'{"permission":{"*":"allow","external_directory":"allow","question":"deny"},"tools":{"question":false}}',
+		},
+		// In read-only mode, strip blanket permission grants so the plan agent can't auto-approve file writes.
+		// Keep question tool disabled to prevent stdin hangs in batch mode.
+		readOnlyEnvOverrides: {
+			OPENCODE_CONFIG_CONTENT:
+				'{"permission":{"question":"deny"},"tools":{"question":false}}',
 		},
 		// Agent-specific configuration options shown in UI
 		configOptions: [
