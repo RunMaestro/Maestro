@@ -152,6 +152,7 @@ describe('useFileTreeManagement', () => {
 			0,
 			undefined,
 			undefined,
+			undefined,
 			undefined
 		);
 		expect(compareFileTrees).toHaveBeenCalledWith(initialTree, nextTree);
@@ -209,6 +210,7 @@ describe('useFileTreeManagement', () => {
 			'/test/project',
 			10,
 			0,
+			undefined,
 			undefined,
 			undefined,
 			undefined
@@ -276,6 +278,7 @@ describe('useFileTreeManagement', () => {
 				0,
 				undefined,
 				undefined,
+				undefined,
 				undefined
 			);
 			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
@@ -320,6 +323,7 @@ describe('useFileTreeManagement', () => {
 				honorGitignore: undefined,
 				ignorePatterns: undefined,
 			},
+			undefined,
 			undefined,
 			undefined
 		);

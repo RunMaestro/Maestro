@@ -102,6 +102,8 @@ export interface UseFileTreeManagementDeps {
 	sshRemoteHonorGitignore?: boolean;
 	/** Local file indexing ignore patterns (glob patterns) */
 	localIgnorePatterns?: string[];
+	/** Whether to honor local .gitignore files */
+	localHonorGitignore?: boolean;
 }
 
 /**
@@ -141,6 +143,7 @@ export function useFileTreeManagement(
 		sshRemoteIgnorePatterns,
 		sshRemoteHonorGitignore,
 		localIgnorePatterns,
+		localHonorGitignore,
 	} = deps;
 
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
@@ -184,7 +187,7 @@ export function useFileTreeManagement(
 						return undefined;
 					});
 
-				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns);
+				const newTree = await loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns, localHonorGitignore);
 				const stats = await statsPromise;
 				const oldTree = session.fileTree || [];
 				const changes = compareFileTrees(oldTree, newTree);
@@ -218,7 +221,7 @@ export function useFileTreeManagement(
 				return undefined;
 			}
 		},
-		[sessionsRef, setSessions, sshContextOptions, localIgnorePatterns]
+		[sessionsRef, setSessions, sshContextOptions, localIgnorePatterns, localHonorGitignore]
 	);
 
 	/**
@@ -258,7 +261,7 @@ export function useFileTreeManagement(
 
 				// Refresh file tree and git repo status in parallel
 				const [tree, isGitRepo] = await Promise.all([
-					loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns),
+					loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns, localHonorGitignore),
 					gitService.isRepo(gitRoot, sshContext?.sshRemoteId),
 				]);
 
@@ -310,7 +313,7 @@ export function useFileTreeManagement(
 				});
 			}
 		},
-		[sessions, setSessions, rightPanelRef, sshContextOptions, localIgnorePatterns]
+		[sessions, setSessions, rightPanelRef, sshContextOptions, localIgnorePatterns, localHonorGitignore]
 	);
 
 	// Ref to track pending retry timers per session
@@ -396,8 +399,8 @@ export function useFileTreeManagement(
 
 			// Load tree with progress callback for SSH sessions
 			const treePromise = sshContext
-				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localIgnorePatterns)
-				: loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns);
+				? loadFileTree(treeRoot, 10, 0, sshContext, onProgress, localIgnorePatterns, localHonorGitignore)
+				: loadFileTree(treeRoot, 10, 0, sshContext, undefined, localIgnorePatterns, localHonorGitignore);
 
 			// Fetch stats independently — a directorySize failure (e.g., `du` timeout
 			// on large repos over SSH) should not prevent the file tree from loading.
@@ -457,7 +460,7 @@ export function useFileTreeManagement(
 					);
 				});
 		}
-	}, [activeSessionId, sessions, setSessions, sshContextOptions, localIgnorePatterns]);
+	}, [activeSessionId, sessions, setSessions, sshContextOptions, localIgnorePatterns, localHonorGitignore]);
 
 	// Cleanup retry timers on unmount
 	useEffect(() => {

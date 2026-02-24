@@ -225,6 +225,7 @@ export interface SettingsStoreState {
 	disableGpuAcceleration: boolean;
 	disableConfetti: boolean;
 	localIgnorePatterns: string[];
+	localHonorGitignore: boolean;
 	sshRemoteIgnorePatterns: string[];
 	sshRemoteHonorGitignore: boolean;
 	automaticTabNamingEnabled: boolean;
@@ -294,6 +295,7 @@ export interface SettingsStoreActions {
 	setDisableGpuAcceleration: (value: boolean) => void;
 	setDisableConfetti: (value: boolean) => void;
 	setLocalIgnorePatterns: (value: string[]) => void;
+	setLocalHonorGitignore: (value: boolean) => void;
 	setSshRemoteIgnorePatterns: (value: string[]) => void;
 	setSshRemoteHonorGitignore: (value: boolean) => void;
 	setAutomaticTabNamingEnabled: (value: boolean) => void;
@@ -439,6 +441,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	disableGpuAcceleration: false,
 	disableConfetti: false,
 	localIgnorePatterns: ['.git', 'node_modules', '__pycache__'],
+	localHonorGitignore: true,
 	sshRemoteIgnorePatterns: ['.git', '*cache*'],
 	sshRemoteHonorGitignore: true,
 	automaticTabNamingEnabled: true,
@@ -719,6 +722,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setLocalIgnorePatterns: (value) => {
 		set({ localIgnorePatterns: value });
 		window.maestro.settings.set('localIgnorePatterns', value);
+	},
+
+	setLocalHonorGitignore: (value) => {
+		set({ localHonorGitignore: value });
+		window.maestro.settings.set('localHonorGitignore', value);
 	},
 
 	setSshRemoteIgnorePatterns: (value) => {
@@ -1625,6 +1633,9 @@ export async function loadAllSettings(): Promise<void> {
 			patch.localIgnorePatterns = allSettings['localIgnorePatterns'] as string[];
 		}
 
+		if (allSettings['localHonorGitignore'] !== undefined)
+			patch.localHonorGitignore = allSettings['localHonorGitignore'] as boolean;
+
 		// SSH Remote settings (with array validation)
 		if (
 			allSettings['sshRemoteIgnorePatterns'] !== undefined &&
@@ -1781,6 +1792,7 @@ export function getSettingsActions() {
 		setDisableGpuAcceleration: state.setDisableGpuAcceleration,
 		setDisableConfetti: state.setDisableConfetti,
 		setLocalIgnorePatterns: state.setLocalIgnorePatterns,
+		setLocalHonorGitignore: state.setLocalHonorGitignore,
 		setSshRemoteIgnorePatterns: state.setSshRemoteIgnorePatterns,
 		setSshRemoteHonorGitignore: state.setSshRemoteHonorGitignore,
 		setAutomaticTabNamingEnabled: state.setAutomaticTabNamingEnabled,
