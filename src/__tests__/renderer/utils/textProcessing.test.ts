@@ -169,7 +169,8 @@ describe('processLogTextHelper', () => {
 // ============================================================================
 
 describe('filterTextByLinesHelper', () => {
-	const sampleText = 'Error: file not found\nWarning: low memory\nInfo: process started\nError: timeout';
+	const sampleText =
+		'Error: file not found\nWarning: low memory\nInfo: process started\nError: timeout';
 
 	describe('empty query', () => {
 		it('returns original text when query is empty string', () => {
@@ -266,9 +267,7 @@ describe('filterTextByLinesHelper', () => {
 
 	describe('multi-line filtering', () => {
 		it('handles single line text', () => {
-			expect(filterTextByLinesHelper('hello world', 'hello', 'include', false)).toBe(
-				'hello world'
-			);
+			expect(filterTextByLinesHelper('hello world', 'hello', 'include', false)).toBe('hello world');
 		});
 
 		it('handles text with many lines', () => {

@@ -41,11 +41,7 @@ import * as fs from 'fs';
 import { app } from 'electron';
 import { logger } from '../../main/utils/logger';
 import { HistoryManager, getHistoryManager } from '../../main/history-manager';
-import {
-	HISTORY_VERSION,
-	MAX_ENTRIES_PER_SESSION,
-	sanitizeSessionId,
-} from '../../shared/history';
+import { HISTORY_VERSION, MAX_ENTRIES_PER_SESSION, sanitizeSessionId } from '../../shared/history';
 import type { HistoryEntry } from '../../shared/types';
 
 // Type the mocked fs functions
@@ -109,9 +105,7 @@ describe('HistoryManager', () => {
 		it('should set up paths based on app.getPath("userData")', () => {
 			expect(app.getPath).toHaveBeenCalledWith('userData');
 			expect(manager.getHistoryDir()).toBe(path.join('/mock/userData', 'history'));
-			expect(manager.getLegacyFilePath()).toBe(
-				path.join('/mock/userData', 'maestro-history.json')
-			);
+			expect(manager.getLegacyFilePath()).toBe(path.join('/mock/userData', 'maestro-history.json'));
 		});
 	});
 
@@ -123,10 +117,9 @@ describe('HistoryManager', () => {
 			mockExistsSync.mockReturnValue(false);
 			await manager.initialize();
 
-			expect(mockMkdirSync).toHaveBeenCalledWith(
-				path.join('/mock/userData', 'history'),
-				{ recursive: true }
-			);
+			expect(mockMkdirSync).toHaveBeenCalledWith(path.join('/mock/userData', 'history'), {
+				recursive: true,
+			});
 		});
 
 		it('should not recreate history directory if it already exists', async () => {
@@ -152,9 +145,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(
-				JSON.stringify({ entries: legacyEntries })
-			);
+			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: legacyEntries }));
 
 			await manager.initialize();
 
@@ -283,9 +274,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(
-				JSON.stringify({ entries: [entry1, entry2, entry3] })
-			);
+			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [entry1, entry2, entry3] }));
 
 			await manager.initialize();
 
@@ -295,18 +284,14 @@ describe('HistoryManager', () => {
 			expect(writeCalls.length).toBe(3); // sess-a.json, sess-b.json, migration marker
 
 			// Check session file for sess-a
-			const sessACall = writeCalls.find((c) =>
-				c[0].toString().includes(`sess-a.json`)
-			);
+			const sessACall = writeCalls.find((c) => c[0].toString().includes(`sess-a.json`));
 			expect(sessACall).toBeDefined();
 			const sessAData = JSON.parse(sessACall![1] as string);
 			expect(sessAData.entries).toHaveLength(2);
 			expect(sessAData.sessionId).toBe('sess-a');
 
 			// Check session file for sess-b
-			const sessBCall = writeCalls.find((c) =>
-				c[0].toString().includes(`sess-b.json`)
-			);
+			const sessBCall = writeCalls.find((c) => c[0].toString().includes(`sess-b.json`));
 			expect(sessBCall).toBeDefined();
 			const sessBData = JSON.parse(sessBCall![1] as string);
 			expect(sessBData.entries).toHaveLength(1);
@@ -353,9 +338,7 @@ describe('HistoryManager', () => {
 				if (s.endsWith('maestro-history.json')) return true;
 				return false;
 			});
-			mockReadFileSync.mockReturnValue(
-				JSON.stringify({ entries: [goodEntry, orphanedEntry] })
-			);
+			mockReadFileSync.mockReturnValue(JSON.stringify({ entries: [goodEntry, orphanedEntry] }));
 
 			await manager.initialize();
 
@@ -509,9 +492,7 @@ describe('HistoryManager', () => {
 			);
 
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('session-1', [existingEntry])
-			);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', [existingEntry]));
 
 			const newEntry = createMockEntry({ id: 'new' });
 			manager.addEntry('session-1', '/test/project', newEntry);
@@ -534,9 +515,7 @@ describe('HistoryManager', () => {
 				`${sanitizeSessionId('session-1')}.json`
 			);
 			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString() === filePath);
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('session-1', existingEntries)
-			);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('session-1', existingEntries));
 
 			const newEntry = createMockEntry({ id: 'overflow' });
 			manager.addEntry('session-1', '/test/project', newEntry);
@@ -605,10 +584,7 @@ describe('HistoryManager', () => {
 	// ----------------------------------------------------------------
 	describe('deleteEntry()', () => {
 		it('should remove an entry by id and return true', () => {
-			const entries = [
-				createMockEntry({ id: 'e1' }),
-				createMockEntry({ id: 'e2' }),
-			];
+			const entries = [createMockEntry({ id: 'e1' }), createMockEntry({ id: 'e2' })];
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -682,9 +658,7 @@ describe('HistoryManager', () => {
 	// ----------------------------------------------------------------
 	describe('updateEntry()', () => {
 		it('should update an entry by id and return true', () => {
-			const entries = [
-				createMockEntry({ id: 'e1', summary: 'original' }),
-			];
+			const entries = [createMockEntry({ id: 'e1', summary: 'original' })];
 			const filePath = path.join(
 				'/mock/userData',
 				'history',
@@ -803,9 +777,7 @@ describe('HistoryManager', () => {
 	// ----------------------------------------------------------------
 	describe('listSessionsWithHistory()', () => {
 		it('should return session IDs from .json files in history dir', () => {
-			mockExistsSync.mockImplementation((p: fs.PathLike) =>
-				p.toString().endsWith('history')
-			);
+			mockExistsSync.mockImplementation((p: fs.PathLike) => p.toString().endsWith('history'));
 			mockReaddirSync.mockReturnValue([
 				'session_1.json' as unknown as fs.Dirent,
 				'session_2.json' as unknown as fs.Dirent,
@@ -877,9 +849,7 @@ describe('HistoryManager', () => {
 
 		it('should respect limit parameter', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [
 				createMockEntry({ id: 'e1', timestamp: 300 }),
@@ -906,9 +876,7 @@ describe('HistoryManager', () => {
 	describe('getAllEntriesPaginated()', () => {
 		it('should return paginated results with metadata', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [
 				createMockEntry({ id: 'e1', timestamp: 300 }),
@@ -927,12 +895,8 @@ describe('HistoryManager', () => {
 
 		it('should handle offset beyond total entries', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('sess_a', [createMockEntry()])
-			);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [createMockEntry()]));
 
 			const result = manager.getAllEntriesPaginated({ limit: 10, offset: 100 });
 			expect(result.entries).toHaveLength(0);
@@ -981,14 +945,10 @@ describe('HistoryManager', () => {
 
 		it('should return empty array when no matching sessions exist', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entry = createMockEntry({ projectPath: '/other/path' });
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('sess_a', [entry], '/other/path')
-			);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [entry], '/other/path'));
 
 			const result = manager.getEntriesByProjectPath('/no/match');
 			expect(result).toEqual([]);
@@ -1001,18 +961,14 @@ describe('HistoryManager', () => {
 	describe('getEntriesByProjectPathPaginated()', () => {
 		it('should return paginated results filtered by project path', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [
 				createMockEntry({ id: 'e1', projectPath: '/proj', timestamp: 300 }),
 				createMockEntry({ id: 'e2', projectPath: '/proj', timestamp: 200 }),
 				createMockEntry({ id: 'e3', projectPath: '/proj', timestamp: 100 }),
 			];
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('sess_a', entries, '/proj')
-			);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries, '/proj'));
 
 			const result = manager.getEntriesByProjectPathPaginated('/proj', {
 				limit: 2,
@@ -1065,9 +1021,7 @@ describe('HistoryManager', () => {
 	describe('updateSessionNameByClaudeSessionId()', () => {
 		it('should update sessionName for matching entries and return count', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [
 				createMockEntry({
@@ -1099,13 +1053,9 @@ describe('HistoryManager', () => {
 
 		it('should return 0 when no entries match', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
-			const entries = [
-				createMockEntry({ id: 'e1', agentSessionId: 'agent-999' }),
-			];
+			const entries = [createMockEntry({ id: 'e1', agentSessionId: 'agent-999' })];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
 			const count = manager.updateSessionNameByClaudeSessionId('no-match', 'new-name');
@@ -1115,9 +1065,7 @@ describe('HistoryManager', () => {
 
 		it('should not update entries that already have the correct sessionName', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entries = [
 				createMockEntry({
@@ -1128,19 +1076,14 @@ describe('HistoryManager', () => {
 			];
 			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', entries));
 
-			const count = manager.updateSessionNameByClaudeSessionId(
-				'agent-123',
-				'already-correct'
-			);
+			const count = manager.updateSessionNameByClaudeSessionId('agent-123', 'already-correct');
 			expect(count).toBe(0);
 			expect(mockWriteFileSync).not.toHaveBeenCalled();
 		});
 
 		it('should handle read errors gracefully', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 			mockReadFileSync.mockImplementation(() => {
 				throw new Error('Read error');
 			});
@@ -1185,14 +1128,10 @@ describe('HistoryManager', () => {
 
 		it('should do nothing when no sessions match', () => {
 			mockExistsSync.mockReturnValue(true);
-			mockReaddirSync.mockReturnValue([
-				'sess_a.json' as unknown as fs.Dirent,
-			]);
+			mockReaddirSync.mockReturnValue(['sess_a.json' as unknown as fs.Dirent]);
 
 			const entry = createMockEntry({ projectPath: '/other' });
-			mockReadFileSync.mockReturnValue(
-				createHistoryFileData('sess_a', [entry], '/other')
-			);
+			mockReadFileSync.mockReturnValue(createHistoryFileData('sess_a', [entry], '/other'));
 
 			manager.clearByProjectPath('/no/match');
 			expect(mockUnlinkSync).not.toHaveBeenCalled();
@@ -1251,10 +1190,9 @@ describe('HistoryManager', () => {
 
 			manager.startWatching(vi.fn());
 
-			expect(mockMkdirSync).toHaveBeenCalledWith(
-				path.join('/mock/userData', 'history'),
-				{ recursive: true }
-			);
+			expect(mockMkdirSync).toHaveBeenCalledWith(path.join('/mock/userData', 'history'), {
+				recursive: true,
+			});
 		});
 
 		it('should invoke callback when a .json file changes', () => {
@@ -1332,9 +1270,7 @@ describe('HistoryManager', () => {
 		it('should allow re-watching after stop', () => {
 			const mockWatcher1 = { close: vi.fn() } as unknown as fs.FSWatcher;
 			const mockWatcher2 = { close: vi.fn() } as unknown as fs.FSWatcher;
-			mockWatch
-				.mockReturnValueOnce(mockWatcher1)
-				.mockReturnValueOnce(mockWatcher2);
+			mockWatch.mockReturnValueOnce(mockWatcher1).mockReturnValueOnce(mockWatcher2);
 			mockExistsSync.mockReturnValue(true);
 
 			manager.startWatching(vi.fn());
@@ -1379,9 +1315,7 @@ describe('HistoryManager', () => {
 			const writtenPath = mockWriteFileSync.mock.calls[0][0] as string;
 			// Should not contain /, :, ., or ! in the filename portion
 			const filename = path.basename(writtenPath);
-			expect(filename).toBe(
-				`${sanitizeSessionId('session/with:special.chars!')}.json`
-			);
+			expect(filename).toBe(`${sanitizeSessionId('session/with:special.chars!')}.json`);
 			expect(filename).not.toContain('/');
 			expect(filename).not.toContain(':');
 			expect(filename).not.toContain('!');

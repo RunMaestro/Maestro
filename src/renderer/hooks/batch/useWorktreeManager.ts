@@ -89,9 +89,17 @@ export interface UseWorktreeManagerReturn {
 	/** Create a pull request after batch completion */
 	createPR: (options: CreatePROptions) => Promise<PRCreationResult>;
 	/** Generate PR title from branch name and document names */
-	generatePRTitle: (branchName: string | undefined, documents: BatchDocumentEntry[], totalTasksCompleted: number) => string;
+	generatePRTitle: (
+		branchName: string | undefined,
+		documents: BatchDocumentEntry[],
+		totalTasksCompleted: number
+	) => string;
 	/** Generate PR body from document list, task count, and commit history */
-	generatePRBody: (documents: BatchDocumentEntry[], totalTasksCompleted: number, commitSubjects?: string[]) => string;
+	generatePRBody: (
+		documents: BatchDocumentEntry[],
+		totalTasksCompleted: number,
+		commitSubjects?: string[]
+	) => string;
 }
 
 /**
@@ -104,7 +112,11 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 	 *   "feature/auth: 12 tasks across login-flow, signup"
 	 */
 	const generatePRTitle = useCallback(
-		(branchName: string | undefined, documents: BatchDocumentEntry[], totalTasksCompleted: number): string => {
+		(
+			branchName: string | undefined,
+			documents: BatchDocumentEntry[],
+			totalTasksCompleted: number
+		): string => {
 			const prefix = branchName || 'Auto Run';
 			const taskWord = totalTasksCompleted === 1 ? 'task' : 'tasks';
 

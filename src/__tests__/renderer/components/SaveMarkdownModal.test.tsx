@@ -315,7 +315,11 @@ describe('SaveMarkdownModal', () => {
 				fireEvent.click(saveButton);
 			});
 
-			expect(mockWriteFile).toHaveBeenCalledWith('/test/folder/test.md', expect.any(String), undefined);
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/folder/test.md',
+				expect.any(String),
+				undefined
+			);
 		});
 
 		it('does not duplicate .md extension', async () => {
@@ -330,7 +334,11 @@ describe('SaveMarkdownModal', () => {
 				fireEvent.click(saveButton);
 			});
 
-			expect(mockWriteFile).toHaveBeenCalledWith('/test/folder/test.md', expect.any(String), undefined);
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/folder/test.md',
+				expect.any(String),
+				undefined
+			);
 		});
 
 		it('handles .MD extension case-insensitively', async () => {
@@ -346,7 +354,11 @@ describe('SaveMarkdownModal', () => {
 			});
 
 			// Should not add another .md
-			expect(mockWriteFile).toHaveBeenCalledWith('/test/folder/test.MD', expect.any(String), undefined);
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/folder/test.MD',
+				expect.any(String),
+				undefined
+			);
 		});
 
 		it('calls onClose after successful save', async () => {
@@ -437,7 +449,11 @@ describe('SaveMarkdownModal', () => {
 			});
 
 			// Should not have double slash
-			expect(mockWriteFile).toHaveBeenCalledWith('/test/folder/test.md', expect.any(String), undefined);
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				'/test/folder/test.md',
+				expect.any(String),
+				undefined
+			);
 		});
 
 		it('handles Windows-style paths', async () => {
@@ -455,7 +471,11 @@ describe('SaveMarkdownModal', () => {
 			});
 
 			// Should use backslash for Windows paths
-			expect(mockWriteFile).toHaveBeenCalledWith(`${windowsPath}\\test.md`, expect.any(String), undefined);
+			expect(mockWriteFile).toHaveBeenCalledWith(
+				`${windowsPath}\\test.md`,
+				expect.any(String),
+				undefined
+			);
 		});
 	});
 
@@ -585,13 +605,7 @@ describe('SaveMarkdownModal', () => {
 			mockWriteFile.mockResolvedValue({ success: true });
 			const onFileSaved = vi.fn();
 			const onClose = vi.fn();
-			render(
-				<SaveMarkdownModal
-					{...defaultProps}
-					onClose={onClose}
-					onFileSaved={onFileSaved}
-				/>
-			);
+			render(<SaveMarkdownModal {...defaultProps} onClose={onClose} onFileSaved={onFileSaved} />);
 
 			const filenameInput = screen.getByPlaceholderText('document.md');
 			fireEvent.change(filenameInput, { target: { value: 'test.md' } });
@@ -612,13 +626,7 @@ describe('SaveMarkdownModal', () => {
 			const callOrder: string[] = [];
 			const onFileSaved = vi.fn(() => callOrder.push('onFileSaved'));
 			const onClose = vi.fn(() => callOrder.push('onClose'));
-			render(
-				<SaveMarkdownModal
-					{...defaultProps}
-					onClose={onClose}
-					onFileSaved={onFileSaved}
-				/>
-			);
+			render(<SaveMarkdownModal {...defaultProps} onClose={onClose} onFileSaved={onFileSaved} />);
 
 			const filenameInput = screen.getByPlaceholderText('document.md');
 			fireEvent.change(filenameInput, { target: { value: 'test.md' } });

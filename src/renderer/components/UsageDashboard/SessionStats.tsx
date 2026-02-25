@@ -99,7 +99,11 @@ function formatAgentName(toolType: ToolType): string {
 	return names[toolType] || toolType;
 }
 
-export const SessionStats = memo(function SessionStats({ sessions, theme, colorBlindMode = false }: SessionStatsProps) {
+export const SessionStats = memo(function SessionStats({
+	sessions,
+	theme,
+	colorBlindMode = false,
+}: SessionStatsProps) {
 	// Filter out terminal-only sessions for meaningful stats
 	const agentSessions = useMemo(
 		() => sessions.filter((s) => s.toolType !== 'terminal'),

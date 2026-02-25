@@ -343,17 +343,15 @@ describe('director-notes IPC handlers', () => {
 
 			// Mock the sessions store to return a session with a name
 			mockGetSessionsStore.mockReturnValue({
-				get: vi
-					.fn()
-					.mockReturnValue([
-						{
-							id: 'session-1',
-							name: '🚧 my-feature',
-							toolType: 'claude-code',
-							cwd: '/test',
-							projectRoot: '/test',
-						},
-					]),
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: '🚧 my-feature',
+						toolType: 'claude-code',
+						cwd: '/test',
+						projectRoot: '/test',
+					},
+				]),
 			});
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
@@ -372,17 +370,15 @@ describe('director-notes IPC handlers', () => {
 
 			// Sessions store returns no matching session
 			mockGetSessionsStore.mockReturnValue({
-				get: vi
-					.fn()
-					.mockReturnValue([
-						{
-							id: 'other-session',
-							name: 'Other',
-							toolType: 'claude-code',
-							cwd: '/test',
-							projectRoot: '/test',
-						},
-					]),
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'other-session',
+						name: 'Other',
+						toolType: 'claude-code',
+						cwd: '/test',
+						projectRoot: '/test',
+					},
+				]),
 			});
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
@@ -616,17 +612,15 @@ describe('director-notes IPC handlers', () => {
 
 			// Mock sessions store with Maestro session name
 			mockGetSessionsStore.mockReturnValue({
-				get: vi
-					.fn()
-					.mockReturnValue([
-						{
-							id: 'session-1',
-							name: '🚧 feature-branch',
-							toolType: 'claude-code',
-							cwd: '/test',
-							projectRoot: '/test',
-						},
-					]),
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: '🚧 feature-branch',
+						toolType: 'claude-code',
+						cwd: '/test',
+						projectRoot: '/test',
+					},
+				]),
 			});
 
 			const handler = handlers.get('director-notes:generateSynopsis');
@@ -709,17 +703,15 @@ describe('director-notes IPC handlers', () => {
 
 			// Session name with markdown injection characters
 			mockGetSessionsStore.mockReturnValue({
-				get: vi
-					.fn()
-					.mockReturnValue([
-						{
-							id: 'session-1',
-							name: '**bold** [link](http://evil) # heading',
-							toolType: 'claude-code',
-							cwd: '/test',
-							projectRoot: '/test',
-						},
-					]),
+				get: vi.fn().mockReturnValue([
+					{
+						id: 'session-1',
+						name: '**bold** [link](http://evil) # heading',
+						toolType: 'claude-code',
+						cwd: '/test',
+						projectRoot: '/test',
+					},
+				]),
 			});
 
 			const handler = handlers.get('director-notes:generateSynopsis');

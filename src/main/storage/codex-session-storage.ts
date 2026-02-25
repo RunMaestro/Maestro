@@ -591,7 +591,10 @@ export class CodexSessionStorage implements AgentSessionStorage {
 		try {
 			const result = await readFileRemote(filePath, sshConfig);
 			if (!result.success || !result.data) {
-				logger.error(`Failed to read remote Codex session file: ${filePath} - ${result.error}`, LOG_CONTEXT);
+				logger.error(
+					`Failed to read remote Codex session file: ${filePath} - ${result.error}`,
+					LOG_CONTEXT
+				);
 				return null;
 			}
 
@@ -957,7 +960,10 @@ export class CodexSessionStorage implements AgentSessionStorage {
 			}
 			const result = await readFileRemote(sessionFilePath, sshConfig);
 			if (!result.success || !result.data) {
-				logger.error(`Failed to read remote Codex session: ${sessionId} - ${result.error}`, LOG_CONTEXT);
+				logger.error(
+					`Failed to read remote Codex session: ${sessionId} - ${result.error}`,
+					LOG_CONTEXT
+				);
 				return { messages: [], total: 0, hasMore: false };
 			}
 			content = result.data;

@@ -67,7 +67,10 @@ export interface WindowsSpawnConfig {
  * @param sshConfig - Optional SSH configuration; if enabled, returns no-op config
  * @returns Shell and stdin configuration for Windows, or no-op config for non-Windows/SSH
  */
-export function getWindowsSpawnConfig(agentId: string, sshConfig?: SpawnSshConfig): WindowsSpawnConfig {
+export function getWindowsSpawnConfig(
+	agentId: string,
+	sshConfig?: SpawnSshConfig
+): WindowsSpawnConfig {
 	// Don't apply Windows shell config when using SSH (remote may be Linux)
 	if (process.platform !== 'win32' || sshConfig?.enabled) {
 		return {

@@ -53,7 +53,9 @@ const inputAreaIconsContent = (
 			<TourIcon icon={Brain} label="Thinking" /> toggles display of agent thinking, and{' '}
 			<TourIcon icon={Keyboard} label="Enter" /> switches the submit hotkey.
 		</div>
-		<div className="opacity-70">Defaults for these toggles can be changed in Settings → General.</div>
+		<div className="opacity-70">
+			Defaults for these toggles can be changed in Settings → General.
+		</div>
 	</div>
 );
 

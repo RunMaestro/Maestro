@@ -285,9 +285,7 @@ describe('useFileExplorerEffects', () => {
 				await result.current.handleMainPanelFileClick('docs/manual.pdf');
 			});
 
-			expect(window.maestro.shell.openPath).toHaveBeenCalledWith(
-				'/test/project/docs/manual.pdf'
-			);
+			expect(window.maestro.shell.openPath).toHaveBeenCalledWith('/test/project/docs/manual.pdf');
 			expect(handleOpenFileTab).not.toHaveBeenCalled();
 		});
 

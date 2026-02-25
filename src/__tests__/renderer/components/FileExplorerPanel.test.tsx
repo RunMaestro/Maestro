@@ -1799,9 +1799,7 @@ describe('FileExplorerPanel', () => {
 			const revealButton = screen.getByText('Reveal in Finder');
 			fireEvent.click(revealButton);
 
-			expect(mockShell.showItemInFolder).toHaveBeenCalledWith(
-				'/Users/test/project/package.json'
-			);
+			expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
 		it('calls shell.showItemInFolder with folder path when Reveal in Finder is clicked on folder', () => {
@@ -1817,9 +1815,7 @@ describe('FileExplorerPanel', () => {
 			const revealButton = screen.getByText('Reveal in Finder');
 			fireEvent.click(revealButton);
 
-			expect(mockShell.showItemInFolder).toHaveBeenCalledWith(
-				'/Users/test/project/src'
-			);
+			expect(mockShell.showItemInFolder).toHaveBeenCalledWith('/Users/test/project/src');
 		});
 
 		it('calls shell.openPath with full file path when Open in Default App is clicked', () => {
@@ -1835,9 +1831,7 @@ describe('FileExplorerPanel', () => {
 			const openButton = screen.getByText('Open in Default App');
 			fireEvent.click(openButton);
 
-			expect(mockShell.openPath).toHaveBeenCalledWith(
-				'/Users/test/project/package.json'
-			);
+			expect(mockShell.openPath).toHaveBeenCalledWith('/Users/test/project/package.json');
 		});
 
 		it('does not show Open in Default App option for SSH sessions', () => {

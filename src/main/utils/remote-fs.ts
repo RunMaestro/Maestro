@@ -155,7 +155,6 @@ async function execRemoteCommand(
 		const sshArgs = deps.buildSshArgs(config);
 		sshArgs.push(remoteCommand);
 
-
 		const result = await deps.execSsh(sshPath, sshArgs);
 		lastResult = result;
 

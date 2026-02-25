@@ -1696,10 +1696,7 @@ interface MaestroAPI {
 		list: () => Promise<Array<GroupChatData>>;
 		load: (id: string) => Promise<GroupChatData | null>;
 		delete: (id: string) => Promise<boolean>;
-		rename: (
-			id: string,
-			name: string
-		) => Promise<GroupChatData>;
+		rename: (id: string, name: string) => Promise<GroupChatData>;
 		update: (
 			id: string,
 			updates: {
@@ -1712,10 +1709,7 @@ interface MaestroAPI {
 				};
 			}
 		) => Promise<GroupChatData>;
-		archive: (
-			id: string,
-			archived: boolean
-		) => Promise<GroupChatData>;
+		archive: (id: string, archived: boolean) => Promise<GroupChatData>;
 		// Chat log
 		appendMessage: (id: string, from: string, content: string) => Promise<void>;
 		getMessages: (id: string) => Promise<

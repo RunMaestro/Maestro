@@ -52,8 +52,14 @@ const BATON_DEFAULTS = {
 };
 
 // Easing options for the sparkle animation
-const EASING_OPTIONS = ['ease-in-out', 'ease-in', 'ease-out', 'linear', 'cubic-bezier(0.4, 0, 0.2, 1)'] as const;
-type EasingOption = typeof EASING_OPTIONS[number];
+const EASING_OPTIONS = [
+	'ease-in-out',
+	'ease-in',
+	'ease-out',
+	'linear',
+	'cubic-bezier(0.4, 0, 0.2, 1)',
+] as const;
+type EasingOption = (typeof EASING_OPTIONS)[number];
 
 // Available confetti shapes
 type ConfettiShape = 'square' | 'circle' | 'star';
@@ -447,8 +453,8 @@ confetti({
 	// Generate dynamic CSS for baton sparkle animation
 	// Stagger delays are non-uniform for organic feel
 	const batonAnimationCSS = useCallback(() => {
-		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map(
-			(multiplier) => (multiplier * batonStagger).toFixed(2)
+		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map((multiplier) =>
+			(multiplier * batonStagger).toFixed(2)
 		);
 
 		return `
@@ -479,7 +485,14 @@ ${staggerDelays.map((delay, i) => `svg.baton-sparkle-active path:nth-child(${i +
 		animation: none;
 	}
 }`;
-	}, [batonDuration, batonFadeOutStart, batonFadeInStart, batonTranslate, batonStagger, batonEasing]);
+	}, [
+		batonDuration,
+		batonFadeOutStart,
+		batonFadeInStart,
+		batonTranslate,
+		batonStagger,
+		batonEasing,
+	]);
 
 	// Inject/update dynamic style element for baton preview
 	useEffect(() => {
@@ -511,8 +524,8 @@ ${staggerDelays.map((delay, i) => `svg.baton-sparkle-active path:nth-child(${i +
 
 	// Copy baton CSS settings to clipboard
 	const copyBatonSettings = useCallback(async () => {
-		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map(
-			(multiplier) => (multiplier * batonStagger).toFixed(2)
+		const staggerDelays = [0, 1, 2, 3, 1.4, 2.4].map((multiplier) =>
+			(multiplier * batonStagger).toFixed(2)
 		);
 
 		const cssSnippet = `/* Wand sparkle animation - sparkle paths vanish/reappear with subtle movement */
@@ -551,7 +564,14 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 		} catch (err) {
 			console.error('Failed to copy baton settings:', err);
 		}
-	}, [batonDuration, batonFadeOutStart, batonFadeInStart, batonTranslate, batonStagger, batonEasing]);
+	}, [
+		batonDuration,
+		batonFadeOutStart,
+		batonFadeInStart,
+		batonTranslate,
+		batonStagger,
+		batonEasing,
+	]);
 
 	return (
 		<>
@@ -1237,7 +1257,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 											backgroundColor: theme.colors.bgActivity,
 										}}
 									>
-										<h3 className="text-sm font-bold self-start" style={{ color: theme.colors.textMain }}>
+										<h3
+											className="text-sm font-bold self-start"
+											style={{ color: theme.colors.textMain }}
+										>
 											Large Preview (4x)
 										</h3>
 										<div
@@ -1276,7 +1299,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 										<div className="flex flex-col gap-4">
 											{/* Expanded sidebar version */}
 											<div className="flex items-center gap-3">
-												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+												<span
+													className="text-xs w-20 shrink-0"
+													style={{ color: theme.colors.textDim }}
+												>
 													Expanded:
 												</span>
 												<div
@@ -1297,7 +1323,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 											</div>
 											{/* Collapsed sidebar version */}
 											<div className="flex items-center gap-3">
-												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+												<span
+													className="text-xs w-20 shrink-0"
+													style={{ color: theme.colors.textDim }}
+												>
 													Collapsed:
 												</span>
 												<div
@@ -1312,15 +1341,15 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 											</div>
 											{/* Solo icon at various sizes */}
 											<div className="flex items-center gap-3">
-												<span className="text-xs w-20 shrink-0" style={{ color: theme.colors.textDim }}>
+												<span
+													className="text-xs w-20 shrink-0"
+													style={{ color: theme.colors.textDim }}
+												>
 													Sizes:
 												</span>
 												<div className="flex items-center gap-4">
 													{[3, 4, 5, 6, 8].map((size) => (
-														<div
-															key={size}
-															className="flex flex-col items-center gap-1"
-														>
+														<div key={size} className="flex flex-col items-center gap-1">
 															<Wand2
 																className={`w-${size} h-${size}${batonActive ? ' baton-sparkle-active' : ''}`}
 																style={{ color: theme.colors.accent }}
@@ -1376,7 +1405,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 										</h3>
 										<div className="space-y-3">
 											<div>
-												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs flex justify-between"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>Duration (cycle)</span>
 													<span>{batonDuration.toFixed(1)}s</span>
 												</label>
@@ -1391,7 +1423,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												/>
 											</div>
 											<div>
-												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs flex justify-between"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>Fade-out start</span>
 													<span>{batonFadeOutStart}%</span>
 												</label>
@@ -1406,7 +1441,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												/>
 											</div>
 											<div>
-												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs flex justify-between"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>Fade-in start</span>
 													<span>{batonFadeInStart}%</span>
 												</label>
@@ -1421,7 +1459,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												/>
 											</div>
 											<div>
-												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs flex justify-between"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>Stagger offset</span>
 													<span>{batonStagger.toFixed(2)}s</span>
 												</label>
@@ -1451,7 +1492,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 										</h3>
 										<div className="space-y-3">
 											<div>
-												<label className="text-xs flex justify-between" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs flex justify-between"
+													style={{ color: theme.colors.textDim }}
+												>
 													<span>Translate amount</span>
 													<span>{batonTranslate.toFixed(1)}px</span>
 												</label>
@@ -1466,7 +1510,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 												/>
 											</div>
 											<div>
-												<label className="text-xs mb-1 block" style={{ color: theme.colors.textDim }}>
+												<label
+													className="text-xs mb-1 block"
+													style={{ color: theme.colors.textDim }}
+												>
 													Easing
 												</label>
 												<div className="flex flex-wrap gap-1">
@@ -1476,9 +1523,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 															onClick={() => setBatonEasing(easing)}
 															className="px-2 py-1 rounded text-xs font-medium transition-colors"
 															style={{
-																backgroundColor: batonEasing === easing
-																	? theme.colors.accent
-																	: theme.colors.bgMain,
+																backgroundColor:
+																	batonEasing === easing
+																		? theme.colors.accent
+																		: theme.colors.bgMain,
 																color: batonEasing === easing ? '#fff' : theme.colors.textMain,
 															}}
 														>
@@ -1496,7 +1544,9 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
 											onClick={copyBatonSettings}
 											className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded font-medium transition-colors"
 											style={{
-												backgroundColor: batonCopySuccess ? theme.colors.success : theme.colors.bgMain,
+												backgroundColor: batonCopySuccess
+													? theme.colors.success
+													: theme.colors.bgMain,
 												color: batonCopySuccess ? '#fff' : theme.colors.textMain,
 												border: `1px solid ${batonCopySuccess ? theme.colors.success : theme.colors.border}`,
 											}}

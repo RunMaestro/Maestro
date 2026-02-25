@@ -249,7 +249,9 @@ describe('shellEscape', () => {
 			try {
 				process.env.PSHOME = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0';
 				fs.existsSync = vi.fn((p: string) =>
-					p === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe' ? true : originalExistsSync(p)
+					p === 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+						? true
+						: originalExistsSync(p)
 				);
 				const result = getWindowsShellForAgentExecution({});
 				expect(result.shell).toBe('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe');
@@ -264,5 +266,4 @@ describe('shellEscape', () => {
 			}
 		});
 	});
-
 });

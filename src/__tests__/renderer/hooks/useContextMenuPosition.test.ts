@@ -17,7 +17,10 @@ describe('useContextMenuPosition', () => {
 
 	afterEach(() => {
 		Object.defineProperty(window, 'innerWidth', { value: originalInnerWidth, configurable: true });
-		Object.defineProperty(window, 'innerHeight', { value: originalInnerHeight, configurable: true });
+		Object.defineProperty(window, 'innerHeight', {
+			value: originalInnerHeight,
+			configurable: true,
+		});
 		Element.prototype.getBoundingClientRect = originalGetBCR;
 		vi.restoreAllMocks();
 	});
@@ -29,7 +32,17 @@ describe('useContextMenuPosition', () => {
 
 	function mockMenuSize(width: number, height: number) {
 		Element.prototype.getBoundingClientRect = function () {
-			return { width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0, toJSON: () => ({}) };
+			return {
+				width,
+				height,
+				top: 0,
+				left: 0,
+				right: width,
+				bottom: height,
+				x: 0,
+				y: 0,
+				toJSON: () => ({}),
+			};
 		};
 	}
 
@@ -105,7 +118,7 @@ describe('useContextMenuPosition', () => {
 		});
 
 		expect(result.current.left).toBe(612); // 800 - 180 - 8
-		expect(result.current.top).toBe(392);  // 600 - 200 - 8
+		expect(result.current.top).toBe(392); // 600 - 200 - 8
 		expect(result.current.ready).toBe(true);
 
 		document.body.removeChild(el);

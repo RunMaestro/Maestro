@@ -35,7 +35,10 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
 }
 
 /** Extension color categories with light and dark variants */
-const EXTENSION_COLORS: Record<string, { light: { bg: string; text: string }; dark: { bg: string; text: string } }> = {
+const EXTENSION_COLORS: Record<
+	string,
+	{ light: { bg: string; text: string }; dark: { bg: string; text: string } }
+> = {
 	// TypeScript/JavaScript - blue tones
 	typescript: {
 		light: { bg: 'rgba(37, 99, 235, 0.15)', text: 'rgba(29, 78, 216, 0.9)' },
@@ -116,40 +119,91 @@ const EXTENSION_COLORS: Record<string, { light: { bg: string; text: string }; da
 /** Map file extensions to color categories */
 const EXTENSION_MAP: Record<string, keyof typeof EXTENSION_COLORS> = {
 	// TypeScript/JavaScript
-	'.ts': 'typescript', '.tsx': 'typescript', '.js': 'typescript', '.jsx': 'typescript',
-	'.mjs': 'typescript', '.cjs': 'typescript',
+	'.ts': 'typescript',
+	'.tsx': 'typescript',
+	'.js': 'typescript',
+	'.jsx': 'typescript',
+	'.mjs': 'typescript',
+	'.cjs': 'typescript',
 	// Markdown/Docs
-	'.md': 'markdown', '.mdx': 'markdown', '.txt': 'markdown', '.rst': 'markdown',
+	'.md': 'markdown',
+	'.mdx': 'markdown',
+	'.txt': 'markdown',
+	'.rst': 'markdown',
 	// JSON/Config
-	'.json': 'config', '.yaml': 'config', '.yml': 'config', '.toml': 'config',
-	'.ini': 'config', '.env': 'config',
+	'.json': 'config',
+	'.yaml': 'config',
+	'.yml': 'config',
+	'.toml': 'config',
+	'.ini': 'config',
+	'.env': 'config',
 	// CSS/Styles
-	'.css': 'styles', '.scss': 'styles', '.sass': 'styles', '.less': 'styles', '.styl': 'styles',
+	'.css': 'styles',
+	'.scss': 'styles',
+	'.sass': 'styles',
+	'.less': 'styles',
+	'.styl': 'styles',
 	// HTML/Templates
-	'.html': 'html', '.htm': 'html', '.xml': 'html', '.svg': 'html',
+	'.html': 'html',
+	'.htm': 'html',
+	'.xml': 'html',
+	'.svg': 'html',
 	// Python
-	'.py': 'python', '.pyw': 'python', '.pyi': 'python',
+	'.py': 'python',
+	'.pyw': 'python',
+	'.pyi': 'python',
 	// Rust
 	'.rs': 'rust',
 	// Go
 	'.go': 'go',
 	// Shell
-	'.sh': 'shell', '.bash': 'shell', '.zsh': 'shell', '.fish': 'shell',
+	'.sh': 'shell',
+	'.bash': 'shell',
+	'.zsh': 'shell',
+	'.fish': 'shell',
 	// Images
-	'.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.gif': 'image',
-	'.webp': 'image', '.bmp': 'image', '.ico': 'image', '.tiff': 'image', '.avif': 'image',
+	'.png': 'image',
+	'.jpg': 'image',
+	'.jpeg': 'image',
+	'.gif': 'image',
+	'.webp': 'image',
+	'.bmp': 'image',
+	'.ico': 'image',
+	'.tiff': 'image',
+	'.avif': 'image',
 	// Java/JVM
-	'.java': 'java', '.kt': 'java', '.scala': 'java', '.groovy': 'java', '.clj': 'java',
+	'.java': 'java',
+	'.kt': 'java',
+	'.scala': 'java',
+	'.groovy': 'java',
+	'.clj': 'java',
 	// C/C++
-	'.c': 'cpp', '.cpp': 'cpp', '.cc': 'cpp', '.h': 'cpp', '.hpp': 'cpp', '.hh': 'cpp',
-	'.cs': 'cpp', '.swift': 'cpp',
+	'.c': 'cpp',
+	'.cpp': 'cpp',
+	'.cc': 'cpp',
+	'.h': 'cpp',
+	'.hpp': 'cpp',
+	'.hh': 'cpp',
+	'.cs': 'cpp',
+	'.swift': 'cpp',
 	// Ruby
-	'.rb': 'ruby', '.erb': 'ruby', '.rake': 'ruby',
+	'.rb': 'ruby',
+	'.erb': 'ruby',
+	'.rake': 'ruby',
 	// SQL/Data
-	'.sql': 'data', '.db': 'data', '.sqlite': 'data', '.csv': 'data', '.tsv': 'data',
+	'.sql': 'data',
+	'.db': 'data',
+	'.sqlite': 'data',
+	'.csv': 'data',
+	'.tsv': 'data',
 	// PDF/Office documents
-	'.pdf': 'document', '.doc': 'document', '.docx': 'document',
-	'.xls': 'document', '.xlsx': 'document', '.ppt': 'document', '.pptx': 'document',
+	'.pdf': 'document',
+	'.doc': 'document',
+	'.docx': 'document',
+	'.xls': 'document',
+	'.xlsx': 'document',
+	'.ppt': 'document',
+	'.pptx': 'document',
 };
 
 /**
@@ -176,8 +230,14 @@ export function getExtensionColor(
 		const accentRgb = hexToRgb(theme.colors.accent);
 		if (accentRgb) {
 			return isLightTheme
-				? { bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.15)`, text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)` }
-				: { bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.3)`, text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)` };
+				? {
+						bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.15)`,
+						text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)`,
+					}
+				: {
+						bg: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.3)`,
+						text: `rgba(${accentRgb.r}, ${accentRgb.g}, ${accentRgb.b}, 0.9)`,
+					};
 		}
 		return isLightTheme
 			? { bg: 'rgba(107, 114, 128, 0.15)', text: 'rgba(75, 85, 99, 0.9)' }
@@ -196,8 +256,14 @@ export function getExtensionColor(
 	const rgb = hexToRgb(theme.colors.accent);
 	if (rgb) {
 		return isLightTheme
-			? { bg: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15)`, text: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)` }
-			: { bg: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`, text: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)` };
+			? {
+					bg: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.15)`,
+					text: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`,
+				}
+			: {
+					bg: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.3)`,
+					text: `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, 0.9)`,
+				};
 	}
 
 	// Ultimate fallback (non-hex accent like rgb/hsl) — still visible

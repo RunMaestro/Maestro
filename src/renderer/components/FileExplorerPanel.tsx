@@ -419,7 +419,11 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		path: string;
 	} | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
-	const contextMenuPos = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
+	const contextMenuPos = useContextMenuPosition(
+		contextMenuRef,
+		contextMenu?.x ?? 0,
+		contextMenu?.y ?? 0
+	);
 
 	// Rename modal state
 	const [renameModal, setRenameModal] = useState<{

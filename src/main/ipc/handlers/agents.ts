@@ -247,9 +247,7 @@ async function discoverModelsRemote(
 				setTimeout(
 					() =>
 						reject(
-							new Error(
-								`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`
-							)
+							new Error(`SSH model discovery timed out after ${SSH_MODEL_TIMEOUT_MS / 1000}s`)
 						),
 					SSH_MODEL_TIMEOUT_MS
 				);

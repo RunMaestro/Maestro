@@ -586,9 +586,7 @@ export function formatSessions(
 	const countInfo = searchQuery
 		? `${filteredCount} matching of ${totalCount} total`
 		: `showing ${sessions.length} of ${totalCount}`;
-	lines.push(
-		bold(c('cyan', 'SESSIONS')) + dim(` for ${agentName} (${countInfo})`)
-	);
+	lines.push(bold(c('cyan', 'SESSIONS')) + dim(` for ${agentName} (${countInfo})`));
 	lines.push('');
 
 	for (const session of sessions) {
@@ -596,14 +594,11 @@ export function formatSessions(
 		const dateStr = date.toLocaleDateString();
 		const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 		const star = session.starred ? c('yellow', '★ ') : '  ';
-		const name = session.sessionName
-			? c('white', session.sessionName)
-			: dim('(unnamed)');
+		const name = session.sessionName ? c('white', session.sessionName) : dim('(unnamed)');
 		const cost = session.costUsd > 0 ? c('yellow', `$${session.costUsd.toFixed(4)}`) : dim('$0');
 		const msgs = dim(`${session.messageCount} msgs`);
-		const dur = session.durationSeconds > 0
-			? dim(formatDurationSeconds(session.durationSeconds))
-			: '';
+		const dur =
+			session.durationSeconds > 0 ? dim(formatDurationSeconds(session.durationSeconds)) : '';
 		const preview = session.firstMessage
 			? dim(truncate(session.firstMessage.replace(/\n/g, ' '), 70))
 			: '';

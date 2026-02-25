@@ -57,7 +57,11 @@ function GroupChatActivityGraph({
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
-	const contextMenuPos = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
+	const contextMenuPos = useContextMenuPosition(
+		contextMenuRef,
+		contextMenu?.x ?? 0,
+		contextMenu?.y ?? 0
+	);
 
 	// Get the current lookback config
 	const lookbackConfig = useMemo(

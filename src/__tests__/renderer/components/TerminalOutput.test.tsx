@@ -2027,7 +2027,9 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
+			);
 
 			// MutationObserver fires on DOM change, RAF needs time to execute
 			await act(async () => {
@@ -2082,7 +2084,9 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
+			);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);
@@ -2093,9 +2097,7 @@ describe('TerminalOutput', () => {
 		});
 
 		it('auto-scrolls when autoScrollAiMode is on and not paused', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' }),
-			];
+			const logs: LogEntry[] = [createLogEntry({ id: 'user-1', text: 'Hello', source: 'user' })];
 
 			const session = createDefaultSession({
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
@@ -2125,7 +2127,15 @@ describe('TerminalOutput', () => {
 				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: newLogs, isUnread: false }],
 			};
 
-			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: true, setAutoScrollAiMode: vi.fn() })} />);
+			rerender(
+				<TerminalOutput
+					{...createDefaultProps({
+						session: newSession,
+						autoScrollAiMode: true,
+						setAutoScrollAiMode: vi.fn(),
+					})}
+				/>
+			);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);
@@ -2135,9 +2145,7 @@ describe('TerminalOutput', () => {
 		});
 
 		it('always auto-scrolls in terminal mode regardless of autoScrollAiMode', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ id: 'cmd-1', text: 'ls', source: 'user' }),
-			];
+			const logs: LogEntry[] = [createLogEntry({ id: 'cmd-1', text: 'ls', source: 'user' })];
 
 			const session = createDefaultSession({
 				inputMode: 'terminal',
@@ -2166,7 +2174,9 @@ describe('TerminalOutput', () => {
 				shellLogs: newLogs,
 			};
 
-			rerender(<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />);
+			rerender(
+				<TerminalOutput {...createDefaultProps({ session: newSession, autoScrollAiMode: false })} />
+			);
 
 			await act(async () => {
 				vi.advanceTimersByTime(50);

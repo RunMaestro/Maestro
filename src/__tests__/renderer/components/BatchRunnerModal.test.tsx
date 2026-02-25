@@ -1165,15 +1165,21 @@ describe('validateAgentPromptHasTaskReference', () => {
 	});
 
 	it('returns true for prompt containing "markdown task"', () => {
-		expect(validateAgentPromptHasTaskReference('Process each markdown task in the document.')).toBe(true);
+		expect(validateAgentPromptHasTaskReference('Process each markdown task in the document.')).toBe(
+			true
+		);
 	});
 
 	it('returns true for prompt containing "Markdown Tasks" (case-insensitive)', () => {
-		expect(validateAgentPromptHasTaskReference('Complete all Markdown Tasks listed below.')).toBe(true);
+		expect(validateAgentPromptHasTaskReference('Complete all Markdown Tasks listed below.')).toBe(
+			true
+		);
 	});
 
 	it('returns true for prompt containing checkbox syntax "- [ ]"', () => {
-		expect(validateAgentPromptHasTaskReference('Look for items marked as - [ ] and complete them.')).toBe(true);
+		expect(
+			validateAgentPromptHasTaskReference('Look for items marked as - [ ] and complete them.')
+		).toBe(true);
 	});
 
 	it('returns true for prompt containing checked checkbox "- [x]"', () => {
@@ -1189,7 +1195,9 @@ describe('validateAgentPromptHasTaskReference', () => {
 	});
 
 	it('returns true for prompt containing "check off task"', () => {
-		expect(validateAgentPromptHasTaskReference('Check off task items as you complete them.')).toBe(true);
+		expect(validateAgentPromptHasTaskReference('Check off task items as you complete them.')).toBe(
+			true
+		);
 	});
 
 	it('returns true for the DEFAULT_BATCH_PROMPT', () => {

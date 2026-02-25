@@ -523,23 +523,31 @@ export const HistoryPanel = React.memo(
 						<div className="text-center py-8 text-xs opacity-50">Loading history...</div>
 					) : allFilteredEntries.length === 0 ? (
 						<div className="text-center py-8 text-xs opacity-50">
-							{historyEntries.length === 0
-								? 'No history yet. Run batch tasks or use /history to add entries.'
-								: searchFilter
-									? `No entries match "${searchFilter}"`
-									: graphLookbackHours !== null ? (
-										<>
-											No entries in the last {graphLookbackHours <= 24 ? `${graphLookbackHours}h` : graphLookbackHours <= 168 ? `${Math.round(graphLookbackHours / 24)}d` : `${Math.round(graphLookbackHours / 720)}mo`}.
-											<br />
-											<button
-												onClick={() => handleLookbackChange(null)}
-												className="mt-2 underline hover:no-underline"
-												style={{ color: theme.colors.accent }}
-											>
-												Show all time ({historyEntries.length} entries)
-											</button>
-										</>
-									) : 'No entries match the selected filters.'}
+							{historyEntries.length === 0 ? (
+								'No history yet. Run batch tasks or use /history to add entries.'
+							) : searchFilter ? (
+								`No entries match "${searchFilter}"`
+							) : graphLookbackHours !== null ? (
+								<>
+									No entries in the last{' '}
+									{graphLookbackHours <= 24
+										? `${graphLookbackHours}h`
+										: graphLookbackHours <= 168
+											? `${Math.round(graphLookbackHours / 24)}d`
+											: `${Math.round(graphLookbackHours / 720)}mo`}
+									.
+									<br />
+									<button
+										onClick={() => handleLookbackChange(null)}
+										className="mt-2 underline hover:no-underline"
+										style={{ color: theme.colors.accent }}
+									>
+										Show all time ({historyEntries.length} entries)
+									</button>
+								</>
+							) : (
+								'No entries match the selected filters.'
+							)}
 						</div>
 					) : (
 						<div

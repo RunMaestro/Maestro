@@ -620,7 +620,11 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 				console.log('[cancelPendingSynopsis] Killed synopsis session:', synopsisSessionId);
 			} catch (error) {
 				// Process may have already exited
-				console.warn('[cancelPendingSynopsis] Failed to kill synopsis session:', synopsisSessionId, error);
+				console.warn(
+					'[cancelPendingSynopsis] Failed to kill synopsis session:',
+					synopsisSessionId,
+					error
+				);
 			}
 		});
 

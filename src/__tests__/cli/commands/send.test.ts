@@ -77,7 +77,12 @@ describe('send command', () => {
 		await send('agent-abc', 'Hello world', {});
 
 		expect(resolveAgentId).toHaveBeenCalledWith('agent-abc');
-		expect(spawnAgent).toHaveBeenCalledWith('claude-code', '/path/to/project', 'Hello world', undefined);
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/path/to/project',
+			'Hello world',
+			undefined
+		);
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -144,12 +149,19 @@ describe('send command', () => {
 
 		await send('agent-abc', 'Do something', {});
 
-		expect(spawnAgent).toHaveBeenCalledWith('claude-code', '/custom/project/path', 'Do something', undefined);
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'claude-code',
+			'/custom/project/path',
+			'Do something',
+			undefined
+		);
 	});
 
 	it('should work with codex agent type', async () => {
 		vi.mocked(resolveAgentId).mockReturnValue('agent-codex-1');
-		vi.mocked(getSessionById).mockReturnValue(mockAgent({ id: 'agent-codex-1', toolType: 'codex' }));
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-codex-1', toolType: 'codex' })
+		);
 		vi.mocked(detectCodex).mockResolvedValue({ available: true, path: '/usr/bin/codex' });
 		vi.mocked(spawnAgent).mockResolvedValue({
 			success: true,

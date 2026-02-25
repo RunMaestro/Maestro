@@ -637,7 +637,10 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					]);
 
 					if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-						const worktreeCommonDir = path.resolve(resolvedWorktree, gitCommonDirResult.stdout.trim());
+						const worktreeCommonDir = path.resolve(
+							resolvedWorktree,
+							gitCommonDirResult.stdout.trim()
+						);
 						const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
 
 						// Normalize paths for comparison

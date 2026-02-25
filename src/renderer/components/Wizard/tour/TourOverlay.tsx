@@ -283,11 +283,7 @@ export function TourOverlay({
 
 			{/* Welcome screen or tour steps */}
 			{showWelcome ? (
-				<TourWelcome
-					theme={theme}
-					onStartTour={handleStartTour}
-					onSkip={skipTour}
-				/>
+				<TourWelcome theme={theme} onStartTour={handleStartTour} onSkip={skipTour} />
 			) : (
 				<>
 					{/* Spotlight border ring (visible highlight around the cutout area) */}

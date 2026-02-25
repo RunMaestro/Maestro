@@ -38,25 +38,26 @@ import {
 	Command,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import type {
-	Session,
-	Group,
-	Theme,
-	Shortcut,
-	AutoRunStats,
-	GroupChat,
-	GroupChatState,
-	SettingsTab,
-	FocusArea,
-} from '../types';
+import type { Session, Group, Theme } from '../types';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { getStatusColor, getContextColor, formatActiveTime } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
-import { useLiveOverlay, useClickOutside, useResizablePanel, useContextMenuPosition } from '../hooks';
+import {
+	useLiveOverlay,
+	useClickOutside,
+	useResizablePanel,
+	useContextMenuPosition,
+} from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
 import { useUIStore } from '../stores/uiStore';
+import { useSessionStore } from '../stores/sessionStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore';
+import { useShallow } from 'zustand/shallow';
+import { useGroupChatStore } from '../stores/groupChatStore';
+import { getModalActions } from '../stores/modalStore';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -428,43 +429,33 @@ function SessionContextMenu({
 
 interface HamburgerMenuContentProps {
 	theme: Theme;
-	shortcuts: Record<string, Shortcut>;
 	onNewAgentSession?: () => void;
 	openWizard?: () => void;
 	startTour?: () => void;
-	setShortcutsHelpOpen: (open: boolean) => void;
-	setSettingsModalOpen: (open: boolean) => void;
-	setSettingsTab: (tab: SettingsTab) => void;
-	setLogViewerOpen: (open: boolean) => void;
-	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
-	setSymphonyModalOpen: (open: boolean) => void;
-	setDirectorNotesOpen?: (open: boolean) => void;
-	setUpdateCheckModalOpen: (open: boolean) => void;
-	setAboutModalOpen: (open: boolean) => void;
 	setMenuOpen: (open: boolean) => void;
-	setQuickActionOpen: (open: boolean) => void;
 }
 
 function HamburgerMenuContent({
 	theme,
-	shortcuts,
 	onNewAgentSession,
 	openWizard,
 	startTour,
-	setShortcutsHelpOpen,
-	setSettingsModalOpen,
-	setSettingsTab,
-	setLogViewerOpen,
-	setProcessMonitorOpen,
-	setUsageDashboardOpen,
-	setSymphonyModalOpen,
-	setDirectorNotesOpen,
-	setUpdateCheckModalOpen,
-	setAboutModalOpen,
 	setMenuOpen,
-	setQuickActionOpen,
 }: HamburgerMenuContentProps) {
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const {
+		setShortcutsHelpOpen,
+		setSettingsModalOpen,
+		setSettingsTab,
+		setLogViewerOpen,
+		setProcessMonitorOpen,
+		setUsageDashboardOpen,
+		setSymphonyModalOpen,
+		setDirectorNotesOpen,
+		setUpdateCheckModalOpen,
+		setAboutModalOpen,
+		setQuickActionOpen,
+	} = getModalActions();
 	return (
 		<div className="p-1">
 			{onNewAgentSession && (
@@ -1029,57 +1020,20 @@ const compareSessionNames = (a: string, b: string): number => {
 };
 
 interface SessionListProps {
-	// State
+	// Computed values (not in stores — remain as props)
 	theme: Theme;
-	sessions: Session[];
-	groups: Group[];
 	sortedSessions: Session[];
-	activeSessionId: string;
-	leftSidebarOpen: boolean;
-	leftSidebarWidthState: number;
-	activeFocus: string;
-	selectedSidebarIndex: number;
-	editingGroupId: string | null;
-	editingSessionId: string | null;
-	draggingSessionId: string | null;
-	shortcuts: Record<string, Shortcut>;
-
-	// Global Live Mode
 	isLiveMode: boolean;
 	webInterfaceUrl: string | null;
+	showSessionJumpNumbers?: boolean;
+	visibleSessions?: Session[];
+
+	// Ref for the sidebar container (for focus management)
+	sidebarContainerRef?: React.RefObject<HTMLDivElement>;
+
+	// Domain handlers
 	toggleGlobalLive: () => void;
-
-	// Web Interface Port Settings
-	webInterfaceUseCustomPort: boolean;
-	setWebInterfaceUseCustomPort: (value: boolean) => void;
-	webInterfaceCustomPort: number;
-	setWebInterfaceCustomPort: (value: number) => void;
 	restartWebServer: () => Promise<string | null>;
-
-	// Bookmarks folder state (lifted from component to App.tsx for keyboard shortcut access)
-	bookmarksCollapsed: boolean;
-	setBookmarksCollapsed: (collapsed: boolean) => void;
-
-	// Ungrouped folder state (persisted via useSettings)
-	ungroupedCollapsed: boolean;
-	setUngroupedCollapsed: (collapsed: boolean) => void;
-
-	// Handlers
-	setActiveFocus: (focus: FocusArea) => void;
-	setActiveSessionId: (id: string) => void;
-	setLeftSidebarOpen: (open: boolean) => void;
-	setLeftSidebarWidthState: (width: number) => void;
-	setShortcutsHelpOpen: (open: boolean) => void;
-	setSettingsModalOpen: (open: boolean) => void;
-	setSettingsTab: (tab: SettingsTab) => void;
-	setAboutModalOpen: (open: boolean) => void;
-	setUpdateCheckModalOpen: (open: boolean) => void;
-	setLogViewerOpen: (open: boolean) => void;
-	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
-	setSymphonyModalOpen: (open: boolean) => void;
-	setDirectorNotesOpen?: (open: boolean) => void;
-	setQuickActionOpen: (open: boolean) => void;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
 	handleDragOver: (e: React.DragEvent) => void;
@@ -1090,25 +1044,17 @@ interface SessionListProps {
 	startRenamingGroup: (groupId: string) => void;
 	startRenamingSession: (sessId: string) => void;
 	showConfirmation: (message: string, onConfirm: () => void) => void;
-	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
-	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	createNewGroup: () => void;
-	onCreateGroupAndMove?: (sessionId: string) => void; // Create new group and move session to it
+	onCreateGroupAndMove?: (sessionId: string) => void;
 	addNewSession: () => void;
 	onDeleteSession?: (id: string) => void;
 	onDeleteWorktreeGroup?: (groupId: string) => void;
-
-	// Rename modal handlers (for context menu rename)
-	setRenameInstanceModalOpen: (open: boolean) => void;
-	setRenameInstanceValue: (value: string) => void;
-	setRenameInstanceSessionId: (id: string) => void;
 
 	// Edit agent modal handler (for context menu edit)
 	onEditAgent: (session: Session) => void;
 
 	// Duplicate agent handlers (for context menu duplicate)
 	onNewAgentSession: () => void;
-	setDuplicatingSessionId: (id: string | null) => void;
 
 	// Worktree handlers
 	onToggleWorktreeExpanded?: (sessionId: string) => void;
@@ -1117,94 +1063,83 @@ interface SessionListProps {
 	onOpenWorktreeConfig?: (session: Session) => void;
 	onDeleteWorktree?: (session: Session) => void;
 
-	// Auto mode props
-	activeBatchSessionIds?: string[]; // Session IDs that are running in auto mode
-
-	// Session jump shortcut props (Opt+Cmd+NUMBER)
-	showSessionJumpNumbers?: boolean;
-	visibleSessions?: Session[];
-
-	// Achievement system props
-	autoRunStats?: AutoRunStats;
-
 	// Wizard props
 	openWizard?: () => void;
 
 	// Tour props
 	startTour?: () => void;
 
-	// Ref for the sidebar container (for focus management)
-	sidebarContainerRef?: React.RefObject<HTMLDivElement>;
-
-	// Group Chat props
-	groupChats?: GroupChat[];
-	activeGroupChatId?: string | null;
+	// Group Chat handlers
 	onOpenGroupChat?: (id: string) => void;
 	onNewGroupChat?: () => void;
 	onEditGroupChat?: (id: string) => void;
 	onRenameGroupChat?: (id: string) => void;
 	onDeleteGroupChat?: (id: string) => void;
 	onArchiveGroupChat?: (id: string, archived: boolean) => void;
-	/** Controlled expanded state for group chats (lifted to parent for keyboard navigation) */
-	groupChatsExpanded?: boolean;
-	/** Callback when group chats expanded state changes */
-	onGroupChatsExpandedChange?: (expanded: boolean) => void;
-	/** Current state of the active group chat (for status indicator) */
-	groupChatState?: GroupChatState;
-	/** Per-participant working states for the active group chat */
-	participantStates?: Map<string, 'idle' | 'working'>;
-	/** State for ALL group chats (groupChatId -> state), for showing busy indicator when not active */
-	groupChatStates?: Map<string, GroupChatState>;
-	/** Participant states for ALL group chats (groupChatId -> Map<participantName, state>) */
-	allGroupChatParticipantStates?: Map<string, Map<string, 'idle' | 'working'>>;
-
-	// Context warning thresholds (to match header bar colors with warning sash)
-	contextWarningYellowThreshold?: number;
-	contextWarningRedThreshold?: number;
 }
 
 function SessionListInner(props: SessionListProps) {
+	// Store subscriptions
+	const sessions = useSessionStore((s) => s.sessions);
+	const groups = useSessionStore((s) => s.groups);
+	const activeSessionId = useSessionStore((s) => s.activeSessionId);
+	const leftSidebarOpen = useUIStore((s) => s.leftSidebarOpen);
+	const activeFocus = useUIStore((s) => s.activeFocus);
+	const selectedSidebarIndex = useUIStore((s) => s.selectedSidebarIndex);
+	const editingGroupId = useUIStore((s) => s.editingGroupId);
+	const editingSessionId = useUIStore((s) => s.editingSessionId);
+	const draggingSessionId = useUIStore((s) => s.draggingSessionId);
+	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
+	const groupChatsExpanded = useUIStore((s) => s.groupChatsExpanded);
+	const shortcuts = useSettingsStore((s) => s.shortcuts);
+	const leftSidebarWidthState = useSettingsStore((s) => s.leftSidebarWidth);
+	const webInterfaceUseCustomPort = useSettingsStore((s) => s.webInterfaceUseCustomPort);
+	const webInterfaceCustomPort = useSettingsStore((s) => s.webInterfaceCustomPort);
+	const ungroupedCollapsed = useSettingsStore((s) => s.ungroupedCollapsed);
+	const autoRunStats = useSettingsStore((s) => s.autoRunStats);
+	const contextWarningYellowThreshold = useSettingsStore(
+		(s) => s.contextManagementSettings.contextWarningYellowThreshold
+	);
+	const contextWarningRedThreshold = useSettingsStore(
+		(s) => s.contextManagementSettings.contextWarningRedThreshold
+	);
+	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+	const groupChats = useGroupChatStore((s) => s.groupChats);
+	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
+	const groupChatState = useGroupChatStore((s) => s.groupChatState);
+	const participantStates = useGroupChatStore((s) => s.participantStates);
+	const groupChatStates = useGroupChatStore((s) => s.groupChatStates);
+	const allGroupChatParticipantStates = useGroupChatStore((s) => s.allGroupChatParticipantStates);
+
+	// Stable store actions
+	const setActiveFocus = useUIStore.getState().setActiveFocus;
+	const setLeftSidebarOpen = useUIStore.getState().setLeftSidebarOpen;
+	const setBookmarksCollapsed = useUIStore.getState().setBookmarksCollapsed;
+	const setGroupChatsExpanded = useUIStore.getState().setGroupChatsExpanded;
+	const setActiveSessionId = useSessionStore.getState().setActiveSessionId;
+	const setSessions = useSessionStore.getState().setSessions;
+	const setGroups = useSessionStore.getState().setGroups;
+	const setWebInterfaceUseCustomPort = useSettingsStore.getState().setWebInterfaceUseCustomPort;
+	const setWebInterfaceCustomPort = useSettingsStore.getState().setWebInterfaceCustomPort;
+	const setUngroupedCollapsed = useSettingsStore.getState().setUngroupedCollapsed;
+	const setLeftSidebarWidthState = useSettingsStore.getState().setLeftSidebarWidth;
+
+	// Modal actions (stable, accessed via store)
+	const {
+		setAboutModalOpen,
+		setRenameInstanceModalOpen,
+		setRenameInstanceValue,
+		setRenameInstanceSessionId,
+		setDuplicatingSessionId,
+	} = getModalActions();
+
 	const {
 		theme,
-		sessions,
-		groups,
 		sortedSessions,
-		activeSessionId,
-		leftSidebarOpen,
-		leftSidebarWidthState,
-		activeFocus,
-		selectedSidebarIndex,
-		editingGroupId,
-		editingSessionId,
-		draggingSessionId,
-		shortcuts,
 		isLiveMode,
 		webInterfaceUrl,
 		toggleGlobalLive,
-		webInterfaceUseCustomPort,
-		setWebInterfaceUseCustomPort,
-		webInterfaceCustomPort,
-		setWebInterfaceCustomPort,
 		restartWebServer,
-		bookmarksCollapsed,
-		setBookmarksCollapsed,
-		ungroupedCollapsed,
-		setUngroupedCollapsed,
-		setActiveFocus,
-		setActiveSessionId,
-		setLeftSidebarOpen,
-		setLeftSidebarWidthState,
-		setShortcutsHelpOpen,
-		setSettingsModalOpen,
-		setSettingsTab,
-		setAboutModalOpen,
-		setUpdateCheckModalOpen,
-		setLogViewerOpen,
-		setProcessMonitorOpen,
-		setUsageDashboardOpen,
-		setSymphonyModalOpen,
-		setDirectorNotesOpen,
-		setQuickActionOpen,
 		toggleGroup,
 		handleDragStart,
 		handleDragOver,
@@ -1215,48 +1150,29 @@ function SessionListInner(props: SessionListProps) {
 		startRenamingGroup,
 		startRenamingSession,
 		showConfirmation,
-		setGroups,
-		setSessions,
 		createNewGroup,
 		onCreateGroupAndMove,
 		addNewSession,
 		onDeleteSession,
 		onDeleteWorktreeGroup,
-		setRenameInstanceModalOpen,
-		setRenameInstanceValue,
-		setRenameInstanceSessionId,
 		onEditAgent,
 		onNewAgentSession,
-		setDuplicatingSessionId,
 		onToggleWorktreeExpanded,
 		onOpenCreatePR,
 		onQuickCreateWorktree,
 		onOpenWorktreeConfig,
 		onDeleteWorktree,
-		activeBatchSessionIds = [],
 		showSessionJumpNumbers = false,
 		visibleSessions = [],
-		autoRunStats,
 		openWizard,
 		startTour,
 		sidebarContainerRef,
-		// Group Chat props
-		groupChats = [],
-		activeGroupChatId = null,
 		onOpenGroupChat,
 		onNewGroupChat,
 		onEditGroupChat,
 		onRenameGroupChat,
 		onDeleteGroupChat,
 		onArchiveGroupChat,
-		groupChatsExpanded,
-		onGroupChatsExpandedChange,
-		groupChatState = 'idle',
-		participantStates,
-		groupChatStates,
-		allGroupChatParticipantStates,
-		contextWarningYellowThreshold = 60,
-		contextWarningRedThreshold = 80,
 	} = props;
 
 	// Derive whether any session is busy or in auto-run (for wand sparkle animation)
@@ -2491,22 +2407,10 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<HamburgerMenuContent
 										theme={theme}
-										shortcuts={shortcuts}
 										onNewAgentSession={onNewAgentSession}
 										openWizard={openWizard}
 										startTour={startTour}
-										setShortcutsHelpOpen={setShortcutsHelpOpen}
-										setSettingsModalOpen={setSettingsModalOpen}
-										setSettingsTab={setSettingsTab}
-										setLogViewerOpen={setLogViewerOpen}
-										setProcessMonitorOpen={setProcessMonitorOpen}
-										setUsageDashboardOpen={setUsageDashboardOpen}
-										setSymphonyModalOpen={setSymphonyModalOpen}
-										setDirectorNotesOpen={setDirectorNotesOpen}
-										setUpdateCheckModalOpen={setUpdateCheckModalOpen}
-										setAboutModalOpen={setAboutModalOpen}
 										setMenuOpen={setMenuOpen}
-										setQuickActionOpen={setQuickActionOpen}
 									/>
 								</div>
 							)}
@@ -2536,22 +2440,10 @@ function SessionListInner(props: SessionListProps) {
 							>
 								<HamburgerMenuContent
 									theme={theme}
-									shortcuts={shortcuts}
 									onNewAgentSession={onNewAgentSession}
 									openWizard={openWizard}
 									startTour={startTour}
-									setShortcutsHelpOpen={setShortcutsHelpOpen}
-									setSettingsModalOpen={setSettingsModalOpen}
-									setSettingsTab={setSettingsTab}
-									setLogViewerOpen={setLogViewerOpen}
-									setProcessMonitorOpen={setProcessMonitorOpen}
-									setUsageDashboardOpen={setUsageDashboardOpen}
-									setSymphonyModalOpen={setSymphonyModalOpen}
-									setDirectorNotesOpen={setDirectorNotesOpen}
-									setUpdateCheckModalOpen={setUpdateCheckModalOpen}
-									setAboutModalOpen={setAboutModalOpen}
 									setMenuOpen={setMenuOpen}
-									setQuickActionOpen={setQuickActionOpen}
 								/>
 							</div>
 						)}
@@ -2879,7 +2771,7 @@ function SessionListInner(props: SessionListProps) {
 								onDeleteGroupChat={onDeleteGroupChat}
 								onArchiveGroupChat={onArchiveGroupChat}
 								isExpanded={groupChatsExpanded}
-								onExpandedChange={onGroupChatsExpandedChange}
+								onExpandedChange={setGroupChatsExpanded}
 								groupChatState={groupChatState}
 								participantStates={participantStates}
 								groupChatStates={groupChatStates}

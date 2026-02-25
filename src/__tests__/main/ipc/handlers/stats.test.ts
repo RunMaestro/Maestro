@@ -506,5 +506,4 @@ describe('stats IPC handlers', () => {
 			});
 		});
 	});
-
 });

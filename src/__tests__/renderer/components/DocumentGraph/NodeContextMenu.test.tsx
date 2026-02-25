@@ -17,6 +17,12 @@ import type {
 	ExternalLinkNodeData,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
+// Mock sentry to capture clipboard errors
+const mockCaptureException = vi.fn();
+vi.mock('../../../../renderer/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 // Mock theme for testing
 const mockTheme: Theme = {
 	id: 'dracula',
@@ -129,7 +135,17 @@ describe('NodeContextMenu', () => {
 			// Mock getBoundingClientRect to return realistic menu dimensions
 			const originalGetBCR = Element.prototype.getBoundingClientRect;
 			Element.prototype.getBoundingClientRect = function () {
-				return { width: 180, height: 150, top: 0, left: 0, right: 180, bottom: 150, x: 0, y: 0, toJSON: () => ({}) };
+				return {
+					width: 180,
+					height: 150,
+					top: 0,
+					left: 0,
+					right: 180,
+					bottom: 150,
+					x: 0,
+					y: 0,
+					toJSON: () => ({}),
+				};
 			};
 
 			try {
@@ -324,7 +340,6 @@ describe('NodeContextMenu', () => {
 
 	describe('Clipboard Error Handling', () => {
 		it('handles clipboard write failure gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockClipboardWriteText.mockRejectedValueOnce(new Error('Clipboard access denied'));
 
 			const onDismiss = vi.fn();
@@ -334,14 +349,9 @@ describe('NodeContextMenu', () => {
 			fireEvent.click(screen.getByRole('button', { name: /copy path/i }));
 
 			await waitFor(() => {
-				expect(consoleErrorSpy).toHaveBeenCalledWith(
-					'Failed to copy to clipboard:',
-					expect.any(Error)
-				);
+				expect(mockCaptureException).toHaveBeenCalledWith(expect.any(Error));
 			});
 			expect(onDismiss).toHaveBeenCalled();
-
-			consoleErrorSpy.mockRestore();
 		});
 	});
 });

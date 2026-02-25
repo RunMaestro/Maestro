@@ -1123,7 +1123,14 @@ export function DocumentGraphView({
 			});
 			return () => unregisterLayer(id);
 		}
-	}, [previewFile, previewLoading, previewError, registerLayer, unregisterLayer, handlePreviewClose]);
+	}, [
+		previewFile,
+		previewLoading,
+		previewError,
+		registerLayer,
+		unregisterLayer,
+		handlePreviewClose,
+	]);
 
 	/**
 	 * Focus the preview content area when preview file loads.
@@ -1732,7 +1739,8 @@ export function DocumentGraphView({
 												cursor: canGoBack ? 'pointer' : 'default',
 											}}
 											onMouseEnter={(e) =>
-												canGoBack && (e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+												canGoBack &&
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 											}
 											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 											title={canGoBack ? 'Go back (←)' : 'No previous document'}
@@ -1750,7 +1758,8 @@ export function DocumentGraphView({
 												cursor: canGoForward ? 'pointer' : 'default',
 											}}
 											onMouseEnter={(e) =>
-												canGoForward && (e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+												canGoForward &&
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 											}
 											onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
 											title={canGoForward ? 'Go forward (→)' : 'No next document'}
@@ -1761,7 +1770,10 @@ export function DocumentGraphView({
 									</div>
 									{/* Document title and path */}
 									<div className="min-w-0">
-										<p className="text-sm font-semibold truncate" style={{ color: theme.colors.textMain }}>
+										<p
+											className="text-sm font-semibold truncate"
+											style={{ color: theme.colors.textMain }}
+										>
 											{previewFile?.name || 'Loading preview...'}
 										</p>
 										<p className="text-xs truncate" style={{ color: theme.colors.textDim }}>
@@ -1799,7 +1811,10 @@ export function DocumentGraphView({
 								className="flex-1 overflow-auto px-4 py-3 graph-preview outline-none"
 							>
 								{previewLoading ? (
-									<div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
+									<div
+										className="flex items-center gap-2 text-xs"
+										style={{ color: theme.colors.textDim }}
+									>
 										<Loader2 className="w-4 h-4 animate-spin" />
 										Loading preview...
 									</div>

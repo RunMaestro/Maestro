@@ -39,11 +39,11 @@ import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitSta
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
+import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
 import type {
 	Session,
 	Theme,
-	Shortcut,
-	FocusArea,
 	BatchRunState,
 	UnifiedTab,
 	FilePreviewTab,
@@ -75,14 +75,8 @@ interface MainPanelProps {
 	// This prevents cascade re-renders when unrelated session updates occur.
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
-	fontFamily: string;
 	isMobileLandscape?: boolean;
-	activeFocus: FocusArea;
-	outputSearchOpen: boolean;
-	outputSearchQuery: string;
 	inputValue: string;
-	enterToSendAI: boolean;
-	enterToSendTerminal: boolean;
 	stagedImages: string[];
 	commandHistoryOpen: boolean;
 	commandHistoryFilter: string;
@@ -107,19 +101,6 @@ interface MainPanelProps {
 	}>;
 	selectedAtMentionIndex?: number;
 	filePreviewLoading?: { name: string; path: string } | null;
-	markdownEditMode: boolean; // FilePreview: whether editing file content
-	chatRawTextMode: boolean; // TerminalOutput: whether to show raw text in AI responses
-	autoScrollAiMode: boolean; // Whether to auto-scroll in AI mode
-	setAutoScrollAiMode: (value: boolean) => void; // Toggle auto-scroll in AI mode
-	userMessageAlignment: 'left' | 'right'; // User message bubble alignment
-	shortcuts: Record<string, Shortcut>;
-	rightPanelOpen: boolean;
-	maxOutputLines: number;
-	gitDiffPreview: string | null;
-	fileTreeFilterOpen: boolean;
-	logLevel?: string; // Current log level setting for LogViewer
-	logViewerSelectedLevels: string[]; // Persisted filter selections for LogViewer
-	setLogViewerSelectedLevels: (levels: string[]) => void;
 
 	// Setters
 	setGitDiffPreview: (preview: string | null) => void;
@@ -134,12 +115,7 @@ interface MainPanelProps {
 		usageStats?: import('../types').UsageStats
 	) => void;
 	onNewAgentSession: () => void;
-	setActiveFocus: (focus: FocusArea) => void;
-	setOutputSearchOpen: (open: boolean) => void;
-	setOutputSearchQuery: (query: string) => void;
 	setInputValue: (value: string) => void;
-	setEnterToSendAI: (value: boolean) => void;
-	setEnterToSendTerminal: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	setLightboxImage: (
 		image: string | null,
@@ -160,18 +136,12 @@ interface MainPanelProps {
 	setAtMentionFilter?: (filter: string) => void;
 	setAtMentionStartIndex?: (index: number) => void;
 	setSelectedAtMentionIndex?: (index: number) => void;
-	setMarkdownEditMode: (mode: boolean) => void;
-	setChatRawTextMode: (mode: boolean) => void;
-	setAboutModalOpen: (open: boolean) => void;
-	setRightPanelOpen: (open: boolean) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
 	inputRef: React.RefObject<HTMLTextAreaElement>;
 	logsEndRef: React.RefObject<HTMLDivElement>;
 	terminalOutputRef: React.RefObject<HTMLDivElement>;
-	fileTreeContainerRef: React.RefObject<HTMLDivElement>;
-	fileTreeFilterInputRef: React.RefObject<HTMLInputElement>;
 
 	// Functions
 	toggleInputMode: () => void;
@@ -187,10 +157,8 @@ interface MainPanelProps {
 	onOpenQueueBrowser?: () => void;
 
 	// Auto mode props
-	batchRunState?: BatchRunState; // For display (may be from any session with active batch)
 	currentSessionBatchState?: BatchRunState | null; // For current session only (input highlighting)
 	onStopBatchRun?: (sessionId?: string) => void;
-	showConfirmation?: (message: string, onConfirm: () => void) => void;
 
 	// Tab management for AI sessions
 	onTabSelect?: (tabId: string) => void;
@@ -208,9 +176,6 @@ interface MainPanelProps {
 	onToggleTabReadOnlyMode?: () => void;
 	onToggleTabSaveToHistory?: () => void;
 	onToggleTabShowThinking?: () => void;
-	showUnreadOnly?: boolean;
-	/** Whether colorblind-friendly colors should be used for extension badges */
-	colorBlindMode?: boolean;
 	onToggleUnreadFilter?: () => void;
 	onOpenTabSearch?: () => void;
 	// Bulk tab close operations
@@ -300,11 +265,6 @@ interface MainPanelProps {
 	onExportHtml?: (tabId: string) => void;
 	onPublishTabGist?: (tabId: string) => void;
 
-	// Context warning sash settings (Phase 6)
-	contextWarningsEnabled?: boolean;
-	contextWarningYellowThreshold?: number;
-	contextWarningRedThreshold?: number;
-
 	// Summarization progress props (non-blocking, per-tab)
 	summarizeProgress?: import('../types/contextMerge').SummarizeProgress | null;
 	summarizeResult?: import('../types/contextMerge').SummarizeResult | null;
@@ -365,12 +325,7 @@ export const MainPanel = React.memo(
 			activeSession,
 			thinkingItems,
 			theme,
-			activeFocus,
-			outputSearchOpen,
-			outputSearchQuery,
 			inputValue,
-			enterToSendAI,
-			enterToSendTerminal,
 			stagedImages,
 			commandHistoryOpen,
 			commandHistoryFilter,
@@ -395,26 +350,13 @@ export const MainPanel = React.memo(
 			setAtMentionStartIndex,
 			setSelectedAtMentionIndex,
 			filePreviewLoading,
-			markdownEditMode: _markdownEditMode,
-			chatRawTextMode,
-			shortcuts,
-			rightPanelOpen,
-			maxOutputLines,
-			gitDiffPreview: _gitDiffPreview,
-			fileTreeFilterOpen: _fileTreeFilterOpen,
-			logLevel,
 			setGitDiffPreview,
 			setLogViewerOpen,
 			setAgentSessionsOpen,
 			setActiveAgentSessionId,
 			onResumeAgentSession,
 			onNewAgentSession,
-			setActiveFocus,
-			setOutputSearchOpen,
-			setOutputSearchQuery,
 			setInputValue,
-			setEnterToSendAI,
-			setEnterToSendTerminal,
 			setStagedImages,
 			setLightboxImage,
 			setCommandHistoryOpen,
@@ -422,16 +364,10 @@ export const MainPanel = React.memo(
 			setCommandHistorySelectedIndex,
 			setSlashCommandOpen,
 			setSelectedSlashCommandIndex,
-			setMarkdownEditMode: _setMarkdownEditMode,
-			setChatRawTextMode,
-			setAboutModalOpen: _setAboutModalOpen,
-			setRightPanelOpen,
 			setGitLogOpen,
 			inputRef,
 			logsEndRef,
 			terminalOutputRef,
-			fileTreeContainerRef: _fileTreeContainerRef,
-			fileTreeFilterInputRef: _fileTreeFilterInputRef,
 			toggleInputMode,
 			processInput,
 			handleInterrupt,
@@ -440,10 +376,8 @@ export const MainPanel = React.memo(
 			handleDrop,
 			getContextColor,
 			setActiveSessionId,
-			batchRunState: _batchRunState,
 			currentSessionBatchState,
 			onStopBatchRun,
-			showConfirmation: _showConfirmation,
 			onRemoveQueuedItem,
 			onOpenQueueBrowser,
 			isMobileLandscape = false,
@@ -456,10 +390,6 @@ export const MainPanel = React.memo(
 			onSendToAgent,
 			onCopyContext,
 			onExportHtml,
-			// Context warning sash settings (Phase 6)
-			contextWarningsEnabled = false,
-			contextWarningYellowThreshold = 60,
-			contextWarningRedThreshold = 80,
 			// Summarization progress props
 			summarizeProgress,
 			summarizeResult,
@@ -477,6 +407,33 @@ export const MainPanel = React.memo(
 			// Inline wizard exit handler
 			onExitWizard,
 		} = props;
+
+		// Phase 3C: Direct store subscriptions (migrated from props)
+		const fontFamily = useSettingsStore((s) => s.fontFamily);
+		const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
+		const enterToSendTerminal = useSettingsStore((s) => s.enterToSendTerminal);
+		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+		const autoScrollAiMode = useSettingsStore((s) => s.autoScrollAiMode);
+		const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
+		const shortcuts = useSettingsStore((s) => s.shortcuts);
+		const maxOutputLines = useSettingsStore((s) => s.maxOutputLines);
+		const logLevel = useSettingsStore((s) => s.logLevel);
+		const logViewerSelectedLevels = useSettingsStore((s) => s.logViewerSelectedLevels);
+		const colorBlindMode = useSettingsStore((s) => s.colorBlindMode);
+		const contextWarningsEnabled = useSettingsStore(
+			(s) => s.contextManagementSettings.contextWarningsEnabled ?? false
+		);
+		const contextWarningYellowThreshold = useSettingsStore(
+			(s) => s.contextManagementSettings.contextWarningYellowThreshold ?? 60
+		);
+		const contextWarningRedThreshold = useSettingsStore(
+			(s) => s.contextManagementSettings.contextWarningRedThreshold ?? 80
+		);
+		const activeFocus = useUIStore((s) => s.activeFocus);
+		const outputSearchOpen = useUIStore((s) => s.outputSearchOpen);
+		const outputSearchQuery = useUIStore((s) => s.outputSearchQuery);
+		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+		const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
 
 		// isCurrentSessionAutoMode: THIS session has active batch run (for all UI indicators)
 		const isCurrentSessionAutoMode = currentSessionBatchState?.isRunning || false;
@@ -500,8 +457,6 @@ export const MainPanel = React.memo(
 			onUnifiedTabReorder,
 			onTabStar,
 			onTabMarkUnread,
-			showUnreadOnly,
-			colorBlindMode,
 			onToggleUnreadFilter,
 			onOpenTabSearch,
 			onCloseAllTabs,
@@ -683,9 +638,9 @@ export const MainPanel = React.memo(
 		const handleInputFocus = useCallback(() => {
 			if (activeSession) {
 				setActiveSessionId(activeSession.id);
-				setActiveFocus('main');
+				useUIStore.getState().setActiveFocus('main');
 			}
-		}, [activeSession, setActiveSessionId, setActiveFocus]);
+		}, [activeSession, setActiveSessionId]);
 
 		// Memoized session click handler for InputArea's ThinkingStatusPill
 		// Avoids creating new function reference on every render
@@ -837,8 +792,8 @@ export const MainPanel = React.memo(
 						theme={theme}
 						onClose={() => setLogViewerOpen(false)}
 						logLevel={logLevel}
-						savedSelectedLevels={props.logViewerSelectedLevels}
-						onSelectedLevelsChange={props.setLogViewerSelectedLevels}
+						savedSelectedLevels={logViewerSelectedLevels}
+						onSelectedLevelsChange={useSettingsStore.getState().setLogViewerSelectedLevels}
 						onShortcutUsed={props.onShortcutUsed}
 					/>
 				</div>
@@ -892,7 +847,7 @@ export const MainPanel = React.memo(
 								'--tw-ring-color': theme.colors.accent,
 							} as React.CSSProperties
 						}
-						onClick={() => setActiveFocus('main')}
+						onClick={() => useUIStore.getState().setActiveFocus('main')}
 					>
 						{/* Top Bar (hidden in mobile landscape for focused reading) */}
 						{!isMobileLandscape && (
@@ -1485,7 +1440,7 @@ export const MainPanel = React.memo(
 
 									{!rightPanelOpen && (
 										<button
-											onClick={() => setRightPanelOpen(true)}
+											onClick={() => useUIStore.getState().setRightPanelOpen(true)}
 											className="p-2 rounded hover:bg-white/5"
 											title={`Show right panel (${formatShortcutKeys(shortcuts.toggleRightPanel.keys)})`}
 										>
@@ -1714,13 +1669,13 @@ export const MainPanel = React.memo(
 											ref={terminalOutputRef}
 											session={activeSession}
 											theme={theme}
-											fontFamily={props.fontFamily}
+											fontFamily={fontFamily}
 											activeFocus={activeFocus}
 											outputSearchOpen={outputSearchOpen}
 											outputSearchQuery={outputSearchQuery}
-											setOutputSearchOpen={setOutputSearchOpen}
-											setOutputSearchQuery={setOutputSearchQuery}
-											setActiveFocus={setActiveFocus}
+											setOutputSearchOpen={useUIStore.getState().setOutputSearchOpen}
+											setOutputSearchQuery={useUIStore.getState().setOutputSearchQuery}
+											setActiveFocus={useUIStore.getState().setActiveFocus}
 											setLightboxImage={setLightboxImage}
 											inputRef={inputRef}
 											logsEndRef={logsEndRef}
@@ -1736,7 +1691,7 @@ export const MainPanel = React.memo(
 													: activeSession.terminalScrollTop
 											}
 											markdownEditMode={chatRawTextMode}
-											setMarkdownEditMode={setChatRawTextMode}
+											setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 											onReplayMessage={props.onReplayMessage}
 											fileTree={props.fileTree}
 											cwd={
@@ -1752,9 +1707,9 @@ export const MainPanel = React.memo(
 													? () => props.refreshFileTree?.(activeSession.id)
 													: undefined
 											}
-											autoScrollAiMode={props.autoScrollAiMode}
-											setAutoScrollAiMode={props.setAutoScrollAiMode}
-											userMessageAlignment={props.userMessageAlignment}
+											autoScrollAiMode={autoScrollAiMode}
+											setAutoScrollAiMode={useSettingsStore.getState().setAutoScrollAiMode}
+											userMessageAlignment={userMessageAlignment}
 											onOpenInTab={props.onOpenSavedFileInTab}
 										/>
 									)}
@@ -1773,8 +1728,8 @@ export const MainPanel = React.memo(
 											}
 											setEnterToSend={
 												activeSession.inputMode === 'terminal'
-													? setEnterToSendTerminal
-													: setEnterToSendAI
+													? useSettingsStore.getState().setEnterToSendTerminal
+													: useSettingsStore.getState().setEnterToSendAI
 											}
 											stagedImages={stagedImages}
 											setStagedImages={setStagedImages}

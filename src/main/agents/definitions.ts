@@ -228,8 +228,7 @@ export const AGENT_DEFINITIONS: AgentDefinition[] = [
 		// In read-only mode, strip blanket permission grants so the plan agent can't auto-approve file writes.
 		// Keep question tool disabled to prevent stdin hangs in batch mode.
 		readOnlyEnvOverrides: {
-			OPENCODE_CONFIG_CONTENT:
-				'{"permission":{"question":"deny"},"tools":{"question":false}}',
+			OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
 		},
 		// Agent-specific configuration options shown in UI
 		configOptions: [

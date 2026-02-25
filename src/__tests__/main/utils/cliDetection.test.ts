@@ -459,7 +459,8 @@ describe('cliDetection.ts', () => {
 
 			// Windows 'where' command returns paths with CRLF line endings
 			mockedExecFileNoThrow.mockResolvedValue({
-				stdout: 'C:\\Windows\\System32\\OpenSSH\\ssh.exe\r\nC:\\Program Files\\Git\\usr\\bin\\ssh.exe\r\n',
+				stdout:
+					'C:\\Windows\\System32\\OpenSSH\\ssh.exe\r\nC:\\Program Files\\Git\\usr\\bin\\ssh.exe\r\n',
 				stderr: '',
 				exitCode: 0,
 			});

@@ -13,8 +13,6 @@ import { useMemo } from 'react';
 import type {
 	Session,
 	Theme,
-	Shortcut,
-	FocusArea,
 	BatchRunState,
 	LogEntry,
 	UsageStats,
@@ -46,14 +44,8 @@ export interface UseMainPanelPropsDeps {
 	activeSession: Session | null;
 	thinkingItems: ThinkingItem[];
 	theme: Theme;
-	fontFamily: string;
 	isMobileLandscape: boolean;
-	activeFocus: FocusArea;
-	outputSearchOpen: boolean;
-	outputSearchQuery: string;
 	inputValue: string;
-	enterToSendAI: boolean;
-	enterToSendTerminal: boolean;
 	stagedImages: string[];
 	commandHistoryOpen: boolean;
 	commandHistoryFilter: string;
@@ -62,18 +54,6 @@ export interface UseMainPanelPropsDeps {
 	slashCommands: Array<{ command: string; description: string }>;
 	selectedSlashCommandIndex: number;
 	filePreviewLoading: { name: string; path: string } | null;
-	markdownEditMode: boolean; // FilePreview: whether editing file content
-	chatRawTextMode: boolean; // TerminalOutput: whether to show raw text in AI responses
-	autoScrollAiMode: boolean; // Whether to auto-scroll in AI mode
-	setAutoScrollAiMode: (value: boolean) => void; // Toggle auto-scroll in AI mode
-	userMessageAlignment: 'left' | 'right'; // User message bubble alignment
-	shortcuts: Record<string, Shortcut>;
-	rightPanelOpen: boolean;
-	maxOutputLines: number;
-	gitDiffPreview: string | null;
-	fileTreeFilterOpen: boolean;
-	logLevel: string;
-	logViewerSelectedLevels: string[];
 
 	// Tab completion state
 	tabCompletionOpen: boolean;
@@ -94,7 +74,6 @@ export interface UseMainPanelPropsDeps {
 	selectedAtMentionIndex: number;
 
 	// Batch run state (undefined matches component prop type)
-	activeBatchRunState: BatchRunState | undefined;
 	currentSessionBatchState: BatchRunState | undefined;
 
 	// File tree
@@ -114,9 +93,6 @@ export interface UseMainPanelPropsDeps {
 	isWorktreeChild: boolean;
 
 	// Context management settings
-	contextWarningsEnabled: boolean;
-	contextWarningYellowThreshold: number;
-	contextWarningRedThreshold: number;
 
 	// Summarization progress
 	summarizeProgress: SummarizeProgress | null;
@@ -135,24 +111,12 @@ export interface UseMainPanelPropsDeps {
 	ghCliAvailable: boolean;
 	hasGist: boolean;
 
-	// Unread filter
-	showUnreadOnly: boolean;
-
-	// Accessibility
-	colorBlindMode: boolean;
-
 	// Setters (these are stable callbacks - should be memoized at definition site)
-	setLogViewerSelectedLevels: (levels: string[]) => void;
 	setGitDiffPreview: (preview: string | null) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
-	setActiveFocus: (focus: FocusArea) => void;
-	setOutputSearchOpen: (open: boolean) => void;
-	setOutputSearchQuery: (query: string) => void;
 	setInputValue: (value: string) => void;
-	setEnterToSendAI: (value: boolean) => void;
-	setEnterToSendTerminal: (value: boolean) => void;
 	setStagedImages: React.Dispatch<React.SetStateAction<string[]>>;
 	setCommandHistoryOpen: (open: boolean) => void;
 	setCommandHistoryFilter: (filter: string) => void;
@@ -166,18 +130,12 @@ export interface UseMainPanelPropsDeps {
 	setAtMentionFilter: (filter: string) => void;
 	setAtMentionStartIndex: (index: number) => void;
 	setSelectedAtMentionIndex: (index: number) => void;
-	setMarkdownEditMode: (mode: boolean) => void;
-	setChatRawTextMode: (mode: boolean) => void;
-	setAboutModalOpen: (open: boolean) => void;
-	setRightPanelOpen: (open: boolean) => void;
 	setGitLogOpen: (open: boolean) => void;
 
 	// Refs
 	inputRef: React.RefObject<HTMLTextAreaElement>;
 	logsEndRef: React.RefObject<HTMLDivElement>;
 	terminalOutputRef: React.RefObject<HTMLDivElement>;
-	fileTreeContainerRef: React.RefObject<HTMLDivElement>;
-	fileTreeFilterInputRef: React.RefObject<HTMLInputElement>;
 
 	// Handlers (should be memoized with useCallback at definition site)
 	handleResumeSession: (
@@ -197,7 +155,6 @@ export interface UseMainPanelPropsDeps {
 	getContextColor: (usage: number, theme: Theme) => string;
 	setActiveSessionId: (id: string) => void;
 	handleStopBatchRun: (sessionId?: string) => void;
-	showConfirmation: (message: string, onConfirm: () => void) => void;
 	handleDeleteLog: (logId: string) => number | null;
 	handleRemoveQueuedItem: (itemId: string) => void;
 	handleOpenQueueBrowser: () => void;
@@ -329,14 +286,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			activeSession: deps.activeSession,
 			thinkingItems: deps.thinkingItems,
 			theme: deps.theme,
-			fontFamily: deps.fontFamily,
 			isMobileLandscape: deps.isMobileLandscape,
-			activeFocus: deps.activeFocus,
-			outputSearchOpen: deps.outputSearchOpen,
-			outputSearchQuery: deps.outputSearchQuery,
 			inputValue: deps.inputValue,
-			enterToSendAI: deps.enterToSendAI,
-			enterToSendTerminal: deps.enterToSendTerminal,
 			stagedImages: deps.stagedImages,
 			commandHistoryOpen: deps.commandHistoryOpen,
 			commandHistoryFilter: deps.commandHistoryFilter,
@@ -345,31 +296,13 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			slashCommands: deps.slashCommands,
 			selectedSlashCommandIndex: deps.selectedSlashCommandIndex,
 			filePreviewLoading: deps.filePreviewLoading,
-			markdownEditMode: deps.markdownEditMode,
-			chatRawTextMode: deps.chatRawTextMode,
-			autoScrollAiMode: deps.autoScrollAiMode,
-			setAutoScrollAiMode: deps.setAutoScrollAiMode,
-			userMessageAlignment: deps.userMessageAlignment,
-			shortcuts: deps.shortcuts,
-			rightPanelOpen: deps.rightPanelOpen,
-			maxOutputLines: deps.maxOutputLines,
-			gitDiffPreview: deps.gitDiffPreview,
-			fileTreeFilterOpen: deps.fileTreeFilterOpen,
-			logLevel: deps.logLevel,
-			logViewerSelectedLevels: deps.logViewerSelectedLevels,
-			setLogViewerSelectedLevels: deps.setLogViewerSelectedLevels,
 			setGitDiffPreview: deps.setGitDiffPreview,
 			setLogViewerOpen: deps.setLogViewerOpen,
 			setAgentSessionsOpen: deps.setAgentSessionsOpen,
 			setActiveAgentSessionId: deps.setActiveAgentSessionId,
 			onResumeAgentSession: deps.handleResumeSession,
 			onNewAgentSession: deps.handleNewAgentSession,
-			setActiveFocus: deps.setActiveFocus,
-			setOutputSearchOpen: deps.setOutputSearchOpen,
-			setOutputSearchQuery: deps.setOutputSearchQuery,
 			setInputValue: deps.setInputValue,
-			setEnterToSendAI: deps.setEnterToSendAI,
-			setEnterToSendTerminal: deps.setEnterToSendTerminal,
 			setStagedImages: deps.setStagedImages,
 			setLightboxImage: deps.handleSetLightboxImage,
 			setCommandHistoryOpen: deps.setCommandHistoryOpen,
@@ -393,16 +326,10 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			atMentionSuggestions: deps.atMentionSuggestions,
 			selectedAtMentionIndex: deps.selectedAtMentionIndex,
 			setSelectedAtMentionIndex: deps.setSelectedAtMentionIndex,
-			setMarkdownEditMode: deps.setMarkdownEditMode,
-			setChatRawTextMode: deps.setChatRawTextMode,
-			setAboutModalOpen: deps.setAboutModalOpen,
-			setRightPanelOpen: deps.setRightPanelOpen,
 			setGitLogOpen: deps.setGitLogOpen,
 			inputRef: deps.inputRef,
 			logsEndRef: deps.logsEndRef,
 			terminalOutputRef: deps.terminalOutputRef,
-			fileTreeContainerRef: deps.fileTreeContainerRef,
-			fileTreeFilterInputRef: deps.fileTreeFilterInputRef,
 			toggleInputMode: deps.toggleInputMode,
 			processInput: deps.processInput,
 			handleInterrupt: deps.handleInterrupt,
@@ -411,10 +338,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			handleDrop: deps.handleDrop,
 			getContextColor: deps.getContextColor,
 			setActiveSessionId: deps.setActiveSessionId,
-			batchRunState: deps.activeBatchRunState,
 			currentSessionBatchState: deps.currentSessionBatchState,
 			onStopBatchRun: deps.handleStopBatchRun,
-			showConfirmation: deps.showConfirmation,
 			onDeleteLog: deps.handleDeleteLog,
 			onRemoveQueuedItem: deps.handleRemoveQueuedItem,
 			onOpenQueueBrowser: deps.handleOpenQueueBrowser,
@@ -429,8 +354,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onTabStar: deps.handleTabStar,
 			onTabMarkUnread: deps.handleTabMarkUnread,
 			onToggleTabReadOnlyMode: deps.handleToggleTabReadOnlyMode,
-			showUnreadOnly: deps.showUnreadOnly,
-			colorBlindMode: deps.colorBlindMode,
 			onToggleUnreadFilter: deps.toggleUnreadFilter,
 			onOpenTabSearch: deps.handleOpenTabSearch,
 			onCloseAllTabs: deps.handleCloseAllTabs,
@@ -483,10 +406,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onCopyContext: deps.handleCopyContext,
 			onExportHtml: deps.handleExportHtml,
 			onPublishTabGist: deps.handlePublishTabGist,
-			// Context warning sash settings
-			contextWarningsEnabled: deps.contextWarningsEnabled,
-			contextWarningYellowThreshold: deps.contextWarningYellowThreshold,
-			contextWarningRedThreshold: deps.contextWarningRedThreshold,
 			// Summarization progress props
 			summarizeProgress: deps.summarizeProgress,
 			summarizeResult: deps.summarizeResult,
@@ -553,14 +472,8 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.activeSession?.cwd,
 			deps.thinkingItems,
 			deps.theme,
-			deps.fontFamily,
 			deps.isMobileLandscape,
-			deps.activeFocus,
-			deps.outputSearchOpen,
-			deps.outputSearchQuery,
 			deps.inputValue,
-			deps.enterToSendAI,
-			deps.enterToSendTerminal,
 			deps.stagedImages,
 			deps.commandHistoryOpen,
 			deps.commandHistoryFilter,
@@ -569,18 +482,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.slashCommands,
 			deps.selectedSlashCommandIndex,
 			deps.filePreviewLoading,
-			deps.markdownEditMode,
-			deps.chatRawTextMode,
-			deps.autoScrollAiMode,
-			deps.setAutoScrollAiMode,
-			deps.userMessageAlignment,
-			deps.shortcuts,
-			deps.rightPanelOpen,
-			deps.maxOutputLines,
-			deps.gitDiffPreview,
-			deps.fileTreeFilterOpen,
-			deps.logLevel,
-			deps.logViewerSelectedLevels,
 			deps.tabCompletionOpen,
 			deps.tabCompletionSuggestions,
 			deps.selectedTabCompletionIndex,
@@ -590,7 +491,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.atMentionStartIndex,
 			deps.atMentionSuggestions,
 			deps.selectedAtMentionIndex,
-			deps.activeBatchRunState,
 			deps.currentSessionBatchState,
 			deps.fileTree,
 			deps.canGoBack,
@@ -600,9 +500,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.filePreviewHistoryIndex,
 			deps.activeTab?.agentError,
 			deps.isWorktreeChild,
-			deps.contextWarningsEnabled,
-			deps.contextWarningYellowThreshold,
-			deps.contextWarningRedThreshold,
 			deps.summarizeProgress,
 			deps.summarizeResult,
 			deps.summarizeStartTime,
@@ -614,22 +511,14 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.mergeTargetName,
 			deps.ghCliAvailable,
 			deps.hasGist,
-			deps.showUnreadOnly,
-			deps.colorBlindMode,
 			// Stable callbacks (shouldn't cause re-renders, but included for completeness)
-			deps.setLogViewerSelectedLevels,
 			deps.setGitDiffPreview,
 			deps.setLogViewerOpen,
 			deps.setAgentSessionsOpen,
 			deps.setActiveAgentSessionId,
 			deps.handleResumeSession,
 			deps.handleNewAgentSession,
-			deps.setActiveFocus,
-			deps.setOutputSearchOpen,
-			deps.setOutputSearchQuery,
 			deps.setInputValue,
-			deps.setEnterToSendAI,
-			deps.setEnterToSendTerminal,
 			deps.setStagedImages,
 			deps.handleSetLightboxImage,
 			deps.setCommandHistoryOpen,
@@ -644,10 +533,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.setAtMentionFilter,
 			deps.setAtMentionStartIndex,
 			deps.setSelectedAtMentionIndex,
-			deps.setMarkdownEditMode,
-			deps.setChatRawTextMode,
-			deps.setAboutModalOpen,
-			deps.setRightPanelOpen,
 			deps.setGitLogOpen,
 			deps.toggleInputMode,
 			deps.processInput,
@@ -658,7 +543,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.getContextColor,
 			deps.setActiveSessionId,
 			deps.handleStopBatchRun,
-			deps.showConfirmation,
 			deps.handleDeleteLog,
 			deps.handleRemoveQueuedItem,
 			deps.handleOpenQueueBrowser,
@@ -736,8 +620,6 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.inputRef,
 			deps.logsEndRef,
 			deps.terminalOutputRef,
-			deps.fileTreeContainerRef,
-			deps.fileTreeFilterInputRef,
 		]
 	);
 }

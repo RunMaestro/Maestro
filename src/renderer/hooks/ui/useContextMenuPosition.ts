@@ -23,7 +23,7 @@ export function useContextMenuPosition(
 	menuRef: RefObject<HTMLElement | null>,
 	x: number,
 	y: number,
-	padding = 8,
+	padding = 8
 ): ContextMenuPosition {
 	const [position, setPosition] = useState<ContextMenuPosition>({
 		left: x,

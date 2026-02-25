@@ -167,11 +167,16 @@ describe('Group Chat Session ID Patterns', () => {
 		});
 
 		it('should match session IDs with UUID tab IDs', () => {
-			expect(REGEX_AI_SUFFIX.test('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb')).toBe(true);
+			expect(
+				REGEX_AI_SUFFIX.test(
+					'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'
+				)
+			).toBe(true);
 		});
 
 		it('should remove -ai- suffix correctly with UUID tab IDs', () => {
-			const sessionId = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
+			const sessionId =
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb';
 			const baseSessionId = sessionId.replace(REGEX_AI_SUFFIX, '');
 			expect(baseSessionId).toBe('51cee651-6629-4de8-abdd-1c1540555f2d');
 		});
@@ -189,7 +194,10 @@ describe('Group Chat Session ID Patterns', () => {
 		});
 
 		it('should extract UUID tab ID from session ID', () => {
-			const match = '51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(REGEX_AI_TAB_ID);
+			const match =
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb'.match(
+					REGEX_AI_TAB_ID
+				);
 			expect(match).not.toBeNull();
 			expect(match![1]).toBe('73aaeb23-6673-45a4-8fdf-c769802f79bb');
 		});

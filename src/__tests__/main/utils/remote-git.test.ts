@@ -213,12 +213,7 @@ describe('remote-git.ts', () => {
 			const expectedResult = successResult('abc1234\n');
 			mockExecFileNoThrow.mockResolvedValue(expectedResult);
 
-			const result = await execGit(
-				['rev-parse', 'HEAD'],
-				'/local/repo',
-				sshRemote,
-				'/remote/repo'
-			);
+			const result = await execGit(['rev-parse', 'HEAD'], '/local/repo', sshRemote, '/remote/repo');
 
 			expect(mockBuildSshCommand).toHaveBeenCalledWith(sshRemote, {
 				command: 'git',
@@ -376,9 +371,7 @@ describe('remote-git.ts', () => {
 		});
 
 		it('should return empty array on command failure', async () => {
-			mockExecFileNoThrow.mockResolvedValue(
-				failResult('fatal: not a git repository', 128)
-			);
+			mockExecFileNoThrow.mockResolvedValue(failResult('fatal: not a git repository', 128));
 
 			const result = await listWorktreesRemote('/not-a-repo', sshRemote);
 
@@ -539,9 +532,7 @@ describe('remote-git.ts', () => {
 		});
 
 		it('should return error when path existence check fails', async () => {
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				failResult('SSH connection refused', 255)
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(failResult('SSH connection refused', 255));
 
 			const result = await worktreeInfoRemote('/some/path', sshRemote);
 
@@ -616,12 +607,7 @@ describe('remote-git.ts', () => {
 			// git status --porcelain returns changes
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult(' M file.txt\n'));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'feature',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'feature', false, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
@@ -637,12 +623,7 @@ describe('remote-git.ts', () => {
 			// git checkout branchName
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'feature',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'feature', false, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(true);
@@ -657,12 +638,7 @@ describe('remote-git.ts', () => {
 			// git checkout -b branchName
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult(''));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'new-feature',
-				true,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'new-feature', true, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(true);
@@ -674,12 +650,7 @@ describe('remote-git.ts', () => {
 			// rev-parse --verify branchName (branch does not exist)
 			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 128));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'nonexistent',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'nonexistent', false, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
@@ -692,12 +663,7 @@ describe('remote-git.ts', () => {
 			// git status --porcelain fails
 			mockExecFileNoThrow.mockResolvedValueOnce(failResult('connection error', 255));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'main',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'main', false, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
@@ -711,16 +677,9 @@ describe('remote-git.ts', () => {
 			// rev-parse --verify (branch exists)
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('abc123\n'));
 			// git checkout fails
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				failResult('error: pathspec did not match', 1)
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(failResult('error: pathspec did not match', 1));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'broken-branch',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'broken-branch', false, sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
@@ -733,12 +692,7 @@ describe('remote-git.ts', () => {
 			// rev-parse --verify (branch does not exist)
 			mockExecFileNoThrow.mockResolvedValueOnce(failResult('', 128));
 
-			const result = await worktreeCheckoutRemote(
-				'/worktree',
-				'new-branch',
-				false,
-				sshRemote
-			);
+			const result = await worktreeCheckoutRemote('/worktree', 'new-branch', false, sshRemote);
 
 			// Since stdout.trim().length > 0 is false for whitespace-only, it's clean
 			// Actually '   \n  '.trim() = '' so length is 0 -> clean
@@ -855,18 +809,11 @@ describe('remote-git.ts', () => {
 
 		it('should return error when path existence check fails', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists fails
 			mockExecFileNoThrow.mockResolvedValueOnce(failResult('SSH error', 255));
 
-			const result = await worktreeSetupRemote(
-				'/a',
-				'/b',
-				'branch',
-				sshRemote
-			);
+			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
 
 			expect(result.success).toBe(false);
 			expect(result.error).toBe('SSH error');
@@ -874,9 +821,7 @@ describe('remote-git.ts', () => {
 
 		it('should return error when worktree creation fails', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('NOT_EXISTS'));
 			// Branch exists
@@ -884,12 +829,7 @@ describe('remote-git.ts', () => {
 			// git worktree add fails
 			mockExecFileNoThrow.mockResolvedValueOnce(failResult('fatal: already exists'));
 
-			const result = await worktreeSetupRemote(
-				'/a',
-				'/b',
-				'branch',
-				sshRemote
-			);
+			const result = await worktreeSetupRemote('/a', '/b', 'branch', sshRemote);
 
 			expect(result.success).toBe(true);
 			expect(result.data!.success).toBe(false);
@@ -898,9 +838,7 @@ describe('remote-git.ts', () => {
 
 		it('should handle existing non-empty non-git directory', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
 			// Is inside work tree -> fails (not a git repo)
@@ -917,9 +855,7 @@ describe('remote-git.ts', () => {
 
 		it('should remove empty non-git directory and create worktree', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
 			// Is inside work tree -> fails (not a git repo)
@@ -942,9 +878,7 @@ describe('remote-git.ts', () => {
 
 		it('should detect worktree belonging to different repository', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
 			// Is inside work tree -> yes
@@ -965,9 +899,7 @@ describe('remote-git.ts', () => {
 
 		it('should not report branch mismatch when requested branch is empty', async () => {
 			// Check nested
-			mockExecFileNoThrow.mockResolvedValueOnce(
-				successResult('/a\n/b\n')
-			);
+			mockExecFileNoThrow.mockResolvedValueOnce(successResult('/a\n/b\n'));
 			// Check path exists
 			mockExecFileNoThrow.mockResolvedValueOnce(successResult('EXISTS'));
 			// Is inside work tree -> yes
@@ -1004,9 +936,7 @@ describe('remote-git.ts', () => {
 		});
 
 		it('should return error on failure', async () => {
-			mockExecFileNoThrow.mockResolvedValue(
-				failResult('fatal: not a git repository', 128)
-			);
+			mockExecFileNoThrow.mockResolvedValue(failResult('fatal: not a git repository', 128));
 
 			const result = await getRepoRootRemote('/not-a-repo', sshRemote);
 

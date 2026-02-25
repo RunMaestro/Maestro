@@ -8,9 +8,7 @@ import { renderHook } from '@testing-library/react';
 import { useWorktreeManager } from '../../../../renderer/hooks/batch/useWorktreeManager';
 import type { BatchDocumentEntry } from '../../../../renderer/types';
 
-const singleDoc: BatchDocumentEntry[] = [
-	{ filename: 'auth-module', resetOnCompletion: false },
-];
+const singleDoc: BatchDocumentEntry[] = [{ filename: 'auth-module', resetOnCompletion: false }];
 
 const twoDocs: BatchDocumentEntry[] = [
 	{ filename: 'auth-module', resetOnCompletion: false },

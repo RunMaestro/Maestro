@@ -80,7 +80,7 @@ const prepareSessionForPersistence = (session: Session): Session => {
 	}));
 
 	// Return session without runtime-only fields
-	 
+
 	const {
 		closedTabHistory: _closedTabHistory,
 		unifiedClosedTabHistory: _unifiedClosedTabHistory,

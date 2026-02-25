@@ -298,7 +298,10 @@ const ToastItem = memo(function ToastItem({
 	);
 });
 
-export const ToastContainer = memo(function ToastContainer({ theme, onSessionClick }: ToastContainerProps) {
+export const ToastContainer = memo(function ToastContainer({
+	theme,
+	onSessionClick,
+}: ToastContainerProps) {
 	const toasts = useNotificationStore((s) => s.toasts);
 	const removeToast = useNotificationStore((s) => s.removeToast);
 

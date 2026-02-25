@@ -66,7 +66,11 @@ function buildResponse(
 	};
 }
 
-export async function send(agentIdArg: string, message: string, options: SendOptions): Promise<void> {
+export async function send(
+	agentIdArg: string,
+	message: string,
+	options: SendOptions
+): Promise<void> {
 	// Resolve agent ID (supports partial IDs)
 	let agentId: string;
 	try {
@@ -97,13 +101,19 @@ export async function send(agentIdArg: string, message: string, options: SendOpt
 	if (agent.toolType === 'claude-code') {
 		const claude = await detectClaude();
 		if (!claude.available) {
-			emitErrorJson('Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code', 'CLAUDE_NOT_FOUND');
+			emitErrorJson(
+				'Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code',
+				'CLAUDE_NOT_FOUND'
+			);
 			process.exit(1);
 		}
 	} else if (agent.toolType === 'codex') {
 		const codex = await detectCodex();
 		if (!codex.available) {
-			emitErrorJson('Codex CLI not found. Install with: npm install -g @openai/codex', 'CODEX_NOT_FOUND');
+			emitErrorJson(
+				'Codex CLI not found. Install with: npm install -g @openai/codex',
+				'CODEX_NOT_FOUND'
+			);
 			process.exit(1);
 		}
 	}

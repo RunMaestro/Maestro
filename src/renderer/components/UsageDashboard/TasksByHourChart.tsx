@@ -57,7 +57,10 @@ function formatHourFull(hour: number): string {
 	return `${displayHour}:00 ${suffix}`;
 }
 
-export const TasksByHourChart = memo(function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
+export const TasksByHourChart = memo(function TasksByHourChart({
+	timeRange,
+	theme,
+}: TasksByHourChartProps) {
 	const [tasks, setTasks] = useState<AutoRunTask[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);

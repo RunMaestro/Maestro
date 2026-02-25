@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { GroupChatInput } from '../../../renderer/components/GroupChatInput';
 import type { Theme, Session, Group, GroupChatParticipant } from '../../../renderer/types';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 // =============================================================================
 // TEST HELPERS
@@ -118,11 +119,30 @@ function typeInTextarea(textarea: HTMLTextAreaElement, value: string) {
 	fireEvent.change(textarea, { target: { value } });
 }
 
+/**
+ * Seeds the session store with groups and renders GroupChatInput
+ */
+function seedAndRender({
+	groups = [] as Group[],
+	sessions = [] as Session[],
+	...propOverrides
+}: { groups?: Group[]; sessions?: Session[] } & Partial<
+	Parameters<typeof GroupChatInput>[0]
+> = {}) {
+	useSessionStore.setState({ groups });
+	return render(<GroupChatInput {...createDefaultProps({ sessions, ...propOverrides })} />);
+}
+
 // =============================================================================
 // @MENTION AUTOCOMPLETE TESTS
 // =============================================================================
 
 describe('GroupChatInput', () => {
+	beforeEach(() => {
+		// Reset session store between tests (groups now read from store)
+		useSessionStore.setState({ groups: [] });
+	});
+
 	describe('@mention autocomplete', () => {
 		it('shows mention dropdown when typing @', () => {
 			const sessions = [
@@ -434,8 +454,7 @@ describe('GroupChatInput', () => {
 				{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
 				{ ...createMockSession('session-2', 'Agent2', 'claude-code'), groupId: 'group-1' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');
@@ -450,8 +469,7 @@ describe('GroupChatInput', () => {
 			const sessions = [
 				{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');
@@ -473,8 +491,7 @@ describe('GroupChatInput', () => {
 				{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
 				{ ...createMockSession('session-2', 'Agent2', 'claude-code'), groupId: 'group-1' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');
@@ -492,8 +509,7 @@ describe('GroupChatInput', () => {
 				{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
 				{ ...createMockSession('session-2', 'Agent2', 'claude-code'), groupId: 'group-1' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');
@@ -509,8 +525,7 @@ describe('GroupChatInput', () => {
 			const sessions = [
 				{ ...createMockSession('session-1', 'Term1', 'terminal'), groupId: 'group-1' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');
@@ -528,8 +543,7 @@ describe('GroupChatInput', () => {
 				{ ...createMockSession('session-1', 'Agent1', 'claude-code'), groupId: 'group-1' },
 				{ ...createMockSession('session-2', 'Agent2', 'claude-code'), groupId: 'group-2' },
 			];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions, groups })} />);
+			seedAndRender({ groups, sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@proj');
@@ -541,8 +555,7 @@ describe('GroupChatInput', () => {
 
 		it('works without groups prop', () => {
 			const sessions = [createMockSession('session-1', 'Agent1', 'claude-code')];
-
-			render(<GroupChatInput {...createDefaultProps({ sessions })} />);
+			seedAndRender({ sessions });
 
 			const textarea = screen.getByPlaceholderText(/Type a message/i) as HTMLTextAreaElement;
 			typeInTextarea(textarea, '@');

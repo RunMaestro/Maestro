@@ -12,7 +12,11 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import type { Theme } from '../../../renderer/types';
-import type { RegisteredRepository, SymphonyIssue, SymphonyCategory } from '../../../shared/symphony-types';
+import type {
+	RegisteredRepository,
+	SymphonyIssue,
+	SymphonyCategory,
+} from '../../../shared/symphony-types';
 
 // ============================================================================
 // Mocks
@@ -55,7 +59,12 @@ vi.mock('remark-gfm', () => ({
 vi.mock('lucide-react', () => {
 	const icon = (name: string) => {
 		const Component = ({ className, style, ...props }: Record<string, unknown>) => (
-			<svg data-testid={`icon-${name}`} className={className as string} style={style as React.CSSProperties} {...props} />
+			<svg
+				data-testid={`icon-${name}`}
+				className={className as string}
+				style={style as React.CSSProperties}
+				{...props}
+			/>
 		);
 		Component.displayName = name;
 		return Component;
