@@ -14,19 +14,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act, cleanup } from '@testing-library/react';
 
-// Mock useNavigationHistory before any imports that use it
 const mockPushNavigation = vi.fn();
-vi.mock('../../../renderer/hooks/session/useNavigationHistory', () => ({
-	useNavigationHistory: vi.fn(() => ({
-		pushNavigation: mockPushNavigation,
-		navigateBack: vi.fn(() => null),
-		navigateForward: vi.fn(() => null),
-		canGoBack: vi.fn(() => false),
-		canGoForward: vi.fn(() => false),
-		clearHistory: vi.fn(),
-		updateCurrentTab: vi.fn(),
-	})),
-}));
 
 import {
 	useSessionLifecycle,
@@ -106,6 +94,7 @@ function createDeps(overrides: Partial<SessionLifecycleDeps> = {}): SessionLifec
 	return {
 		flushSessionPersistence: mockFlushSessionPersistence,
 		setRemovedWorktreePaths: mockSetRemovedWorktreePaths,
+		pushNavigation: mockPushNavigation,
 		...overrides,
 	};
 }
@@ -194,6 +183,7 @@ describe('useSessionLifecycle', () => {
 				result.current.handleSaveEditAgent(
 					'session-1',
 					'New Name',
+					undefined, // toolType unchanged
 					'nudge msg',
 					'/custom/path',
 					'--arg1',
@@ -256,6 +246,119 @@ describe('useSessionLifecycle', () => {
 			expect(updated.name).toBe('Name Only');
 			expect(updated.nudgeMessage).toBeUndefined();
 			expect(updated.customPath).toBeUndefined();
+		});
+
+		it('resets tabs and provider-specific config when toolType changes', () => {
+			const tab = createMockAITab({ id: 'old-tab', agentSessionId: 'old-session' });
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'My Agent',
+				toolType: 'claude-code' as any,
+				aiTabs: [tab],
+				activeTabId: 'old-tab',
+				customPath: '/old/claude/path',
+				customArgs: '--old-args',
+				customEnvVars: { OLD_KEY: 'old' },
+				customModel: 'sonnet',
+				customContextWindow: 200000,
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'My Agent',
+					'opencode' as any, // Change provider
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Provider changed
+			expect(updated.toolType).toBe('opencode');
+			// Tabs reset to a single fresh tab
+			expect(updated.aiTabs).toHaveLength(1);
+			expect(updated.aiTabs[0].agentSessionId).toBeNull();
+			expect(updated.aiTabs[0].logs).toEqual([]);
+			expect(updated.activeTabId).toBe(updated.aiTabs[0].id);
+			expect(updated.activeTabId).not.toBe('old-tab');
+			// Provider-specific config cleared
+			expect(updated.customPath).toBeUndefined();
+			expect(updated.customArgs).toBeUndefined();
+			expect(updated.customEnvVars).toBeUndefined();
+			expect(updated.customModel).toBeUndefined();
+			expect(updated.customContextWindow).toBeUndefined();
+			// File preview tabs reset
+			expect(updated.filePreviewTabs).toEqual([]);
+			expect(updated.activeFileTabId).toBeNull();
+			// Unified tab order reset to single entry
+			expect(updated.unifiedTabOrder).toHaveLength(1);
+			expect(updated.unifiedTabOrder[0]).toEqual({ type: 'ai', id: updated.aiTabs[0].id });
+			// Runtime state reset
+			expect(updated.state).toBe('idle');
+			expect(updated.aiPid).toBe(0);
+			// Existing AI process killed
+			expect((window as any).maestro.process.kill).toHaveBeenCalledWith('session-1-ai');
+		});
+
+		it('does not reset tabs when toolType is same as current', () => {
+			const tab = createMockAITab({ id: 'my-tab', agentSessionId: 'my-session' });
+			const session = createMockSession({
+				id: 'session-1',
+				toolType: 'claude-code' as any,
+				aiTabs: [tab],
+				activeTabId: 'my-tab',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'Same Provider',
+					'claude-code' as any, // Same provider
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Tabs should NOT be reset
+			expect(updated.aiTabs).toHaveLength(1);
+			expect(updated.aiTabs[0].id).toBe('my-tab');
+			expect(updated.activeTabId).toBe('my-tab');
+			// Process should NOT be killed
+			expect((window as any).maestro.process.kill).not.toHaveBeenCalled();
+		});
+
+		it('preserves session identity fields when changing provider', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				name: 'My Agent',
+				toolType: 'claude-code' as any,
+				projectRoot: '/projects/myapp',
+				cwd: '/projects/myapp',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
+
+			act(() => {
+				result.current.handleSaveEditAgent(
+					'session-1',
+					'My Agent',
+					'codex' as any,
+				);
+			});
+
+			const updated = useSessionStore.getState().sessions[0];
+			// Identity fields preserved
+			expect(updated.id).toBe('session-1');
+			expect(updated.name).toBe('My Agent');
+			expect(updated.projectRoot).toBe('/projects/myapp');
+			expect(updated.cwd).toBe('/projects/myapp');
+			// Provider changed
+			expect(updated.toolType).toBe('codex');
 		});
 	});
 

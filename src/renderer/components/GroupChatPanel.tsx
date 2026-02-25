@@ -11,6 +11,7 @@ import type {
 	GroupChat,
 	GroupChatMessage,
 	GroupChatState,
+	Group,
 	Shortcut,
 	Session,
 	QueuedItem,
@@ -36,6 +37,7 @@ interface GroupChatPanelProps {
 	onToggleRightPanel: () => void;
 	shortcuts: Record<string, Shortcut>;
 	sessions: Session[];
+	groups?: Group[];
 	onDraftChange?: (draft: string) => void;
 	onOpenPromptComposer?: () => void;
 	// Lifted state for sync with PromptComposer
@@ -86,6 +88,7 @@ export function GroupChatPanel({
 	onToggleRightPanel,
 	shortcuts,
 	sessions,
+	groups,
 	onDraftChange,
 	onOpenPromptComposer,
 	stagedImages,
@@ -142,6 +145,7 @@ export function GroupChatPanel({
 				onSend={onSendMessage}
 				participants={groupChat.participants}
 				sessions={sessions}
+				groups={groups}
 				groupChatId={groupChat.id}
 				draftMessage={groupChat.draftMessage}
 				onDraftChange={onDraftChange}

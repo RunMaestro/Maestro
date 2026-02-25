@@ -409,12 +409,18 @@ export interface AppSessionModalsProps {
 	onSaveEditAgent: (
 		sessionId: string,
 		name: string,
+		toolType?: ToolType,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
-		customContextWindow?: number
+		customContextWindow?: number,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		}
 	) => void;
 	editAgentSession: Session | null;
 
@@ -1836,12 +1842,18 @@ export interface AppModalsProps {
 	onSaveEditAgent: (
 		sessionId: string,
 		name: string,
+		toolType?: ToolType,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
 		customEnvVars?: Record<string, string>,
 		customModel?: string,
-		customContextWindow?: number
+		customContextWindow?: number,
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		}
 	) => void;
 	editAgentSession: Session | null;
 	renameSessionModalOpen: boolean;

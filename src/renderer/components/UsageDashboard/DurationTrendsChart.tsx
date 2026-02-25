@@ -12,7 +12,7 @@
  * - Theme-aware line color and grid
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback, useId } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
@@ -143,7 +143,7 @@ function formatXAxisDate(dateStr: string, timeRange: StatsTimeRange): string {
 	}
 }
 
-export function DurationTrendsChart({
+export const DurationTrendsChart = memo(function DurationTrendsChart({
 	data,
 	timeRange,
 	theme,
@@ -293,11 +293,9 @@ export function DurationTrendsChart({
 		return { r: 100, g: 149, b: 237 }; // Default blue
 	}, [primaryColor]);
 
-	// Generate unique ID for gradient
-	const gradientId = useMemo(
-		() => `duration-gradient-${Math.random().toString(36).slice(2, 9)}`,
-		[]
-	);
+	// Stable unique ID for SVG gradient
+	const baseId = useId();
+	const gradientId = `duration-gradient-${baseId.replace(/:/g, '')}`;
 
 	return (
 		<div
@@ -544,6 +542,6 @@ export function DurationTrendsChart({
 			</div>
 		</div>
 	);
-}
+});
 
 export default DurationTrendsChart;

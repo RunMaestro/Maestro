@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { memo, useState, useEffect, useRef, useCallback } from 'react';
 import { Search } from 'lucide-react';
 import type { Session, Group, Theme, Shortcut, RightPanelTab, SettingsTab } from '../types';
 import type { GroupChat } from '../../shared/group-chat-types';
@@ -122,7 +122,7 @@ interface QuickActionsModalProps {
 	setAutoScrollAiMode?: (value: boolean) => void;
 }
 
-export function QuickActionsModal(props: QuickActionsModalProps) {
+export const QuickActionsModal = memo(function QuickActionsModal(props: QuickActionsModalProps) {
 	const {
 		theme,
 		sessions,
@@ -1563,4 +1563,4 @@ export function QuickActionsModal(props: QuickActionsModalProps) {
 			</div>
 		</div>
 	);
-}
+});

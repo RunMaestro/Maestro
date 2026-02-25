@@ -17,6 +17,12 @@ vi.mock('qrcode', () => ({
 	},
 }));
 
+// Mock sentry
+const mockCaptureException = vi.fn();
+vi.mock('../../../renderer/utils/sentry', () => ({
+	captureException: (...args: unknown[]) => mockCaptureException(...args),
+}));
+
 // Import the mocked module
 import QRCodeLib from 'qrcode';
 
@@ -253,7 +259,6 @@ describe('QRCode', () => {
 
 	describe('Error Handling', () => {
 		it('should show error state when generation fails', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockToDataURL.mockRejectedValue(new Error('Generation failed'));
 
 			render(<QRCode value="https://example.com" />);
@@ -262,12 +267,7 @@ describe('QRCode', () => {
 				expect(screen.getByText('Failed to generate QR code')).toBeInTheDocument();
 			});
 
-			expect(consoleErrorSpy).toHaveBeenCalledWith(
-				'Failed to generate QR code:',
-				expect.any(Error)
-			);
-
-			consoleErrorSpy.mockRestore();
+			expect(mockCaptureException).toHaveBeenCalledWith(expect.any(Error));
 		});
 
 		it('should apply error styling', async () => {

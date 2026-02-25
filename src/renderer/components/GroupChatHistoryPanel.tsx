@@ -9,6 +9,7 @@
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { Check, Send, MessageSquare, Layers, AlertTriangle } from 'lucide-react';
 import type { Theme } from '../types';
+import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import type {
 	GroupChatHistoryEntry,
 	GroupChatHistoryEntryType,
@@ -55,6 +56,8 @@ function GroupChatActivityGraph({
 }: GroupChatActivityGraphProps) {
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const contextMenuPos = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
 
 	// Get the current lookback config
 	const lookbackConfig = useMemo(
@@ -224,10 +227,12 @@ function GroupChatActivityGraph({
 			{/* Context menu for lookback options */}
 			{contextMenu && (
 				<div
+					ref={contextMenuRef}
 					className="fixed z-50 py-1 rounded border shadow-lg"
 					style={{
-						left: contextMenu.x,
-						top: contextMenu.y,
+						left: contextMenuPos.left,
+						top: contextMenuPos.top,
+						opacity: contextMenuPos.ready ? 1 : 0,
 						backgroundColor: theme.colors.bgSidebar,
 						borderColor: theme.colors.border,
 						minWidth: '120px',

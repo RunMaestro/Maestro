@@ -54,7 +54,7 @@ import { getStatusColor, getContextColor, formatActiveTime } from '../utils/them
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
-import { useLiveOverlay, useClickOutside, useResizablePanel } from '../hooks';
+import { useLiveOverlay, useClickOutside, useResizablePanel, useContextMenuPosition } from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
 import { useUIStore } from '../stores/uiStore';
 
@@ -130,11 +130,8 @@ function SessionContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	// Adjust menu position to stay within viewport
-	const adjustedPosition = {
-		left: Math.min(x, window.innerWidth - 200),
-		top: Math.min(y, window.innerHeight - 250),
-	};
+	// Measure menu and adjust position to stay within viewport
+	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// Calculate submenu position when showing
 	const handleMoveToGroupHover = () => {
@@ -176,8 +173,9 @@ function SessionContextMenu({
 			ref={menuRef}
 			className="fixed z-50 py-1 rounded-md shadow-xl border"
 			style={{
-				left: adjustedPosition.left,
-				top: adjustedPosition.top,
+				left,
+				top,
+				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '160px',

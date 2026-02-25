@@ -11,9 +11,10 @@
  * - Theme-aware styling
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Auto Run task data shape from the API
@@ -56,7 +57,7 @@ function formatHourFull(hour: number): string {
 	return `${displayHour}:00 ${suffix}`;
 }
 
-export function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
+export const TasksByHourChart = memo(function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
 	const [tasks, setTasks] = useState<AutoRunTask[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [error, setError] = useState<string | null>(null);
@@ -78,7 +79,7 @@ export function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
 			const taskResults = await Promise.all(taskPromises);
 			setTasks(taskResults.flat());
 		} catch (err) {
-			console.error('Failed to fetch Auto Run tasks:', err);
+			captureException(err);
 			setError(err instanceof Error ? err.message : 'Failed to load tasks');
 		} finally {
 			setLoading(false);
@@ -293,6 +294,6 @@ export function TasksByHourChart({ timeRange, theme }: TasksByHourChartProps) {
 			)}
 		</div>
 	);
-}
+});
 
 export default TasksByHourChart;

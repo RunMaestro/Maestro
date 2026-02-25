@@ -158,6 +158,7 @@ describe('groupChat IPC handlers', () => {
 				'groupChat:list',
 				'groupChat:load',
 				'groupChat:delete',
+				'groupChat:archive',
 				'groupChat:rename',
 				'groupChat:update',
 				// Chat log handlers

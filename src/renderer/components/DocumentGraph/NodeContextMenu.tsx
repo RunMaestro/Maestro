@@ -11,7 +11,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { FileText, ExternalLink, Copy, Focus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';
-import { useClickOutside } from '../../hooks/ui';
+import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
 
 /**
  * Props for the NodeContextMenu component
@@ -71,11 +71,8 @@ export function NodeContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
 
-	// Adjust menu position to stay within viewport
-	const adjustedPosition = {
-		left: Math.min(x, window.innerWidth - 180),
-		top: Math.min(y, window.innerHeight - 150),
-	};
+	// Measure menu and adjust position to stay within viewport
+	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
 	const isDocument = nodeData.nodeType === 'document';
 	const isExternal = nodeData.nodeType === 'external';
@@ -123,8 +120,9 @@ export function NodeContextMenu({
 			ref={menuRef}
 			className="fixed z-[10000] py-1 rounded-md shadow-xl border"
 			style={{
-				left: adjustedPosition.left,
-				top: adjustedPosition.top,
+				left,
+				top,
+				opacity: ready ? 1 : 0,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '160px',

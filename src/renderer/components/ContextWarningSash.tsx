@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react';
+import { memo, useMemo, useState, useCallback } from 'react';
 import { AlertTriangle, X } from 'lucide-react';
 import type { Theme } from '../types';
 
@@ -23,7 +23,7 @@ export interface ContextWarningSashProps {
  * - "Summarize & Continue" button for quick action
  * - Dismiss button that hides the warning until usage increases 10%+ or crosses threshold
  */
-export function ContextWarningSash({
+export const ContextWarningSash = memo(function ContextWarningSash({
 	theme: _theme,
 	contextUsage,
 	yellowThreshold,
@@ -179,6 +179,6 @@ export function ContextWarningSash({
       `}</style>
 		</div>
 	);
-}
+});
 
 export default ContextWarningSash;

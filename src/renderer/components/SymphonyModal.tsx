@@ -303,15 +303,17 @@ function IssueCard({
 	);
 	const isAvailable = issue.status === 'available' && !isBlocked;
 	const isClaimed = issue.status === 'in_progress';
+	const isSelectable = isAvailable || isBlocked;
 
 	return (
 		<div
 			role="button"
-			tabIndex={isAvailable ? 0 : -1}
-			onClick={isAvailable ? onSelect : undefined}
+			tabIndex={isSelectable ? 0 : -1}
+			onClick={isSelectable ? onSelect : undefined}
 			onKeyDown={
-				isAvailable
+				isSelectable
 					? (e) => {
+							if (e.target !== e.currentTarget) return;
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
 								onSelect();
@@ -319,8 +321,8 @@ function IssueCard({
 						}
 					: undefined
 			}
-			className={`w-full p-3 rounded-lg border text-left transition-all ${
-				!isAvailable ? 'opacity-60' : 'hover:bg-white/5 cursor-pointer'
+			className={`w-full p-3 rounded-lg border text-left transition-all outline-none focus-visible:ring-2 ${
+				isBlocked ? 'opacity-75 hover:bg-white/5 cursor-pointer' : !isAvailable ? 'opacity-60' : 'hover:bg-white/5 cursor-pointer'
 			} ${isSelected ? 'ring-2' : ''}`}
 			style={{
 				backgroundColor: isSelected ? theme.colors.bgActivity : theme.colors.bgMain,
@@ -776,20 +778,7 @@ function RepositoryDetailView({
 									<FileText className="w-3 h-3" />
 									<span>{selectedIssue.documentPaths.length} Auto Run documents to process</span>
 								</div>
-								{isIssueBlocked(selectedIssue) && (
-									<div
-										className="mt-2 px-2 py-1.5 rounded text-xs flex items-center gap-2"
-										style={{
-											backgroundColor: `${STATUS_COLORS.cancelled}15`,
-											color: STATUS_COLORS.cancelled,
-										}}
-									>
-										<Lock className="w-3 h-3 shrink-0" />
-										This issue is blocked by a dependency. The maintainer will remove the blocking
-										label when prerequisites are met.
-									</div>
-								)}
-							</div>
+														</div>
 
 							{/* Document selector dropdown */}
 							<div
@@ -909,18 +898,27 @@ function RepositoryDetailView({
 			</div>
 
 			{/* Footer */}
-			{selectedIssue && selectedIssue.status === 'available' && !isIssueBlocked(selectedIssue) && (
+			{selectedIssue && selectedIssue.status === 'available' && (
 				<div
 					className="shrink-0 px-4 py-3 border-t flex items-center justify-between"
 					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
 				>
 					<div className="flex items-center gap-2 text-sm" style={{ color: theme.colors.textDim }}>
-						<GitBranch className="w-4 h-4" />
-						<span>Will clone repo, create draft PR, and run all documents</span>
+						{isIssueBlocked(selectedIssue) ? (
+							<>
+								<Lock className="w-4 h-4" />
+								<span>Blocked by a dependency — the maintainer will unblock when prerequisites are met</span>
+							</>
+						) : (
+							<>
+								<GitBranch className="w-4 h-4" />
+								<span>Will clone repo, create draft PR, and run all documents</span>
+							</>
+						)}
 					</div>
 					<button
-						onClick={onStartContribution}
-						disabled={isStarting}
+						onClick={isIssueBlocked(selectedIssue) ? undefined : onStartContribution}
+						disabled={isStarting || isIssueBlocked(selectedIssue)}
 						className="px-4 py-2 rounded font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
 					>

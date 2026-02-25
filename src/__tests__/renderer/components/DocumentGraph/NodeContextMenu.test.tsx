@@ -122,17 +122,31 @@ describe('NodeContextMenu', () => {
 		});
 
 		it('adjusts position to stay within viewport', () => {
-			// Position that would overflow the viewport (assuming 180px menu width and 150px height)
-			const props = createProps({ x: window.innerWidth - 50, y: window.innerHeight - 50 });
-			const { container } = render(<NodeContextMenu {...props} />);
+			// Set known viewport dimensions
+			Object.defineProperty(window, 'innerWidth', { value: 800, configurable: true });
+			Object.defineProperty(window, 'innerHeight', { value: 600, configurable: true });
 
-			const menu = container.firstChild as HTMLElement;
-			const left = parseInt(menu.style.left);
-			const top = parseInt(menu.style.top);
+			// Mock getBoundingClientRect to return realistic menu dimensions
+			const originalGetBCR = Element.prototype.getBoundingClientRect;
+			Element.prototype.getBoundingClientRect = function () {
+				return { width: 180, height: 150, top: 0, left: 0, right: 180, bottom: 150, x: 0, y: 0, toJSON: () => ({}) };
+			};
 
-			// Should be adjusted to stay within viewport
-			expect(left).toBeLessThanOrEqual(window.innerWidth - 180);
-			expect(top).toBeLessThanOrEqual(window.innerHeight - 150);
+			try {
+				// Position near bottom-right edge
+				const props = createProps({ x: 750, y: 550 });
+				const { container } = render(<NodeContextMenu {...props} />);
+
+				const menu = container.firstChild as HTMLElement;
+				const left = parseInt(menu.style.left);
+				const top = parseInt(menu.style.top);
+
+				// Should be clamped so the menu stays within the viewport
+				expect(left).toBeLessThanOrEqual(800 - 180 - 8);
+				expect(top).toBeLessThanOrEqual(600 - 150 - 8);
+			} finally {
+				Element.prototype.getBoundingClientRect = originalGetBCR;
+			}
 		});
 	});
 

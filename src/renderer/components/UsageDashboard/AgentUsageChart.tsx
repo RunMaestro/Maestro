@@ -14,7 +14,7 @@
  * - Limits display to top 10 agents by query count
  */
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { memo, useState, useMemo, useCallback } from 'react';
 import { format, parseISO } from 'date-fns';
 import type { Theme, Session } from '../../types';
 import type { StatsTimeRange, StatsAggregation } from '../../hooks/stats/useStats';
@@ -162,7 +162,7 @@ function getSessionDisplayName(sessionId: string, sessions?: Session[]): string 
 	return sessionId.substring(0, 8).toUpperCase();
 }
 
-export function AgentUsageChart({
+export const AgentUsageChart = memo(function AgentUsageChart({
 	data,
 	timeRange,
 	theme,
@@ -554,6 +554,6 @@ export function AgentUsageChart({
 			</div>
 		</div>
 	);
-}
+});
 
 export default AgentUsageChart;

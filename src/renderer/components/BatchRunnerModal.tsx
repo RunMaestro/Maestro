@@ -111,13 +111,10 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	);
 
 	const handleOpenWorktreeConfig = useCallback(() => {
-		onClose();
-		// Defer opening the config modal to the next frame so the batch runner
-		// fully unmounts first — avoids state-batching race with the layer stack.
-		requestAnimationFrame(() => {
-			getModalActions().setWorktreeConfigModalOpen(true);
-		});
-	}, [onClose]);
+		// Open worktree config on top of the batch runner (WORKTREE_CONFIG priority 752 > BATCH_RUNNER 720).
+		// The batch runner stays open underneath so the user returns to it after configuring.
+		getModalActions().setWorktreeConfigModalOpen(true);
+	}, []);
 
 	// Document list state
 	const [documents, setDocuments] = useState<BatchDocumentEntry[]>(() => {

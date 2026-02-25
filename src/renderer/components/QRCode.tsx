@@ -5,8 +5,9 @@
  * No cloud services - all generation happens locally.
  */
 
-import { useState, useEffect } from 'react';
+import { memo, useState, useEffect } from 'react';
 import QRCodeLib from 'qrcode';
+import { captureException } from '../utils/sentry';
 
 interface QRCodeProps {
 	/** The URL or text to encode in the QR code */
@@ -23,7 +24,7 @@ interface QRCodeProps {
 	className?: string;
 }
 
-export function QRCode({
+export const QRCode = memo(function QRCode({
 	value,
 	size = 128,
 	bgColor = 'transparent',
@@ -55,7 +56,7 @@ export function QRCode({
 				setError(null);
 			})
 			.catch((err) => {
-				console.error('Failed to generate QR code:', err);
+				captureException(err);
 				setError('Failed to generate QR code');
 				setDataUrl(null);
 			});
@@ -96,4 +97,4 @@ export function QRCode({
 			style={{ imageRendering: 'pixelated' }}
 		/>
 	);
-}
+});

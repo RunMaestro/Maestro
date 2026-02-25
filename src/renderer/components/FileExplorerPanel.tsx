@@ -36,6 +36,7 @@ import { getExplorerFileIcon, getExplorerFolderIcon } from '../utils/theme';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
+import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { getRevealLabel } from '../utils/platformUtils';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
@@ -418,6 +419,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 		path: string;
 	} | null>(null);
 	const contextMenuRef = useRef<HTMLDivElement>(null);
+	const contextMenuPos = useContextMenuPosition(contextMenuRef, contextMenu?.x ?? 0, contextMenu?.y ?? 0);
 
 	// Rename modal state
 	const [renameModal, setRenameModal] = useState<{
@@ -1383,9 +1385,9 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 							backgroundColor: theme.colors.bgSidebar,
 							borderColor: theme.colors.border,
 							minWidth: '180px',
-							// Position menu, adjusting if it would go off-screen
-							top: Math.min(contextMenu.y, window.innerHeight - 200),
-							left: Math.min(contextMenu.x, window.innerWidth - 200),
+							top: contextMenuPos.top,
+							left: contextMenuPos.left,
+							opacity: contextMenuPos.ready ? 1 : 0,
 						}}
 					>
 						<div className="p-1">

@@ -458,40 +458,26 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					return { exists: true, isWorktree: false };
 				}
 
-				// Get the git directory path
-				const gitDirResult = await execFileNoThrow('git', ['rev-parse', '--git-dir'], worktreePath);
+				// Run git queries in parallel to reduce latency
+				const [gitDirResult, gitCommonDirResult, branchResult, repoRootResult] = await Promise.all([
+					execFileNoThrow('git', ['rev-parse', '--git-dir'], worktreePath),
+					execFileNoThrow('git', ['rev-parse', '--git-common-dir'], worktreePath),
+					execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], worktreePath),
+					execFileNoThrow('git', ['rev-parse', '--show-toplevel'], worktreePath),
+				]);
 				if (gitDirResult.exitCode !== 0) {
 					throw new Error('Failed to get git directory');
 				}
 				const gitDir = gitDirResult.stdout.trim();
 
-				// A worktree's .git is a file pointing to the main repo, not a directory
-				// Check if this is a worktree by looking for .git file (not directory) or checking git-common-dir
-				const gitCommonDirResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--git-common-dir'],
-					worktreePath
-				);
 				const gitCommonDir =
 					gitCommonDirResult.exitCode === 0 ? gitCommonDirResult.stdout.trim() : gitDir;
 
 				// If git-dir and git-common-dir are different, this is a worktree
 				const isWorktree = gitDir !== gitCommonDir;
 
-				// Get the current branch
-				const branchResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--abbrev-ref', 'HEAD'],
-					worktreePath
-				);
 				const currentBranch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : undefined;
 
-				// Get the repository root (of the main repository)
-				const repoRootResult = await execFileNoThrow(
-					'git',
-					['rev-parse', '--show-toplevel'],
-					worktreePath
-				);
 				let repoRoot: string | undefined;
 
 				if (isWorktree && gitCommonDir) {
@@ -644,21 +630,15 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				}
 
 				if (pathExists) {
-					// Get the common dir to check if it's the same repo
-					const gitCommonDirResult = await execFileNoThrow(
-						'git',
-						['rev-parse', '--git-common-dir'],
-						worktreePath
-					);
-					const mainGitDirResult = await execFileNoThrow(
-						'git',
-						['rev-parse', '--git-dir'],
-						mainRepoCwd
-					);
+					// Get the common dir to check if it's the same repo (parallel)
+					const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
+						execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
+						execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
+					]);
 
 					if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-						const worktreeCommonDir = path.resolve(worktreePath, gitCommonDirResult.stdout.trim());
-						const mainGitDir = path.resolve(mainRepoCwd, mainGitDirResult.stdout.trim());
+						const worktreeCommonDir = path.resolve(resolvedWorktree, gitCommonDirResult.stdout.trim());
+						const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
 
 						// Normalize paths for comparison
 						const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);

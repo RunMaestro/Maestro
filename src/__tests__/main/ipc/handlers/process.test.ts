@@ -394,6 +394,96 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalled();
 		});
 
+		it('should apply readOnlyEnvOverrides when readOnlyMode is true', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockApply = vi.mocked(applyAgentConfigOverrides);
+
+			// Simulate agent with YOLO env vars returned by applyAgentConfigOverrides
+			mockApply.mockReturnValueOnce({
+				args: [],
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}',
+				},
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				requiresPty: false,
+				readOnlyEnvOverrides: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2000, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-readonly-env',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+				readOnlyMode: true,
+			});
+
+			// The spawn call should receive the overridden env vars (without blanket permissions)
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+					}),
+				})
+			);
+		});
+
+		it('should NOT apply readOnlyEnvOverrides when readOnlyMode is false', async () => {
+			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
+			const mockApply = vi.mocked(applyAgentConfigOverrides);
+
+			const yoloConfig = '{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}';
+			mockApply.mockReturnValueOnce({
+				args: [],
+				modelSource: 'default',
+				customArgsSource: 'none',
+				customEnvSource: 'none',
+				effectiveCustomEnvVars: { OPENCODE_CONFIG_CONTENT: yoloConfig },
+			});
+
+			const mockAgent = {
+				id: 'opencode',
+				requiresPty: false,
+				readOnlyEnvOverrides: {
+					OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+				},
+			};
+
+			mockAgentDetector.getAgent.mockResolvedValue(mockAgent);
+			mockProcessManager.spawn.mockReturnValue({ pid: 2001, success: true });
+
+			const handler = handlers.get('process:spawn');
+			await handler!({} as any, {
+				sessionId: 'session-not-readonly',
+				toolType: 'opencode',
+				cwd: '/test',
+				command: 'opencode',
+				args: [],
+				// readOnlyMode not set (defaults to undefined/false)
+			});
+
+			// The spawn call should keep the original YOLO env vars
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					customEnvVars: expect.objectContaining({
+						OPENCODE_CONFIG_CONTENT: yoloConfig,
+					}),
+				})
+			);
+		});
+
 		it('should use sessionCustomPath for local execution when provided', async () => {
 			// When user sets a custom path for a session, it should be used for the command
 			// This allows users to use a different binary (e.g., a wrapper script)

@@ -190,7 +190,15 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					);
 				}
 
-				const effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
+				// In read-only mode, apply agent-specific env var overrides to strip
+				// blanket permission grants (e.g., OpenCode's "*":"allow" YOLO config)
+				let effectiveCustomEnvVars = configResolution.effectiveCustomEnvVars;
+				if (config.readOnlyMode && agent?.readOnlyEnvOverrides) {
+					effectiveCustomEnvVars = {
+						...(effectiveCustomEnvVars || {}),
+						...agent.readOnlyEnvOverrides,
+					};
+				}
 				if (configResolution.customEnvSource !== 'none' && effectiveCustomEnvVars) {
 					logger.debug(
 						`Custom env vars configured for ${config.toolType} (${configResolution.customEnvSource}-level)`,

@@ -1,4 +1,4 @@
-import React, { useRef, useCallback } from 'react';
+import React, { memo, useRef, useCallback } from 'react';
 import { AlertTriangle, Trash2 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -16,7 +16,7 @@ interface ConfirmModalProps {
 	confirmLabel?: string;
 }
 
-export function ConfirmModal({
+export const ConfirmModal = memo(function ConfirmModal({
 	theme,
 	message,
 	onConfirm,
@@ -72,4 +72,4 @@ export function ConfirmModal({
 			</div>
 		</Modal>
 	);
-}
+});
