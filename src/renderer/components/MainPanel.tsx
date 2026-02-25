@@ -854,7 +854,7 @@ export const MainPanel = React.memo(
 						{!isMobileLandscape && (
 							<div
 								ref={headerRef}
-								className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 relative z-20 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
+								className={`header-container h-16 border-b flex items-center justify-between px-6 shrink-0 ${isCurrentSessionAutoMode ? 'header-auto-mode' : ''}`}
 								style={{
 									borderColor: theme.colors.border,
 									backgroundColor: theme.colors.bgSidebar,
