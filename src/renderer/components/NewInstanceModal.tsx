@@ -56,6 +56,7 @@ interface EditAgentModalProps {
 	onSave: (
 		sessionId: string,
 		name: string,
+		toolType?: ToolType,
 		nudgeMessage?: string,
 		customPath?: string,
 		customArgs?: string,
@@ -1220,6 +1221,8 @@ export function EditAgentModal({
 	const [_customModel, setCustomModel] = useState('');
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
 	const [copiedId, setCopiedId] = useState(false);
+	// Provider change state
+	const [selectedToolType, setSelectedToolType] = useState<ToolType>(session?.toolType ?? 'claude-code');
 	// SSH Remote configuration
 	const [sshRemotes, setSshRemotes] = useState<SshRemoteConfig[]>([]);
 	const [sshRemoteConfig, setSshRemoteConfig] = useState<AgentSshRemoteConfig | undefined>(
@@ -1247,31 +1250,44 @@ export function EditAgentModal({
 		}
 	}, [session]);
 
-	// Load agent info, config, custom settings, and models when modal opens
+	// Track whether provider has been changed from the original
+	const providerChanged = session ? selectedToolType !== session.toolType : false;
+
+	// Load agent info, config, custom settings, and models when modal opens or provider changes
 	useEffect(() => {
 		if (isOpen && session) {
+			const activeToolType = selectedToolType;
+			const isProviderSwitch = activeToolType !== session.toolType;
+
 			// Load agent definition to get configOptions
 			window.maestro.agents.detect().then((agents: AgentConfig[]) => {
-				const foundAgent = agents.find((a) => a.id === session.toolType);
+				const foundAgent = agents.find((a) => a.id === activeToolType);
 				setAgent(foundAgent || null);
 
 				// Load models if agent supports model selection
 				if (foundAgent?.capabilities?.supportsModelSelection) {
 					setLoadingModels(true);
 					window.maestro.agents
-						.getModels(session.toolType)
+						.getModels(activeToolType)
 						.then((models) => setAvailableModels(models))
 						.catch((err) => console.error('Failed to load models:', err))
 						.finally(() => setLoadingModels(false));
+				} else {
+					setAvailableModels([]);
 				}
 			});
 			// Load agent config for defaults, but use session-level overrides when available
 			// Both model and contextWindow are now per-session
-			window.maestro.agents.getConfig(session.toolType).then((globalConfig) => {
-				// Use session-level values if set, otherwise use global defaults
-				const modelValue = session.customModel ?? globalConfig.model ?? '';
-				const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
-				setAgentConfig({ ...globalConfig, model: modelValue, contextWindow: contextWindowValue });
+			window.maestro.agents.getConfig(activeToolType).then((globalConfig) => {
+				if (isProviderSwitch) {
+					// When provider changed, use global defaults for the new provider
+					setAgentConfig(globalConfig);
+				} else {
+					// Use session-level values if set, otherwise use global defaults
+					const modelValue = session.customModel ?? globalConfig.model ?? '';
+					const contextWindowValue = session.customContextWindow ?? globalConfig.contextWindow;
+					setAgentConfig({ ...globalConfig, model: modelValue, contextWindow: contextWindowValue });
+				}
 			});
 
 			// Load SSH remote config from session (per-session, not global)
@@ -1296,19 +1312,27 @@ export function EditAgentModal({
 				.catch((err) => console.error('Failed to load SSH remotes:', err));
 
 			// Load per-session config (stored on the session/agent instance)
-			// No provider-level fallback - each agent has its own config
-			setCustomPath(session.customPath ?? '');
-			setCustomArgs(session.customArgs ?? '');
-			setCustomEnvVars(session.customEnvVars ?? {});
-			setCustomModel(session.customModel ?? '');
+			// When provider changed, clear provider-specific overrides
+			if (isProviderSwitch) {
+				setCustomPath('');
+				setCustomArgs('');
+				setCustomEnvVars({});
+				setCustomModel('');
+			} else {
+				setCustomPath(session.customPath ?? '');
+				setCustomArgs(session.customArgs ?? '');
+				setCustomEnvVars(session.customEnvVars ?? {});
+				setCustomModel(session.customModel ?? '');
+			}
 		}
-	}, [isOpen, session]);
+	}, [isOpen, session, selectedToolType]);
 
 	// Populate form when session changes or modal opens
 	useEffect(() => {
 		if (isOpen && session) {
 			setInstanceName(session.name);
 			setNudgeMessage(session.nudgeMessage || '');
+			setSelectedToolType(session.toolType);
 		}
 	}, [isOpen, session]);
 
@@ -1426,6 +1450,7 @@ export function EditAgentModal({
 		onSave(
 			session.id,
 			name,
+			providerChanged ? selectedToolType : undefined,
 			nudgeMessage.trim() || undefined,
 			customPath.trim() || undefined,
 			customArgs.trim() || undefined,
@@ -1444,6 +1469,8 @@ export function EditAgentModal({
 		customEnvVars,
 		agentConfig,
 		sshRemoteConfig,
+		selectedToolType,
+		providerChanged,
 		onSave,
 		onClose,
 		existingSessions,
@@ -1451,32 +1478,31 @@ export function EditAgentModal({
 
 	// Refresh available models
 	const refreshModels = useCallback(async () => {
-		if (!session || !agent?.capabilities?.supportsModelSelection) return;
+		if (!agent?.capabilities?.supportsModelSelection) return;
 		setLoadingModels(true);
 		try {
-			const models = await window.maestro.agents.getModels(session.toolType, true);
+			const models = await window.maestro.agents.getModels(selectedToolType, true);
 			setAvailableModels(models);
 		} catch (err) {
 			console.error('Failed to refresh models:', err);
 		} finally {
 			setLoadingModels(false);
 		}
-	}, [session, agent]);
+	}, [selectedToolType, agent]);
 
 	// Refresh agent detection
 	const handleRefreshAgent = useCallback(async () => {
-		if (!session) return;
 		setRefreshingAgent(true);
 		try {
-			const result = await window.maestro.agents.refresh(session.toolType);
-			const foundAgent = result.agents.find((a: AgentConfig) => a.id === session.toolType);
+			const result = await window.maestro.agents.refresh(selectedToolType);
+			const foundAgent = result.agents.find((a: AgentConfig) => a.id === selectedToolType);
 			setAgent(foundAgent || null);
 		} catch (error) {
 			console.error('Failed to refresh agent:', error);
 		} finally {
 			setRefreshingAgent(false);
 		}
-	}, [session]);
+	}, [selectedToolType]);
 
 	// Check if form is valid for submission
 	const isFormValid = useMemo(() => {
@@ -1510,7 +1536,7 @@ export function EditAgentModal({
 		opencode: 'OpenCode',
 		'factory-droid': 'Factory Droid',
 	};
-	const agentName = agentNameMap[session.toolType] || session.toolType;
+	const agentName = agentNameMap[selectedToolType] || selectedToolType;
 
 	return (
 		<div onKeyDown={handleKeyDown} role="group" aria-label="Edit agent dialog">
@@ -1582,7 +1608,7 @@ export function EditAgentModal({
 						heightClass="p-2"
 					/>
 
-						{/* Agent Provider (read-only) */}
+						{/* Agent Provider */}
 						<div>
 							<div
 								className="block text-xs font-bold opacity-70 uppercase mb-2"
@@ -1590,19 +1616,38 @@ export function EditAgentModal({
 							>
 								Agent Provider
 							</div>
-						<div
-							className="p-2 rounded border text-sm"
+						<select
+							value={selectedToolType}
+							onChange={(e) => setSelectedToolType(e.target.value as ToolType)}
+							className="w-full p-2 rounded border bg-transparent outline-none text-sm"
 							style={{
 								borderColor: theme.colors.border,
-								color: theme.colors.textDim,
-								backgroundColor: theme.colors.bgActivity,
+								color: theme.colors.textMain,
+								backgroundColor: theme.colors.bgMain,
 							}}
 						>
-							{agentName}
-						</div>
-						<p className="mt-1 text-xs" style={{ color: theme.colors.textDim }}>
-							Provider cannot be changed after creation.
-						</p>
+							{SUPPORTED_AGENTS.map((agentId) => (
+								<option key={agentId} value={agentId}>
+									{agentNameMap[agentId] || agentId}
+								</option>
+							))}
+						</select>
+						{providerChanged && (
+							<div
+								className="mt-2 p-2 rounded border text-xs flex items-start gap-2"
+								style={{
+									borderColor: theme.colors.warning + '60',
+									backgroundColor: theme.colors.warning + '10',
+									color: theme.colors.warning,
+								}}
+							>
+								<AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+								<span>
+									Changing the provider will clear your session list (tabs).
+									Your history panel data will persist.
+								</span>
+							</div>
+						)}
 					</div>
 
 						{/* Working Directory (read-only) */}
@@ -1751,7 +1796,7 @@ export function EditAgentModal({
 										...otherConfig
 									} = agentConfig;
 									if (Object.keys(otherConfig).length > 0) {
-										window.maestro.agents.setConfig(session.toolType, otherConfig);
+										window.maestro.agents.setConfig(selectedToolType, otherConfig);
 									}
 								}}
 								availableModels={availableModels}
