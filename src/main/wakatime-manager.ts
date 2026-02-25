@@ -626,7 +626,10 @@ export class WakaTimeManager {
 		}
 		if (!apiKey) return;
 
-		if (!(await this.ensureCliInstalled())) return;
+		if (!(await this.ensureCliInstalled())) {
+			logger.warn('WakaTime CLI not available — skipping file heartbeats', LOG_CONTEXT);
+			return;
+		}
 
 		const branch = projectCwd
 			? await this.detectBranch(`file:${projectCwd}`, projectCwd)

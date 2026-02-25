@@ -72,12 +72,14 @@ export function setupWakaTimeListener(
 		const sessionFiles = pendingFiles.get(sessionId);
 		if (!sessionFiles || sessionFiles.size === 0) return;
 
-		const filesArray = Array.from(sessionFiles.values()).map((f) => ({
-			filePath: path.isAbsolute(f.filePath)
-				? f.filePath
-				: path.resolve(projectDir || '', f.filePath),
-			timestamp: f.timestamp,
-		}));
+		const filesArray = Array.from(sessionFiles.values())
+			.map((f) => ({
+				filePath: path.isAbsolute(f.filePath)
+					? f.filePath
+					: projectDir ? path.resolve(projectDir, f.filePath) : null,
+				timestamp: f.timestamp,
+			}))
+			.filter((f): f is { filePath: string; timestamp: number } => f.filePath !== null);
 
 		void wakaTimeManager.sendFileHeartbeats(filesArray, projectName, projectDir, source);
 		pendingFiles.delete(sessionId);
@@ -120,9 +122,11 @@ export function setupWakaTimeListener(
 			: queryData.sessionId;
 		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath, queryData.source);
 
-		// Flush accumulated file heartbeats
+		// Flush accumulated file heartbeats (or clear if detailed tracking was disabled)
 		if (detailedEnabled) {
 			flushPendingFiles(queryData.sessionId, queryData.projectPath, projectName, queryData.source);
+		} else {
+			pendingFiles.delete(queryData.sessionId);
 		}
 
 		// Cancel any pending usage-based flush since query-complete already flushed
@@ -137,7 +141,11 @@ export function setupWakaTimeListener(
 	// including interactive). Debounced per-session since usage can fire multiple
 	// times per turn.
 	processManager.on('usage', (sessionId: string, _usageStats: UsageStats) => {
-		if (!enabled || !detailedEnabled) return;
+		if (!enabled) return;
+		if (!detailedEnabled) {
+			pendingFiles.delete(sessionId);
+			return;
+		}
 		if (!pendingFiles.has(sessionId) || pendingFiles.get(sessionId)!.size === 0) return;
 
 		// Reset existing timer for this session (debounce)
