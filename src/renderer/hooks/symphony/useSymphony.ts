@@ -158,9 +158,7 @@ export function useSymphony(): UseSymphonyReturn {
 
 	const fetchRegistry = useCallback(async (force: boolean = false) => {
 		try {
-			if (force) {
-				setIsRefreshing(true);
-			} else {
+			if (!force) {
 				setIsLoading(true);
 			}
 			setError(null);
@@ -175,7 +173,6 @@ export function useSymphony(): UseSymphonyReturn {
 			setError(err instanceof Error ? err.message : 'Failed to fetch registry');
 		} finally {
 			setIsLoading(false);
-			setIsRefreshing(false);
 		}
 	}, []);
 
@@ -267,7 +264,18 @@ export function useSymphony(): UseSymphonyReturn {
 
 	const refresh = useCallback(
 		async (force: boolean = true) => {
-			await Promise.all([fetchRegistry(force), fetchSymphonyState()]);
+			setIsRefreshing(true);
+			try {
+				await Promise.all([fetchRegistry(force), fetchSymphonyState()]);
+				// Re-check PR/issue statuses against GitHub so history entries
+				// reflect merges and closures that happened since last fetch
+				await window.maestro.symphony.checkPRStatuses();
+				await fetchSymphonyState();
+			} catch (err) {
+				console.error('Failed to refresh symphony:', err);
+			} finally {
+				setIsRefreshing(false);
+			}
 		},
 		[fetchRegistry, fetchSymphonyState]
 	);
