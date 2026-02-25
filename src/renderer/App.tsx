@@ -2295,17 +2295,57 @@ function MaestroConsoleInner() {
 	});
 
 	const rightPanelProps = useRightPanelProps({
-		// Theme (computed externally from settingsStore + themeId)
+		// Session & Theme
+		activeSession,
 		theme,
+		shortcuts,
+
+		// Panel state
+		rightPanelOpen,
+		rightPanelWidth,
+
+		// Tab state
+		activeRightTab,
+
+		// Focus management
+		activeFocus,
+
+		// File explorer state
+		fileTreeFilter,
+		fileTreeFilterOpen,
+		filteredFileTree,
+		selectedFileIndex,
+		showHiddenFiles,
+
+		// Auto Run state
+		autoRunDocumentList,
+		autoRunDocumentTree,
+		autoRunIsLoadingDocuments,
+		autoRunDocumentTaskCounts,
+
+		// Batch processing (convert null to undefined for component props)
+		activeBatchRunState: activeBatchRunState ?? undefined,
+		currentSessionBatchState: currentSessionBatchState ?? undefined,
+
+		// Document Graph
+		lastGraphFocusFilePath: lastGraphFocusFilePath || undefined,
 
 		// Refs
 		fileTreeContainerRef,
 		fileTreeFilterInputRef,
 
-		// Tab handler (custom logic: checks autorun folder before switching)
-		handleSetActiveRightTab,
+		// Setters
+		setRightPanelOpen,
+		setRightPanelWidth,
+		setActiveFocus,
+		setFileTreeFilter,
+		setFileTreeFilterOpen,
+		setSelectedFileIndex,
+		setShowHiddenFiles,
+		setSessions,
 
-		// File explorer handlers
+		// Handlers
+		handleSetActiveRightTab,
 		toggleFolder,
 		handleFileClick,
 		expandAllFolders,
@@ -2324,8 +2364,7 @@ function MaestroConsoleInner() {
 		handleAutoRunRefresh,
 		handleAutoRunOpenSetup,
 
-		// Batch processing (computed by useBatchHandlers, not a raw store field)
-		currentSessionBatchState: currentSessionBatchState ?? undefined,
+		// Batch processing handlers
 		handleOpenBatchRunner,
 		handleStopBatchRun,
 		handleKillBatchRun,

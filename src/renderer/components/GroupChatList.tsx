@@ -16,7 +16,7 @@ import {
 	ArchiveRestore,
 } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
-import { useClickOutside, useContextMenuPosition } from '../hooks';
+import { useClickOutside } from '../hooks';
 import { getStatusColor } from '../utils/theme';
 
 // ============================================================================
@@ -62,17 +62,19 @@ function GroupChatContextMenu({
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, [onClose]);
 
-	// Measure menu and adjust position to stay within viewport
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+	// Adjust menu position to stay within viewport
+	const adjustedPosition = {
+		left: Math.min(x, window.innerWidth - 150),
+		top: Math.min(y, window.innerHeight - 100),
+	};
 
 	return (
 		<div
 			ref={menuRef}
 			className="fixed z-50 py-1 rounded-md shadow-xl border"
 			style={{
-				left,
-				top,
-				opacity: ready ? 1 : 0,
+				left: adjustedPosition.left,
+				top: adjustedPosition.top,
 				backgroundColor: theme.colors.bgSidebar,
 				borderColor: theme.colors.border,
 				minWidth: '120px',
