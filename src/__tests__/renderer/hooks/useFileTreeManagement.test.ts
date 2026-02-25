@@ -146,7 +146,14 @@ describe('useFileTreeManagement', () => {
 		});
 
 		// For local sessions (no sshRemoteId), sshContext and localOptions are undefined
-		expect(loadFileTree).toHaveBeenCalledWith('/test/project', 10, 0, undefined, undefined, undefined);
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/test/project',
+			10,
+			0,
+			undefined,
+			undefined,
+			undefined
+		);
 		expect(compareFileTrees).toHaveBeenCalledWith(initialTree, nextTree);
 		expect(returnedChanges).toEqual(changes);
 		expect(state.getSessions()[0].fileTree).toEqual(nextTree);
@@ -199,7 +206,14 @@ describe('useFileTreeManagement', () => {
 
 		// loadFileTree always uses projectRoot (treeRoot), not shellCwd
 		// Git operations use shellCwd when inputMode is 'terminal'
-		expect(loadFileTree).toHaveBeenCalledWith('/test/project', 10, 0, undefined, undefined, undefined);
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/test/project',
+			10,
+			0,
+			undefined,
+			undefined,
+			undefined
+		);
 		expect(gitService.isRepo).toHaveBeenCalledWith('/test/shell', undefined);
 		expect(gitService.getBranches).toHaveBeenCalledWith('/test/shell', undefined);
 		expect(gitService.getTags).toHaveBeenCalledWith('/test/shell', undefined);
@@ -257,7 +271,14 @@ describe('useFileTreeManagement', () => {
 
 		await waitFor(() => {
 			// loadFileTree is now called with (path, maxDepth, currentDepth, sshContext)
-			expect(loadFileTree).toHaveBeenCalledWith('/test/project', 10, 0, undefined, undefined, undefined);
+			expect(loadFileTree).toHaveBeenCalledWith(
+				'/test/project',
+				10,
+				0,
+				undefined,
+				undefined,
+				undefined
+			);
 			expect(state.getSessions()[0].fileTree).toEqual(nextTree);
 		});
 	});
@@ -290,12 +311,19 @@ describe('useFileTreeManagement', () => {
 		});
 
 		// Verify SSH context is passed to loadFileTree
-		expect(loadFileTree).toHaveBeenCalledWith('/test/project', 10, 0, {
-			sshRemoteId: 'my-ssh-remote',
-			remoteCwd: '/remote/project',
-			honorGitignore: undefined,
-			ignorePatterns: undefined,
-		}, undefined, undefined);
+		expect(loadFileTree).toHaveBeenCalledWith(
+			'/test/project',
+			10,
+			0,
+			{
+				sshRemoteId: 'my-ssh-remote',
+				remoteCwd: '/remote/project',
+				honorGitignore: undefined,
+				ignorePatterns: undefined,
+			},
+			undefined,
+			undefined
+		);
 	});
 
 	it('fetches stats for sessions with file tree but no stats (migration)', async () => {

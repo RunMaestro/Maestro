@@ -899,6 +899,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 					'..',
 					'..',
 					'..',
+					'..',
 					'node_modules',
 					'better-sqlite3',
 					'bin'

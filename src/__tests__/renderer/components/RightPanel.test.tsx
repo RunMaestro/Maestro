@@ -3,6 +3,11 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { RightPanel, RightPanelHandle } from '../../../renderer/components/RightPanel';
 import { createRef } from 'react';
 import type { Session, Theme, Shortcut, BatchRunState } from '../../../renderer/types';
+import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useFileExplorerStore } from '../../../renderer/stores/fileExplorerStore';
+import { useBatchStore } from '../../../renderer/stores/batchStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 
 // Mock child components
 vi.mock('../../../renderer/components/FileExplorerPanel', () => ({
@@ -127,25 +132,11 @@ describe('RightPanel', () => {
 		},
 	};
 
-	const createDefaultProps = (overrides: Partial<ReturnType<typeof createDefaultProps>> = {}) => ({
-		session: mockSession,
+	// Props that remain as actual props (domain-logic handlers + theme + batch state + refs).
+	// State/store props are now read directly from Zustand stores inside RightPanel.
+	const createDefaultProps = (overrides: Record<string, any> = {}) => ({
 		theme: mockTheme,
-		shortcuts: mockShortcuts,
-		rightPanelOpen: true,
-		setRightPanelOpen: vi.fn(),
-		rightPanelWidth: 400,
-		setRightPanelWidthState: vi.fn(),
-		activeRightTab: 'files' as const,
 		setActiveRightTab: vi.fn(),
-		activeFocus: 'right',
-		setActiveFocus: vi.fn(),
-		fileTreeFilter: '',
-		setFileTreeFilter: vi.fn(),
-		fileTreeFilterOpen: false,
-		setFileTreeFilterOpen: vi.fn(),
-		filteredFileTree: [],
-		selectedFileIndex: 0,
-		setSelectedFileIndex: vi.fn(),
 		fileTreeContainerRef: { current: null } as React.RefObject<HTMLDivElement>,
 		fileTreeFilterInputRef: { current: null } as React.RefObject<HTMLInputElement>,
 		toggleFolder: vi.fn(),
@@ -154,13 +145,8 @@ describe('RightPanel', () => {
 		collapseAllFolders: vi.fn(),
 		updateSessionWorkingDirectory: vi.fn(),
 		refreshFileTree: vi.fn(),
-		setSessions: vi.fn(),
 		onAutoRefreshChange: vi.fn(),
 		onShowFlash: vi.fn(),
-		autoRunDocumentList: ['doc1', 'doc2'],
-		autoRunDocumentTree: [],
-		autoRunContent: '',
-		autoRunIsLoadingDocuments: false,
 		onAutoRunContentChange: vi.fn(),
 		onAutoRunModeChange: vi.fn(),
 		onAutoRunStateChange: vi.fn(),
@@ -168,8 +154,7 @@ describe('RightPanel', () => {
 		onAutoRunCreateDocument: vi.fn(),
 		onAutoRunRefresh: vi.fn(),
 		onAutoRunOpenSetup: vi.fn(),
-		batchRunState: undefined,
-		currentSessionBatchState: undefined, // For session-specific progress display
+		currentSessionBatchState: undefined as BatchRunState | undefined,
 		onOpenBatchRunner: vi.fn(),
 		onStopBatchRun: vi.fn(),
 		onKillBatchRun: vi.fn(),
@@ -187,6 +172,29 @@ describe('RightPanel', () => {
 			cb(0);
 			return 0;
 		});
+
+		// Initialize stores to default state for each test.
+		// State props formerly passed as RightPanel props are now read from stores directly.
+		useSessionStore.setState({ sessions: [mockSession], activeSessionId: 'session-1' });
+		useUIStore.setState({ rightPanelOpen: true, activeRightTab: 'files', activeFocus: 'right' });
+		useSettingsStore.setState({
+			rightPanelWidth: 400,
+			shortcuts: mockShortcuts,
+			showHiddenFiles: false,
+		});
+		useFileExplorerStore.setState({
+			fileTreeFilter: '',
+			fileTreeFilterOpen: false,
+			flatFileList: [],
+			selectedFileIndex: 0,
+			lastGraphFocusFilePath: undefined,
+		});
+		useBatchStore.setState({
+			documentList: ['doc1', 'doc2'],
+			documentTree: [] as any,
+			isLoadingDocuments: false,
+			documentTaskCounts: undefined as any,
+		});
 	});
 
 	afterEach(() => {
@@ -196,7 +204,8 @@ describe('RightPanel', () => {
 
 	describe('Render conditions', () => {
 		it('should return null when session is null', () => {
-			const props = createDefaultProps({ session: null });
+			useSessionStore.setState({ sessions: [], activeSessionId: null });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 			expect(container.firstChild).toBeNull();
 		});
@@ -209,7 +218,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should hide content when panel is closed', () => {
-			const props = createDefaultProps({ rightPanelOpen: false });
+			useUIStore.setState({ rightPanelOpen: false });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 			const panel = container.firstChild as HTMLElement;
 			expect(panel.style.width).toBe('0px');
@@ -217,7 +227,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should show content when panel is open', () => {
-			const props = createDefaultProps({ rightPanelOpen: true });
+			useUIStore.setState({ rightPanelOpen: true });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 			const panel = container.firstChild as HTMLElement;
 			expect(panel.style.width).toBe('400px');
@@ -226,30 +237,34 @@ describe('RightPanel', () => {
 
 	describe('Panel toggle', () => {
 		it('should show PanelRightClose icon when open', () => {
-			const props = createDefaultProps({ rightPanelOpen: true });
+			useUIStore.setState({ rightPanelOpen: true });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 			expect(screen.getByTestId('panel-right-close')).toBeInTheDocument();
 		});
 
 		it('should show PanelRightOpen icon when closed', () => {
-			const props = createDefaultProps({ rightPanelOpen: false });
+			useUIStore.setState({ rightPanelOpen: false });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 			expect(screen.getByTestId('panel-right-open')).toBeInTheDocument();
 		});
 
 		it('should call setRightPanelOpen when toggle button clicked', () => {
-			const setRightPanelOpen = vi.fn();
-			const props = createDefaultProps({ setRightPanelOpen, rightPanelOpen: true });
+			useUIStore.setState({ rightPanelOpen: true });
+			const spy = vi.spyOn(useUIStore.getState(), 'setRightPanelOpen');
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			const toggleButton = screen.getByTitle(/collapse right panel/i);
 			fireEvent.click(toggleButton);
 
-			expect(setRightPanelOpen).toHaveBeenCalledWith(false);
+			expect(spy).toHaveBeenCalledWith(false);
 		});
 
 		it('should have correct tooltip with keyboard shortcut', () => {
-			const props = createDefaultProps({ rightPanelOpen: true });
+			useUIStore.setState({ rightPanelOpen: true });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			const toggleButton = screen.getByTitle(/collapse right panel/i);
@@ -268,7 +283,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should highlight active tab with accent color', () => {
-			const props = createDefaultProps({ activeRightTab: 'files' });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			const filesTab = screen.getByRole('button', { name: 'Files' });
@@ -277,7 +293,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should show transparent border for inactive tabs', () => {
-			const props = createDefaultProps({ activeRightTab: 'files' });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			const historyTab = screen.getByRole('button', { name: 'History' });
@@ -302,7 +319,8 @@ describe('RightPanel', () => {
 
 	describe('Tab content', () => {
 		it('should show FileExplorerPanel when files tab is active', () => {
-			const props = createDefaultProps({ activeRightTab: 'files' });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
@@ -311,7 +329,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should show HistoryPanel when history tab is active', () => {
-			const props = createDefaultProps({ activeRightTab: 'history' });
+			useUIStore.setState({ activeRightTab: 'history' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
@@ -320,7 +339,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should show AutoRun when autorun tab is active', () => {
-			const props = createDefaultProps({ activeRightTab: 'autorun' });
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTestId('file-explorer-panel')).not.toBeInTheDocument();
@@ -331,25 +351,26 @@ describe('RightPanel', () => {
 
 	describe('Focus management', () => {
 		it('should call setActiveFocus when panel is clicked', () => {
-			const setActiveFocus = vi.fn();
-			const props = createDefaultProps({ setActiveFocus });
+			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			fireEvent.click(container.firstChild as Element);
-			expect(setActiveFocus).toHaveBeenCalledWith('right');
+			expect(spy).toHaveBeenCalledWith('right');
 		});
 
 		it('should call setActiveFocus when panel is focused', () => {
-			const setActiveFocus = vi.fn();
-			const props = createDefaultProps({ setActiveFocus });
+			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			fireEvent.focus(container.firstChild as Element);
-			expect(setActiveFocus).toHaveBeenCalledWith('right');
+			expect(spy).toHaveBeenCalledWith('right');
 		});
 
 		it('should show focus ring when activeFocus is right', () => {
-			const props = createDefaultProps({ activeFocus: 'right' });
+			useUIStore.setState({ activeFocus: 'right' });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
@@ -358,7 +379,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should not show focus ring when activeFocus is not right', () => {
-			const props = createDefaultProps({ activeFocus: 'main' });
+			useUIStore.setState({ activeFocus: 'main' });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
@@ -368,7 +390,8 @@ describe('RightPanel', () => {
 
 	describe('Resize handle', () => {
 		it('should render resize handle when panel is open', () => {
-			const props = createDefaultProps({ rightPanelOpen: true });
+			useUIStore.setState({ rightPanelOpen: true });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize');
@@ -376,7 +399,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should not render resize handle when panel is closed', () => {
-			const props = createDefaultProps({ rightPanelOpen: false });
+			useUIStore.setState({ rightPanelOpen: false });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize');
@@ -384,8 +408,9 @@ describe('RightPanel', () => {
 		});
 
 		it('should handle mouse down on resize handle', () => {
-			const setRightPanelWidthState = vi.fn();
-			const props = createDefaultProps({ setRightPanelWidthState, rightPanelWidth: 400 });
+			useSettingsStore.setState({ rightPanelWidth: 400 });
+			const spy = vi.spyOn(useSettingsStore.getState(), 'setRightPanelWidth');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
@@ -397,16 +422,17 @@ describe('RightPanel', () => {
 			fireEvent.mouseMove(document, { clientX: 450 }); // 50px to the left (makes panel wider since reversed)
 
 			// State is only updated on mouseUp for performance (avoids ~60 re-renders/sec)
-			expect(setRightPanelWidthState).not.toHaveBeenCalled();
+			expect(spy).not.toHaveBeenCalled();
 
 			// End resize - state is updated
 			fireEvent.mouseUp(document);
-			expect(setRightPanelWidthState).toHaveBeenCalled();
+			expect(spy).toHaveBeenCalled();
 		});
 
 		it('should respect min/max width constraints during resize', () => {
-			const setRightPanelWidthState = vi.fn();
-			const props = createDefaultProps({ setRightPanelWidthState, rightPanelWidth: 400 });
+			useSettingsStore.setState({ rightPanelWidth: 400 });
+			const spy = vi.spyOn(useSettingsStore.getState(), 'setRightPanelWidth');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
@@ -421,14 +447,14 @@ describe('RightPanel', () => {
 			fireEvent.mouseUp(document);
 
 			// Should be clamped to max 800
-			const calls = setRightPanelWidthState.mock.calls;
+			const calls = spy.mock.calls;
 			const lastCall = calls[calls.length - 1][0];
 			expect(lastCall).toBeLessThanOrEqual(800);
 		});
 
 		it('should save width on mouse up', () => {
-			const setRightPanelWidthState = vi.fn();
-			const props = createDefaultProps({ setRightPanelWidthState, rightPanelWidth: 400 });
+			useSettingsStore.setState({ rightPanelWidth: 400 });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const resizeHandle = container.querySelector('.cursor-col-resize') as HTMLElement;
@@ -451,8 +477,9 @@ describe('RightPanel', () => {
 
 	describe('Scroll position tracking', () => {
 		it('should update session scroll position on scroll for files tab', () => {
-			const setSessions = vi.fn();
-			const props = createDefaultProps({ activeRightTab: 'files', setSessions });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const spy = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -462,12 +489,13 @@ describe('RightPanel', () => {
 
 			fireEvent.scroll(scrollContainer);
 
-			expect(setSessions).toHaveBeenCalled();
+			expect(spy).toHaveBeenCalled();
 		});
 
 		it('should not update scroll position for non-files tabs', () => {
-			const setSessions = vi.fn();
-			const props = createDefaultProps({ activeRightTab: 'history', setSessions });
+			useUIStore.setState({ activeRightTab: 'history' });
+			const spy = vi.spyOn(useSessionStore.getState(), 'setSessions');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -475,11 +503,8 @@ describe('RightPanel', () => {
 
 			fireEvent.scroll(scrollContainer);
 
-			// setSessions may be called for other reasons, but not for scroll tracking
-			// The implementation checks activeRightTab === 'files'
-			const calls = setSessions.mock.calls;
-			// Should not be called for scroll tracking
-			expect(calls.length).toBe(0);
+			// setSessions should not be called for scroll tracking on non-files tabs
+			expect(spy).not.toHaveBeenCalled();
 		});
 	});
 
@@ -975,11 +1000,8 @@ describe('RightPanel', () => {
 
 	describe('Focus effects', () => {
 		it('should not focus history panel when tab is not history', () => {
-			const props = createDefaultProps({
-				activeRightTab: 'files',
-				rightPanelOpen: true,
-				activeFocus: 'right',
-			});
+			useUIStore.setState({ activeRightTab: 'files', rightPanelOpen: true, activeFocus: 'right' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			// requestAnimationFrame should not trigger focus for non-history tab
@@ -989,11 +1011,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should not focus autorun panel when tab is not autorun', () => {
-			const props = createDefaultProps({
-				activeRightTab: 'files',
-				rightPanelOpen: true,
-				activeFocus: 'right',
-			});
+			useUIStore.setState({ activeRightTab: 'files', rightPanelOpen: true, activeFocus: 'right' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.queryByTestId('auto-run')).not.toBeInTheDocument();
@@ -1002,18 +1021,19 @@ describe('RightPanel', () => {
 
 	describe('Content container click behavior', () => {
 		it('should set active focus when content area is clicked', () => {
-			const setActiveFocus = vi.fn();
-			const props = createDefaultProps({ setActiveFocus });
+			const spy = vi.spyOn(useUIStore.getState(), 'setActiveFocus');
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const contentArea = container.querySelector('.overflow-y-auto') as HTMLElement;
 			fireEvent.click(contentArea);
 
-			expect(setActiveFocus).toHaveBeenCalledWith('right');
+			expect(spy).toHaveBeenCalledWith('right');
 		});
 
 		it('should have content container with tabIndex -1 for programmatic focus', () => {
-			const props = createDefaultProps({ activeRightTab: 'files' });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const contentArea = container.querySelector('.overflow-y-auto') as HTMLElement;
@@ -1021,14 +1041,16 @@ describe('RightPanel', () => {
 		});
 
 		it('should render files content when files tab is active', () => {
-			const props = createDefaultProps({ activeRightTab: 'files' });
+			useUIStore.setState({ activeRightTab: 'files' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByTestId('file-explorer-panel')).toBeInTheDocument();
 		});
 
 		it('should render autorun content when autorun tab is active', () => {
-			const props = createDefaultProps({ activeRightTab: 'autorun' });
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			const props = createDefaultProps();
 			render(<RightPanel {...props} />);
 
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
@@ -1055,7 +1077,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should apply theme accent color to focus ring', () => {
-			const props = createDefaultProps({ activeFocus: 'right' });
+			useUIStore.setState({ activeFocus: 'right' });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
@@ -1064,7 +1087,8 @@ describe('RightPanel', () => {
 		});
 
 		it('should apply correct width based on rightPanelWidth', () => {
-			const props = createDefaultProps({ rightPanelWidth: 500 });
+			useSettingsStore.setState({ rightPanelWidth: 500 });
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const panel = container.firstChild as HTMLElement;
@@ -1083,26 +1107,29 @@ describe('RightPanel', () => {
 				autoRunEditScrollPos: undefined,
 				autoRunPreviewScrollPos: undefined,
 			};
-			const props = createDefaultProps({
-				session: sessionWithoutOptional,
-				activeRightTab: 'autorun',
+			useSessionStore.setState({
+				sessions: [sessionWithoutOptional],
+				activeSessionId: 'session-1',
 			});
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			const props = createDefaultProps();
 
 			expect(() => render(<RightPanel {...props} />)).not.toThrow();
 		});
 
 		it('should handle empty autoRunDocumentList', () => {
-			const props = createDefaultProps({ autoRunDocumentList: [], activeRightTab: 'autorun' });
+			useBatchStore.setState({ documentList: [] });
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			const props = createDefaultProps();
 
 			expect(() => render(<RightPanel {...props} />)).not.toThrow();
 			expect(screen.getByTestId('auto-run')).toBeInTheDocument();
 		});
 
 		it('should handle undefined autoRunDocumentTree', () => {
-			const props = createDefaultProps({
-				autoRunDocumentTree: undefined,
-				activeRightTab: 'autorun',
-			});
+			useBatchStore.setState({ documentTree: undefined as any });
+			useUIStore.setState({ activeRightTab: 'autorun' });
+			const props = createDefaultProps();
 
 			expect(() => render(<RightPanel {...props} />)).not.toThrow();
 		});
@@ -1427,6 +1454,8 @@ describe('RightPanel', () => {
 
 	describe('Scroll position tracking with callback execution', () => {
 		it('should execute setSessions callback to update fileExplorerScrollPos', () => {
+			useUIStore.setState({ activeRightTab: 'files' });
+
 			const setSessions = vi.fn((callback) => {
 				// Execute the callback with a mock sessions array
 				if (typeof callback === 'function') {
@@ -1440,7 +1469,10 @@ describe('RightPanel', () => {
 					expect(result[1].fileExplorerScrollPos).toBeUndefined();
 				}
 			});
-			const props = createDefaultProps({ activeRightTab: 'files', setSessions });
+			// Replace the store's setSessions with our mock so the component calls it
+			vi.spyOn(useSessionStore.getState(), 'setSessions').mockImplementation(setSessions as any);
+
+			const props = createDefaultProps();
 			const { container } = render(<RightPanel {...props} />);
 
 			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;

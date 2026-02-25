@@ -456,15 +456,17 @@ describe('StdoutHandler', () => {
 		 * via the 'usage' event emitter.
 		 */
 
-		function createOutputParserMock(usageReturn: {
-			inputTokens: number;
-			outputTokens: number;
-			cacheReadTokens?: number;
-			cacheCreationTokens?: number;
-			costUsd?: number;
-			contextWindow?: number;
-			reasoningTokens?: number;
-		} | null) {
+		function createOutputParserMock(
+			usageReturn: {
+				inputTokens: number;
+				outputTokens: number;
+				cacheReadTokens?: number;
+				cacheCreationTokens?: number;
+				costUsd?: number;
+				contextWindow?: number;
+				reasoningTokens?: number;
+			} | null
+		) {
 			return {
 				agentId: 'claude-code',
 				parseJsonLine: vi.fn((line: string) => {
@@ -575,10 +577,10 @@ describe('StdoutHandler', () => {
 
 			expect(usageSpy).toHaveBeenCalledTimes(2);
 			const delta = usageSpy.mock.calls[1][1];
-			expect(delta.inputTokens).toBe(800);  // 1800 - 1000
-			expect(delta.outputTokens).toBe(400);  // 900 - 500
-			expect(delta.cacheReadInputTokens).toBe(150);  // 350 - 200
-			expect(delta.cacheCreationInputTokens).toBe(80);  // 180 - 100
+			expect(delta.inputTokens).toBe(800); // 1800 - 1000
+			expect(delta.outputTokens).toBe(400); // 900 - 500
+			expect(delta.cacheReadInputTokens).toBe(150); // 350 - 200
+			expect(delta.cacheCreationInputTokens).toBe(80); // 180 - 100
 
 			// Cost and contextWindow should still be passed through from the raw stats
 			expect(delta.totalCostUsd).toBe(0.09);
@@ -757,15 +759,15 @@ describe('StdoutHandler', () => {
 
 			// Turn 2: delta from turn 1
 			sendJsonLine(handler, sessionId, { type: 'message', text: 'turn 2' });
-			expect(usageSpy.mock.calls[1][1].inputTokens).toBe(700);   // 1200 - 500
-			expect(usageSpy.mock.calls[1][1].outputTokens).toBe(400);  // 600 - 200
+			expect(usageSpy.mock.calls[1][1].inputTokens).toBe(700); // 1200 - 500
+			expect(usageSpy.mock.calls[1][1].outputTokens).toBe(400); // 600 - 200
 
 			// Turn 3: delta from turn 2
 			sendJsonLine(handler, sessionId, { type: 'message', text: 'turn 3' });
-			expect(usageSpy.mock.calls[2][1].inputTokens).toBe(800);   // 2000 - 1200
-			expect(usageSpy.mock.calls[2][1].outputTokens).toBe(400);  // 1000 - 600
-			expect(usageSpy.mock.calls[2][1].cacheReadInputTokens).toBe(200);  // 500 - 300
-			expect(usageSpy.mock.calls[2][1].cacheCreationInputTokens).toBe(80);  // 200 - 120
+			expect(usageSpy.mock.calls[2][1].inputTokens).toBe(800); // 2000 - 1200
+			expect(usageSpy.mock.calls[2][1].outputTokens).toBe(400); // 1000 - 600
+			expect(usageSpy.mock.calls[2][1].cacheReadInputTokens).toBe(200); // 500 - 300
+			expect(usageSpy.mock.calls[2][1].cacheCreationInputTokens).toBe(80); // 200 - 120
 
 			expect(proc.usageIsCumulative).toBe(true);
 		});
@@ -862,9 +864,9 @@ describe('StdoutHandler', () => {
 
 			expect(usageSpy).toHaveBeenCalledTimes(2);
 			const delta = usageSpy.mock.calls[1][1];
-			expect(delta.inputTokens).toBe(500);       // 1000 - 500
-			expect(delta.outputTokens).toBe(200);       // 400 - 200
-			expect(delta.reasoningTokens).toBe(150);    // 250 - 100
+			expect(delta.inputTokens).toBe(500); // 1000 - 500
+			expect(delta.outputTokens).toBe(200); // 400 - 200
+			expect(delta.reasoningTokens).toBe(150); // 250 - 100
 		});
 
 		it('should detect decrease in reasoningTokens as non-monotonic', () => {
@@ -1006,8 +1008,8 @@ describe('StdoutHandler', () => {
 
 			expect(usageSpy).toHaveBeenCalledTimes(2);
 			const delta = usageSpy.mock.calls[1][1];
-			expect(delta.inputTokens).toBe(700);   // 1200 - 500
-			expect(delta.outputTokens).toBe(400);   // 600 - 200
+			expect(delta.inputTokens).toBe(700); // 1200 - 500
+			expect(delta.outputTokens).toBe(400); // 600 - 200
 
 			expect(proc.usageIsCumulative).toBe(true);
 		});
@@ -1166,10 +1168,7 @@ describe('StdoutHandler', () => {
 			});
 
 			handler.handleData(sessionId, 'This is not JSON\n');
-			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
-				sessionId,
-				'This is not JSON'
-			);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'This is not JSON');
 		});
 
 		it('should append to stdoutBuffer for each processed line in stream JSON mode', () => {

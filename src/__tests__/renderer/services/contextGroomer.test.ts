@@ -542,7 +542,6 @@ describe('AGENT_TARGET_NOTES', () => {
 		expect(notes).toContain('OpenAI');
 		expect(notes).toContain('reasoning');
 	});
-
 });
 
 describe('getAgentDisplayName', () => {

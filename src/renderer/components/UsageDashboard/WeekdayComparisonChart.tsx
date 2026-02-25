@@ -270,7 +270,7 @@ export const WeekdayComparisonChart = memo(function WeekdayComparisonChart({
 					style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 				>
 					{comparisonData.weekend.avgQueriesPerDay > 0 &&
-				comparisonData.weekday.avgQueriesPerDay > comparisonData.weekend.avgQueriesPerDay ? (
+					comparisonData.weekday.avgQueriesPerDay > comparisonData.weekend.avgQueriesPerDay ? (
 						<span>
 							You're{' '}
 							<strong style={{ color: theme.colors.textMain }}>

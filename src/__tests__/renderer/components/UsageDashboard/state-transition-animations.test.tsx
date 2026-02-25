@@ -118,6 +118,7 @@ class MockResizeObserver {
 const mockStats = {
 	getAggregation: vi.fn(),
 	getDatabaseSize: vi.fn(),
+	getAutoRunSessions: vi.fn().mockResolvedValue([]),
 	onStatsUpdate: vi.fn(() => () => {}),
 	exportCsv: vi.fn(),
 };

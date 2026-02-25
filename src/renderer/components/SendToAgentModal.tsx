@@ -500,14 +500,14 @@ export function SendToAgentModal({
 							<label htmlFor="search-sessions-input" className="sr-only">
 								Search sessions
 							</label>
-								<input
-									id="search-sessions-input"
-									ref={inputRef}
-									type="text"
-									placeholder="Search sessions..."
-									value={searchQuery}
-									onChange={(e) => handleSearchQueryChange(e.target.value)}
-									aria-controls="session-list"
+							<input
+								id="search-sessions-input"
+								ref={inputRef}
+								type="text"
+								placeholder="Search sessions..."
+								value={searchQuery}
+								onChange={(e) => handleSearchQueryChange(e.target.value)}
+								aria-controls="session-list"
 								className="w-full pl-9 pr-3 py-2 rounded-lg border text-sm outline-none"
 								style={{
 									backgroundColor: theme.colors.bgMain,

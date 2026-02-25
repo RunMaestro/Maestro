@@ -145,7 +145,6 @@ export function GroupChatPanel({
 				onSend={onSendMessage}
 				participants={groupChat.participants}
 				sessions={sessions}
-				groups={groups}
 				groupChatId={groupChat.id}
 				draftMessage={groupChat.draftMessage}
 				onDraftChange={onDraftChange}

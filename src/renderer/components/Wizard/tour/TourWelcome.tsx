@@ -23,11 +23,7 @@ interface TourWelcomeProps {
  * Renders a centered modal with the welcome content and
  * navigation options to start or skip the tour.
  */
-export function TourWelcome({
-	theme,
-	onStartTour,
-	onSkip,
-}: TourWelcomeProps): JSX.Element {
+export function TourWelcome({ theme, onStartTour, onSkip }: TourWelcomeProps): JSX.Element {
 	return (
 		<div
 			className="tour-step-tooltip rounded-xl shadow-2xl overflow-hidden tour-welcome-enter"

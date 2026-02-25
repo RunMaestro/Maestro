@@ -376,7 +376,9 @@ describe('SummaryCards', () => {
 
 	describe('Icons', () => {
 		it('renders SVG icons for each metric', () => {
-			const { container } = render(<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />);
+			const { container } = render(
+				<SummaryCards data={mockData} theme={theme} sessions={mockSessions} />
+			);
 
 			// Each card should have an SVG icon (10 cards = 10 icons)
 			const svgElements = container.querySelectorAll('svg');

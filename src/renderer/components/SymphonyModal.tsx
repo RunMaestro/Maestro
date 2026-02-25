@@ -322,7 +322,11 @@ function IssueCard({
 					: undefined
 			}
 			className={`w-full p-3 rounded-lg border text-left transition-all outline-none focus-visible:ring-2 ${
-				isBlocked ? 'opacity-75 hover:bg-white/5 cursor-pointer' : !isAvailable ? 'opacity-60' : 'hover:bg-white/5 cursor-pointer'
+				isBlocked
+					? 'opacity-75 hover:bg-white/5 cursor-pointer'
+					: !isAvailable
+						? 'opacity-60'
+						: 'hover:bg-white/5 cursor-pointer'
 			} ${isSelected ? 'ring-2' : ''}`}
 			style={{
 				backgroundColor: isSelected ? theme.colors.bgActivity : theme.colors.bgMain,
@@ -377,15 +381,15 @@ function IssueCard({
 					{issue.documentPaths.length} {issue.documentPaths.length === 1 ? 'document' : 'documents'}
 				</span>
 				{isClaimed && issue.claimedByPr && (
-						<button
-							type="button"
-							className="flex items-center gap-1 cursor-pointer hover:underline"
-							style={{ color: theme.colors.accent, pointerEvents: 'auto' }}
-							onClick={(e) => {
-								e.stopPropagation();
-								window.maestro.shell.openExternal(issue.claimedByPr!.url);
-							}}
-						>
+					<button
+						type="button"
+						className="flex items-center gap-1 cursor-pointer hover:underline"
+						style={{ color: theme.colors.accent, pointerEvents: 'auto' }}
+						onClick={(e) => {
+							e.stopPropagation();
+							window.maestro.shell.openExternal(issue.claimedByPr!.url);
+						}}
+					>
 						<GitPullRequest className="w-3 h-3" />
 						{issue.claimedByPr.isDraft ? 'Draft ' : ''}PR #{issue.claimedByPr.number} by @
 						{issue.claimedByPr.author}
@@ -395,12 +399,12 @@ function IssueCard({
 			</div>
 
 			{issue.documentPaths.length > 0 && (
-					<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
-						{issue.documentPaths.slice(0, 2).map((doc) => (
-							<div key={doc.path} className="truncate">
-								• {doc.name}
-							</div>
-						))}
+				<div className="mt-2 text-xs" style={{ color: theme.colors.textDim }}>
+					{issue.documentPaths.slice(0, 2).map((doc) => (
+						<div key={doc.path} className="truncate">
+							• {doc.name}
+						</div>
+					))}
 					{issue.documentPaths.length > 2 && (
 						<div>...and {issue.documentPaths.length - 2} more</div>
 					)}
@@ -557,23 +561,23 @@ function RepositoryDetailView({
 						</h2>
 					</div>
 				</div>
-					<div className="flex items-center gap-3">
-						<span
-							className="px-2 py-0.5 rounded text-xs flex items-center gap-1"
-							style={{ backgroundColor: `${theme.colors.accent}20`, color: theme.colors.accent }}
-						>
-							<span>{categoryInfo.emoji}</span>
-							<span>{categoryInfo.label}</span>
-						</span>
-						<button
-							type="button"
-							className="p-1.5 rounded hover:bg-white/10 transition-colors"
-							title="View repository on GitHub"
-							onClick={() => handleOpenExternal(repo.url)}
-						>
-							<ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
-						</button>
-					</div>
+				<div className="flex items-center gap-3">
+					<span
+						className="px-2 py-0.5 rounded text-xs flex items-center gap-1"
+						style={{ backgroundColor: `${theme.colors.accent}20`, color: theme.colors.accent }}
+					>
+						<span>{categoryInfo.emoji}</span>
+						<span>{categoryInfo.label}</span>
+					</span>
+					<button
+						type="button"
+						className="p-1.5 rounded hover:bg-white/10 transition-colors"
+						title="View repository on GitHub"
+						onClick={() => handleOpenExternal(repo.url)}
+					>
+						<ExternalLink className="w-5 h-5" style={{ color: theme.colors.textDim }} />
+					</button>
+				</div>
 			</div>
 
 			{/* Content */}
@@ -602,17 +606,17 @@ function RepositoryDetailView({
 						>
 							Maintainer
 						</h4>
-							{repo.maintainer.url ? (
-								<button
-									type="button"
-									className="text-sm hover:underline inline-flex items-center gap-1"
-									style={{ color: theme.colors.accent }}
-									onClick={() => handleOpenExternal(repo.maintainer.url!)}
-								>
-									{repo.maintainer.name}
-									<ExternalLink className="w-3 h-3" />
-								</button>
-							) : (
+						{repo.maintainer.url ? (
+							<button
+								type="button"
+								className="text-sm hover:underline inline-flex items-center gap-1"
+								style={{ color: theme.colors.accent }}
+								onClick={() => handleOpenExternal(repo.maintainer.url!)}
+							>
+								{repo.maintainer.name}
+								<ExternalLink className="w-3 h-3" />
+							</button>
+						) : (
 							<p className="text-sm" style={{ color: theme.colors.textMain }}>
 								{repo.maintainer.name}
 							</p>
@@ -643,14 +647,14 @@ function RepositoryDetailView({
 
 					<div className="border-t my-4" style={{ borderColor: theme.colors.border }} />
 
-						{isLoadingIssues ? (
-							<div className="space-y-2">
-								{['issue-skeleton-1', 'issue-skeleton-2', 'issue-skeleton-3'].map((skeletonId) => (
-									<div
-										key={skeletonId}
-										className="h-20 rounded animate-pulse"
-										style={{ backgroundColor: theme.colors.bgMain }}
-									/>
+					{isLoadingIssues ? (
+						<div className="space-y-2">
+							{['issue-skeleton-1', 'issue-skeleton-2', 'issue-skeleton-3'].map((skeletonId) => (
+								<div
+									key={skeletonId}
+									className="h-20 rounded animate-pulse"
+									style={{ backgroundColor: theme.colors.bgMain }}
+								/>
 							))}
 						</div>
 					) : issues.length === 0 ? (
@@ -778,7 +782,7 @@ function RepositoryDetailView({
 									<FileText className="w-3 h-3" />
 									<span>{selectedIssue.documentPaths.length} Auto Run documents to process</span>
 								</div>
-														</div>
+							</div>
 
 							{/* Document selector dropdown */}
 							<div
@@ -907,7 +911,9 @@ function RepositoryDetailView({
 						{isIssueBlocked(selectedIssue) ? (
 							<>
 								<Lock className="w-4 h-4" />
-								<span>Blocked by a dependency — the maintainer will unblock when prerequisites are met</span>
+								<span>
+									Blocked by a dependency — the maintainer will unblock when prerequisites are met
+								</span>
 							</>
 						) : (
 							<>
@@ -969,7 +975,7 @@ function ActiveContributionCard({
 				)
 			: 0;
 
-	const canFinalize = contribution.status === 'ready_for_review';
+	const canFinalize = contribution.status === 'ready_for_review' || contribution.status === 'completed';
 
 	const handleOpenExternal = useCallback((url: string) => {
 		window.maestro.shell.openExternal(url);
@@ -1885,12 +1891,12 @@ export function SymphonyModal({
 													className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4"
 													style={{ color: theme.colors.textDim }}
 												/>
-													<input
-														ref={searchInputRef}
-														type="text"
-														value={searchQuery}
-														onChange={(e) => handleSearchChange(e.target.value)}
-														placeholder="Search repositories..."
+												<input
+													ref={searchInputRef}
+													type="text"
+													value={searchQuery}
+													onChange={(e) => handleSearchChange(e.target.value)}
+													placeholder="Search repositories..."
 													className="w-full pl-9 pr-3 py-2 rounded border outline-none text-sm focus:ring-1"
 													style={{
 														borderColor: theme.colors.border,
@@ -1900,10 +1906,10 @@ export function SymphonyModal({
 												/>
 											</div>
 
-												<div className="flex items-center gap-1 flex-wrap">
-													<button
-														onClick={() => handleCategoryChange('all')}
-														className={`px-3 py-1.5 rounded text-sm transition-colors ${selectedCategory === 'all' ? 'font-semibold' : ''}`}
+											<div className="flex items-center gap-1 flex-wrap">
+												<button
+													onClick={() => handleCategoryChange('all')}
+													className={`px-3 py-1.5 rounded text-sm transition-colors ${selectedCategory === 'all' ? 'font-semibold' : ''}`}
 													style={{
 														backgroundColor:
 															selectedCategory === 'all' ? theme.colors.bgActivity : 'transparent',
@@ -1922,12 +1928,12 @@ export function SymphonyModal({
 												{categories.map((cat) => {
 													const info = SYMPHONY_CATEGORIES[cat];
 													return (
-															<button
-																key={cat}
-																onClick={() => handleCategoryChange(cat)}
-																className={`px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-1 ${
-																	selectedCategory === cat ? 'font-semibold' : ''
-																}`}
+														<button
+															key={cat}
+															onClick={() => handleCategoryChange(cat)}
+															className={`px-3 py-1.5 rounded text-sm transition-colors flex items-center gap-1 ${
+																selectedCategory === cat ? 'font-semibold' : ''
+															}`}
 															style={{
 																backgroundColor:
 																	selectedCategory === cat
@@ -1957,19 +1963,19 @@ export function SymphonyModal({
 										className="flex-1 overflow-y-auto p-4"
 										style={{ backgroundColor: theme.colors.bgMain }}
 									>
-											{isLoading ? (
-												<div className="grid grid-cols-3 gap-4">
-													{[
-														'repo-skeleton-1',
-														'repo-skeleton-2',
-														'repo-skeleton-3',
-														'repo-skeleton-4',
-														'repo-skeleton-5',
-														'repo-skeleton-6',
-													].map((skeletonId) => (
-														<RepositoryTileSkeleton key={skeletonId} theme={theme} />
-													))}
-												</div>
+										{isLoading ? (
+											<div className="grid grid-cols-3 gap-4">
+												{[
+													'repo-skeleton-1',
+													'repo-skeleton-2',
+													'repo-skeleton-3',
+													'repo-skeleton-4',
+													'repo-skeleton-5',
+													'repo-skeleton-6',
+												].map((skeletonId) => (
+													<RepositoryTileSkeleton key={skeletonId} theme={theme} />
+												))}
+											</div>
 										) : error ? (
 											<div className="flex flex-col items-center justify-center h-48">
 												<AlertCircle
@@ -2331,16 +2337,16 @@ export function SymphonyModal({
 			{createPortal(modalContent, document.body)}
 			{/* Pre-flight Check Dialog */}
 			{showBuildWarning &&
-					createPortal(
-						<div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 10001 }}>
-							<button
-								type="button"
-								className="absolute inset-0"
-								style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
-								tabIndex={-1}
-								onClick={() => setShowBuildWarning(false)}
-								aria-label="Close pre-flight check dialog"
-							/>
+				createPortal(
+					<div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 10001 }}>
+						<button
+							type="button"
+							className="absolute inset-0"
+							style={{ backgroundColor: 'rgba(0,0,0,0.6)' }}
+							tabIndex={-1}
+							onClick={() => setShowBuildWarning(false)}
+							aria-label="Close pre-flight check dialog"
+						/>
 						<div
 							className="relative rounded-lg border shadow-2xl p-6 max-w-md mx-4"
 							style={{
@@ -2393,16 +2399,16 @@ export function SymphonyModal({
 												className="text-sm leading-relaxed mt-2"
 												style={{ color: theme.colors.textDim }}
 											>
-													Install it from{' '}
-													<a
-														href="https://cli.github.com/"
-														target="_blank"
-														rel="noopener noreferrer"
-														className="underline"
-														style={{ color: theme.colors.accent }}
-													>
-														cli.github.com
-													</a>{' '}
+												Install it from{' '}
+												<a
+													href="https://cli.github.com/"
+													target="_blank"
+													rel="noopener noreferrer"
+													className="underline"
+													style={{ color: theme.colors.accent }}
+												>
+													cli.github.com
+												</a>{' '}
 												and run{' '}
 												<code
 													className="px-1 py-0.5 rounded text-xs"

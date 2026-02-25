@@ -80,7 +80,9 @@ describe('WorktreeRunSection', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		// Restore git.branch to default mock (previous tests may override it)
-		(window.maestro.git as Record<string, unknown>).branch = vi.fn().mockResolvedValue({ stdout: 'main' });
+		(window.maestro.git as Record<string, unknown>).branch = vi
+			.fn()
+			.mockResolvedValue({ stdout: 'main' });
 		mockOnWorktreeTargetChange = vi.fn();
 		mockOnOpenWorktreeConfig = vi.fn();
 	});
@@ -181,8 +183,20 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({
 			gitSubdirs: [
-				{ path: '/project/worktrees/old-feature', name: 'old-feature', isWorktree: true, branch: 'old-feature', repoRoot: '/project' },
-				{ path: '/project/worktrees/experiment', name: 'experiment', isWorktree: true, branch: 'experiment', repoRoot: '/project' },
+				{
+					path: '/project/worktrees/old-feature',
+					name: 'old-feature',
+					isWorktree: true,
+					branch: 'old-feature',
+					repoRoot: '/project',
+				},
+				{
+					path: '/project/worktrees/experiment',
+					name: 'experiment',
+					isWorktree: true,
+					branch: 'experiment',
+					repoRoot: '/project',
+				},
 			],
 		});
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -215,8 +229,20 @@ describe('WorktreeRunSection', () => {
 		});
 		const scanMock = vi.fn().mockResolvedValue({
 			gitSubdirs: [
-				{ path: '/project/worktrees/feature-branch', name: 'feature-branch', isWorktree: true, branch: 'feature-branch', repoRoot: '/project' },
-				{ path: '/project/worktrees/closed-wt', name: 'closed-wt', isWorktree: true, branch: 'closed-wt', repoRoot: '/project' },
+				{
+					path: '/project/worktrees/feature-branch',
+					name: 'feature-branch',
+					isWorktree: true,
+					branch: 'feature-branch',
+					repoRoot: '/project',
+				},
+				{
+					path: '/project/worktrees/closed-wt',
+					name: 'closed-wt',
+					isWorktree: true,
+					branch: 'closed-wt',
+					repoRoot: '/project',
+				},
 			],
 		});
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -240,18 +266,26 @@ describe('WorktreeRunSection', () => {
 		// feature-branch is already open, should NOT appear in Available Worktrees optgroup
 		// (it appears in "Open in Maestro" instead)
 		const availableOptions = screen.getAllByRole('option');
-		const closedOptions = availableOptions.filter(
-			(opt) => (opt as HTMLOptionElement).value.startsWith('__closed__:')
+		const closedOptions = availableOptions.filter((opt) =>
+			(opt as HTMLOptionElement).value.startsWith('__closed__:')
 		);
 		expect(closedOptions).toHaveLength(1);
-		expect((closedOptions[0] as HTMLOptionElement).value).toBe('__closed__:/project/worktrees/closed-wt');
+		expect((closedOptions[0] as HTMLOptionElement).value).toBe(
+			'__closed__:/project/worktrees/closed-wt'
+		);
 	});
 
 	it('emits existing-closed mode when selecting an available worktree', async () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({
 			gitSubdirs: [
-				{ path: '/project/worktrees/closed-wt', name: 'closed-wt', isWorktree: true, branch: 'closed-wt', repoRoot: '/project' },
+				{
+					path: '/project/worktrees/closed-wt',
+					name: 'closed-wt',
+					isWorktree: true,
+					branch: 'closed-wt',
+					repoRoot: '/project',
+				},
 			],
 		});
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -307,7 +341,13 @@ describe('WorktreeRunSection', () => {
 		const session = createMockSession();
 		const scanMock = vi.fn().mockResolvedValue({
 			gitSubdirs: [
-				{ path: '/project/worktrees/my-wt', name: 'my-wt', isWorktree: true, branch: null, repoRoot: '/project' },
+				{
+					path: '/project/worktrees/my-wt',
+					name: 'my-wt',
+					isWorktree: true,
+					branch: null,
+					repoRoot: '/project',
+				},
 			],
 		});
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
@@ -332,8 +372,12 @@ describe('WorktreeRunSection', () => {
 	it('shows Scanning indicator while worktrees are loading', async () => {
 		const session = createMockSession();
 		// Create a scan mock that doesn't resolve immediately
-		let resolveScan: (value: { gitSubdirs: Array<{ path: string; name: string; branch: string | null }> }) => void;
-		const scanPromise = new Promise<{ gitSubdirs: Array<{ path: string; name: string; branch: string | null }> }>((resolve) => {
+		let resolveScan: (value: {
+			gitSubdirs: Array<{ path: string; name: string; branch: string | null }>;
+		}) => void;
+		const scanPromise = new Promise<{
+			gitSubdirs: Array<{ path: string; name: string; branch: string | null }>;
+		}>((resolve) => {
 			resolveScan = resolve;
 		});
 		const scanMock = vi.fn().mockReturnValue(scanPromise);
@@ -357,7 +401,9 @@ describe('WorktreeRunSection', () => {
 
 		// Resolve the scan
 		await act(async () => {
-			resolveScan!({ gitSubdirs: [{ path: '/project/worktrees/wt1', name: 'wt1', branch: 'wt1' }] });
+			resolveScan!({
+				gitSubdirs: [{ path: '/project/worktrees/wt1', name: 'wt1', branch: 'wt1' }],
+			});
 		});
 
 		// "Scanning..." should disappear
@@ -415,8 +461,16 @@ describe('WorktreeRunSection', () => {
 
 	it('lists open worktree agents as options', () => {
 		const session = createMockSession();
-		const child1 = createWorktreeChild({ id: 'child-1', name: 'Agent Alpha', worktreeBranch: 'branch-a' });
-		const child2 = createWorktreeChild({ id: 'child-2', name: 'Agent Beta', worktreeBranch: 'branch-b' });
+		const child1 = createWorktreeChild({
+			id: 'child-1',
+			name: 'Agent Alpha',
+			worktreeBranch: 'branch-a',
+		});
+		const child2 = createWorktreeChild({
+			id: 'child-2',
+			name: 'Agent Beta',
+			worktreeBranch: 'branch-b',
+		});
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
 
@@ -425,7 +479,11 @@ describe('WorktreeRunSection', () => {
 				theme={theme}
 				activeSession={session}
 				worktreeChildren={[child1, child2]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-1', createPROnCompletion: false }}
+				worktreeTarget={{
+					mode: 'existing-open',
+					sessionId: 'child-1',
+					createPROnCompletion: false,
+				}}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
@@ -434,14 +492,28 @@ describe('WorktreeRunSection', () => {
 		// Both children should be listed as options
 		const options = screen.getAllByRole('option');
 		const optionTexts = options.map((o) => o.textContent);
-		expect(optionTexts.some((t) => t?.includes('Agent Alpha') && t?.includes('branch-a'))).toBe(true);
-		expect(optionTexts.some((t) => t?.includes('Agent Beta') && t?.includes('branch-b'))).toBe(true);
+		expect(optionTexts.some((t) => t?.includes('Agent Alpha') && t?.includes('branch-a'))).toBe(
+			true
+		);
+		expect(optionTexts.some((t) => t?.includes('Agent Beta') && t?.includes('branch-b'))).toBe(
+			true
+		);
 	});
 
 	it('disables busy agents and shows busy suffix', () => {
 		const session = createMockSession();
-		const idleChild = createWorktreeChild({ id: 'child-idle', name: 'Idle Agent', state: 'idle', worktreeBranch: 'idle-branch' });
-		const busyChild = createWorktreeChild({ id: 'child-busy', name: 'Busy Agent', state: 'busy', worktreeBranch: 'busy-branch' });
+		const idleChild = createWorktreeChild({
+			id: 'child-idle',
+			name: 'Idle Agent',
+			state: 'idle',
+			worktreeBranch: 'idle-branch',
+		});
+		const busyChild = createWorktreeChild({
+			id: 'child-busy',
+			name: 'Busy Agent',
+			state: 'busy',
+			worktreeBranch: 'busy-branch',
+		});
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
 
@@ -450,19 +522,27 @@ describe('WorktreeRunSection', () => {
 				theme={theme}
 				activeSession={session}
 				worktreeChildren={[idleChild, busyChild]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-idle', createPROnCompletion: false }}
+				worktreeTarget={{
+					mode: 'existing-open',
+					sessionId: 'child-idle',
+					createPROnCompletion: false,
+				}}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
 		);
 
 		const options = screen.getAllByRole('option');
-		const busyOption = options.find((o) => (o as HTMLOptionElement).value === 'child-busy') as HTMLOptionElement;
+		const busyOption = options.find(
+			(o) => (o as HTMLOptionElement).value === 'child-busy'
+		) as HTMLOptionElement;
 		expect(busyOption).toBeTruthy();
 		expect(busyOption.disabled).toBe(true);
 		expect(busyOption.textContent).toContain('— busy');
 
-		const idleOption = options.find((o) => (o as HTMLOptionElement).value === 'child-idle') as HTMLOptionElement;
+		const idleOption = options.find(
+			(o) => (o as HTMLOptionElement).value === 'child-idle'
+		) as HTMLOptionElement;
 		expect(idleOption).toBeTruthy();
 		expect(idleOption.disabled).toBe(false);
 		expect(idleOption.textContent).not.toContain('— busy');
@@ -508,7 +588,9 @@ describe('WorktreeRunSection', () => {
 		const scanMock = vi.fn().mockResolvedValue({ gitSubdirs: [] });
 		(window.maestro.git as Record<string, unknown>).scanWorktreeDirectory = scanMock;
 		// Current branch is 'develop', not main
-		(window.maestro.git as Record<string, unknown>).branch = vi.fn().mockResolvedValue({ stdout: 'develop' });
+		(window.maestro.git as Record<string, unknown>).branch = vi
+			.fn()
+			.mockResolvedValue({ stdout: 'develop' });
 		vi.mocked(gitService.getBranches).mockResolvedValue(['main', 'develop', 'feature/xyz']);
 
 		render(
@@ -602,7 +684,8 @@ describe('WorktreeRunSection', () => {
 		});
 
 		// Rerender with the worktreeTarget that would have been set by the parent
-		const lastCall = mockOnWorktreeTargetChange.mock.calls[mockOnWorktreeTargetChange.mock.calls.length - 1][0];
+		const lastCall =
+			mockOnWorktreeTargetChange.mock.calls[mockOnWorktreeTargetChange.mock.calls.length - 1][0];
 		mockOnWorktreeTargetChange.mockClear();
 
 		rerender(
@@ -639,7 +722,11 @@ describe('WorktreeRunSection', () => {
 				theme={theme}
 				activeSession={session}
 				worktreeChildren={[child]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-1', createPROnCompletion: false }}
+				worktreeTarget={{
+					mode: 'existing-open',
+					sessionId: 'child-1',
+					createPROnCompletion: false,
+				}}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>
@@ -954,7 +1041,11 @@ describe('WorktreeRunSection', () => {
 				theme={theme}
 				activeSession={session}
 				worktreeChildren={[idleChild]}
-				worktreeTarget={{ mode: 'existing-open', sessionId: 'child-idle', createPROnCompletion: false }}
+				worktreeTarget={{
+					mode: 'existing-open',
+					sessionId: 'child-idle',
+					createPROnCompletion: false,
+				}}
 				onWorktreeTargetChange={mockOnWorktreeTargetChange}
 				onOpenWorktreeConfig={mockOnOpenWorktreeConfig}
 			/>

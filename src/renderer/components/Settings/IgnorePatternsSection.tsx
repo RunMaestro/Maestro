@@ -137,40 +137,23 @@ export function IgnorePatternsSection({
 								onClick={() => onHonorGitignoreChange(!honorGitignore)}
 								className="w-5 h-5 rounded border flex items-center justify-center transition-colors"
 								style={{
-									borderColor: honorGitignore
-										? theme.colors.accent
-										: theme.colors.border,
-									backgroundColor: honorGitignore
-										? theme.colors.accent
-										: 'transparent',
+									borderColor: honorGitignore ? theme.colors.accent : theme.colors.border,
+									backgroundColor: honorGitignore ? theme.colors.accent : 'transparent',
 								}}
 							>
 								{honorGitignore && (
-									<Check
-										className="w-3 h-3"
-										style={{ color: theme.colors.bgMain }}
-									/>
+									<Check className="w-3 h-3" style={{ color: theme.colors.bgMain }} />
 								)}
 							</button>
 							<div className="flex items-center gap-1.5">
-								<FileText
-									className="w-4 h-4"
-									style={{ color: theme.colors.textDim }}
-								/>
-								<span
-									className="text-sm"
-									style={{ color: theme.colors.textMain }}
-								>
+								<FileText className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+								<span className="text-sm" style={{ color: theme.colors.textMain }}>
 									Honor .gitignore
 								</span>
 							</div>
 						</label>
-						<p
-							className="text-xs mt-1 ml-7"
-							style={{ color: theme.colors.textDim }}
-						>
-							When enabled, patterns from .gitignore files will also be excluded
-							from indexing.
+						<p className="text-xs mt-1 ml-7" style={{ color: theme.colors.textDim }}>
+							When enabled, patterns from .gitignore files will also be excluded from indexing.
 						</p>
 					</div>
 				)}
@@ -178,10 +161,7 @@ export function IgnorePatternsSection({
 				{/* Current patterns list */}
 				{ignorePatterns.length > 0 && (
 					<div className="space-y-1.5 mb-3">
-						<p
-							className="text-xs font-medium"
-							style={{ color: theme.colors.textDim }}
-						>
+						<p className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
 							Active patterns:
 						</p>
 						<div className="flex flex-wrap gap-2">
@@ -195,9 +175,7 @@ export function IgnorePatternsSection({
 										border: '1px solid',
 									}}
 								>
-									<span style={{ color: theme.colors.textMain }}>
-										{pattern}
-									</span>
+									<span style={{ color: theme.colors.textMain }}>{pattern}</span>
 									<button
 										type="button"
 										onClick={() => handleRemovePattern(pattern)}
@@ -240,9 +218,7 @@ export function IgnorePatternsSection({
 							className="w-full px-3 py-2 rounded text-sm font-mono outline-none"
 							style={{
 								backgroundColor: theme.colors.bgActivity,
-								borderColor: inputError
-									? theme.colors.error
-									: theme.colors.border,
+								borderColor: inputError ? theme.colors.error : theme.colors.border,
 								border: '1px solid',
 								color: theme.colors.textMain,
 							}}

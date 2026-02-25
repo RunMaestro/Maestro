@@ -256,7 +256,7 @@ export function getWindowsShellForAgentExecution(
 	const comSpec = process.env.ComSpec || 'cmd.exe';
 	console.warn(
 		`[shellEscape] PowerShell not found, falling back to ${comSpec}. ` +
-		`Long commands may fail due to cmd.exe's ~8191 character limit.`
+			`Long commands may fail due to cmd.exe's ~8191 character limit.`
 	);
 
 	return {

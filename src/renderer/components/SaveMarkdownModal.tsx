@@ -27,7 +27,12 @@ export interface SaveMarkdownModalProps {
 	/** Callback when file is successfully saved (e.g., to refresh file list) */
 	onFileSaved?: () => void;
 	/** Callback to open the saved file in a tab. When provided, shows an "Open in Tab" checkbox. */
-	onOpenInTab?: (file: { path: string; name: string; content: string; sshRemoteId?: string }) => void;
+	onOpenInTab?: (file: {
+		path: string;
+		name: string;
+		content: string;
+		sshRemoteId?: string;
+	}) => void;
 }
 
 export function SaveMarkdownModal({

@@ -5,7 +5,16 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { MessageSquare, ChevronDown, ChevronRight, Edit3, Trash2, Settings, Archive, ArchiveRestore } from 'lucide-react';
+import {
+	MessageSquare,
+	ChevronDown,
+	ChevronRight,
+	Edit3,
+	Trash2,
+	Settings,
+	Archive,
+	ArchiveRestore,
+} from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside, useContextMenuPosition } from '../hooks';
 import { getStatusColor } from '../utils/theme';
@@ -265,7 +274,11 @@ export function GroupChatList({
 								color: theme.colors.textDim,
 								border: `1px solid ${theme.colors.border}`,
 							}}
-							title={showArchived ? 'Hide archived chats' : `Show ${archivedCount} archived chat${archivedCount !== 1 ? 's' : ''}`}
+							title={
+								showArchived
+									? 'Hide archived chats'
+									: `Show ${archivedCount} archived chat${archivedCount !== 1 ? 's' : ''}`
+							}
 						>
 							<Archive className="w-3 h-3" />
 							<span>{archivedCount}</span>
@@ -386,10 +399,14 @@ export function GroupChatList({
 					isArchived={!!groupChats.find((c) => c.id === contextMenu.chatId)?.archived}
 					onEdit={() => onEditGroupChat(contextMenu.chatId)}
 					onRename={() => onRenameGroupChat(contextMenu.chatId)}
-					onArchive={onArchiveGroupChat ? () => {
-						const chat = groupChats.find((c) => c.id === contextMenu.chatId);
-						if (chat) onArchiveGroupChat(chat.id, !chat.archived);
-					} : undefined}
+					onArchive={
+						onArchiveGroupChat
+							? () => {
+									const chat = groupChats.find((c) => c.id === contextMenu.chatId);
+									if (chat) onArchiveGroupChat(chat.id, !chat.archived);
+								}
+							: undefined
+					}
 					onDelete={() => onDeleteGroupChat(contextMenu.chatId)}
 					onClose={() => setContextMenu(null)}
 				/>

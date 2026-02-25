@@ -439,7 +439,10 @@ export class ClaudeSessionStorage implements AgentSessionStorage {
 					);
 				} catch (error) {
 					logger.error(`Error processing remote session file: ${entry.name}`, LOG_CONTEXT, error);
-					captureException(error, { operation: 'claudeStorage:processRemoteSessionFile', filename: entry.name });
+					captureException(error, {
+						operation: 'claudeStorage:processRemoteSessionFile',
+						filename: entry.name,
+					});
 					return null;
 				}
 			})

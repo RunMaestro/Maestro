@@ -67,8 +67,7 @@ function isFactoryStreamMessage(data: unknown): data is FactoryStreamMessage {
 	const obj = data as Record<string, unknown>;
 	// Must have a valid type field
 	return (
-		typeof obj.type === 'string' &&
-		['system', 'message', 'completion', 'error'].includes(obj.type)
+		typeof obj.type === 'string' && ['system', 'message', 'completion', 'error'].includes(obj.type)
 	);
 }
 

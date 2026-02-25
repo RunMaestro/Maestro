@@ -202,6 +202,18 @@ export function registerSystemHandlers(deps: SystemHandlerDependencies): void {
 		} catch {
 			throw new Error(`Invalid URL: ${url}`);
 		}
+		// Redirect file:// URLs to shell.openPath instead of rejecting — Fixes MAESTRO-9M
+		if (parsed.protocol === 'file:') {
+			const filePath = decodeURIComponent(parsed.pathname);
+			if (!fsSync.existsSync(filePath)) {
+				throw new Error(`Path does not exist: ${filePath}`);
+			}
+			const errorMessage = await shell.openPath(filePath);
+			if (errorMessage) {
+				throw new Error(errorMessage);
+			}
+			return;
+		}
 		if (!ALLOWED_PROTOCOLS.includes(parsed.protocol)) {
 			throw new Error(`Protocol not allowed: ${parsed.protocol}`);
 		}

@@ -129,7 +129,8 @@ export function QuitConfirmModal({
 						className="text-sm leading-relaxed"
 						style={{ color: theme.colors.textMain }}
 					>
-						{busyAgentCount} {agentText} currently {hasAutoRun ? 'active' : 'thinking'}. Quitting now will interrupt their work.
+						{busyAgentCount} {agentText} currently {hasAutoRun ? 'active' : 'thinking'}. Quitting
+						now will interrupt their work.
 					</p>
 
 					{/* List of busy agents */}

@@ -110,7 +110,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				const isSystemUtilShortcut =
 					e.altKey &&
 					(e.metaKey || e.ctrlKey) &&
-					(codeKeyLower === 'l' || codeKeyLower === 'p' || codeKeyLower === 'u' || codeKeyLower === 's');
+					(codeKeyLower === 'l' ||
+						codeKeyLower === 'p' ||
+						codeKeyLower === 'u' ||
+						codeKeyLower === 's');
 				// Allow session jump shortcuts (Alt+Cmd+NUMBER) even when modals are open
 				// NOTE: Must use e.code for Alt key combos on macOS because e.key produces special characters
 				const isSessionJumpShortcut =

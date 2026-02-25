@@ -259,7 +259,7 @@ describe('Autorun Preload API', () => {
 
 				await api.deleteBackups('/project/.maestro');
 
-			expect(mockInvoke).toHaveBeenCalledWith(
+				expect(mockInvoke).toHaveBeenCalledWith(
 					'autorun:deleteBackups',
 					'/project/.maestro',
 					undefined

@@ -525,10 +525,23 @@ describe('system IPC handlers', () => {
 			expect(shell.openExternal).toHaveBeenCalledWith('mailto:test@example.com');
 		});
 
-		it('should reject file:// URLs', async () => {
+		it('should redirect file:// URLs to shell.openPath', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(true);
+			vi.mocked(shell.openPath).mockResolvedValue('');
+
 			const handler = handlers.get('shell:openExternal');
-			await expect(handler!({} as any, 'file:///etc/passwd')).rejects.toThrow(
-				'Protocol not allowed: file:'
+			await handler!({} as any, 'file:///Users/test/document.pdf');
+
+			expect(shell.openExternal).not.toHaveBeenCalled();
+			expect(shell.openPath).toHaveBeenCalledWith('/Users/test/document.pdf');
+		});
+
+		it('should reject file:// URLs when path does not exist', async () => {
+			vi.mocked(fsSync.existsSync).mockReturnValue(false);
+
+			const handler = handlers.get('shell:openExternal');
+			await expect(handler!({} as any, 'file:///nonexistent/path')).rejects.toThrow(
+				'Path does not exist'
 			);
 			expect(shell.openExternal).not.toHaveBeenCalled();
 		});

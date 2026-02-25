@@ -24,19 +24,19 @@ vi.mock('../../../renderer/components/MaestroSilhouette', () => ({
 
 // Mock useContributorStats hook
 vi.mock('../../../renderer/hooks/symphony/useContributorStats', () => ({
-  useContributorStats: () => ({
-    stats: null,
-    recentContributions: [],
-    achievements: [],
-    isLoading: false,
-    refresh: vi.fn(),
-    formattedTotalCost: '$0.00',
-    formattedTotalTokens: '0',
-    formattedTotalTime: '0m',
-    uniqueRepos: 0,
-    currentStreakWeeks: 0,
-    longestStreakWeeks: 0,
-  }),
+	useContributorStats: () => ({
+		stats: null,
+		recentContributions: [],
+		achievements: [],
+		isLoading: false,
+		refresh: vi.fn(),
+		formattedTotalCost: '$0.00',
+		formattedTotalTokens: '0',
+		formattedTotalTime: '0m',
+		uniqueRepos: 0,
+		currentStreakWeeks: 0,
+		longestStreakWeeks: 0,
+	}),
 }));
 
 // Mock lucide-react icons

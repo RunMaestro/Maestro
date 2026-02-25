@@ -617,27 +617,33 @@ describe('sessionStore', () => {
 			});
 
 			it('returns false when all sessions are idle', () => {
-				useSessionStore.getState().setSessions([
-					createMockSession({ id: 'a', state: 'idle' }),
-					createMockSession({ id: 'b', state: 'idle' }),
-				]);
+				useSessionStore
+					.getState()
+					.setSessions([
+						createMockSession({ id: 'a', state: 'idle' }),
+						createMockSession({ id: 'b', state: 'idle' }),
+					]);
 				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(false);
 			});
 
 			it('returns true when at least one session is busy', () => {
-				useSessionStore.getState().setSessions([
-					createMockSession({ id: 'a', state: 'idle' }),
-					createMockSession({ id: 'b', state: 'busy' }),
-				]);
+				useSessionStore
+					.getState()
+					.setSessions([
+						createMockSession({ id: 'a', state: 'idle' }),
+						createMockSession({ id: 'b', state: 'busy' }),
+					]);
 				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(true);
 			});
 
 			it('returns false for non-busy active states', () => {
-				useSessionStore.getState().setSessions([
-					createMockSession({ id: 'a', state: 'waiting_input' }),
-					createMockSession({ id: 'b', state: 'connecting' }),
-					createMockSession({ id: 'c', state: 'error' }),
-				]);
+				useSessionStore
+					.getState()
+					.setSessions([
+						createMockSession({ id: 'a', state: 'waiting_input' }),
+						createMockSession({ id: 'b', state: 'connecting' }),
+						createMockSession({ id: 'c', state: 'error' }),
+					]);
 				expect(selectIsAnySessionBusy(useSessionStore.getState())).toBe(false);
 			});
 		});

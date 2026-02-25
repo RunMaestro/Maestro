@@ -24,16 +24,10 @@ function getConfigDir(): string {
 	if (platform === 'darwin') {
 		return path.join(home, 'Library', 'Application Support', 'Maestro');
 	} else if (platform === 'win32') {
-		return path.join(
-			process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
-			'Maestro'
-		);
+		return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
 	} else {
 		// Linux and others
-		return path.join(
-			process.env.XDG_CONFIG_HOME || path.join(home, '.config'),
-			'Maestro'
-		);
+		return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
 	}
 }
 

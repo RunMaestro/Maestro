@@ -20,7 +20,10 @@ interface HistoryHelpModalProps {
 	onClose: () => void;
 }
 
-export const HistoryHelpModal = memo(function HistoryHelpModal({ theme, onClose }: HistoryHelpModalProps) {
+export const HistoryHelpModal = memo(function HistoryHelpModal({
+	theme,
+	onClose,
+}: HistoryHelpModalProps) {
 	return (
 		<Modal
 			theme={theme}

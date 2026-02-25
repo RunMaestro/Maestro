@@ -80,16 +80,18 @@ describe('AppConfirmModals', () => {
 	describe('quit confirmation agent list', () => {
 		it('includes busy AI agents in quit modal', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Busy Agent', state: 'busy', busySource: 'ai', toolType: 'claude-code' }),
+				createMockSession({
+					id: 's1',
+					name: 'Busy Agent',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'claude-code',
+				}),
 				createMockSession({ id: 's2', name: 'Idle Agent', state: 'idle', toolType: 'claude-code' }),
 			];
 
 			renderWithLayerStack(
-				<AppConfirmModals
-					{...defaultProps}
-					sessions={sessions}
-					quitConfirmModalOpen={true}
-				/>
+				<AppConfirmModals {...defaultProps} sessions={sessions} quitConfirmModalOpen={true} />
 			);
 
 			expect(screen.getByText('Busy Agent')).toBeInTheDocument();
@@ -99,7 +101,13 @@ describe('AppConfirmModals', () => {
 
 		it('excludes terminal sessions from busy agent count', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Terminal', state: 'busy', busySource: 'ai', toolType: 'terminal' }),
+				createMockSession({
+					id: 's1',
+					name: 'Terminal',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'terminal',
+				}),
 			];
 
 			renderWithLayerStack(
@@ -118,7 +126,12 @@ describe('AppConfirmModals', () => {
 
 		it('includes auto-running sessions with (Auto Run) suffix', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Auto Session', state: 'idle', toolType: 'claude-code' }),
+				createMockSession({
+					id: 's1',
+					name: 'Auto Session',
+					state: 'idle',
+					toolType: 'claude-code',
+				}),
 			];
 
 			renderWithLayerStack(
@@ -136,7 +149,13 @@ describe('AppConfirmModals', () => {
 
 		it('deduplicates agents that are both busy and auto-running', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Dual Agent', state: 'busy', busySource: 'ai', toolType: 'claude-code' }),
+				createMockSession({
+					id: 's1',
+					name: 'Dual Agent',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'claude-code',
+				}),
 			];
 
 			renderWithLayerStack(
@@ -156,8 +175,19 @@ describe('AppConfirmModals', () => {
 
 		it('combines busy agents and auto-run-only sessions', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Thinking Agent', state: 'busy', busySource: 'ai', toolType: 'claude-code' }),
-				createMockSession({ id: 's2', name: 'Auto Runner', state: 'idle', toolType: 'claude-code' }),
+				createMockSession({
+					id: 's1',
+					name: 'Thinking Agent',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'claude-code',
+				}),
+				createMockSession({
+					id: 's2',
+					name: 'Auto Runner',
+					state: 'idle',
+					toolType: 'claude-code',
+				}),
 			];
 
 			renderWithLayerStack(
@@ -176,15 +206,17 @@ describe('AppConfirmModals', () => {
 
 		it('does not show quit modal when quitConfirmModalOpen is false', () => {
 			const sessions = [
-				createMockSession({ id: 's1', name: 'Agent', state: 'busy', busySource: 'ai', toolType: 'claude-code' }),
+				createMockSession({
+					id: 's1',
+					name: 'Agent',
+					state: 'busy',
+					busySource: 'ai',
+					toolType: 'claude-code',
+				}),
 			];
 
 			renderWithLayerStack(
-				<AppConfirmModals
-					{...defaultProps}
-					sessions={sessions}
-					quitConfirmModalOpen={false}
-				/>
+				<AppConfirmModals {...defaultProps} sessions={sessions} quitConfirmModalOpen={false} />
 			);
 
 			expect(screen.queryByText('Quit Maestro?')).not.toBeInTheDocument();

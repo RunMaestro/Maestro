@@ -402,12 +402,7 @@ describe('applyAgentConfigOverrides', () => {
 		const result = applyAgentConfigOverrides(agent, [], {
 			sessionCustomArgs: '--flag "arg with spaces" \'another arg\' plain',
 		});
-		expect(result.args).toEqual([
-			'--flag',
-			'arg with spaces',
-			'another arg',
-			'plain',
-		]);
+		expect(result.args).toEqual(['--flag', 'arg with spaces', 'another arg', 'plain']);
 		expect(result.customArgsSource).toBe('session');
 	});
 
@@ -549,11 +544,7 @@ describe('getContextWindowValue', () => {
 			],
 		});
 
-		const result = getContextWindowValue(
-			agent,
-			{ contextWindow: 50000 },
-			200000
-		);
+		const result = getContextWindowValue(agent, { contextWindow: 50000 }, 200000);
 		expect(result).toBe(200000);
 	});
 
@@ -638,11 +629,7 @@ describe('getContextWindowValue', () => {
 			],
 		});
 
-		const result = getContextWindowValue(
-			agent,
-			{ contextWindow: 50000 },
-			undefined
-		);
+		const result = getContextWindowValue(agent, { contextWindow: 50000 }, undefined);
 		expect(result).toBe(50000);
 	});
 });

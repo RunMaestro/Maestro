@@ -337,14 +337,22 @@ export class StdoutHandler {
 
 		// For Codex, flush the latest captured result when the turn completes.
 		// turn.completed is normalized as a usage event by the Codex parser.
-		if (managedProcess.toolType === 'codex' && event.type === 'usage' && !managedProcess.resultEmitted) {
+		if (
+			managedProcess.toolType === 'codex' &&
+			event.type === 'usage' &&
+			!managedProcess.resultEmitted
+		) {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
-				logger.debug('[ProcessManager] Emitting final Codex result at turn completion', 'ProcessManager', {
-					sessionId,
-					resultLength: resultText.length,
-				});
+				logger.debug(
+					'[ProcessManager] Emitting final Codex result at turn completion',
+					'ProcessManager',
+					{
+						sessionId,
+						resultLength: resultText.length,
+					}
+				);
 				this.bufferManager.emitDataBuffered(sessionId, resultText);
 			}
 		}

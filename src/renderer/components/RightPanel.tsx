@@ -15,16 +15,20 @@ import {
 	Skull,
 	AlertTriangle,
 } from 'lucide-react';
-import type { Session, Theme, RightPanelTab, Shortcut, BatchRunState, FocusArea } from '../types';
+import type { Session, Theme, RightPanelTab, BatchRunState } from '../types';
 import type { FileTreeChanges } from '../utils/fileExplorer';
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { HistoryPanel, HistoryPanelHandle } from './HistoryPanel';
 import { AutoRun, AutoRunHandle } from './AutoRun';
-import type { DocumentTaskCount } from './AutoRunDocumentSelector';
 import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
+import { useUIStore } from '../stores/uiStore';
+import { useSettingsStore } from '../stores/settingsStore';
+import { useFileExplorerStore } from '../stores/fileExplorerStore';
+import { useBatchStore } from '../stores/batchStore';
+import { useSessionStore } from '../stores/sessionStore';
 
 export interface RightPanelHandle {
 	refreshHistoryPanel: () => void;
@@ -35,33 +39,13 @@ export interface RightPanelHandle {
 }
 
 interface RightPanelProps {
-	// Session & Theme
-	session: Session | null;
+	// Theme (computed from settingsStore by App.tsx)
 	theme: Theme;
-	shortcuts: Record<string, Shortcut>;
 
-	// Panel state
-	rightPanelOpen: boolean;
-	setRightPanelOpen: (open: boolean) => void;
-	rightPanelWidth: number;
-	setRightPanelWidthState: (width: number) => void;
-
-	// Tab state
-	activeRightTab: RightPanelTab;
+	// Tab state (custom handler with setup modal logic)
 	setActiveRightTab: (tab: RightPanelTab) => void;
 
-	// Focus management
-	activeFocus: FocusArea;
-	setActiveFocus: (focus: FocusArea) => void;
-
-	// File explorer state & handlers
-	fileTreeFilter: string;
-	setFileTreeFilter: (filter: string) => void;
-	fileTreeFilterOpen: boolean;
-	setFileTreeFilterOpen: (open: boolean) => void;
-	filteredFileTree: any[];
-	selectedFileIndex: number;
-	setSelectedFileIndex: (index: number) => void;
+	// Refs
 	fileTreeContainerRef: React.RefObject<HTMLDivElement>;
 	fileTreeFilterInputRef: React.RefObject<HTMLInputElement>;
 
@@ -86,24 +70,10 @@ interface RightPanelProps {
 		setSessions: React.Dispatch<React.SetStateAction<Session[]>>
 	) => Promise<void>;
 	refreshFileTree: (sessionId: string) => Promise<FileTreeChanges | undefined>;
-	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	onAutoRefreshChange?: (interval: number) => void;
 	onShowFlash?: (message: string) => void;
-	showHiddenFiles: boolean;
-	setShowHiddenFiles: (value: boolean) => void;
 
 	// Auto Run handlers
-	autoRunDocumentList: string[]; // List of document filenames (without .md)
-	autoRunDocumentTree?: Array<{
-		name: string;
-		type: 'file' | 'folder';
-		path: string;
-		children?: unknown[];
-	}>; // Tree structure for subfolders
-	autoRunContent: string; // Content of currently selected document
-	autoRunContentVersion?: number; // Version counter for external file changes (forces sync)
-	autoRunIsLoadingDocuments: boolean; // Loading state
-	autoRunDocumentTaskCounts?: Map<string, DocumentTaskCount>; // Task counts per document
 	onAutoRunContentChange: (content: string) => void;
 	onAutoRunModeChange: (mode: 'edit' | 'preview') => void;
 	onAutoRunStateChange: (state: {
@@ -117,55 +87,67 @@ interface RightPanelProps {
 	onAutoRunRefresh: () => void;
 	onAutoRunOpenSetup: () => void;
 
-	// Batch processing props
-	batchRunState?: BatchRunState; // For progress display (may be from any session)
-	currentSessionBatchState?: BatchRunState | null; // For locking editor (current session only)
+	// Batch processing
+	currentSessionBatchState?: BatchRunState | null;
 	onOpenBatchRunner?: () => void;
 	onStopBatchRun?: (sessionId?: string) => void;
 	onKillBatchRun?: (sessionId: string) => void;
-	// Error handling callbacks (Phase 5.10)
 	onSkipCurrentDocument?: () => void;
 	onAbortBatchOnError?: () => void;
 	onResumeAfterError?: () => void;
 	onJumpToAgentSession?: (agentSessionId: string) => void;
 	onResumeSession?: (agentSessionId: string) => void;
 	onOpenSessionAsTab?: (agentSessionId: string) => void;
-	onOpenAboutModal?: () => void; // For opening About/achievements panel from history entries
-	// File linking callback for history detail modal
+
+	// Modal handlers
+	onOpenAboutModal?: () => void;
 	onFileClick?: (path: string) => void;
-	// Marketplace modal
 	onOpenMarketplace?: () => void;
-	// Launch inline wizard in new tab
 	onLaunchWizard?: () => void;
-	/** Callback to open graph view focused on a specific file (relative path to session.cwd) */
+
+	// Document Graph handlers
 	onFocusFileInGraph?: (relativePath: string) => void;
-	/** Path of the last opened document graph focus file (for quick re-open) */
-	lastGraphFocusFile?: string;
-	/** Callback to open the last document graph */
 	onOpenLastDocumentGraph?: () => void;
 }
 
 export const RightPanel = memo(
 	forwardRef<RightPanelHandle, RightPanelProps>(function RightPanel(props, ref) {
+		// === State from stores (direct subscriptions — no prop drilling) ===
+		const session = useSessionStore(
+			(s) => s.sessions.find((x) => x.id === s.activeSessionId) ?? null
+		);
+		const setSessions = useSessionStore((s) => s.setSessions);
+
+		const rightPanelOpen = useUIStore((s) => s.rightPanelOpen);
+		const activeRightTab = useUIStore((s) => s.activeRightTab);
+		const activeFocus = useUIStore((s) => s.activeFocus);
+		const setRightPanelOpen = useUIStore((s) => s.setRightPanelOpen);
+		const setActiveFocus = useUIStore((s) => s.setActiveFocus);
+
+		const rightPanelWidth = useSettingsStore((s) => s.rightPanelWidth);
+		const shortcuts = useSettingsStore((s) => s.shortcuts);
+		const showHiddenFiles = useSettingsStore((s) => s.showHiddenFiles);
+		const setRightPanelWidth = useSettingsStore((s) => s.setRightPanelWidth);
+		const setShowHiddenFiles = useSettingsStore((s) => s.setShowHiddenFiles);
+
+		const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
+		const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
+		const filteredFileTree = useFileExplorerStore((s) => s.flatFileList);
+		const selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
+		const lastGraphFocusFile = useFileExplorerStore((s) => s.lastGraphFocusFilePath);
+		const setFileTreeFilter = useFileExplorerStore((s) => s.setFileTreeFilter);
+		const setFileTreeFilterOpen = useFileExplorerStore((s) => s.setFileTreeFilterOpen);
+		const setSelectedFileIndex = useFileExplorerStore((s) => s.setSelectedFileIndex);
+
+		const autoRunDocumentList = useBatchStore((s) => s.documentList);
+		const autoRunDocumentTree = useBatchStore((s) => s.documentTree);
+		const autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
+		const autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
+
+		// === Props (domain-hook handlers + theme + batch state + refs) ===
 		const {
-			session,
 			theme,
-			shortcuts,
-			rightPanelOpen,
-			setRightPanelOpen,
-			rightPanelWidth,
-			setRightPanelWidthState,
-			activeRightTab,
 			setActiveRightTab,
-			activeFocus,
-			setActiveFocus,
-			fileTreeFilter,
-			setFileTreeFilter,
-			fileTreeFilterOpen,
-			setFileTreeFilterOpen,
-			filteredFileTree,
-			selectedFileIndex,
-			setSelectedFileIndex,
 			fileTreeContainerRef,
 			fileTreeFilterInputRef,
 			toggleFolder,
@@ -174,17 +156,8 @@ export const RightPanel = memo(
 			collapseAllFolders,
 			updateSessionWorkingDirectory,
 			refreshFileTree,
-			setSessions,
 			onAutoRefreshChange,
 			onShowFlash,
-			showHiddenFiles,
-			setShowHiddenFiles,
-			autoRunDocumentList,
-			autoRunDocumentTree,
-			autoRunContent,
-			autoRunContentVersion,
-			autoRunIsLoadingDocuments,
-			autoRunDocumentTaskCounts,
 			onAutoRunContentChange,
 			onAutoRunModeChange,
 			onAutoRunStateChange,
@@ -196,7 +169,6 @@ export const RightPanel = memo(
 			onOpenBatchRunner,
 			onStopBatchRun,
 			onKillBatchRun,
-			// Error handling callbacks (Phase 5.10)
 			onSkipCurrentDocument,
 			onAbortBatchOnError,
 			onResumeAfterError,
@@ -208,9 +180,12 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onFocusFileInGraph,
-			lastGraphFocusFile,
 			onOpenLastDocumentGraph,
 		} = props;
+
+		// === Values derived from session ===
+		const autoRunContent = session?.autoRunContent ?? '';
+		const autoRunContentVersion = session?.autoRunContentVersion ?? 0;
 
 		const historyPanelRef = useRef<HistoryPanelHandle>(null);
 		const autoRunRef = useRef<AutoRunHandle>(null);
@@ -223,7 +198,7 @@ export const RightPanel = memo(
 			minWidth: 384,
 			maxWidth: 800,
 			settingsKey: 'rightPanelWidth',
-			setWidth: setRightPanelWidthState,
+			setWidth: setRightPanelWidth,
 			side: 'right',
 		});
 

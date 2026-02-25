@@ -155,12 +155,12 @@ async function spawnWorktreeAgentAndDispatch(
 	});
 
 	// Step 5: Add session to store and expand parent's worktrees
-	useSessionStore.getState().setSessions((prev) => [
-		...prev.map((s) =>
-			s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s
-		),
-		newSession,
-	]);
+	useSessionStore
+		.getState()
+		.setSessions((prev) => [
+			...prev.map((s) => (s.id === parentSession.id ? { ...s, worktreesExpanded: true } : s)),
+			newSession,
+		]);
 
 	// Step 6: Populate config.worktree for PR creation if requested
 	if (target.createPROnCompletion) {
@@ -309,9 +309,9 @@ export function useAutoRunHandlers(
 			let targetSessionId = activeSession.id;
 			if (config.worktreeTarget?.mode === 'existing-open' && config.worktreeTarget.sessionId) {
 				// Verify the target session still exists (could have been removed while modal was open)
-				const targetSession = useSessionStore.getState().sessions.find(
-					(s) => s.id === config.worktreeTarget!.sessionId
-				);
+				const targetSession = useSessionStore
+					.getState()
+					.sessions.find((s) => s.id === config.worktreeTarget!.sessionId);
 				if (!targetSession) {
 					window.maestro.logger.log(
 						'warn',
@@ -321,7 +321,8 @@ export function useAutoRunHandlers(
 					notifyToast({
 						type: 'warning',
 						title: 'Worktree Agent Not Found',
-						message: 'The selected worktree agent was removed. Running on the active agent instead.',
+						message:
+							'The selected worktree agent was removed. Running on the active agent instead.',
 					});
 					// Fall back to active session
 					targetSessionId = activeSession.id;
@@ -348,7 +349,8 @@ export function useAutoRunHandlers(
 						config.worktree = {
 							enabled: true,
 							path: targetSession.cwd,
-							branchName: targetSession.worktreeBranch || targetSession.cwd.split('/').pop() || 'worktree',
+							branchName:
+								targetSession.worktreeBranch || targetSession.cwd.split('/').pop() || 'worktree',
 							createPROnCompletion: true,
 							prTargetBranch: config.worktreeTarget.baseBranch || 'main',
 						};
@@ -360,10 +362,7 @@ export function useAutoRunHandlers(
 			) {
 				// Spawn a worktree agent and dispatch to it
 				try {
-					const newSessionId = await spawnWorktreeAgentAndDispatch(
-						activeSession,
-						config
-					);
+					const newSessionId = await spawnWorktreeAgentAndDispatch(activeSession, config);
 					if (!newSessionId) return; // Error already shown via toast
 					targetSessionId = newSessionId;
 				} catch (err) {

@@ -270,7 +270,7 @@ describe('useSessionLifecycle', () => {
 				result.current.handleSaveEditAgent(
 					'session-1',
 					'My Agent',
-					'opencode' as any, // Change provider
+					'opencode' as any // Change provider
 				);
 			});
 
@@ -318,7 +318,7 @@ describe('useSessionLifecycle', () => {
 				result.current.handleSaveEditAgent(
 					'session-1',
 					'Same Provider',
-					'claude-code' as any, // Same provider
+					'claude-code' as any // Same provider
 				);
 			});
 
@@ -344,11 +344,7 @@ describe('useSessionLifecycle', () => {
 			const { result } = renderHook(() => useSessionLifecycle(createDeps()));
 
 			act(() => {
-				result.current.handleSaveEditAgent(
-					'session-1',
-					'My Agent',
-					'codex' as any,
-				);
+				result.current.handleSaveEditAgent('session-1', 'My Agent', 'codex' as any);
 			});
 
 			const updated = useSessionStore.getState().sessions[0];

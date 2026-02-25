@@ -405,7 +405,8 @@ describe('process IPC handlers', () => {
 				customArgsSource: 'none',
 				customEnvSource: 'none',
 				effectiveCustomEnvVars: {
-					OPENCODE_CONFIG_CONTENT: '{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}',
+					OPENCODE_CONFIG_CONTENT:
+						'{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}',
 				},
 			});
 
@@ -434,7 +435,8 @@ describe('process IPC handlers', () => {
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
 					customEnvVars: expect.objectContaining({
-						OPENCODE_CONFIG_CONTENT: '{"permission":{"question":"deny"},"tools":{"question":false}}',
+						OPENCODE_CONFIG_CONTENT:
+							'{"permission":{"question":"deny"},"tools":{"question":false}}',
 					}),
 				})
 			);
@@ -444,7 +446,8 @@ describe('process IPC handlers', () => {
 			const { applyAgentConfigOverrides } = await import('../../../../main/utils/agent-args');
 			const mockApply = vi.mocked(applyAgentConfigOverrides);
 
-			const yoloConfig = '{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}';
+			const yoloConfig =
+				'{"permission":{"*":"allow","question":"deny"},"tools":{"question":false}}';
 			mockApply.mockReturnValueOnce({
 				args: [],
 				modelSource: 'default',

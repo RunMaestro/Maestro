@@ -1085,15 +1085,15 @@ export function AgentSessionsBrowser({
 					</div>
 
 					{/* Messages Container */}
-						<div
-							ref={messagesContainerRef}
-							className="flex-1 overflow-y-auto p-6 space-y-4 outline-none scrollbar-thin"
-							onScroll={handleMessagesScroll}
-							onKeyDown={handleKeyDown}
-							tabIndex={0}
-							role="region"
-							aria-label="Session messages"
-						>
+					<div
+						ref={messagesContainerRef}
+						className="flex-1 overflow-y-auto p-6 space-y-4 outline-none scrollbar-thin"
+						onScroll={handleMessagesScroll}
+						onKeyDown={handleKeyDown}
+						tabIndex={0}
+						role="region"
+						aria-label="Session messages"
+					>
 						{/* Load more indicator */}
 						{hasMoreMessages && (
 							<div className="text-center py-2">
@@ -1262,17 +1262,17 @@ export function AgentSessionsBrowser({
 							style={{ backgroundColor: theme.colors.bgActivity }}
 						>
 							{/* Toggle button: Search icon when showing graph, BarChart icon when showing search */}
-								<button
-									onClick={() => {
-										setShowSearchPanel(!showSearchPanel);
-										if (!showSearchPanel) {
-											// Switching to search - focus input after state update
-											setTimeout(() => inputRef.current?.focus(), 50);
-										} else {
-											// Switching to graph - clear search
-											handleSearchChange('');
-										}
-									}}
+							<button
+								onClick={() => {
+									setShowSearchPanel(!showSearchPanel);
+									if (!showSearchPanel) {
+										// Switching to search - focus input after state update
+										setTimeout(() => inputRef.current?.focus(), 50);
+									} else {
+										// Switching to graph - clear search
+										handleSearchChange('');
+									}
+								}}
 								className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 								style={{ color: theme.colors.textDim }}
 								title={
@@ -1296,20 +1296,20 @@ export function AgentSessionsBrowser({
 										<input
 											ref={inputRef}
 											className="flex-1 bg-transparent outline-none text-sm"
-												placeholder={`Search ${searchMode === 'title' ? 'titles' : searchMode === 'user' ? 'your messages' : searchMode === 'assistant' ? 'AI responses' : 'all content'}...`}
-												style={{ color: theme.colors.textMain }}
-												value={search}
-												onChange={(e) => handleSearchChange(e.target.value)}
-												onKeyDown={(e) => {
-													if (e.key === 'Escape') {
-														e.preventDefault();
-														e.stopPropagation();
-														setShowSearchPanel(false);
-														handleSearchChange('');
-													} else {
-														handleKeyDown(e);
-													}
-												}}
+											placeholder={`Search ${searchMode === 'title' ? 'titles' : searchMode === 'user' ? 'your messages' : searchMode === 'assistant' ? 'AI responses' : 'all content'}...`}
+											style={{ color: theme.colors.textMain }}
+											value={search}
+											onChange={(e) => handleSearchChange(e.target.value)}
+											onKeyDown={(e) => {
+												if (e.key === 'Escape') {
+													e.preventDefault();
+													e.stopPropagation();
+													setShowSearchPanel(false);
+													handleSearchChange('');
+												} else {
+													handleKeyDown(e);
+												}
+											}}
 										/>
 										{isSearching && (
 											<Loader2
@@ -1317,12 +1317,12 @@ export function AgentSessionsBrowser({
 												style={{ color: theme.colors.textDim }}
 											/>
 										)}
-											{search && !isSearching && (
-												<button
-													onClick={() => handleSearchChange('')}
-													className="p-0.5 rounded hover:bg-white/10"
-													style={{ color: theme.colors.textDim }}
-												>
+										{search && !isSearching && (
+											<button
+												onClick={() => handleSearchChange('')}
+												className="p-0.5 rounded hover:bg-white/10"
+												style={{ color: theme.colors.textDim }}
+											>
 												<X className="w-3 h-3" />
 											</button>
 										)}

@@ -30,6 +30,7 @@ import {
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
 import { normalizeMentionName } from '../utils/participantColors';
+import { useSessionStore } from '../stores/sessionStore';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -40,7 +41,13 @@ const ALLOWED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp
 /** Union type for items shown in the @ mention dropdown */
 type MentionItem =
 	| { type: 'agent'; name: string; mentionName: string; agentId: string; sessionId: string }
-	| { type: 'group'; group: Group; mentionName: string; memberCount: number; memberMentions: string[] };
+	| {
+			type: 'group';
+			group: Group;
+			mentionName: string;
+			memberCount: number;
+			memberMentions: string[];
+	  };
 
 interface GroupChatInputProps {
 	theme: Theme;
@@ -48,7 +55,6 @@ interface GroupChatInputProps {
 	onSend: (content: string, images?: string[], readOnly?: boolean) => void;
 	participants: GroupChatParticipant[];
 	sessions: Session[];
-	groups?: Group[];
 	groupChatId: string;
 	draftMessage?: string;
 	onDraftChange?: (draft: string) => void;
@@ -86,7 +92,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	onSend,
 	participants: _participants,
 	sessions,
-	groups,
 	groupChatId,
 	draftMessage,
 	onDraftChange,
@@ -107,6 +112,9 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	showFlashNotification,
 	shortcuts,
 }: GroupChatInputProps): JSX.Element {
+	// Read groups directly from store (Phase 3 pattern — no prop drilling)
+	const groups = useSessionStore((s) => s.groups);
+
 	const [message, setMessage] = useState(draftMessage || '');
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');
@@ -136,9 +144,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 		// Add groups (only those with at least 1 non-terminal member)
 		if (groups) {
 			for (const group of groups) {
-				const members = sessions.filter(
-					(s) => s.groupId === group.id && s.toolType !== 'terminal'
-				);
+				const members = sessions.filter((s) => s.groupId === group.id && s.toolType !== 'terminal');
 				if (members.length > 0) {
 					items.push({
 						type: 'group',

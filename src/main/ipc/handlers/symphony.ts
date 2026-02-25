@@ -1361,7 +1361,9 @@ export function registerSymphonyHandlers({
 				const prTitle = `[WIP] Symphony: ${issueTitle} (#${issueNumber})`;
 				const prBody = `## Maestro Symphony Contribution
 
-Working on #${issueNumber} via [Maestro Symphony](https://runmaestro.ai).
+Closes #${issueNumber}
+
+Contributed via [Maestro Symphony](https://runmaestro.ai).
 
 **Status:** In Progress
 **Started:** ${new Date().toISOString()}
@@ -2507,7 +2509,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 						const prTitle = `[WIP] Symphony: ${issueTitle} (#${issueNumber})`;
 						const prBody = `## Maestro Symphony Contribution
 
-Working on #${issueNumber} via [Maestro Symphony](https://runmaestro.ai).
+Closes #${issueNumber}
+
+Contributed via [Maestro Symphony](https://runmaestro.ai).
 
 **Status:** In Progress
 **Started:** ${new Date().toISOString()}
@@ -2678,7 +2682,9 @@ This PR will be updated automatically when the Auto Run completes.`;
 				const prTitle = `[WIP] Symphony: ${issueTitle} (#${issueNumber})`;
 				const prBody = `## Maestro Symphony Contribution
 
-Working on #${issueNumber} via [Maestro Symphony](https://runmaestro.ai).
+Closes #${issueNumber}
+
+Contributed via [Maestro Symphony](https://runmaestro.ai).
 
 **Status:** In Progress
 **Started:** ${new Date().toISOString()}

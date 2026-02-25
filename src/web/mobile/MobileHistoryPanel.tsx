@@ -1122,7 +1122,8 @@ export function MobileHistoryPanel({
 								touchAction: 'manipulation',
 								WebkitTapHighlightColor: 'transparent',
 								flexShrink: 0,
-								transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+								transition:
+									'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
 							}}
 							aria-label="Search history"
 							aria-pressed={isSearchOpen}
@@ -1189,13 +1190,13 @@ export function MobileHistoryPanel({
 										fontSize: '12px',
 										fontWeight: 600,
 										textTransform: 'uppercase',
-											cursor: 'pointer',
-											touchAction: 'manipulation',
-											WebkitTapHighlightColor: 'transparent',
-											opacity: isActive ? 1 : 0.6,
-											transition:
-												'opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
-										}}
+										cursor: 'pointer',
+										touchAction: 'manipulation',
+										WebkitTapHighlightColor: 'transparent',
+										opacity: isActive ? 1 : 0.6,
+										transition:
+											'opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
+									}}
 									aria-pressed={isActive}
 								>
 									{displayLabel}

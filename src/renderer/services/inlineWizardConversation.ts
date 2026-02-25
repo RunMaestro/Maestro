@@ -580,10 +580,11 @@ export async function sendWizardMessage(
 		// Build args for the agent
 		const argsForSpawn = agent ? buildArgsForAgent(agent) : [];
 
-		const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } = getStdinFlags({
-			isSshSession: !!session.sessionSshRemoteConfig?.enabled,
-			supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
-		});
+		const { sendPromptViaStdin: sendViaStdin, sendPromptViaStdinRaw: sendViaStdinRaw } =
+			getStdinFlags({
+				isSshSession: !!session.sessionSshRemoteConfig?.enabled,
+				supportsStreamJsonInput: agent?.capabilities?.supportsStreamJsonInput ?? false,
+			});
 		if (sendViaStdin && !argsForSpawn.includes('--input-format')) {
 			// Add --input-format stream-json when using stdin with stream-json compatible agents
 			argsForSpawn.push('--input-format', 'stream-json');

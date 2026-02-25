@@ -163,11 +163,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 				await result.current.handleStartBatchRun(config);
 			});
 
-			expect(deps.startBatchRun).toHaveBeenCalledWith(
-				'parent-session-1',
-				config,
-				'/shared/docs'
-			);
+			expect(deps.startBatchRun).toHaveBeenCalledWith('parent-session-1', config, '/shared/docs');
 		});
 	});
 
@@ -961,9 +957,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 
 			// Session should exist in the store with correct path
 			const sessions = useSessionStore.getState().sessions;
-			const newSession = sessions.find(
-				(s) => s.cwd === '/projects/worktrees/feature-old'
-			);
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/feature-old');
 			expect(newSession).toBeDefined();
 			expect(newSession!.parentSessionId).toBe('parent-session-1');
 		});
@@ -992,9 +986,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			});
 
 			const sessions = useSessionStore.getState().sessions;
-			const newSession = sessions.find(
-				(s) => s.cwd === '/deep/nested/path/my-feature'
-			);
+			const newSession = sessions.find((s) => s.cwd === '/deep/nested/path/my-feature');
 			expect(newSession).toBeDefined();
 			// Branch name should be derived from the last path segment
 			expect(newSession!.worktreeBranch).toBe('my-feature');
@@ -1037,9 +1029,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			const session = createMockSession();
 			const deps = createMockDeps();
 
-			vi.mocked(gitService.getBranches).mockRejectedValue(
-				new Error('git not found')
-			);
+			vi.mocked(gitService.getBranches).mockRejectedValue(new Error('git not found'));
 
 			const config: BatchRunConfig = {
 				documents: baseDocuments,
@@ -1063,9 +1053,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 
 			// Session should still exist with path-derived branch
 			const sessions = useSessionStore.getState().sessions;
-			const newSession = sessions.find(
-				(s) => s.cwd === '/projects/worktrees/resilient'
-			);
+			const newSession = sessions.find((s) => s.cwd === '/projects/worktrees/resilient');
 			expect(newSession).toBeDefined();
 			expect(newSession!.worktreeBranch).toBe('resilient');
 		});
@@ -1102,9 +1090,7 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			});
 
 			const sessions = useSessionStore.getState().sessions;
-			const newSession = sessions.find(
-				(s) => s.cwd === '/remote/worktrees/ssh-feature'
-			);
+			const newSession = sessions.find((s) => s.cwd === '/remote/worktrees/ssh-feature');
 			expect(newSession).toBeDefined();
 			expect(newSession!.sessionSshRemoteConfig).toEqual(sshConfig);
 		});

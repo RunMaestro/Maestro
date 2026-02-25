@@ -22,12 +22,12 @@ import {
 	ChevronLeft,
 	ChevronRight,
 	Clipboard,
+	Copy,
 	Loader2,
 	Image,
 	Globe,
 	Save,
 	Edit,
-	FolderOpen,
 	AlertTriangle,
 	Share2,
 	GitGraph,
@@ -37,6 +37,7 @@ import {
 	X,
 } from 'lucide-react';
 import { visit } from 'unist-util-visit';
+import { captureException } from '../utils/sentry';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
@@ -991,7 +992,8 @@ export const FilePreview = React.memo(
 
 		const showPath = showStatsBar && !!directoryPath;
 		const headerIconClass = 'w-4 h-4';
-		const headerBtnClass = 'p-2 rounded hover:bg-white/10 transition-colors';
+		const headerBtnClass =
+			'p-2 rounded hover:bg-white/10 transition-colors outline-none focus-visible:ring-1 focus-visible:ring-white/30';
 
 		// Fetch file stats when file changes
 		useEffect(() => {
@@ -1460,10 +1462,15 @@ export const FilePreview = React.memo(
 			theme.colors.accent,
 		]);
 
-		const copyPathToClipboard = () => {
+		const copyPathToClipboard = async () => {
 			if (!file) return;
-			navigator.clipboard.writeText(file.path);
-			setCopyNotificationMessage('File Path Copied to Clipboard');
+			try {
+				await navigator.clipboard.writeText(file.path);
+				setCopyNotificationMessage('File Path Copied to Clipboard');
+			} catch (err) {
+				captureException(err);
+				setCopyNotificationMessage('Failed to Copy Path');
+			}
 			setShowCopyNotification(true);
 			setTimeout(() => setShowCopyNotification(false), 2000);
 		};
@@ -1477,14 +1484,20 @@ export const FilePreview = React.memo(
 					const blob = await response.blob();
 					await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
 					setCopyNotificationMessage('Image Copied to Clipboard');
-				} catch {
+				} catch (err) {
+					captureException(err);
 					// Fallback: copy the data URL if image copy fails
-					navigator.clipboard.writeText(file.content);
-					setCopyNotificationMessage('Image URL Copied to Clipboard');
+					try {
+						await navigator.clipboard.writeText(file.content);
+						setCopyNotificationMessage('Image URL Copied to Clipboard');
+					} catch (fallbackErr) {
+						captureException(fallbackErr);
+						setCopyNotificationMessage('Failed to Copy Image');
+					}
 				}
 			} else {
 				// For text files, copy the content
-				navigator.clipboard.writeText(file.content);
+				await navigator.clipboard.writeText(file.content);
 				setCopyNotificationMessage('Content Copied to Clipboard');
 			}
 			setShowCopyNotification(true);
@@ -1765,7 +1778,7 @@ export const FilePreview = React.memo(
 				// Cmd+C: Copy image to clipboard when viewing an image
 				e.preventDefault();
 				e.stopPropagation();
-				copyContentToClipboard();
+				copyContentToClipboard().catch(captureException);
 			}
 		};
 
@@ -1795,127 +1808,131 @@ export const FilePreview = React.memo(
 				{/* Header */}
 				<div className="shrink-0" style={{ backgroundColor: theme.colors.bgSidebar }}>
 					{/* Main header row */}
-					<div
-						className="border-b px-6 py-3"
-						style={{ borderColor: theme.colors.border }}
-					>
+					<div className="border-b px-6 py-3" style={{ borderColor: theme.colors.border }}>
 						<div className="flex items-center justify-between">
 							<div className="flex items-center gap-3 min-w-0">
 								<FileCode className="w-5 h-5 shrink-0" style={{ color: theme.colors.accent }} />
-								<div className="text-sm font-medium truncate" style={{ color: theme.colors.textMain }}>
+								<div
+									className="text-sm font-medium truncate"
+									style={{ color: theme.colors.textMain }}
+								>
 									{file.name}
 								</div>
 							</div>
-						<div className="flex items-center gap-2 shrink-0">
-							{/* Save button - shown in edit mode with changes for any editable text file */}
-							{isEditableText && markdownEditMode && onSave && (
+							<div className="flex items-center gap-2 shrink-0">
+								{/* Save button - shown in edit mode with changes for any editable text file */}
+								{isEditableText && markdownEditMode && onSave && (
+									<button
+										onClick={handleSave}
+										disabled={!hasChanges || isSaving}
+										className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5"
+										style={{
+											backgroundColor: hasChanges ? theme.colors.accent : theme.colors.bgActivity,
+											color: hasChanges ? theme.colors.accentForeground : theme.colors.textDim,
+											opacity: hasChanges && !isSaving ? 1 : 0.5,
+											cursor: hasChanges && !isSaving ? 'pointer' : 'default',
+										}}
+										title={
+											hasChanges
+												? `Save changes (${formatShortcutKeys(['Meta', 's'])})`
+												: 'No changes to save'
+										}
+									>
+										{isSaving ? (
+											<Loader2 className="w-3.5 h-3.5 animate-spin" />
+										) : (
+											<Save className="w-3.5 h-3.5" />
+										)}
+										{isSaving ? 'Saving...' : 'Save'}
+									</button>
+								)}
+								{/* Show remote images toggle - only for markdown in preview mode */}
+								{isMarkdown && !markdownEditMode && (
+									<button
+										onClick={() => setShowRemoteImages(!showRemoteImages)}
+										className={headerBtnClass}
+										style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
+										title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
+									>
+										<Globe className={headerIconClass} />
+									</button>
+								)}
+								{/* Toggle between edit and preview/view mode - for any editable text file */}
+								{isEditableText && (
+									<button
+										onClick={() => setMarkdownEditMode(!markdownEditMode)}
+										className={headerBtnClass}
+										style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
+										title={`${markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'} (${formatShortcut('toggleMarkdownMode')})`}
+									>
+										{markdownEditMode ? (
+											<Eye className={headerIconClass} />
+										) : (
+											<Edit className={headerIconClass} />
+										)}
+									</button>
+								)}
 								<button
-									onClick={handleSave}
-									disabled={!hasChanges || isSaving}
-									className="px-3 py-1.5 rounded text-xs font-medium transition-colors flex items-center gap-1.5"
-									style={{
-										backgroundColor: hasChanges ? theme.colors.accent : theme.colors.bgActivity,
-										color: hasChanges ? theme.colors.accentForeground : theme.colors.textDim,
-										opacity: hasChanges && !isSaving ? 1 : 0.5,
-										cursor: hasChanges && !isSaving ? 'pointer' : 'default',
-									}}
+									onClick={() => copyContentToClipboard().catch(captureException)}
+									className={headerBtnClass}
+									style={{ color: theme.colors.textDim }}
 									title={
-										hasChanges
-											? `Save changes (${formatShortcutKeys(['Meta', 's'])})`
-											: 'No changes to save'
+										isImage
+											? `Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
+											: 'Copy content to clipboard'
 									}
 								>
-									{isSaving ? (
-										<Loader2 className="w-3.5 h-3.5 animate-spin" />
-									) : (
-										<Save className="w-3.5 h-3.5" />
-									)}
-									{isSaving ? 'Saving...' : 'Save'}
+									<Clipboard className={headerIconClass} />
 								</button>
-							)}
-							{/* Show remote images toggle - only for markdown in preview mode */}
-							{isMarkdown && !markdownEditMode && (
+								{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
+								{ghCliAvailable && !markdownEditMode && onPublishGist && !isImage && (
+									<button
+										onClick={onPublishGist}
+										className={headerBtnClass}
+										style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
+										title={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
+									>
+										<Share2 className={headerIconClass} />
+									</button>
+								)}
+								{/* Document Graph button - show for markdown files when callback is available */}
+								{isMarkdown && onOpenInGraph && (
+									<button
+										onClick={onOpenInGraph}
+										className={headerBtnClass}
+										style={{ color: theme.colors.textDim }}
+										title={`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`}
+									>
+										<GitGraph className={headerIconClass} />
+									</button>
+								)}
+								{!sshRemoteId && (
+									<button
+										onClick={() => window.maestro?.shell?.openPath(file.path)}
+										className={headerBtnClass}
+										style={{ color: theme.colors.textDim }}
+										title="Open in Default App"
+									>
+										<ExternalLink className={headerIconClass} />
+									</button>
+								)}
 								<button
-									onClick={() => setShowRemoteImages(!showRemoteImages)}
-									className={headerBtnClass}
-									style={{ color: showRemoteImages ? theme.colors.accent : theme.colors.textDim }}
-									title={showRemoteImages ? 'Hide remote images' : 'Show remote images'}
-								>
-									<Globe className={headerIconClass} />
-								</button>
-							)}
-							{/* Toggle between edit and preview/view mode - for any editable text file */}
-							{isEditableText && (
-								<button
-									onClick={() => setMarkdownEditMode(!markdownEditMode)}
-									className={headerBtnClass}
-									style={{ color: markdownEditMode ? theme.colors.accent : theme.colors.textDim }}
-									title={`${markdownEditMode ? (isMarkdown ? 'Show preview' : 'View file') : 'Edit file'} (${formatShortcut('toggleMarkdownMode')})`}
-								>
-									{markdownEditMode ? <Eye className={headerIconClass} /> : <Edit className={headerIconClass} />}
-								</button>
-							)}
-							<button
-								onClick={copyContentToClipboard}
-								className={headerBtnClass}
-								style={{ color: theme.colors.textDim }}
-								title={
-									isImage
-										? `Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
-										: 'Copy content to clipboard'
-								}
-							>
-								<Clipboard className={headerIconClass} />
-							</button>
-							{/* Publish as Gist button - only show if gh CLI is available and not in edit mode */}
-							{ghCliAvailable && !markdownEditMode && onPublishGist && !isImage && (
-								<button
-									onClick={onPublishGist}
-									className={headerBtnClass}
-									style={{ color: hasGist ? theme.colors.accent : theme.colors.textDim }}
-									title={hasGist ? 'View published gist' : 'Publish as GitHub Gist'}
-								>
-									<Share2 className={headerIconClass} />
-								</button>
-							)}
-							{/* Document Graph button - show for markdown files when callback is available */}
-							{isMarkdown && onOpenInGraph && (
-								<button
-									onClick={onOpenInGraph}
+									onClick={copyPathToClipboard}
 									className={headerBtnClass}
 									style={{ color: theme.colors.textDim }}
-									title={`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`}
+									title="Copy full path to clipboard"
 								>
-									<GitGraph className={headerIconClass} />
+									<Copy className={headerIconClass} />
 								</button>
-							)}
-							{!sshRemoteId && (
-								<button
-									onClick={() => window.maestro?.shell?.openPath(file.path)}
-									className={headerBtnClass}
-									style={{ color: theme.colors.textDim }}
-									title="Open in Default App"
-								>
-									<ExternalLink className={headerIconClass} />
-								</button>
-							)}
-							<button
-								onClick={copyPathToClipboard}
-								className={headerBtnClass}
-								style={{ color: theme.colors.textDim }}
-								title="Copy full path to clipboard"
-							>
-								<FolderOpen className={headerIconClass} />
-							</button>
-						</div>
+							</div>
 						</div>
 						{showPath && (
-						<div
-							className="text-xs opacity-50 truncate mt-1"
-							style={{ color: theme.colors.textDim }}
-						>
-							{directoryPath}
-						</div>
+							<div
+								className="text-xs opacity-50 truncate mt-1"
+								style={{ color: theme.colors.textDim }}
+							>
+								{directoryPath}
+							</div>
 						)}
 					</div>
 					{/* File Stats subbar - hidden on scroll */}

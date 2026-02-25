@@ -1500,8 +1500,7 @@ export function useBatchProcessor({
 			) {
 				// For worktree-dispatched runs, the main repo is the parent session's cwd
 				const mainRepoCwd = config.worktreeTarget
-					? (sessionsRef.current.find((s) => s.id === session.parentSessionId)?.cwd ||
-						session.cwd)
+					? sessionsRef.current.find((s) => s.id === session.parentSessionId)?.cwd || session.cwd
 					: session.cwd;
 
 				const prResult = await worktreeManager.createPR({
