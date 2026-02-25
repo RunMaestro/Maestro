@@ -17,12 +17,6 @@ import type {
 	ExternalLinkNodeData,
 } from '../../../../renderer/components/DocumentGraph/graphDataBuilder';
 
-// Mock sentry to capture clipboard errors
-const mockCaptureException = vi.fn();
-vi.mock('../../../../renderer/utils/sentry', () => ({
-	captureException: (...args: unknown[]) => mockCaptureException(...args),
-}));
-
 // Mock theme for testing
 const mockTheme: Theme = {
 	id: 'dracula',
@@ -340,6 +334,7 @@ describe('NodeContextMenu', () => {
 
 	describe('Clipboard Error Handling', () => {
 		it('handles clipboard write failure gracefully', async () => {
+			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockClipboardWriteText.mockRejectedValueOnce(new Error('Clipboard access denied'));
 
 			const onDismiss = vi.fn();
@@ -349,9 +344,14 @@ describe('NodeContextMenu', () => {
 			fireEvent.click(screen.getByRole('button', { name: /copy path/i }));
 
 			await waitFor(() => {
-				expect(mockCaptureException).toHaveBeenCalledWith(expect.any(Error));
+				expect(consoleErrorSpy).toHaveBeenCalledWith(
+					'Failed to copy to clipboard:',
+					expect.any(Error)
+				);
 			});
 			expect(onDismiss).toHaveBeenCalled();
+
+			consoleErrorSpy.mockRestore();
 		});
 	});
 });

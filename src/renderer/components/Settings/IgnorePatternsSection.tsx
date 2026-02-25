@@ -152,8 +152,12 @@ export function IgnorePatternsSection({
 								</span>
 							</div>
 						</label>
-						<p className="text-xs mt-1 ml-7" style={{ color: theme.colors.textDim }}>
-							When enabled, patterns from .gitignore files will also be excluded from indexing.
+						<p
+							className="text-xs mt-1 ml-7"
+							style={{ color: theme.colors.textDim }}
+						>
+							When enabled, patterns from .gitignore files will also be excluded
+							from indexing.
 						</p>
 					</div>
 				)}

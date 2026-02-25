@@ -782,7 +782,7 @@ function RepositoryDetailView({
 									<FileText className="w-3 h-3" />
 									<span>{selectedIssue.documentPaths.length} Auto Run documents to process</span>
 								</div>
-							</div>
+														</div>
 
 							{/* Document selector dropdown */}
 							<div
@@ -911,9 +911,7 @@ function RepositoryDetailView({
 						{isIssueBlocked(selectedIssue) ? (
 							<>
 								<Lock className="w-4 h-4" />
-								<span>
-									Blocked by a dependency — the maintainer will unblock when prerequisites are met
-								</span>
+								<span>Blocked by a dependency — the maintainer will unblock when prerequisites are met</span>
 							</>
 						) : (
 							<>
@@ -975,8 +973,7 @@ function ActiveContributionCard({
 				)
 			: 0;
 
-	const canFinalize =
-		contribution.status === 'ready_for_review' || contribution.status === 'completed';
+	const canFinalize = contribution.status === 'ready_for_review';
 
 	const handleOpenExternal = useCallback((url: string) => {
 		window.maestro.shell.openExternal(url);

@@ -12,7 +12,6 @@ import { FileText, ExternalLink, Copy, Focus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';
 import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
-import { captureException } from '../../utils/sentry';
 
 /**
  * Props for the NodeContextMenu component
@@ -103,7 +102,7 @@ export function NodeContextMenu({
 				await navigator.clipboard.writeText(textToCopy);
 			}
 		} catch (err) {
-			captureException(err);
+			console.error('Failed to copy to clipboard:', err);
 		}
 		onDismiss();
 	}, [isDocument, isExternal, nodeData, onDismiss]);

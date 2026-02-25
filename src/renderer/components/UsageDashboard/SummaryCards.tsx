@@ -91,13 +91,7 @@ interface MetricCardProps {
 	animationIndex?: number;
 }
 
-const MetricCard = memo(function MetricCard({
-	icon,
-	label,
-	value,
-	theme,
-	animationIndex = 0,
-}: MetricCardProps) {
+const MetricCard = memo(function MetricCard({ icon, label, value, theme, animationIndex = 0 }: MetricCardProps) {
 	return (
 		<div
 			className="p-4 rounded-lg flex items-start gap-3 dashboard-card-enter"

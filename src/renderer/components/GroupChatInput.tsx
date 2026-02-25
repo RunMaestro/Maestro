@@ -30,7 +30,6 @@ import {
 } from '../utils/shortcutFormatter';
 import { QueuedItemsList } from './QueuedItemsList';
 import { normalizeMentionName } from '../utils/participantColors';
-import { useSessionStore } from '../stores/sessionStore';
 
 /** Maximum image file size in bytes (10MB) */
 const MAX_IMAGE_SIZE = 10 * 1024 * 1024;
@@ -55,6 +54,7 @@ interface GroupChatInputProps {
 	onSend: (content: string, images?: string[], readOnly?: boolean) => void;
 	participants: GroupChatParticipant[];
 	sessions: Session[];
+	groups?: Group[];
 	groupChatId: string;
 	draftMessage?: string;
 	onDraftChange?: (draft: string) => void;
@@ -92,6 +92,7 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	onSend,
 	participants: _participants,
 	sessions,
+	groups,
 	groupChatId,
 	draftMessage,
 	onDraftChange,
@@ -112,9 +113,6 @@ export const GroupChatInput = React.memo(function GroupChatInput({
 	showFlashNotification,
 	shortcuts,
 }: GroupChatInputProps): JSX.Element {
-	// Read groups directly from store (Phase 3 pattern — no prop drilling)
-	const groups = useSessionStore((s) => s.groups);
-
 	const [message, setMessage] = useState(draftMessage || '');
 	const [showMentions, setShowMentions] = useState(false);
 	const [mentionFilter, setMentionFilter] = useState('');

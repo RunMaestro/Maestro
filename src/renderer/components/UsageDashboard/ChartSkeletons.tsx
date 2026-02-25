@@ -181,10 +181,9 @@ export const ActivityHeatmapSkeleton = memo(function ActivityHeatmapSkeleton({
 
 	// Stable random opacities so skeleton doesn't flicker on re-renders
 	const cellOpacities = useMemo(
-		() =>
-			Array.from({ length: cols }, () =>
-				Array.from({ length: rows }, () => 0.2 + Math.random() * 0.15)
-			),
+		() => Array.from({ length: cols }, () =>
+			Array.from({ length: rows }, () => 0.2 + Math.random() * 0.15)
+		),
 		[]
 	);
 

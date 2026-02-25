@@ -2,19 +2,6 @@ import { useEffect, useRef } from 'react';
 import type { Session, SessionState, ThinkingMode } from '../../types';
 import { createTab, closeTab } from '../../utils/tabHelpers';
 
-function applyInputModeToSession(session: Session, inputMode: 'ai' | 'terminal'): Session {
-	if (session.inputMode === inputMode) {
-		return session;
-	}
-
-	// File preview tabs are only valid in AI mode.
-	if (inputMode === 'terminal') {
-		return { ...session, inputMode, activeFileTabId: null };
-	}
-
-	return { ...session, inputMode };
-}
-
 /**
  * Dependencies for the useRemoteIntegration hook.
  * Uses refs for values that change frequently to avoid re-attaching listeners.
@@ -121,7 +108,15 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// This ensures the renderer uses the same mode the web intended
 				if (inputMode && targetSession.inputMode !== inputMode) {
 					setSessions((prev) =>
-						prev.map((s) => (s.id === sessionId ? applyInputModeToSession(s, inputMode) : s))
+						prev.map((s) =>
+							s.id === sessionId
+								? {
+										...s,
+										inputMode,
+										...(inputMode === 'terminal' && { activeFileTabId: null }),
+									}
+								: s
+						)
 					);
 				}
 
@@ -170,7 +165,13 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 
 					return prev.map((s) => {
 						if (s.id !== sessionId) return s;
-						return applyInputModeToSession(s, mode);
+						// Clear activeFileTabId when switching to terminal mode to prevent
+						// orphaned file preview without tab bar
+						return {
+							...s,
+							inputMode: mode,
+							...(mode === 'terminal' && { activeFileTabId: null }),
+						};
 					});
 				});
 			}
