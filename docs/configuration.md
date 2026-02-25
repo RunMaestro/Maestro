@@ -300,6 +300,15 @@ File heartbeats are generated for write operations across all supported agents:
 
 Read operations and shell commands are excluded to avoid inflating tracked time.
 
+### Activity Categories
+
+Maestro assigns WakaTime categories based on how the session was initiated:
+
+- **Interactive sessions** (user-driven) are tracked as `building`
+- **Auto Run / batch sessions** are tracked as `ai coding`
+
+This lets you distinguish time you spent actively directing agents from time the AI worked autonomously on your WakaTime dashboard.
+
 ## Storage Location
 
 Settings are stored in:

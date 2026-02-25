@@ -31,7 +31,7 @@ function heartbeatForSession(
 	if (!managedProcess || managedProcess.isTerminal) return;
 	const projectDir = managedProcess.projectPath || managedProcess.cwd;
 	const projectName = projectDir ? path.basename(projectDir) : sessionId;
-	void wakaTimeManager.sendHeartbeat(sessionId, projectName, projectDir);
+	void wakaTimeManager.sendHeartbeat(sessionId, projectName, projectDir, managedProcess.querySource);
 }
 
 /** Debounce delay for flushing file heartbeats after a `usage` event (ms) */
@@ -68,7 +68,7 @@ export function setupWakaTimeListener(
 	const usageFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	/** Flush accumulated file heartbeats for a session. */
-	function flushPendingFiles(sessionId: string, projectDir: string | undefined, projectName: string): void {
+	function flushPendingFiles(sessionId: string, projectDir: string | undefined, projectName: string, source?: 'user' | 'auto'): void {
 		const sessionFiles = pendingFiles.get(sessionId);
 		if (!sessionFiles || sessionFiles.size === 0) return;
 
@@ -79,7 +79,7 @@ export function setupWakaTimeListener(
 			timestamp: f.timestamp,
 		}));
 
-		void wakaTimeManager.sendFileHeartbeats(filesArray, projectName, projectDir);
+		void wakaTimeManager.sendFileHeartbeats(filesArray, projectName, projectDir, source);
 		pendingFiles.delete(sessionId);
 	}
 
@@ -118,11 +118,11 @@ export function setupWakaTimeListener(
 		const projectName = queryData.projectPath
 			? path.basename(queryData.projectPath)
 			: queryData.sessionId;
-		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath);
+		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath, queryData.source);
 
 		// Flush accumulated file heartbeats
 		if (detailedEnabled) {
-			flushPendingFiles(queryData.sessionId, queryData.projectPath, projectName);
+			flushPendingFiles(queryData.sessionId, queryData.projectPath, projectName, queryData.source);
 		}
 
 		// Cancel any pending usage-based flush since query-complete already flushed
@@ -157,7 +157,7 @@ export function setupWakaTimeListener(
 				const projectDir = managedProcess.projectPath || managedProcess.cwd;
 				const projectName = projectDir ? path.basename(projectDir) : sessionId;
 
-				flushPendingFiles(sessionId, projectDir, projectName);
+				flushPendingFiles(sessionId, projectDir, projectName, managedProcess.querySource);
 			}, USAGE_FLUSH_DELAY_MS)
 		);
 	});

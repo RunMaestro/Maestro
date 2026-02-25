@@ -538,7 +538,7 @@ export class WakaTimeManager {
 	}
 
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string): Promise<void> {
+	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string, source?: 'user' | 'auto'): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -574,7 +574,7 @@ export class WakaTimeManager {
 			'--plugin',
 			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
 			'--category',
-			'ai coding',
+			source === 'auto' ? 'ai coding' : 'building',
 		];
 
 		// Detect project language from manifest files in cwd
@@ -609,7 +609,8 @@ export class WakaTimeManager {
 	async sendFileHeartbeats(
 		files: Array<{ filePath: string; timestamp: number }>,
 		projectName: string,
-		projectCwd?: string
+		projectCwd?: string,
+		source?: 'user' | 'auto'
 	): Promise<void> {
 		if (files.length === 0) return;
 
@@ -645,7 +646,7 @@ export class WakaTimeManager {
 			'--plugin',
 			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
 			'--category',
-			'coding',
+			source === 'auto' ? 'ai coding' : 'building',
 			'--time',
 			String(primary.timestamp / 1000),
 		];
@@ -670,7 +671,7 @@ export class WakaTimeManager {
 				type: 'file',
 				is_write: true,
 				time: f.timestamp / 1000,
-				category: 'coding',
+				category: source === 'auto' ? 'ai coding' : 'building',
 				project: projectName,
 			};
 			const lang = detectLanguageFromPath(f.filePath);

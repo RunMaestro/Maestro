@@ -332,7 +332,7 @@ describe('WakaTimeManager', () => {
 				'--plugin',
 				'maestro/1.0.0 maestro-wakatime/1.0.0',
 				'--category',
-				'ai coding',
+				'building',
 			]);
 		});
 
@@ -422,7 +422,7 @@ describe('WakaTimeManager', () => {
 			);
 		});
 
-		it('should send heartbeat with correct arguments', async () => {
+		it('should send heartbeat with building category by default', async () => {
 			// First call to detectCli
 			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
 				exitCode: 0,
@@ -450,11 +450,35 @@ describe('WakaTimeManager', () => {
 				'--plugin',
 				'maestro/1.0.0 maestro-wakatime/1.0.0',
 				'--category',
-				'ai coding',
+				'building',
 			]);
 			expect(logger.debug).toHaveBeenCalledWith(
 				expect.stringContaining('Heartbeat sent for session session-1'),
 				'[WakaTime]'
+			);
+		});
+
+		it('should send ai coding category for auto source', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'auto');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli',
+				expect.arrayContaining(['--category', 'ai coding'])
+			);
+		});
+
+		it('should send building category for user source', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'user');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli',
+				expect.arrayContaining(['--category', 'building'])
 			);
 		});
 
@@ -950,7 +974,7 @@ describe('WakaTimeManager', () => {
 			expect(execFileNoThrow).not.toHaveBeenCalled();
 		});
 
-		it('should send a single file heartbeat with correct CLI args', async () => {
+		it('should send a single file heartbeat with building category by default', async () => {
 			// The heartbeat exec call
 			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
 				exitCode: 0,
@@ -973,7 +997,7 @@ describe('WakaTimeManager', () => {
 				'--write',
 				'--project', 'My Project',
 				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
-				'--category', 'coding',
+				'--category', 'building',
 				'--time', String(1708700000000 / 1000),
 				'--language', 'TypeScript',
 			]);
@@ -981,6 +1005,46 @@ describe('WakaTimeManager', () => {
 			expect(heartbeatCall[1]).not.toContain('--extra-heartbeats');
 			// No stdin input for single file
 			expect(heartbeatCall[3]).toBeUndefined();
+		});
+
+		it('should send ai coding category for file heartbeats with auto source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				undefined,
+				'auto'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('ai coding');
+		});
+
+		it('should send building category for file heartbeats with user source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				undefined,
+				'user'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('building');
 		});
 
 		it('should send multiple files with --extra-heartbeats via stdin', async () => {
@@ -1019,11 +1083,35 @@ describe('WakaTimeManager', () => {
 			expect(extraArray[0].language).toBe('Python');
 			expect(extraArray[0].type).toBe('file');
 			expect(extraArray[0].is_write).toBe(true);
-			expect(extraArray[0].category).toBe('coding');
+			expect(extraArray[0].category).toBe('building');
 			expect(extraArray[0].project).toBe('My Project');
 			expect(extraArray[0].time).toBe(1708700001000 / 1000);
 			expect(extraArray[1].entity).toBe('/project/src/main.go');
 			expect(extraArray[1].language).toBe('Go');
+		});
+
+		it('should use ai coding category in extra heartbeats for auto source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.py', timestamp: 1708700001000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project', undefined, 'auto');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('ai coding');
+
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray[0].category).toBe('ai coding');
 		});
 
 		it('should include branch info when projectCwd is provided', async () => {

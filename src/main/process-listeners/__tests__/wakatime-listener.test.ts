@@ -77,7 +77,8 @@ describe('WakaTime Listener', () => {
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-abc',
 			'project',
-			'/home/user/project'
+			'/home/user/project',
+			undefined
 		);
 	});
 
@@ -100,7 +101,8 @@ describe('WakaTime Listener', () => {
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-thinking',
 			'project',
-			'/home/user/project'
+			'/home/user/project',
+			undefined
 		);
 	});
 
@@ -151,11 +153,12 @@ describe('WakaTime Listener', () => {
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-no-path',
 			'fallback',
-			'/home/user/fallback'
+			'/home/user/fallback',
+			undefined
 		);
 	});
 
-	it('should send heartbeat on query-complete with projectPath', () => {
+	it('should send heartbeat on query-complete with projectPath and source', () => {
 		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager, mockSettingsStore);
 
 		const handler = eventHandlers.get('query-complete');
@@ -174,7 +177,8 @@ describe('WakaTime Listener', () => {
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-abc',
 			'project',
-			'/home/user/project'
+			'/home/user/project',
+			'user'
 		);
 	});
 
@@ -195,7 +199,56 @@ describe('WakaTime Listener', () => {
 		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
 			'session-fallback',
 			'session-fallback',
-			undefined
+			undefined,
+			'user'
+		);
+	});
+
+	it('should forward querySource auto on data event', () => {
+		vi.mocked(mockProcessManager.get).mockReturnValue({
+			sessionId: 'session-auto',
+			toolType: 'claude-code',
+			cwd: '/home/user/project',
+			pid: 1234,
+			isTerminal: false,
+			startTime: Date.now(),
+			projectPath: '/home/user/project',
+			querySource: 'auto',
+		} as any);
+
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager, mockSettingsStore);
+
+		const handler = eventHandlers.get('data');
+		handler?.('session-auto', 'output');
+
+		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
+			'session-auto',
+			'project',
+			'/home/user/project',
+			'auto'
+		);
+	});
+
+	it('should forward source auto on query-complete', () => {
+		setupWakaTimeListener(mockProcessManager, mockWakaTimeManager, mockSettingsStore);
+
+		const handler = eventHandlers.get('query-complete');
+		const queryData: QueryCompleteData = {
+			sessionId: 'session-auto',
+			agentType: 'claude-code',
+			source: 'auto',
+			startTime: Date.now(),
+			duration: 5000,
+			projectPath: '/home/user/project',
+		};
+
+		handler?.('session-auto', queryData);
+
+		expect(mockWakaTimeManager.sendHeartbeat).toHaveBeenCalledWith(
+			'session-auto',
+			'project',
+			'/home/user/project',
+			'auto'
 		);
 	});
 
@@ -347,7 +400,32 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/project/src/index.ts', timestamp: 1000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				'user'
+			);
+		});
+
+		it('should forward auto source to sendFileHeartbeats on query-complete', () => {
+			toolExecutionHandler('session-1', {
+				toolName: 'Write',
+				state: { input: { file_path: '/home/user/project/src/index.ts' } },
+				timestamp: 1000,
+			});
+
+			queryCompleteHandler('session-1', {
+				sessionId: 'session-1',
+				agentType: 'claude-code',
+				source: 'auto',
+				startTime: 0,
+				duration: 5000,
+				projectPath: '/home/user/project',
+			} as QueryCompleteData);
+
+			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
+				[{ filePath: '/home/user/project/src/index.ts', timestamp: 1000 }],
+				'project',
+				'/home/user/project',
+				'auto'
 			);
 		});
 
@@ -394,7 +472,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/project/src/app.ts', timestamp: 2000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				'user'
 			);
 		});
 
@@ -417,7 +496,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/project/src/utils.ts', timestamp: 1000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				'user'
 			);
 		});
 
@@ -440,7 +520,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/absolute/path/file.ts', timestamp: 1000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				'user'
 			);
 		});
 
@@ -661,7 +742,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/project/src/app.ts', timestamp: 1000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				undefined
 			);
 		});
 
@@ -701,7 +783,8 @@ describe('WakaTime Listener', () => {
 					{ filePath: '/home/user/project/b.ts', timestamp: 2000 },
 				]),
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				undefined
 			);
 		});
 
@@ -792,7 +875,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/project/src/utils.ts', timestamp: 1000 }],
 				'project',
-				'/home/user/project'
+				'/home/user/project',
+				undefined
 			);
 		});
 
@@ -818,7 +902,8 @@ describe('WakaTime Listener', () => {
 			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
 				[{ filePath: '/home/user/fallback/src/utils.ts', timestamp: 1000 }],
 				'fallback',
-				'/home/user/fallback'
+				'/home/user/fallback',
+				undefined
 			);
 		});
 
@@ -837,6 +922,35 @@ describe('WakaTime Listener', () => {
 			// Advance past debounce -- should NOT flush
 			vi.advanceTimersByTime(500);
 			expect(mockWakaTimeManager.sendFileHeartbeats).not.toHaveBeenCalled();
+		});
+
+		it('should forward querySource auto on usage flush', () => {
+			vi.mocked(mockProcessManager.get).mockReturnValue({
+				sessionId: 'session-interactive',
+				toolType: 'claude-code',
+				cwd: '/home/user/project',
+				pid: 1234,
+				isTerminal: false,
+				startTime: Date.now(),
+				projectPath: '/home/user/project',
+				querySource: 'auto',
+			} as any);
+
+			toolExecutionHandler('session-interactive', {
+				toolName: 'Write',
+				state: { input: { file_path: '/home/user/project/a.ts' } },
+				timestamp: 1000,
+			});
+
+			usageHandler('session-interactive', usageStats);
+			vi.advanceTimersByTime(500);
+
+			expect(mockWakaTimeManager.sendFileHeartbeats).toHaveBeenCalledWith(
+				[{ filePath: '/home/user/project/a.ts', timestamp: 1000 }],
+				'project',
+				'/home/user/project',
+				'auto'
+			);
 		});
 
 		it('should skip flush for terminal sessions', () => {
