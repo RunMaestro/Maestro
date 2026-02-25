@@ -24,6 +24,7 @@ import {
 	CREATE_AUTO_RUN_TASKS_INDEXES_SQL,
 	CREATE_SESSION_LIFECYCLE_SQL,
 	CREATE_SESSION_LIFECYCLE_INDEXES_SQL,
+	CREATE_COMPOUND_INDEXES_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -53,6 +54,11 @@ export function getMigrations(): Migration[] {
 			version: 3,
 			description: 'Add session_lifecycle table for tracking session creation and closure',
 			up: (db) => migrateV3(db),
+		},
+		{
+			version: 4,
+			description: 'Add compound indexes on query_events for dashboard query performance',
+			up: (db) => migrateV4(db),
 		},
 	];
 }
@@ -231,4 +237,13 @@ function migrateV3(db: Database.Database): void {
 	runStatements(db, CREATE_SESSION_LIFECYCLE_INDEXES_SQL);
 
 	logger.debug('Created session_lifecycle table', LOG_CONTEXT);
+}
+
+/**
+ * Migration v4: Add compound indexes for dashboard query performance
+ */
+function migrateV4(db: Database.Database): void {
+	runStatements(db, CREATE_COMPOUND_INDEXES_SQL);
+
+	logger.debug('Added compound indexes on query_events', LOG_CONTEXT);
 }

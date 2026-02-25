@@ -55,7 +55,6 @@ export const CREATE_QUERY_EVENTS_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_query_source ON query_events(source);
   CREATE INDEX IF NOT EXISTS idx_query_session ON query_events(session_id);
   CREATE INDEX IF NOT EXISTS idx_query_project_path ON query_events(project_path);
-  CREATE INDEX IF NOT EXISTS idx_query_agent_time ON query_events(agent_type, start_time);
   CREATE INDEX IF NOT EXISTS idx_query_time_agent ON query_events(start_time, agent_type);
   CREATE INDEX IF NOT EXISTS idx_query_time_project ON query_events(start_time, project_path);
   CREATE INDEX IF NOT EXISTS idx_query_time_source ON query_events(start_time, source)
@@ -126,6 +125,16 @@ export const CREATE_SESSION_LIFECYCLE_SQL = `
 export const CREATE_SESSION_LIFECYCLE_INDEXES_SQL = `
   CREATE INDEX IF NOT EXISTS idx_session_created_at ON session_lifecycle(created_at);
   CREATE INDEX IF NOT EXISTS idx_session_agent_type ON session_lifecycle(agent_type)
+`;
+
+// ============================================================================
+// Compound Indexes (Migration v4)
+// ============================================================================
+
+export const CREATE_COMPOUND_INDEXES_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_query_time_agent ON query_events(start_time, agent_type);
+  CREATE INDEX IF NOT EXISTS idx_query_time_project ON query_events(start_time, project_path);
+  CREATE INDEX IF NOT EXISTS idx_query_time_source ON query_events(start_time, source)
 `;
 
 // ============================================================================

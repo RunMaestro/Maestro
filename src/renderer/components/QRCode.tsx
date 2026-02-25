@@ -7,6 +7,7 @@
 
 import { memo, useState, useEffect } from 'react';
 import QRCodeLib from 'qrcode';
+import { captureException } from '../utils/sentry';
 
 interface QRCodeProps {
 	/** The URL or text to encode in the QR code */
@@ -55,7 +56,7 @@ export const QRCode = memo(function QRCode({
 				setError(null);
 			})
 			.catch((err) => {
-				console.error('Failed to generate QR code:', err);
+				captureException(err);
 				setError('Failed to generate QR code');
 				setDataUrl(null);
 			});

@@ -112,4 +112,4 @@ export interface StatsFilters {
 /**
  * Database schema version for migrations
  */
-export const STATS_DB_VERSION = 3;
+export const STATS_DB_VERSION = 4;

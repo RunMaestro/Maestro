@@ -80,7 +80,7 @@ interface MetricCardProps {
 	animationIndex?: number;
 }
 
-function MetricCard({ icon, label, value, theme, animationIndex = 0 }: MetricCardProps) {
+const MetricCard = memo(function MetricCard({ icon, label, value, theme, animationIndex = 0 }: MetricCardProps) {
 	return (
 		<div
 			className="p-4 rounded-lg flex items-start gap-3 dashboard-card-enter"
@@ -114,7 +114,7 @@ function MetricCard({ icon, label, value, theme, animationIndex = 0 }: MetricCar
 			</div>
 		</div>
 	);
-}
+});
 
 /**
  * Format hour number (0-23) to human-readable time

@@ -632,13 +632,13 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				if (pathExists) {
 					// Get the common dir to check if it's the same repo (parallel)
 					const [gitCommonDirResult, mainGitDirResult] = await Promise.all([
-						execFileNoThrow('git', ['rev-parse', '--git-common-dir'], worktreePath),
-						execFileNoThrow('git', ['rev-parse', '--git-dir'], mainRepoCwd),
+						execFileNoThrow('git', ['rev-parse', '--git-common-dir'], resolvedWorktree),
+						execFileNoThrow('git', ['rev-parse', '--git-dir'], resolvedMainRepo),
 					]);
 
 					if (gitCommonDirResult.exitCode === 0 && mainGitDirResult.exitCode === 0) {
-						const worktreeCommonDir = path.resolve(worktreePath, gitCommonDirResult.stdout.trim());
-						const mainGitDir = path.resolve(mainRepoCwd, mainGitDirResult.stdout.trim());
+						const worktreeCommonDir = path.resolve(resolvedWorktree, gitCommonDirResult.stdout.trim());
+						const mainGitDir = path.resolve(resolvedMainRepo, mainGitDirResult.stdout.trim());
 
 						// Normalize paths for comparison
 						const normalizedWorktreeCommon = path.normalize(worktreeCommonDir);

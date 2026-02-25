@@ -103,7 +103,7 @@ export const PeakHoursChart = memo(function PeakHoursChart({
 	}, [hourlyData, metricMode]);
 
 	// Check if there's any data
-	const hasData = hourlyData.some((h) => h.count > 0);
+	const hasData = useMemo(() => hourlyData.some((h) => h.count > 0), [hourlyData]);
 
 	// Chart dimensions
 	const chartHeight = 120;

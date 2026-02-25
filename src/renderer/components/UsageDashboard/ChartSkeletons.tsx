@@ -12,7 +12,7 @@
  * - Reduced motion support for accessibility
  */
 
-import React, { memo } from 'react';
+import React, { memo, useMemo } from 'react';
 import type { Theme } from '../../types';
 
 interface SkeletonProps {
@@ -53,7 +53,7 @@ export const SummaryCardsSkeleton = memo(function SummaryCardsSkeleton({ theme, 
 			}}
 			data-testid="summary-cards-skeleton"
 		>
-			{Array.from({ length: 5 }).map((_, i) => (
+			{Array.from({ length: columns }).map((_, i) => (
 				<div
 					key={i}
 					className="p-4 rounded-lg flex items-start gap-3"
@@ -170,6 +170,14 @@ export const ActivityHeatmapSkeleton = memo(function ActivityHeatmapSkeleton({ t
 	const rows = 7; // Days of week
 	const cols = 12; // Approximate weeks to show
 
+	// Stable random opacities so skeleton doesn't flicker on re-renders
+	const cellOpacities = useMemo(
+		() => Array.from({ length: cols }, () =>
+			Array.from({ length: rows }, () => 0.2 + Math.random() * 0.15)
+		),
+		[]
+	);
+
 	return (
 		<div
 			className="p-4 rounded-lg"
@@ -214,8 +222,7 @@ export const ActivityHeatmapSkeleton = memo(function ActivityHeatmapSkeleton({ t
 									style={{
 										width: cellSize,
 										height: cellSize,
-										// Vary opacity slightly for visual interest
-										opacity: 0.2 + Math.random() * 0.15,
+										opacity: cellOpacities[weekIdx][dayIdx],
 									}}
 								/>
 							))}
@@ -322,7 +329,7 @@ export const AutoRunStatsSkeleton = memo(function AutoRunStatsSkeleton({ theme, 
 			}}
 			data-testid="autorun-stats-skeleton"
 		>
-			{Array.from({ length: 6 }).map((_, i) => (
+			{Array.from({ length: columns }).map((_, i) => (
 				<div key={i} className="p-4 rounded-lg" style={{ backgroundColor: theme.colors.bgMain }}>
 					{/* Icon placeholder */}
 					<SkeletonBox theme={theme} style={{ width: 32, height: 32, marginBottom: 12 }} />
