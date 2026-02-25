@@ -134,6 +134,7 @@ export interface UseSessionListPropsDeps {
 	handleEditGroupChat: (id: string) => void;
 	handleOpenRenameGroupChatModal: (id: string) => void;
 	handleOpenDeleteGroupChatModal: (id: string) => void;
+	handleArchiveGroupChat: (id: string, archived: boolean) => void;
 
 	// Context warning thresholds
 	contextWarningYellowThreshold: number;
@@ -264,6 +265,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			onEditGroupChat: deps.handleEditGroupChat,
 			onRenameGroupChat: deps.handleOpenRenameGroupChatModal,
 			onDeleteGroupChat: deps.handleOpenDeleteGroupChatModal,
+			onArchiveGroupChat: deps.handleArchiveGroupChat,
 			groupChatsExpanded: deps.groupChatsExpanded,
 			onGroupChatsExpandedChange: deps.setGroupChatsExpanded,
 			groupChatState: deps.groupChatState,
@@ -367,6 +369,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.handleEditGroupChat,
 			deps.handleOpenRenameGroupChatModal,
 			deps.handleOpenDeleteGroupChatModal,
+			deps.handleArchiveGroupChat,
 			deps.contextWarningYellowThreshold,
 			deps.contextWarningRedThreshold,
 			// Refs (stable, but included for completeness)

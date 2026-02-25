@@ -46,6 +46,7 @@ export interface GroupChatHandlersReturn {
 		}
 	) => Promise<void>;
 	handleDeleteGroupChat: (id: string) => Promise<void>;
+	handleArchiveGroupChat: (id: string, archived: boolean) => Promise<void>;
 	handleRenameGroupChat: (id: string, newName: string) => Promise<void>;
 	handleUpdateGroupChat: (
 		id: string,
@@ -446,6 +447,18 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		[handleCloseGroupChat]
 	);
 
+	const handleArchiveGroupChat = useCallback(
+		async (id: string, archived: boolean) => {
+			const { activeGroupChatId, setGroupChats } = useGroupChatStore.getState();
+			const updated = await window.maestro.groupChat.archive(id, archived);
+			setGroupChats((prev) => prev.map((c) => (c.id === id ? updated : c)));
+			if (archived && activeGroupChatId === id) {
+				handleCloseGroupChat();
+			}
+		},
+		[handleCloseGroupChat]
+	);
+
 	const handleRenameGroupChat = useCallback(async (id: string, newName: string) => {
 		const { setGroupChats } = useGroupChatStore.getState();
 		const { closeModal } = useModalStore.getState();
@@ -650,6 +663,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		handleCloseGroupChat,
 		handleCreateGroupChat,
 		handleDeleteGroupChat,
+		handleArchiveGroupChat,
 		handleRenameGroupChat,
 		handleUpdateGroupChat,
 		deleteGroupChatWithConfirmation,

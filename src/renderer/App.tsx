@@ -1014,6 +1014,7 @@ function MaestroConsoleInner() {
 		handleCloseGroupChat,
 		handleCreateGroupChat,
 		handleUpdateGroupChat,
+		handleArchiveGroupChat,
 		deleteGroupChatWithConfirmation,
 		handleProcessMonitorNavigateToGroupChat,
 		handleOpenModeratorSession,
@@ -5265,6 +5266,7 @@ function MaestroConsoleInner() {
 		handleEditGroupChat,
 		handleOpenRenameGroupChatModal,
 		handleOpenDeleteGroupChatModal,
+		handleArchiveGroupChat,
 
 		// Context warning thresholds
 		contextWarningYellowThreshold: contextManagementSettings.contextWarningYellowThreshold,
