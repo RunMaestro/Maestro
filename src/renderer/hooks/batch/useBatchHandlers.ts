@@ -377,6 +377,59 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 					}
 				}
 			}
+
+			// Symphony auto-finalization: when auto-run completes for a Symphony
+			// contribution, automatically push code and mark the PR as ready.
+			if (!info.wasStopped && session?.symphonyMetadata?.isSymphonySession) {
+				const contributionId = session.symphonyMetadata.contributionId;
+				// Delay slightly to let the final task's git operations settle
+				setTimeout(async () => {
+					try {
+						const result = await window.maestro.symphony.complete({
+							contributionId,
+						});
+						if (result.prUrl) {
+							notifyToast({
+								type: 'success',
+								title: 'Symphony: PR Ready for Review',
+								message: `PR opened: ${result.prUrl}`,
+								sessionId: info.sessionId,
+							});
+						} else {
+							// complete returned but no prUrl — set to completed for manual finalization
+							await window.maestro.symphony.updateStatus({
+								contributionId,
+								status: 'completed',
+							});
+							notifyToast({
+								type: 'warning',
+								title: 'Symphony: Manual Finalization Needed',
+								message: result.error || 'Could not auto-finalize PR. Open Symphony to finalize.',
+								sessionId: info.sessionId,
+							});
+						}
+					} catch (err) {
+						// Set status to completed so user can manually finalize via the Symphony modal
+						try {
+							await window.maestro.symphony.updateStatus({
+								contributionId,
+								status: 'completed',
+							});
+						} catch {
+							// Best-effort status update
+						}
+						Sentry.captureException(err, {
+							extra: { operation: 'symphony-auto-finalize', contributionId },
+						});
+						notifyToast({
+							type: 'warning',
+							title: 'Symphony: Auto-Finalize Failed',
+							message: 'PR remains as draft. Open Symphony to finalize manually.',
+							sessionId: info.sessionId,
+						});
+					}
+				}, 2000);
+			}
 		},
 		onPRResult: (info) => {
 			// Read from stores at call time
