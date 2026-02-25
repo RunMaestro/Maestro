@@ -2809,11 +2809,11 @@ function SessionListInner(props: SessionListProps) {
 												? {
 														border: `1.5px solid ${theme.colors.textDim}`,
 														backgroundColor: 'transparent',
-														opacity: activeSessionId === session.id ? 1 : 0.45,
+														opacity: activeSessionId === session.id ? 1 : 0.25,
 													}
 												: {
 														backgroundColor: effectiveStatusColor,
-														opacity: activeSessionId === session.id ? 1 : 0.45,
+														opacity: activeSessionId === session.id ? 1 : 0.25,
 													}
 										}
 										title={
