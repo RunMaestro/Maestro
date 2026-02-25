@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { MessageSquare, ChevronDown, ChevronRight, Edit3, Trash2, Settings } from 'lucide-react';
+import { MessageSquare, ChevronDown, ChevronRight, Edit3, Trash2, Settings, Archive, ArchiveRestore } from 'lucide-react';
 import type { Theme, GroupChat, GroupChatState } from '../types';
 import { useClickOutside } from '../hooks';
 import { getStatusColor } from '../utils/theme';
@@ -18,8 +18,10 @@ interface GroupChatContextMenuProps {
 	x: number;
 	y: number;
 	theme: Theme;
+	isArchived: boolean;
 	onEdit: () => void;
 	onRename: () => void;
+	onArchive?: () => void;
 	onDelete: () => void;
 	onClose: () => void;
 }
@@ -28,8 +30,10 @@ function GroupChatContextMenu({
 	x,
 	y,
 	theme,
+	isArchived,
 	onEdit,
 	onRename,
+	onArchive,
 	onDelete,
 	onClose,
 }: GroupChatContextMenuProps) {
@@ -89,6 +93,23 @@ function GroupChatContextMenu({
 				<Edit3 className="w-3.5 h-3.5" />
 				Rename
 			</button>
+			{onArchive && (
+				<button
+					onClick={() => {
+						onArchive();
+						onClose();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: theme.colors.textMain }}
+				>
+					{isArchived ? (
+						<ArchiveRestore className="w-3.5 h-3.5" />
+					) : (
+						<Archive className="w-3.5 h-3.5" />
+					)}
+					{isArchived ? 'Unarchive' : 'Archive'}
+				</button>
+			)}
 			<button
 				onClick={() => {
 					onDelete();
@@ -117,6 +138,7 @@ interface GroupChatListProps {
 	onEditGroupChat: (id: string) => void;
 	onRenameGroupChat: (id: string) => void;
 	onDeleteGroupChat: (id: string) => void;
+	onArchiveGroupChat?: (id: string, archived: boolean) => void;
 	/** Controlled expanded state (lifted to parent for keyboard navigation) */
 	isExpanded?: boolean;
 	/** Callback when expanded state changes */
@@ -140,6 +162,7 @@ export function GroupChatList({
 	onEditGroupChat,
 	onRenameGroupChat,
 	onDeleteGroupChat,
+	onArchiveGroupChat,
 	isExpanded: controlledIsExpanded,
 	onExpandedChange,
 	groupChatState = 'idle',
@@ -152,6 +175,8 @@ export function GroupChatList({
 	// Otherwise, use internal state (default: expanded if there are group chats)
 	const [internalIsExpanded, setInternalIsExpanded] = useState(groupChats.length > 0);
 	const isExpanded = controlledIsExpanded !== undefined ? controlledIsExpanded : internalIsExpanded;
+
+	const [showArchived, setShowArchived] = useState(false);
 
 	const setIsExpanded = useCallback(
 		(expanded: boolean) => {
@@ -187,10 +212,21 @@ export function GroupChatList({
 		setContextMenu({ x: e.clientX, y: e.clientY, chatId });
 	};
 
-	// Sort group chats alphabetically by name (case-insensitive)
+	const archivedCount = useMemo(() => groupChats.filter((c) => c.archived).length, [groupChats]);
+	const activeCount = groupChats.length - archivedCount;
+
+	// Filter and sort group chats: show active chats, plus archived if toggled
 	const sortedGroupChats = useMemo(() => {
-		return [...groupChats].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
-	}, [groupChats]);
+		return [...groupChats]
+			.filter((c) => (showArchived ? true : !c.archived))
+			.sort((a, b) => {
+				// When showing archived, group active chats first
+				if (showArchived && a.archived !== b.archived) {
+					return a.archived ? 1 : -1;
+				}
+				return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+			});
+	}, [groupChats, showArchived]);
 
 	return (
 		<div className="border-t mt-4" style={{ borderColor: theme.colors.border }}>
@@ -206,7 +242,7 @@ export function GroupChatList({
 					{isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
 					<MessageSquare className="w-3.5 h-3.5" />
 					<span>Group Chats</span>
-					{groupChats.length > 0 && (
+					{activeCount > 0 && (
 						<span
 							className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
 							style={{
@@ -214,33 +250,53 @@ export function GroupChatList({
 								color: theme.colors.textDim,
 							}}
 						>
-							{groupChats.length}
+							{activeCount}
 						</span>
 					)}
 				</div>
-				<button
-					onClick={(e) => {
-						e.stopPropagation();
-						onNewGroupChat();
-					}}
-					className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
-					style={{
-						backgroundColor: theme.colors.accent + '20',
-						color: theme.colors.accent,
-						border: `1px solid ${theme.colors.accent}40`,
-					}}
-					title="New Group Chat"
-				>
-					<span>+ New Chat</span>
-				</button>
+				<div className="flex items-center gap-1.5">
+					{onArchiveGroupChat && archivedCount > 0 && (
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setShowArchived(!showArchived);
+							}}
+							className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+							style={{
+								backgroundColor: showArchived ? `${theme.colors.textDim}20` : 'transparent',
+								color: theme.colors.textDim,
+								border: `1px solid ${theme.colors.border}`,
+							}}
+							title={showArchived ? 'Hide archived chats' : `Show ${archivedCount} archived chat${archivedCount !== 1 ? 's' : ''}`}
+						>
+							<Archive className="w-3 h-3" />
+							<span>{archivedCount}</span>
+						</button>
+					)}
+					<button
+						onClick={(e) => {
+							e.stopPropagation();
+							onNewGroupChat();
+						}}
+						className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
+						style={{
+							backgroundColor: theme.colors.accent + '20',
+							color: theme.colors.accent,
+							border: `1px solid ${theme.colors.accent}40`,
+						}}
+						title="New Group Chat"
+					>
+						<span>+ New Chat</span>
+					</button>
+				</div>
 			</div>
 
 			{/* List of Group Chats */}
 			{isExpanded && (
 				<div className="px-2 pb-2">
-					{groupChats.length === 0 ? (
+					{sortedGroupChats.length === 0 ? (
 						<div className="text-xs px-3 py-2 italic" style={{ color: theme.colors.textDim }}>
-							No group chats yet
+							{groupChats.length === 0 ? 'No group chats yet' : 'All group chats are archived'}
 						</div>
 					) : (
 						<div
@@ -274,15 +330,23 @@ export function GroupChatList({
 										className="flex items-center gap-2 px-3 py-1.5 cursor-pointer transition-colors hover:bg-white/5"
 										style={{
 											backgroundColor: isActive ? `${theme.colors.accent}20` : 'transparent',
+											opacity: chat.archived ? 0.5 : 1,
 										}}
 										onDoubleClick={() => onOpenGroupChat(chat.id)}
 										onClick={() => onOpenGroupChat(chat.id)}
 										onContextMenu={(e) => handleContextMenu(e, chat.id)}
 									>
-										<MessageSquare
-											className="w-4 h-4 shrink-0"
-											style={{ color: isActive ? theme.colors.accent : theme.colors.textDim }}
-										/>
+										{chat.archived ? (
+											<Archive
+												className="w-4 h-4 shrink-0"
+												style={{ color: theme.colors.textDim }}
+											/>
+										) : (
+											<MessageSquare
+												className="w-4 h-4 shrink-0"
+												style={{ color: isActive ? theme.colors.accent : theme.colors.textDim }}
+											/>
+										)}
 										<span
 											className="text-sm truncate flex-1"
 											style={{ color: theme.colors.textMain }}
@@ -321,8 +385,13 @@ export function GroupChatList({
 					x={contextMenu.x}
 					y={contextMenu.y}
 					theme={theme}
+					isArchived={!!groupChats.find((c) => c.id === contextMenu.chatId)?.archived}
 					onEdit={() => onEditGroupChat(contextMenu.chatId)}
 					onRename={() => onRenameGroupChat(contextMenu.chatId)}
+					onArchive={onArchiveGroupChat ? () => {
+						const chat = groupChats.find((c) => c.id === contextMenu.chatId);
+						if (chat) onArchiveGroupChat(chat.id, !chat.archived);
+					} : undefined}
 					onDelete={() => onDeleteGroupChat(contextMenu.chatId)}
 					onClose={() => setContextMenu(null)}
 				/>

@@ -88,6 +88,9 @@ export function createGroupChatApi() {
 			}
 		) => ipcRenderer.invoke('groupChat:update', id, updates),
 
+		archive: (id: string, archived: boolean) =>
+			ipcRenderer.invoke('groupChat:archive', id, archived),
+
 		// Chat log
 		appendMessage: (id: string, from: string, content: string) =>
 			ipcRenderer.invoke('groupChat:appendMessage', id, from, content),
