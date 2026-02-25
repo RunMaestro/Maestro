@@ -17,6 +17,7 @@ import { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Trophy } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Auto Run session data shape from the API
@@ -131,7 +132,7 @@ export const LongestAutoRunsTable = memo(function LongestAutoRunsTable({
 			const autoRunSessions = await window.maestro.stats.getAutoRunSessions(timeRange);
 			setSessions(autoRunSessions);
 		} catch (err) {
-			console.error('Failed to fetch Auto Run sessions for table:', err);
+			captureException(err);
 		} finally {
 			setLoading(false);
 		}

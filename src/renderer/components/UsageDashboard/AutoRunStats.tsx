@@ -16,6 +16,7 @@ import React, { memo, useState, useEffect, useMemo, useCallback } from 'react';
 import { Play, CheckSquare, ListChecks, Target, Clock, Timer } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { StatsTimeRange } from '../../hooks/stats/useStats';
+import { captureException } from '../../utils/sentry';
 
 /**
  * Auto Run session data shape from the API
@@ -146,7 +147,7 @@ function groupSessionsByDate(
 		if (!grouped[date]) {
 			grouped[date] = { count: 0, successCount: 0 };
 		}
-		grouped[date].count += session.tasksCompleted ?? 0;
+		grouped[date].count += session.tasksTotal ?? 0;
 		grouped[date].successCount += session.tasksCompleted ?? 0;
 	});
 
@@ -180,7 +181,7 @@ export const AutoRunStats = memo(function AutoRunStats({
 			const autoRunSessions = await window.maestro.stats.getAutoRunSessions(timeRange);
 			setSessions(autoRunSessions);
 		} catch (err) {
-			console.error('Failed to fetch Auto Run stats:', err);
+			captureException(err);
 			setError(err instanceof Error ? err.message : 'Failed to load Auto Run stats');
 		} finally {
 			setLoading(false);
@@ -425,9 +426,19 @@ export const AutoRunStats = memo(function AutoRunStats({
 										}}
 										onMouseEnter={(e) => handleMouseEnter(day, e)}
 										onMouseLeave={handleMouseLeave}
+										onKeyDown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												setHoveredBar((prev) => (prev?.date === day.date ? null : day));
+											}
+											if (e.key === 'Escape') {
+												handleMouseLeave();
+											}
+										}}
+										onBlur={handleMouseLeave}
 										data-testid={`task-bar-${day.date}`}
 										role="listitem"
-										aria-label={`${formatFullDate(day.date)}: ${day.count} tasks completed, ${day.successCount} successful (${Math.round((day.successCount / day.count) * 100)}%)`}
+										aria-label={`${formatFullDate(day.date)}: ${day.count} tasks attempted, ${day.successCount} successful (${day.count > 0 ? Math.round((day.successCount / day.count) * 100) : 0}%)`}
 										tabIndex={0}
 									/>
 								);

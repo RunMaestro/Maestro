@@ -135,20 +135,18 @@ export function useStats(range: StatsTimeRange, enabled: boolean = true): UseSta
 	useEffect(() => {
 		mountedRef.current = true;
 
-		if (!enabled) {
-			return;
+		let unsubscribe: (() => void) | undefined;
+		if (enabled) {
+			// Initial fetch
+			fetchStats();
+			// Subscribe to stats updates with stable debounced function
+			unsubscribe = window.maestro.stats.onStatsUpdate(debouncedUpdate);
 		}
-
-		// Initial fetch
-		fetchStats();
-
-		// Subscribe to stats updates with stable debounced function
-		const unsubscribe = window.maestro.stats.onStatsUpdate(debouncedUpdate);
 
 		return () => {
 			mountedRef.current = false;
 			cancelDebounce();
-			unsubscribe();
+			unsubscribe?.();
 		};
 	}, [enabled, fetchStats, debouncedUpdate, cancelDebounce]);
 
