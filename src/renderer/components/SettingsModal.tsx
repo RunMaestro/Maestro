@@ -2206,10 +2206,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									{wakatimeEnabled && (
 										<div className="flex items-center justify-between">
 											<div>
-												<p
-													className="text-sm"
-													style={{ color: theme.colors.textMain }}
-												>
+												<p className="text-sm" style={{ color: theme.colors.textMain }}>
 													Detailed file tracking
 												</p>
 												<p className="text-xs opacity-50 mt-0.5">

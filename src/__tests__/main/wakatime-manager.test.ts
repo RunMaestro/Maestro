@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WakaTimeManager, detectLanguageFromPath, WRITE_TOOL_NAMES, extractFilePathFromToolExecution } from '../../main/wakatime-manager';
+import {
+	WakaTimeManager,
+	detectLanguageFromPath,
+	WRITE_TOOL_NAMES,
+	extractFilePathFromToolExecution,
+} from '../../main/wakatime-manager';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -465,7 +470,8 @@ describe('WakaTimeManager', () => {
 
 			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'auto');
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli',
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'wakatime-cli',
 				expect.arrayContaining(['--category', 'ai coding'])
 			);
 		});
@@ -477,7 +483,8 @@ describe('WakaTimeManager', () => {
 
 			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'user');
 
-			expect(execFileNoThrow).toHaveBeenCalledWith('wakatime-cli',
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'wakatime-cli',
 				expect.arrayContaining(['--category', 'building'])
 			);
 		});
@@ -701,8 +708,14 @@ describe('WakaTimeManager', () => {
 	describe('WRITE_TOOL_NAMES', () => {
 		it('should contain all expected write tool names', () => {
 			const expected = [
-				'Write', 'Edit', 'write_to_file', 'str_replace_based_edit_tool',
-				'create_file', 'write', 'patch', 'NotebookEdit',
+				'Write',
+				'Edit',
+				'write_to_file',
+				'str_replace_based_edit_tool',
+				'create_file',
+				'write',
+				'patch',
+				'NotebookEdit',
 			];
 			for (const name of expected) {
 				expect(WRITE_TOOL_NAMES.has(name)).toBe(true);
@@ -991,15 +1004,23 @@ describe('WakaTimeManager', () => {
 			const calls = vi.mocked(execFileNoThrow).mock.calls;
 			const heartbeatCall = calls[calls.length - 1];
 			expect(heartbeatCall[1]).toEqual([
-				'--key', 'test-api-key-123',
-				'--entity', '/project/src/index.ts',
-				'--entity-type', 'file',
+				'--key',
+				'test-api-key-123',
+				'--entity',
+				'/project/src/index.ts',
+				'--entity-type',
+				'file',
 				'--write',
-				'--project', 'My Project',
-				'--plugin', 'maestro/1.0.0 maestro-wakatime/1.0.0',
-				'--category', 'building',
-				'--time', String(1708700000000 / 1000),
-				'--language', 'TypeScript',
+				'--project',
+				'My Project',
+				'--plugin',
+				'maestro/1.0.0 maestro-wakatime/1.0.0',
+				'--category',
+				'building',
+				'--time',
+				String(1708700000000 / 1000),
+				'--language',
+				'TypeScript',
 			]);
 			// No --extra-heartbeats for single file
 			expect(heartbeatCall[1]).not.toContain('--extra-heartbeats');
@@ -1116,15 +1137,17 @@ describe('WakaTimeManager', () => {
 
 		it('should include branch info when projectCwd is provided', async () => {
 			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
-			vi.mocked(execFileNoThrow).mockReset().mockImplementation(async (cmd: any, args: any) => {
-				if (args?.[0] === '--version') {
-					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
-				}
-				if (cmd === 'git') {
-					return { exitCode: 0, stdout: 'feat/my-branch\n', stderr: '' };
-				}
-				return { exitCode: 0, stdout: '', stderr: '' };
-			});
+			vi.mocked(execFileNoThrow)
+				.mockReset()
+				.mockImplementation(async (cmd: any, args: any) => {
+					if (args?.[0] === '--version') {
+						return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+					}
+					if (cmd === 'git') {
+						return { exitCode: 0, stdout: 'feat/my-branch\n', stderr: '' };
+					}
+					return { exitCode: 0, stdout: '', stderr: '' };
+				});
 
 			await manager.sendFileHeartbeats(
 				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
@@ -1141,15 +1164,17 @@ describe('WakaTimeManager', () => {
 
 		it('should include branch in extra heartbeats when available', async () => {
 			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
-			vi.mocked(execFileNoThrow).mockReset().mockImplementation(async (cmd: any, args: any) => {
-				if (args?.[0] === '--version') {
-					return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
-				}
-				if (cmd === 'git') {
-					return { exitCode: 0, stdout: 'main\n', stderr: '' };
-				}
-				return { exitCode: 0, stdout: '', stderr: '' };
-			});
+			vi.mocked(execFileNoThrow)
+				.mockReset()
+				.mockImplementation(async (cmd: any, args: any) => {
+					if (args?.[0] === '--version') {
+						return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+					}
+					if (cmd === 'git') {
+						return { exitCode: 0, stdout: 'main\n', stderr: '' };
+					}
+					return { exitCode: 0, stdout: '', stderr: '' };
+				});
 
 			const files = [
 				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
@@ -1200,11 +1225,7 @@ describe('WakaTimeManager', () => {
 				'My Project'
 			);
 
-			expect(logger.info).toHaveBeenCalledWith(
-				'Sent file heartbeats',
-				'[WakaTime]',
-				{ count: 2 }
-			);
+			expect(logger.info).toHaveBeenCalledWith('Sent file heartbeats', '[WakaTime]', { count: 2 });
 		});
 
 		it('should convert timestamps to seconds for WakaTime CLI', async () => {

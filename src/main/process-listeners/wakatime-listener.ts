@@ -31,7 +31,12 @@ function heartbeatForSession(
 	if (!managedProcess || managedProcess.isTerminal) return;
 	const projectDir = managedProcess.projectPath || managedProcess.cwd;
 	const projectName = projectDir ? path.basename(projectDir) : sessionId;
-	void wakaTimeManager.sendHeartbeat(sessionId, projectName, projectDir, managedProcess.querySource);
+	void wakaTimeManager.sendHeartbeat(
+		sessionId,
+		projectName,
+		projectDir,
+		managedProcess.querySource
+	);
 }
 
 /** Debounce delay for flushing file heartbeats after a `usage` event (ms) */
@@ -68,7 +73,12 @@ export function setupWakaTimeListener(
 	const usageFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
 	/** Flush accumulated file heartbeats for a session. */
-	function flushPendingFiles(sessionId: string, projectDir: string | undefined, projectName: string, source?: 'user' | 'auto'): void {
+	function flushPendingFiles(
+		sessionId: string,
+		projectDir: string | undefined,
+		projectName: string,
+		source?: 'user' | 'auto'
+	): void {
 		const sessionFiles = pendingFiles.get(sessionId);
 		if (!sessionFiles || sessionFiles.size === 0) return;
 
@@ -76,7 +86,9 @@ export function setupWakaTimeListener(
 			.map((f) => ({
 				filePath: path.isAbsolute(f.filePath)
 					? f.filePath
-					: projectDir ? path.resolve(projectDir, f.filePath) : null,
+					: projectDir
+						? path.resolve(projectDir, f.filePath)
+						: null,
 				timestamp: f.timestamp,
 			}))
 			.filter((f): f is { filePath: string; timestamp: number } => f.filePath !== null);
@@ -120,7 +132,12 @@ export function setupWakaTimeListener(
 		const projectName = queryData.projectPath
 			? path.basename(queryData.projectPath)
 			: queryData.sessionId;
-		void wakaTimeManager.sendHeartbeat(queryData.sessionId, projectName, queryData.projectPath, queryData.source);
+		void wakaTimeManager.sendHeartbeat(
+			queryData.sessionId,
+			projectName,
+			queryData.projectPath,
+			queryData.source
+		);
 
 		// Flush accumulated file heartbeats (or clear if detailed tracking was disabled)
 		if (detailedEnabled) {

@@ -538,7 +538,12 @@ export class WakaTimeManager {
 	}
 
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string, source?: 'user' | 'auto'): Promise<void> {
+	async sendHeartbeat(
+		sessionId: string,
+		projectName: string,
+		projectCwd?: string,
+		source?: 'user' | 'auto'
+	): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -631,9 +636,7 @@ export class WakaTimeManager {
 			return;
 		}
 
-		const branch = projectCwd
-			? await this.detectBranch(`file:${projectCwd}`, projectCwd)
-			: null;
+		const branch = projectCwd ? await this.detectBranch(`file:${projectCwd}`, projectCwd) : null;
 
 		const primary = files[0];
 		const args = [
