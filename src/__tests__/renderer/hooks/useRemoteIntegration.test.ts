@@ -272,6 +272,27 @@ describe('useRemoteIntegration', () => {
 
 			expect(deps.setSessions).toHaveBeenCalled();
 		});
+
+		it('clears activeFileTabId when remote command syncs to terminal mode', () => {
+			const session = createMockSession({
+				id: 'session-1',
+				state: 'idle',
+				inputMode: 'ai',
+				activeFileTabId: 'file-tab-1',
+			});
+			const deps = createDeps({ sessions: [session] });
+
+			renderHook(() => useRemoteIntegration(deps));
+
+			act(() => {
+				onRemoteCommandHandler?.('session-1', 'ls -la', 'terminal');
+			});
+
+			const updater = deps.setSessions.mock.calls[0][0];
+			const result = typeof updater === 'function' ? updater([session]) : updater;
+			expect(result[0].inputMode).toBe('terminal');
+			expect(result[0].activeFileTabId).toBeNull();
+		});
 	});
 
 	describe('remote mode switching', () => {
@@ -344,7 +365,7 @@ describe('useRemoteIntegration', () => {
 			const session = createMockSession({
 				id: 'session-1',
 				inputMode: 'terminal',
-				activeFileTabId: null,
+				activeFileTabId: 'file-tab-1',
 			});
 			const deps = createDeps({ sessions: [session] });
 
@@ -357,8 +378,7 @@ describe('useRemoteIntegration', () => {
 			const updater = deps.setSessions.mock.calls[0][0];
 			const result = typeof updater === 'function' ? updater([session]) : updater;
 			expect(result[0].inputMode).toBe('ai');
-			// activeFileTabId should not be set to some arbitrary value
-			expect(result[0].activeFileTabId).toBeNull();
+			expect(result[0].activeFileTabId).toBe('file-tab-1');
 		});
 	});
 

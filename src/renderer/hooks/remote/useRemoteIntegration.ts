@@ -107,7 +107,17 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 				// If web provided an inputMode, sync the session state before executing
 				// This ensures the renderer uses the same mode the web intended
 				if (inputMode && targetSession.inputMode !== inputMode) {
-					setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, inputMode } : s)));
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === sessionId
+								? {
+										...s,
+										inputMode,
+										...(inputMode === 'terminal' && { activeFileTabId: null }),
+									}
+								: s
+						)
+					);
 				}
 
 				// Switch to the target session (for visual feedback)
