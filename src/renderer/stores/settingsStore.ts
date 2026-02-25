@@ -240,6 +240,7 @@ export interface SettingsStoreState {
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
 	wakatimeEnabled: boolean;
+	wakatimeDetailedTracking: boolean;
 	useNativeTitleBar: boolean;
 	autoHideMenuBar: boolean;
 }
@@ -309,6 +310,7 @@ export interface SettingsStoreActions {
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
 	setWakatimeEnabled: (value: boolean) => void;
+	setWakatimeDetailedTracking: (value: boolean) => void;
 	setUseNativeTitleBar: (value: boolean) => void;
 	setAutoHideMenuBar: (value: boolean) => void;
 
@@ -454,6 +456,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 	wakatimeApiKey: '',
 	wakatimeEnabled: false,
+	wakatimeDetailedTracking: false,
 	useNativeTitleBar: false,
 	autoHideMenuBar: false,
 
@@ -782,6 +785,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setWakatimeEnabled: (value) => {
 		set({ wakatimeEnabled: value });
 		window.maestro.settings.set('wakatimeEnabled', value);
+	},
+
+	setWakatimeDetailedTracking: (value) => {
+		set({ wakatimeDetailedTracking: value });
+		window.maestro.settings.set('wakatimeDetailedTracking', value);
 	},
 
 	setUseNativeTitleBar: (value) => {
@@ -1679,6 +1687,9 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['wakatimeEnabled'] !== undefined)
 			patch.wakatimeEnabled = allSettings['wakatimeEnabled'] as boolean;
 
+		if (allSettings['wakatimeDetailedTracking'] !== undefined)
+			patch.wakatimeDetailedTracking = allSettings['wakatimeDetailedTracking'] as boolean;
+
 		if (allSettings['useNativeTitleBar'] !== undefined)
 			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
 
@@ -1795,6 +1806,7 @@ export function getSettingsActions() {
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
+		setWakatimeDetailedTracking: state.setWakatimeDetailedTracking,
 		setUseNativeTitleBar: state.setUseNativeTitleBar,
 		setAutoHideMenuBar: state.setAutoHideMenuBar,
 	};

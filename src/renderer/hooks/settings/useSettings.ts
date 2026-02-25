@@ -297,6 +297,8 @@ export interface UseSettingsReturn {
 	setWakatimeApiKey: (value: string) => void;
 	wakatimeEnabled: boolean;
 	setWakatimeEnabled: (value: boolean) => void;
+	wakatimeDetailedTracking: boolean;
+	setWakatimeDetailedTracking: (value: boolean) => void;
 
 	// Window chrome settings
 	useNativeTitleBar: boolean;

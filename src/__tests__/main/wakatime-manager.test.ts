@@ -5,7 +5,12 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { WakaTimeManager } from '../../main/wakatime-manager';
+import {
+	WakaTimeManager,
+	detectLanguageFromPath,
+	WRITE_TOOL_NAMES,
+	extractFilePathFromToolExecution,
+} from '../../main/wakatime-manager';
 
 // Mock electron
 vi.mock('electron', () => ({
@@ -332,7 +337,7 @@ describe('WakaTimeManager', () => {
 				'--plugin',
 				'maestro/1.0.0 maestro-wakatime/1.0.0',
 				'--category',
-				'ai coding',
+				'building',
 			]);
 		});
 
@@ -422,7 +427,7 @@ describe('WakaTimeManager', () => {
 			);
 		});
 
-		it('should send heartbeat with correct arguments', async () => {
+		it('should send heartbeat with building category by default', async () => {
 			// First call to detectCli
 			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
 				exitCode: 0,
@@ -450,11 +455,37 @@ describe('WakaTimeManager', () => {
 				'--plugin',
 				'maestro/1.0.0 maestro-wakatime/1.0.0',
 				'--category',
-				'ai coding',
+				'building',
 			]);
 			expect(logger.debug).toHaveBeenCalledWith(
 				expect.stringContaining('Heartbeat sent for session session-1'),
 				'[WakaTime]'
+			);
+		});
+
+		it('should send ai coding category for auto source', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'auto');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'wakatime-cli',
+				expect.arrayContaining(['--category', 'ai coding'])
+			);
+		});
+
+		it('should send building category for user source', async () => {
+			vi.mocked(execFileNoThrow)
+				.mockResolvedValueOnce({ exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' })
+				.mockResolvedValueOnce({ exitCode: 0, stdout: '', stderr: '' });
+
+			await manager.sendHeartbeat('session-1', 'My Project', undefined, 'user');
+
+			expect(execFileNoThrow).toHaveBeenCalledWith(
+				'wakatime-cli',
+				expect.arrayContaining(['--category', 'building'])
 			);
 		});
 
@@ -671,6 +702,582 @@ describe('WakaTimeManager', () => {
 
 			// detectCli (1, cached) + first heartbeat (1) + second heartbeat (1) = 3
 			expect(execFileNoThrow).toHaveBeenCalledTimes(3);
+		});
+	});
+
+	describe('WRITE_TOOL_NAMES', () => {
+		it('should contain all expected write tool names', () => {
+			const expected = [
+				'Write',
+				'Edit',
+				'write_to_file',
+				'str_replace_based_edit_tool',
+				'create_file',
+				'write',
+				'patch',
+				'NotebookEdit',
+			];
+			for (const name of expected) {
+				expect(WRITE_TOOL_NAMES.has(name)).toBe(true);
+			}
+			expect(WRITE_TOOL_NAMES.size).toBe(expected.length);
+		});
+
+		it('should not contain non-write tool names', () => {
+			expect(WRITE_TOOL_NAMES.has('Read')).toBe(false);
+			expect(WRITE_TOOL_NAMES.has('search')).toBe(false);
+			expect(WRITE_TOOL_NAMES.has('Bash')).toBe(false);
+		});
+	});
+
+	describe('extractFilePathFromToolExecution', () => {
+		it('should extract file_path from a Write tool execution', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: { input: { file_path: '/project/src/index.ts' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBe('/project/src/index.ts');
+		});
+
+		it('should extract path from a Codex write_to_file tool execution', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'write_to_file',
+				state: { input: { path: '/project/src/main.py' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBe('/project/src/main.py');
+		});
+
+		it('should prefer file_path over path when both are present', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Edit',
+				state: { input: { file_path: '/preferred.ts', path: '/fallback.ts' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBe('/preferred.ts');
+		});
+
+		it('should return null for non-write tool names', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Read',
+				state: { input: { file_path: '/project/src/index.ts' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should return null when state has no input', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: { status: 'completed' },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should return null when state is null', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: null,
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should return null when input has no file path fields', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Edit',
+				state: { input: { content: 'some code' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should return null when file_path is empty string', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: { input: { file_path: '' } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should return null when path value is not a string', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: { input: { file_path: 123 } },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+
+		it('should work for all write tool names', () => {
+			for (const toolName of WRITE_TOOL_NAMES) {
+				const result = extractFilePathFromToolExecution({
+					toolName,
+					state: { input: { file_path: `/project/${toolName}.ts` } },
+					timestamp: Date.now(),
+				});
+				expect(result).toBe(`/project/${toolName}.ts`);
+			}
+		});
+
+		it('should handle input being a non-object value', () => {
+			const result = extractFilePathFromToolExecution({
+				toolName: 'Write',
+				state: { input: 'not an object' },
+				timestamp: Date.now(),
+			});
+			expect(result).toBeNull();
+		});
+	});
+
+	describe('detectLanguageFromPath', () => {
+		it('should detect TypeScript from .ts extension', () => {
+			expect(detectLanguageFromPath('/project/src/index.ts')).toBe('TypeScript');
+		});
+
+		it('should detect TypeScript from .tsx extension', () => {
+			expect(detectLanguageFromPath('/project/src/App.tsx')).toBe('TypeScript');
+		});
+
+		it('should detect JavaScript from .js extension', () => {
+			expect(detectLanguageFromPath('/project/src/index.js')).toBe('JavaScript');
+		});
+
+		it('should detect JavaScript from .mjs extension', () => {
+			expect(detectLanguageFromPath('/project/src/config.mjs')).toBe('JavaScript');
+		});
+
+		it('should detect JavaScript from .cjs extension', () => {
+			expect(detectLanguageFromPath('/project/src/config.cjs')).toBe('JavaScript');
+		});
+
+		it('should detect Python from .py extension', () => {
+			expect(detectLanguageFromPath('/project/main.py')).toBe('Python');
+		});
+
+		it('should detect Rust from .rs extension', () => {
+			expect(detectLanguageFromPath('/project/src/main.rs')).toBe('Rust');
+		});
+
+		it('should detect Go from .go extension', () => {
+			expect(detectLanguageFromPath('/project/main.go')).toBe('Go');
+		});
+
+		it('should detect C++ from .cpp extension', () => {
+			expect(detectLanguageFromPath('/project/src/main.cpp')).toBe('C++');
+		});
+
+		it('should detect C from .h extension', () => {
+			expect(detectLanguageFromPath('/project/include/header.h')).toBe('C');
+		});
+
+		it('should detect Shell Script from .sh extension', () => {
+			expect(detectLanguageFromPath('/project/scripts/build.sh')).toBe('Shell Script');
+		});
+
+		it('should detect Markdown from .md extension', () => {
+			expect(detectLanguageFromPath('/project/README.md')).toBe('Markdown');
+		});
+
+		it('should detect JSON from .json extension', () => {
+			expect(detectLanguageFromPath('/project/package.json')).toBe('JSON');
+		});
+
+		it('should detect YAML from .yml extension', () => {
+			expect(detectLanguageFromPath('/project/.github/workflows/ci.yml')).toBe('YAML');
+		});
+
+		it('should detect HCL from .tf extension', () => {
+			expect(detectLanguageFromPath('/infra/main.tf')).toBe('HCL');
+		});
+
+		it('should detect Protocol Buffer from .proto extension', () => {
+			expect(detectLanguageFromPath('/proto/service.proto')).toBe('Protocol Buffer');
+		});
+
+		it('should return undefined for unknown extensions', () => {
+			expect(detectLanguageFromPath('/project/data.xyz')).toBeUndefined();
+		});
+
+		it('should return undefined for files without extension', () => {
+			expect(detectLanguageFromPath('/project/Makefile')).toBeUndefined();
+		});
+
+		it('should handle case-insensitive extensions', () => {
+			expect(detectLanguageFromPath('/project/main.PY')).toBe('Python');
+			expect(detectLanguageFromPath('/project/app.TSX')).toBe('TypeScript');
+		});
+
+		it('should handle paths with multiple dots', () => {
+			expect(detectLanguageFromPath('/project/config.test.ts')).toBe('TypeScript');
+			expect(detectLanguageFromPath('/project/styles.module.css')).toBe('CSS');
+		});
+	});
+
+	describe('sendFileHeartbeats', () => {
+		beforeEach(() => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return 'test-api-key-123';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+			// CLI detected on PATH
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: 'wakatime-cli 1.73.1\n',
+				stderr: '',
+			});
+		});
+
+		it('should early return when files array is empty', async () => {
+			await manager.sendFileHeartbeats([], 'My Project');
+			// Only the detectCli mock is set up; no calls should have been made
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when wakatimeEnabled is false', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return false;
+				return defaultVal;
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when wakatimeDetailedTracking is false', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return 'test-api-key-123';
+				if (key === 'wakatimeDetailedTracking') return false;
+				return defaultVal;
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should skip when no API key is available', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+			vi.mocked(fs.existsSync).mockReturnValue(false);
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			// No heartbeat call should have been made (only the pre-set detectCli mock exists)
+			expect(execFileNoThrow).not.toHaveBeenCalled();
+		});
+
+		it('should send a single file heartbeat with building category by default', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			// Second call (after detectCli) is the heartbeat
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			expect(heartbeatCall[1]).toEqual([
+				'--key',
+				'test-api-key-123',
+				'--entity',
+				'/project/src/index.ts',
+				'--entity-type',
+				'file',
+				'--write',
+				'--project',
+				'My Project',
+				'--plugin',
+				'maestro/1.0.0 maestro-wakatime/1.0.0',
+				'--category',
+				'building',
+				'--time',
+				String(1708700000000 / 1000),
+				'--language',
+				'TypeScript',
+			]);
+			// No --extra-heartbeats for single file
+			expect(heartbeatCall[1]).not.toContain('--extra-heartbeats');
+			// No stdin input for single file
+			expect(heartbeatCall[3]).toBeUndefined();
+		});
+
+		it('should send ai coding category for file heartbeats with auto source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				undefined,
+				'auto'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('ai coding');
+		});
+
+		it('should send building category for file heartbeats with user source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				undefined,
+				'user'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('building');
+		});
+
+		it('should send multiple files with --extra-heartbeats via stdin', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.py', timestamp: 1708700001000 },
+				{ filePath: '/project/src/main.go', timestamp: 1708700002000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+
+			// Primary file is index.ts
+			expect(args).toContain('--entity');
+			expect(args[args.indexOf('--entity') + 1]).toBe('/project/src/index.ts');
+			expect(args).toContain('--extra-heartbeats');
+			expect(args).toContain('--language');
+			expect(args[args.indexOf('--language') + 1]).toBe('TypeScript');
+
+			// stdin should contain extra heartbeats JSON
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			expect(stdinOpts).toBeDefined();
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray).toHaveLength(2);
+			expect(extraArray[0].entity).toBe('/project/src/utils.py');
+			expect(extraArray[0].language).toBe('Python');
+			expect(extraArray[0].type).toBe('file');
+			expect(extraArray[0].is_write).toBe(true);
+			expect(extraArray[0].category).toBe('building');
+			expect(extraArray[0].project).toBe('My Project');
+			expect(extraArray[0].time).toBe(1708700001000 / 1000);
+			expect(extraArray[1].entity).toBe('/project/src/main.go');
+			expect(extraArray[1].language).toBe('Go');
+		});
+
+		it('should use ai coding category in extra heartbeats for auto source', async () => {
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.py', timestamp: 1708700001000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project', undefined, 'auto');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args[args.indexOf('--category') + 1]).toBe('ai coding');
+
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray[0].category).toBe('ai coding');
+		});
+
+		it('should include branch info when projectCwd is provided', async () => {
+			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
+			vi.mocked(execFileNoThrow)
+				.mockReset()
+				.mockImplementation(async (cmd: any, args: any) => {
+					if (args?.[0] === '--version') {
+						return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+					}
+					if (cmd === 'git') {
+						return { exitCode: 0, stdout: 'feat/my-branch\n', stderr: '' };
+					}
+					return { exitCode: 0, stdout: '', stderr: '' };
+				});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project',
+				'/project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).toContain('--alternate-branch');
+			expect(args[args.indexOf('--alternate-branch') + 1]).toBe('feat/my-branch');
+		});
+
+		it('should include branch in extra heartbeats when available', async () => {
+			// Use mockImplementation to avoid mock ordering issues with fire-and-forget checkForUpdate
+			vi.mocked(execFileNoThrow)
+				.mockReset()
+				.mockImplementation(async (cmd: any, args: any) => {
+					if (args?.[0] === '--version') {
+						return { exitCode: 0, stdout: 'wakatime-cli 1.73.1\n', stderr: '' };
+					}
+					if (cmd === 'git') {
+						return { exitCode: 0, stdout: 'main\n', stderr: '' };
+					}
+					return { exitCode: 0, stdout: '', stderr: '' };
+				});
+
+			const files = [
+				{ filePath: '/project/src/index.ts', timestamp: 1708700000000 },
+				{ filePath: '/project/src/utils.ts', timestamp: 1708700001000 },
+			];
+
+			await manager.sendFileHeartbeats(files, 'My Project', '/project');
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const stdinOpts = heartbeatCall[3] as { input: string };
+			const extraArray = JSON.parse(stdinOpts.input);
+			expect(extraArray[0].branch).toBe('main');
+		});
+
+		it('should omit language for files with unknown extensions', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/data.xyz', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).not.toContain('--language');
+		});
+
+		it('should log success with file count', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[
+					{ filePath: '/project/src/a.ts', timestamp: 1708700000000 },
+					{ filePath: '/project/src/b.ts', timestamp: 1708700001000 },
+				],
+				'My Project'
+			);
+
+			expect(logger.info).toHaveBeenCalledWith('Sent file heartbeats', '[WakaTime]', { count: 2 });
+		});
+
+		it('should convert timestamps to seconds for WakaTime CLI', async () => {
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			const timestamp = 1708700000000; // milliseconds
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			const timeIndex = args.indexOf('--time');
+			expect(args[timeIndex + 1]).toBe(String(timestamp / 1000));
+		});
+
+		it('should fall back to ~/.wakatime.cfg for API key', async () => {
+			mockStore.get.mockImplementation((key: string, defaultVal: unknown) => {
+				if (key === 'wakatimeEnabled') return true;
+				if (key === 'wakatimeApiKey') return '';
+				if (key === 'wakatimeDetailedTracking') return true;
+				return defaultVal;
+			});
+
+			vi.mocked(fs.existsSync).mockImplementation((p: any) => {
+				return String(p).endsWith('.wakatime.cfg');
+			});
+			vi.mocked(fs.readFileSync).mockReturnValue('[settings]\napi_key = cfg-key-456\n');
+
+			// The heartbeat exec call
+			vi.mocked(execFileNoThrow).mockResolvedValueOnce({
+				exitCode: 0,
+				stdout: '',
+				stderr: '',
+			});
+
+			await manager.sendFileHeartbeats(
+				[{ filePath: '/project/src/index.ts', timestamp: 1708700000000 }],
+				'My Project'
+			);
+
+			const calls = vi.mocked(execFileNoThrow).mock.calls;
+			const heartbeatCall = calls[calls.length - 1];
+			const args = heartbeatCall[1] as string[];
+			expect(args).toContain('cfg-key-456');
 		});
 	});
 });

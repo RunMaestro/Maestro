@@ -78,6 +78,10 @@ window.maestro.history = {
 
 - `power` - Sleep prevention: setEnabled, isEnabled, getStatus, addReason, removeReason
 
+## Integrations
+
+- `wakatime` - WakaTime CLI management: checkCli, validateApiKey
+
 ## Utilities
 
 - `fonts` - Font detection

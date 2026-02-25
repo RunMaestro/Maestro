@@ -68,6 +68,7 @@ export const SETTINGS_DEFAULTS: MaestroSettings = {
 	installationId: null,
 	wakatimeEnabled: false,
 	wakatimeApiKey: '',
+	wakatimeDetailedTracking: false,
 	totalActiveTimeMs: 0,
 };
 
