@@ -1,6 +1,6 @@
 {
 	"schemaVersion": "1.0",
-	"lastUpdated": "2026-02-14T00:00:00Z",
+	"lastUpdated": "2026-02-25T00:00:00Z",
 	"repositories": [
 		{
 			"slug": "RunMaestro/Maestro",
@@ -61,6 +61,36 @@
 			"isActive": true,
 			"featured": false,
 			"addedAt": "2026-02-14"
+		},
+		{
+			"slug": "danielmiessler/Personal_AI_Infrastructure",
+			"name": "Personal AI Infrastructure",
+			"description": "A guide and framework for building your own personal AI infrastructure, including patterns for AI agents, workflows, and automation.",
+			"url": "https://github.com/danielmiessler/Personal_AI_Infrastructure",
+			"category": "ai-ml",
+			"tags": ["ai", "infrastructure", "agents", "automation", "guide"],
+			"maintainer": {
+				"name": "Daniel Miessler",
+				"url": "https://github.com/danielmiessler"
+			},
+			"isActive": true,
+			"featured": false,
+			"addedAt": "2026-02-25"
+		},
+		{
+			"slug": "danielmiessler/fabric",
+			"name": "fabric",
+			"description": "An open-source framework for augmenting humans using AI, providing a modular system for solving specific problems with crowdsourced AI prompts.",
+			"url": "https://github.com/danielmiessler/fabric",
+			"category": "productivity",
+			"tags": ["ai", "prompts", "automation", "cli", "go"],
+			"maintainer": {
+				"name": "Daniel Miessler",
+				"url": "https://github.com/danielmiessler"
+			},
+			"isActive": true,
+			"featured": false,
+			"addedAt": "2026-02-25"
 		}
 	]
 }
