@@ -47,3 +47,7 @@ export type { SessionRestorationReturn } from './useSessionRestoration';
 // Session lifecycle operations (rename, delete, star, unread, groups persistence)
 export { useSessionLifecycle } from './useSessionLifecycle';
 export type { SessionLifecycleDeps, SessionLifecycleReturn } from './useSessionLifecycle';
+
+// Session CRUD (create, delete, rename, bookmark, drag-drop, group-move)
+export { useSessionCrud } from './useSessionCrud';
+export type { UseSessionCrudDeps, UseSessionCrudReturn } from './useSessionCrud';

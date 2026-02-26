@@ -16,12 +16,7 @@ import { DebugWizardModal } from './components/DebugWizardModal';
 import { DebugPackageModal } from './components/DebugPackageModal';
 import { WindowsWarningModal } from './components/WindowsWarningModal';
 import { GistPublishModal } from './components/GistPublishModal';
-import {
-	MaestroWizard,
-	useWizard,
-	WizardResumeModal,
-	AUTO_RUN_FOLDER_NAME,
-} from './components/Wizard';
+import { MaestroWizard, useWizard, WizardResumeModal } from './components/Wizard';
 import { TourOverlay } from './components/Wizard/tour';
 import { CONDUCTOR_BADGES } from './constants/conductorBadges';
 import { EmptyStateView } from './components/EmptyStateView';
@@ -111,6 +106,7 @@ import {
 	useAppInitialization,
 	// Session lifecycle operations
 	useSessionLifecycle,
+	useSessionCrud,
 	// Wizard handlers
 	useWizardHandlers,
 } from './hooks';
@@ -187,7 +183,6 @@ function MaestroConsoleInner() {
 		setSettingsTab,
 		// New Instance Modal
 		newInstanceModalOpen,
-		setNewInstanceModalOpen,
 		duplicatingSessionId,
 		// Edit Agent Modal
 		editAgentModalOpen,
@@ -197,7 +192,6 @@ function MaestroConsoleInner() {
 		// Delete Agent Modal
 		deleteAgentModalOpen,
 		deleteAgentSession,
-		setDeleteAgentSession,
 		// Shortcuts Help Modal
 		shortcutsHelpOpen,
 		setShortcutsHelpOpen,
@@ -605,7 +599,6 @@ function MaestroConsoleInner() {
 		setActiveFocus,
 		setBookmarksCollapsed,
 		setEditingGroupId,
-		setEditingSessionId,
 		setDraggingSessionId,
 		setFlashNotification,
 		setSuccessFlashNotification,
@@ -1427,15 +1420,7 @@ function MaestroConsoleInner() {
 		);
 	}, []);
 
-	/**
-	 * Toggle bookmark state for a session.
-	 * Used by keyboard shortcut (Cmd+Shift+B) and UI actions.
-	 */
-	const toggleBookmark = useCallback((sessionId: string) => {
-		setSessions((prev) =>
-			prev.map((s) => (s.id === sessionId ? { ...s, bookmarked: !s.bookmarked } : s))
-		);
-	}, []);
+	// toggleBookmark — provided by useSessionCrud hook
 
 	const handleFocusFileInGraph = useFileExplorerStore.getState().focusFileInGraph;
 	const handleOpenLastDocumentGraph = useFileExplorerStore.getState().openLastDocumentGraph;
@@ -2227,253 +2212,9 @@ function MaestroConsoleInner() {
 	};
 
 	// showConfirmation, performDeleteSession — provided by useSessionLifecycle hook (Phase 2H)
+	// deleteSession, deleteWorktreeGroup — provided by useSessionCrud hook
 
-	const deleteSession = (id: string) => {
-		const session = sessions.find((s) => s.id === id);
-		if (!session) return;
-
-		// Open the delete agent modal (setDeleteAgentSession opens the modal with session data)
-		setDeleteAgentSession(session);
-	};
-
-	// Delete an entire worktree group and all its agents
-	const deleteWorktreeGroup = (groupId: string) => {
-		const group = groups.find((g) => g.id === groupId);
-		if (!group) return;
-
-		const groupSessions = sessions.filter((s) => s.groupId === groupId);
-		const sessionCount = groupSessions.length;
-
-		showConfirmation(
-			`Are you sure you want to remove the group "${group.name}" and all ${sessionCount} agent${
-				sessionCount !== 1 ? 's' : ''
-			} in it? This action cannot be undone.`,
-			async () => {
-				// Kill processes and delete playbooks for each session
-				for (const session of groupSessions) {
-					try {
-						await window.maestro.process.kill(`${session.id}-ai`);
-					} catch (error) {
-						console.error('Failed to kill AI process:', error);
-					}
-
-					try {
-						await window.maestro.process.kill(`${session.id}-terminal`);
-					} catch (error) {
-						console.error('Failed to kill terminal process:', error);
-					}
-
-					try {
-						await window.maestro.playbooks.deleteAll(session.id);
-					} catch (error) {
-						console.error('Failed to delete playbooks:', error);
-					}
-				}
-
-				// Track all removed paths to prevent re-discovery
-				const pathsToTrack = groupSessions
-					.filter((s) => s.worktreeParentPath && s.cwd)
-					.map((s) => s.cwd);
-
-				if (pathsToTrack.length > 0) {
-					setRemovedWorktreePaths((prev) => new Set([...prev, ...pathsToTrack]));
-				}
-
-				// Remove all sessions in the group
-				const sessionIdsToRemove = new Set(groupSessions.map((s) => s.id));
-				const newSessions = sessions.filter((s) => !sessionIdsToRemove.has(s.id));
-				setSessions(newSessions);
-
-				// Remove the group
-				setGroups((prev) => prev.filter((g) => g.id !== groupId));
-
-				// Flush immediately for critical operation
-				setTimeout(() => flushSessionPersistence(), 0);
-
-				// Switch to another session if needed
-				if (sessionIdsToRemove.has(activeSessionId) && newSessions.length > 0) {
-					setActiveSessionId(newSessions[0].id);
-				} else if (newSessions.length === 0) {
-					setActiveSessionId('');
-				}
-
-				notifyToast({
-					type: 'success',
-					title: 'Group Removed',
-					message: `Removed "${group.name}" and ${sessionCount} agent${
-						sessionCount !== 1 ? 's' : ''
-					}`,
-				});
-			}
-		);
-	};
-
-	const addNewSession = () => {
-		setNewInstanceModalOpen(true);
-	};
-
-	const createNewSession = async (
-		agentId: string,
-		workingDir: string,
-		name: string,
-		nudgeMessage?: string,
-		customPath?: string,
-		customArgs?: string,
-		customEnvVars?: Record<string, string>,
-		customModel?: string,
-		customContextWindow?: number,
-		customProviderPath?: string,
-		sessionSshRemoteConfig?: {
-			enabled: boolean;
-			remoteId: string | null;
-			workingDirOverride?: string;
-		}
-	) => {
-		// Get agent definition to get correct command
-		const agent = await window.maestro.agents.get(agentId);
-		if (!agent) {
-			console.error(`Agent not found: ${agentId}`);
-			return;
-		}
-
-		try {
-			// Always create a single session for the selected directory
-			// Worktree scanning/creation is now handled explicitly via the worktree config modal
-			// Validate uniqueness before creating
-			const validation = validateNewSession(name, workingDir, agentId as ToolType, sessions);
-			if (!validation.valid) {
-				console.error(`Session validation failed: ${validation.error}`);
-				notifyToast({
-					type: 'error',
-					title: 'Session Creation Failed',
-					message: validation.error || 'Cannot create duplicate session',
-				});
-				return;
-			}
-
-			const newId = generateId();
-			const aiPid = 0;
-
-			// For SSH sessions, defer git check until onSshRemote fires (SSH connection established)
-			// For local sessions, check git repo status immediately
-			const isRemoteSession = sessionSshRemoteConfig?.enabled && sessionSshRemoteConfig.remoteId;
-			let isGitRepo = false;
-			let gitBranches: string[] | undefined;
-			let gitTags: string[] | undefined;
-			let gitRefsCacheTime: number | undefined;
-
-			if (!isRemoteSession) {
-				// Local session - check git repo status now
-				isGitRepo = await gitService.isRepo(workingDir);
-				if (isGitRepo) {
-					[gitBranches, gitTags] = await Promise.all([
-						gitService.getBranches(workingDir),
-						gitService.getTags(workingDir),
-					]);
-					gitRefsCacheTime = Date.now();
-				}
-			}
-			// For SSH sessions: isGitRepo stays false until onSshRemote callback fires
-			// and rechecks with the established SSH connection
-
-			// Create initial fresh tab for new sessions
-			const initialTabId = generateId();
-			const initialTab: AITab = {
-				id: initialTabId,
-				agentSessionId: null,
-				name: null,
-				starred: false,
-				logs: [],
-				inputValue: '',
-				stagedImages: [],
-				createdAt: Date.now(),
-				state: 'idle',
-				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
-			};
-
-			const newSession: Session = {
-				id: newId,
-				name,
-				toolType: agentId as ToolType,
-				state: 'idle',
-				cwd: workingDir,
-				fullPath: workingDir,
-				projectRoot: workingDir, // Store the initial directory (never changes)
-				isGitRepo,
-				gitBranches,
-				gitTags,
-				gitRefsCacheTime,
-				aiLogs: [], // Deprecated - logs are now in aiTabs
-				shellLogs: [
-					{
-						id: generateId(),
-						timestamp: Date.now(),
-						source: 'system',
-						text: 'Shell Session Ready.',
-					},
-				],
-				workLog: [],
-				contextUsage: 0,
-				inputMode: agentId === 'terminal' ? 'terminal' : 'ai',
-				// AI process PID (terminal uses runCommand which spawns fresh shells)
-				// For agents that requiresPromptToStart, this starts as 0 and gets set on first message
-				aiPid,
-				terminalPid: 0,
-				port: 3000 + Math.floor(Math.random() * 100),
-				isLive: false,
-				changedFiles: [],
-				fileTree: [],
-				fileExplorerExpanded: [],
-				fileExplorerScrollPos: 0,
-				fileTreeAutoRefreshInterval: 180, // Default: auto-refresh every 3 minutes
-				shellCwd: workingDir,
-				aiCommandHistory: [],
-				shellCommandHistory: [],
-				executionQueue: [],
-				activeTimeMs: 0,
-				// Tab management - start with a fresh empty tab
-				aiTabs: [initialTab],
-				activeTabId: initialTabId,
-				closedTabHistory: [],
-				// File preview tabs - start empty, unified tab order starts with initial AI tab
-				filePreviewTabs: [],
-				activeFileTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
-				unifiedClosedTabHistory: [],
-				// Nudge message - appended to every interactive user message
-				nudgeMessage,
-				// Per-agent config (path, args, env vars, model)
-				customPath,
-				customArgs,
-				customEnvVars,
-				customModel,
-				customContextWindow,
-				customProviderPath,
-				// Per-session SSH remote config (takes precedence over agent-level SSH config)
-				sessionSshRemoteConfig,
-				// Default Auto Run folder path (user can change later)
-				autoRunFolderPath: `${workingDir}/${AUTO_RUN_FOLDER_NAME}`,
-			};
-			setSessions((prev) => [...prev, newSession]);
-			setActiveSessionId(newId);
-			// Record session lifecycle for Usage Dashboard
-			window.maestro.stats.recordSessionCreated({
-				sessionId: newId,
-				agentType: agentId,
-				projectPath: workingDir,
-				createdAt: Date.now(),
-				isRemote: !!isRemoteSession,
-			});
-			// Auto-focus the input so user can start typing immediately
-			// Use a small delay to ensure the modal has closed and the UI has updated
-			setActiveFocus('main');
-			setTimeout(() => inputRef.current?.focus(), 50);
-		} catch (error) {
-			console.error('Failed to create session:', error);
-			// TODO: Show error to user
-		}
-	};
+	// addNewSession, createNewSession — provided by useSessionCrud hook
 
 	// handleWizardLaunchSession now in useWizardHandlers hook
 
@@ -2587,47 +2328,9 @@ function MaestroConsoleInner() {
 		}
 	};
 
-	// startRenamingSession now accepts a unique key (e.g., 'bookmark-id', 'group-gid-id', 'ungrouped-id')
-	// to support renaming the same session from different UI locations (bookmarks vs groups)
-	const startRenamingSession = (editKey: string) => {
-		setEditingSessionId(editKey);
-	};
+	// startRenamingSession, finishRenamingSession — provided by useSessionCrud hook
 
-	const finishRenamingSession = (sessId: string, newName: string) => {
-		setSessions((prev) => {
-			const updated = prev.map((s) => (s.id === sessId ? { ...s, name: newName } : s));
-			// Sync the session name to agent session storage for searchability
-			// Use projectRoot (not cwd) for consistent session storage access
-			const session = updated.find((s) => s.id === sessId);
-			if (session?.agentSessionId && session.projectRoot) {
-				const agentId = session.toolType || 'claude-code';
-				if (agentId === 'claude-code') {
-					window.maestro.claude
-						.updateSessionName(session.projectRoot, session.agentSessionId, newName)
-						.catch((err) =>
-							console.warn('[finishRenamingSession] Failed to sync session name:', err)
-						);
-				} else {
-					window.maestro.agentSessions
-						.setSessionName(agentId, session.projectRoot, session.agentSessionId, newName)
-						.catch((err) =>
-							console.warn('[finishRenamingSession] Failed to sync session name:', err)
-						);
-				}
-			}
-			return updated;
-		});
-		setEditingSessionId(null);
-	};
-
-	// Drag and Drop Handlers
-	const handleDragStart = (sessionId: string) => {
-		setDraggingSessionId(sessionId);
-	};
-
-	const handleDragOver = (e: React.DragEvent) => {
-		e.preventDefault();
-	};
+	// handleDragStart, handleDragOver — provided by useSessionCrud hook
 
 	// Note: processInput has been extracted to useInputProcessing hook (see line ~2128)
 
@@ -3195,38 +2898,31 @@ function MaestroConsoleInner() {
 	// Destructure group modal state for use in JSX
 	const { createGroupModalOpen, setCreateGroupModalOpen } = groupModalState;
 
-	// State to track session that should be moved to newly created group
-	const [pendingMoveToGroupSessionId, setPendingMoveToGroupSessionId] = useState<string | null>(
-		null
-	);
+	// Session CRUD operations (create, delete, rename, bookmark, drag-drop, group-move)
+	const {
+		addNewSession,
+		createNewSession,
+		deleteSession,
+		deleteWorktreeGroup,
+		startRenamingSession,
+		finishRenamingSession,
+		toggleBookmark,
+		handleDragStart,
+		handleDragOver,
+		handleCreateGroupAndMove,
+		handleGroupCreated,
+	} = useSessionCrud({
+		flushSessionPersistence,
+		setRemovedWorktreePaths,
+		showConfirmation,
+		inputRef,
+		setCreateGroupModalOpen,
+	});
 
 	// Group Modal Handlers (stable callbacks for AppGroupModals)
-	// Must be defined after groupModalState destructure since setCreateGroupModalOpen comes from there
 	const handleCloseCreateGroupModal = useCallback(() => {
 		setCreateGroupModalOpen(false);
-		setPendingMoveToGroupSessionId(null); // Clear pending move on close
 	}, [setCreateGroupModalOpen]);
-	// Handler for when a new group is created - move pending session to it
-	const handleGroupCreated = useCallback(
-		(groupId: string) => {
-			if (pendingMoveToGroupSessionId) {
-				setSessions((prev) =>
-					prev.map((s) => (s.id === pendingMoveToGroupSessionId ? { ...s, groupId } : s))
-				);
-				setPendingMoveToGroupSessionId(null);
-			}
-		},
-		[pendingMoveToGroupSessionId, setSessions]
-	);
-
-	// Handler for "Create New Group" from context menu - sets pending session and opens modal
-	const handleCreateGroupAndMove = useCallback(
-		(sessionId: string) => {
-			setPendingMoveToGroupSessionId(sessionId);
-			setCreateGroupModalOpen(true);
-		},
-		[setCreateGroupModalOpen]
-	);
 
 	const handlePRCreated = useCallback(
 		async (prDetails: PRDetails) => {
