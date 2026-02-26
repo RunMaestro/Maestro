@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Stub getShellPath before importing path-prober
 vi.mock('../../runtime/getShellPath', () => ({
