@@ -861,6 +861,7 @@ export function useModalActions() {
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
+	const agentInboxOpen = useModalStore(selectModalOpen('agentInbox'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1028,6 +1029,9 @@ export function useModalActions() {
 
 		// Director's Notes Modal
 		directorNotesOpen,
+
+		// Agent Inbox Modal
+		agentInboxOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

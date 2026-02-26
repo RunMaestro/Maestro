@@ -46,6 +46,7 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const AgentInbox = lazy(() => import('./components/AgentInbox'));
 
 // Re-import the type for SymphonyContributionData (types don't need lazy loading)
 import type { SymphonyContributionData } from './components/SymphonyModal';
@@ -355,6 +356,9 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Agent Inbox Modal
+		agentInboxOpen,
+		setAgentInboxOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -628,8 +632,11 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
-	const { setSelectedFileIndex: _setSelectedFileIndex, setFileTreeFilter: _setFileTreeFilter, setFileTreeFilterOpen } =
-		useFileExplorerStore.getState();
+	const {
+		setSelectedFileIndex: _setSelectedFileIndex,
+		setFileTreeFilter: _setFileTreeFilter,
+		setFileTreeFilterOpen,
+	} = useFileExplorerStore.getState();
 
 	// --- GROUP CHAT STATE (now in groupChatStore) ---
 
@@ -1508,6 +1515,16 @@ function MaestroConsoleInner() {
 			handleResumeSession(agentSessionId);
 		}
 	}, [activeSession?.id, handleResumeSession]);
+
+	// --- AGENT INBOX SESSION NAVIGATION ---
+	// Close inbox modal and switch to the target agent session
+	const handleAgentInboxNavigateToSession = useCallback(
+		(sessionId: string) => {
+			setAgentInboxOpen(false);
+			setActiveSessionId(sessionId);
+		},
+		[setAgentInboxOpen, setActiveSessionId]
+	);
 
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
@@ -4710,6 +4727,7 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setAgentInboxOpen,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -5218,6 +5236,7 @@ function MaestroConsoleInner() {
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen: encoreFeatures.directorNotes ? setDirectorNotesOpen : undefined,
+		setAgentInboxOpen: encoreFeatures.unifiedInbox ? setAgentInboxOpen : undefined,
 		setGroups,
 		setSessions,
 		setRenameInstanceModalOpen,
@@ -5633,6 +5652,9 @@ function MaestroConsoleInner() {
 					onOpenDirectorNotes={
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
+					onOpenUnifiedInbox={
+						encoreFeatures.unifiedInbox ? () => setAgentInboxOpen(true) : undefined
+					}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					tabSwitcherOpen={tabSwitcherOpen}
@@ -6024,6 +6046,20 @@ function MaestroConsoleInner() {
 							onFileClick={(path: string) =>
 								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
 							}
+						/>
+					</Suspense>
+				)}
+
+				{/* --- AGENT INBOX MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.unifiedInbox && agentInboxOpen && (
+					<Suspense fallback={null}>
+						<AgentInbox
+							theme={theme}
+							sessions={sessions}
+							groups={groups}
+							enterToSendAI={enterToSendAI}
+							onClose={() => setAgentInboxOpen(false)}
+							onNavigateToSession={handleAgentInboxNavigateToSession}
 						/>
 					</Suspense>
 				)}
