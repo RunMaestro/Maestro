@@ -424,6 +424,9 @@ function FocusSidebar({
 							return (
 								<div
 									key={`header-${row.groupName}-${rowIdx}`}
+									tabIndex={0}
+									role="option"
+									aria-selected={false}
 									onClick={() => {
 										setCollapsedGroups((prev) => {
 											const next = new Set(prev);
@@ -431,6 +434,17 @@ function FocusSidebar({
 											else next.add(row.groupName);
 											return next;
 										});
+									}}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											setCollapsedGroups((prev) => {
+												const next = new Set(prev);
+												if (next.has(row.groupName)) next.delete(row.groupName);
+												else next.add(row.groupName);
+												return next;
+											});
+										}
 									}}
 									className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] uppercase tracking-wider cursor-pointer"
 									style={{
@@ -468,7 +482,16 @@ function FocusSidebar({
 							<div
 								key={`${itm.sessionId}-${itm.tabId}`}
 								ref={isCurrent ? currentRowRef : undefined}
+								tabIndex={0}
+								role="option"
+								aria-selected={isCurrent}
 								onClick={() => onNavigateItem(idx)}
+								onKeyDown={(e) => {
+									if (e.key === 'Enter' || e.key === ' ') {
+										e.preventDefault();
+										onNavigateItem(idx);
+									}
+								}}
 								className="flex items-center gap-2 px-3 cursor-pointer transition-colors"
 								style={{
 									height: 48,

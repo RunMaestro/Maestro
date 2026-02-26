@@ -748,7 +748,7 @@ function HamburgerMenuContent({
 							Unified Inbox
 						</div>
 						<div className="text-xs" style={{ color: theme.colors.textDim }}>
-							Cross-session notifications
+							Cross-agent notifications
 						</div>
 					</div>
 					{shortcuts.agentInbox && (

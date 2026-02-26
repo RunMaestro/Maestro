@@ -284,6 +284,8 @@ export default function AgentInbox({
 				onClick={(e) => e.stopPropagation()}
 				onKeyDownCapture={handleCaptureKeyDown}
 				onKeyDown={handleShellKeyDown}
+				onFocus={() => {}}
+				onBlur={() => {}}
 			>
 				<div className="flex-1 flex flex-col overflow-hidden" style={{ minHeight: 0 }}>
 					{viewMode === 'list' ? (

@@ -36,10 +36,10 @@ const STATS_BAR_HEIGHT = 32;
 // Empty state messages per filter mode
 // ============================================================================
 const EMPTY_STATE_MESSAGES: Record<InboxFilterMode, { text: string; showIcon: boolean }> = {
-	all: { text: 'No active sessions to show.', showIcon: true },
-	unread: { text: 'No unread sessions.', showIcon: false },
-	read: { text: 'No read sessions with activity.', showIcon: false },
-	starred: { text: 'No starred sessions.', showIcon: false },
+	all: { text: 'No active agents to show.', showIcon: true },
+	unread: { text: 'No unread agents.', showIcon: false },
+	read: { text: 'No read agents with activity.', showIcon: false },
+	starred: { text: 'No starred agents.', showIcon: false },
 };
 
 // ============================================================================
@@ -419,7 +419,7 @@ function InboxStatsStrip({ items, theme }: { items: InboxItem[]; theme: Theme })
 		{ label: 'Agents', value: stats.uniqueAgents },
 		{ label: 'Unread', value: stats.unread },
 		{ label: 'Needs Input', value: stats.needsInput },
-		{ label: 'Context >80%', value: stats.highContext },
+		{ label: 'Context \u226580%', value: stats.highContext },
 	];
 
 	return (
@@ -1039,14 +1039,14 @@ export default function InboxListView({
 						value={sortMode}
 						onChange={setSortMode}
 						theme={theme}
-						ariaLabel="Sort sessions"
+						ariaLabel="Sort agents"
 					/>
 					<SegmentedControl
 						options={FILTER_OPTIONS}
 						value={filterMode}
 						onChange={setFilterMode}
 						theme={theme}
-						ariaLabel="Filter sessions"
+						ariaLabel="Filter agents"
 					/>
 				</div>
 			</div>
@@ -1156,8 +1156,8 @@ export default function InboxListView({
 													: '3px solid transparent',
 												backgroundColor: isRowSelected ? `${theme.colors.accent}10` : 'transparent',
 												cursor: 'pointer',
-												background: 'transparent',
-												border: 'none',
+												borderTop: 'none',
+												borderRight: 'none',
 												textAlign: 'left',
 											}}
 											onClick={() => toggleGroup(row.groupName)}

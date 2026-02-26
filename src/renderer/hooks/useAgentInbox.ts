@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { Session, Group } from '../types';
 import type { InboxItem, InboxFilterMode, InboxSortMode } from '../types/agent-inbox';
 
-const MAX_MESSAGE_LENGTH = 250;
+const MAX_MESSAGE_LENGTH = 90;
 const DEFAULT_MESSAGE = 'No activity yet';
 
 /**
@@ -21,7 +21,7 @@ function matchesFilter(
 		case 'unread':
 			return hasUnread === true;
 		case 'read':
-			return hasUnread === false && (sessionState === 'idle' || sessionState === 'waiting_input');
+			return hasUnread === false;
 		case 'starred':
 			return isStarred === true;
 		default:
