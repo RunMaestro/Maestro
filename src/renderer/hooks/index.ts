@@ -98,6 +98,11 @@ export * from './stats';
 export * from './worktree';
 
 // ============================================================================
+// Wizard Module - Wizard lifecycle and command handlers
+// ============================================================================
+export * from './wizard';
+
+// ============================================================================
 // Re-export TransferError types from component for convenience
 // ============================================================================
 export type {
