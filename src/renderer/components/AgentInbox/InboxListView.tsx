@@ -571,7 +571,8 @@ export default function InboxListView({
 
 	const allRows = useMemo(() => buildRows(items, sortMode), [items, sortMode]);
 	const rows = useMemo(() => {
-		if (collapsedGroups.size === 0) return allRows;
+		if ((sortMode !== 'grouped' && sortMode !== 'byAgent') || collapsedGroups.size === 0)
+			return allRows;
 		return allRows.filter((row) => {
 			if (row.type === 'header') return true;
 			const collapseKey =
@@ -744,6 +745,20 @@ export default function InboxListView({
 			}
 		}
 	}, [selectedRowIndex, rows, setSelectedIndex]);
+
+	// Guard: ensure parent selectedIndex points to a visible item after collapse
+	useEffect(() => {
+		if (rows.length === 0) return;
+		const visibleItemIndexes = new Set(
+			rows.filter((row) => row.type === 'item').map((row) => row.index)
+		);
+		if (!visibleItemIndexes.has(selectedIndex)) {
+			const firstItemRow = rows.find((row) => row.type === 'item');
+			if (firstItemRow && firstItemRow.type === 'item') {
+				setSelectedIndex(firstItemRow.index);
+			}
+		}
+	}, [rows, selectedIndex, setSelectedIndex]);
 
 	// Row height getter for variable-size rows
 	const getRowHeight = useCallback(
@@ -1129,8 +1144,10 @@ export default function InboxListView({
 									}
 
 									return (
-										<div
+										<button
+											type="button"
 											key={`header-${row.groupName}`}
+											className="outline-none"
 											style={{
 												position: 'absolute',
 												top: 0,
@@ -1153,8 +1170,17 @@ export default function InboxListView({
 													: '3px solid transparent',
 												backgroundColor: isRowSelected ? `${theme.colors.accent}10` : 'transparent',
 												cursor: 'pointer',
+												background: 'transparent',
+												border: 'none',
+												textAlign: 'left',
 											}}
 											onClick={() => toggleGroup(row.groupName)}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter' || e.key === ' ') {
+													e.preventDefault();
+													toggleGroup(row.groupName);
+												}
+											}}
 										>
 											{isCollapsed ? (
 												<ChevronRight
@@ -1192,7 +1218,7 @@ export default function InboxListView({
 													{unreadCount} unread
 												</span>
 											)}
-										</div>
+										</button>
 									);
 								}
 
