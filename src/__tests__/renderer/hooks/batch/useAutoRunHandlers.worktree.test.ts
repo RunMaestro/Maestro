@@ -33,8 +33,19 @@ vi.mock('../../../../renderer/stores/notificationStore', async () => {
 	return { ...actual, notifyToast: vi.fn() };
 });
 
+// Mock worktreeDedup
+vi.mock('../../../../renderer/utils/worktreeDedup', () => ({
+	markWorktreePathAsRecentlyCreated: vi.fn(),
+	clearRecentlyCreatedWorktreePath: vi.fn(),
+	isRecentlyCreatedWorktreePath: vi.fn().mockReturnValue(false),
+}));
+
 import { gitService } from '../../../../renderer/services/git';
 import { notifyToast } from '../../../../renderer/stores/notificationStore';
+import {
+	markWorktreePathAsRecentlyCreated,
+	clearRecentlyCreatedWorktreePath,
+} from '../../../../renderer/utils/worktreeDedup';
 
 // ============================================================================
 // Helpers
@@ -1093,6 +1104,112 @@ describe('handleStartBatchRun — worktree dispatch integration', () => {
 			const newSession = sessions.find((s) => s.cwd === '/remote/worktrees/ssh-feature');
 			expect(newSession).toBeDefined();
 			expect(newSession!.sessionSshRemoteConfig).toEqual(sshConfig);
+		});
+	});
+
+	// -----------------------------------------------------------------------
+	// SSH integration
+	// -----------------------------------------------------------------------
+
+	// -----------------------------------------------------------------------
+	// Worktree dedup integration
+	// -----------------------------------------------------------------------
+
+	describe('worktree dedup (prevents duplicate sessions)', () => {
+		it('marks path as recently created BEFORE calling worktreeSetup for create-new', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			const callOrder: string[] = [];
+			vi.mocked(markWorktreePathAsRecentlyCreated).mockImplementation(() => {
+				callOrder.push('mark');
+			});
+			vi.mocked(window.maestro.git.worktreeSetup).mockImplementation(async () => {
+				callOrder.push('worktreeSetup');
+				return { success: true };
+			});
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'dedup-test',
+					baseBranch: 'main',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			// Mark must happen before worktreeSetup
+			expect(callOrder).toEqual(['mark', 'worktreeSetup']);
+			expect(markWorktreePathAsRecentlyCreated).toHaveBeenCalledWith(
+				'/projects/worktrees/dedup-test'
+			);
+		});
+
+		it('clears recently created path when worktreeSetup fails', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(window.maestro.git.worktreeSetup).mockResolvedValue({
+				success: false,
+				error: 'branch conflict',
+			});
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'create-new',
+					newBranchName: 'fail-dedup',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(clearRecentlyCreatedWorktreePath).toHaveBeenCalledWith(
+				'/projects/worktrees/fail-dedup'
+			);
+		});
+
+		it('does NOT mark path for existing-closed mode (no disk creation)', async () => {
+			const session = createMockSession();
+			const deps = createMockDeps();
+
+			vi.mocked(gitService.getBranches).mockResolvedValue(['main']);
+
+			const config: BatchRunConfig = {
+				documents: baseDocuments,
+				prompt: 'Go',
+				loopEnabled: false,
+				worktreeTarget: {
+					mode: 'existing-closed',
+					worktreePath: '/projects/worktrees/existing',
+					createPROnCompletion: false,
+				},
+			};
+
+			const { result } = renderHook(() => useAutoRunHandlers(session, deps));
+
+			await act(async () => {
+				await result.current.handleStartBatchRun(config);
+			});
+
+			expect(markWorktreePathAsRecentlyCreated).not.toHaveBeenCalled();
 		});
 	});
 

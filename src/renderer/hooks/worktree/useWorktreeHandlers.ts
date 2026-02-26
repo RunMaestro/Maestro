@@ -24,6 +24,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { buildWorktreeSession } from '../../utils/worktreeSession';
+import { isRecentlyCreatedWorktreePath } from '../../utils/worktreeDedup';
 
 // ============================================================================
 // Return type
@@ -602,8 +603,12 @@ export function useWorktreeHandlers(): WorktreeHandlersReturn {
 			const { sessionId, worktree } = data;
 
 			// Skip worktrees that were just manually created (prevents duplicate UI entries)
-			// Normalize path for cross-platform comparison (chokidar may emit backslashes on Windows)
-			if (recentlyCreatedWorktreePathsRef.current.has(normalizePath(worktree.path))) {
+			// Checks both the local ref (for manual creation via useWorktreeHandlers) and the
+			// shared module (for auto-run dispatch via useAutoRunHandlers).
+			if (
+				recentlyCreatedWorktreePathsRef.current.has(normalizePath(worktree.path)) ||
+				isRecentlyCreatedWorktreePath(worktree.path)
+			) {
 				return;
 			}
 

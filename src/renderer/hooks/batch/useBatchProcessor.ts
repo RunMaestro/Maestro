@@ -21,6 +21,7 @@ import { countUnfinishedTasks, uncheckAllTasks } from './batchUtils';
 import { useSessionDebounce } from './useSessionDebounce';
 import { DEFAULT_BATCH_STATE, type BatchAction } from './batchReducer';
 import { useBatchStore, selectHasAnyActiveBatch } from '../../stores/batchStore';
+import { useSessionStore } from '../../stores/sessionStore';
 import { useTimeTracking } from './useTimeTracking';
 import { useWorktreeManager } from './useWorktreeManager';
 import { useDocumentProcessor } from './useDocumentProcessor';
@@ -606,8 +607,11 @@ export function useBatchProcessor({
 				worktreeEnabled: config.worktree?.enabled,
 			});
 
-			// Use sessionsRef to get latest sessions (handles case where session was just created)
-			const session = sessionsRef.current.find((s) => s.id === sessionId);
+			// Use sessionsRef first, then fall back to Zustand store for sessions just created
+			// (sessionsRef updates on React re-render, but Zustand store updates synchronously)
+			const session =
+				sessionsRef.current.find((s) => s.id === sessionId) ||
+				useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			if (!session) {
 				const worktreeInfo = config.worktreeTarget
 					? ` (worktree mode: ${config.worktreeTarget.mode}, path: ${

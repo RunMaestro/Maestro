@@ -5,6 +5,10 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
 import { buildWorktreeSession } from '../../utils/worktreeSession';
+import {
+	markWorktreePathAsRecentlyCreated,
+	clearRecentlyCreatedWorktreePath,
+} from '../../utils/worktreeDedup';
 import { captureException } from '../../utils/sentry';
 
 /**
@@ -107,6 +111,10 @@ async function spawnWorktreeAgentAndDispatch(
 		worktreePath = basePath + '/' + target.newBranchName;
 		branchName = target.newBranchName!;
 
+		// Mark path BEFORE creating on disk so the file watcher in useWorktreeHandlers
+		// skips this path and doesn't create a duplicate session.
+		markWorktreePathAsRecentlyCreated(worktreePath);
+
 		// Step 2: Create worktree on disk
 		const result = await window.maestro.git.worktreeSetup(
 			parentSession.cwd,
@@ -115,6 +123,7 @@ async function spawnWorktreeAgentAndDispatch(
 			sshRemoteId
 		);
 		if (!result.success) {
+			clearRecentlyCreatedWorktreePath(worktreePath);
 			notifyToast({
 				type: 'error',
 				title: 'Failed to Create Worktree',
