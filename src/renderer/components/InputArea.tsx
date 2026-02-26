@@ -24,7 +24,7 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks';
-import { filterAndSortSlashCommands } from '../utils/search';
+import { filterAndSortSlashCommands, type SlashCommandEntry } from '../utils/search';
 import type {
 	SummarizeProgress,
 	SummarizeResult,
@@ -39,13 +39,6 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
-
-interface SlashCommand {
-	command: string;
-	description: string;
-	terminalOnly?: boolean;
-	aiOnly?: boolean;
-}
 
 interface InputAreaProps {
 	session: Session;
@@ -69,7 +62,7 @@ interface InputAreaProps {
 	setCommandHistorySelectedIndex: (index: number) => void;
 	slashCommandOpen: boolean;
 	setSlashCommandOpen: (open: boolean) => void;
-	slashCommands: SlashCommand[];
+	slashCommands: SlashCommandEntry[];
 	selectedSlashCommandIndex: number;
 	setSelectedSlashCommandIndex: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;

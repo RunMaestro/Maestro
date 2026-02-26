@@ -221,8 +221,12 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setSelectedSlashCommandIndex((prev) => Math.max(prev - 1, 0));
 				} else if (e.key === 'Tab' || e.key === 'Enter') {
 					e.preventDefault();
-					if (filteredCommands[selectedSlashCommandIndex]) {
-						setInputValue(filteredCommands[selectedSlashCommandIndex].command);
+					const safeIndex = Math.min(
+						Math.max(0, selectedSlashCommandIndex),
+						Math.max(0, filteredCommands.length - 1)
+					);
+					if (filteredCommands[safeIndex]) {
+						setInputValue(filteredCommands[safeIndex].command);
 						setSlashCommandOpen(false);
 						inputRef.current?.focus();
 					}

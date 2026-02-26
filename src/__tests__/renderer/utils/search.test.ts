@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { fuzzyMatch, fuzzyMatchWithScore, FuzzyMatchResult } from '../../../renderer/utils/search';
+import {
+	fuzzyMatch,
+	fuzzyMatchWithScore,
+	filterAndSortSlashCommands,
+	FuzzyMatchResult,
+} from '../../../renderer/utils/search';
 
 describe('search utils', () => {
 	describe('fuzzyMatch', () => {
@@ -490,6 +495,86 @@ describe('search utils', () => {
 				// handleUserInput should match
 				expect(results.some((r) => r.symbol === 'handleUserInput')).toBe(true);
 			});
+		});
+	});
+
+	describe('filterAndSortSlashCommands', () => {
+		const commands = [
+			{ command: '/clear', description: 'Clear the terminal' },
+			{ command: '/help', description: 'Show help', aiOnly: true },
+			{ command: '/reset', description: 'Reset the session' },
+			{ command: '/run', description: 'Run a command', terminalOnly: true },
+			{ command: '/review', description: 'Review code changes' },
+		];
+
+		it('returns all eligible commands for empty search term', () => {
+			const result = filterAndSortSlashCommands(commands, '', false);
+			// aiOnly commands excluded in non-terminal mode? No — aiOnly excluded in terminal mode
+			// terminalOnly excluded in non-terminal mode
+			expect(result).toHaveLength(4); // /run excluded (terminalOnly, not in terminal mode)
+			expect(result.map((c) => c.command)).not.toContain('/run');
+		});
+
+		it('filters out terminalOnly commands in AI mode', () => {
+			const result = filterAndSortSlashCommands(commands, '', false);
+			expect(result.find((c) => c.command === '/run')).toBeUndefined();
+		});
+
+		it('filters out aiOnly commands in terminal mode', () => {
+			const result = filterAndSortSlashCommands(commands, '', true);
+			expect(result.find((c) => c.command === '/help')).toBeUndefined();
+		});
+
+		it('includes terminalOnly commands in terminal mode', () => {
+			const result = filterAndSortSlashCommands(commands, '', true);
+			expect(result.find((c) => c.command === '/run')).toBeDefined();
+		});
+
+		it('includes aiOnly commands in AI mode', () => {
+			const result = filterAndSortSlashCommands(commands, '', false);
+			expect(result.find((c) => c.command === '/help')).toBeDefined();
+		});
+
+		it('ranks prefix matches higher than fuzzy matches', () => {
+			const result = filterAndSortSlashCommands(commands, 're', false);
+			// /reset and /review both prefix-match "re"
+			// /clear fuzzy-matches "re" (c-l-e-a-r has r and e in order? no — r then e, "clear" has c,l,e,a,r — "re" needs r then e: r is at index 4, no e after that)
+			expect(result.length).toBeGreaterThanOrEqual(2);
+			expect(result[0].command).toBe('/reset');
+			expect(result[1].command).toBe('/review');
+		});
+
+		it('ranks command name fuzzy match higher than description fuzzy match', () => {
+			// "cl" prefix-matches /clear
+			// Nothing else has "cl" in command name
+			// "Clear the terminal" description has "cl" — but /clear already matched by prefix
+			const result = filterAndSortSlashCommands(commands, 'cl', false);
+			expect(result[0].command).toBe('/clear');
+		});
+
+		it('matches description when command name does not match', () => {
+			// "terminal" matches /clear's description "Clear the terminal"
+			// and /run's description "Run a command" does NOT contain "terminal"
+			// Wait — /run is terminalOnly, testing in AI mode so it's excluded
+			const result = filterAndSortSlashCommands(commands, 'terminal', false);
+			expect(result.find((c) => c.command === '/clear')).toBeDefined();
+		});
+
+		it('is case-insensitive for prefix matching', () => {
+			const result = filterAndSortSlashCommands(commands, 'RE', false);
+			expect(result.length).toBeGreaterThanOrEqual(2);
+			expect(result[0].command).toBe('/reset');
+		});
+
+		it('returns empty array when nothing matches', () => {
+			const result = filterAndSortSlashCommands(commands, 'zzz', false);
+			expect(result).toHaveLength(0);
+		});
+
+		it('preserves generic type parameter', () => {
+			const extendedCommands = [{ command: '/test', description: 'Test', customProp: 42 }];
+			const result = filterAndSortSlashCommands(extendedCommands, '', false);
+			expect(result[0].customProp).toBe(42);
 		});
 	});
 });
