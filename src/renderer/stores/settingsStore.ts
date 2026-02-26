@@ -41,6 +41,7 @@ import { commitCommandPrompt } from '../../prompts';
 // ============================================================================
 
 export type DocumentGraphLayoutType = 'mindmap' | 'radial' | 'force';
+const DOCUMENT_GRAPH_LAYOUT_TYPES: DocumentGraphLayoutType[] = ['mindmap', 'radial', 'force'];
 
 // ============================================================================
 // Default Constants
@@ -712,8 +713,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	},
 
 	setDocumentGraphLayoutType: (value) => {
-		const valid: DocumentGraphLayoutType[] = ['mindmap', 'radial', 'force'];
-		const layoutType = valid.includes(value) ? value : 'mindmap';
+		const layoutType = DOCUMENT_GRAPH_LAYOUT_TYPES.includes(value) ? value : 'mindmap';
 		set({ documentGraphLayoutType: layoutType });
 		window.maestro.settings.set('documentGraphLayoutType', layoutType);
 	},
@@ -1621,7 +1621,7 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['documentGraphLayoutType'] !== undefined) {
 			const lt = allSettings['documentGraphLayoutType'] as string;
-			if (['mindmap', 'radial', 'force'].includes(lt)) {
+			if (DOCUMENT_GRAPH_LAYOUT_TYPES.includes(lt as DocumentGraphLayoutType)) {
 				patch.documentGraphLayoutType = lt as DocumentGraphLayoutType;
 			}
 		}
