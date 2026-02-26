@@ -991,6 +991,7 @@ function MaestroConsoleInner() {
 		handleUpdateTabByClaudeSessionId,
 		handleTabStar,
 		handleTabMarkUnread,
+		handleUpdateTabDescription,
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
@@ -5088,6 +5089,9 @@ function MaestroConsoleInner() {
 		handleUpdateTabByClaudeSessionId,
 		handleTabStar,
 		handleTabMarkUnread,
+		handleUpdateTabDescription: encoreFeatures.tabDescription
+			? handleUpdateTabDescription
+			: undefined,
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
