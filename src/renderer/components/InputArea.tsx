@@ -24,7 +24,7 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks';
-import { fuzzyMatchWithScore } from '../utils/search';
+import { filterAndSortSlashCommands } from '../utils/search';
 import type {
 	SummarizeProgress,
 	SummarizeResult,
@@ -318,39 +318,10 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// PERF: Memoize both the search term extraction and filtered results to avoid
 	// recalculating on every render - inputValue changes on every keystroke
 	const searchTerm = useMemo(() => inputValue.toLowerCase().replace(/^\//, ''), [inputValue]);
-	const filteredSlashCommands = useMemo(() => {
-		const scored: { cmd: (typeof slashCommands)[number]; score: number }[] = [];
-		for (const cmd of slashCommands) {
-			if (cmd.terminalOnly && !isTerminalMode) continue;
-			if (cmd.aiOnly && isTerminalMode) continue;
-			if (!searchTerm) {
-				scored.push({ cmd, score: 0 });
-				continue;
-			}
-			const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
-			// Prefix match gets highest priority
-			if (cmdName.startsWith(searchTerm)) {
-				scored.push({ cmd, score: 300 });
-				continue;
-			}
-			// Fuzzy match on command name
-			const nameResult = fuzzyMatchWithScore(cmdName, searchTerm);
-			if (nameResult.matches) {
-				scored.push({ cmd, score: 100 + nameResult.score });
-				continue;
-			}
-			// Fuzzy match on description
-			if (cmd.description) {
-				const descResult = fuzzyMatchWithScore(cmd.description, searchTerm);
-				if (descResult.matches) {
-					scored.push({ cmd, score: descResult.score });
-					continue;
-				}
-			}
-		}
-		scored.sort((a, b) => b.score - a.score);
-		return scored.map((s) => s.cmd);
-	}, [slashCommands, isTerminalMode, searchTerm]);
+	const filteredSlashCommands = useMemo(
+		() => filterAndSortSlashCommands(slashCommands, searchTerm, isTerminalMode),
+		[slashCommands, isTerminalMode, searchTerm]
+	);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
 	const safeSelectedIndex = Math.min(

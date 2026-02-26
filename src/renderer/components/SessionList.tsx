@@ -1941,10 +1941,9 @@ function SessionListInner(props: SessionListProps) {
 		if (sessionFilter) {
 			// Find groups that contain matching sessions (search session name AND AI tab names)
 			const groupsWithMatches = new Set<string>();
-			const query = sessionFilter.toLowerCase();
 			const matchingSessions = sessions.filter((s) => {
-				if (s.name.toLowerCase().includes(query)) return true;
-				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) return true;
+				if (fuzzyMatch(s.name, sessionFilter)) return true;
+				if (s.aiTabs?.some((tab) => tab.name && fuzzyMatch(tab.name, sessionFilter))) return true;
 				return false;
 			});
 

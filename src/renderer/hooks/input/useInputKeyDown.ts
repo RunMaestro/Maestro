@@ -16,7 +16,7 @@ import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { fuzzyMatch } from '../../utils/search';
+import { filterAndSortSlashCommands } from '../../utils/search';
 
 // ============================================================================
 // Dependencies interface
@@ -207,17 +207,11 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			if (slashCommandOpen) {
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
 				const searchTerm = inputValue.toLowerCase().replace(/^\//, '');
-				const filteredCommands = allSlashCommands.filter((cmd) => {
-					if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
-					if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-					if (!searchTerm) return true;
-					const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
-					return (
-						cmdName.startsWith(searchTerm) ||
-						fuzzyMatch(cmdName, searchTerm) ||
-						(cmd.description ? fuzzyMatch(cmd.description, searchTerm) : false)
-					);
-				});
+				const filteredCommands = filterAndSortSlashCommands(
+					allSlashCommands,
+					searchTerm,
+					isTerminalMode
+				);
 
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
