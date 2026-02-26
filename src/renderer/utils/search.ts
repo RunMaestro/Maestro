@@ -144,6 +144,7 @@ export const filterAndSortSlashCommands = <T extends SlashCommandEntry>(
 	isTerminalMode: boolean
 ): T[] => {
 	const scored: { cmd: T; score: number }[] = [];
+	const lowerSearchTerm = searchTerm.toLowerCase();
 	for (const cmd of commands) {
 		if (cmd.terminalOnly && !isTerminalMode) continue;
 		if (cmd.aiOnly && isTerminalMode) continue;
@@ -153,7 +154,7 @@ export const filterAndSortSlashCommands = <T extends SlashCommandEntry>(
 		}
 		const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
 		// Prefix match gets highest priority
-		if (cmdName.startsWith(searchTerm)) {
+		if (cmdName.startsWith(lowerSearchTerm)) {
 			scored.push({ cmd, score: 300 });
 			continue;
 		}
