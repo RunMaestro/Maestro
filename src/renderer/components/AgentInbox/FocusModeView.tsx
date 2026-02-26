@@ -724,11 +724,18 @@ export default function FocusModeView({
 	const replyInputRef = useRef<HTMLTextAreaElement>(null);
 
 	// Auto-focus reply input when entering focus mode or switching items
+	const innerRafRef = useRef<number>(0);
 	useEffect(() => {
-		const timer = setTimeout(() => {
-			replyInputRef.current?.focus();
-		}, 200);
-		return () => clearTimeout(timer);
+		const raf1 = requestAnimationFrame(() => {
+			const raf2 = requestAnimationFrame(() => {
+				replyInputRef.current?.focus();
+			});
+			innerRafRef.current = raf2;
+		});
+		return () => {
+			cancelAnimationFrame(raf1);
+			if (innerRafRef.current) cancelAnimationFrame(innerRafRef.current);
+		};
 	}, [item.sessionId, item.tabId]);
 
 	// Reset reply text when item changes (prev/next navigation)

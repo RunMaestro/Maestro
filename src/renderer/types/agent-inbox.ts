@@ -32,7 +32,9 @@ export const STATUS_LABELS: Record<SessionState, string> = {
 	error: 'Error',
 };
 
-/** Status badge color keys (map to theme.colors.*) */
+// Note: Values are not keyof ThemeColors — 'info' and 'textMuted' are resolved
+// through a local colorMap in resolveStatusColor(), not direct ThemeColors keys.
+/** Status badge color keys (map to theme.colors.* via resolveStatusColor()) */
 export const STATUS_COLORS: Record<SessionState, string> = {
 	idle: 'success',
 	waiting_input: 'warning',

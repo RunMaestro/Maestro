@@ -138,6 +138,8 @@ export interface KeyboardMasteryData {
 	level: number;
 }
 
+// Note: filterMode/sortMode typed as string (not InboxFilterMode/InboxSortMode)
+// to avoid circular dependency with types/agent-inbox.ts
 /** Agent Inbox modal data (persisted filter/sort/expand state) */
 export interface AgentInboxModalData {
 	filterMode?: string;

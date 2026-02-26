@@ -93,9 +93,13 @@ export default function AgentInbox({
 	// Resolve frozen order against live items (live data, frozen order)
 	const resolveFrozenItems = useCallback(
 		(frozen: { sessionId: string; tabId: string }[]): InboxItem[] => {
+			const liveMap = new Map<string, InboxItem>();
+			for (const item of liveItems) {
+				liveMap.set(`${item.sessionId}:${item.tabId}`, item);
+			}
 			const resolved: InboxItem[] = [];
 			for (const key of frozen) {
-				const live = liveItems.find((i) => i.sessionId === key.sessionId && i.tabId === key.tabId);
+				const live = liveMap.get(`${key.sessionId}:${key.tabId}`);
 				if (live) resolved.push(live);
 			}
 			return resolved.length > 0 ? resolved : liveItems;
