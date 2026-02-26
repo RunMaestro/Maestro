@@ -63,6 +63,7 @@ import {
 } from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
 import { useUIStore } from '../stores/uiStore';
+import { fuzzyMatch } from '../utils/search';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -1780,8 +1781,8 @@ function SessionListInner(props: SessionListProps) {
 	// Consolidated session categorization and sorting - computed in a single pass
 	// This replaces 12+ chained useMemo calls with one comprehensive computation
 	const sessionCategories = useMemo(() => {
-		// Step 1: Filter sessions based on search query
-		const query = sessionFilter?.toLowerCase() ?? '';
+		// Step 1: Filter sessions based on search query (fuzzy match)
+		const query = sessionFilter ?? '';
 		const filtered: Session[] = [];
 
 		for (const s of sessions) {
@@ -1792,12 +1793,12 @@ function SessionListInner(props: SessionListProps) {
 				filtered.push(s);
 			} else {
 				// Match session name
-				if (s.name.toLowerCase().includes(query)) {
+				if (fuzzyMatch(s.name, query)) {
 					filtered.push(s);
 					continue;
 				}
 				// Match any AI tab name
-				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) {
+				if (s.aiTabs?.some((tab) => tab.name && fuzzyMatch(tab.name, query))) {
 					filtered.push(s);
 					continue;
 				}
@@ -1806,8 +1807,8 @@ function SessionListInner(props: SessionListProps) {
 				if (
 					worktreeChildren?.some(
 						(child) =>
-							child.worktreeBranch?.toLowerCase().includes(query) ||
-							child.name.toLowerCase().includes(query)
+							(child.worktreeBranch && fuzzyMatch(child.worktreeBranch, query)) ||
+							fuzzyMatch(child.name, query)
 					)
 				) {
 					filtered.push(s);
