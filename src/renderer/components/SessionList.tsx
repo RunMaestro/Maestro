@@ -36,6 +36,7 @@ import {
 	Server,
 	Music,
 	Command,
+	Inbox,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type {
@@ -54,7 +55,12 @@ import { getStatusColor, getContextColor, formatActiveTime } from '../utils/them
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
-import { useLiveOverlay, useClickOutside, useResizablePanel, useContextMenuPosition } from '../hooks';
+import {
+	useLiveOverlay,
+	useClickOutside,
+	useResizablePanel,
+	useContextMenuPosition,
+} from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
 import { useUIStore } from '../stores/uiStore';
 
@@ -440,6 +446,7 @@ interface HamburgerMenuContentProps {
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen?: (open: boolean) => void;
+	setAgentInboxOpen?: (open: boolean) => void;
 	setUpdateCheckModalOpen: (open: boolean) => void;
 	setAboutModalOpen: (open: boolean) => void;
 	setMenuOpen: (open: boolean) => void;
@@ -460,6 +467,7 @@ function HamburgerMenuContent({
 	setUsageDashboardOpen,
 	setSymphonyModalOpen,
 	setDirectorNotesOpen,
+	setAgentInboxOpen,
 	setUpdateCheckModalOpen,
 	setAboutModalOpen,
 	setMenuOpen,
@@ -722,6 +730,33 @@ function HamburgerMenuContent({
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{formatShortcutKeys(shortcuts.directorNotes.keys)}
+						</span>
+					)}
+				</button>
+			)}
+			{setAgentInboxOpen && (
+				<button
+					onClick={() => {
+						setAgentInboxOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Inbox className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Unified Inbox
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Cross-session notifications
+						</div>
+					</div>
+					{shortcuts.agentInbox && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.agentInbox.keys)}
 						</span>
 					)}
 				</button>
@@ -1079,6 +1114,7 @@ interface SessionListProps {
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen?: (open: boolean) => void;
+	setAgentInboxOpen?: (open: boolean) => void;
 	setQuickActionOpen: (open: boolean) => void;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
@@ -1204,6 +1240,7 @@ function SessionListInner(props: SessionListProps) {
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setAgentInboxOpen,
 		setQuickActionOpen,
 		toggleGroup,
 		handleDragStart,
@@ -2503,6 +2540,7 @@ function SessionListInner(props: SessionListProps) {
 										setUsageDashboardOpen={setUsageDashboardOpen}
 										setSymphonyModalOpen={setSymphonyModalOpen}
 										setDirectorNotesOpen={setDirectorNotesOpen}
+										setAgentInboxOpen={setAgentInboxOpen}
 										setUpdateCheckModalOpen={setUpdateCheckModalOpen}
 										setAboutModalOpen={setAboutModalOpen}
 										setMenuOpen={setMenuOpen}
@@ -2548,6 +2586,7 @@ function SessionListInner(props: SessionListProps) {
 									setUsageDashboardOpen={setUsageDashboardOpen}
 									setSymphonyModalOpen={setSymphonyModalOpen}
 									setDirectorNotesOpen={setDirectorNotesOpen}
+									setAgentInboxOpen={setAgentInboxOpen}
 									setUpdateCheckModalOpen={setUpdateCheckModalOpen}
 									setAboutModalOpen={setAboutModalOpen}
 									setMenuOpen={setMenuOpen}
