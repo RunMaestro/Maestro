@@ -1519,11 +1519,20 @@ function MaestroConsoleInner() {
 	// --- AGENT INBOX SESSION NAVIGATION ---
 	// Close inbox modal and switch to the target agent session
 	const handleAgentInboxNavigateToSession = useCallback(
-		(sessionId: string) => {
+		(sessionId: string, tabId?: string) => {
 			setAgentInboxOpen(false);
 			setActiveSessionId(sessionId);
+			if (tabId) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, activeTabId: tabId, activeFileTabId: null, inputMode: 'ai' as const }
+							: s
+					)
+				);
+			}
 		},
-		[setAgentInboxOpen, setActiveSessionId]
+		[setAgentInboxOpen, setActiveSessionId, setSessions]
 	);
 
 	// Ref for processInput — populated after useInputHandlers (declared later in component).
@@ -2547,6 +2556,9 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// Bind the ref so Inbox Quick Reply handlers always call the latest processInput.
+	inboxProcessInputRef.current = processInput;
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -6162,6 +6174,10 @@ function MaestroConsoleInner() {
 							enterToSendAI={enterToSendAI}
 							onClose={() => setAgentInboxOpen(false)}
 							onNavigateToSession={handleAgentInboxNavigateToSession}
+							onQuickReply={handleAgentInboxQuickReply}
+							onOpenAndReply={handleAgentInboxOpenAndReply}
+							onMarkAsRead={handleAgentInboxMarkAsRead}
+							onToggleThinking={handleAgentInboxToggleThinking}
 						/>
 					</Suspense>
 				)}
