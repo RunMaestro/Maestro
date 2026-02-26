@@ -17,6 +17,7 @@
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getShellPath } from '../runtime/getShellPath';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { expandTilde, detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
@@ -132,6 +133,37 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 
 	env.PATH = pathParts.join(path.delimiter);
 	return env;
+}
+
+/**
+ * Merge shell-provided PATH entries (when available) into an env object.
+ * Shell PATH entries are prioritized (prepended) but de-duplicated.
+ */
+export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
+	const env = getExpandedEnv();
+	try {
+		const shellPath = await getShellPath();
+		if (!shellPath) return env;
+
+		const delim = path.delimiter;
+		const shellParts = shellPath.split(delim).filter(Boolean);
+		const currentParts = (env.PATH || '').split(delim).filter(Boolean);
+
+		const merged: string[] = [];
+		// Start with shell parts to prioritize them
+		for (const p of shellParts) {
+			if (!merged.includes(p)) merged.push(p);
+		}
+		for (const p of currentParts) {
+			if (!merged.includes(p)) merged.push(p);
+		}
+
+		env.PATH = merged.join(delim);
+		return env;
+	} catch (err) {
+		// If shell probing fails, just return the base expanded env
+		return env;
+	}
 }
 
 // ============ Custom Path Validation ============
