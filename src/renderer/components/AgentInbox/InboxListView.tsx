@@ -1063,6 +1063,13 @@ export default function InboxListView({
 				aria-label="Inbox items"
 				className="outline-none"
 				style={{ flex: 1, overflow: 'hidden' }}
+				onFocus={(e) => {
+					e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
+					e.currentTarget.style.outlineOffset = '-2px';
+				}}
+				onBlur={(e) => {
+					e.currentTarget.style.outline = 'none';
+				}}
 			>
 				{rows.length === 0 ? (
 					<div

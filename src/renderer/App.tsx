@@ -1546,7 +1546,7 @@ function MaestroConsoleInner() {
 			// Save current active session so we can restore it after sending.
 			// This ensures AI responses mark the tab as unread (since the user
 			// is viewing through Focus Mode, not directly in the session).
-			const previousActiveSessionId = activeSessionId;
+			const previousActiveSessionId = activeSessionIdRef.current;
 
 			// Activate the target tab and mark as read (processInput adds the user log entry)
 			setSessions((prev) =>
@@ -1562,17 +1562,17 @@ function MaestroConsoleInner() {
 
 			// Temporarily switch to the target session so processInput sends to it
 			setActiveSessionId(sessionId);
-			setTimeout(() => {
+			requestAnimationFrame(() => {
 				inboxProcessInputRef.current(text);
 				// Restore previous active session so AI response triggers unread marker
-				setTimeout(() => {
-					if (previousActiveSessionId) {
+				requestAnimationFrame(() => {
+					if (previousActiveSessionId && previousActiveSessionId !== sessionId) {
 						setActiveSessionId(previousActiveSessionId);
 					}
-				}, 100);
-			}, 150);
+				});
+			});
 		},
-		[setSessions, setActiveSessionId, activeSessionId]
+		[setSessions, setActiveSessionId, activeSessionIdRef]
 	);
 
 	// Agent Inbox: Open & Reply — navigates to session with pre-filled input

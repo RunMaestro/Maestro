@@ -3742,6 +3742,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 							>
 								{/* Feature Toggle Header */}
 								<button
+									role="switch"
+									aria-checked={encoreFeatures.tabDescription}
 									className="w-full flex items-center justify-between p-4 text-left"
 									onClick={() =>
 										setEncoreFeatures({

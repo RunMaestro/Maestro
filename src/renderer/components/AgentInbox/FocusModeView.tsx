@@ -507,6 +507,13 @@ function FocusSidebar({
 								onMouseLeave={(e) => {
 									if (!isCurrent) e.currentTarget.style.backgroundColor = 'transparent';
 								}}
+								onFocus={(e) => {
+									if (!isCurrent)
+										e.currentTarget.style.backgroundColor = `${theme.colors.accent}08`;
+								}}
+								onBlur={(e) => {
+									if (!isCurrent) e.currentTarget.style.backgroundColor = 'transparent';
+								}}
 							>
 								{/* Status dot */}
 								<span
