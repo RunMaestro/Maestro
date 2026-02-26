@@ -54,9 +54,15 @@ import { getStatusColor, getContextColor, formatActiveTime } from '../utils/them
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { SessionItem } from './SessionItem';
 import { GroupChatList } from './GroupChatList';
-import { useLiveOverlay, useClickOutside, useResizablePanel, useContextMenuPosition } from '../hooks';
+import {
+	useLiveOverlay,
+	useClickOutside,
+	useResizablePanel,
+	useContextMenuPosition,
+} from '../hooks';
 import { useGitFileStatus } from '../contexts/GitStatusContext';
 import { useUIStore } from '../stores/uiStore';
+import { fuzzyMatch } from '../utils/search';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -1743,8 +1749,8 @@ function SessionListInner(props: SessionListProps) {
 	// Consolidated session categorization and sorting - computed in a single pass
 	// This replaces 12+ chained useMemo calls with one comprehensive computation
 	const sessionCategories = useMemo(() => {
-		// Step 1: Filter sessions based on search query
-		const query = sessionFilter?.toLowerCase() ?? '';
+		// Step 1: Filter sessions based on search query (fuzzy match)
+		const query = sessionFilter ?? '';
 		const filtered: Session[] = [];
 
 		for (const s of sessions) {
@@ -1755,12 +1761,12 @@ function SessionListInner(props: SessionListProps) {
 				filtered.push(s);
 			} else {
 				// Match session name
-				if (s.name.toLowerCase().includes(query)) {
+				if (fuzzyMatch(s.name, query)) {
 					filtered.push(s);
 					continue;
 				}
 				// Match any AI tab name
-				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) {
+				if (s.aiTabs?.some((tab) => tab.name && fuzzyMatch(tab.name, query))) {
 					filtered.push(s);
 					continue;
 				}
@@ -1769,8 +1775,8 @@ function SessionListInner(props: SessionListProps) {
 				if (
 					worktreeChildren?.some(
 						(child) =>
-							child.worktreeBranch?.toLowerCase().includes(query) ||
-							child.name.toLowerCase().includes(query)
+							(child.worktreeBranch && fuzzyMatch(child.worktreeBranch, query)) ||
+							fuzzyMatch(child.name, query)
 					)
 				) {
 					filtered.push(s);
@@ -1898,15 +1904,26 @@ function SessionListInner(props: SessionListProps) {
 	}, [sessionFilterOpen]);
 
 	// Temporarily expand groups when filtering to show matching sessions
-	// Note: Only depend on sessionFilter and sessions (not filteredSessions which changes reference each render)
+	// Uses the same matching logic as sessionCategories to stay consistent
 	useEffect(() => {
 		if (sessionFilter) {
-			// Find groups that contain matching sessions (search session name AND AI tab names)
 			const groupsWithMatches = new Set<string>();
-			const query = sessionFilter.toLowerCase();
 			const matchingSessions = sessions.filter((s) => {
-				if (s.name.toLowerCase().includes(query)) return true;
-				if (s.aiTabs?.some((tab) => tab.name?.toLowerCase().includes(query))) return true;
+				// Skip worktree children (same as sessionCategories)
+				if (s.parentSessionId) return false;
+				if (fuzzyMatch(s.name, sessionFilter)) return true;
+				if (s.aiTabs?.some((tab) => tab.name && fuzzyMatch(tab.name, sessionFilter))) return true;
+				// Match worktree children branch names (same as sessionCategories)
+				const worktreeChildren = worktreeChildrenByParentId.get(s.id);
+				if (
+					worktreeChildren?.some(
+						(child) =>
+							(child.worktreeBranch && fuzzyMatch(child.worktreeBranch, sessionFilter)) ||
+							fuzzyMatch(child.name, sessionFilter)
+					)
+				) {
+					return true;
+				}
 				return false;
 			});
 
@@ -1936,7 +1953,7 @@ function SessionListInner(props: SessionListProps) {
 			setGroups((prev) => prev.map((g) => ({ ...g, collapsed: true })));
 			setBookmarksCollapsed(false);
 		}
-	}, [sessionFilter]);
+	}, [sessionFilter, sessions, worktreeChildrenByParentId]);
 
 	// Get the jump number (1-9, 0=10th) for a session based on its position in visibleSessions
 	const getSessionJumpNumber = (sessionId: string): string | null => {
