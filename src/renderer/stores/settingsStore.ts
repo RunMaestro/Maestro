@@ -222,6 +222,7 @@ export interface SettingsStoreState {
 	documentGraphShowExternalLinks: boolean;
 	documentGraphMaxNodes: number;
 	documentGraphPreviewCharLimit: number;
+	documentGraphLayoutType: 'mindmap' | 'radial' | 'force';
 	statsCollectionEnabled: boolean;
 	defaultStatsTimeRange: 'day' | 'week' | 'month' | 'year' | 'all';
 	preventSleepEnabled: boolean;
@@ -293,6 +294,7 @@ export interface SettingsStoreActions {
 	setDocumentGraphShowExternalLinks: (value: boolean) => void;
 	setDocumentGraphMaxNodes: (value: number) => void;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
+	setDocumentGraphLayoutType: (value: 'mindmap' | 'radial' | 'force') => void;
 	setStatsCollectionEnabled: (value: boolean) => void;
 	setDefaultStatsTimeRange: (value: 'day' | 'week' | 'month' | 'year' | 'all') => void;
 	setDisableGpuAcceleration: (value: boolean) => void;
@@ -438,6 +440,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	documentGraphShowExternalLinks: false,
 	documentGraphMaxNodes: 50,
 	documentGraphPreviewCharLimit: 100,
+	documentGraphLayoutType: 'mindmap',
 	statsCollectionEnabled: true,
 	defaultStatsTimeRange: 'week',
 	preventSleepEnabled: false,
@@ -700,6 +703,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 		const clamped = Math.max(50, Math.min(500, value));
 		set({ documentGraphPreviewCharLimit: clamped });
 		window.maestro.settings.set('documentGraphPreviewCharLimit', clamped);
+	},
+
+	setDocumentGraphLayoutType: (value) => {
+		const valid: Array<'mindmap' | 'radial' | 'force'> = ['mindmap', 'radial', 'force'];
+		const layoutType = valid.includes(value) ? value : 'mindmap';
+		set({ documentGraphLayoutType: layoutType });
+		window.maestro.settings.set('documentGraphLayoutType', layoutType);
 	},
 
 	setStatsCollectionEnabled: (value) => {
@@ -1603,6 +1613,13 @@ export async function loadAllSettings(): Promise<void> {
 			}
 		}
 
+		if (allSettings['documentGraphLayoutType'] !== undefined) {
+			const lt = allSettings['documentGraphLayoutType'] as string;
+			if (['mindmap', 'radial', 'force'].includes(lt)) {
+				patch.documentGraphLayoutType = lt as 'mindmap' | 'radial' | 'force';
+			}
+		}
+
 		// Stats settings (with time range validation)
 		if (allSettings['statsCollectionEnabled'] !== undefined)
 			patch.statsCollectionEnabled = allSettings['statsCollectionEnabled'] as boolean;
@@ -1789,6 +1806,7 @@ export function getSettingsActions() {
 		setDocumentGraphShowExternalLinks: state.setDocumentGraphShowExternalLinks,
 		setDocumentGraphMaxNodes: state.setDocumentGraphMaxNodes,
 		setDocumentGraphPreviewCharLimit: state.setDocumentGraphPreviewCharLimit,
+		setDocumentGraphLayoutType: state.setDocumentGraphLayoutType,
 		setStatsCollectionEnabled: state.setStatsCollectionEnabled,
 		setDefaultStatsTimeRange: state.setDefaultStatsTimeRange,
 		setPreventSleepEnabled: state.setPreventSleepEnabled,

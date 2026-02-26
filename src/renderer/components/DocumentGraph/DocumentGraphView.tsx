@@ -53,6 +53,7 @@ import {
 	convertToMindMapData,
 	NodePositionOverride,
 } from './MindMap';
+import { type MindMapLayoutType, LAYOUT_LABELS } from './mindMapLayouts';
 import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
@@ -171,6 +172,10 @@ export interface DocumentGraphViewProps {
 	defaultPreviewCharLimit?: number;
 	/** Callback to persist preview character limit changes */
 	onPreviewCharLimitChange?: (limit: number) => void;
+	/** Default layout algorithm type (from settings, with per-agent override) */
+	defaultLayoutType?: MindMapLayoutType;
+	/** Callback to persist layout type changes */
+	onLayoutTypeChange?: (type: MindMapLayoutType) => void;
 	/** Optional SSH remote ID - if provided, shows unavailable message (can't scan remote filesystem) */
 	sshRemoteId?: string;
 }
@@ -194,6 +199,8 @@ export function DocumentGraphView({
 	onNeighborDepthChange,
 	defaultPreviewCharLimit = 100,
 	onPreviewCharLimitChange,
+	defaultLayoutType = 'mindmap',
+	onLayoutTypeChange,
 	sshRemoteId,
 }: DocumentGraphViewProps) {
 	// Graph data state
@@ -210,6 +217,8 @@ export function DocumentGraphView({
 	const [showDepthSlider, setShowDepthSlider] = useState(false);
 	const [previewCharLimit, setPreviewCharLimit] = useState(defaultPreviewCharLimit);
 	const [showPreviewSlider, setShowPreviewSlider] = useState(false);
+	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
+	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 
 	// Selection state
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -362,6 +371,24 @@ export function DocumentGraphView({
 			return () => unregisterLayer(id);
 		}
 	}, [showDepthSlider, registerLayer, unregisterLayer]);
+
+	/**
+	 * Register layout dropdown with layer stack when open
+	 */
+	useEffect(() => {
+		if (showLayoutDropdown) {
+			const id = registerLayer({
+				type: 'overlay',
+				priority: MODAL_PRIORITIES.DOCUMENT_GRAPH + 1,
+				blocksLowerLayers: false,
+				capturesFocus: false,
+				focusTrap: 'none',
+				allowClickOutside: true,
+				onEscape: () => setShowLayoutDropdown(false),
+			});
+			return () => unregisterLayer(id);
+		}
+	}, [showLayoutDropdown, registerLayer, unregisterLayer]);
 
 	/**
 	 * Register legend with layer stack when expanded
@@ -845,6 +872,21 @@ export function DocumentGraphView({
 	);
 
 	/**
+	 * Handle layout type change — clears drag overrides since they're layout-specific
+	 */
+	const handleLayoutTypeChange = useCallback(
+		(type: MindMapLayoutType) => {
+			setLayoutType(type);
+			setShowLayoutDropdown(false);
+			// Clear node position overrides since they're layout-specific
+			setNodePositions(new Map());
+			positionsContextRef.current = null;
+			onLayoutTypeChange?.(type);
+		},
+		[onLayoutTypeChange]
+	);
+
+	/**
 	 * Handle load more
 	 */
 	const handleLoadMore = useCallback(async () => {
@@ -1306,6 +1348,75 @@ export function DocumentGraphView({
 							)}
 						</div>
 
+						{/* Layout Algorithm Selector */}
+						<div className="relative">
+							<button
+								onClick={() => setShowLayoutDropdown(!showLayoutDropdown)}
+								className="flex items-center gap-1.5 px-3 py-1.5 rounded text-sm transition-colors"
+								style={{
+									backgroundColor: `${theme.colors.accent}10`,
+									color: theme.colors.textDim,
+								}}
+								onMouseEnter={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+								}
+								onMouseLeave={(e) =>
+									(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+								}
+								title={`Layout: ${LAYOUT_LABELS[layoutType].name}`}
+							>
+								<Network className="w-4 h-4" />
+								{LAYOUT_LABELS[layoutType].name}
+								<ChevronDown className="w-3 h-3" />
+							</button>
+
+							{showLayoutDropdown && (
+								<div
+									className="absolute top-full left-0 mt-2 py-1 rounded-lg shadow-lg z-50"
+									style={{
+										backgroundColor: theme.colors.bgActivity,
+										border: `1px solid ${theme.colors.border}`,
+										minWidth: 200,
+									}}
+								>
+									{(['mindmap', 'radial', 'force'] as MindMapLayoutType[]).map((type) => (
+										<button
+											key={type}
+											onClick={() => handleLayoutTypeChange(type)}
+											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
+											style={{
+												backgroundColor:
+													layoutType === type
+														? `${theme.colors.accent}15`
+														: 'transparent',
+												color:
+													layoutType === type
+														? theme.colors.accent
+														: theme.colors.textMain,
+											}}
+											onMouseEnter={(e) =>
+												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+											}
+											onMouseLeave={(e) =>
+												(e.currentTarget.style.backgroundColor =
+													layoutType === type
+														? `${theme.colors.accent}15`
+														: 'transparent')
+											}
+										>
+											<span>{LAYOUT_LABELS[type].name}</span>
+											<span
+												className="text-xs"
+												style={{ color: theme.colors.textDim }}
+											>
+												{LAYOUT_LABELS[type].description}
+											</span>
+										</button>
+									))}
+								</div>
+							)}
+						</div>
+
 						{/* Neighbor Depth Slider */}
 						<div className="relative">
 							<button
@@ -1670,6 +1781,7 @@ export function DocumentGraphView({
 							onOpenFile={handleOpenFile}
 							searchQuery={searchQuery}
 							previewCharLimit={previewCharLimit}
+							layoutType={layoutType}
 							nodePositions={nodePositions}
 							onNodePositionChange={handleNodePositionChange}
 							containerRef={mindMapContainerRef}
@@ -2005,11 +2117,20 @@ export function DocumentGraphView({
 			)}
 
 			{/* Click outside dropdowns to close them */}
+			{showLayoutDropdown && (
+				<div
+					className="fixed inset-0 z-40"
+					onClick={(e) => {
+						e.stopPropagation();
+						setShowLayoutDropdown(false);
+					}}
+				/>
+			)}
 			{showDepthSlider && (
 				<div
 					className="fixed inset-0 z-40"
 					onClick={(e) => {
-						e.stopPropagation(); // Prevent triggering modal close
+						e.stopPropagation();
 						setShowDepthSlider(false);
 					}}
 				/>

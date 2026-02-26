@@ -14,6 +14,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Theme } from '../../types';
 import type { GraphNodeData, DocumentNodeData, ExternalLinkNodeData } from './graphDataBuilder';
+import {
+	type MindMapLayoutType,
+	calculateLayout,
+	buildAdjacencyMap,
+	calculateNodeHeight,
+	NODE_WIDTH,
+	NODE_HEADER_HEIGHT,
+	NODE_SUBHEADER_HEIGHT,
+	DESC_LINE_HEIGHT,
+	CHARS_PER_LINE,
+	EXTERNAL_NODE_WIDTH,
+	EXTERNAL_NODE_HEIGHT,
+} from './mindMapLayouts';
 
 // ============================================================================
 // Types
@@ -104,6 +117,8 @@ export interface MindMapProps {
 	searchQuery: string;
 	/** Character limit for preview text (description or content preview) */
 	previewCharLimit?: number;
+	/** Layout algorithm to use for node positioning */
+	layoutType?: MindMapLayoutType;
 	/** Custom position overrides for nodes (from user drag operations) */
 	nodePositions?: Map<string, NodePositionOverride>;
 	/** Callback when a node position is changed via drag */
@@ -113,70 +128,8 @@ export interface MindMapProps {
 }
 
 // ============================================================================
-// Layout Constants
+// Rendering Constants (not part of layout algorithms)
 // ============================================================================
-
-/** Horizontal spacing between depth levels */
-const HORIZONTAL_SPACING = 340;
-/** Minimum vertical gap between nodes (added to node heights) */
-const VERTICAL_GAP = 30;
-/** Document node width */
-const NODE_WIDTH = 260;
-/** Header height for node title bar */
-const NODE_HEADER_HEIGHT = 32;
-/** Sub-header height for folder path */
-const NODE_SUBHEADER_HEIGHT = 22;
-/** Minimum node height (title + folder path, no description) */
-const NODE_HEIGHT_BASE = 56 + NODE_SUBHEADER_HEIGHT;
-/** Line height for description text */
-const DESC_LINE_HEIGHT = 14;
-/** Approximate characters per line in description (for estimation) */
-const CHARS_PER_LINE = 35;
-/** Padding for description area */
-const DESC_PADDING = 20; // 10px top + 10px bottom
-
-/**
- * Cache for node height calculations.
- * Key format: `${textLength}:${previewCharLimit}` - uses text length as proxy for content
- */
-const nodeHeightCache = new Map<string, number>();
-
-/**
- * Calculate node height based on actual content length (with caching)
- */
-function calculateNodeHeight(previewText: string | undefined, previewCharLimit: number): number {
-	if (!previewText) {
-		return NODE_HEIGHT_BASE;
-	}
-
-	// Use text length as cache key (exact content not needed, just length matters for height)
-	const cacheKey = `${Math.min(previewText.length, previewCharLimit)}:${previewCharLimit}`;
-	const cached = nodeHeightCache.get(cacheKey);
-	if (cached !== undefined) {
-		return cached;
-	}
-
-	// Truncate to the limit, then calculate actual lines needed
-	const truncatedLength = Math.min(previewText.length, previewCharLimit);
-	const actualLines = Math.ceil(truncatedLength / CHARS_PER_LINE);
-	// Minimum 1 line, cap at reasonable max
-	const lines = Math.max(1, Math.min(actualLines, 15));
-	const height = NODE_HEIGHT_BASE + lines * DESC_LINE_HEIGHT + DESC_PADDING;
-
-	// Cache the result
-	nodeHeightCache.set(cacheKey, height);
-	return height;
-}
-/** Scale factor for center node */
-const CENTER_NODE_SCALE = 1.15;
-/** External node width (smaller) */
-const EXTERNAL_NODE_WIDTH = 150;
-/** External node height */
-const EXTERNAL_NODE_HEIGHT = 38;
-/** Offset for external link cluster from bottom */
-const EXTERNAL_CLUSTER_OFFSET = 120;
-/** Padding around canvas content */
-const CANVAS_PADDING = 80;
 /** Node corner radius */
 const NODE_BORDER_RADIUS = 12;
 /** Open icon size */
@@ -355,360 +308,8 @@ function drawLink(
 	ctx.setLineDash([]);
 }
 
-// ============================================================================
-// Layout Algorithm
-// ============================================================================
-
-interface LayoutResult {
-	nodes: MindMapNode[];
-	links: MindMapLink[];
-	bounds: { minX: number; maxX: number; minY: number; maxY: number };
-}
-
-/**
- * Build an adjacency map from links for efficient neighbor lookups.
- * This is extracted to allow memoization at the component level.
- */
-function buildAdjacencyMap(links: MindMapLink[]): Map<string, Set<string>> {
-	const adjacency = new Map<string, Set<string>>();
-	for (const link of links) {
-		if (!adjacency.has(link.source)) adjacency.set(link.source, new Set());
-		if (!adjacency.has(link.target)) adjacency.set(link.target, new Set());
-		adjacency.get(link.source)!.add(link.target);
-		adjacency.get(link.target)!.add(link.source);
-	}
-	return adjacency;
-}
-
-/**
- * Calculate the mind map layout with center node and branching structure
- */
-function calculateMindMapLayout(
-	allNodes: MindMapNode[],
-	allLinks: MindMapLink[],
-	adjacency: Map<string, Set<string>>,
-	centerFilePath: string,
-	maxDepth: number,
-	canvasWidth: number,
-	canvasHeight: number,
-	showExternalLinks: boolean,
-	previewCharLimit: number = 100
-): LayoutResult {
-	// Find center node - try multiple path variations
-	// The centerFilePath might be relative to the root, but node filePaths might be
-	// relative to a subdirectory (e.g., "docs/index.md" vs "index.md")
-
-	let centerNode: MindMapNode | undefined;
-	let actualCenterNodeId: string = '';
-
-	// Get all document nodes for searching
-	const documentNodes = allNodes.filter((n) => n.nodeType === 'document');
-
-	// Build a list of all node IDs and filePaths for matching
-	const nodeIdSet = new Set(documentNodes.map((n) => n.id));
-	const filePathToNode = new Map<string, MindMapNode>();
-	documentNodes.forEach((n) => {
-		if (n.filePath) {
-			// Index by full path
-			filePathToNode.set(n.filePath, n);
-			// Index by filename only
-			const filename = n.filePath.split('/').pop();
-			if (filename && !filePathToNode.has(filename)) {
-				filePathToNode.set(filename, n);
-			}
-		}
-	});
-
-	// Generate all possible variations of the centerFilePath
-	const searchVariations = [
-		centerFilePath,
-		centerFilePath.replace(/^\/+/, ''),
-		centerFilePath.split('/').pop() || centerFilePath,
-	];
-
-	// Try to find by node ID first
-	for (const variation of searchVariations) {
-		const nodeId = `doc-${variation}`;
-		if (nodeIdSet.has(nodeId)) {
-			centerNode = documentNodes.find((n) => n.id === nodeId);
-			if (centerNode) {
-				actualCenterNodeId = nodeId;
-				break;
-			}
-		}
-	}
-
-	// Try to find by filePath
-	if (!centerNode) {
-		for (const variation of searchVariations) {
-			const node = filePathToNode.get(variation);
-			if (node) {
-				centerNode = node;
-				actualCenterNodeId = node.id;
-				break;
-			}
-		}
-	}
-
-	// Try fuzzy filename match (case-insensitive, without extension)
-	if (!centerNode) {
-		const targetFilename = (centerFilePath.split('/').pop() || centerFilePath).toLowerCase();
-		const targetBasename = targetFilename.replace(/\.md$/i, '');
-
-		for (const node of documentNodes) {
-			const nodeFilename = (node.filePath?.split('/').pop() || node.label || '').toLowerCase();
-			const nodeBasename = nodeFilename.replace(/\.md$/i, '');
-
-			if (nodeFilename === targetFilename || nodeBasename === targetBasename) {
-				centerNode = node;
-				actualCenterNodeId = node.id;
-				break;
-			}
-		}
-	}
-
-	// Fallback: if still not found and we have document nodes, use the first one
-	if (!centerNode && documentNodes.length > 0) {
-		console.warn(
-			`[MindMap] Center node not found for path: "${centerFilePath}"`,
-			'\nSearched variations:',
-			searchVariations,
-			'\nAvailable document nodes:',
-			documentNodes.map((n) => ({ id: n.id, filePath: n.filePath })).slice(0, 10),
-			documentNodes.length > 10 ? `... and ${documentNodes.length - 10} more` : ''
-		);
-		centerNode = documentNodes[0];
-		actualCenterNodeId = centerNode.id;
-	}
-
-	if (!centerNode) {
-		// No document nodes at all
-		console.warn(`[MindMap] No document nodes available for center`);
-		return {
-			nodes: [],
-			links: [],
-			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
-		};
-	}
-
-	// BFS to find nodes within maxDepth (adjacency map is pre-built and passed in)
-	const visited = new Map<string, number>(); // nodeId -> depth
-	const queue: Array<{ id: string; depth: number }> = [{ id: actualCenterNodeId, depth: 0 }];
-	visited.set(actualCenterNodeId, 0);
-
-	while (queue.length > 0) {
-		const { id, depth } = queue.shift()!;
-		if (depth >= maxDepth) continue;
-
-		const neighbors = adjacency.get(id) || new Set();
-		neighbors.forEach((neighborId) => {
-			if (!visited.has(neighborId)) {
-				visited.set(neighborId, depth + 1);
-				queue.push({ id: neighborId, depth: depth + 1 });
-			}
-		});
-	}
-
-	// Filter nodes to only those within depth
-	const nodesInRange = allNodes.filter((n) => {
-		// Filter out external nodes if not showing them
-		if (n.nodeType === 'external' && !showExternalLinks) return false;
-		return visited.has(n.id);
-	});
-
-	// Separate document and external nodes from the filtered set
-	const visibleDocumentNodes = nodesInRange.filter((n) => n.nodeType === 'document');
-	const externalNodes = nodesInRange.filter((n) => n.nodeType === 'external');
-
-	// Position center node
-	const centerX = canvasWidth / 2;
-	const centerY = canvasHeight / 2 - (showExternalLinks && externalNodes.length > 0 ? 50 : 0);
-	const centerWidth = NODE_WIDTH * CENTER_NODE_SCALE;
-	const centerPreviewText = centerNode.description || centerNode.contentPreview;
-	const centerHeight = calculateNodeHeight(centerPreviewText, previewCharLimit) * CENTER_NODE_SCALE;
-
-	const positionedNodes: MindMapNode[] = [];
-	const usedLinks: MindMapLink[] = [];
-
-	// Add center node
-	positionedNodes.push({
-		...centerNode,
-		x: centerX,
-		y: centerY,
-		width: centerWidth,
-		height: centerHeight,
-		depth: 0,
-		side: 'center',
-		isFocused: true,
-	});
-
-	// Group nodes by depth
-	const nodesByDepth = new Map<number, MindMapNode[]>();
-	visibleDocumentNodes.forEach((node) => {
-		if (node.id === actualCenterNodeId) return;
-		const depth = visited.get(node.id) || 1;
-		if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
-		nodesByDepth.get(depth)!.push(node);
-	});
-
-	// Process each depth level
-	for (let depth = 1; depth <= maxDepth; depth++) {
-		const nodesAtDepth = nodesByDepth.get(depth) || [];
-		if (nodesAtDepth.length === 0) continue;
-
-		// Sort alphabetically by label
-		nodesAtDepth.sort((a, b) => a.label.localeCompare(b.label));
-
-		// Split into left and right columns
-		const midpoint = Math.ceil(nodesAtDepth.length / 2);
-		const leftNodes = nodesAtDepth.slice(0, midpoint);
-		const rightNodes = nodesAtDepth.slice(midpoint);
-
-		// Calculate positions for left column - use actual node heights
-		const leftX = centerX - HORIZONTAL_SPACING * depth;
-
-		// First pass: calculate heights for all left nodes
-		const leftNodeHeights = leftNodes.map((node) => {
-			const previewText = node.description || node.contentPreview;
-			return calculateNodeHeight(previewText, previewCharLimit);
-		});
-
-		// Calculate total height needed (sum of heights + gaps between nodes)
-		const leftTotalHeight =
-			leftNodeHeights.reduce((sum, h) => sum + h, 0) +
-			Math.max(0, leftNodes.length - 1) * VERTICAL_GAP;
-
-		// Start position: center the column vertically
-		let leftCurrentY = centerY - leftTotalHeight / 2;
-
-		leftNodes.forEach((node, index) => {
-			const height = leftNodeHeights[index];
-			// Position at center of this node's space
-			const nodeY = leftCurrentY + height / 2;
-
-			positionedNodes.push({
-				...node,
-				x: leftX,
-				y: nodeY,
-				width: NODE_WIDTH,
-				height,
-				depth,
-				side: 'left',
-			});
-
-			// Move to next position: current node's height + gap
-			leftCurrentY += height + VERTICAL_GAP;
-		});
-
-		// Calculate positions for right column - use actual node heights
-		const rightX = centerX + HORIZONTAL_SPACING * depth;
-
-		// First pass: calculate heights for all right nodes
-		const rightNodeHeights = rightNodes.map((node) => {
-			const previewText = node.description || node.contentPreview;
-			return calculateNodeHeight(previewText, previewCharLimit);
-		});
-
-		// Calculate total height needed (sum of heights + gaps between nodes)
-		const rightTotalHeight =
-			rightNodeHeights.reduce((sum, h) => sum + h, 0) +
-			Math.max(0, rightNodes.length - 1) * VERTICAL_GAP;
-
-		// Start position: center the column vertically
-		let rightCurrentY = centerY - rightTotalHeight / 2;
-
-		rightNodes.forEach((node, index) => {
-			const height = rightNodeHeights[index];
-			// Position at center of this node's space
-			const nodeY = rightCurrentY + height / 2;
-
-			positionedNodes.push({
-				...node,
-				x: rightX,
-				y: nodeY,
-				width: NODE_WIDTH,
-				height,
-				depth,
-				side: 'right',
-			});
-
-			// Move to next position: current node's height + gap
-			rightCurrentY += height + VERTICAL_GAP;
-		});
-	}
-
-	// Position external nodes at the bottom
-	if (showExternalLinks && externalNodes.length > 0) {
-		// Sort alphabetically by domain
-		externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
-
-		// PERF: Single-pass filter+map using reduce instead of chained filter().map()
-		const maxYDistance = positionedNodes.reduce((max, n) => {
-			if (n.side === 'external') return max;
-			const dist = Math.abs(n.y - centerY);
-			return dist > max ? dist : max;
-		}, 0);
-		const externalY = centerY + maxYDistance + EXTERNAL_CLUSTER_OFFSET;
-
-		const totalExternalWidth = externalNodes.length * (EXTERNAL_NODE_WIDTH + 20);
-		const externalStartX = centerX - totalExternalWidth / 2 + EXTERNAL_NODE_WIDTH / 2;
-
-		externalNodes.forEach((node, index) => {
-			positionedNodes.push({
-				...node,
-				x: externalStartX + index * (EXTERNAL_NODE_WIDTH + 20),
-				y: externalY,
-				width: EXTERNAL_NODE_WIDTH,
-				height: EXTERNAL_NODE_HEIGHT,
-				depth: 1,
-				side: 'external',
-			});
-		});
-	}
-
-	// Filter links to only include "inside-out" connections (adjacent depth levels)
-	// This prevents crossing lines by only connecting:
-	// - Center (depth 0) to depth 1
-	// - Depth N to depth N+1
-	// - Documents to their external links
-	const positionedNodeIds = new Set(positionedNodes.map((n) => n.id));
-	const nodeDepthMap = new Map(positionedNodes.map((n) => [n.id, n.depth]));
-	const nodeTypeMap = new Map(positionedNodes.map((n) => [n.id, n.nodeType]));
-
-	allLinks.forEach((link) => {
-		if (!positionedNodeIds.has(link.source) || !positionedNodeIds.has(link.target)) {
-			return; // Skip if either node isn't positioned
-		}
-
-		const sourceDepth = nodeDepthMap.get(link.source) ?? 0;
-		const targetDepth = nodeDepthMap.get(link.target) ?? 0;
-		const sourceType = nodeTypeMap.get(link.source);
-		const targetType = nodeTypeMap.get(link.target);
-
-		// Allow connections if:
-		// 1. Adjacent depth levels (difference of 1)
-		// 2. External link connections (document to external domain)
-		const depthDiff = Math.abs(sourceDepth - targetDepth);
-		const isExternalLink = sourceType === 'external' || targetType === 'external';
-
-		if (depthDiff <= 1 || isExternalLink) {
-			usedLinks.push(link);
-		}
-	});
-
-	// Calculate bounds - use max node height for padding (simulate full preview text)
-	const maxNodeHeight = calculateNodeHeight('x'.repeat(previewCharLimit), previewCharLimit);
-	const xs = positionedNodes.map((n) => n.x);
-	const ys = positionedNodes.map((n) => n.y);
-	const bounds = {
-		minX: Math.min(...xs) - NODE_WIDTH / 2 - CANVAS_PADDING,
-		maxX: Math.max(...xs) + NODE_WIDTH / 2 + CANVAS_PADDING,
-		minY: Math.min(...ys) - maxNodeHeight / 2 - CANVAS_PADDING,
-		maxY: Math.max(...ys) + maxNodeHeight / 2 + CANVAS_PADDING,
-	};
-
-	return { nodes: positionedNodes, links: usedLinks, bounds };
-}
+// Layout algorithm code has been moved to mindMapLayouts.ts
+// Imports: calculateLayout, buildAdjacencyMap, LayoutResult
 
 // ============================================================================
 // Canvas Rendering
@@ -973,6 +574,7 @@ export function MindMap({
 	onOpenFile,
 	searchQuery,
 	previewCharLimit = 100,
+	layoutType = 'mindmap',
 	nodePositions,
 	onNodePositionChange,
 	containerRef: externalContainerRef,
@@ -1004,9 +606,10 @@ export function MindMap({
 	// Memoize adjacency map - only rebuilds when links change
 	const adjacencyMap = useMemo(() => buildAdjacencyMap(rawLinks), [rawLinks]);
 
-	// Calculate layout
+	// Calculate layout using the selected algorithm
 	const layout = useMemo(() => {
-		return calculateMindMapLayout(
+		return calculateLayout(
+			layoutType,
 			rawNodes,
 			rawLinks,
 			adjacencyMap,
@@ -1018,6 +621,7 @@ export function MindMap({
 			previewCharLimit
 		);
 	}, [
+		layoutType,
 		rawNodes,
 		rawLinks,
 		adjacencyMap,

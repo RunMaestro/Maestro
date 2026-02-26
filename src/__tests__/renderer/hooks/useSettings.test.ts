@@ -84,6 +84,7 @@ describe('useSettings', () => {
 			documentGraphShowExternalLinks: false,
 			documentGraphMaxNodes: 50,
 			documentGraphPreviewCharLimit: 100,
+			documentGraphLayoutType: 'mindmap',
 			statsCollectionEnabled: true,
 			defaultStatsTimeRange: 'week',
 			preventSleepEnabled: false,

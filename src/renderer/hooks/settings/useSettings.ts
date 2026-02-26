@@ -235,6 +235,8 @@ export interface UseSettingsReturn {
 	setDocumentGraphMaxNodes: (value: number) => void;
 	documentGraphPreviewCharLimit: number;
 	setDocumentGraphPreviewCharLimit: (value: number) => void;
+	documentGraphLayoutType: 'mindmap' | 'radial' | 'force';
+	setDocumentGraphLayoutType: (value: 'mindmap' | 'radial' | 'force') => void;
 
 	// Stats settings
 	statsCollectionEnabled: boolean;

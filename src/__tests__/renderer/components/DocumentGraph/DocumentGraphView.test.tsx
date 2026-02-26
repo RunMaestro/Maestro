@@ -287,6 +287,39 @@ describe('DocumentGraphView', () => {
 			expect(typeof props.onDocumentOpen).toBe('function');
 			expect(typeof props.onExternalLinkOpen).toBe('function');
 		});
+
+		it('accepts layout type props', () => {
+			const props: DocumentGraphViewProps = {
+				isOpen: true,
+				onClose: vi.fn(),
+				theme: {
+					id: 'test',
+					name: 'Test',
+					mode: 'dark',
+					colors: {
+						bgMain: '#000',
+						bgSidebar: '#111',
+						bgActivity: '#222',
+						border: '#333',
+						textMain: '#fff',
+						textDim: '#888',
+						accent: '#00f',
+						accentDim: '#008',
+						accentText: '#0ff',
+						accentForeground: '#fff',
+						success: '#0f0',
+						warning: '#ff0',
+						error: '#f00',
+					},
+				},
+				rootPath: '/test/path',
+				defaultLayoutType: 'radial',
+				onLayoutTypeChange: vi.fn(),
+			};
+
+			expect(props.defaultLayoutType).toBe('radial');
+			expect(typeof props.onLayoutTypeChange).toBe('function');
+		});
 	});
 
 	describe('Edge Styling', () => {
@@ -2741,9 +2774,10 @@ describe('DocumentGraphView', () => {
 			});
 
 			it('button is positioned after Refresh button and before Fit View button', () => {
-				// Button order in header: Search -> Layout Toggle -> External Toggle -> Refresh -> Reset View -> Fit View -> Close
+				// Button order in header: Search -> Layout Type -> Layout Toggle -> External Toggle -> Refresh -> Reset View -> Fit View -> Close
 				const buttonOrder = [
 					'search',
+					'layoutType',
 					'layout',
 					'external',
 					'refresh',

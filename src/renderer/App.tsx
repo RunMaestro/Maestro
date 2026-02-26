@@ -400,6 +400,12 @@ function MaestroConsoleInner() {
 		documentGraphShowExternalLinks,
 		documentGraphMaxNodes,
 		documentGraphPreviewCharLimit,
+		documentGraphLayoutType,
+
+		// Rendering settings
+		disableConfetti,
+
+		// File tab refresh settings
 		fileTabAutoRefreshEnabled,
 		useNativeTitleBar,
 		autoScrollAiMode,
@@ -2914,6 +2920,21 @@ function MaestroConsoleInner() {
 							defaultMaxNodes={documentGraphMaxNodes}
 							defaultPreviewCharLimit={documentGraphPreviewCharLimit}
 							onPreviewCharLimitChange={settings.setDocumentGraphPreviewCharLimit}
+							defaultLayoutType={activeSession?.documentGraphLayout ?? documentGraphLayoutType}
+							onLayoutTypeChange={(type) => {
+								// Persist to the active session for per-agent recall
+								if (activeSession) {
+									setSessions((prev) =>
+										prev.map((s) =>
+											s.id === activeSession.id
+												? { ...s, documentGraphLayout: type }
+												: s
+										)
+									);
+								}
+								// Also update the global default for new agents
+								settings.setDocumentGraphLayoutType(type);
+							}}
 							// Note: sshRemoteId is only set after AI agent spawns. For terminal-only SSH sessions,
 							// use sessionSshRemoteConfig.remoteId as fallback (see CLAUDE.md SSH Remote Sessions)
 							sshRemoteId={

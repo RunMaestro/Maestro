@@ -78,6 +78,7 @@ function resetStore() {
 		documentGraphShowExternalLinks: false,
 		documentGraphMaxNodes: 50,
 		documentGraphPreviewCharLimit: 100,
+		documentGraphLayoutType: 'mindmap',
 		statsCollectionEnabled: true,
 		defaultStatsTimeRange: 'week',
 		preventSleepEnabled: false,
@@ -175,6 +176,7 @@ describe('settingsStore', () => {
 			expect(state.documentGraphShowExternalLinks).toBe(false);
 			expect(state.documentGraphMaxNodes).toBe(50);
 			expect(state.documentGraphPreviewCharLimit).toBe(100);
+			expect(state.documentGraphLayoutType).toBe('mindmap');
 			expect(state.statsCollectionEnabled).toBe(true);
 			expect(state.defaultStatsTimeRange).toBe('week');
 			expect(state.preventSleepEnabled).toBe(false);
@@ -503,6 +505,20 @@ describe('settingsStore', () => {
 					'documentGraphShowExternalLinks',
 					true
 				);
+			});
+
+			it('setDocumentGraphLayoutType updates state and persists', () => {
+				useSettingsStore.getState().setDocumentGraphLayoutType('radial');
+				expect(useSettingsStore.getState().documentGraphLayoutType).toBe('radial');
+				expect(window.maestro.settings.set).toHaveBeenCalledWith(
+					'documentGraphLayoutType',
+					'radial'
+				);
+			});
+
+			it('setDocumentGraphLayoutType rejects invalid values', () => {
+				useSettingsStore.getState().setDocumentGraphLayoutType('invalid' as any);
+				expect(useSettingsStore.getState().documentGraphLayoutType).toBe('mindmap');
 			});
 		});
 
@@ -1558,6 +1574,27 @@ describe('settingsStore', () => {
 
 			// Invalid value rejected, keeps default
 			expect(useSettingsStore.getState().documentGraphPreviewCharLimit).toBe(100);
+		});
+
+		it('validates documentGraphLayoutType on load (rejects invalid)', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphLayoutType: 'invalid-layout',
+			});
+
+			await loadAllSettings();
+
+			// Invalid value rejected, keeps default
+			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('mindmap');
+		});
+
+		it('loads valid documentGraphLayoutType from settings', async () => {
+			vi.mocked(window.maestro.settings.getAll).mockResolvedValue({
+				documentGraphLayoutType: 'force',
+			});
+
+			await loadAllSettings();
+
+			expect(useSettingsStore.getState().documentGraphLayoutType).toBe('force');
 		});
 	});
 
