@@ -1526,6 +1526,108 @@ function MaestroConsoleInner() {
 		[setAgentInboxOpen, setActiveSessionId]
 	);
 
+	// Ref for processInput — populated after useInputHandlers (declared later in component).
+	// Handlers below close over this ref so they always call the latest version.
+	const inboxProcessInputRef = useRef<(text?: string) => void>(() => {});
+
+	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
+	const handleAgentInboxQuickReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			// Save current active session so we can restore it after sending.
+			// This ensures AI responses mark the tab as unread (since the user
+			// is viewing through Focus Mode, not directly in the session).
+			const previousActiveSessionId = activeSessionId;
+
+			// Activate the target tab and mark as read (processInput adds the user log entry)
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+
+			// Temporarily switch to the target session so processInput sends to it
+			setActiveSessionId(sessionId);
+			setTimeout(() => {
+				inboxProcessInputRef.current(text);
+				// Restore previous active session so AI response triggers unread marker
+				setTimeout(() => {
+					if (previousActiveSessionId) {
+						setActiveSessionId(previousActiveSessionId);
+					}
+				}, 100);
+			}, 150);
+		},
+		[setSessions, setActiveSessionId, activeSessionId]
+	);
+
+	// Agent Inbox: Open & Reply — navigates to session with pre-filled input
+	const handleAgentInboxOpenAndReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			setActiveSessionId(sessionId);
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						aiTabs: s.aiTabs.map((t) =>
+							t.id === tabId ? { ...t, inputValue: text, hasUnread: false } : t
+						),
+					};
+				})
+			);
+			setAgentInboxOpen(false);
+		},
+		[setActiveSessionId, setSessions, setAgentInboxOpen]
+	);
+
+	// Agent Inbox: Mark as Read — dismiss unread badge without replying
+	const handleAgentInboxMarkAsRead = useCallback(
+		(sessionId: string, tabId: string) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
+	// Agent Inbox: Toggle thinking mode on a specific tab
+	const handleAgentInboxToggleThinking = useCallback(
+		(sessionId: string, tabId: string, mode: ThinkingMode) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => {
+							if (t.id !== tabId) return t;
+							if (mode === 'off') {
+								return {
+									...t,
+									showThinking: 'off',
+									logs: t.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+								};
+							}
+							return { ...t, showThinking: mode };
+						}),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
 		startBatchRun,
