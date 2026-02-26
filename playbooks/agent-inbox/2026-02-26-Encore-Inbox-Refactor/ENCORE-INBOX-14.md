@@ -11,9 +11,10 @@ Full verification pass ensuring all 13 prior phases integrate cleanly.
 - [x] Run `npm run test`. Fix any failures. Pay special attention to tests referencing SessionList props, keyboard handler context, or modal store IDs.
   > ✅ 484/485 test files pass, 20,880/20,883 tests pass. 3 failures are **pre-existing** CodexSessionStorage timeout issues (not related to Encore Inbox): the test scans ~32K real `.jsonl` files in `~/.codex/sessions/` without mocking the filesystem, causing 10s timeouts. Verified by checking `git diff main` — no functional changes to this test file. All SessionList, keyboard handler, and modal store tests pass cleanly.
 
-- [ ] Run `npm run lint:eslint`. Fix any warnings.
+- [x] Run `npm run lint:eslint`. Fix any warnings.
+  > ✅ Passes cleanly — zero warnings, zero errors.
 
-- [ ] Verify the complete integration by running these checks:
+- [x] Verify the complete integration by running these checks:
   ```bash
   # 1. Type flag exists
   grep -n "unifiedInbox" src/renderer/types/index.ts
@@ -37,6 +38,17 @@ Full verification pass ensuring all 13 prior phases integrate cleanly.
   # 10. Design alignment
   grep -n "px-4 py-3" src/renderer/components/AgentInbox/InboxListView.tsx
   ```
+  > ✅ All 10 verification checks pass:
+  > 1. Type flag: `types/index.ts:908`
+  > 2. Default false: `settingsStore.ts:112`
+  > 3. Settings toggle: 8 occurrences in SettingsModal.tsx
+  > 4. Modal gating: 3 gating points in App.tsx (lines 5239, 5656, 6054)
+  > 5. Shortcut registered: `shortcuts.ts:81` — gated: `useMainKeyboardHandler.ts:423`
+  > 6. Hamburger menu: 10 references in SessionList.tsx
+  > 7. Command palette: `QuickActionsModal.tsx:1041`
+  > 8. Components: `FocusModeView.tsx`, `InboxListView.tsx`, `index.tsx`
+  > 9. Auto-scroll: `FocusModeView.tsx:681-682` (proximity-based)
+  > 10. Design alignment: `InboxListView.tsx:962` (px-4 py-3)
 
 ## Gate
 - `npm run lint` passes (zero errors)
