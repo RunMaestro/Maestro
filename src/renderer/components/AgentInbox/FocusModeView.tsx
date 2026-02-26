@@ -737,11 +737,10 @@ export default function FocusModeView({
 
 	return (
 		<div className="flex flex-col flex-1" style={{ minHeight: 0 }}>
-			{/* Header bar — 48px */}
+			{/* Header bar */}
 			<div
-				className="flex items-center px-4 border-b"
+				className="flex items-center px-4 py-3 border-b"
 				style={{
-					height: 48,
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
 				}}
@@ -789,7 +788,7 @@ export default function FocusModeView({
 						</>
 					)}
 					<span
-						className="text-sm font-bold"
+						className="text-lg font-semibold"
 						style={{
 							color: theme.colors.textMain,
 							whiteSpace: 'nowrap',

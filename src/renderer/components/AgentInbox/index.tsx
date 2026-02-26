@@ -262,7 +262,7 @@ export default function AgentInbox({
 
 	return (
 		<div
-			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-150"
+			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
 			onClick={handleClose}
 		>
 			<div

@@ -959,7 +959,7 @@ export default function InboxListView({
 			{/* Header — 80px, two rows */}
 			<div
 				ref={headerRef}
-				className="px-6 border-b"
+				className="px-4 py-3 border-b"
 				style={{
 					height: MODAL_HEADER_HEIGHT,
 					backgroundColor: theme.colors.bgSidebar,
@@ -972,8 +972,9 @@ export default function InboxListView({
 			>
 				{/* Header row 1: title + badge + close */}
 				<div className="flex items-center justify-between">
-					<div className="flex items-center gap-3">
-						<h2 className="text-base font-semibold" style={{ color: theme.colors.textMain }}>
+					<div className="flex items-center gap-2">
+						<Bot className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h2 className="text-lg font-semibold" style={{ color: theme.colors.textMain }}>
 							Unified Inbox
 						</h2>
 						<span
@@ -1287,7 +1288,7 @@ export default function InboxListView({
 
 			{/* Footer — 36px */}
 			<div
-				className="flex items-center justify-between px-6 py-2 border-t text-xs"
+				className="flex items-center justify-between px-4 py-2 border-t text-xs"
 				style={{
 					height: MODAL_FOOTER_HEIGHT,
 					borderColor: theme.colors.border,
