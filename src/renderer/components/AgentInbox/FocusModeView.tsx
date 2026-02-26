@@ -663,12 +663,24 @@ export default function FocusModeView({
 		[theme]
 	);
 
-	// Auto-scroll to bottom when logs change or item changes
+	// Auto-scroll to bottom ONLY if user is near bottom (within 150px) or item changed
 	const scrollRef = useRef<HTMLDivElement>(null);
+	const prevScrollItemRef = useRef<string>('');
 
 	useEffect(() => {
-		if (scrollRef.current) {
-			scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+		if (!scrollRef.current) return;
+		const el = scrollRef.current;
+		const itemKey = `${item.sessionId}:${item.tabId}`;
+		const isNewItem = prevScrollItemRef.current !== itemKey;
+		if (isNewItem) {
+			prevScrollItemRef.current = itemKey;
+			el.scrollTop = el.scrollHeight;
+			return;
+		}
+		// Only auto-scroll if user is near bottom
+		const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+		if (distanceFromBottom < 150) {
+			el.scrollTop = el.scrollHeight;
 		}
 	}, [visibleLogs, item.sessionId, item.tabId]);
 
