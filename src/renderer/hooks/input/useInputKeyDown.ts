@@ -213,6 +213,14 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					isTerminalMode
 				);
 
+				if (filteredCommands.length === 0) {
+					if (e.key === 'Escape') {
+						e.preventDefault();
+						setSlashCommandOpen(false);
+					}
+					return;
+				}
+
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
 					setSelectedSlashCommandIndex((prev) => Math.min(prev + 1, filteredCommands.length - 1));
