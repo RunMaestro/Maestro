@@ -553,7 +553,7 @@ describe('Slash command autocomplete', () => {
 	it('filters out aiOnly commands in terminal mode', () => {
 		setActiveSession({ inputMode: 'terminal' });
 		// Only /run is aiOnly, so it should be filtered out
-		// Input is '/r' which only matches /run
+		// With fuzzy matching, '/r' matches /clear (has 'r') but NOT /run (aiOnly excluded)
 		const deps = createMockDeps({ inputValue: '/r', allSlashCommands: commands });
 		const { result } = renderHook(() => useInputKeyDown(deps));
 		const e = createKeyEvent('Enter');
@@ -562,8 +562,8 @@ describe('Slash command autocomplete', () => {
 			result.current.handleInputKeyDown(e);
 		});
 
-		// No matching command after filtering, so setInputValue should not be called
-		expect(deps.setInputValue).not.toHaveBeenCalled();
+		// /clear fuzzy-matches 'r', so it gets selected (but /run is excluded as aiOnly)
+		expect(deps.setInputValue).toHaveBeenCalledWith('/clear');
 	});
 
 	it('filters out terminalOnly commands in AI mode', () => {
