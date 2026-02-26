@@ -1936,14 +1936,26 @@ function SessionListInner(props: SessionListProps) {
 	}, [sessionFilterOpen]);
 
 	// Temporarily expand groups when filtering to show matching sessions
-	// Note: Only depend on sessionFilter and sessions (not filteredSessions which changes reference each render)
+	// Uses the same matching logic as sessionCategories to stay consistent
 	useEffect(() => {
 		if (sessionFilter) {
-			// Find groups that contain matching sessions (search session name AND AI tab names)
 			const groupsWithMatches = new Set<string>();
 			const matchingSessions = sessions.filter((s) => {
+				// Skip worktree children (same as sessionCategories)
+				if (s.parentSessionId) return false;
 				if (fuzzyMatch(s.name, sessionFilter)) return true;
 				if (s.aiTabs?.some((tab) => tab.name && fuzzyMatch(tab.name, sessionFilter))) return true;
+				// Match worktree children branch names (same as sessionCategories)
+				const worktreeChildren = worktreeChildrenByParentId.get(s.id);
+				if (
+					worktreeChildren?.some(
+						(child) =>
+							(child.worktreeBranch && fuzzyMatch(child.worktreeBranch, sessionFilter)) ||
+							fuzzyMatch(child.name, sessionFilter)
+					)
+				) {
+					return true;
+				}
 				return false;
 			});
 
@@ -1973,7 +1985,7 @@ function SessionListInner(props: SessionListProps) {
 			setGroups((prev) => prev.map((g) => ({ ...g, collapsed: true })));
 			setBookmarksCollapsed(false);
 		}
-	}, [sessionFilter]);
+	}, [sessionFilter, sessions, worktreeChildrenByParentId]);
 
 	// Get the jump number (1-9, 0=10th) for a session based on its position in visibleSessions
 	const getSessionJumpNumber = (sessionId: string): string | null => {
