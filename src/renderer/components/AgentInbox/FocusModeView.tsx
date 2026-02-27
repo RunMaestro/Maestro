@@ -26,8 +26,7 @@ import { generateTerminalProseStyles } from '../../utils/markdownConfig';
  * Line 166: bgSidebar in user bubble color-mix — CORRECT (chrome blend for user messages)
  * Line 210: bgActivity for AI bubble — CORRECT (content)
  * Line 429: bgSidebar for sidebar group header — CORRECT (chrome)
- * Line 722: bgSidebar for focus header — CORRECT (chrome)
- * Line 818: bgActivity for subheader info bar — CORRECT (content)
+ * Line ~792: bgSidebar for unified focus header — CORRECT (chrome)
  * Line 904: bgSidebar for sidebar bg — CORRECT (chrome)
  * Line 1025: bgActivity → bgMain (textarea is nested input, needs contrast)
  * All other usages: CORRECT
@@ -538,16 +537,17 @@ function FocusSidebar({
 									if (!isCurrent) e.currentTarget.style.backgroundColor = 'transparent';
 								}}
 							>
-								{/* Status dot */}
-								<span
-									className="flex-shrink-0"
-									style={{
-										width: 6,
-										height: 6,
-										borderRadius: '50%',
-										backgroundColor: statusColor,
-									}}
-								/>
+								{/* Status dot with unread badge (matches Left Bar) */}
+								<div className="relative flex-shrink-0">
+									<div className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColor }} />
+									{itm.hasUnread && (
+										<div
+											className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
+											style={{ backgroundColor: theme.colors.accent }}
+											title="Unread messages"
+										/>
+									)}
+								</div>
 								{/* Name + preview vertical stack */}
 								<div className="flex-1 flex flex-col gap-0.5 min-w-0">
 									<span
@@ -568,20 +568,6 @@ function FocusSidebar({
 										</span>
 									)}
 								</div>
-								{/* Indicators: unread */}
-								{itm.hasUnread && (
-									<span
-										className="flex-shrink-0"
-										style={{
-											width: 6,
-											height: 6,
-											borderRadius: '50%',
-											backgroundColor: theme.colors.accent,
-											alignSelf: 'flex-start',
-											marginTop: 2,
-										}}
-									/>
-								)}
 							</div>
 						);
 					});
@@ -801,9 +787,9 @@ export default function FocusModeView({
 
 	return (
 		<div className="flex flex-col flex-1" style={{ minHeight: 0 }}>
-			{/* Header bar */}
+			{/* Header bar — single h-16 bar matching MainPanel */}
 			<div
-				className="flex items-center px-4 py-3 border-b"
+				className="h-16 border-b flex items-center justify-between px-6 shrink-0"
 				style={{
 					backgroundColor: theme.colors.bgSidebar,
 					borderColor: theme.colors.border,
@@ -813,7 +799,7 @@ export default function FocusModeView({
 				<button
 					aria-label="Return to inbox list"
 					onClick={onExitFocus}
-					className="flex items-center gap-1.5 text-sm font-medium"
+					className="flex items-center gap-1.5 text-sm font-medium shrink-0"
 					style={{
 						background: 'transparent',
 						border: 'none',
@@ -828,148 +814,109 @@ export default function FocusModeView({
 					<span>Inbox</span>
 				</button>
 
-				{/* Center: GROUP | Agent name · tab */}
-				<div
-					className="flex-1 flex items-center justify-center gap-1"
-					style={{ overflow: 'hidden' }}
-				>
-					{item.groupName && (
-						<>
-							<span
-								className="text-xs"
-								style={{
-									color: theme.colors.textDim,
-									whiteSpace: 'nowrap',
-									textTransform: 'uppercase',
-									letterSpacing: '0.5px',
-								}}
-							>
-								{item.groupName}
-							</span>
-							<span className="text-xs" style={{ color: theme.colors.textDim, padding: '0 4px' }}>
-								|
-							</span>
-						</>
-					)}
+				{/* Center: Group | Agent Name | Tab — matches app title bar pattern */}
+				<div className="flex-1 flex items-center justify-center min-w-0 mx-3">
 					<span
-						className="text-lg font-semibold"
-						style={{
-							color: theme.colors.textMain,
-							whiteSpace: 'nowrap',
-							overflow: 'hidden',
-							textOverflow: 'ellipsis',
-						}}
+						className="text-xs select-none truncate"
+						style={{ color: theme.colors.textDim, opacity: 0.5 }}
 					>
-						{truncate(item.sessionName, 30)}
+						{(() => {
+							const parts: string[] = [];
+							if (item.groupName) parts.push(item.groupName);
+							parts.push(item.sessionName);
+							if (item.tabName) parts.push(item.tabName);
+							return parts.join(' | ');
+						})()}
 					</span>
-					{item.tabName && (
-						<>
-							<span className="text-xs" style={{ color: theme.colors.textDim }}>
-								·
-							</span>
-							<span
-								className="text-xs"
-								style={{
-									color: theme.colors.textDim,
-									whiteSpace: 'nowrap',
-									overflow: 'hidden',
-									textOverflow: 'ellipsis',
-								}}
-							>
-								{item.tabName}
-							</span>
-						</>
-					)}
-					{/* TODO: cost badge — needs InboxItem.cost field */}
 				</div>
 
-				{/* Right: Close button */}
-				<button
-					onClick={onClose}
-					aria-label="Close inbox"
-					className="p-1.5 rounded"
+				{/* Right: metadata badges + thinking toggle + close */}
+				<div
+					className="flex items-center gap-2 shrink-0 text-xs"
 					style={{ color: theme.colors.textDim }}
-					onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)}
-					onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-					title="Close (Esc)"
 				>
-					<X className="w-4 h-4" />
-				</button>
-			</div>
-
-			{/* Subheader info bar — 32px */}
-			<div
-				className="flex items-center justify-end px-4 py-2 gap-3 text-xs border-b"
-				style={{
-					borderColor: theme.colors.border,
-					backgroundColor: theme.colors.bgActivity,
-					color: theme.colors.textDim,
-				}}
-			>
-				{item.gitBranch && (
+					{item.gitBranch && (
+						<span
+							className="px-1.5 py-0.5 rounded hidden sm:inline"
+							style={{
+								fontFamily: "'SF Mono', 'Menlo', monospace",
+								backgroundColor: `${theme.colors.border}40`,
+								color: theme.colors.textDim,
+								fontSize: 11,
+							}}
+						>
+							{truncate(item.gitBranch, 20)}
+						</span>
+					)}
+					{hasValidContext && (
+						<span className="hidden sm:inline" style={{ color: contextColor, fontSize: 11 }}>
+							{item.contextUsage}%
+						</span>
+					)}
 					<span
-						className="px-1.5 py-0.5 rounded"
 						style={{
-							fontFamily: "'SF Mono', 'Menlo', monospace",
-							backgroundColor: `${theme.colors.border}40`,
-							color: theme.colors.textDim,
+							padding: '1px 8px',
+							borderRadius: 10,
+							backgroundColor: `${statusColor}20`,
+							color: statusColor,
+							whiteSpace: 'nowrap',
+							fontSize: 11,
 						}}
 					>
-						{truncate(item.gitBranch, 25)}
+						{STATUS_LABELS[item.state]}
 					</span>
-				)}
-				{hasValidContext && (
-					<span style={{ color: contextColor }}>Context: {item.contextUsage}%</span>
-				)}
-				<span
-					style={{
-						padding: '1px 8px',
-						borderRadius: 10,
-						backgroundColor: `${statusColor}20`,
-						color: statusColor,
-						whiteSpace: 'nowrap',
-					}}
-				>
-					{STATUS_LABELS[item.state]}
-				</span>
-				{/* Thinking toggle — 3-state: off → on → sticky → off */}
-				<button
-					onClick={cycleThinking}
-					className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
-						showThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
-					}`}
-					style={{
-						backgroundColor:
-							showThinking === 'sticky'
-								? `${theme.colors.warning}30`
+					{/* Thinking toggle — 3-state: off → on → sticky → off */}
+					<button
+						onClick={cycleThinking}
+						className={`flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all ${
+							showThinking !== 'off' ? '' : 'opacity-40 hover:opacity-70'
+						}`}
+						style={{
+							backgroundColor:
+								showThinking === 'sticky'
+									? `${theme.colors.warning}30`
+									: showThinking === 'on'
+										? `${theme.colors.accentText}25`
+										: 'transparent',
+							color:
+								showThinking === 'sticky'
+									? theme.colors.warning
+									: showThinking === 'on'
+										? theme.colors.accentText
+										: theme.colors.textDim,
+							border:
+								showThinking === 'sticky'
+									? `1px solid ${theme.colors.warning}50`
+									: showThinking === 'on'
+										? `1px solid ${theme.colors.accentText}50`
+										: '1px solid transparent',
+						}}
+						title={
+							showThinking === 'off'
+								? 'Show Thinking - Click to stream AI reasoning'
 								: showThinking === 'on'
-									? `${theme.colors.accentText}25`
-									: 'transparent',
-						color:
-							showThinking === 'sticky'
-								? theme.colors.warning
-								: showThinking === 'on'
-									? theme.colors.accentText
-									: theme.colors.textDim,
-						border:
-							showThinking === 'sticky'
-								? `1px solid ${theme.colors.warning}50`
-								: showThinking === 'on'
-									? `1px solid ${theme.colors.accentText}50`
-									: '1px solid transparent',
-					}}
-					title={
-						showThinking === 'off'
-							? 'Show Thinking - Click to stream AI reasoning'
-							: showThinking === 'on'
-								? 'Thinking (temporary) - Click for sticky mode'
-								: 'Thinking (sticky) - Click to turn off'
-					}
-				>
-					<Brain className="w-3 h-3" />
-					<span>Thinking</span>
-					{showThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
-				</button>
+									? 'Thinking (temporary) - Click for sticky mode'
+									: 'Thinking (sticky) - Click to turn off'
+						}
+					>
+						<Brain className="w-3 h-3" />
+						<span>Thinking</span>
+						{showThinking === 'sticky' && <Pin className="w-2.5 h-2.5" />}
+					</button>
+					<button
+						onClick={onClose}
+						aria-label="Close inbox"
+						className="p-1.5 rounded ml-1"
+						style={{ color: theme.colors.textDim }}
+						onMouseEnter={(e) =>
+							(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+						}
+						onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+						title="Close (Esc)"
+					>
+						<X className="w-4 h-4" />
+					</button>
+				</div>
 			</div>
 
 			{/* Prose styles for markdown rendering — injected once at container level */}

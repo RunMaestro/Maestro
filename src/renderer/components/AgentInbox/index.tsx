@@ -190,7 +190,7 @@ export default function AgentInbox({
 		typeof window !== 'undefined' ? window.innerWidth * 0.92 : 1400,
 		1400
 	);
-	const dialogWidth = viewMode === 'focus' ? expandedWidth : isWide ? expandedWidth : 780;
+	const dialogWidth = viewMode === 'focus' ? expandedWidth : isWide ? expandedWidth : 900;
 	const dialogHeight = viewMode === 'focus' ? '85vh' : undefined;
 	const dialogMaxHeight = viewMode === 'focus' ? undefined : isWide ? '90vh' : '80vh';
 
@@ -264,6 +264,7 @@ export default function AgentInbox({
 	return (
 		<div
 			className="fixed inset-0 modal-overlay flex items-center justify-center z-[9999] animate-in fade-in duration-100"
+			style={{ backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}
 			onClick={handleClose}
 		>
 			<div
