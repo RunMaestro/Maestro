@@ -732,18 +732,18 @@ export default function FocusModeView({
 	const [replyText, setReplyText] = useState('');
 	const replyInputRef = useRef<HTMLTextAreaElement>(null);
 
-	// Auto-focus reply input when entering focus mode or switching items
+	// Auto-focus reply input when entering focus mode or switching items.
+	// Double rAF ensures focus fires after the browser paints the new item.
 	useEffect(() => {
-		const rafId = requestAnimationFrame(() => {
-			replyInputRef.current?.focus();
+		let innerRafId: number | undefined;
+		const outerRafId = requestAnimationFrame(() => {
+			innerRafId = requestAnimationFrame(() => {
+				replyInputRef.current?.focus();
+			});
 		});
-		// Fallback for heavy render frames where the first focus attempt loses timing.
-		const timeoutId = window.setTimeout(() => {
-			replyInputRef.current?.focus();
-		}, 60);
 		return () => {
-			cancelAnimationFrame(rafId);
-			window.clearTimeout(timeoutId);
+			cancelAnimationFrame(outerRafId);
+			if (innerRafId !== undefined) cancelAnimationFrame(innerRafId);
 		};
 	}, [item.sessionId, item.tabId]);
 
