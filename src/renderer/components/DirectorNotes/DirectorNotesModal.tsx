@@ -41,7 +41,7 @@ export function DirectorNotesModal({
 	fileTree,
 	onFileClick,
 }: DirectorNotesModalProps) {
-	const { directorNotesSettings, shortcuts } = useSettings();
+	const { directorNotesSettings: _directorNotesSettings, shortcuts } = useSettings();
 	const cached = hasCachedSynopsis();
 	const [activeTab, setActiveTab] = useState<TabId>('history');
 	const [overviewReady, setOverviewReady] = useState(cached);
