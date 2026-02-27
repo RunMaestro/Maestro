@@ -431,6 +431,97 @@ describe('search utils', () => {
 			});
 		});
 
+		describe('scoring - exact vs fuzzy vs substring ranking', () => {
+			it('exact match scores higher than scattered fuzzy match', () => {
+				const exact = fuzzyMatchWithScore('abc', 'abc');
+				const scattered = fuzzyMatchWithScore('aXbXc', 'abc');
+
+				expect(exact.matches).toBe(true);
+				expect(scattered.matches).toBe(true);
+				expect(exact.score).toBeGreaterThan(scattered.score);
+			});
+
+			it('substring match scores higher than scattered fuzzy match', () => {
+				const substring = fuzzyMatchWithScore('xxabcxx', 'abc');
+				const scattered = fuzzyMatchWithScore('aXXbXXc', 'abc');
+
+				expect(substring.matches).toBe(true);
+				expect(scattered.matches).toBe(true);
+				expect(substring.score).toBeGreaterThan(scattered.score);
+			});
+
+			it('exact match scores higher than substring match', () => {
+				const exact = fuzzyMatchWithScore('hello', 'hello');
+				const substring = fuzzyMatchWithScore('say hello there', 'hello');
+
+				expect(exact.matches).toBe(true);
+				expect(substring.matches).toBe(true);
+				expect(exact.score).toBeGreaterThan(substring.score);
+			});
+		});
+
+		describe('case-insensitive matching in scored search', () => {
+			it('matches regardless of case', () => {
+				const upper = fuzzyMatchWithScore('HELLO WORLD', 'hello');
+				const lower = fuzzyMatchWithScore('hello world', 'HELLO');
+				const mixed = fuzzyMatchWithScore('HeLLo WoRLd', 'hElLo');
+
+				expect(upper.matches).toBe(true);
+				expect(lower.matches).toBe(true);
+				expect(mixed.matches).toBe(true);
+			});
+
+			it('case-matching query scores higher than mismatched case', () => {
+				const caseMatch = fuzzyMatchWithScore('Hello', 'Hello');
+				const caseMismatch = fuzzyMatchWithScore('Hello', 'hello');
+
+				expect(caseMatch.matches).toBe(true);
+				expect(caseMismatch.matches).toBe(true);
+				expect(caseMatch.score).toBeGreaterThan(caseMismatch.score);
+			});
+		});
+
+		describe('special characters in query', () => {
+			it('does not crash with regex special characters in query', () => {
+				expect(() => fuzzyMatchWithScore('some text', '.*+?^${}()|[]\\')).not.toThrow();
+				expect(() => fuzzyMatch('some text', '.*+?^${}()|[]\\')).not.toThrow();
+			});
+
+			it('does not crash with brackets and parens in query', () => {
+				const result = fuzzyMatchWithScore('function()', '()');
+				expect(result).toHaveProperty('matches');
+				expect(result).toHaveProperty('score');
+			});
+
+			it('does not crash with unicode in query', () => {
+				const result = fuzzyMatchWithScore('caf\u00e9 latte', 'caf\u00e9');
+				expect(result.matches).toBe(true);
+				expect(result.score).toBeGreaterThan(0);
+			});
+
+			it('does not crash with emoji in query', () => {
+				expect(() => fuzzyMatchWithScore('hello world', '\ud83d\ude00')).not.toThrow();
+				expect(() => fuzzyMatch('hello world', '\ud83d\ude00')).not.toThrow();
+			});
+		});
+
+		describe('deterministic scoring', () => {
+			it('produces identical scores for identical inputs across multiple calls', () => {
+				const results = Array.from({ length: 10 }, () =>
+					fuzzyMatchWithScore('src/renderer/utils/search.ts', 'search')
+				);
+
+				const firstScore = results[0].score;
+				expect(results.every((r) => r.score === firstScore)).toBe(true);
+			});
+
+			it('produces identical match results for identical inputs', () => {
+				const results = Array.from({ length: 10 }, () => fuzzyMatch('handleUserInput', 'hui'));
+
+				expect(results.every((r) => r === true)).toBe(true);
+			});
+		});
+
 		describe('integration scenarios', () => {
 			it('handles real file search scenario', () => {
 				const files = [
