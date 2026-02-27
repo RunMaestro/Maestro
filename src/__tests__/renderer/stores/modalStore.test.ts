@@ -192,12 +192,13 @@ describe('modalStore', () => {
 			expect(data?.allowDelete).toBe(true);
 		});
 
-		it('does nothing for unopened modals', () => {
-			const { updateModalData, getData } = useModalStore.getState();
+		it('stores data even for unopened modals', () => {
+			const { updateModalData, getData, isOpen } = useModalStore.getState();
 
 			updateModalData('settings', { tab: 'general' });
 
-			expect(getData('settings')).toBeUndefined();
+			expect(getData('settings')).toEqual({ tab: 'general' });
+			expect(isOpen('settings')).toBe(false);
 		});
 
 		it('does not change open state', () => {
