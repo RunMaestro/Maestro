@@ -3712,6 +3712,7 @@ function MaestroConsoleInner() {
 					onOpenDirectorNotes={
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
+					onOpenAgentInbox={encoreFeatures.unifiedInbox ? () => setAgentInboxOpen(true) : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					tabSwitcherOpen={tabSwitcherOpen}
@@ -4106,6 +4107,17 @@ function MaestroConsoleInner() {
 						/>
 					</Suspense>
 				)}
+
+				{/* --- AGENT INBOX MODAL (Encore Feature — component TBD) --- */}
+				{/* Gate: renders only when unifiedInbox encore feature is enabled */}
+				{/* {encoreFeatures.unifiedInbox && agentInboxOpen && (
+					<Suspense fallback={null}>
+						<AgentInboxModal
+							theme={theme}
+							onClose={() => setAgentInboxOpen(false)}
+						/>
+					</Suspense>
+				)} */}
 
 				{/* --- GIST PUBLISH MODAL --- */}
 				{/* Supports both file preview tabs and tab context gist publishing */}
