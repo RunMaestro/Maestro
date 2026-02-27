@@ -167,6 +167,7 @@ interface MainPanelProps {
 	onRequestTabRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUpdateTabDescription?: (tabId: string, description: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	onUpdateTabByClaudeSessionId?: (
@@ -455,6 +456,7 @@ export const MainPanel = React.memo(
 			onRequestTabRename,
 			onTabReorder,
 			onUnifiedTabReorder,
+			onUpdateTabDescription,
 			onTabStar,
 			onTabMarkUnread,
 			onToggleUnreadFilter,
@@ -1470,6 +1472,7 @@ export const MainPanel = React.memo(
 									onRequestRename={onRequestTabRename}
 									onTabReorder={onTabReorder}
 									onUnifiedTabReorder={onUnifiedTabReorder}
+									onUpdateTabDescription={onUpdateTabDescription}
 									onTabStar={onTabStar}
 									onTabMarkUnread={onTabMarkUnread}
 									onMergeWith={onMergeWith}
