@@ -497,6 +497,160 @@ describe('useMainKeyboardHandler', () => {
 			// Cmd+J should toggle mode even when file preview overlay is open
 			expect(mockToggleInputMode).toHaveBeenCalled();
 		});
+
+		it('should allow tab cycle shortcut with brace characters when layers are open', () => {
+			// On macOS, Shift+[ produces '{' and Shift+] produces '}'
+			// The overlay guard must recognize brace characters as tab cycle shortcuts
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSession = {
+				id: 'test-session',
+				name: 'Test',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'ai-tab-1', name: 'Tab 1', logs: [] }],
+				activeTabId: 'ai-tab-1',
+				filePreviewTabs: [{ id: 'file-tab-1', path: '/test.ts', name: 'test', extension: '.ts' }],
+				activeFileTabId: 'file-tab-1',
+				unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+			};
+			const mockNavigateToNextUnifiedTab = vi.fn().mockReturnValue({
+				session: { ...mockSession, activeFileTabId: null },
+			});
+			const mockSetSessions = vi.fn((updater: unknown) => {
+				if (typeof updater === 'function') {
+					(updater as (prev: unknown[]) => unknown[])([mockSession]);
+				}
+			});
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true, // Overlay is open (file preview layer)
+				hasOpenModal: () => false,
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
+				activeSessionId: 'test-session',
+				activeSession: mockSession,
+				navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
+				setSessions: mockSetSessions,
+				showUnreadOnly: false,
+			});
+
+			// Dispatch with '}' (brace) key, as produced by Shift+] on macOS
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '}',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			// The brace character should be recognized as a tab cycle shortcut
+			// and pass through the overlay guard
+			expect(mockSetSessions).toHaveBeenCalled();
+			expect(mockNavigateToNextUnifiedTab).toHaveBeenCalled();
+		});
+
+		it('should allow tab cycle shortcut with opening brace when layers are open', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockSession = {
+				id: 'test-session',
+				name: 'Test',
+				inputMode: 'ai',
+				aiTabs: [{ id: 'ai-tab-1', name: 'Tab 1', logs: [] }],
+				activeTabId: 'ai-tab-1',
+				filePreviewTabs: [{ id: 'file-tab-1', path: '/test.ts', name: 'test', extension: '.ts' }],
+				activeFileTabId: 'file-tab-1',
+				unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+			};
+			const mockNavigateToPrevUnifiedTab = vi.fn().mockReturnValue({
+				session: { ...mockSession, activeFileTabId: null },
+			});
+			const mockSetSessions = vi.fn((updater: unknown) => {
+				if (typeof updater === 'function') {
+					(updater as (prev: unknown[]) => unknown[])([mockSession]);
+				}
+			});
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				hasOpenLayers: () => true,
+				hasOpenModal: () => false,
+				isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'prevTab',
+				activeSessionId: 'test-session',
+				activeSession: mockSession,
+				navigateToPrevUnifiedTab: mockNavigateToPrevUnifiedTab,
+				setSessions: mockSetSessions,
+				showUnreadOnly: false,
+			});
+
+			// Dispatch with '{' (brace) key, as produced by Shift+[ on macOS
+			act(() => {
+				window.dispatchEvent(
+					new KeyboardEvent('keydown', {
+						key: '{',
+						metaKey: true,
+						shiftKey: true,
+						bubbles: true,
+					})
+				);
+			});
+
+			expect(mockSetSessions).toHaveBeenCalled();
+			expect(mockNavigateToPrevUnifiedTab).toHaveBeenCalled();
+		});
+	});
+
+	describe('session cycle preventDefault', () => {
+		it('should call preventDefault on cyclePrev (Cmd+[)', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockCycleSession = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'cyclePrev',
+				cycleSession: mockCycleSession,
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: '[',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(mockCycleSession).toHaveBeenCalledWith('prev');
+		});
+
+		it('should call preventDefault on cycleNext (Cmd+])', () => {
+			const { result } = renderHook(() => useMainKeyboardHandler());
+
+			const mockCycleSession = vi.fn();
+
+			result.current.keyboardHandlerRef.current = createMockContext({
+				isShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'cycleNext',
+				cycleSession: mockCycleSession,
+			});
+
+			const event = new KeyboardEvent('keydown', {
+				key: ']',
+				metaKey: true,
+				bubbles: true,
+			});
+			const preventDefaultSpy = vi.spyOn(event, 'preventDefault');
+
+			act(() => {
+				window.dispatchEvent(event);
+			});
+
+			expect(preventDefaultSpy).toHaveBeenCalled();
+			expect(mockCycleSession).toHaveBeenCalledWith('next');
+		});
 	});
 
 	describe('navigation handlers delegation', () => {
@@ -902,15 +1056,32 @@ describe('useMainKeyboardHandler', () => {
 			it('should navigate to next tab in unified order (Cmd+Shift+])', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [
+						{ id: 'file-tab-1', path: '/test/file1.ts', name: 'file1', extension: '.ts' },
+					],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToNextUnifiedTab = vi.fn().mockReturnValue({
-					session: { id: 'session-1', activeFileTabId: 'file-tab-1' },
+					session: { ...mockSession, activeFileTabId: 'file-tab-1' },
 				});
-				const mockSetSessions = vi.fn();
+				// setSessions invokes the updater so navigation runs inside it
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
 					navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
 					setSessions: mockSetSessions,
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -924,22 +1095,38 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				expect(mockNavigateToNextUnifiedTab).toHaveBeenCalled();
 				expect(mockSetSessions).toHaveBeenCalled();
+				expect(mockNavigateToNextUnifiedTab).toHaveBeenCalledWith(mockSession, false);
 			});
 
 			it('should navigate to previous tab in unified order (Cmd+Shift+[)', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [
+						{ id: 'file-tab-1', path: '/test/file1.ts', name: 'file1', extension: '.ts' },
+					],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToPrevUnifiedTab = vi.fn().mockReturnValue({
-					session: { id: 'session-1', activeFileTabId: 'file-tab-2' },
+					session: { ...mockSession, activeFileTabId: 'file-tab-1' },
 				});
-				const mockSetSessions = vi.fn();
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'prevTab',
 					navigateToPrevUnifiedTab: mockNavigateToPrevUnifiedTab,
 					setSessions: mockSetSessions,
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -953,23 +1140,37 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				expect(mockNavigateToPrevUnifiedTab).toHaveBeenCalled();
 				expect(mockSetSessions).toHaveBeenCalled();
+				expect(mockNavigateToPrevUnifiedTab).toHaveBeenCalledWith(mockSession, false);
 			});
 
 			it('should pass showUnreadOnly filter to navigation', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToNextUnifiedTab = vi.fn().mockReturnValue({
 					session: { id: 'session-1' },
 				});
-				const mockSetSessions = vi.fn();
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
 					navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
 					setSessions: mockSetSessions,
 					showUnreadOnly: true, // Filter is active
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -984,9 +1185,57 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				expect(mockNavigateToNextUnifiedTab).toHaveBeenCalledWith(
-					expect.anything(),
+					mockSession,
 					true // showUnreadOnly passed
 				);
+			});
+
+			it('should use current session from store, not stale ref (stale-state safety)', () => {
+				const { result } = renderHook(() => useMainKeyboardHandler());
+
+				const staleSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1'],
+					inputMode: 'ai',
+				};
+				const freshSession = {
+					...staleSession,
+					activeFileTabId: 'file-tab-1', // Updated by a concurrent operation
+				};
+				const mockNavigateToNextUnifiedTab = vi.fn().mockReturnValue({
+					session: { ...freshSession, activeTabId: 'ai-tab-2' },
+				});
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						// The updater receives the FRESH sessions from the store
+						(updater as (prev: unknown[]) => unknown[])([freshSession]);
+					}
+				});
+
+				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
+					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'nextTab',
+					navigateToNextUnifiedTab: mockNavigateToNextUnifiedTab,
+					setSessions: mockSetSessions,
+					activeSession: staleSession, // Stale session in the ref
+				});
+
+				act(() => {
+					window.dispatchEvent(
+						new KeyboardEvent('keydown', {
+							key: ']',
+							metaKey: true,
+							shiftKey: true,
+							bubbles: true,
+						})
+					);
+				});
+
+				// Navigation should use the FRESH session from the store, not the stale ref
+				expect(mockNavigateToNextUnifiedTab).toHaveBeenCalledWith(freshSession, false);
 			});
 		});
 
@@ -994,15 +1243,31 @@ describe('useMainKeyboardHandler', () => {
 			it('should jump to AI tab at index 0 with Cmd+1', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [
+						{ id: 'file-tab-1', path: '/test/file1.ts', name: 'file1', extension: '.ts' },
+					],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'file-tab-1'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToUnifiedTabByIndex = vi.fn().mockReturnValue({
-					session: { id: 'session-1', activeTabId: 'ai-tab-1', activeFileTabId: null },
+					session: { ...mockSession, activeTabId: 'ai-tab-1', activeFileTabId: null },
 				});
-				const mockSetSessions = vi.fn();
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToTab1',
 					navigateToUnifiedTabByIndex: mockNavigateToUnifiedTabByIndex,
 					setSessions: mockSetSessions,
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -1016,7 +1281,7 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				expect(mockNavigateToUnifiedTabByIndex).toHaveBeenCalledWith(
-					expect.anything(),
+					mockSession,
 					0 // index 0 for Cmd+1
 				);
 			});
@@ -1024,15 +1289,34 @@ describe('useMainKeyboardHandler', () => {
 			it('should jump to file tab at index 1 with Cmd+2', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [
+						{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] },
+						{ id: 'ai-tab-2', name: 'AI Tab 2', logs: [] },
+					],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [
+						{ id: 'file-tab-1', path: '/test/file1.ts', name: 'file1', extension: '.ts' },
+					],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'file-tab-1', 'ai-tab-2'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToUnifiedTabByIndex = vi.fn().mockReturnValue({
-					session: { id: 'session-1', activeTabId: 'ai-tab-1', activeFileTabId: 'file-tab-1' },
+					session: { ...mockSession, activeTabId: 'ai-tab-1', activeFileTabId: 'file-tab-1' },
 				});
-				const mockSetSessions = vi.fn();
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToTab2',
 					navigateToUnifiedTabByIndex: mockNavigateToUnifiedTabByIndex,
 					setSessions: mockSetSessions,
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -1046,7 +1330,7 @@ describe('useMainKeyboardHandler', () => {
 				});
 
 				expect(mockNavigateToUnifiedTabByIndex).toHaveBeenCalledWith(
-					expect.anything(),
+					mockSession,
 					1 // index 1 for Cmd+2
 				);
 			});
@@ -1083,15 +1367,31 @@ describe('useMainKeyboardHandler', () => {
 			it('should jump to last tab in unified order', () => {
 				const { result } = renderHook(() => useMainKeyboardHandler());
 
+				const mockSession = {
+					id: 'session-1',
+					aiTabs: [{ id: 'ai-tab-1', name: 'AI Tab 1', logs: [] }],
+					activeTabId: 'ai-tab-1',
+					filePreviewTabs: [
+						{ id: 'file-tab-2', path: '/test/file2.ts', name: 'file2', extension: '.ts' },
+					],
+					activeFileTabId: null,
+					unifiedTabOrder: ['ai-tab-1', 'file-tab-2'],
+					inputMode: 'ai',
+				};
 				const mockNavigateToLastUnifiedTab = vi.fn().mockReturnValue({
-					session: { id: 'session-1', activeFileTabId: 'file-tab-2' },
+					session: { ...mockSession, activeFileTabId: 'file-tab-2' },
 				});
-				const mockSetSessions = vi.fn();
+				const mockSetSessions = vi.fn((updater: unknown) => {
+					if (typeof updater === 'function') {
+						(updater as (prev: unknown[]) => unknown[])([mockSession]);
+					}
+				});
 
 				result.current.keyboardHandlerRef.current = createUnifiedTabContext({
 					isTabShortcut: (_e: KeyboardEvent, actionId: string) => actionId === 'goToLastTab',
 					navigateToLastUnifiedTab: mockNavigateToLastUnifiedTab,
 					setSessions: mockSetSessions,
+					activeSession: mockSession,
 				});
 
 				act(() => {
@@ -1104,7 +1404,7 @@ describe('useMainKeyboardHandler', () => {
 					);
 				});
 
-				expect(mockNavigateToLastUnifiedTab).toHaveBeenCalled();
+				expect(mockNavigateToLastUnifiedTab).toHaveBeenCalledWith(mockSession);
 				expect(mockSetSessions).toHaveBeenCalled();
 			});
 

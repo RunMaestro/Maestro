@@ -24,6 +24,101 @@ const LOG_CONTEXT = '[WakaTime]';
 const HEARTBEAT_DEBOUNCE_MS = 120_000; // 2 minutes - WakaTime deduplicates within this window
 const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // Check for CLI updates once per day
 
+/** Map file extensions (without dot, lowercase) to WakaTime language names */
+const EXTENSION_LANGUAGE_MAP = new Map<string, string>([
+	['ts', 'TypeScript'],
+	['tsx', 'TypeScript'],
+	['js', 'JavaScript'],
+	['jsx', 'JavaScript'],
+	['mjs', 'JavaScript'],
+	['cjs', 'JavaScript'],
+	['py', 'Python'],
+	['rb', 'Ruby'],
+	['rs', 'Rust'],
+	['go', 'Go'],
+	['java', 'Java'],
+	['kt', 'Kotlin'],
+	['swift', 'Swift'],
+	['c', 'C'],
+	['cpp', 'C++'],
+	['h', 'C'],
+	['hpp', 'C++'],
+	['cs', 'C#'],
+	['php', 'PHP'],
+	['ex', 'Elixir'],
+	['exs', 'Elixir'],
+	['dart', 'Dart'],
+	['json', 'JSON'],
+	['yaml', 'YAML'],
+	['yml', 'YAML'],
+	['toml', 'TOML'],
+	['md', 'Markdown'],
+	['html', 'HTML'],
+	['css', 'CSS'],
+	['scss', 'SCSS'],
+	['less', 'LESS'],
+	['sql', 'SQL'],
+	['sh', 'Shell Script'],
+	['bash', 'Shell Script'],
+	['zsh', 'Shell Script'],
+	['vue', 'Vue.js'],
+	['svelte', 'Svelte'],
+	['lua', 'Lua'],
+	['zig', 'Zig'],
+	['r', 'R'],
+	['scala', 'Scala'],
+	['clj', 'Clojure'],
+	['erl', 'Erlang'],
+	['hs', 'Haskell'],
+	['ml', 'OCaml'],
+	['nim', 'Nim'],
+	['cr', 'Crystal'],
+	['tf', 'HCL'],
+	['proto', 'Protocol Buffer'],
+]);
+
+/**
+ * Detect the WakaTime language name from a file path's extension.
+ * Returns undefined if the extension is not recognized.
+ */
+export function detectLanguageFromPath(filePath: string): string | undefined {
+	const ext = path.extname(filePath).replace(/^\./, '').toLowerCase();
+	if (!ext) return undefined;
+	return EXTENSION_LANGUAGE_MAP.get(ext);
+}
+
+/** Tool names that represent file write operations across supported agents */
+export const WRITE_TOOL_NAMES = new Set<string>([
+	'Write',
+	'Edit',
+	'write_to_file',
+	'str_replace_based_edit_tool',
+	'create_file',
+	'write',
+	'patch',
+	'NotebookEdit',
+]);
+
+/**
+ * Extract a file path from a tool-execution event if the tool is a write operation.
+ * Returns null if the tool is not a write operation or no file path is found.
+ */
+export function extractFilePathFromToolExecution(toolExecution: {
+	toolName: string;
+	state: unknown;
+	timestamp: number;
+}): string | null {
+	if (!WRITE_TOOL_NAMES.has(toolExecution.toolName)) return null;
+
+	const input = (toolExecution.state as any)?.input;
+	if (!input || typeof input !== 'object') return null;
+
+	const filePath = input.file_path ?? input.path;
+	if (typeof filePath === 'string' && filePath.length > 0) return filePath;
+
+	return null;
+}
+
 /** Map Node.js platform to WakaTime release naming */
 function getWakaTimePlatform(): string | null {
 	switch (process.platform) {
@@ -140,10 +235,13 @@ function fetchJson(url: string, maxRedirects = 5): Promise<unknown> {
 	});
 }
 
+/** How long a successfully-detected branch is cached before re-checking (5 min). */
+const BRANCH_CACHE_TTL_MS = 5 * 60 * 1000;
+
 export class WakaTimeManager {
 	private settingsStore: Store<MaestroSettings>;
 	private lastHeartbeatPerSession: Map<string, number> = new Map();
-	private branchCache: Map<string, string> = new Map();
+	private branchCache: Map<string, { branch: string; timestamp: number }> = new Map();
 	private languageCache: Map<string, string> = new Map();
 	private cliPath: string | null = null;
 	private cliDetected = false;
@@ -419,20 +517,33 @@ export class WakaTimeManager {
 
 	/**
 	 * Detect the current git branch for a project directory.
-	 * Result is cached per session to avoid running git on every heartbeat.
+	 * Successful results are cached per session with a TTL so branch switches
+	 * are picked up. Failures are never cached — the next heartbeat retries.
 	 */
 	private async detectBranch(sessionId: string, cwd: string): Promise<string | null> {
 		const cached = this.branchCache.get(sessionId);
-		if (cached !== undefined) return cached || null;
+		if (cached && cached.branch && Date.now() - cached.timestamp < BRANCH_CACHE_TTL_MS) {
+			return cached.branch;
+		}
 
 		const result = await execFileNoThrow('git', ['rev-parse', '--abbrev-ref', 'HEAD'], cwd);
 		const branch = result.exitCode === 0 ? result.stdout.trim() : '';
-		this.branchCache.set(sessionId, branch);
+		if (branch) {
+			this.branchCache.set(sessionId, { branch, timestamp: Date.now() });
+		} else {
+			// Don't cache failures — retry on next heartbeat
+			this.branchCache.delete(sessionId);
+		}
 		return branch || null;
 	}
 
 	/** Send a heartbeat for a session's activity */
-	async sendHeartbeat(sessionId: string, projectName: string, projectCwd?: string): Promise<void> {
+	async sendHeartbeat(
+		sessionId: string,
+		projectName: string,
+		projectCwd?: string,
+		source?: 'user' | 'auto'
+	): Promise<void> {
 		// Check if enabled
 		const enabled = this.settingsStore.get('wakatimeEnabled', false);
 		if (!enabled) return;
@@ -468,7 +579,7 @@ export class WakaTimeManager {
 			'--plugin',
 			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
 			'--category',
-			'ai coding',
+			source === 'auto' ? 'ai coding' : 'building',
 		];
 
 		// Detect project language from manifest files in cwd
@@ -492,6 +603,100 @@ export class WakaTimeManager {
 			logger.debug(`Heartbeat sent for session ${sessionId} (${projectName})`, LOG_CONTEXT);
 		} else {
 			logger.warn(`Heartbeat failed for ${sessionId}: ${result.stderr}`, LOG_CONTEXT);
+		}
+	}
+
+	/**
+	 * Send file-level heartbeats for files modified during a query.
+	 * The first file is sent as the primary heartbeat via CLI args;
+	 * remaining files are batched via --extra-heartbeats on stdin.
+	 */
+	async sendFileHeartbeats(
+		files: Array<{ filePath: string; timestamp: number }>,
+		projectName: string,
+		projectCwd?: string,
+		source?: 'user' | 'auto'
+	): Promise<void> {
+		if (files.length === 0) return;
+
+		const enabled = this.settingsStore.get('wakatimeEnabled', false);
+		if (!enabled) return;
+
+		const detailedTracking = this.settingsStore.get('wakatimeDetailedTracking', false);
+		if (!detailedTracking) return;
+
+		let apiKey = this.settingsStore.get('wakatimeApiKey', '') as string;
+		if (!apiKey) {
+			apiKey = this.readApiKeyFromConfig();
+		}
+		if (!apiKey) return;
+
+		if (!(await this.ensureCliInstalled())) {
+			logger.warn('WakaTime CLI not available — skipping file heartbeats', LOG_CONTEXT);
+			return;
+		}
+
+		const branch = projectCwd ? await this.detectBranch(`file:${projectCwd}`, projectCwd) : null;
+
+		const primary = files[0];
+		const args = [
+			'--key',
+			apiKey,
+			'--entity',
+			primary.filePath,
+			'--entity-type',
+			'file',
+			'--write',
+			'--project',
+			projectName,
+			'--plugin',
+			`maestro/${app.getVersion()} maestro-wakatime/${app.getVersion()}`,
+			'--category',
+			source === 'auto' ? 'ai coding' : 'building',
+			'--time',
+			String(primary.timestamp / 1000),
+		];
+
+		const primaryLanguage = detectLanguageFromPath(primary.filePath);
+		if (primaryLanguage) {
+			args.push('--language', primaryLanguage);
+		}
+
+		if (branch) {
+			args.push('--alternate-branch', branch);
+		}
+
+		const extraFiles = files.slice(1);
+		if (extraFiles.length > 0) {
+			args.push('--extra-heartbeats');
+		}
+
+		const extraArray = extraFiles.map((f) => {
+			const obj: Record<string, unknown> = {
+				entity: f.filePath,
+				type: 'file',
+				is_write: true,
+				time: f.timestamp / 1000,
+				category: source === 'auto' ? 'ai coding' : 'building',
+				project: projectName,
+			};
+			const lang = detectLanguageFromPath(f.filePath);
+			if (lang) obj.language = lang;
+			if (branch) obj.branch = branch;
+			return obj;
+		});
+
+		const result = await execFileNoThrow(
+			this.cliPath!,
+			args,
+			projectCwd,
+			extraFiles.length > 0 ? { input: JSON.stringify(extraArray) } : undefined
+		);
+
+		if (result.exitCode === 0) {
+			logger.info('Sent file heartbeats', LOG_CONTEXT, { count: files.length });
+		} else {
+			logger.warn(`File heartbeats failed: ${result.stderr}`, LOG_CONTEXT, { count: files.length });
 		}
 	}
 

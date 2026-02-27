@@ -19,6 +19,7 @@ Settings are organized into tabs:
 | **Notifications** | OS notifications, custom command notifications, toast notification duration                                                                                                                          |
 | **AI Commands**   | View and edit slash commands, [Spec-Kit](./speckit-commands), and [OpenSpec](./openspec-commands) prompts                                                                                            |
 | **SSH Hosts**     | Configure remote hosts for [SSH agent execution](./ssh-remote-execution)                                                                                                                             |
+| **WakaTime** *(in General tab)* | WakaTime integration toggle, API key, detailed file tracking                                                                                                                  |
 
 ## Conductor Profile
 
@@ -262,6 +263,51 @@ Sleep prevention on Linux uses standard freedesktop.org interfaces:
 <Info>
 On unsupported Linux configurations, the feature silently does nothing — your system will sleep normally according to its power settings.
 </Info>
+
+## WakaTime Integration
+
+Maestro integrates with [WakaTime](https://wakatime.com) to track coding activity across your AI sessions. The WakaTime CLI is auto-installed when you enable the integration.
+
+**To enable:**
+
+1. Open **Settings** (`Cmd+,` / `Ctrl+,`) → **General** tab
+2. Toggle **Enable WakaTime tracking** on
+3. Enter your API key (get it from [wakatime.com/settings/api-key](https://wakatime.com/settings/api-key))
+
+### What Gets Tracked
+
+By default, Maestro sends **app-level heartbeats** — WakaTime sees time spent in Maestro as a single project entry with language detected from your project's manifest files (e.g., `tsconfig.json` → TypeScript).
+
+### Detailed File Tracking
+
+Enable **Detailed file tracking** to send per-file heartbeats for write operations. When an agent writes or edits a file, Maestro sends that file path to WakaTime with:
+
+- The file's language (detected from extension)
+- A write flag indicating the file was modified
+- Project name and branch
+
+File paths (not file content) are sent to WakaTime's servers. This setting defaults to off and requires two explicit opt-ins (WakaTime enabled + detailed tracking enabled).
+
+### Supported Tools
+
+File heartbeats are generated for write operations across all supported agents:
+
+| Agent | Tracked Tools |
+|-------|--------------|
+| Claude Code | Write, Edit, NotebookEdit |
+| Codex | write_to_file, str_replace_based_edit_tool, create_file |
+| OpenCode | write, patch |
+
+Read operations and shell commands are excluded to avoid inflating tracked time.
+
+### Activity Categories
+
+Maestro assigns WakaTime categories based on how the session was initiated:
+
+- **Interactive sessions** (user-driven) are tracked as `building`
+- **Auto Run / batch sessions** are tracked as `ai coding`
+
+This lets you distinguish time you spent actively directing agents from time the AI worked autonomously on your WakaTime dashboard.
 
 ## Storage Location
 

@@ -604,30 +604,46 @@ export async function sendWizardMessage(
 			let dataListenerCleanup: (() => void) | undefined;
 			let exitListenerCleanup: (() => void) | undefined;
 
-			// Set up timeout (5 minutes for complex prompts)
-			const timeoutId = setTimeout(() => {
-				logger.warn('Inline wizard response timeout', '[InlineWizardConversation]', {
-					sessionId: session.sessionId,
-					timeoutMs: 300000,
-				});
-				cleanupListeners();
-				// Kill the orphaned agent process to prevent resource leaks
-				window.maestro.process.kill(session.sessionId).catch((err) => {
-					logger.warn(
-						'Failed to kill timed-out inline wizard process',
-						'[InlineWizardConversation]',
-						{
-							sessionId: session.sessionId,
-							error: (err as Error)?.message || 'Unknown error',
-						}
-					);
-				});
-				resolve({
-					success: false,
-					error: 'Response timeout - agent did not complete in time',
-					rawOutput: outputBuffer,
-				});
-			}, 300000);
+			// Activity-based timeout: resets whenever the agent produces output.
+			// This prevents false timeouts on complex prompts where the agent is
+			// actively reading files or thinking, while still catching true stalls.
+			const INACTIVITY_TIMEOUT_MS = 1200000; // 20 minutes of inactivity
+			let lastActivityTime = Date.now();
+			let timeoutId: ReturnType<typeof setTimeout>;
+
+			const resetTimeout = () => {
+				clearTimeout(timeoutId);
+				lastActivityTime = Date.now();
+				timeoutId = setTimeout(() => {
+					const timeSinceLastActivity = Date.now() - lastActivityTime;
+					logger.warn('Inline wizard inactivity timeout', '[InlineWizardConversation]', {
+						sessionId: session.sessionId,
+						timeoutMs: INACTIVITY_TIMEOUT_MS,
+						timeSinceLastActivityMs: timeSinceLastActivity,
+						outputBufferLength: outputBuffer.length,
+					});
+					cleanupListeners();
+					// Kill the orphaned agent process to prevent resource leaks
+					window.maestro.process.kill(session.sessionId).catch((err) => {
+						logger.warn(
+							'Failed to kill timed-out inline wizard process',
+							'[InlineWizardConversation]',
+							{
+								sessionId: session.sessionId,
+								error: (err as Error)?.message || 'Unknown error',
+							}
+						);
+					});
+					resolve({
+						success: false,
+						error: 'Response timeout - agent did not complete in time',
+						rawOutput: outputBuffer,
+					});
+				}, INACTIVITY_TIMEOUT_MS);
+			};
+
+			// Start the initial timeout
+			resetTimeout();
 
 			let thinkingListenerCleanup: (() => void) | undefined;
 			let toolExecutionListenerCleanup: (() => void) | undefined;
@@ -656,6 +672,7 @@ export async function sendWizardMessage(
 				(receivedSessionId: string, data: string) => {
 					if (receivedSessionId === session.sessionId) {
 						outputBuffer += data;
+						resetTimeout();
 						callbacks?.onChunk?.(data);
 					}
 				}
@@ -667,6 +684,7 @@ export async function sendWizardMessage(
 				thinkingListenerCleanup = window.maestro.process.onThinkingChunk(
 					(receivedSessionId: string, content: string) => {
 						if (receivedSessionId === session.sessionId && content) {
+							resetTimeout();
 							try {
 								callbacks.onThinkingChunk!(content);
 							} catch (err) {
@@ -690,6 +708,7 @@ export async function sendWizardMessage(
 						toolEvent: { toolName: string; state?: unknown; timestamp: number }
 					) => {
 						if (receivedSessionId === session.sessionId) {
+							resetTimeout();
 							try {
 								callbacks.onToolExecution!(toolEvent);
 							} catch (err) {

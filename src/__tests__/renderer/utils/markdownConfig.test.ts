@@ -227,7 +227,7 @@ describe('generateProseStyles', () => {
 		it('should normalize list-item paragraphs even when compactSpacing is false', () => {
 			const css = generateProseStyles({ theme: mockTheme, compactSpacing: false });
 			expect(css).toContain(
-				'.prose li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }'
+				'.prose li > p { margin: 0 !important; display: block; line-height: inherit; }'
 			);
 		});
 

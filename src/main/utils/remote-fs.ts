@@ -68,7 +68,7 @@ export interface RemoteFsDeps {
  */
 const defaultDeps: RemoteFsDeps = {
 	execSsh: (command: string, args: string[]): Promise<ExecResult> => {
-		return execFileNoThrow(command, args);
+		return execFileNoThrow(command, args, undefined, { timeout: SSH_COMMAND_TIMEOUT_MS });
 	},
 	buildSshArgs: (config: SshRemoteConfig): string[] => {
 		return sshRemoteManager.buildSshArgs(config);
@@ -94,6 +94,7 @@ const RECOVERABLE_SSH_ERRORS = [
 	/read: Connection reset by peer/i,
 	/banner exchange/i, // SSH handshake failed - often due to stale ControlMaster sockets
 	/socket is not connected/i, // Connection dropped before handshake
+	/ETIMEDOUT/i, // Command timed out - SSH connection may be stale
 ];
 
 /**
@@ -111,6 +112,13 @@ const DEFAULT_RETRY_CONFIG = {
 	baseDelayMs: 500,
 	maxDelayMs: 5000,
 };
+
+/**
+ * Timeout for individual SSH commands in milliseconds.
+ * Prevents hung SSH connections (e.g., stale ControlMaster sockets)
+ * from blocking the file tree load indefinitely.
+ */
+const SSH_COMMAND_TIMEOUT_MS = 30000;
 
 /**
  * Sleep for a specified duration with jitter.
@@ -165,7 +173,8 @@ async function execRemoteCommand(
 
 		// Check if this is a recoverable error
 		const combinedOutput = `${result.stderr} ${result.stdout}`;
-		if (isRecoverableSshError(combinedOutput) && attempt < maxRetries) {
+		const isNodeTimeout = result.exitCode === 'ETIMEDOUT';
+		if ((isRecoverableSshError(combinedOutput) || isNodeTimeout) && attempt < maxRetries) {
 			const delay = getBackoffDelay(attempt, baseDelayMs, maxDelayMs);
 			logger.debug(
 				`[remote-fs] SSH transient error (attempt ${attempt + 1}/${maxRetries + 1}), retrying in ${delay}ms: ${result.stderr.slice(0, 100)}`

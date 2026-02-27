@@ -1414,15 +1414,19 @@ export function useBatchProcessor({
 					newTotalTasks += taskCount;
 				}
 
+				// Capture completed-loop metrics before resetting counters
+				const completedLoopNumber = loopIteration + 1;
+				const completedLoopTasks = loopTasksCompleted;
+
 				// Calculate loop elapsed time
 				const loopElapsedMs = Date.now() - loopStartTime;
 
 				// Add loop summary history entry
-				const loopSummary = `Loop ${loopIteration + 1} completed: ${loopTasksCompleted} task${loopTasksCompleted !== 1 ? 's' : ''} accomplished`;
+				const loopSummary = `Loop ${completedLoopNumber} completed: ${completedLoopTasks} task${completedLoopTasks !== 1 ? 's' : ''} accomplished`;
 				const loopDetails = [
-					`**Loop ${loopIteration + 1} Summary**`,
+					`**Loop ${completedLoopNumber} Summary**`,
 					'',
-					`- **Tasks Accomplished:** ${loopTasksCompleted}`,
+					`- **Tasks Accomplished:** ${completedLoopTasks}`,
 					`- **Duration:** ${formatElapsedTime(loopElapsedMs)}`,
 					loopTotalInputTokens > 0 || loopTotalOutputTokens > 0
 						? `- **Tokens:** ${(loopTotalInputTokens + loopTotalOutputTokens).toLocaleString()} (${loopTotalInputTokens.toLocaleString()} in / ${loopTotalOutputTokens.toLocaleString()} out)`
@@ -1463,9 +1467,9 @@ export function useBatchProcessor({
 				loopTotalCost = 0;
 
 				// AUTORUN LOG: Loop completion
-				window.maestro.logger.autorun(`Loop ${loopIteration + 1} completed`, session.name, {
-					loopNumber: loopIteration + 1,
-					tasksCompleted: loopTasksCompleted,
+				window.maestro.logger.autorun(`Loop ${completedLoopNumber} completed`, session.name, {
+					loopNumber: completedLoopNumber,
+					tasksCompleted: completedLoopTasks,
 					tasksForNextLoop: newTotalTasks,
 				});
 

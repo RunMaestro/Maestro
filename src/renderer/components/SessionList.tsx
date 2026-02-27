@@ -2798,8 +2798,7 @@ function SessionListInner(props: SessionListProps) {
 								key={session.id}
 								onClick={() => setActiveSessionId(session.id)}
 								onContextMenu={(e) => handleContextMenu(e, session.id)}
-								className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? 'ring-2' : 'hover:bg-white/10'}`}
-								style={{ '--tw-ring-color': theme.colors.accent } as React.CSSProperties}
+								className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
 							>
 								<div className="relative">
 									<div

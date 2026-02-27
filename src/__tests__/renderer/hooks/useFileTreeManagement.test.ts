@@ -175,9 +175,8 @@ describe('useFileTreeManagement', () => {
 		});
 
 		expect(returnedChanges).toBeUndefined();
-		expect(state.getSessions()[0].fileTree).toEqual([]);
-		expect(state.getSessions()[0].fileTreeError).toContain('/test/project');
-		expect(state.getSessions()[0].fileTreeError).toContain('boom');
+		// Refresh errors preserve the existing file tree (transient failures shouldn't wipe data)
+		expect(state.getSessions()[0].fileTree).toEqual([{ name: 'keep', type: 'file' }]);
 	});
 
 	it('refreshGitFileState refreshes git metadata and history', async () => {

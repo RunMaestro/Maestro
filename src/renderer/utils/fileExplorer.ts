@@ -346,13 +346,21 @@ async function loadFileTreeRecursive(
 			}
 
 			if (entry.isDirectory) {
-				const children = await loadFileTreeRecursive(
-					`${dirPath}/${entry.name}`,
-					maxDepth,
-					currentDepth + 1,
-					sshContext,
-					state
-				);
+				// Wrap child directory reads in try/catch so a single failing
+				// subdirectory (permissions, spaces in name over SSH, broken
+				// symlinks, etc.) doesn't kill the entire tree walk.
+				let children: FileTreeNode[] = [];
+				try {
+					children = await loadFileTreeRecursive(
+						`${dirPath}/${entry.name}`,
+						maxDepth,
+						currentDepth + 1,
+						sshContext,
+						state
+					);
+				} catch {
+					// Skip unreadable child directories — show them as empty folders
+				}
 				tree.push({
 					name: entry.name,
 					type: 'folder',

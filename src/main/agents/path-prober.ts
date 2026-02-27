@@ -17,6 +17,7 @@
 import * as os from 'os';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getShellPath } from '../runtime/getShellPath';
 import { execFileNoThrow } from '../utils/execFile';
 import { logger } from '../utils/logger';
 import { expandTilde, detectNodeVersionManagerBinPaths } from '../../shared/pathUtils';
@@ -132,6 +133,45 @@ export function getExpandedEnv(): NodeJS.ProcessEnv {
 
 	env.PATH = pathParts.join(path.delimiter);
 	return env;
+}
+
+/**
+ * Merge shell-provided PATH entries (when available) into an env object.
+ * Shell PATH entries are prioritized (prepended) but de-duplicated.
+ */
+export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
+	const env = getExpandedEnv();
+	try {
+		const shellPath = await getShellPath();
+		if (!shellPath) return env;
+
+		const delim = path.delimiter;
+		const shellParts = shellPath.split(delim).filter(Boolean);
+		const currentParts = (env.PATH || '').split(delim).filter(Boolean);
+
+		const merged: string[] = [];
+		// Start with shell parts to prioritize them
+		for (const p of shellParts) {
+			if (!merged.includes(p)) merged.push(p);
+		}
+		for (const p of currentParts) {
+			if (!merged.includes(p)) merged.push(p);
+		}
+
+		env.PATH = merged.join(delim);
+		return env;
+	} catch (err) {
+		// If shell probing fails, log debug so diagnostics can distinguish
+		// a probe failure from an absent shell PATH, then fall back to base env.
+		try {
+			logger.debug('Shell PATH probe failed; using base expanded env', LOG_CONTEXT, { err });
+		} catch {
+			// Safe fallback if logger is not available
+			 
+			console.debug('Shell PATH probe failed; using base expanded env', err);
+		}
+		return env;
+	}
 }
 
 // ============ Custom Path Validation ============
@@ -464,9 +504,10 @@ export async function checkBinaryExists(binaryName: string): Promise<BinaryDetec
 		// Use 'which' on Unix-like systems, 'where' on Windows
 		const command = isWindows ? 'where' : 'which';
 
-		// Use expanded PATH to find binaries in common installation locations
-		// This is critical for packaged Electron apps which don't inherit shell env
-		const env = getExpandedEnv();
+		// Use expanded PATH to find binaries in common installation locations.
+		// Prefer shell-provided PATH entries when available (they should be
+		// prioritized). This helps packaged apps locate user-installed tools.
+		const env = await getExpandedEnvWithShell();
 		const result = await execFileNoThrow(command, [binaryName], undefined, env);
 
 		if (result.exitCode === 0 && result.stdout.trim()) {

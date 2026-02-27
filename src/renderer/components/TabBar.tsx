@@ -963,6 +963,8 @@ interface FileTabProps {
 	tabIndex?: number;
 	/** Whether colorblind-friendly colors should be used for extension badges */
 	colorBlindMode?: boolean;
+	/** Shortcut hint badge number (1-9 for Cmd+1-9, 0 for Cmd+0/last tab) */
+	shortcutHint?: number | null;
 }
 
 /**
@@ -998,6 +1000,7 @@ const FileTab = memo(function FileTab({
 	totalTabs,
 	tabIndex,
 	colorBlindMode,
+	shortcutHint,
 }: FileTabProps) {
 	const [isHovered, setIsHovered] = useState(false);
 	const [overlayOpen, setOverlayOpen] = useState(false);
@@ -1262,6 +1265,19 @@ const FileTab = memo(function FileTab({
 			{hasUnsavedEdits && (
 				<span title="Has unsaved changes">
 					<Pencil className="w-3 h-3 shrink-0" style={{ color: theme.colors.warning }} />
+				</span>
+			)}
+
+			{/* Shortcut hint badge - shows tab number for Cmd+1-9 or Cmd+0 navigation */}
+			{shortcutHint !== null && shortcutHint !== undefined && (
+				<span
+					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					style={{
+						backgroundColor: theme.colors.border,
+						color: theme.colors.textMain,
+					}}
+				>
+					{shortcutHint}
 				</span>
 			)}
 
@@ -1905,6 +1921,15 @@ function TabBarInner({
 						const isFirstTab = originalIndex === 0;
 						const isLastTab = originalIndex === allTabs.length - 1;
 
+						// Shortcut hint: 1-9 for first 9 tabs, 0 for last tab (Cmd+0)
+						const shortcutHint = !showUnreadOnly
+							? isLastTab
+								? 0
+								: originalIndex < 9
+									? originalIndex + 1
+									: null
+							: null;
+
 						if (unifiedTab.type === 'ai') {
 							const tab = unifiedTab.data;
 							return (
@@ -1956,7 +1981,7 @@ function TabBarInner({
 										onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
 										isFirstTab={isFirstTab}
 										isLastTab={isLastTab}
-										shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}
+										shortcutHint={shortcutHint}
 										hasDraft={hasDraft(tab)}
 										registerRef={(el) => registerTabRef(tab.id, el)}
 										onCloseAllTabs={onCloseAllTabs}
@@ -2004,6 +2029,7 @@ function TabBarInner({
 										totalTabs={allTabs.length}
 										tabIndex={originalIndex}
 										colorBlindMode={colorBlindMode}
+										shortcutHint={shortcutHint}
 									/>
 								</React.Fragment>
 							);
@@ -2070,7 +2096,15 @@ function TabBarInner({
 									onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
 									isFirstTab={isFirstTab}
 									isLastTab={isLastTab}
-									shortcutHint={!showUnreadOnly && originalIndex < 9 ? originalIndex + 1 : null}
+									shortcutHint={
+										!showUnreadOnly
+											? isLastTab
+												? 0
+												: originalIndex < 9
+													? originalIndex + 1
+													: null
+											: null
+									}
 									hasDraft={hasDraft(tab)}
 									registerRef={(el) => registerTabRef(tab.id, el)}
 									onCloseAllTabs={onCloseAllTabs}

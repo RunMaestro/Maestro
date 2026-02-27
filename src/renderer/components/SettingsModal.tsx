@@ -415,6 +415,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 		setWakatimeApiKey,
 		wakatimeEnabled,
 		setWakatimeEnabled,
+		wakatimeDetailedTracking,
+		setWakatimeDetailedTracking,
 		// Window chrome settings
 		useNativeTitleBar,
 		setUseNativeTitleBar,
@@ -2198,6 +2200,38 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 										<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
 											WakaTime CLI is being installed automatically...
 										</p>
+									)}
+
+									{/* Detailed file tracking toggle (only shown when enabled) */}
+									{wakatimeEnabled && (
+										<div className="flex items-center justify-between">
+											<div>
+												<p className="text-sm" style={{ color: theme.colors.textMain }}>
+													Detailed file tracking
+												</p>
+												<p className="text-xs opacity-50 mt-0.5">
+													Track per-file write activity. Sends file paths (not content) to WakaTime.
+												</p>
+											</div>
+											<button
+												onClick={() => setWakatimeDetailedTracking(!wakatimeDetailedTracking)}
+												className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
+												tabIndex={0}
+												style={{
+													backgroundColor: wakatimeDetailedTracking
+														? theme.colors.accent
+														: theme.colors.bgActivity,
+												}}
+												role="switch"
+												aria-checked={wakatimeDetailedTracking}
+											>
+												<span
+													className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+														wakatimeDetailedTracking ? 'translate-x-5' : 'translate-x-0.5'
+													}`}
+												/>
+											</button>
+										</div>
 									)}
 
 									{/* API Key Input (only shown when enabled) */}

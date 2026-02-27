@@ -394,7 +394,7 @@ function getUserFriendlyErrorMessage(error: string): { title: string; descriptio
 		return {
 			title: 'Response Timeout',
 			description:
-				'The AI agent took too long to respond. This can happen with complex requests or network issues.',
+				'The agent stopped producing output for an extended period. This usually means the agent process crashed or lost its connection to the AI provider. Try again — if the issue persists, check your API key and network connection.',
 		};
 	}
 

@@ -188,11 +188,11 @@ describe('AIOverviewTab', () => {
 		expect(slider).toHaveValue('7');
 	});
 
-	it('renders Refresh button', async () => {
+	it('renders Regenerate button', async () => {
 		render(<AIOverviewTab theme={mockTheme} />);
 
 		await waitFor(() => {
-			expect(screen.getByText('Refresh')).toBeInTheDocument();
+			expect(screen.getByText('Regenerate')).toBeInTheDocument();
 		});
 	});
 
@@ -204,7 +204,7 @@ describe('AIOverviewTab', () => {
 		});
 	});
 
-	it('refreshes synopsis when Refresh button is clicked', async () => {
+	it('refreshes synopsis when Regenerate button is clicked', async () => {
 		mockGenerateSynopsis.mockResolvedValue({
 			success: true,
 			synopsis: '# Synopsis',
@@ -221,7 +221,7 @@ describe('AIOverviewTab', () => {
 
 		// Click refresh
 		await act(async () => {
-			fireEvent.click(screen.getByText('Refresh'));
+			fireEvent.click(screen.getByText('Regenerate'));
 		});
 
 		await waitFor(() => {
@@ -322,7 +322,7 @@ describe('AIOverviewTab', () => {
 		// But the module-level cache should still be populated for next open
 		const { hasCachedSynopsis } =
 			await import('../../../../renderer/components/DirectorNotes/AIOverviewTab');
-		expect(hasCachedSynopsis(7)).toBe(true);
+		expect(hasCachedSynopsis()).toBe(true);
 	});
 
 	it('closes save modal when close button is clicked', async () => {

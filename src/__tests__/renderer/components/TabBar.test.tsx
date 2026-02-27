@@ -628,6 +628,74 @@ describe('TabBar', () => {
 
 			expect(screen.queryByText('1')).not.toBeInTheDocument();
 		});
+
+		it('shows shortcut hints on file tabs in unified tab order', () => {
+			const aiTab = createTab({ id: 'ai-1', name: 'AI Tab' });
+			const fileTab: FilePreviewTab = {
+				id: 'file-1',
+				path: '/path/to/test.ts',
+				name: 'test',
+				extension: '.ts',
+				content: '',
+				scrollTop: 0,
+				searchQuery: '',
+				editMode: false,
+				editContent: undefined,
+				createdAt: Date.now(),
+				lastModified: Date.now(),
+			};
+			const unifiedTabs = [
+				{ type: 'ai' as const, id: 'ai-1', data: aiTab },
+				{ type: 'file' as const, id: 'file-1', data: fileTab },
+				{ type: 'ai' as const, id: 'ai-2', data: createTab({ id: 'ai-2', name: 'AI Tab 2' }) },
+			];
+
+			render(
+				<TabBar
+					tabs={[aiTab, unifiedTabs[2].data as AITab]}
+					activeTabId="ai-1"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+					unifiedTabs={unifiedTabs}
+					activeFileTabId={null}
+					onFileTabSelect={vi.fn()}
+					onFileTabClose={vi.fn()}
+				/>
+			);
+
+			// AI tab at index 0 should show "1"
+			expect(screen.getByText('1')).toBeInTheDocument();
+			// File tab at index 1 should show "2"
+			expect(screen.getByText('2')).toBeInTheDocument();
+			// Last tab should show "0" (Cmd+0 shortcut)
+			expect(screen.getByText('0')).toBeInTheDocument();
+		});
+
+		it('shows 0 badge on last tab (Cmd+0 shortcut)', () => {
+			const tabs = Array.from({ length: 3 }, (_, i) =>
+				createTab({ id: `tab-${i}`, name: `Tab ${i + 1}` })
+			);
+
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId="tab-0"
+					theme={mockTheme}
+					onTabSelect={mockOnTabSelect}
+					onTabClose={mockOnTabClose}
+					onNewTab={mockOnNewTab}
+				/>
+			);
+
+			// First two tabs show 1, 2
+			expect(screen.getByText('1')).toBeInTheDocument();
+			expect(screen.getByText('2')).toBeInTheDocument();
+			// Last tab shows 0 instead of 3
+			expect(screen.getByText('0')).toBeInTheDocument();
+			expect(screen.queryByText('3')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('unread filter', () => {

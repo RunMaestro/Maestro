@@ -688,7 +688,7 @@ describe('useSymphony', () => {
 	// ──────────────────────────────────────────────────────────────────────────
 
 	describe('refresh action', () => {
-		it('should fetch both registry and state', async () => {
+		it('should fetch both registry and state, then check PR statuses', async () => {
 			const { result } = renderHook(() => useSymphony());
 
 			await waitFor(() => {
@@ -702,7 +702,9 @@ describe('useSymphony', () => {
 			});
 
 			expect(window.maestro.symphony.getRegistry).toHaveBeenCalled();
-			expect(window.maestro.symphony.getState).toHaveBeenCalled();
+			expect(window.maestro.symphony.checkPRStatuses).toHaveBeenCalled();
+			// getState called twice: once in parallel with getRegistry, once after checkPRStatuses
+			expect(window.maestro.symphony.getState).toHaveBeenCalledTimes(2);
 		});
 
 		it('should bypass cache with force=true', async () => {
@@ -719,6 +721,43 @@ describe('useSymphony', () => {
 			});
 
 			expect(window.maestro.symphony.getRegistry).toHaveBeenCalledWith(true);
+			expect(window.maestro.symphony.checkPRStatuses).toHaveBeenCalled();
+		});
+
+		it('should manage isRefreshing state across full refresh cycle', async () => {
+			const { result } = renderHook(() => useSymphony());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+
+			expect(result.current.isRefreshing).toBe(false);
+
+			await act(async () => {
+				await result.current.refresh(true);
+			});
+
+			// After completion, isRefreshing should be false
+			expect(result.current.isRefreshing).toBe(false);
+		});
+
+		it('should handle checkPRStatuses failure gracefully', async () => {
+			const { result } = renderHook(() => useSymphony());
+
+			await waitFor(() => {
+				expect(result.current.isLoading).toBe(false);
+			});
+
+			vi.mocked(window.maestro.symphony.checkPRStatuses).mockRejectedValueOnce(
+				new Error('Network error')
+			);
+
+			await act(async () => {
+				await result.current.refresh(true);
+			});
+
+			// Should not throw, isRefreshing should still reset
+			expect(result.current.isRefreshing).toBe(false);
 		});
 	});
 

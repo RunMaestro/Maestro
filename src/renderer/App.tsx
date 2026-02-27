@@ -2599,16 +2599,8 @@ function MaestroConsoleInner() {
 		},
 		[activeSession]
 	);
-	const handleUtilityFileTabSelect = useCallback(
-		(tabId: string) => {
-			if (!activeSession) return;
-			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs)
-			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSession.id ? { ...s, activeFileTabId: tabId } : s))
-			);
-		},
-		[activeSession]
-	);
+	// File tab selection from TabSwitcher - reuse the proper handler which includes auto-refresh
+	const handleUtilityFileTabSelect = handleSelectFileTab;
 	const handleNamedSessionSelect = useCallback(
 		(agentSessionId: string, _projectPath: string, sessionName: string, starred?: boolean) => {
 			// Open a closed named session as a new tab - use handleResumeSession to properly load messages
@@ -4257,6 +4249,7 @@ function MaestroConsoleInner() {
 									groupChat={groupChats.find((c) => c.id === activeGroupChatId)!}
 									messages={groupChatMessages}
 									state={groupChatState}
+									groups={groups}
 									totalCost={(() => {
 										const chat = groupChats.find((c) => c.id === activeGroupChatId);
 										const participantsCost = (chat?.participants || []).reduce(

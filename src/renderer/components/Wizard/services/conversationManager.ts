@@ -116,8 +116,10 @@ interface ConversationSession {
 	thinkingListenerCleanup?: () => void;
 	/** Cleanup function for tool execution listener */
 	toolExecutionListenerCleanup?: () => void;
-	/** Timeout ID for response timeout (for cleanup) */
-	responseTimeoutId?: NodeJS.Timeout;
+	/** Timeout ID for response inactivity timeout (for cleanup) */
+	responseTimeoutId?: ReturnType<typeof setTimeout>;
+	/** Function to reset the inactivity timeout (called on activity) */
+	resetResponseTimeout?: () => void;
 	/** SSH remote configuration (for remote execution) */
 	sshRemoteConfig?: {
 		enabled: boolean;
@@ -380,23 +382,42 @@ class ConversationManager {
 				promptLength: prompt.length,
 			});
 
-			// Set up timeout (20 minutes for wizard's complex prompts - large codebases need time)
-			const timeoutId = setTimeout(() => {
-				wizardDebugLogger.log('timeout', 'Response timeout after 20 minutes', {
-					sessionId: this.session?.sessionId,
-					outputBufferLength: this.session?.outputBuffer?.length || 0,
-					outputPreview: this.session?.outputBuffer?.slice(-500),
-				});
-				this.cleanupListeners();
-				resolve({
-					success: false,
-					error: 'Response timeout - agent did not complete in time',
-					rawOutput: this.session?.outputBuffer,
-				});
-			}, 1200000);
+			// Activity-based timeout: resets whenever the agent produces output.
+			// This prevents false timeouts on complex prompts where the agent is
+			// actively reading files or thinking, while still catching true stalls.
+			const INACTIVITY_TIMEOUT_MS = 1200000; // 20 minutes of inactivity
+			let lastActivityTime = Date.now();
 
+			const resetTimeout = () => {
+				if (this.session?.responseTimeoutId) {
+					clearTimeout(this.session.responseTimeoutId);
+				}
+				lastActivityTime = Date.now();
+				const newTimeoutId = setTimeout(() => {
+					const timeSinceLastActivity = Date.now() - lastActivityTime;
+					wizardDebugLogger.log('timeout', 'Response inactivity timeout after 20 minutes', {
+						sessionId: this.session?.sessionId,
+						timeSinceLastActivityMs: timeSinceLastActivity,
+						outputBufferLength: this.session?.outputBuffer?.length || 0,
+						outputPreview: this.session?.outputBuffer?.slice(-500),
+					});
+					this.cleanupListeners();
+					resolve({
+						success: false,
+						error: 'Response timeout - agent did not complete in time',
+						rawOutput: this.session?.outputBuffer,
+					});
+				}, INACTIVITY_TIMEOUT_MS);
+
+				if (this.session) {
+					this.session.responseTimeoutId = newTimeoutId;
+				}
+			};
+
+			// Start the initial timeout and store the reset function for listeners
+			resetTimeout();
 			if (this.session) {
-				this.session.responseTimeoutId = timeoutId;
+				this.session.resetResponseTimeout = resetTimeout;
 			}
 
 			// Set up data listener
@@ -404,6 +425,7 @@ class ConversationManager {
 				(sessionId: string, data: string) => {
 					if (sessionId === this.session?.sessionId) {
 						this.session.outputBuffer += data;
+						this.session.resetResponseTimeout?.();
 						this.session.callbacks?.onChunk?.(data);
 					}
 				}
@@ -415,6 +437,7 @@ class ConversationManager {
 				this.session!.thinkingListenerCleanup = window.maestro.process.onThinkingChunk?.(
 					(sessionId: string, content: string) => {
 						if (sessionId === this.session?.sessionId && content) {
+							this.session.resetResponseTimeout?.();
 							this.session.callbacks?.onThinkingChunk?.(content);
 						}
 					}
@@ -431,6 +454,7 @@ class ConversationManager {
 						toolEvent: { toolName: string; state?: unknown; timestamp: number }
 					) => {
 						if (sessionId === this.session?.sessionId) {
+							this.session.resetResponseTimeout?.();
 							this.session.callbacks?.onToolExecution?.(toolEvent);
 						}
 					}
@@ -447,13 +471,8 @@ class ConversationManager {
 					});
 					if (sessionId === this.session?.sessionId) {
 						wizardDebugLogger.log('exit', 'Session ID matched, processing exit', { sessionId });
-						// Clear timeout since we got a response
-						clearTimeout(timeoutId);
-						if (this.session) {
-							this.session.responseTimeoutId = undefined;
-						}
 
-						// Agent finished - resolve with parsed output
+						// Agent finished - cleanupListeners() clears the inactivity timeout
 						this.cleanupListeners();
 
 						if (code === 0) {
@@ -832,6 +851,9 @@ class ConversationManager {
 		if (this.session?.responseTimeoutId) {
 			clearTimeout(this.session.responseTimeoutId);
 			this.session.responseTimeoutId = undefined;
+		}
+		if (this.session) {
+			this.session.resetResponseTimeout = undefined;
 		}
 	}
 

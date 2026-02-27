@@ -76,6 +76,45 @@ export function ensureInUnifiedTabOrder(
 }
 
 /**
+ * Get a repaired unifiedTabOrder that includes any orphaned tabs.
+ * Follows the existing unifiedTabOrder, then appends tabs that exist in
+ * aiTabs/filePreviewTabs but are missing from the order.
+ *
+ * This keeps navigation in sync with rendering (which uses buildUnifiedTabs).
+ * Returns the original array unchanged if no orphans are found (no allocation).
+ */
+export function getRepairedUnifiedTabOrder(session: Session): UnifiedTabRef[] {
+	const order = session.unifiedTabOrder || [];
+	const aiTabs = session.aiTabs || [];
+	const fileTabs = session.filePreviewTabs || [];
+
+	// Build sets of IDs already in the order
+	const aiIdsInOrder = new Set<string>();
+	const fileIdsInOrder = new Set<string>();
+	for (const ref of order) {
+		if (ref.type === 'ai') aiIdsInOrder.add(ref.id);
+		else fileIdsInOrder.add(ref.id);
+	}
+
+	// Collect orphaned tabs
+	const orphanedRefs: UnifiedTabRef[] = [];
+	for (const tab of aiTabs) {
+		if (!aiIdsInOrder.has(tab.id)) {
+			orphanedRefs.push({ type: 'ai', id: tab.id });
+		}
+	}
+	for (const tab of fileTabs) {
+		if (!fileIdsInOrder.has(tab.id)) {
+			orphanedRefs.push({ type: 'file', id: tab.id });
+		}
+	}
+
+	// Return original if no orphans (avoids allocation)
+	if (orphanedRefs.length === 0) return order;
+	return [...order, ...orphanedRefs];
+}
+
+/**
  * Get the initial name to show in the rename modal.
  * Returns empty string if no custom name is set (name is null),
  * or the custom name if user has set one.
@@ -517,6 +556,11 @@ export function reopenClosedTab(session: Session): ReopenTabResult | null {
 					...session,
 					activeTabId: existingTab.id,
 					closedTabHistory: remainingHistory,
+					unifiedTabOrder: ensureInUnifiedTabOrder(
+						session.unifiedTabOrder || [],
+						'ai',
+						existingTab.id
+					),
 				},
 				wasDuplicate: true,
 			};
@@ -545,6 +589,7 @@ export function reopenClosedTab(session: Session): ReopenTabResult | null {
 			aiTabs: updatedTabs,
 			activeTabId: restoredTab.id,
 			closedTabHistory: remainingHistory,
+			unifiedTabOrder: ensureInUnifiedTabOrder(session.unifiedTabOrder || [], 'ai', restoredTab.id),
 		},
 		wasDuplicate: false,
 	};
@@ -1226,28 +1271,36 @@ export function navigateToUnifiedTabByIndex(
 	session: Session,
 	index: number
 ): NavigateToUnifiedTabResult | null {
-	if (!session || !session.unifiedTabOrder || session.unifiedTabOrder.length === 0) {
+	// Use repaired order that includes any orphaned tabs (keeps navigation
+	// consistent with what buildUnifiedTabs renders in the tab bar)
+	const effectiveOrder = getRepairedUnifiedTabOrder(session);
+	if (!session || effectiveOrder.length === 0) {
 		return null;
 	}
 
 	// Check if index is within bounds
-	if (index < 0 || index >= session.unifiedTabOrder.length) {
+	if (index < 0 || index >= effectiveOrder.length) {
 		return null;
 	}
 
-	const targetTabRef = session.unifiedTabOrder[index];
+	const targetTabRef = effectiveOrder[index];
+	// If orphans were repaired, persist the fix in the returned session
+	const repairedSession =
+		effectiveOrder !== session.unifiedTabOrder
+			? { ...session, unifiedTabOrder: effectiveOrder }
+			: session;
 
 	if (targetTabRef.type === 'ai') {
 		// Navigate to AI tab - verify it exists
 		const aiTab = session.aiTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!aiTab) return null;
 
-		// If already active, return current state
+		// If already active, return current state (with repair if needed)
 		if (session.activeTabId === targetTabRef.id && session.activeFileTabId === null) {
 			return {
 				type: 'ai',
 				id: targetTabRef.id,
-				session,
+				session: repairedSession,
 			};
 		}
 
@@ -1256,7 +1309,7 @@ export function navigateToUnifiedTabByIndex(
 			type: 'ai',
 			id: targetTabRef.id,
 			session: {
-				...session,
+				...repairedSession,
 				activeTabId: targetTabRef.id,
 				activeFileTabId: null,
 			},
@@ -1266,12 +1319,12 @@ export function navigateToUnifiedTabByIndex(
 		const fileTab = session.filePreviewTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!fileTab) return null;
 
-		// If already active, return current state
+		// If already active, return current state (with repair if needed)
 		if (session.activeFileTabId === targetTabRef.id) {
 			return {
 				type: 'file',
 				id: targetTabRef.id,
-				session,
+				session: repairedSession,
 			};
 		}
 
@@ -1280,7 +1333,7 @@ export function navigateToUnifiedTabByIndex(
 			type: 'file',
 			id: targetTabRef.id,
 			session: {
-				...session,
+				...repairedSession,
 				activeFileTabId: targetTabRef.id,
 			},
 		};
@@ -1295,12 +1348,18 @@ export function navigateToUnifiedTabByIndex(
  * @returns Object with the tab type, id, and updated session, or null if no tabs
  */
 export function navigateToLastUnifiedTab(session: Session): NavigateToUnifiedTabResult | null {
-	if (!session || !session.unifiedTabOrder || session.unifiedTabOrder.length === 0) {
+	// Use repaired order so orphaned tabs are reachable via Cmd+0
+	const effectiveOrder = getRepairedUnifiedTabOrder(session);
+	if (!session || effectiveOrder.length === 0) {
 		return null;
 	}
 
-	const lastIndex = session.unifiedTabOrder.length - 1;
-	return navigateToUnifiedTabByIndex(session, lastIndex);
+	// Find the last valid tab, skipping orphaned entries
+	for (let i = effectiveOrder.length - 1; i >= 0; i--) {
+		const result = navigateToUnifiedTabByIndex(session, i);
+		if (result) return result;
+	}
+	return null;
 }
 
 /**
@@ -1310,22 +1369,19 @@ export function navigateToLastUnifiedTab(session: Session): NavigateToUnifiedTab
  * @param session - The Maestro session
  * @returns The index in unifiedTabOrder, or -1 if not found
  */
-function getCurrentUnifiedTabIndex(session: Session): number {
-	if (!session.unifiedTabOrder || session.unifiedTabOrder.length === 0) {
+function getCurrentUnifiedTabIndex(session: Session, effectiveOrder?: UnifiedTabRef[]): number {
+	const order = effectiveOrder || getRepairedUnifiedTabOrder(session);
+	if (order.length === 0) {
 		return -1;
 	}
 
 	// If a file tab is active, find it in the unified order
 	if (session.activeFileTabId) {
-		return session.unifiedTabOrder.findIndex(
-			(ref) => ref.type === 'file' && ref.id === session.activeFileTabId
-		);
+		return order.findIndex((ref) => ref.type === 'file' && ref.id === session.activeFileTabId);
 	}
 
 	// Otherwise find the active AI tab
-	return session.unifiedTabOrder.findIndex(
-		(ref) => ref.type === 'ai' && ref.id === session.activeTabId
-	);
+	return order.findIndex((ref) => ref.type === 'ai' && ref.id === session.activeTabId);
 }
 
 /**
@@ -1350,27 +1406,35 @@ export function navigateToNextUnifiedTab(
 	session: Session,
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
-	if (!session || !session.unifiedTabOrder || session.unifiedTabOrder.length < 2) {
+	// Use repaired order so orphaned tabs are included (consistent with tab bar rendering)
+	const effectiveOrder = getRepairedUnifiedTabOrder(session);
+	if (!session || effectiveOrder.length < 2) {
 		return null;
 	}
 
-	const currentIndex = getCurrentUnifiedTabIndex(session);
+	const currentIndex = getCurrentUnifiedTabIndex(session, effectiveOrder);
+	const length = effectiveOrder.length;
 
-	// If current tab not found, go to first tab
+	// If current tab not found, go to first valid tab
 	if (currentIndex === -1) {
-		return navigateToUnifiedTabByIndex(session, 0);
+		for (let i = 0; i < length; i++) {
+			const result = navigateToUnifiedTabByIndex(session, i);
+			if (result) return result;
+		}
+		return null;
 	}
 
 	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts
 	if (showUnreadOnly) {
-		const length = session.unifiedTabOrder.length;
 		for (let offset = 1; offset < length; offset++) {
 			const nextIndex = (currentIndex + offset) % length;
-			const tabRef = session.unifiedTabOrder[nextIndex];
+			const tabRef = effectiveOrder[nextIndex];
 
-			// File tabs are always navigable
+			// File tabs are always navigable (if they still exist)
 			if (tabRef.type === 'file') {
-				return navigateToUnifiedTabByIndex(session, nextIndex);
+				const result = navigateToUnifiedTabByIndex(session, nextIndex);
+				if (result) return result;
+				continue; // Orphaned file tab, skip
 			}
 
 			// For AI tabs, check if it's unread or has a draft
@@ -1383,9 +1447,13 @@ export function navigateToNextUnifiedTab(
 		return null;
 	}
 
-	// Simple case: just go to next tab with wrap-around
-	const nextIndex = (currentIndex + 1) % session.unifiedTabOrder.length;
-	return navigateToUnifiedTabByIndex(session, nextIndex);
+	// Find next valid tab with wrap-around, skipping orphaned entries
+	for (let offset = 1; offset < length; offset++) {
+		const nextIndex = (currentIndex + offset) % length;
+		const result = navigateToUnifiedTabByIndex(session, nextIndex);
+		if (result) return result;
+	}
+	return null;
 }
 
 /**
@@ -1410,27 +1478,35 @@ export function navigateToPrevUnifiedTab(
 	session: Session,
 	showUnreadOnly = false
 ): NavigateToUnifiedTabResult | null {
-	if (!session || !session.unifiedTabOrder || session.unifiedTabOrder.length < 2) {
+	// Use repaired order so orphaned tabs are included (consistent with tab bar rendering)
+	const effectiveOrder = getRepairedUnifiedTabOrder(session);
+	if (!session || effectiveOrder.length < 2) {
 		return null;
 	}
 
-	const currentIndex = getCurrentUnifiedTabIndex(session);
+	const currentIndex = getCurrentUnifiedTabIndex(session, effectiveOrder);
+	const length = effectiveOrder.length;
 
-	// If current tab not found, go to last tab
+	// If current tab not found, go to last valid tab
 	if (currentIndex === -1) {
-		return navigateToLastUnifiedTab(session);
+		for (let i = length - 1; i >= 0; i--) {
+			const result = navigateToUnifiedTabByIndex(session, i);
+			if (result) return result;
+		}
+		return null;
 	}
 
 	// When showUnreadOnly is true, we need to skip AI tabs that are read and have no drafts
 	if (showUnreadOnly) {
-		const length = session.unifiedTabOrder.length;
 		for (let offset = 1; offset < length; offset++) {
 			const prevIndex = (currentIndex - offset + length) % length;
-			const tabRef = session.unifiedTabOrder[prevIndex];
+			const tabRef = effectiveOrder[prevIndex];
 
-			// File tabs are always navigable
+			// File tabs are always navigable (if they still exist)
 			if (tabRef.type === 'file') {
-				return navigateToUnifiedTabByIndex(session, prevIndex);
+				const result = navigateToUnifiedTabByIndex(session, prevIndex);
+				if (result) return result;
+				continue; // Orphaned file tab, skip
 			}
 
 			// For AI tabs, check if it's unread or has a draft
@@ -1443,10 +1519,13 @@ export function navigateToPrevUnifiedTab(
 		return null;
 	}
 
-	// Simple case: just go to previous tab with wrap-around
-	const length = session.unifiedTabOrder.length;
-	const prevIndex = (currentIndex - 1 + length) % length;
-	return navigateToUnifiedTabByIndex(session, prevIndex);
+	// Find previous valid tab with wrap-around, skipping orphaned entries
+	for (let offset = 1; offset < length; offset++) {
+		const prevIndex = (currentIndex - offset + length) % length;
+		const result = navigateToUnifiedTabByIndex(session, prevIndex);
+		if (result) return result;
+	}
+	return null;
 }
 
 /**

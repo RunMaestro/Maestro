@@ -124,10 +124,12 @@ export function generateProseStyles(options: ProseStylesOptions): string {
     ${s} ol { list-style-type: decimal; }
     ${compactSpacing ? `${s} li ul, ${s} li ol { margin: 0 !important; padding-left: 1.5em; list-style-position: outside; }` : ''}
     ${s} li { margin: ${compactSpacing ? '0' : '0.25em 0'} !important; ${compactSpacing ? 'padding: 0;' : ''} line-height: 1.4; display: list-item; }
-    ${s} li > p { margin: 0 !important; display: inline; vertical-align: baseline; line-height: inherit; }
+    ${s} ol li { padding-left: 0.15em; }
+    ${s} li > p { margin: 0 !important; display: block; line-height: inherit; }
     ${s} li > p + ul, ${s} li > p + ol { margin-top: 0 !important; }
     ${s} li > p > strong:first-child, ${s} li > p > b:first-child, ${s} li > p > em:first-child, ${s} li > p > code:first-child, ${s} li > p > a:first-child { vertical-align: baseline; line-height: inherit; }
     ${s} li::marker { color: ${colors.textMain}; }
+    ${s} ol li::marker { font-variant-numeric: tabular-nums; font-weight: 400; }
     ${s} li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.5em; }
     ${s} code { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 0.2em 0.4em; border-radius: 3px; font-size: 0.9em; }
     ${s} pre { background-color: ${colors.bgActivity}; color: ${colors.textMain}; padding: 1em; border-radius: 6px; overflow-x: auto; ${compactSpacing ? 'margin: 0.35em 0 !important;' : ''} }

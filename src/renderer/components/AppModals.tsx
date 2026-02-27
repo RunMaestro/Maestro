@@ -2343,6 +2343,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		tabSwitcherOpen,
 		onCloseTabSwitcher,
 		onTabSelect,
+		onFileTabSelect,
 		onNamedSessionSelect,
 		fuzzyFileSearchOpen,
 		filteredFileTree,
@@ -2655,6 +2656,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				tabSwitcherOpen={tabSwitcherOpen}
 				onCloseTabSwitcher={onCloseTabSwitcher}
 				onTabSelect={onTabSelect}
+				onFileTabSelect={onFileTabSelect}
 				onNamedSessionSelect={onNamedSessionSelect}
 				colorBlindMode={colorBlindMode}
 				fuzzyFileSearchOpen={fuzzyFileSearchOpen}

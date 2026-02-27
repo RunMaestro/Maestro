@@ -282,6 +282,106 @@ describe('inlineWizardConversation', () => {
 		});
 	});
 
+	describe('activity-based timeout', () => {
+		afterEach(() => {
+			vi.useRealTimers();
+		});
+
+		it('should reset timeout when data is received, preventing false timeouts on active agents', async () => {
+			vi.useFakeTimers();
+
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			const mockKill = vi.fn().mockResolvedValue(undefined);
+			mockMaestro.process.kill = mockKill;
+
+			const session = await startInlineWizardConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Analyze this codebase', []);
+			await vi.advanceTimersByTimeAsync(10);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+
+			// Simulate data arriving at 15 minutes (before the 20-min timeout)
+			await vi.advanceTimersByTimeAsync(900000); // 15 minutes
+			dataCallback(session.sessionId, '{"type":"assistant"}');
+
+			// Advance another 15 minutes — would have timed out at 20 min without the reset
+			await vi.advanceTimersByTimeAsync(900000); // now 30 minutes total
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Advance past the 20-min inactivity window (no data since 15-min mark)
+			await vi.advanceTimersByTimeAsync(600000); // 35 minutes total, 20+ min since last data
+
+			// Now it should have timed out due to inactivity
+			expect(mockKill).toHaveBeenCalledWith(session.sessionId);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(false);
+			expect(result.error).toContain('timeout');
+		});
+
+		it('should not timeout when agent continuously produces output', async () => {
+			vi.useFakeTimers();
+
+			const mockAgent = {
+				id: 'claude-code',
+				available: true,
+				command: 'claude',
+				args: [],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+			const mockKill = vi.fn().mockResolvedValue(undefined);
+			mockMaestro.process.kill = mockKill;
+
+			const session = await startInlineWizardConversation({
+				agentType: 'claude-code',
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+				mode: 'ask',
+			});
+
+			const messagePromise = sendWizardMessage(session, 'Complex analysis', []);
+			await vi.advanceTimersByTimeAsync(10);
+
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+
+			// Send data every 10 minutes for 70 minutes — well past the 20-min timeout
+			for (let i = 0; i < 7; i++) {
+				await vi.advanceTimersByTimeAsync(600000);
+				dataCallback(session.sessionId, `{"type":"chunk_${i}"}`);
+			}
+
+			// Agent should still be alive — never went 20 min without activity
+			expect(mockKill).not.toHaveBeenCalled();
+
+			// Complete normally
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(session.sessionId, 0);
+
+			await vi.advanceTimersByTimeAsync(0); // flush microtasks
+
+			const result = await messagePromise;
+			// The agent should have completed without a timeout error.
+			// result.error may be undefined (success) or a parse error — either is fine.
+			if (result.error) {
+				expect(result.error).not.toContain('timeout');
+			}
+		});
+	});
+
 	describe('Windows stdin handling', () => {
 		// Save original platform
 		const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform');

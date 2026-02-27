@@ -563,5 +563,98 @@ describe('execFile.ts', () => {
 				expect(capturedOptions.encoding).toBe('utf8');
 			});
 		});
+
+		describe('timeout option', () => {
+			it('should pass timeout to execFile options', async () => {
+				let capturedOptions: any;
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], options: any, callback?: any) => {
+						capturedOptions = options;
+						if (callback) {
+							callback(null, 'output', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				await execFileNoThrow('ssh', ['-T', 'host'], undefined, { timeout: 30000 });
+
+				expect(capturedOptions.timeout).toBe(30000);
+			});
+
+			it('should return ETIMEDOUT exitCode when process killed by timeout', async () => {
+				const error = new Error('Command timed out') as any;
+				error.killed = true;
+				error.code = undefined;
+				error.signal = 'SIGTERM';
+				error.stdout = 'partial';
+				error.stderr = 'partial err';
+
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(error, '', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const result = await execFileNoThrow('ssh', ['-T', 'host'], undefined, {
+					timeout: 30000,
+				});
+
+				expect(result.exitCode).toBe('ETIMEDOUT');
+				expect(result.stderr).toContain('ETIMEDOUT');
+				expect(result.stderr).toContain('30000ms');
+				expect(result.stdout).toBe('partial');
+			});
+
+			it('should NOT return ETIMEDOUT for maxBuffer kills', async () => {
+				const error = new Error('maxBuffer exceeded') as any;
+				error.killed = true;
+				error.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
+				error.stdout = 'huge output';
+				error.stderr = '';
+
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(error, '', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const result = await execFileNoThrow('cat', ['bigfile'], undefined, { timeout: 30000 });
+
+				expect(result.exitCode).toBe('ERR_CHILD_PROCESS_STDIO_MAXBUFFER');
+				expect(result.stderr).not.toContain('ETIMEDOUT');
+			});
+
+			it('should not detect timeout when no timeout option was set', async () => {
+				const error = new Error('Killed') as any;
+				error.killed = true;
+				error.code = undefined;
+				error.stdout = '';
+				error.stderr = '';
+
+				mockExecFile.mockImplementation(
+					(_cmd: string, _args: readonly string[], _options: any, callback?: any) => {
+						if (callback) {
+							callback(error, '', '');
+						}
+						return {} as any;
+					}
+				);
+
+				const { execFileNoThrow } = await import('../../../main/utils/execFile');
+				const result = await execFileNoThrow('cmd');
+
+				expect(result.exitCode).toBe(1);
+			});
+		});
 	});
 });

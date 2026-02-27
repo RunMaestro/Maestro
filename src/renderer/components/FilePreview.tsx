@@ -1738,7 +1738,7 @@ export const FilePreview = React.memo(
 					// Arrow Down: Scroll down
 					container.scrollTop += 40;
 				}
-			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey)) {
+			} else if (e.key === 'ArrowLeft' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				// Cmd+Left: Navigate back in history (disabled in edit mode)
 				if (isEditableText && markdownEditMode) return;
 				e.preventDefault();
@@ -1747,7 +1747,7 @@ export const FilePreview = React.memo(
 					onNavigateBack();
 					onShortcutUsed?.('filePreviewBack');
 				}
-			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey)) {
+			} else if (e.key === 'ArrowRight' && (e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
 				// Cmd+Right: Navigate forward in history (disabled in edit mode)
 				if (isEditableText && markdownEditMode) return;
 				e.preventDefault();

@@ -835,9 +835,7 @@ export const MainPanel = React.memo(
 			);
 		}
 
-		// File preview is only eligible in AI mode — in terminal mode, the tab bar is
-		// hidden so rendering a file preview would be orphaned (no way to close it).
-		const canShowFilePreview = activeSession.inputMode === 'ai';
+		// File preview eligibility checked inline below
 
 		// Show normal session view
 		return (
@@ -1541,7 +1539,7 @@ export const MainPanel = React.memo(
 
 						{/* Content area: Show FilePreview when file tab is active, otherwise show terminal output */}
 						{/* Skip rendering when loading remote file - loading state takes over entire main area */}
-						{canShowFilePreview &&
+						{activeSession.inputMode === 'ai' &&
 						((filePreviewLoading && !activeFileTabId) || activeFileTab?.isLoading) ? (
 							<div
 								className="flex-1 flex items-center justify-center"
@@ -1565,7 +1563,7 @@ export const MainPanel = React.memo(
 									</div>
 								</div>
 							</div>
-						) : canShowFilePreview &&
+						) : activeSession.inputMode === 'ai' &&
 						  activeFileTabId &&
 						  activeFileTab &&
 						  memoizedFilePreviewFile ? (
