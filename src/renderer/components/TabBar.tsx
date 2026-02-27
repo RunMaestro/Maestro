@@ -731,7 +731,7 @@ const Tab = memo(function Tab({
 								borderBottom: `1px solid ${theme.colors.border}`,
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
-								minWidth: '220px',
+								width: '220px',
 							}}
 						>
 							{/* Header with session name and ID - only show for tabs with sessions */}
@@ -804,6 +804,7 @@ const Tab = memo(function Tab({
 														WebkitLineClamp: 3,
 														WebkitBoxOrient: 'vertical',
 														overflow: 'hidden',
+														wordBreak: 'break-word',
 													}}
 												>
 													{tab.description}
@@ -1491,7 +1492,7 @@ const FileTab = memo(function FileTab({
 								borderBottom: `1px solid ${theme.colors.border}`,
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
-								minWidth: '220px',
+								width: '220px',
 							}}
 						>
 							{/* Actions */}
