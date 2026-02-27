@@ -39,3 +39,7 @@ export type { InputKeyDownDeps, InputKeyDownReturn } from './useInputKeyDown';
 // Input handler orchestration (Phase 2J)
 export { useInputHandlers } from './useInputHandlers';
 export type { UseInputHandlersDeps, UseInputHandlersReturn } from './useInputHandlers';
+
+// Input mode toggle (Tier 3A)
+export { useInputMode } from './useInputMode';
+export type { UseInputModeDeps, UseInputModeReturn } from './useInputMode';

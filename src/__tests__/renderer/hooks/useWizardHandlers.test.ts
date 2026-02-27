@@ -2235,4 +2235,200 @@ describe('useWizardHandlers', () => {
 			expect(sessions[0].sessionSshRemoteConfig).toEqual(sshConfig);
 		});
 	});
+
+	// ======================================================================
+	// Tier 3D: Wizard Resume Handlers
+	// ======================================================================
+
+	describe('Wizard Resume Handlers (Tier 3D)', () => {
+		const createResumeDeps = (overrides: Partial<UseWizardHandlersDeps> = {}) =>
+			createMockDeps({
+				wizardContext: {
+					state: {
+						currentStep: 'conversation' as any,
+						isOpen: false,
+						selectedAgent: 'claude-code',
+						availableAgents: [],
+						agentName: 'Test Agent',
+						directoryPath: '/projects/test',
+						isGitRepo: false,
+						detectedAgentPath: null,
+						directoryError: null,
+						hasExistingAutoRunDocs: false,
+						existingDocsCount: 0,
+						existingDocsChoice: null,
+						conversationHistory: [],
+						confidenceLevel: 50,
+						isReadyToProceed: false,
+						isConversationLoading: false,
+						conversationError: null,
+						generatedDocuments: [],
+						currentDocumentIndex: 0,
+						isGeneratingDocuments: false,
+						generationError: null,
+						editedPhase1Content: null,
+						wantsTour: false,
+						isComplete: false,
+						createdSessionId: null,
+					} as any,
+					completeWizard: vi.fn(),
+					clearResumeState: vi.fn(),
+					openWizard: vi.fn(),
+					restoreState: vi.fn(),
+				},
+				...overrides,
+			});
+
+		describe('handleWizardResume', () => {
+			it('no-ops when no resume state exists in modal store', () => {
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResume();
+				});
+
+				// restoreState should NOT have been called — no state to restore
+				expect(deps.wizardContext.restoreState).not.toHaveBeenCalled();
+				expect(deps.wizardContext.openWizard).not.toHaveBeenCalled();
+			});
+
+			it('restores wizard state normally when no invalid flags', () => {
+				const savedState = {
+					currentStep: 'conversation',
+					selectedAgent: 'claude-code',
+					directoryPath: '/projects/test',
+				};
+				getModalActions().setWizardResumeState(savedState as any);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResume();
+				});
+
+				expect(deps.wizardContext.restoreState).toHaveBeenCalledWith(savedState);
+				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
+			});
+
+			it('redirects to agent-selection when agentInvalid is true', () => {
+				const savedState = {
+					currentStep: 'conversation',
+					selectedAgent: 'claude-code',
+					directoryPath: '/projects/test',
+				};
+				getModalActions().setWizardResumeState(savedState as any);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResume({ agentInvalid: true });
+				});
+
+				expect(deps.wizardContext.restoreState).toHaveBeenCalledWith({
+					...savedState,
+					currentStep: 'agent-selection',
+					selectedAgent: null,
+				});
+			});
+
+			it('redirects to directory-selection when directoryInvalid is true', () => {
+				const savedState = {
+					currentStep: 'conversation',
+					selectedAgent: 'claude-code',
+					directoryPath: '/old/path',
+					isGitRepo: true,
+				};
+				getModalActions().setWizardResumeState(savedState as any);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResume({ directoryInvalid: true });
+				});
+
+				expect(deps.wizardContext.restoreState).toHaveBeenCalledWith({
+					...savedState,
+					currentStep: 'directory-selection',
+					directoryError:
+						'The previously selected directory no longer exists. Please choose a new location.',
+					directoryPath: '',
+					isGitRepo: false,
+				});
+			});
+
+			it('opens wizard and clears resume state after restoring', () => {
+				const savedState = {
+					currentStep: 'conversation',
+					selectedAgent: 'claude-code',
+					directoryPath: '/projects/test',
+				};
+				getModalActions().setWizardResumeState(savedState as any);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResume();
+				});
+
+				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
+				// Resume state should be cleared in the modal store
+				expect(useModalStore.getState().getData('wizardResume')).toBeUndefined();
+			});
+		});
+
+		describe('handleWizardStartFresh', () => {
+			it('clears resume state and opens a fresh wizard', () => {
+				getModalActions().setWizardResumeModalOpen(true);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardStartFresh();
+				});
+
+				expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
+				expect(deps.wizardContext.openWizard).toHaveBeenCalled();
+			});
+
+			it('calls clearResumeState on wizard context', () => {
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardStartFresh();
+				});
+
+				expect(deps.wizardContext.clearResumeState).toHaveBeenCalled();
+			});
+		});
+
+		describe('handleWizardResumeClose', () => {
+			it('closes modal and clears resume state without further action', () => {
+				const savedState = {
+					currentStep: 'conversation',
+					selectedAgent: 'claude-code',
+				};
+				getModalActions().setWizardResumeState(savedState as any);
+
+				const deps = createResumeDeps();
+				const { result } = renderHook(() => useWizardHandlers(deps));
+
+				act(() => {
+					result.current.handleWizardResumeClose();
+				});
+
+				expect(useModalStore.getState().isOpen('wizardResume')).toBe(false);
+				expect(useModalStore.getState().getData('wizardResume')).toBeUndefined();
+				// Should NOT have opened wizard or restored state
+				expect(deps.wizardContext.restoreState).not.toHaveBeenCalled();
+				expect(deps.wizardContext.openWizard).not.toHaveBeenCalled();
+			});
+		});
+	});
 });

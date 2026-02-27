@@ -127,6 +127,10 @@ import {
 	useQuickActionsHandlers,
 	// Session cycling (Cmd+Shift+[/])
 	useCycleSession,
+	// Input mode toggle (Tier 3A)
+	useInputMode,
+	// Live mode management (Tier 3B)
+	useLiveMode,
 } from './hooks';
 import { useMainPanelProps, useSessionListProps, useRightPanelProps } from './hooks/props';
 import { useAgentListeners } from './hooks/agent/useAgentListeners';
@@ -147,7 +151,7 @@ import { InlineWizardProvider, useInlineWizardContext } from './contexts/InlineW
 import { ToastContainer } from './components/Toast';
 
 // Import services
-import { gitService } from './services/git';
+// gitService — now used in useModalHandlers (Tier 3C)
 
 // Import types and constants
 // Note: GroupChat, GroupChatState are imported from types (re-exported from shared)
@@ -297,9 +301,8 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		// Wizard Resume Modal
 		wizardResumeModalOpen,
-		setWizardResumeModalOpen,
 		wizardResumeState,
-		setWizardResumeState,
+		// setWizardResumeModalOpen, setWizardResumeState — now used in useWizardHandlers (Tier 3D)
 		// Agent Error Modal
 		// Worktree Modals
 		worktreeConfigModalOpen,
@@ -712,9 +715,8 @@ function MaestroConsoleInner() {
 	// Note: Images are now stored per-tab in AITab.stagedImages
 	// See stagedImages/setStagedImages computed from active tab below
 
-	// Global Live Mode State (web interface for all sessions)
-	const [isLiveMode, setIsLiveMode] = useState(false);
-	const [webInterfaceUrl, setWebInterfaceUrl] = useState<string | null>(null);
+	// Global Live Mode — extracted to useLiveMode hook (Tier 3B)
+	const { isLiveMode, webInterfaceUrl, toggleGlobalLive, restartWebServer } = useLiveMode();
 
 	// Auto Run document management state (from batchStore)
 	// Content is per-session in session.autoRunContent
@@ -784,6 +786,8 @@ function MaestroConsoleInner() {
 	const processQueuedItemRef = useRef<
 		((sessionId: string, item: QueuedItem) => Promise<void>) | null
 	>(null);
+	// Ref for handleResumeSession - bridges ordering gap between useModalHandlers and useAgentSessionManagement
+	const handleResumeSessionRef = useRef<((agentSessionId: string) => void) | null>(null);
 
 	// Note: thinkingChunkBufferRef and thinkingChunkRafIdRef moved into useAgentListeners hook
 	// Note: pauseBatchOnErrorRef and getBatchStateRef moved into useBatchHandlers hook
@@ -967,7 +971,9 @@ function MaestroConsoleInner() {
 		handleQuickActionsOpenSendToAgent,
 		handleQuickActionsOpenCreatePR,
 		handleLogViewerShortcutUsed,
-	} = useModalHandlers(inputRef, terminalOutputRef);
+		handleViewGitDiff,
+		handleDirectorNotesResumeSession,
+	} = useModalHandlers(inputRef, terminalOutputRef, handleResumeSessionRef);
 
 	const {
 		handleOpenWorktreeConfig,
@@ -1113,81 +1119,10 @@ function MaestroConsoleInner() {
 		result: summarizeResult,
 		error: _summarizeError,
 		startTime,
-		startSummarize,
 		cancelTab,
-		clearTabState,
 		canSummarize,
-		minContextUsagePercent,
+		handleSummarizeAndContinue,
 	} = useSummarizeAndContinue(activeSession ?? null);
-
-	// Handler for starting summarization (non-blocking - UI remains interactive)
-	const handleSummarizeAndContinue = useCallback(
-		(tabId?: string) => {
-			if (!activeSession || activeSession.inputMode !== 'ai') return;
-
-			const targetTabId = tabId || activeSession.activeTabId;
-			const targetTab = activeSession.aiTabs.find((t) => t.id === targetTabId);
-
-			if (!targetTab || !canSummarize(activeSession.contextUsage, targetTab.logs)) {
-				notifyToast({
-					type: 'warning',
-					title: 'Cannot Compact',
-					message: `Context too small. Need at least ${minContextUsagePercent}% usage, ~2k tokens, or 8+ messages to compact.`,
-				});
-				return;
-			}
-
-			// Store session info for toast navigation
-			const sourceSessionId = activeSession.id;
-			const sourceSessionName = activeSession.name;
-
-			startSummarize(targetTabId).then((result) => {
-				if (result) {
-					// Update session with the new tab
-					setSessions((prev) =>
-						prev.map((s) => (s.id === sourceSessionId ? result.updatedSession : s))
-					);
-
-					// Add system log entry to the SOURCE tab's history
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sourceSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab) =>
-									tab.id === targetTabId
-										? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
-										: tab
-								),
-							};
-						})
-					);
-
-					// Show success notification with click-to-navigate
-					const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
-					notifyToast({
-						type: 'success',
-						title: 'Context Compacted',
-						message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
-						sessionId: sourceSessionId,
-						tabId: result.newTabId,
-						project: sourceSessionName,
-					});
-
-					// Clear the summarization state for this tab
-					clearTabState(targetTabId);
-				}
-			});
-		},
-		[
-			activeSession,
-			canSummarize,
-			minContextUsagePercent,
-			startSummarize,
-			setSessions,
-			clearTabState,
-		]
-	);
 
 	// Combine custom AI commands with spec-kit and openspec commands for input processing (slash command execution)
 	// This ensures speckit and openspec commands are processed the same way as custom commands
@@ -1338,39 +1273,9 @@ function MaestroConsoleInner() {
 			defaultShowThinking,
 		});
 
-	// --- DIRECTOR'S NOTES SESSION NAVIGATION ---
-	// Handles cross-agent navigation: close modal → switch agent → resume session
-	const pendingResumeRef = useRef<{ agentSessionId: string; targetSessionId: string } | null>(null);
-
-	const handleDirectorNotesResumeSession = useCallback(
-		(sourceSessionId: string, agentSessionId: string) => {
-			// Close the Director's Notes modal
-			setDirectorNotesOpen(false);
-
-			// If already on the right agent, resume directly
-			if (activeSession?.id === sourceSessionId) {
-				handleResumeSession(agentSessionId);
-				return;
-			}
-
-			// Switch to the target agent and defer resume until activeSession updates
-			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId };
-			setActiveSessionId(sourceSessionId);
-		},
-		[activeSession?.id, handleResumeSession, setActiveSessionId, setDirectorNotesOpen]
-	);
-
-	// Effect: process pending resume after agent switch completes
-	useEffect(() => {
-		if (
-			pendingResumeRef.current &&
-			activeSession?.id === pendingResumeRef.current.targetSessionId
-		) {
-			const { agentSessionId } = pendingResumeRef.current;
-			pendingResumeRef.current = null;
-			handleResumeSession(agentSessionId);
-		}
-	}, [activeSession?.id, handleResumeSession]);
+	// handleDirectorNotesResumeSession — extracted to useModalHandlers (Tier 3C)
+	// Bridge: keep handleResumeSessionRef in sync for useModalHandlers
+	handleResumeSessionRef.current = handleResumeSession;
 
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
@@ -1470,12 +1375,17 @@ function MaestroConsoleInner() {
 		handleWizardLetsGo,
 		handleToggleWizardShowThinking,
 		handleWizardLaunchSession,
+		handleWizardResume,
+		handleWizardStartFresh,
+		handleWizardResumeClose,
 	} = useWizardHandlers({
 		inlineWizardContext,
 		wizardContext: {
 			state: wizardState,
 			completeWizard,
 			clearResumeState,
+			openWizard: openWizardModal,
+			restoreState: restoreWizardState,
 		},
 		spawnBackgroundSynopsis,
 		addHistoryEntry,
@@ -1756,84 +1666,12 @@ function MaestroConsoleInner() {
 
 	// handleWizardLaunchSession now in useWizardHandlers hook
 
-	const toggleInputMode = () => {
-		setSessions((prev) =>
-			prev.map((s) => {
-				if (s.id !== activeSessionId) return s;
-				const newMode = s.inputMode === 'ai' ? 'terminal' : 'ai';
-
-				if (newMode === 'terminal') {
-					// Switching to terminal mode: save current file tab (if any) and clear it
-					useUIStore.getState().setPreTerminalFileTabId(s.activeFileTabId);
-					return {
-						...s,
-						inputMode: newMode,
-						activeFileTabId: null,
-					};
-				} else {
-					// Switching to AI mode: restore previous file tab if it still exists
-					const savedFileTabId = useUIStore.getState().preTerminalFileTabId;
-					const fileTabStillExists =
-						savedFileTabId && s.filePreviewTabs?.some((t) => t.id === savedFileTabId);
-					useUIStore.getState().setPreTerminalFileTabId(null);
-					return {
-						...s,
-						inputMode: newMode,
-						...(fileTabStillExists && { activeFileTabId: savedFileTabId }),
-					};
-				}
-			})
-		);
-		// Close any open dropdowns when switching modes
-		setTabCompletionOpen(false);
-		setSlashCommandOpen(false);
-	};
+	// toggleInputMode — extracted to useInputMode hook (Tier 3A)
+	const { toggleInputMode } = useInputMode({ setTabCompletionOpen, setSlashCommandOpen });
 
 	// toggleUnreadFilter, toggleTabStar, toggleTabUnread — provided by useSessionLifecycle hook (Phase 2H)
 
-	// Toggle global live mode (enables web interface for all sessions)
-	const toggleGlobalLive = async () => {
-		try {
-			if (isLiveMode) {
-				// Stop tunnel first (if running), then stop web server
-				await window.maestro.tunnel.stop();
-				await window.maestro.live.disableAll();
-				setIsLiveMode(false);
-				setWebInterfaceUrl(null);
-			} else {
-				// Turn on - start the server and get the URL
-				const result = await window.maestro.live.startServer();
-				if (result.success && result.url) {
-					setIsLiveMode(true);
-					setWebInterfaceUrl(result.url);
-				} else {
-					console.error('[toggleGlobalLive] Failed to start server:', result.error);
-				}
-			}
-		} catch (error) {
-			console.error('[toggleGlobalLive] Error:', error);
-		}
-	};
-
-	// Restart web server (used when port settings change while server is running)
-	const restartWebServer = async (): Promise<string | null> => {
-		if (!isLiveMode) return null;
-		try {
-			// Stop and restart the server to pick up new port settings
-			await window.maestro.live.stopServer();
-			const result = await window.maestro.live.startServer();
-			if (result.success && result.url) {
-				setWebInterfaceUrl(result.url);
-				return result.url;
-			} else {
-				console.error('[restartWebServer] Failed to restart server:', result.error);
-				return null;
-			}
-		} catch (error) {
-			console.error('[restartWebServer] Error:', error);
-			return null;
-		}
-	};
+	// toggleGlobalLive, restartWebServer — extracted to useLiveMode hook (Tier 3B)
 
 	// --- REMOTE HANDLERS (remote command processing, SSH name mapping) ---
 	const { handleQuickActionsToggleRemoteControl, sessionSshRemoteNames } = useRemoteHandlers({
@@ -1846,25 +1684,7 @@ function MaestroConsoleInner() {
 		sshRemoteConfigs,
 	});
 
-	const handleViewGitDiff = async () => {
-		if (!activeSession || !activeSession.isGitRepo) return;
-
-		const cwd =
-			activeSession.inputMode === 'terminal'
-				? activeSession.shellCwd || activeSession.cwd
-				: activeSession.cwd;
-		const sshRemoteId =
-			activeSession.sshRemoteId ||
-			(activeSession.sessionSshRemoteConfig?.enabled
-				? activeSession.sessionSshRemoteConfig.remoteId
-				: undefined) ||
-			undefined;
-		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
-
-		if (diff.diff) {
-			setGitDiffPreview(diff.diff);
-		}
-	};
+	// handleViewGitDiff — extracted to useModalHandlers (Tier 3C)
 
 	// startRenamingSession, finishRenamingSession — provided by useSessionCrud hook
 
@@ -3504,61 +3324,9 @@ function MaestroConsoleInner() {
 					<WizardResumeModal
 						theme={theme}
 						resumeState={wizardResumeState}
-						onResume={(options?: { directoryInvalid?: boolean; agentInvalid?: boolean }) => {
-							// Close the resume modal
-							setWizardResumeModalOpen(false);
-
-							const { directoryInvalid = false, agentInvalid = false } = options || {};
-
-							// If agent is invalid, redirect to agent selection step with error
-							// This takes priority since it's the first step
-							if (agentInvalid) {
-								const modifiedState = {
-									...wizardResumeState,
-									currentStep: 'agent-selection' as const,
-									// Clear the agent selection so user must select a new one
-									selectedAgent: null,
-									// Keep other state for resume after agent selection
-								};
-								restoreWizardState(modifiedState);
-							} else if (directoryInvalid) {
-								// If directory is invalid, redirect to directory selection step with error
-								const modifiedState = {
-									...wizardResumeState,
-									currentStep: 'directory-selection' as const,
-									directoryError:
-										'The previously selected directory no longer exists. Please choose a new location.',
-									// Clear the directory path so user must select a new one
-									directoryPath: '',
-									isGitRepo: false,
-								};
-								restoreWizardState(modifiedState);
-							} else {
-								// Restore the saved wizard state as-is
-								restoreWizardState(wizardResumeState);
-							}
-
-							// Open the wizard at the restored step
-							openWizardModal();
-							// Clear the resume state holder
-							setWizardResumeState(null);
-						}}
-						onStartFresh={() => {
-							// Close the resume modal
-							setWizardResumeModalOpen(false);
-							// Clear any saved resume state
-							clearResumeState();
-							// Open a fresh wizard
-							openWizardModal();
-							// Clear the resume state holder
-							setWizardResumeState(null);
-						}}
-						onClose={() => {
-							// Just close the modal without doing anything
-							// The user can open the wizard manually later if they want
-							setWizardResumeModalOpen(false);
-							setWizardResumeState(null);
-						}}
+						onResume={handleWizardResume}
+						onStartFresh={handleWizardStartFresh}
+						onClose={handleWizardResumeClose}
 					/>
 				)}
 
@@ -3632,11 +3400,8 @@ function MaestroConsoleInner() {
  * MaestroConsole - Main application component with context providers
  *
  * Wraps MaestroConsoleInner with context providers for centralized state management.
- * Phase 3: InputProvider - centralized input state management
- * Phase 4: Group chat state now lives in groupChatStore (Zustand) — no context wrapper needed
- * Phase 5: Auto Run state now lives in batchStore (Zustand) — no context wrapper needed
- * Phase 6: Session state now lives in sessionStore (Zustand) — no context wrapper needed
- * Phase 7: InlineWizardProvider - inline /wizard command state management
+ * InputProvider - centralized input state management
+ * InlineWizardProvider - inline /wizard command state management
  */
 export default function MaestroConsole() {
 	return (

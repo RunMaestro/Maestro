@@ -13,17 +13,18 @@
  * directly. These will be migrated in a future cleanup pass.
  */
 
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, LeaderboardRegistration } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
-import { useSessionStore } from '../../stores/sessionStore';
+import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
 import { useAgentStore } from '../../stores/agentStore';
 import { useAgentErrorRecovery } from '../agent/useAgentErrorRecovery';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { CONDUCTOR_BADGES } from '../../constants/conductorBadges';
+import { gitService } from '../../services/git';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,6 +129,12 @@ export interface ModalHandlersReturn {
 
 	// LogViewer shortcut handler
 	handleLogViewerShortcutUsed: (shortcutId: string) => void;
+
+	// Git diff opener (Tier 3C)
+	handleViewGitDiff: () => Promise<void>;
+
+	// Director's Notes session navigation (Tier 3C)
+	handleDirectorNotesResumeSession: (sourceSessionId: string, agentSessionId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +153,8 @@ const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =
 
 export function useModalHandlers(
 	inputRef: React.RefObject<HTMLTextAreaElement | null>,
-	terminalOutputRef: React.RefObject<HTMLDivElement | null>
+	terminalOutputRef: React.RefObject<HTMLDivElement | null>,
+	handleResumeSessionRef?: React.MutableRefObject<((agentSessionId: string) => void) | null>
 ): ModalHandlersReturn {
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
@@ -749,6 +757,68 @@ export function useModalHandlers(
 	}, [settingsLoaded, sessionsLoaded]);
 
 	// ====================================================================
+	// Git Diff Opener (Tier 3C)
+	// ====================================================================
+
+	const activeSession = useSessionStore(selectActiveSession);
+
+	const handleViewGitDiff = useCallback(async () => {
+		if (!activeSession || !activeSession.isGitRepo) return;
+
+		const cwd =
+			activeSession.inputMode === 'terminal'
+				? activeSession.shellCwd || activeSession.cwd
+				: activeSession.cwd;
+		const sshRemoteId =
+			activeSession.sshRemoteId ||
+			(activeSession.sessionSshRemoteConfig?.enabled
+				? activeSession.sessionSshRemoteConfig.remoteId
+				: undefined) ||
+			undefined;
+		const diff = await gitService.getDiff(cwd, undefined, sshRemoteId);
+
+		if (diff.diff) {
+			getModalActions().setGitDiffPreview(diff.diff);
+		}
+	}, [activeSession]);
+
+	// ====================================================================
+	// Director's Notes Session Navigation (Tier 3C)
+	// ====================================================================
+
+	const pendingResumeRef = useRef<{ agentSessionId: string; targetSessionId: string } | null>(null);
+
+	const handleDirectorNotesResumeSession = useCallback(
+		(sourceSessionId: string, agentSessionId: string) => {
+			// Close the Director's Notes modal
+			getModalActions().setDirectorNotesOpen(false);
+
+			// If already on the right agent, resume directly
+			if (activeSession?.id === sourceSessionId) {
+				handleResumeSessionRef?.current?.(agentSessionId);
+				return;
+			}
+
+			// Switch to the target agent and defer resume until activeSession updates
+			pendingResumeRef.current = { agentSessionId, targetSessionId: sourceSessionId };
+			useSessionStore.getState().setActiveSessionId(sourceSessionId);
+		},
+		[activeSession?.id, handleResumeSessionRef]
+	);
+
+	// Effect: process pending resume after agent switch completes
+	useEffect(() => {
+		if (
+			pendingResumeRef.current &&
+			activeSession?.id === pendingResumeRef.current.targetSessionId
+		) {
+			const { agentSessionId } = pendingResumeRef.current;
+			pendingResumeRef.current = null;
+			handleResumeSessionRef?.current?.(agentSessionId);
+		}
+	}, [activeSession?.id, handleResumeSessionRef]);
+
+	// ====================================================================
 	// Return
 	// ====================================================================
 
@@ -847,5 +917,11 @@ export function useModalHandlers(
 
 		// LogViewer shortcut handler
 		handleLogViewerShortcutUsed,
+
+		// Git diff opener (Tier 3C)
+		handleViewGitDiff,
+
+		// Director's Notes session navigation (Tier 3C)
+		handleDirectorNotesResumeSession,
 	};
 }

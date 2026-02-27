@@ -13,6 +13,12 @@ vi.mock('../../../renderer/hooks/agent/useAgentErrorRecovery', () => ({
 	useAgentErrorRecovery: vi.fn().mockReturnValue({ recoveryActions: [] }),
 }));
 
+vi.mock('../../../renderer/services/git', () => ({
+	gitService: {
+		getDiff: vi.fn().mockResolvedValue({ diff: '' }),
+	},
+}));
+
 import { useModalHandlers } from '../../../renderer/hooks/modal/useModalHandlers';
 import { useModalStore, getModalActions } from '../../../renderer/stores/modalStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
@@ -20,6 +26,7 @@ import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 import { useGroupChatStore } from '../../../renderer/stores/groupChatStore';
 import { useAgentStore } from '../../../renderer/stores/agentStore';
 import { useAgentErrorRecovery } from '../../../renderer/hooks/agent/useAgentErrorRecovery';
+import { gitService } from '../../../renderer/services/git';
 import type { Session, AITab } from '../../../renderer/types';
 
 // ============================================================================
@@ -1706,6 +1713,172 @@ describe('useModalHandlers', () => {
 			});
 
 			expect(useModalStore.getState().isOpen('keyboardMastery')).toBe(false);
+		});
+	});
+
+	// ======================================================================
+	// Tier 3C: handleViewGitDiff + handleDirectorNotesResumeSession
+	// ======================================================================
+
+	describe('handleViewGitDiff', () => {
+		it('returns early when no active session', async () => {
+			useSessionStore.setState({ sessions: [], activeSessionId: '' });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).not.toHaveBeenCalled();
+		});
+
+		it('returns early when session is not a git repo', async () => {
+			const session = createMockSession({ isGitRepo: false });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).not.toHaveBeenCalled();
+		});
+
+		it('fetches diff using cwd and sets preview when diff exists', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				inputMode: 'ai',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({
+				diff: 'diff --git a/file.ts',
+			});
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).toHaveBeenCalledWith('/projects/my-repo', undefined, undefined);
+			expect(useModalStore.getState().isOpen('gitDiff')).toBe(true);
+			expect(useModalStore.getState().getData('gitDiff')?.diff).toBe('diff --git a/file.ts');
+		});
+
+		it('uses shellCwd when in terminal mode', async () => {
+			const session = createMockSession({
+				isGitRepo: true,
+				cwd: '/projects/my-repo',
+				shellCwd: '/projects/my-repo/subdir',
+				inputMode: 'terminal',
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+			(gitService.getDiff as ReturnType<typeof vi.fn>).mockResolvedValue({
+				diff: 'some diff',
+			});
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+
+			await act(async () => {
+				await result.current.handleViewGitDiff();
+			});
+
+			expect(gitService.getDiff).toHaveBeenCalledWith(
+				'/projects/my-repo/subdir',
+				undefined,
+				undefined
+			);
+		});
+	});
+
+	describe('handleDirectorNotesResumeSession', () => {
+		it('closes the director notes modal', () => {
+			getModalActions().setDirectorNotesOpen(true);
+
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
+		});
+
+		it('calls handleResumeSession directly when already on target session', () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+		});
+
+		it('defers resume when on different session, then resumes after activeSession change', () => {
+			const session1 = createMockSession({ id: 'session-1' });
+			const session2 = createMockSession({ id: 'session-2' });
+			useSessionStore.setState({
+				sessions: [session1, session2],
+				activeSessionId: 'session-2',
+			});
+
+			const resumeRef = { current: vi.fn() };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			// Call with sourceSessionId='session-1' while activeSession is session-2
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			// Should have switched to session-1
+			expect(useSessionStore.getState().activeSessionId).toBe('session-1');
+
+			// The setActiveSessionId triggers a store update + re-render within the same act(),
+			// which fires the pending resume effect synchronously. The resume should have been
+			// called with the deferred agentSessionId.
+			expect(resumeRef.current).toHaveBeenCalledWith('agent-sess-1');
+		});
+
+		it('does not call resume when ref is null', () => {
+			const session = createMockSession({ id: 'session-1' });
+			useSessionStore.setState({ sessions: [session], activeSessionId: session.id });
+
+			const resumeRef = { current: null };
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef(), resumeRef)
+			);
+
+			act(() => {
+				result.current.handleDirectorNotesResumeSession('session-1', 'agent-sess-1');
+			});
+
+			// Should not throw — no-op
+			expect(useModalStore.getState().isOpen('directorNotes')).toBe(false);
 		});
 	});
 });

@@ -29,7 +29,7 @@ import type {
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useUIStore } from '../../stores/uiStore';
-import { getModalActions } from '../../stores/modalStore';
+import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab, createTab } from '../../utils/tabHelpers';
 import { generateId } from '../../utils/ids';
@@ -53,11 +53,13 @@ import type { AgentSpawnResult } from '../agent/useAgentExecution';
 export interface UseWizardHandlersDeps {
 	/** Inline wizard context — the full return value from useInlineWizard */
 	inlineWizardContext: UseInlineWizardReturn;
-	/** Onboarding wizard context — state, completeWizard, clearResumeState */
+	/** Onboarding wizard context — state, completeWizard, clearResumeState, openWizard, restoreState */
 	wizardContext: {
 		state: WizardState;
 		completeWizard: (sessionId: string | null) => void;
 		clearResumeState: () => void;
+		openWizard: () => void;
+		restoreState: (state: Partial<WizardState>) => void;
 	};
 	/** Spawn a background synopsis for /history command */
 	spawnBackgroundSynopsis: (
@@ -122,6 +124,12 @@ export interface UseWizardHandlersReturn {
 	handleToggleWizardShowThinking: () => void;
 	/** Creates a new session from onboarding wizard with Auto Run configured */
 	handleWizardLaunchSession: (wantsTour: boolean) => Promise<void>;
+	/** Resume wizard from saved state, handling invalid agent/directory redirects */
+	handleWizardResume: (options?: { directoryInvalid?: boolean; agentInvalid?: boolean }) => void;
+	/** Clear saved state and open a fresh wizard */
+	handleWizardStartFresh: () => void;
+	/** Close the resume modal without action */
+	handleWizardResumeClose: () => void;
 }
 
 // ============================================================================
@@ -1232,6 +1240,72 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		]
 	);
 
+	// ====================================================================
+	// Wizard Resume Handlers (Tier 3D)
+	// ====================================================================
+
+	const handleWizardResume = useCallback(
+		(options?: { directoryInvalid?: boolean; agentInvalid?: boolean }) => {
+			const { setWizardResumeModalOpen, setWizardResumeState } = getModalActions();
+			const wizardResumeState = useModalStore.getState().getData('wizardResume')?.state ?? null;
+			if (!wizardResumeState) return;
+
+			// Close the resume modal
+			setWizardResumeModalOpen(false);
+
+			const { directoryInvalid = false, agentInvalid = false } = options || {};
+
+			if (agentInvalid) {
+				// Redirect to agent selection step with error
+				const modifiedState = {
+					...wizardResumeState,
+					currentStep: 'agent-selection' as const,
+					selectedAgent: null,
+				};
+				wizardContext.restoreState(modifiedState);
+			} else if (directoryInvalid) {
+				// Redirect to directory selection step with error
+				const modifiedState = {
+					...wizardResumeState,
+					currentStep: 'directory-selection' as const,
+					directoryError:
+						'The previously selected directory no longer exists. Please choose a new location.',
+					directoryPath: '',
+					isGitRepo: false,
+				};
+				wizardContext.restoreState(modifiedState);
+			} else {
+				// Restore the saved wizard state as-is
+				wizardContext.restoreState(wizardResumeState);
+			}
+
+			// Open the wizard at the restored step
+			wizardContext.openWizard();
+			// Clear the resume state holder
+			setWizardResumeState(null);
+		},
+		[wizardContext]
+	);
+
+	const handleWizardStartFresh = useCallback(() => {
+		const { setWizardResumeModalOpen, setWizardResumeState } = getModalActions();
+		// Close the resume modal
+		setWizardResumeModalOpen(false);
+		// Clear any saved resume state
+		wizardContext.clearResumeState();
+		// Open a fresh wizard
+		wizardContext.openWizard();
+		// Clear the resume state holder
+		setWizardResumeState(null);
+	}, [wizardContext]);
+
+	const handleWizardResumeClose = useCallback(() => {
+		const { setWizardResumeModalOpen, setWizardResumeState } = getModalActions();
+		// Just close the modal without doing anything
+		setWizardResumeModalOpen(false);
+		setWizardResumeState(null);
+	}, []);
+
 	return {
 		sendWizardMessageWithThinking,
 		handleHistoryCommand,
@@ -1243,5 +1317,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 		handleWizardLetsGo,
 		handleToggleWizardShowThinking,
 		handleWizardLaunchSession,
+		handleWizardResume,
+		handleWizardStartFresh,
+		handleWizardResumeClose,
 	};
 }
