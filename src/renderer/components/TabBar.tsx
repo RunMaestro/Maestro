@@ -801,7 +801,7 @@ const Tab = memo(function Tab({
 													style={{
 														color: theme.colors.textMain,
 														display: '-webkit-box',
-														WebkitLineClamp: 2,
+														WebkitLineClamp: 3,
 														WebkitBoxOrient: 'vertical',
 														overflow: 'hidden',
 													}}

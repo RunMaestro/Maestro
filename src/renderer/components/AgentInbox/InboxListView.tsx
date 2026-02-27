@@ -59,7 +59,8 @@ function buildRows(items: InboxItem[], sortMode: InboxSortMode): ListRow[] {
 	for (const item of items) {
 		// For 'grouped': group by Left Bar group name
 		// For 'byAgent': group by sessionId (unique) and display sessionName
-		const groupKey = sortMode === 'byAgent' ? item.sessionId : (item.groupName ?? 'Ungrouped');
+		const groupKey =
+			sortMode === 'byAgent' ? item.sessionId : (item.groupId ?? item.groupName ?? 'Ungrouped');
 		const groupName = sortMode === 'byAgent' ? item.sessionName : (item.groupName ?? 'Ungrouped');
 		if (groupKey !== lastGroupKey) {
 			rows.push({ type: 'header', groupKey, groupName });
@@ -1059,6 +1060,7 @@ export default function InboxListView({
 
 			{/* Body — virtualized list */}
 			<div
+				ref={containerRef as React.RefObject<HTMLDivElement>}
 				role="listbox"
 				tabIndex={0}
 				onKeyDown={handleKeyDown}
@@ -1144,6 +1146,12 @@ export default function InboxListView({
 											type="button"
 											key={`header-${row.groupKey}`}
 											className="outline-none"
+											onFocus={(e) => {
+												e.currentTarget.style.boxShadow = `inset 0 0 0 2px ${theme.colors.accent}`;
+											}}
+											onBlur={(e) => {
+												e.currentTarget.style.boxShadow = 'none';
+											}}
 											style={{
 												position: 'absolute',
 												top: 0,

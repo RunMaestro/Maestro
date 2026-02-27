@@ -1,8 +1,3 @@
-/* POLISH-04 Token Audit (@architect)
- * Line 267: bgActivity for dialog container — CORRECT (content)
- * All other usages: CORRECT
- */
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import InboxListView from './InboxListView';
 import FocusModeView from './FocusModeView';

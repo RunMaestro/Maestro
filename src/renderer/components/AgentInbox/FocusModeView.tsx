@@ -329,6 +329,12 @@ function SidebarFilter({
 						key={opt.value}
 						onClick={() => onChange(opt.value)}
 						className="text-[11px] px-2.5 py-1 rounded-full cursor-pointer transition-all"
+						onFocus={(e) => {
+							e.currentTarget.style.boxShadow = `0 0 0 2px ${theme.colors.accent}`;
+						}}
+						onBlur={(e) => {
+							e.currentTarget.style.boxShadow = 'none';
+						}}
 						style={{
 							backgroundColor: isActive ? `${theme.colors.accent}25` : 'transparent',
 							color: isActive ? theme.colors.accentText : theme.colors.textDim,
@@ -457,10 +463,17 @@ function FocusSidebar({
 										}
 									}}
 									className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] uppercase tracking-wider cursor-pointer"
+									onFocus={(e) => {
+										e.currentTarget.style.boxShadow = `inset 0 0 0 2px ${theme.colors.accent}`;
+									}}
+									onBlur={(e) => {
+										e.currentTarget.style.boxShadow = 'none';
+									}}
 									style={{
 										color: theme.colors.textDim,
 										fontWeight: 600,
 										backgroundColor: theme.colors.bgSidebar,
+										outline: 'none',
 									}}
 								>
 									{collapsedGroups.has(row.groupKey) ? (
