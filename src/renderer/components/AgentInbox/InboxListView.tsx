@@ -809,7 +809,9 @@ export default function InboxListView({
 	const getHeaderFocusables = useCallback((): HTMLElement[] => {
 		if (!headerRef.current) return [];
 		return Array.from(
-			headerRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), [tabindex="0"]')
+			headerRef.current.querySelectorAll<HTMLElement>(
+				'button:not(:disabled), [tabindex="0"]:not([aria-disabled="true"])'
+			)
 		);
 	}, []);
 
