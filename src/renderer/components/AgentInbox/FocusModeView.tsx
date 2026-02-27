@@ -599,7 +599,7 @@ export default function FocusModeView({
 	const hasValidContext = item.contextUsage !== undefined && !isNaN(item.contextUsage);
 
 	// ---- Resizable sidebar ----
-	const [sidebarWidth, setSidebarWidth] = useState(220);
+	const [sidebarWidth, setSidebarWidth] = useState(300);
 	const sidebarWidthRef = useRef(sidebarWidth);
 	sidebarWidthRef.current = sidebarWidth;
 	const isResizingRef = useRef(false);
@@ -623,7 +623,7 @@ export default function FocusModeView({
 
 		const onMouseMove = (ev: MouseEvent) => {
 			if (!isResizingRef.current) return;
-			const newWidth = Math.max(160, Math.min(400, startWidth + (ev.clientX - startX)));
+			const newWidth = Math.max(200, Math.min(440, startWidth + (ev.clientX - startX)));
 			setSidebarWidth(newWidth);
 		};
 
@@ -955,10 +955,10 @@ export default function FocusModeView({
 					onKeyDown={(e) => {
 						if (e.key === 'ArrowLeft') {
 							e.preventDefault();
-							setSidebarWidth((w) => Math.max(160, w - 16));
+							setSidebarWidth((w) => Math.max(200, w - 16));
 						} else if (e.key === 'ArrowRight') {
 							e.preventDefault();
-							setSidebarWidth((w) => Math.min(400, w + 16));
+							setSidebarWidth((w) => Math.min(440, w + 16));
 						}
 					}}
 					style={{
@@ -1129,13 +1129,13 @@ export default function FocusModeView({
 					borderColor: theme.colors.border,
 				}}
 			>
-				{/* Prev button */}
+				{/* Prev button with shortcut badge */}
 				<button
 					onClick={() => onNavigateItem((currentIndex - 1 + items.length) % items.length)}
 					disabled={items.length <= 1}
 					aria-disabled={items.length <= 1 ? 'true' : undefined}
 					aria-label="Previous item"
-					className="flex items-center gap-1 text-xs px-3 py-1.5 rounded transition-colors"
+					className="flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors"
 					style={{
 						border: `1px solid ${theme.colors.border}`,
 						color: items.length > 1 ? theme.colors.textMain : theme.colors.textDim,
@@ -1150,13 +1150,22 @@ export default function FocusModeView({
 					onMouseLeave={(e) => {
 						e.currentTarget.style.backgroundColor = 'transparent';
 					}}
-					title="Previous item (⌘←)"
+					title="Previous item (⌘[)"
 				>
 					<ChevronLeft className="w-3 h-3" />
 					Prev
+					<kbd
+						className="text-[10px] px-1.5 py-0.5 rounded"
+						style={{
+							backgroundColor: `${theme.colors.border}60`,
+							color: theme.colors.textDim,
+						}}
+					>
+						⌘[
+					</kbd>
 				</button>
 
-				{/* Center: counter + keyboard hints */}
+				{/* Center: counter + Esc hint */}
 				<div className="flex flex-col items-center gap-0.5">
 					<span
 						aria-live="polite"
@@ -1166,17 +1175,17 @@ export default function FocusModeView({
 						{currentIndex + 1} / {items.length}
 					</span>
 					<span className="text-xs" style={{ color: theme.colors.textDim, opacity: 0.6 }}>
-						⌘←→ Navigate · Esc Back
+						Esc Back
 					</span>
 				</div>
 
-				{/* Next button */}
+				{/* Next button with shortcut badge */}
 				<button
 					onClick={() => onNavigateItem((currentIndex + 1) % items.length)}
 					disabled={items.length <= 1}
 					aria-disabled={items.length <= 1 ? 'true' : undefined}
 					aria-label="Next item"
-					className="flex items-center gap-1 text-xs px-3 py-1.5 rounded transition-colors"
+					className="flex items-center gap-2 text-xs px-3 py-1.5 rounded transition-colors"
 					style={{
 						border: `1px solid ${theme.colors.border}`,
 						color: items.length > 1 ? theme.colors.textMain : theme.colors.textDim,
@@ -1191,8 +1200,17 @@ export default function FocusModeView({
 					onMouseLeave={(e) => {
 						e.currentTarget.style.backgroundColor = 'transparent';
 					}}
-					title="Next item (⌘→)"
+					title="Next item (⌘])"
 				>
+					<kbd
+						className="text-[10px] px-1.5 py-0.5 rounded"
+						style={{
+							backgroundColor: `${theme.colors.border}60`,
+							color: theme.colors.textDim,
+						}}
+					>
+						⌘]
+					</kbd>
 					Next
 					<ChevronRight className="w-3 h-3" />
 				</button>
