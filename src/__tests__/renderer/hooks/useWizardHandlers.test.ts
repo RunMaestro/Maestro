@@ -611,11 +611,49 @@ describe('useWizardHandlers', () => {
 			const session = createMockSession({ aiTabs: [tab] });
 			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
 
-			const sendMessage = vi.fn().mockResolvedValue(undefined);
+			// Capture store state at the moment sendMessage is called to verify clearing happened before send
+			let stateAtSendTime: any = null;
+			const sendMessage = vi.fn().mockImplementation(() => {
+				const tab = useSessionStore.getState().sessions[0]?.aiTabs[0];
+				stateAtSendTime = {
+					thinkingContent: tab?.wizardState?.thinkingContent,
+					toolExecutions: tab?.wizardState?.toolExecutions,
+				};
+				return Promise.resolve(undefined);
+			});
+
+			// getStateForTab must return a valid wizard state so the sync effect
+			// preserves (rather than strips) the tab's wizardState before send
+			const mockInlineState = {
+				isActive: true,
+				isWaiting: false,
+				mode: 'new',
+				goal: null,
+				confidence: 50,
+				ready: false,
+				conversationHistory: [],
+				previousUIState: {
+					readOnlyMode: false,
+					saveToHistory: true,
+					showThinking: 'off',
+				},
+				error: null,
+				isGeneratingDocs: false,
+				generatedDocuments: [],
+				streamingContent: '',
+				currentDocumentIndex: 0,
+				generationProgress: null,
+				projectPath: null,
+				subfolderPath: null,
+				agentSessionId: null,
+				subfolderName: null,
+			};
 			const deps = createMockDeps({
 				inlineWizardContext: {
 					...createMockDeps().inlineWizardContext,
 					sendMessage,
+					getStateForTab: vi.fn(() => mockInlineState),
+					isWizardActiveForTab: vi.fn(() => true),
 				} as any,
 			});
 
@@ -625,9 +663,10 @@ describe('useWizardHandlers', () => {
 				await result.current.sendWizardMessageWithThinking('Test');
 			});
 
-			// The session should have been updated to clear thinking content
-			// This happens via setSessions before calling sendMessage
+			// Verify thinking content and tool executions were cleared before sendMessage was called
 			expect(sendMessage).toHaveBeenCalled();
+			expect(stateAtSendTime?.thinkingContent).toBe('');
+			expect(stateAtSendTime?.toolExecutions).toEqual([]);
 		});
 
 		it('routes thinking chunks to tab wizard state when showWizardThinking is on', async () => {

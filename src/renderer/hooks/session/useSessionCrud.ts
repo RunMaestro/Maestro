@@ -141,14 +141,13 @@ export function useSessionCrud(deps: UseSessionCrudDeps): UseSessionCrudReturn {
 				workingDirOverride?: string;
 			}
 		) => {
-			// Get agent definition to get correct command
-			const agent = await (window as any).maestro.agents.get(agentId);
-			if (!agent) {
-				console.error(`Agent not found: ${agentId}`);
-				return;
-			}
-
 			try {
+				// Get agent definition to get correct command
+				const agent = await (window as any).maestro.agents.get(agentId);
+				if (!agent) {
+					console.error(`Agent not found: ${agentId}`);
+					return;
+				}
 				const currentSessions = useSessionStore.getState().sessions;
 				const validation = validateNewSession(
 					name,

@@ -1164,7 +1164,9 @@ describe('SessionList', () => {
 
 		it("shows Director's Notes menu item in hamburger menu", () => {
 			useUIStore.setState({ leftSidebarOpen: true });
-			useSettingsStore.setState({ encoreFeatures: { directorNotes: true } });
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, directorNotes: true },
+			});
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 
@@ -1176,7 +1178,9 @@ describe('SessionList', () => {
 
 		it("opens Director's Notes modal from menu", () => {
 			useUIStore.setState({ leftSidebarOpen: true });
-			useSettingsStore.setState({ encoreFeatures: { directorNotes: true } });
+			useSettingsStore.setState({
+				encoreFeatures: { ...useSettingsStore.getState().encoreFeatures, directorNotes: true },
+			});
 			const props = createDefaultProps({});
 			render(<SessionList {...props} />);
 

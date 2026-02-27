@@ -2415,7 +2415,7 @@ function MaestroConsoleInner() {
 
 			// Process the first queued item from each session
 			// Delay to ensure all refs and handlers are set up
-			setTimeout(() => {
+			const startupTimerId = setTimeout(() => {
 				sessionsWithQueuedItems.forEach((session) => {
 					const firstItem = session.executionQueue[0];
 					console.log(`[App] Processing leftover queued item for session ${session.id}:`, {
@@ -2460,7 +2460,7 @@ function MaestroConsoleInner() {
 					// Process the item
 					processQueuedItem(session.id, firstItem).catch((err) => {
 						console.error(`[App] Failed to process queued item for session ${session.id}:`, err);
-						// Reset session busy state so the queue isn't permanently stuck
+						// Reset session busy state and re-queue the failed item so it isn't lost
 						setSessions((prev) =>
 							prev.map((s) => {
 								if (s.id !== session.id) return s;
@@ -2469,6 +2469,7 @@ function MaestroConsoleInner() {
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
+									executionQueue: [firstItem, ...s.executionQueue],
 									aiTabs: s.aiTabs.map((tab) =>
 										tab.state === 'busy'
 											? { ...tab, state: 'idle' as const, thinkingStartTime: undefined }
@@ -2480,6 +2481,7 @@ function MaestroConsoleInner() {
 					});
 				});
 			}, 500); // Small delay to ensure everything is initialized
+			return () => clearTimeout(startupTimerId);
 		}
 	}, [sessionsLoaded, sessions]);
 

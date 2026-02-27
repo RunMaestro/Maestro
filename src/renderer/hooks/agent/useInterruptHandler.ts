@@ -65,10 +65,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 				? `${activeSession.id}-ai-${activeTab?.id || 'default'}`
 				: `${activeSession.id}-terminal`;
 
+		// Cancel any pending synopsis processes (non-critical, shouldn't block interrupt)
 		try {
-			// Cancel any pending synopsis processes for this session
 			await cancelPendingSynopsis(activeSession.id);
+		} catch (synopsisErr) {
+			console.warn('[useInterruptHandler] Failed to cancel pending synopsis:', synopsisErr);
+		}
 
+		try {
 			// Send interrupt signal (Ctrl+C)
 			await (window as any).maestro.process.interrupt(targetSessionId);
 
@@ -342,21 +346,13 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 
 							// No queued items, just go to idle and clear thinking logs
 							if (currentMode === 'ai') {
-								const tab = getActiveTab(s);
-								if (!tab)
-									return {
-										...updatedSession,
-										state: 'idle',
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									};
 								return {
 									...updatedSession,
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
 									aiTabs: updatedSession.aiTabs.map((t) => {
-										if (t.id === tab.id) {
+										if (t.state === 'busy') {
 											const logsWithoutThinkingOrTools = t.logs.filter(
 												(log) => log.source !== 'thinking' && log.source !== 'tool'
 											);
@@ -406,22 +402,14 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 						prev.map((s) => {
 							if (s.id !== activeSession.id) return s;
 							if (currentMode === 'ai') {
-								const tab = getActiveTab(s);
-								if (!tab)
-									return {
-										...s,
-										state: 'idle',
-										busySource: undefined,
-										thinkingStartTime: undefined,
-									};
+								const activeTabForError = getActiveTab(s);
 								return {
 									...s,
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
 									aiTabs: s.aiTabs.map((t) => {
-										if (t.id === tab.id) {
-											// Clear thinking/tool logs even on error
+										if (t.id === activeTabForError?.id || t.state === 'busy') {
 											const logsWithoutThinkingOrTools = t.logs.filter(
 												(log) => log.source !== 'thinking' && log.source !== 'tool'
 											);
@@ -429,7 +417,10 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 												...t,
 												state: 'idle' as const,
 												thinkingStartTime: undefined,
-												logs: [...logsWithoutThinkingOrTools, errorLog],
+												logs:
+													t.id === activeTabForError?.id
+														? [...logsWithoutThinkingOrTools, errorLog]
+														: logsWithoutThinkingOrTools,
 											};
 										}
 										return t;
