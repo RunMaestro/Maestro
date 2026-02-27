@@ -472,6 +472,9 @@ const Tab = memo(function Tab({
 			}
 			setIsEditingDescription(false);
 			setDescriptionDraft(trimmed || (tab.description ?? ''));
+			requestAnimationFrame(() => {
+				descriptionButtonRef.current?.focus();
+			});
 		},
 		[onUpdateTabDescription, tabId, tab.description]
 	);
@@ -479,6 +482,9 @@ const Tab = memo(function Tab({
 	const handleDescriptionCancel = useCallback(() => {
 		setDescriptionDraft(tab.description ?? '');
 		setIsEditingDescription(false);
+		requestAnimationFrame(() => {
+			descriptionButtonRef.current?.focus();
+		});
 	}, [tab.description]);
 
 	const handleDescriptionKeyDown = useCallback(
