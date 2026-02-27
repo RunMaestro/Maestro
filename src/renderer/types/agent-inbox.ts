@@ -1,4 +1,4 @@
-import type { SessionState } from './index';
+import type { SessionState, ToolType } from './index';
 
 export interface InboxItem {
 	sessionId: string;
@@ -7,7 +7,7 @@ export interface InboxItem {
 	groupName?: string;
 	sessionName: string;
 	tabName?: string;
-	toolType: string;
+	toolType: ToolType;
 	gitBranch?: string;
 	contextUsage?: number; // 0-100, undefined = unknown
 	lastMessage: string; // truncated to 90 chars

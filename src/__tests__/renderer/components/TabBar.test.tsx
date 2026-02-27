@@ -5871,6 +5871,73 @@ describe('TabBar description section', () => {
 		expect(mockOnUpdateTabDescription).toHaveBeenCalledWith('tab-1', 'New description');
 	});
 
+	it('pressing Enter with whitespace-only description clears to empty string', () => {
+		const tabs = [
+			createTab({
+				id: 'tab-1',
+				name: 'Tab 1',
+				agentSessionId: 'session-1',
+				description: 'Old description',
+			}),
+		];
+
+		render(
+			<TabBar
+				tabs={tabs}
+				activeTabId="tab-1"
+				theme={mockThemeDesc}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				onUpdateTabDescription={mockOnUpdateTabDescription}
+			/>
+		);
+
+		openOverlay('Tab 1');
+
+		const descButton = screen.getByLabelText('Edit tab description');
+		fireEvent.click(descButton);
+
+		const textarea = screen.getByLabelText('Tab description');
+		fireEvent.change(textarea, { target: { value: '   ' } });
+		fireEvent.keyDown(textarea, { key: 'Enter' });
+
+		expect(mockOnUpdateTabDescription).toHaveBeenCalledWith('tab-1', '');
+	});
+
+	it('pressing Enter with whitespace-only on tab without description does not call handler', () => {
+		const tabs = [
+			createTab({
+				id: 'tab-1',
+				name: 'Tab 1',
+				agentSessionId: 'session-1',
+			}),
+		];
+
+		render(
+			<TabBar
+				tabs={tabs}
+				activeTabId="tab-1"
+				theme={mockThemeDesc}
+				onTabSelect={mockOnTabSelect}
+				onTabClose={mockOnTabClose}
+				onNewTab={mockOnNewTab}
+				onUpdateTabDescription={mockOnUpdateTabDescription}
+			/>
+		);
+
+		openOverlay('Tab 1');
+
+		const descButton = screen.getByLabelText('Add tab description');
+		fireEvent.click(descButton);
+
+		const textarea = screen.getByLabelText('Tab description');
+		fireEvent.change(textarea, { target: { value: '   ' } });
+		fireEvent.keyDown(textarea, { key: 'Enter' });
+
+		expect(mockOnUpdateTabDescription).not.toHaveBeenCalled();
+	});
+
 	it('pressing Escape in textarea exits edit mode without calling handler', () => {
 		const tabs = [
 			createTab({
