@@ -167,7 +167,7 @@ export async function getExpandedEnvWithShell(): Promise<NodeJS.ProcessEnv> {
 			logger.debug('Shell PATH probe failed; using base expanded env', LOG_CONTEXT, { err });
 		} catch {
 			// Safe fallback if logger is not available
-			 
+
 			console.debug('Shell PATH probe failed; using base expanded env', err);
 		}
 		return env;
