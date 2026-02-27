@@ -238,6 +238,7 @@ const Tab = memo(function Tab({
 	const [showCopied, setShowCopied] = useState(false);
 	const [isEditingDescription, setIsEditingDescription] = useState(false);
 	const [descriptionDraft, setDescriptionDraft] = useState(tab.description ?? '');
+	const descriptionDraftRef = useRef(descriptionDraft);
 	const [overlayPosition, setOverlayPosition] = useState<{
 		top: number;
 		left: number;
@@ -503,6 +504,23 @@ const Tab = memo(function Tab({
 			setDescriptionDraft(tab.description ?? '');
 		}
 	}, [tab.description, isEditingDescription]);
+
+	// Keep ref in sync with latest draft value to avoid stale closures in cleanup
+	useEffect(() => {
+		descriptionDraftRef.current = descriptionDraft;
+	}, [descriptionDraft]);
+
+	// Save description draft when overlay closes while editing
+	useEffect(() => {
+		if (!overlayOpen && isEditingDescription) {
+			const draft = descriptionDraftRef.current.trim();
+			if (draft !== (tab.description ?? '')) {
+				onUpdateTabDescription?.(tabId, draft);
+			}
+			setIsEditingDescription(false);
+			setDescriptionDraft(draft || (tab.description ?? ''));
+		}
+	}, [overlayOpen, isEditingDescription, tab.description, onUpdateTabDescription, tabId]);
 
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
