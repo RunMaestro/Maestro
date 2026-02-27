@@ -202,11 +202,7 @@ export default function AgentInbox({
 
 	// ---- Compute dialog dimensions (focus mode or expanded → wide) ----
 	const isWide = isExpanded || viewMode === 'focus';
-	const expandedWidth = Math.min(
-		typeof window !== 'undefined' ? window.innerWidth * 0.92 : 1400,
-		1400
-	);
-	const dialogWidth = viewMode === 'focus' ? expandedWidth : isWide ? expandedWidth : 1100;
+	const dialogWidth = '75vw';
 	const dialogHeight = viewMode === 'focus' ? '85vh' : undefined;
 	const dialogMaxHeight = viewMode === 'focus' ? undefined : isWide ? '90vh' : '80vh';
 
