@@ -4,6 +4,7 @@ import type { InboxItem, InboxFilterMode, InboxSortMode } from '../types/agent-i
 
 const MAX_MESSAGE_LENGTH = 90;
 const DEFAULT_MESSAGE = 'No activity yet';
+const ELLIPSIS = '...';
 
 /**
  * Determines whether a session/tab combination should be included
@@ -46,7 +47,8 @@ function getTabDisplayName(
  */
 export function truncate(text: string): string {
 	if (text.length <= MAX_MESSAGE_LENGTH) return text;
-	return text.slice(0, MAX_MESSAGE_LENGTH) + '...';
+	const maxWithoutEllipsis = Math.max(0, MAX_MESSAGE_LENGTH - ELLIPSIS.length);
+	return text.slice(0, maxWithoutEllipsis) + ELLIPSIS;
 }
 
 /**
@@ -226,7 +228,7 @@ export function useAgentInbox(
 					groupId: session.groupId ?? undefined,
 					groupName: parentGroup?.name ?? undefined,
 					sessionName: session.name,
-					tabName: tabs.length > 1 ? getTabDisplayName(tab, tabIdx) : undefined,
+					tabName: getTabDisplayName(tab, tabIdx),
 					toolType: session.toolType,
 					gitBranch: session.worktreeBranch ?? undefined,
 					contextUsage: session.contextUsage ?? undefined,

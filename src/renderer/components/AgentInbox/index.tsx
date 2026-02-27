@@ -250,8 +250,15 @@ export default function AgentInbox({
 				return;
 			}
 
-			// Delegate to InboxListView's keyboard handler in list mode
-			if (viewMode === 'list' && listKeyDownRef.current) {
+			// Delegate only when the shell container itself is focused.
+			// Avoid re-processing events already handled inside InboxListView.
+			if (
+				viewMode === 'list' &&
+				listKeyDownRef.current &&
+				!e.defaultPrevented &&
+				e.target === e.currentTarget
+			) {
+				e.stopPropagation();
 				listKeyDownRef.current(e);
 			}
 		},

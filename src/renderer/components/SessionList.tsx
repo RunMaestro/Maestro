@@ -2111,7 +2111,7 @@ function SessionListInner(props: SessionListProps) {
 													className="text-[11px] leading-relaxed"
 													style={{ color: theme.colors.textDim }}
 												>
-													Control your AI sessions from your phone or tablet.
+													Control your AI agents from your phone or tablet.
 													{tunnelStatus === 'connected' ? (
 														<span className="text-blue-400">
 															{' '}

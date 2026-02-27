@@ -1538,6 +1538,30 @@ function MaestroConsoleInner() {
 	// Ref for processInput — populated after useInputHandlers (declared later in component).
 	// Handlers below close over this ref so they always call the latest version.
 	const inboxProcessInputRef = useRef<(text?: string) => void>(() => {});
+	const [pendingInboxQuickReply, setPendingInboxQuickReply] = useState<{
+		targetSessionId: string;
+		previousActiveSessionId: string | null;
+		text: string;
+	} | null>(null);
+
+	// Flush pending quick-reply once target session is active (deterministic, no RAF timing chain).
+	useEffect(() => {
+		if (!pendingInboxQuickReply) return;
+		if (activeSession?.id !== pendingInboxQuickReply.targetSessionId) return;
+
+		inboxProcessInputRef.current(pendingInboxQuickReply.text);
+		const previousActiveSessionId = pendingInboxQuickReply.previousActiveSessionId;
+		setPendingInboxQuickReply(null);
+
+		if (
+			previousActiveSessionId &&
+			previousActiveSessionId !== pendingInboxQuickReply.targetSessionId
+		) {
+			queueMicrotask(() => {
+				setActiveSessionId(previousActiveSessionId);
+			});
+		}
+	}, [pendingInboxQuickReply, activeSession?.id, setActiveSessionId]);
 
 	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
 	const handleAgentInboxQuickReply = useCallback(
@@ -1561,17 +1585,13 @@ function MaestroConsoleInner() {
 				})
 			);
 
-			// Temporarily switch to the target session so processInput sends to it
-			setActiveSessionId(sessionId);
-			requestAnimationFrame(() => {
-				inboxProcessInputRef.current(text);
-				// Restore previous active session so AI response triggers unread marker
-				requestAnimationFrame(() => {
-					if (previousActiveSessionId && previousActiveSessionId !== sessionId) {
-						setActiveSessionId(previousActiveSessionId);
-					}
-				});
+			// Switch to target session and let the effect above send once state is committed.
+			setPendingInboxQuickReply({
+				targetSessionId: sessionId,
+				previousActiveSessionId,
+				text,
 			});
+			setActiveSessionId(sessionId);
 		},
 		[setSessions, setActiveSessionId, activeSessionIdRef]
 	);

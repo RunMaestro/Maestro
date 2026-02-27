@@ -365,9 +365,11 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	updateModalData: (id, data) => {
 		set((state) => {
 			const current = state.modals.get(id);
-			if (!current || !current.data) return state;
+			if (!current) return state;
 			const newModals = new Map(state.modals);
-			const mergedData = Object.assign({}, current.data, data);
+
+			const baseData = current.data ?? {};
+			const mergedData = Object.assign({}, baseData, data);
 			newModals.set(id, {
 				...current,
 				data: mergedData,

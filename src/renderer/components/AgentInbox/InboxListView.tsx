@@ -46,7 +46,7 @@ const EMPTY_STATE_MESSAGES: Record<InboxFilterMode, { text: string; showIcon: bo
 // Grouped list model: interleaves group headers with items when sort = 'grouped'
 // ============================================================================
 type ListRow =
-	| { type: 'header'; groupName: string }
+	| { type: 'header'; groupKey: string; groupName: string }
 	| { type: 'item'; item: InboxItem; index: number };
 
 function buildRows(items: InboxItem[], sortMode: InboxSortMode): ListRow[] {
@@ -54,15 +54,16 @@ function buildRows(items: InboxItem[], sortMode: InboxSortMode): ListRow[] {
 		return items.map((item, index) => ({ type: 'item' as const, item, index }));
 	}
 	const rows: ListRow[] = [];
-	let lastGroup: string | null = null;
+	let lastGroupKey: string | null = null;
 	let itemIndex = 0;
 	for (const item of items) {
 		// For 'grouped': group by Left Bar group name
-		// For 'byAgent': group by session/agent name
-		const groupKey = sortMode === 'byAgent' ? item.sessionName : (item.groupName ?? 'Ungrouped');
-		if (groupKey !== lastGroup) {
-			rows.push({ type: 'header', groupName: groupKey });
-			lastGroup = groupKey;
+		// For 'byAgent': group by sessionId (unique) and display sessionName
+		const groupKey = sortMode === 'byAgent' ? item.sessionId : (item.groupName ?? 'Ungrouped');
+		const groupName = sortMode === 'byAgent' ? item.sessionName : (item.groupName ?? 'Ungrouped');
+		if (groupKey !== lastGroupKey) {
+			rows.push({ type: 'header', groupKey, groupName });
+			lastGroupKey = groupKey;
 		}
 		rows.push({ type: 'item', item, index: itemIndex });
 		itemIndex++;
@@ -406,7 +407,7 @@ function SegmentedControl<T extends string>({
 // ============================================================================
 function InboxStatsStrip({ items, theme }: { items: InboxItem[]; theme: Theme }) {
 	const stats = useMemo(() => {
-		const uniqueAgents = new Set(items.map((i) => i.sessionName)).size;
+		const uniqueAgents = new Set(items.map((i) => i.sessionId)).size;
 		const unread = items.filter((i) => i.hasUnread).length;
 		const needsInput = items.filter((i) => i.state === 'waiting_input').length;
 		const highContext = items.filter(
@@ -481,7 +482,7 @@ const FILTER_OPTIONS: { value: InboxFilterMode; label: string }[] = [
 
 // Track the identity of the selected row so we can re-find it after rows change
 type RowIdentity =
-	| { type: 'header'; groupName: string }
+	| { type: 'header'; groupKey: string }
 	| { type: 'item'; sessionId: string; tabId: string };
 
 export default function InboxListView({
@@ -516,13 +517,13 @@ export default function InboxListView({
 		updateAgentInboxData({ filterMode, sortMode, isExpanded });
 	}, [filterMode, sortMode, isExpanded]);
 
-	const toggleGroup = useCallback((groupName: string) => {
+	const toggleGroup = useCallback((groupKey: string) => {
 		setCollapsedGroups((prev) => {
 			const next = new Set(prev);
-			if (next.has(groupName)) {
-				next.delete(groupName);
+			if (next.has(groupKey)) {
+				next.delete(groupKey);
 			} else {
-				next.add(groupName);
+				next.add(groupKey);
 			}
 			return next;
 		});
@@ -538,8 +539,8 @@ export default function InboxListView({
 		if (sortMode === 'byAgent' && prev !== 'byAgent') {
 			const agentUnreads = new Map<string, number>();
 			for (const item of items) {
-				const count = agentUnreads.get(item.sessionName) ?? 0;
-				agentUnreads.set(item.sessionName, count + (item.hasUnread ? 1 : 0));
+				const count = agentUnreads.get(item.sessionId) ?? 0;
+				agentUnreads.set(item.sessionId, count + (item.hasUnread ? 1 : 0));
 			}
 			const toCollapse = new Set<string>();
 			for (const [agent, count] of agentUnreads) {
@@ -558,7 +559,7 @@ export default function InboxListView({
 		return allRows.filter((row) => {
 			if (row.type === 'header') return true;
 			const collapseKey =
-				sortMode === 'byAgent' ? row.item.sessionName : (row.item.groupName ?? 'Ungrouped');
+				sortMode === 'byAgent' ? row.item.sessionId : (row.item.groupName ?? 'Ungrouped');
 			return !collapsedGroups.has(collapseKey);
 		});
 	}, [allRows, collapsedGroups, sortMode]);
@@ -600,7 +601,7 @@ export default function InboxListView({
 			return;
 		}
 		if (row.type === 'header') {
-			selectedRowIdentityRef.current = { type: 'header', groupName: row.groupName };
+			selectedRowIdentityRef.current = { type: 'header', groupKey: row.groupKey };
 		} else {
 			selectedRowIdentityRef.current = {
 				type: 'item',
@@ -630,7 +631,7 @@ export default function InboxListView({
 			if (
 				identity.type === 'header' &&
 				currentRow.type === 'header' &&
-				currentRow.groupName === identity.groupName
+				currentRow.groupKey === identity.groupKey
 			) {
 				return; // Still correct
 			}
@@ -647,7 +648,7 @@ export default function InboxListView({
 		// Identity drifted — search for the old identity in the new rows
 		for (let i = 0; i < rows.length; i++) {
 			const r = rows[i];
-			if (identity.type === 'header' && r.type === 'header' && r.groupName === identity.groupName) {
+			if (identity.type === 'header' && r.type === 'header' && r.groupKey === identity.groupKey) {
 				setSelectedRowIndex(i);
 				return;
 			}
@@ -863,7 +864,7 @@ export default function InboxListView({
 				const row = rows[selectedRowIndex];
 				if (!row) return;
 				if (row.type === 'header') {
-					toggleGroup(row.groupName);
+					toggleGroup(row.groupKey);
 				} else {
 					handleNavigate(row.item);
 				}
@@ -877,10 +878,10 @@ export default function InboxListView({
 					const row = rows[selectedRowIndex];
 					if (!row) return;
 					if (row.type === 'header') {
-						toggleGroup(row.groupName);
+						toggleGroup(row.groupKey);
 					} else {
 						const groupKey =
-							sortMode === 'byAgent' ? row.item.sessionName : (row.item.groupName ?? 'Ungrouped');
+							sortMode === 'byAgent' ? row.item.sessionId : (row.item.groupName ?? 'Ungrouped');
 						toggleGroup(groupKey);
 					}
 				}
@@ -1120,7 +1121,7 @@ export default function InboxListView({
 								const isRowSelected = virtualRow.index === selectedRowIndex;
 
 								if (row.type === 'header') {
-									const isCollapsed = collapsedGroups.has(row.groupName);
+									const isCollapsed = collapsedGroups.has(row.groupKey);
 
 									// For byAgent mode: derive agent type label and unread count from subsequent rows
 									let agentToolType: string | undefined;
@@ -1139,7 +1140,7 @@ export default function InboxListView({
 									return (
 										<button
 											type="button"
-											key={`header-${row.groupName}`}
+											key={`header-${row.groupKey}`}
 											className="outline-none"
 											style={{
 												position: 'absolute',
@@ -1167,11 +1168,11 @@ export default function InboxListView({
 												borderRight: 'none',
 												textAlign: 'left',
 											}}
-											onClick={() => toggleGroup(row.groupName)}
+											onClick={() => toggleGroup(row.groupKey)}
 											onKeyDown={(e) => {
 												if (e.key === 'Enter' || e.key === ' ') {
 													e.preventDefault();
-													toggleGroup(row.groupName);
+													toggleGroup(row.groupKey);
 												}
 											}}
 										>

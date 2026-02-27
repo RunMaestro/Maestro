@@ -377,26 +377,35 @@ function FocusSidebar({
 		const effectiveSort = sortMode ?? 'newest';
 		const useGroupName = effectiveSort === 'grouped';
 
-		// Collect items per group key, preserving original index
-		const groupMap = new Map<string, { item: InboxItem; index: number }[]>();
+		// Collect items per unique group key, preserving original index
+		const groupMap = new Map<
+			string,
+			{ groupName: string; items: { item: InboxItem; index: number }[] }
+		>();
 		const groupOrder: string[] = [];
 		items.forEach((itm, idx) => {
-			const groupKey = useGroupName ? (itm.groupName ?? 'Ungrouped') : itm.sessionName;
+			const groupKey = useGroupName ? (itm.groupName ?? 'Ungrouped') : itm.sessionId;
+			const groupName = useGroupName ? (itm.groupName ?? 'Ungrouped') : itm.sessionName;
 			if (!groupMap.has(groupKey)) {
-				groupMap.set(groupKey, []);
+				groupMap.set(groupKey, { groupName, items: [] });
 				groupOrder.push(groupKey);
 			}
-			groupMap.get(groupKey)!.push({ item: itm, index: idx });
+			groupMap.get(groupKey)!.items.push({ item: itm, index: idx });
 		});
 
 		const result: (
-			| { type: 'header'; groupName: string; count: number }
+			| { type: 'header'; groupKey: string; groupName: string; count: number }
 			| { type: 'item'; item: InboxItem; index: number }
 		)[] = [];
 		for (const groupKey of groupOrder) {
-			const groupItems = groupMap.get(groupKey)!;
-			result.push({ type: 'header', groupName: groupKey, count: groupItems.length });
-			for (const entry of groupItems) {
+			const group = groupMap.get(groupKey)!;
+			result.push({
+				type: 'header',
+				groupKey,
+				groupName: group.groupName,
+				count: group.items.length,
+			});
+			for (const entry of group.items) {
 				result.push({ type: 'item', item: entry.item, index: entry.index });
 			}
 		}
@@ -420,18 +429,18 @@ function FocusSidebar({
 					let activeGroup: string | null = null;
 					return rows.map((row, rowIdx) => {
 						if (row.type === 'header') {
-							activeGroup = row.groupName;
+							activeGroup = row.groupKey;
 							return (
 								<div
-									key={`header-${row.groupName}-${rowIdx}`}
+									key={`header-${row.groupKey}-${rowIdx}`}
 									tabIndex={0}
 									role="option"
 									aria-selected={false}
 									onClick={() => {
 										setCollapsedGroups((prev) => {
 											const next = new Set(prev);
-											if (next.has(row.groupName)) next.delete(row.groupName);
-											else next.add(row.groupName);
+											if (next.has(row.groupKey)) next.delete(row.groupKey);
+											else next.add(row.groupKey);
 											return next;
 										});
 									}}
@@ -440,8 +449,8 @@ function FocusSidebar({
 											e.preventDefault();
 											setCollapsedGroups((prev) => {
 												const next = new Set(prev);
-												if (next.has(row.groupName)) next.delete(row.groupName);
-												else next.add(row.groupName);
+												if (next.has(row.groupKey)) next.delete(row.groupKey);
+												else next.add(row.groupKey);
 												return next;
 											});
 										}
@@ -453,7 +462,7 @@ function FocusSidebar({
 										backgroundColor: theme.colors.bgSidebar,
 									}}
 								>
-									{collapsedGroups.has(row.groupName) ? (
+									{collapsedGroups.has(row.groupKey) ? (
 										<ChevronRight className="w-3 h-3" />
 									) : (
 										<ChevronDown className="w-3 h-3" />
@@ -1003,7 +1012,7 @@ export default function FocusModeView({
 							className="flex-1 flex items-center justify-center"
 							style={{ color: theme.colors.textDim }}
 						>
-							<span className="text-sm">Session no longer available</span>
+							<span className="text-sm">Agent no longer available</span>
 						</div>
 					) : (
 						<div
