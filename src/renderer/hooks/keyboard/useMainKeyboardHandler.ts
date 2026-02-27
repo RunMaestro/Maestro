@@ -420,6 +420,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
+			} else if (
+				ctx.isShortcut(e, 'agentInbox') &&
+				ctx.encoreFeatures?.unifiedInbox &&
+				ctx.setAgentInboxOpen
+			) {
+				e.preventDefault();
+				ctx.setAgentInboxOpen(true);
+				trackShortcut('agentInbox');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)

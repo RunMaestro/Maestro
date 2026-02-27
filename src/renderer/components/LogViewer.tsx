@@ -88,7 +88,20 @@ export function LogViewer({
 		return new Set(['debug', 'info', 'warn', 'error', 'toast', 'autorun']);
 	});
 
-	// Wrapper to persist changes when selectedLevels changes
+	// Persist selectedLevels to parent settings via effect (avoids setState-during-render).
+	// Skip the initial mount to avoid redundant write of saved values back to settings.
+	const isInitialMount = useRef(true);
+	useEffect(() => {
+		if (isInitialMount.current) {
+			isInitialMount.current = false;
+			return;
+		}
+		if (onSelectedLevelsChange) {
+			onSelectedLevelsChange(Array.from(selectedLevels));
+		}
+	}, [selectedLevels, onSelectedLevelsChange]);
+
+	// Wrapper that only updates local state — persistence handled by the effect above
 	const setSelectedLevels = useCallback(
 		(
 			updater:
@@ -98,15 +111,10 @@ export function LogViewer({
 				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>)
 		) => {
 			setSelectedLevelsState((prev) => {
-				const newSet = typeof updater === 'function' ? updater(prev) : updater;
-				// Persist to settings
-				if (onSelectedLevelsChange) {
-					onSelectedLevelsChange(Array.from(newSet));
-				}
-				return newSet;
+				return typeof updater === 'function' ? updater(prev) : updater;
 			});
 		},
-		[onSelectedLevelsChange]
+		[]
 	);
 	const [expandedData, setExpandedData] = useState<Set<number>>(new Set());
 	const [showClearConfirm, setShowClearConfirm] = useState(false);

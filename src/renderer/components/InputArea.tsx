@@ -24,6 +24,7 @@ import {
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks';
+import { filterAndSortSlashCommands, type SlashCommandEntry } from '../utils/search';
 import type {
 	SummarizeProgress,
 	SummarizeResult,
@@ -38,13 +39,6 @@ import { SummarizeProgressOverlay } from './SummarizeProgressOverlay';
 import { WizardInputPanel } from './InlineWizard';
 import { useAgentCapabilities, useScrollIntoView } from '../hooks';
 import { getProviderDisplayName } from '../utils/sessionValidation';
-
-interface SlashCommand {
-	command: string;
-	description: string;
-	terminalOnly?: boolean;
-	aiOnly?: boolean;
-}
 
 interface InputAreaProps {
 	session: Session;
@@ -68,7 +62,7 @@ interface InputAreaProps {
 	setCommandHistorySelectedIndex: (index: number) => void;
 	slashCommandOpen: boolean;
 	setSlashCommandOpen: (open: boolean) => void;
-	slashCommands: SlashCommand[];
+	slashCommands: SlashCommandEntry[];
 	selectedSlashCommandIndex: number;
 	setSelectedSlashCommandIndex: (index: number) => void;
 	inputRef: React.RefObject<HTMLTextAreaElement>;
@@ -314,19 +308,13 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 			: legacyHistory;
 
 	// Use the slash commands passed from App.tsx (already includes custom + Claude commands)
-	// PERF: Memoize both the lowercase conversion and filtered results to avoid
+	// PERF: Memoize both the search term extraction and filtered results to avoid
 	// recalculating on every render - inputValue changes on every keystroke
-	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
-	const filteredSlashCommands = useMemo(() => {
-		return slashCommands.filter((cmd) => {
-			// Check if command is only available in terminal mode
-			if (cmd.terminalOnly && !isTerminalMode) return false;
-			// Check if command is only available in AI mode
-			if (cmd.aiOnly && isTerminalMode) return false;
-			// Check if command matches input
-			return cmd.command.toLowerCase().startsWith(inputValueLower);
-		});
-	}, [slashCommands, isTerminalMode, inputValueLower]);
+	const searchTerm = useMemo(() => inputValue.toLowerCase().replace(/^\//, ''), [inputValue]);
+	const filteredSlashCommands = useMemo(
+		() => filterAndSortSlashCommands(slashCommands, searchTerm, isTerminalMode),
+		[slashCommands, isTerminalMode, searchTerm]
+	);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
 	const safeSelectedIndex = Math.min(

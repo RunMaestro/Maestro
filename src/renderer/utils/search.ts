@@ -117,3 +117,62 @@ export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResu
 
 	return { matches, score };
 };
+
+/**
+ * Slash command interface for filtering
+ */
+export interface SlashCommandEntry {
+	command: string;
+	description: string;
+	terminalOnly?: boolean;
+	aiOnly?: boolean;
+}
+
+/**
+ * Filter and sort slash commands using fuzzy matching with tiered scoring.
+ * This is the single source of truth for slash command filtering — used by both
+ * the dropdown renderer (InputArea) and the keyboard handler (useInputKeyDown).
+ *
+ * Scoring tiers:
+ * - Prefix match on command name: 300
+ * - Fuzzy match on command name: 100 + fuzzy score
+ * - Fuzzy match on description: fuzzy score
+ */
+export const filterAndSortSlashCommands = <T extends SlashCommandEntry>(
+	commands: T[],
+	searchTerm: string,
+	isTerminalMode: boolean
+): T[] => {
+	const scored: { cmd: T; score: number }[] = [];
+	const lowerSearchTerm = searchTerm.toLowerCase();
+	for (const cmd of commands) {
+		if (cmd.terminalOnly && !isTerminalMode) continue;
+		if (cmd.aiOnly && isTerminalMode) continue;
+		if (!searchTerm) {
+			scored.push({ cmd, score: 0 });
+			continue;
+		}
+		const cmdName = cmd.command.toLowerCase().replace(/^\//, '');
+		// Prefix match gets highest priority
+		if (cmdName.startsWith(lowerSearchTerm)) {
+			scored.push({ cmd, score: 300 });
+			continue;
+		}
+		// Fuzzy match on command name
+		const nameResult = fuzzyMatchWithScore(cmdName, searchTerm);
+		if (nameResult.matches) {
+			scored.push({ cmd, score: 100 + nameResult.score });
+			continue;
+		}
+		// Fuzzy match on description
+		if (cmd.description) {
+			const descResult = fuzzyMatchWithScore(cmd.description, searchTerm);
+			if (descResult.matches) {
+				scored.push({ cmd, score: descResult.score });
+				continue;
+			}
+		}
+	}
+	scored.sort((a, b) => b.score - a.score);
+	return scored.map((s) => s.cmd);
+};

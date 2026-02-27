@@ -92,6 +92,7 @@ export interface UseSessionListPropsDeps {
 	setUsageDashboardOpen: (open: boolean) => void;
 	setSymphonyModalOpen: (open: boolean) => void;
 	setDirectorNotesOpen?: (open: boolean) => void;
+	setAgentInboxOpen?: (open: boolean) => void;
 	setGroups: React.Dispatch<React.SetStateAction<Group[]>>;
 	setSessions: React.Dispatch<React.SetStateAction<Session[]>>;
 	setRenameInstanceModalOpen: (open: boolean) => void;
@@ -201,6 +202,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			setUsageDashboardOpen: deps.setUsageDashboardOpen,
 			setSymphonyModalOpen: deps.setSymphonyModalOpen,
 			setDirectorNotesOpen: deps.setDirectorNotesOpen,
+			setAgentInboxOpen: deps.setAgentInboxOpen,
 			setQuickActionOpen: deps.setQuickActionOpen,
 
 			// Handlers
@@ -331,6 +333,7 @@ export function useSessionListProps(deps: UseSessionListPropsDeps) {
 			deps.setUsageDashboardOpen,
 			deps.setSymphonyModalOpen,
 			deps.setDirectorNotesOpen,
+			deps.setAgentInboxOpen,
 			deps.setQuickActionOpen,
 			deps.setGroups,
 			deps.setSessions,

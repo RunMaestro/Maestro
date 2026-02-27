@@ -16,6 +16,7 @@ import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { filterAndSortSlashCommands } from '../../utils/search';
 
 // ============================================================================
 // Dependencies interface
@@ -205,11 +206,20 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Handle slash command autocomplete
 			if (slashCommandOpen) {
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
-				const filteredCommands = allSlashCommands.filter((cmd) => {
-					if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
-					if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-					return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
-				});
+				const searchTerm = inputValue.toLowerCase().replace(/^\//, '');
+				const filteredCommands = filterAndSortSlashCommands(
+					allSlashCommands,
+					searchTerm,
+					isTerminalMode
+				);
+
+				if (filteredCommands.length === 0) {
+					if (e.key === 'Escape') {
+						e.preventDefault();
+						setSlashCommandOpen(false);
+					}
+					return;
+				}
 
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
@@ -219,8 +229,12 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 					setSelectedSlashCommandIndex((prev) => Math.max(prev - 1, 0));
 				} else if (e.key === 'Tab' || e.key === 'Enter') {
 					e.preventDefault();
-					if (filteredCommands[selectedSlashCommandIndex]) {
-						setInputValue(filteredCommands[selectedSlashCommandIndex].command);
+					const safeIndex = Math.min(
+						Math.max(0, selectedSlashCommandIndex),
+						Math.max(0, filteredCommands.length - 1)
+					);
+					if (filteredCommands[safeIndex]) {
+						setInputValue(filteredCommands[safeIndex].command);
 						setSlashCommandOpen(false);
 						inputRef.current?.focus();
 					}

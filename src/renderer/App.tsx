@@ -46,6 +46,7 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const AgentInbox = lazy(() => import('./components/AgentInbox'));
 
 // Re-import the type for SymphonyContributionData (types don't need lazy loading)
 import type { SymphonyContributionData } from './components/SymphonyModal';
@@ -355,6 +356,9 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Agent Inbox Modal
+		agentInboxOpen,
+		setAgentInboxOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -628,8 +632,11 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
-	const { setSelectedFileIndex: _setSelectedFileIndex, setFileTreeFilter: _setFileTreeFilter, setFileTreeFilterOpen } =
-		useFileExplorerStore.getState();
+	const {
+		setSelectedFileIndex: _setSelectedFileIndex,
+		setFileTreeFilter: _setFileTreeFilter,
+		setFileTreeFilterOpen,
+	} = useFileExplorerStore.getState();
 
 	// --- GROUP CHAT STATE (now in groupChatStore) ---
 
@@ -984,6 +991,7 @@ function MaestroConsoleInner() {
 		handleUpdateTabByClaudeSessionId,
 		handleTabStar,
 		handleTabMarkUnread,
+		handleUpdateTabDescription,
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
@@ -1508,6 +1516,127 @@ function MaestroConsoleInner() {
 			handleResumeSession(agentSessionId);
 		}
 	}, [activeSession?.id, handleResumeSession]);
+
+	// --- AGENT INBOX SESSION NAVIGATION ---
+	// Close inbox modal and switch to the target agent session
+	const handleAgentInboxNavigateToSession = useCallback(
+		(sessionId: string, tabId?: string) => {
+			setAgentInboxOpen(false);
+			setActiveSessionId(sessionId);
+			if (tabId) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, activeTabId: tabId, activeFileTabId: null, inputMode: 'ai' as const }
+							: s
+					)
+				);
+			}
+		},
+		[setAgentInboxOpen, setActiveSessionId, setSessions]
+	);
+
+	// Ref for processInput — populated after useInputHandlers (declared later in component).
+	// Handlers below close over this ref so they always call the latest version.
+	const inboxProcessInputRef = useRef<(text?: string) => void>(() => {});
+
+	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
+	const handleAgentInboxQuickReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			// Save current active session so we can restore it after sending.
+			// This ensures AI responses mark the tab as unread (since the user
+			// is viewing through Focus Mode, not directly in the session).
+			const previousActiveSessionId = activeSessionIdRef.current;
+
+			// Activate the target tab and mark as read (processInput adds the user log entry)
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+
+			// Temporarily switch to the target session so processInput sends to it
+			setActiveSessionId(sessionId);
+			requestAnimationFrame(() => {
+				inboxProcessInputRef.current(text);
+				// Restore previous active session so AI response triggers unread marker
+				requestAnimationFrame(() => {
+					if (previousActiveSessionId && previousActiveSessionId !== sessionId) {
+						setActiveSessionId(previousActiveSessionId);
+					}
+				});
+			});
+		},
+		[setSessions, setActiveSessionId, activeSessionIdRef]
+	);
+
+	// Agent Inbox: Open & Reply — navigates to session with pre-filled input
+	const handleAgentInboxOpenAndReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			setActiveSessionId(sessionId);
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						aiTabs: s.aiTabs.map((t) =>
+							t.id === tabId ? { ...t, inputValue: text, hasUnread: false } : t
+						),
+					};
+				})
+			);
+			setAgentInboxOpen(false);
+		},
+		[setActiveSessionId, setSessions, setAgentInboxOpen]
+	);
+
+	// Agent Inbox: Mark as Read — dismiss unread badge without replying
+	const handleAgentInboxMarkAsRead = useCallback(
+		(sessionId: string, tabId: string) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
+	// Agent Inbox: Toggle thinking mode on a specific tab
+	const handleAgentInboxToggleThinking = useCallback(
+		(sessionId: string, tabId: string, mode: ThinkingMode) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => {
+							if (t.id !== tabId) return t;
+							if (mode === 'off') {
+								return {
+									...t,
+									showThinking: 'off',
+									logs: t.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+								};
+							}
+							return { ...t, showThinking: mode };
+						}),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
 
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
@@ -2428,6 +2557,9 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// Bind the ref so Inbox Quick Reply handlers always call the latest processInput.
+	inboxProcessInputRef.current = processInput;
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -4710,6 +4842,7 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setAgentInboxOpen,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -5070,6 +5203,9 @@ function MaestroConsoleInner() {
 		handleUpdateTabByClaudeSessionId,
 		handleTabStar,
 		handleTabMarkUnread,
+		handleUpdateTabDescription: encoreFeatures.tabDescription
+			? handleUpdateTabDescription
+			: undefined,
 		handleToggleTabReadOnlyMode,
 		handleToggleTabSaveToHistory,
 		handleToggleTabShowThinking,
@@ -5218,6 +5354,7 @@ function MaestroConsoleInner() {
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen: encoreFeatures.directorNotes ? setDirectorNotesOpen : undefined,
+		setAgentInboxOpen: encoreFeatures.unifiedInbox ? setAgentInboxOpen : undefined,
 		setGroups,
 		setSessions,
 		setRenameInstanceModalOpen,
@@ -5633,6 +5770,9 @@ function MaestroConsoleInner() {
 					onOpenDirectorNotes={
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
+					onOpenUnifiedInbox={
+						encoreFeatures.unifiedInbox ? () => setAgentInboxOpen(true) : undefined
+					}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					tabSwitcherOpen={tabSwitcherOpen}
@@ -6024,6 +6164,24 @@ function MaestroConsoleInner() {
 							onFileClick={(path: string) =>
 								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
 							}
+						/>
+					</Suspense>
+				)}
+
+				{/* --- AGENT INBOX MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.unifiedInbox && agentInboxOpen && (
+					<Suspense fallback={null}>
+						<AgentInbox
+							theme={theme}
+							sessions={sessions}
+							groups={groups}
+							enterToSendAI={enterToSendAI}
+							onClose={() => setAgentInboxOpen(false)}
+							onNavigateToSession={handleAgentInboxNavigateToSession}
+							onQuickReply={handleAgentInboxQuickReply}
+							onOpenAndReply={handleAgentInboxOpenAndReply}
+							onMarkAsRead={handleAgentInboxMarkAsRead}
+							onToggleThinking={handleAgentInboxToggleThinking}
 						/>
 					</Suspense>
 				)}

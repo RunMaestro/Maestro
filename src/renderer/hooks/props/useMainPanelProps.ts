@@ -215,6 +215,7 @@ export interface UseMainPanelPropsDeps {
 	) => void;
 	handleTabStar: (tabId: string, starred: boolean) => void;
 	handleTabMarkUnread: (tabId: string) => void;
+	handleUpdateTabDescription?: (tabId: string, description: string) => void;
 	handleToggleTabReadOnlyMode: () => void;
 	handleToggleTabSaveToHistory: () => void;
 	handleToggleTabShowThinking: () => void;
@@ -428,6 +429,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onUpdateTabByClaudeSessionId: deps.handleUpdateTabByClaudeSessionId,
 			onTabStar: deps.handleTabStar,
 			onTabMarkUnread: deps.handleTabMarkUnread,
+			onUpdateTabDescription: deps.handleUpdateTabDescription,
 			onToggleTabReadOnlyMode: deps.handleToggleTabReadOnlyMode,
 			showUnreadOnly: deps.showUnreadOnly,
 			colorBlindMode: deps.colorBlindMode,
@@ -670,6 +672,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleUpdateTabByClaudeSessionId,
 			deps.handleTabStar,
 			deps.handleTabMarkUnread,
+			deps.handleUpdateTabDescription,
 			deps.handleToggleTabReadOnlyMode,
 			deps.handleToggleTabSaveToHistory,
 			deps.handleToggleTabShowThinking,

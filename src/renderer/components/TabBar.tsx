@@ -20,6 +20,7 @@ import {
 	Loader2,
 	ExternalLink,
 	FolderOpen,
+	FileText,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
@@ -40,6 +41,8 @@ interface TabBarProps {
 	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
+	/** Handler to update tab description (Encore Feature - undefined when disabled) */
+	onUpdateTabDescription?: (tabId: string, description: string) => void;
 	/** Handler to open merge session modal with this tab as source */
 	onMergeWith?: (tabId: string) => void;
 	/** Handler to open send to agent modal with this tab as source */
@@ -106,6 +109,8 @@ interface TabProps {
 	onStar?: (tabId: string, starred: boolean) => void;
 	/** Stable callback - receives tabId */
 	onMarkUnread?: (tabId: string) => void;
+	/** Stable callback - receives tabId and description */
+	onUpdateDescription?: (tabId: string, description: string) => void;
 	/** Stable callback - receives tabId */
 	onMergeWith?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -208,6 +213,7 @@ const Tab = memo(function Tab({
 	onRename,
 	onStar,
 	onMarkUnread,
+	onUpdateDescription,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -236,6 +242,10 @@ const Tab = memo(function Tab({
 		left: number;
 		tabWidth?: number;
 	} | null>(null);
+	const [isEditingDescription, setIsEditingDescription] = useState(false);
+	const [descriptionDraft, setDescriptionDraft] = useState('');
+	const descriptionInputRef = useRef<HTMLTextAreaElement>(null);
+	const skipNextBlurSaveRef = useRef(false);
 	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const tabRef = useRef<HTMLDivElement>(null);
 
@@ -247,6 +257,13 @@ const Tab = memo(function Tab({
 		},
 		[registerRef]
 	);
+
+	// Reset description editing state when overlay closes
+	useEffect(() => {
+		if (!overlayOpen) {
+			setIsEditingDescription(false);
+		}
+	}, [overlayOpen]);
 
 	const handleMouseEnter = () => {
 		setIsHovered(true);
@@ -344,6 +361,50 @@ const Tab = memo(function Tab({
 		},
 		[onMarkUnread, tabId]
 	);
+
+	const handleStartEditDescription = useCallback(
+		(e: React.MouseEvent | React.KeyboardEvent) => {
+			e.stopPropagation();
+			setDescriptionDraft(tab.description || '');
+			setIsEditingDescription(true);
+			// Focus the textarea after render
+			requestAnimationFrame(() => {
+				descriptionInputRef.current?.focus();
+			});
+		},
+		[tab.description]
+	);
+
+	const handleSaveDescription = useCallback(() => {
+		const trimmed = descriptionDraft.trim();
+		onUpdateDescription?.(tabId, trimmed);
+		setIsEditingDescription(false);
+	}, [onUpdateDescription, tabId, descriptionDraft]);
+
+	const handleDescriptionKeyDown = useCallback(
+		(e: React.KeyboardEvent) => {
+			e.stopPropagation();
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				skipNextBlurSaveRef.current = true;
+				handleSaveDescription();
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				skipNextBlurSaveRef.current = true;
+				setDescriptionDraft(tab.description || '');
+				setIsEditingDescription(false);
+			}
+		},
+		[handleSaveDescription, tab.description]
+	);
+
+	const handleDescriptionBlur = useCallback(() => {
+		if (skipNextBlurSaveRef.current) {
+			skipNextBlurSaveRef.current = false;
+			return;
+		}
+		handleSaveDescription();
+	}, [handleSaveDescription]);
 
 	const handleMergeWithClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -650,6 +711,7 @@ const Tab = memo(function Tab({
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
 								minWidth: '220px',
+								maxWidth: '320px',
 							}}
 						>
 							{/* Header with session name and ID - only show for tabs with sessions */}
@@ -664,7 +726,7 @@ const Tab = memo(function Tab({
 									{/* Session name display */}
 									{tab.name && (
 										<div
-											className="px-3 py-2 text-sm font-medium"
+											className="px-3 py-2 text-sm font-medium break-words"
 											style={{ color: theme.colors.textMain }}
 										>
 											{tab.name}
@@ -673,11 +735,60 @@ const Tab = memo(function Tab({
 
 									{/* Session ID display */}
 									<div
-										className="px-3 py-2 text-[10px] font-mono"
+										className="px-3 py-2 text-[10px] font-mono break-all"
 										style={{ color: theme.colors.textDim }}
 									>
 										{tab.agentSessionId}
 									</div>
+								</div>
+							)}
+
+							{/* Tab Description (Encore Feature) */}
+							{onUpdateDescription && (
+								<div className="border-b px-3 py-2" style={{ borderColor: theme.colors.border }}>
+									{isEditingDescription ? (
+										<textarea
+											ref={descriptionInputRef}
+											value={descriptionDraft}
+											onChange={(e) => setDescriptionDraft(e.target.value)}
+											onKeyDown={handleDescriptionKeyDown}
+											onBlur={handleDescriptionBlur}
+											className="w-full text-xs rounded px-2 py-1.5 resize-none outline-none"
+											style={{
+												backgroundColor: theme.colors.bgMain,
+												color: theme.colors.textMain,
+												border: `1px solid ${theme.colors.accent}`,
+												minHeight: '48px',
+												maxHeight: '96px',
+											}}
+											placeholder="Describe what this tab is working on..."
+											rows={2}
+										/>
+									) : (
+										<button
+											onClick={handleStartEditDescription}
+											onKeyDown={(e) => {
+												if (e.key === 'Enter' || e.key === ' ') {
+													e.preventDefault();
+													handleStartEditDescription(e);
+												}
+											}}
+											tabIndex={0}
+											aria-label="Edit tab description"
+											className="w-full flex items-start gap-2 rounded text-xs hover:bg-white/5 transition-colors p-1 text-left"
+											style={{
+												color: tab.description ? theme.colors.textMain : theme.colors.textDim,
+											}}
+										>
+											<FileText
+												className="w-3.5 h-3.5 mt-0.5 shrink-0"
+												style={{ color: theme.colors.textDim }}
+											/>
+											<span className={tab.description ? 'line-clamp-3 break-words' : 'italic'}>
+												{tab.description || 'Add description...'}
+											</span>
+										</button>
+									)}
 								</div>
 							)}
 
@@ -1514,6 +1625,7 @@ function TabBarInner({
 	onTabReorder,
 	onTabStar,
 	onTabMarkUnread,
+	onUpdateTabDescription,
 	onMergeWith,
 	onSendToAgent,
 	onSummarizeAndContinue,
@@ -1755,6 +1867,13 @@ function TabBarInner({
 		[onTabMarkUnread]
 	);
 
+	const handleTabUpdateDescription = useCallback(
+		(tabId: string, description: string) => {
+			onUpdateTabDescription?.(tabId, description);
+		},
+		[onUpdateTabDescription]
+	);
+
 	const handleTabMergeWith = useCallback(
 		(tabId: string) => {
 			onMergeWith?.(tabId);
@@ -1957,6 +2076,9 @@ function TabBarInner({
 										onRename={handleRenameRequest}
 										onStar={onTabStar && tab.agentSessionId ? handleTabStar : undefined}
 										onMarkUnread={onTabMarkUnread ? handleTabMarkUnread : undefined}
+										onUpdateDescription={
+											onUpdateTabDescription ? handleTabUpdateDescription : undefined
+										}
 										onMergeWith={onMergeWith ? handleTabMergeWith : undefined}
 										onSendToAgent={onSendToAgent ? handleTabSendToAgent : undefined}
 										onSummarizeAndContinue={
@@ -2076,6 +2198,9 @@ function TabBarInner({
 									onRename={handleRenameRequest}
 									onStar={onTabStar && tab.agentSessionId ? handleTabStar : undefined}
 									onMarkUnread={onTabMarkUnread ? handleTabMarkUnread : undefined}
+									onUpdateDescription={
+										onUpdateTabDescription ? handleTabUpdateDescription : undefined
+									}
 									onMergeWith={onMergeWith ? handleTabMergeWith : undefined}
 									onSendToAgent={onSendToAgent ? handleTabSendToAgent : undefined}
 									onSummarizeAndContinue={
