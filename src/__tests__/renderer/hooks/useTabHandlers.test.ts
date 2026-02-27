@@ -806,6 +806,44 @@ describe('useTabHandlers', () => {
 			expect(session.aiTabs[0].description).toBeUndefined();
 		});
 
+		it('handleUpdateTabDescription does not modify tabs in non-active sessions', () => {
+			const tab = createMockAITab({ id: 'tab-1' });
+			setupSessionWithTabs([tab]);
+
+			// Add a second non-active session with its own tab
+			const otherSession = createMockSession({
+				id: 'other-session',
+				aiTabs: [createMockAITab({ id: 'other-tab' })],
+				activeTabId: 'other-tab',
+				unifiedTabOrder: [{ type: 'ai', id: 'other-tab' }],
+			});
+			useSessionStore.setState((prev: any) => ({
+				sessions: [...prev.sessions, otherSession],
+			}));
+
+			const { result } = renderHook(() => useTabHandlers());
+			act(() => {
+				result.current.handleUpdateTabDescription('other-tab', 'should not apply');
+			});
+
+			const state = useSessionStore.getState();
+			const other = state.sessions.find((s) => s.id === 'other-session')!;
+			expect(other.aiTabs[0].description).toBeUndefined();
+		});
+
+		it('handleUpdateTabDescription does not modify other tabs in the same session', () => {
+			const tab1 = createMockAITab({ id: 'tab-1' });
+			const tab2 = createMockAITab({ id: 'tab-2', description: 'original' } as any);
+			const { result } = renderWithSession([tab1, tab2]);
+			act(() => {
+				result.current.handleUpdateTabDescription('tab-1', 'New description');
+			});
+
+			const session = getSession();
+			expect(session.aiTabs[0].description).toBe('New description');
+			expect(session.aiTabs[1].description).toBe('original');
+		});
+
 		it('handleUpdateTabByClaudeSessionId updates tab by agent session id', () => {
 			const tab = createMockAITab({
 				id: 'tab-1',
