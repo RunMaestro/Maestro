@@ -41,6 +41,7 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const AgentInbox = lazy(() => import('./components/AgentInbox'));
 
 // Re-import the type for SymphonyContributionData (types don't need lazy loading)
 import type { SymphonyContributionData } from './components/SymphonyModal';
@@ -1376,6 +1377,149 @@ function MaestroConsoleInner() {
 		}
 	}, [activeSession?.id, handleResumeSession]);
 
+	// --- AGENT INBOX SESSION NAVIGATION ---
+	// Close inbox modal and switch to the target agent session
+	const handleAgentInboxNavigateToSession = useCallback(
+		(sessionId: string, tabId?: string) => {
+			setAgentInboxOpen(false);
+			setActiveSessionId(sessionId);
+			if (tabId) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, activeTabId: tabId, activeFileTabId: null, inputMode: 'ai' as const }
+							: s
+					)
+				);
+			}
+		},
+		[setAgentInboxOpen, setActiveSessionId, setSessions]
+	);
+
+	// Ref for processInput — populated after useInputHandlers (declared later in component).
+	// Handlers below close over this ref so they always call the latest version.
+	const inboxProcessInputRef = useRef<(text?: string) => void>(() => {});
+	const [pendingInboxQuickReply, setPendingInboxQuickReply] = useState<{
+		targetSessionId: string;
+		previousActiveSessionId: string | null;
+		text: string;
+	} | null>(null);
+
+	// Flush pending quick-reply once target session is active (deterministic, no RAF timing chain).
+	useEffect(() => {
+		if (!pendingInboxQuickReply) return;
+		if (activeSession?.id !== pendingInboxQuickReply.targetSessionId) return;
+
+		inboxProcessInputRef.current(pendingInboxQuickReply.text);
+		const previousActiveSessionId = pendingInboxQuickReply.previousActiveSessionId;
+		setPendingInboxQuickReply(null);
+
+		if (
+			previousActiveSessionId &&
+			previousActiveSessionId !== pendingInboxQuickReply.targetSessionId
+		) {
+			queueMicrotask(() => {
+				setActiveSessionId(previousActiveSessionId);
+			});
+		}
+	}, [pendingInboxQuickReply, activeSession?.id, setActiveSessionId]);
+
+	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
+	const handleAgentInboxQuickReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			// Save current active session so we can restore it after sending.
+			const previousActiveSessionId = activeSessionIdRef.current;
+
+			// Activate the target tab and mark as read (processInput adds the user log entry)
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						activeFileTabId: null,
+						inputMode: 'ai' as const,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+
+			// Switch to target session and let the effect above send once state is committed.
+			setPendingInboxQuickReply({
+				targetSessionId: sessionId,
+				previousActiveSessionId,
+				text,
+			});
+			setActiveSessionId(sessionId);
+		},
+		[setSessions, setActiveSessionId, activeSessionIdRef]
+	);
+
+	// Agent Inbox: Open & Reply — navigates to session with pre-filled input
+	const handleAgentInboxOpenAndReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			setActiveSessionId(sessionId);
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						activeFileTabId: null,
+						inputMode: 'ai' as const,
+						aiTabs: s.aiTabs.map((t) =>
+							t.id === tabId ? { ...t, inputValue: text, hasUnread: false } : t
+						),
+					};
+				})
+			);
+			setAgentInboxOpen(false);
+		},
+		[setActiveSessionId, setSessions, setAgentInboxOpen]
+	);
+
+	// Agent Inbox: Mark as Read — dismiss unread badge without replying
+	const handleAgentInboxMarkAsRead = useCallback(
+		(sessionId: string, tabId: string) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
+	// Agent Inbox: Toggle thinking mode on a specific tab
+	const handleAgentInboxToggleThinking = useCallback(
+		(sessionId: string, tabId: string, mode: ThinkingMode) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => {
+							if (t.id !== tabId) return t;
+							if (mode === 'off') {
+								return {
+									...t,
+									showThinking: 'off',
+									logs: t.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+								};
+							}
+							return { ...t, showThinking: mode };
+						}),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
 		startBatchRun,
@@ -1593,6 +1737,9 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// Bind the ref so Inbox Quick Reply handlers always call the latest processInput.
+	inboxProcessInputRef.current = processInput;
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -3013,7 +3160,7 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
-		setAgentInboxOpen,
+		setAgentInboxOpen: encoreFeatures.unifiedInbox ? setAgentInboxOpen : undefined,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -4112,16 +4259,22 @@ function MaestroConsoleInner() {
 					</Suspense>
 				)}
 
-				{/* --- AGENT INBOX MODAL (Encore Feature — component TBD) --- */}
-				{/* Gate: renders only when unifiedInbox encore feature is enabled */}
-				{/* {encoreFeatures.unifiedInbox && agentInboxOpen && (
+				{/* --- AGENT INBOX MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.unifiedInbox && agentInboxOpen && (
 					<Suspense fallback={null}>
-						<AgentInboxModal
+						<AgentInbox
+							sessions={sessions}
+							groups={groups}
 							theme={theme}
 							onClose={() => setAgentInboxOpen(false)}
+							onNavigateToSession={handleAgentInboxNavigateToSession}
+							onQuickReply={handleAgentInboxQuickReply}
+							onOpenAndReply={handleAgentInboxOpenAndReply}
+							onMarkAsRead={handleAgentInboxMarkAsRead}
+							onToggleThinking={handleAgentInboxToggleThinking}
 						/>
 					</Suspense>
-				)} */}
+				)}
 
 				{/* --- GIST PUBLISH MODAL --- */}
 				{/* Supports both file preview tabs and tab context gist publishing */}

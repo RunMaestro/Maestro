@@ -3641,27 +3641,19 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 									})()}
 							</div>
 
-							{/* Unified Inbox Feature Card */}
+							{/* Unified Inbox Feature Section */}
 							<div
-								className="rounded-lg p-4"
+								className="rounded-lg border"
 								style={{
-									borderLeft: `3px solid ${encoreFeatures.unifiedInbox ? theme.colors.accent : theme.colors.border}`,
+									borderColor: encoreFeatures.unifiedInbox
+										? theme.colors.accent
+										: theme.colors.border,
 									backgroundColor: encoreFeatures.unifiedInbox
 										? `${theme.colors.accent}08`
 										: 'transparent',
 								}}
 							>
-								<button
-									className="w-full flex items-center justify-between text-left"
-									onClick={() =>
-										setEncoreFeatures({
-											...encoreFeatures,
-											unifiedInbox: !encoreFeatures.unifiedInbox,
-										})
-									}
-									role="switch"
-									aria-checked={encoreFeatures.unifiedInbox}
-								>
+								<div className="w-full flex items-center justify-between p-4">
 									<div className="flex items-center gap-3">
 										<Inbox
 											className="w-5 h-5"
@@ -3688,51 +3680,49 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 												</span>
 											</div>
 											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
-												Aggregated view of pending actions across all agents
+												Cross-agent inbox to triage and reply to all active conversations (Alt+I)
 											</div>
 										</div>
 									</div>
-									<div
-										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.unifiedInbox ? '' : 'opacity-50'}`}
+									<button
+										role="switch"
+										aria-checked={encoreFeatures.unifiedInbox}
+										onClick={(e) => {
+											e.stopPropagation();
+											setEncoreFeatures({
+												...encoreFeatures,
+												unifiedInbox: !encoreFeatures.unifiedInbox,
+											});
+										}}
+										className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
 										style={{
 											backgroundColor: encoreFeatures.unifiedInbox
 												? theme.colors.accent
-												: theme.colors.border,
+												: theme.colors.bgActivity,
 										}}
 									>
-										<div
-											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-											style={{
-												transform: encoreFeatures.unifiedInbox
-													? 'translateX(22px)'
-													: 'translateX(2px)',
-											}}
+										<span
+											className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+												encoreFeatures.unifiedInbox ? 'translate-x-5' : 'translate-x-0.5'
+											}`}
 										/>
-									</div>
-								</button>
+									</button>
+								</div>
 							</div>
 
 							{/* Tab Descriptions Feature Card */}
 							<div
-								className="rounded-lg p-4"
+								className="rounded-lg border"
 								style={{
-									borderLeft: `3px solid ${encoreFeatures.tabDescription ? theme.colors.accent : theme.colors.border}`,
+									borderColor: encoreFeatures.tabDescription
+										? theme.colors.accent
+										: theme.colors.border,
 									backgroundColor: encoreFeatures.tabDescription
 										? `${theme.colors.accent}08`
 										: 'transparent',
 								}}
 							>
-								<button
-									className="w-full flex items-center justify-between text-left"
-									onClick={() =>
-										setEncoreFeatures({
-											...encoreFeatures,
-											tabDescription: !encoreFeatures.tabDescription,
-										})
-									}
-									role="switch"
-									aria-checked={encoreFeatures.tabDescription}
-								>
+								<div className="w-full flex items-center justify-between p-4">
 									<div className="flex items-center gap-3">
 										<FileText
 											className="w-5 h-5"
@@ -3751,24 +3741,30 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											</div>
 										</div>
 									</div>
-									<div
-										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.tabDescription ? '' : 'opacity-50'}`}
+									<button
+										role="switch"
+										aria-checked={encoreFeatures.tabDescription}
+										onClick={(e) => {
+											e.stopPropagation();
+											setEncoreFeatures({
+												...encoreFeatures,
+												tabDescription: !encoreFeatures.tabDescription,
+											});
+										}}
+										className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0"
 										style={{
 											backgroundColor: encoreFeatures.tabDescription
 												? theme.colors.accent
-												: theme.colors.border,
+												: theme.colors.bgActivity,
 										}}
 									>
-										<div
-											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
-											style={{
-												transform: encoreFeatures.tabDescription
-													? 'translateX(22px)'
-													: 'translateX(2px)',
-											}}
+										<span
+											className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+												encoreFeatures.tabDescription ? 'translate-x-5' : 'translate-x-0.5'
+											}`}
 										/>
-									</div>
-								</button>
+									</button>
+								</div>
 							</div>
 						</div>
 					)}

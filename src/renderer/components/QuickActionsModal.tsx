@@ -1037,14 +1037,14 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 					},
 				]
 			: []),
-		// Agent Inbox (Unified Inbox) - cross-agent message hub
+		// Agent Inbox (Unified Inbox) - centralized agent conversations
 		...(onOpenAgentInbox
 			? [
 					{
 						id: 'agentInbox',
 						label: 'Unified Inbox',
 						shortcut: shortcuts.agentInbox,
-						subtext: 'Open the unified inbox for cross-agent messages',
+						subtext: 'Centralized view of all agent conversations with Focus Mode',
 						action: () => {
 							onOpenAgentInbox();
 							setQuickActionOpen(false);
