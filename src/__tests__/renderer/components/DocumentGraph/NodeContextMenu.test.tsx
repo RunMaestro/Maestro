@@ -334,7 +334,6 @@ describe('NodeContextMenu', () => {
 
 	describe('Clipboard Error Handling', () => {
 		it('handles clipboard write failure gracefully', async () => {
-			const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockClipboardWriteText.mockRejectedValueOnce(new Error('Clipboard access denied'));
 
 			const onDismiss = vi.fn();
@@ -343,15 +342,10 @@ describe('NodeContextMenu', () => {
 
 			fireEvent.click(screen.getByRole('button', { name: /copy path/i }));
 
+			// safeClipboardWrite swallows the error — onDismiss is still called
 			await waitFor(() => {
-				expect(consoleErrorSpy).toHaveBeenCalledWith(
-					'Failed to copy to clipboard:',
-					expect.any(Error)
-				);
+				expect(onDismiss).toHaveBeenCalled();
 			});
-			expect(onDismiss).toHaveBeenCalled();
-
-			consoleErrorSpy.mockRestore();
 		});
 	});
 });

@@ -2385,7 +2385,6 @@ describe('MainPanel', () => {
 		});
 
 		it('should handle clipboard.writeText failure gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			const writeText = vi.fn().mockRejectedValue(new Error('Clipboard error'));
 			Object.assign(navigator, { clipboard: { writeText } });
 
@@ -2407,11 +2406,10 @@ describe('MainPanel', () => {
 
 			fireEvent.click(screen.getByText('ABC12345'));
 
-			await waitFor(() => {
-				expect(consoleError).toHaveBeenCalled();
-			});
-
-			consoleError.mockRestore();
+			// safeClipboardWrite swallows the error and returns false,
+			// so no copy notification should appear
+			await act(async () => {});
+			expect(screen.queryByText('Copied to Clipboard')).not.toBeInTheDocument();
 		});
 
 		it('should handle gitDiff with no content gracefully', async () => {

@@ -591,7 +591,6 @@ describe('LightboxModal', () => {
 		});
 
 		it('handles copy error gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockClipboardWrite.mockRejectedValue(new Error('Clipboard error'));
 
 			const onClose = vi.fn();
@@ -611,17 +610,11 @@ describe('LightboxModal', () => {
 			);
 			fireEvent.click(copyButton);
 
+			// safeClipboardWriteBlob swallows the error and returns false,
+			// so the copy-success indicator should NOT appear
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith(
-					'Failed to copy image to clipboard:',
-					expect.any(Error)
-				);
+				expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
 			});
-
-			// Should still show copy icon (not check)
-			expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
-
-			consoleSpy.mockRestore();
 		});
 	});
 

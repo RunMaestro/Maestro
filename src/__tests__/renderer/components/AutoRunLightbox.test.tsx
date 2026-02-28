@@ -735,7 +735,6 @@ describe('AutoRunLightbox', () => {
 		});
 
 		it('should handle copy failure gracefully', async () => {
-			const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 			mockClipboardWrite.mockRejectedValueOnce(new Error('Clipboard error'));
 
 			const props = createDefaultProps();
@@ -745,17 +744,11 @@ describe('AutoRunLightbox', () => {
 				screen.getByTitle(`Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`)
 			);
 
+			// safeClipboardWriteBlob swallows the error and returns false,
+			// so the copy-success indicator should NOT appear
 			await waitFor(() => {
-				expect(consoleSpy).toHaveBeenCalledWith(
-					'Failed to copy image to clipboard:',
-					expect.any(Error)
-				);
+				expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
 			});
-
-			// Should still show copy icon (not check)
-			expect(screen.getByTestId('copy-icon')).toBeInTheDocument();
-
-			consoleSpy.mockRestore();
 		});
 
 		it('should copy external URL when viewing external image', async () => {

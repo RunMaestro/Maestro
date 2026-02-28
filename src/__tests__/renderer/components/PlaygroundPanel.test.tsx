@@ -1121,7 +1121,6 @@ describe('PlaygroundPanel', () => {
 
 	describe('Baton Tab - Copy Failure Handling', () => {
 		it('handles clipboard write failure gracefully', async () => {
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			Object.assign(navigator, {
 				clipboard: {
 					writeText: vi.fn().mockRejectedValue(new Error('Clipboard error')),
@@ -1135,12 +1134,8 @@ describe('PlaygroundPanel', () => {
 				fireEvent.click(screen.getByRole('button', { name: /Copy CSS Settings/ }));
 			});
 
-			expect(consoleError).toHaveBeenCalledWith(
-				'Failed to copy baton settings:',
-				expect.any(Error)
-			);
-
-			consoleError.mockRestore();
+			// safeClipboardWrite swallows the error — no success indicator should appear
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
 		});
 	});
 
@@ -1280,8 +1275,6 @@ describe('PlaygroundPanel', () => {
 
 	describe('Confetti Settings Copy Failure', () => {
 		it('handles clipboard write failure gracefully', async () => {
-			// Mock clipboard to fail
-			const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 			Object.assign(navigator, {
 				clipboard: {
 					writeText: vi.fn().mockRejectedValue(new Error('Clipboard error')),
@@ -1295,9 +1288,8 @@ describe('PlaygroundPanel', () => {
 				fireEvent.click(screen.getByRole('button', { name: /Copy Settings/ }));
 			});
 
-			expect(consoleError).toHaveBeenCalledWith('Failed to copy settings:', expect.any(Error));
-
-			consoleError.mockRestore();
+			// safeClipboardWrite swallows the error — no success indicator should appear
+			expect(screen.queryByText('Copied!')).not.toBeInTheDocument();
 		});
 	});
 
