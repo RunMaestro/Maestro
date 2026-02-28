@@ -1,6 +1,7 @@
 // Agent Sessions Service for CLI
-// Reads Claude Code session files directly from disk without Electron dependencies.
-// Supports listing sessions for an agent with sorting, limiting, and keyword search.
+// Reads agent session files directly from disk without Electron dependencies.
+// Supports listing sessions for Claude Code and Gemini CLI agents
+// with sorting, limiting, and keyword search.
 
 import * as fs from 'fs';
 import * as path from 'path';
@@ -331,6 +332,268 @@ export function listClaudeSessions(
 			// Search in session name
 			if (s.sessionName?.toLowerCase().includes(searchLower)) return true;
 			// Search in first message preview
+			if (s.firstMessage.toLowerCase().includes(searchLower)) return true;
+			return false;
+		});
+	}
+
+	const filteredCount = filtered.length;
+
+	// Apply skip and limit for pagination
+	const paginated = filtered.slice(skip, skip + limit);
+
+	return { sessions: paginated, totalCount, filteredCount };
+}
+
+// ============================================================================
+// Gemini CLI Sessions
+// ============================================================================
+
+interface GeminiSessionFile {
+	sessionId: string;
+	messages: GeminiMessage[];
+	startTime?: string;
+	lastUpdated?: string;
+	summary?: string;
+}
+
+interface GeminiMessage {
+	type: 'user' | 'gemini' | 'info' | 'error' | 'warning';
+	content: string | Array<{ type?: string; text?: string }>;
+	displayContent?: string;
+}
+
+interface AgentOriginsStore {
+	origins: Record<
+		string,
+		Record<string, Record<string, { origin?: string; sessionName?: string; starred?: boolean }>>
+	>;
+}
+
+function readAgentOriginsStore(): AgentOriginsStore {
+	const platform = os.platform();
+	const home = os.homedir();
+	let configDir: string;
+
+	if (platform === 'darwin') {
+		configDir = path.join(home, 'Library', 'Application Support', 'Maestro');
+	} else if (platform === 'win32') {
+		configDir = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Maestro');
+	} else {
+		configDir = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Maestro');
+	}
+
+	const filePath = path.join(configDir, 'maestro-agent-session-origins.json');
+
+	try {
+		const content = fs.readFileSync(filePath, 'utf-8');
+		return JSON.parse(content) as AgentOriginsStore;
+	} catch {
+		return { origins: {} };
+	}
+}
+
+function extractGeminiText(
+	content: string | Array<{ type?: string; text?: string }> | undefined
+): string {
+	if (!content) return '';
+	if (typeof content === 'string') return content;
+	if (Array.isArray(content)) {
+		return content
+			.map((part) => part.text || '')
+			.filter((text) => text.trim())
+			.join(' ');
+	}
+	return '';
+}
+
+function getGeminiDisplayText(msg: GeminiMessage): string {
+	const display = msg.displayContent?.trim();
+	if (display) return display;
+	return extractGeminiText(msg.content).trim();
+}
+
+/**
+ * Find the Gemini history directory for a project path.
+ * Gemini stores sessions in ~/.gemini/history/{basename}/ with a .project_root verification file.
+ */
+function findGeminiHistoryDir(projectPath: string): string | null {
+	const baseDir = path.join(os.homedir(), '.gemini', 'history');
+	const basename = path.basename(projectPath);
+	const directPath = path.join(baseDir, basename);
+
+	// First, try the direct basename match
+	if (fs.existsSync(directPath)) {
+		const projectRootFile = path.join(directPath, '.project_root');
+		try {
+			const projectRoot = fs.readFileSync(projectRootFile, 'utf-8');
+			if (path.resolve(projectRoot.trim()) === path.resolve(projectPath)) {
+				return directPath;
+			}
+		} catch {
+			// No .project_root file — basename match is the best we have
+			return directPath;
+		}
+	}
+
+	// Fallback: scan all subdirectories for matching .project_root
+	try {
+		const subdirs = fs.readdirSync(baseDir);
+		for (const subdir of subdirs) {
+			const subdirPath = path.join(baseDir, subdir);
+			try {
+				const stat = fs.statSync(subdirPath);
+				if (!stat.isDirectory()) continue;
+
+				const projectRootFile = path.join(subdirPath, '.project_root');
+				try {
+					const projectRoot = fs.readFileSync(projectRootFile, 'utf-8');
+					if (path.resolve(projectRoot.trim()) === path.resolve(projectPath)) {
+						return subdirPath;
+					}
+				} catch {
+					// No .project_root in this subdir
+				}
+			} catch {
+				continue;
+			}
+		}
+	} catch {
+		// Base history dir doesn't exist
+	}
+
+	return null;
+}
+
+/**
+ * Extract session ID from a Gemini session filename.
+ * Format: session-{timestamp}-{sessionId}.json
+ */
+function extractSessionIdFromFilename(filename: string): string | null {
+	const match = filename.match(/^session-[^-]+-(.+)\.json$/);
+	return match ? match[1] : null;
+}
+
+/**
+ * List sessions for a given project path (Gemini CLI).
+ * Reads session JSON files from ~/.gemini/history/{project}/ and returns
+ * session metadata sorted by modified date (newest first).
+ *
+ * @param projectPath - Absolute project directory path (from Maestro session cwd)
+ * @param options - Limit and search options
+ * @returns List of sessions with metadata
+ */
+export function listGeminiSessions(
+	projectPath: string,
+	options: ListSessionsOptions = {}
+): ListSessionsResult {
+	const { limit = 25, skip = 0, search } = options;
+
+	const historyDir = findGeminiHistoryDir(projectPath);
+	if (!historyDir) {
+		return { sessions: [], totalCount: 0, filteredCount: 0 };
+	}
+
+	// List all session-*.json files
+	const files = fs
+		.readdirSync(historyDir)
+		.filter((f) => f.startsWith('session-') && f.endsWith('.json'));
+
+	// Read agent origins store for session names
+	const agentOrigins = readAgentOriginsStore();
+	const resolvedPath = path.resolve(projectPath);
+	const geminiProjectOrigins = agentOrigins.origins['gemini-cli']?.[resolvedPath] || {};
+
+	const sessions: AgentSessionInfo[] = [];
+	for (const filename of files) {
+		const filePath = path.join(historyDir, filename);
+
+		try {
+			const stats = fs.statSync(filePath);
+			if (stats.size === 0) continue;
+
+			const content = fs.readFileSync(filePath, 'utf-8');
+			const sessionData = JSON.parse(content) as GeminiSessionFile;
+
+			const sessionId =
+				sessionData.sessionId ||
+				extractSessionIdFromFilename(filename) ||
+				filename.replace('.json', '');
+
+			// Count only conversation messages (user + gemini)
+			const conversationMessages = (sessionData.messages || []).filter(
+				(m) => m.type === 'user' || m.type === 'gemini'
+			);
+			const messageCount = conversationMessages.length;
+
+			// Extract first user message for preview
+			let firstUserText = '';
+			for (const msg of conversationMessages) {
+				if (msg.type === 'user') {
+					const text = getGeminiDisplayText(msg);
+					if (text) {
+						firstUserText = text;
+						break;
+					}
+				}
+			}
+
+			const summary = sessionData.summary?.trim() || '';
+			const displayName =
+				summary || firstUserText.slice(0, 50) || `Gemini session ${sessionId.slice(0, 8)}`;
+			const firstMessagePreview = firstUserText
+				? firstUserText.slice(0, PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH)
+				: displayName.slice(0, PARSE_LIMITS.FIRST_MESSAGE_PREVIEW_LENGTH);
+
+			const startedAt = sessionData.startTime || new Date(stats.mtimeMs).toISOString();
+			const lastActiveAt = sessionData.lastUpdated || new Date(stats.mtimeMs).toISOString();
+
+			const startTime = new Date(startedAt).getTime();
+			const endTime = new Date(lastActiveAt).getTime();
+			const durationSeconds = Math.max(0, Math.floor((endTime - startTime) / 1000));
+
+			const session: AgentSessionInfo = {
+				sessionId,
+				projectPath: resolvedPath,
+				timestamp: startedAt,
+				modifiedAt: lastActiveAt,
+				firstMessage: firstMessagePreview,
+				messageCount,
+				sizeBytes: stats.size,
+				costUsd: 0, // Gemini CLI doesn't expose token costs in session files
+				inputTokens: 0,
+				outputTokens: 0,
+				cacheReadTokens: 0,
+				cacheCreationTokens: 0,
+				durationSeconds,
+				sessionName: displayName,
+			};
+
+			// Attach origin metadata from origins store
+			const meta = geminiProjectOrigins[sessionId];
+			if (meta) {
+				if (meta.sessionName) session.sessionName = meta.sessionName;
+				if (meta.starred) session.starred = meta.starred;
+				if (meta.origin) session.origin = meta.origin;
+			}
+
+			sessions.push(session);
+		} catch {
+			// Skip files that can't be read or parsed
+		}
+	}
+
+	// Sort by modified date (newest first)
+	sessions.sort((a, b) => new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime());
+
+	const totalCount = sessions.length;
+
+	// Apply keyword search filter
+	let filtered = sessions;
+	if (search) {
+		const searchLower = search.toLowerCase();
+		filtered = sessions.filter((s) => {
+			if (s.sessionName?.toLowerCase().includes(searchLower)) return true;
 			if (s.firstMessage.toLowerCase().includes(searchLower)) return true;
 			return false;
 		});

@@ -22,11 +22,12 @@ vi.mock('../../../cli/services/storage', () => ({
 // Mock agent-sessions
 vi.mock('../../../cli/services/agent-sessions', () => ({
 	listClaudeSessions: vi.fn(),
+	listGeminiSessions: vi.fn(),
 }));
 
 import { listSessions } from '../../../cli/commands/list-sessions';
 import { resolveAgentId, getSessionById } from '../../../cli/services/storage';
-import { listClaudeSessions } from '../../../cli/services/agent-sessions';
+import { listClaudeSessions, listGeminiSessions } from '../../../cli/services/agent-sessions';
 
 describe('list sessions command', () => {
 	let consoleSpy: MockInstance;
@@ -254,5 +255,82 @@ describe('list sessions command', () => {
 
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
 		expect(processExitSpy).not.toHaveBeenCalled();
+	});
+
+	it('should route gemini-cli agents to listGeminiSessions', () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-gemini-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-gemini-1', name: 'Gemini Agent', toolType: 'gemini-cli' })
+		);
+		vi.mocked(listGeminiSessions).mockReturnValue({
+			sessions: [
+				{
+					sessionId: 'gemini-session-1',
+					sessionName: 'Gemini Session',
+					projectPath: '/path/to/project',
+					timestamp: '2026-02-08T10:00:00.000Z',
+					modifiedAt: '2026-02-08T10:05:00.000Z',
+					firstMessage: 'Help with Gemini',
+					messageCount: 4,
+					sizeBytes: 3000,
+					costUsd: 0,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					cacheCreationTokens: 0,
+					durationSeconds: 300,
+				},
+			],
+			totalCount: 1,
+			filteredCount: 1,
+		});
+
+		listSessions('agent-gemini', {});
+
+		expect(listGeminiSessions).toHaveBeenCalledWith('/path/to/project', {
+			limit: 25,
+			skip: 0,
+			search: undefined,
+		});
+		expect(listClaudeSessions).not.toHaveBeenCalled();
+		expect(consoleSpy).toHaveBeenCalledTimes(1);
+		expect(consoleSpy.mock.calls[0][0]).toContain('Gemini Agent');
+	});
+
+	it('should route gemini-cli agents to listGeminiSessions in JSON mode', () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-gemini-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-gemini-1', name: 'Gemini Agent', toolType: 'gemini-cli' })
+		);
+		vi.mocked(listGeminiSessions).mockReturnValue({
+			sessions: [],
+			totalCount: 0,
+			filteredCount: 0,
+		});
+
+		listSessions('agent-gemini', { json: true });
+
+		expect(listGeminiSessions).toHaveBeenCalled();
+		expect(listClaudeSessions).not.toHaveBeenCalled();
+		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
+		expect(output.success).toBe(true);
+		expect(output.agentName).toBe('Gemini Agent');
+	});
+
+	it('should route claude-code agents to listClaudeSessions (not listGeminiSessions)', () => {
+		vi.mocked(resolveAgentId).mockReturnValue('agent-claude-1');
+		vi.mocked(getSessionById).mockReturnValue(
+			mockAgent({ id: 'agent-claude-1', name: 'Claude Agent', toolType: 'claude-code' })
+		);
+		vi.mocked(listClaudeSessions).mockReturnValue({
+			sessions: [],
+			totalCount: 0,
+			filteredCount: 0,
+		});
+
+		listSessions('agent-claude', {});
+
+		expect(listClaudeSessions).toHaveBeenCalled();
+		expect(listGeminiSessions).not.toHaveBeenCalled();
 	});
 });
