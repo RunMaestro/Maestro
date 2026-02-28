@@ -325,18 +325,18 @@ describe('group-chat-moderator', () => {
 	// Test: killAllModerators kills processes and clears sessions
 	// ===========================================================================
 	describe('killAllModerators', () => {
-		it('kills all active moderator processes via processManager', async () => {
+		it('kills all active moderator processes via killByPrefix', async () => {
 			const chat1 = await createTestChat('Kill All 1', 'claude-code');
 			const chat2 = await createTestChat('Kill All 2', 'claude-code');
 
-			const sessionId1 = await spawnModerator(chat1, mockProcessManager);
-			const sessionId2 = await spawnModerator(chat2, mockProcessManager);
+			const sessionIdPrefix1 = await spawnModerator(chat1, mockProcessManager);
+			const sessionIdPrefix2 = await spawnModerator(chat2, mockProcessManager);
 
 			killAllModerators(mockProcessManager);
 
-			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId1);
-			expect(mockProcessManager.kill).toHaveBeenCalledWith(sessionId2);
-			expect(mockProcessManager.kill).toHaveBeenCalledTimes(2);
+			expect(mockProcessManager.killByPrefix).toHaveBeenCalledWith(sessionIdPrefix1);
+			expect(mockProcessManager.killByPrefix).toHaveBeenCalledWith(sessionIdPrefix2);
+			expect(mockProcessManager.killByPrefix).toHaveBeenCalledTimes(2);
 		});
 
 		it('clears all session mappings after killing', async () => {
@@ -364,7 +364,7 @@ describe('group-chat-moderator', () => {
 		it('handles empty session map gracefully', () => {
 			// No sessions spawned
 			expect(() => killAllModerators(mockProcessManager)).not.toThrow();
-			expect(mockProcessManager.kill).not.toHaveBeenCalled();
+			expect(mockProcessManager.killByPrefix).not.toHaveBeenCalled();
 		});
 	});
 });

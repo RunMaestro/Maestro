@@ -52,7 +52,7 @@ export interface IProcessManager {
 
 /**
  * In-memory store for active moderator sessions.
- * Maps groupChatId -> sessionId
+ * Maps groupChatId -> sessionIdPrefix
  */
 const activeModeratorSessions = new Map<string, string>();
 
@@ -286,9 +286,12 @@ export function clearAllModeratorSessions(): void {
  * @param processManager - The process manager for killing processes (optional)
  */
 export function killAllModerators(processManager?: IProcessManager): void {
-	for (const [groupChatId, sessionId] of activeModeratorSessions) {
+	for (const [groupChatId, sessionIdPrefix] of activeModeratorSessions) {
 		if (processManager) {
-			processManager.kill(sessionId);
+			// Kill by prefix because batch mode spawns processes with timestamp suffixes
+			// (e.g., "group-chat-{id}-moderator-1771743188276") while the active sessions
+			// map stores the prefix ("group-chat-{id}-moderator").
+			processManager.killByPrefix(sessionIdPrefix);
 		}
 		// Remove power block reason for each moderator
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
