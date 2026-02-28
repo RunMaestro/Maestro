@@ -78,6 +78,7 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	agentInbox: { id: 'agentInbox', label: 'Unified Inbox', keys: ['Alt', 'i'] },
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)

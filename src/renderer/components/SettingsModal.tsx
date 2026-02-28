@@ -37,6 +37,8 @@ import {
 	Clapperboard,
 	HelpCircle,
 	AppWindow,
+	Inbox,
+	FileText,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -1242,7 +1244,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						}}
 						title="Encore Features"
 					>
-						<FlaskConical className="w-4 h-4" />
+						<Sparkles className="w-4 h-4" />
 						{activeTab === 'encore' && <span>Encore Features</span>}
 					</button>
 					<div className="flex-1 flex justify-end items-center pr-4">
@@ -3639,6 +3641,136 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											</div>
 										);
 									})()}
+							</div>
+
+							{/* Unified Inbox Feature Card */}
+							<div
+								className="rounded-lg p-4"
+								style={{
+									borderLeft: `3px solid ${encoreFeatures.unifiedInbox ? theme.colors.accent : theme.colors.border}`,
+									backgroundColor: encoreFeatures.unifiedInbox
+										? `${theme.colors.accent}08`
+										: 'transparent',
+								}}
+							>
+								<button
+									className="w-full flex items-center justify-between text-left"
+									onClick={() =>
+										setEncoreFeatures({
+											...encoreFeatures,
+											unifiedInbox: !encoreFeatures.unifiedInbox,
+										})
+									}
+									role="switch"
+									aria-checked={encoreFeatures.unifiedInbox}
+								>
+									<div className="flex items-center gap-3">
+										<Inbox
+											className="w-5 h-5"
+											style={{
+												color: encoreFeatures.unifiedInbox
+													? theme.colors.accent
+													: theme.colors.textDim,
+											}}
+										/>
+										<div>
+											<div
+												className="text-sm font-bold flex items-center gap-2"
+												style={{ color: theme.colors.textMain }}
+											>
+												Unified Inbox
+												<span
+													className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+													style={{
+														backgroundColor: theme.colors.warning + '30',
+														color: theme.colors.warning,
+													}}
+												>
+													Beta
+												</span>
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												Aggregated view of pending actions across all agents
+											</div>
+										</div>
+									</div>
+									<div
+										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.unifiedInbox ? '' : 'opacity-50'}`}
+										style={{
+											backgroundColor: encoreFeatures.unifiedInbox
+												? theme.colors.accent
+												: theme.colors.border,
+										}}
+									>
+										<div
+											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+											style={{
+												transform: encoreFeatures.unifiedInbox
+													? 'translateX(22px)'
+													: 'translateX(2px)',
+											}}
+										/>
+									</div>
+								</button>
+							</div>
+
+							{/* Tab Descriptions Feature Card */}
+							<div
+								className="rounded-lg p-4"
+								style={{
+									borderLeft: `3px solid ${encoreFeatures.tabDescription ? theme.colors.accent : theme.colors.border}`,
+									backgroundColor: encoreFeatures.tabDescription
+										? `${theme.colors.accent}08`
+										: 'transparent',
+								}}
+							>
+								<button
+									className="w-full flex items-center justify-between text-left"
+									onClick={() =>
+										setEncoreFeatures({
+											...encoreFeatures,
+											tabDescription: !encoreFeatures.tabDescription,
+										})
+									}
+									role="switch"
+									aria-checked={encoreFeatures.tabDescription}
+								>
+									<div className="flex items-center gap-3">
+										<FileText
+											className="w-5 h-5"
+											style={{
+												color: encoreFeatures.tabDescription
+													? theme.colors.accent
+													: theme.colors.textDim,
+											}}
+										/>
+										<div>
+											<div className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+												Tab Descriptions
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												Show AI-generated descriptions below tab names for quick context
+											</div>
+										</div>
+									</div>
+									<div
+										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.tabDescription ? '' : 'opacity-50'}`}
+										style={{
+											backgroundColor: encoreFeatures.tabDescription
+												? theme.colors.accent
+												: theme.colors.border,
+										}}
+									>
+										<div
+											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+											style={{
+												transform: encoreFeatures.tabDescription
+													? 'translateX(22px)'
+													: 'translateX(2px)',
+											}}
+										/>
+									</div>
+								</button>
 							</div>
 						</div>
 					)}

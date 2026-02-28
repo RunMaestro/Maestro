@@ -218,7 +218,9 @@ export type ModalId =
 	// Platform Warnings
 	| 'windowsWarning'
 	// Director's Notes
-	| 'directorNotes';
+	| 'directorNotes'
+	// Agent Inbox (Unified Inbox)
+	| 'agentInbox';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -757,6 +759,10 @@ export function getModalActions() {
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
 
+		// Agent Inbox Modal (Unified Inbox)
+		setAgentInboxOpen: (open: boolean) =>
+			open ? openModal('agentInbox') : closeModal('agentInbox'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -846,6 +852,7 @@ export function useModalActions() {
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
+	const agentInboxOpen = useModalStore(selectModalOpen('agentInbox'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1013,6 +1020,9 @@ export function useModalActions() {
 
 		// Director's Notes Modal
 		directorNotesOpen,
+
+		// Agent Inbox Modal (Unified Inbox)
+		agentInboxOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,
