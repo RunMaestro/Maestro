@@ -102,7 +102,6 @@ function createMockAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
 const defaultProps = () => ({
 	theme: createMockTheme(),
 	isOpen: true,
-	groupChatId: 'group-chat-1',
 	sessions: [] as Session[],
 	participants: [] as GroupChatParticipant[],
 	onClose: vi.fn(),
@@ -305,7 +304,6 @@ describe('AddParticipantModal', () => {
 			fireEvent.click(addButton);
 
 			expect(props.onAddExisting).toHaveBeenCalledWith(
-				'session-1',
 				'My Project',
 				'claude-code',
 				'/home/user/project'
