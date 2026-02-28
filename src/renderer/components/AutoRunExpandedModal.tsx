@@ -366,7 +366,7 @@ export function AutoRunExpandedModal({
 								className={`flex items-center gap-2 px-3 py-1.5 rounded text-xs transition-colors font-semibold ${isStopping ? 'cursor-not-allowed' : ''}`}
 								style={{
 									backgroundColor: isStopping ? theme.colors.warning : theme.colors.error,
-									color: isStopping ? theme.colors.bgMain : 'white',
+									color: isStopping ? theme.colors.bgMain : theme.colors.errorForeground,
 									border: `1px solid ${isStopping ? theme.colors.warning : theme.colors.error}`,
 									pointerEvents: isStopping ? 'none' : 'auto',
 								}}

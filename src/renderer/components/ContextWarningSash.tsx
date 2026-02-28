@@ -82,6 +82,7 @@ export function ContextWarningSash({
 	const textColor = isRed ? theme.colors.error : theme.colors.warning;
 	const iconColor = isRed ? theme.colors.error : theme.colors.warning;
 	const buttonBgColor = isRed ? theme.colors.error : theme.colors.warning;
+	const buttonTextColor = isRed ? theme.colors.errorForeground : theme.colors.warningForeground;
 
 	return (
 		<div
@@ -127,7 +128,7 @@ export function ContextWarningSash({
 					className="px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors hover:opacity-90"
 					style={{
 						backgroundColor: buttonBgColor,
-						color: '#000',
+						color: buttonTextColor,
 					}}
 				>
 					Compact & Continue

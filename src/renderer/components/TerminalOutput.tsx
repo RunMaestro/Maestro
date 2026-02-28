@@ -1824,7 +1824,8 @@ export const TerminalOutput = memo(
 									}
 								}
 							}}
-							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20`}
+							tabIndex={0}
+							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
 							style={{
 								backgroundColor: isAutoScrollActive
 									? theme.colors.accent

@@ -1328,7 +1328,15 @@ export const FilePreview = React.memo(
 				});
 				matchElementsRef.current = [];
 			};
-		}, [searchQuery, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
+		}, [
+			searchQuery,
+			file?.content,
+			isMarkdown,
+			isImage,
+			isCsv,
+			theme.colors.accent,
+			theme.colors.accentForeground,
+		]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
