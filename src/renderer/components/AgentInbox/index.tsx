@@ -22,6 +22,12 @@ interface AgentInboxProps {
 	sessions: Session[];
 	groups: Group[];
 	enterToSendAI?: boolean;
+	slashCommands?: Array<{
+		command: string;
+		description: string;
+		terminalOnly?: boolean;
+		aiOnly?: boolean;
+	}>;
 	onClose: () => void;
 	onNavigateToSession?: (sessionId: string, tabId?: string) => void;
 	onQuickReply?: (sessionId: string, tabId: string, text: string) => void;
@@ -35,6 +41,7 @@ export default function AgentInbox({
 	sessions,
 	groups,
 	enterToSendAI,
+	slashCommands: slashCommandsProp,
 	onClose,
 	onNavigateToSession,
 	onQuickReply,
@@ -341,6 +348,7 @@ export default function AgentInbox({
 							sessions={sessions}
 							currentIndex={safeFocusIndex}
 							enterToSendAI={enterToSendAI}
+							slashCommands={slashCommandsProp}
 							filterMode={filterMode}
 							setFilterMode={handleSetFilterMode}
 							sortMode={sortMode}

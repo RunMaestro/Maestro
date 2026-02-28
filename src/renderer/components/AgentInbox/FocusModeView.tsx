@@ -277,6 +277,12 @@ interface FocusModeViewProps {
 	sessions: Session[]; // For accessing AITab.logs
 	currentIndex: number; // Position of item in items[]
 	enterToSendAI?: boolean; // false = Cmd+Enter sends, true = Enter sends
+	slashCommands?: Array<{
+		command: string;
+		description: string;
+		terminalOnly?: boolean;
+		aiOnly?: boolean;
+	}>;
 	filterMode?: InboxFilterMode;
 	setFilterMode?: (mode: InboxFilterMode) => void;
 	sortMode?: InboxSortMode;
@@ -586,6 +592,7 @@ export default function FocusModeView({
 	sessions,
 	currentIndex,
 	enterToSendAI,
+	slashCommands: slashCommandsProp,
 	filterMode,
 	setFilterMode,
 	sortMode,
@@ -737,23 +744,31 @@ export default function FocusModeView({
 
 	// ---- Slash command autocomplete state ----
 	const [slashCommandOpen, setSlashCommandOpen] = useState(false);
+	const slashCommandOpenRef = useRef(false);
+	slashCommandOpenRef.current = slashCommandOpen;
 	const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
 
-	const replyTextLower = useMemo(() => replyText.toLowerCase(), [replyText]);
+	// Use prop (full merged list from App.tsx) with fallback to built-in commands
+	const effectiveSlashCommands = slashCommandsProp ?? slashCommands;
+
+	// PERF: Only run fuzzy matching when dropdown is open — avoids work on every keystroke
 	const filteredSlashCommands = useMemo(() => {
-		return slashCommands
+		if (!slashCommandOpen) return [];
+		const query = replyText.toLowerCase();
+		return effectiveSlashCommands
 			.filter((cmd) => !cmd.terminalOnly) // Focus mode is always AI mode
 			.map((cmd) => {
-				const result = fuzzyMatchWithScore(cmd.command, replyTextLower);
+				const result = fuzzyMatchWithScore(cmd.command, query);
 				if (!result.matches) return null;
 				return { cmd, score: result.score };
 			})
 			.filter(
-				(item): item is { cmd: (typeof slashCommands)[number]; score: number } => item !== null
+				(item): item is { cmd: (typeof effectiveSlashCommands)[number]; score: number } =>
+					item !== null
 			)
 			.sort((a, b) => b.score - a.score)
 			.map((item) => item.cmd);
-	}, [replyTextLower]);
+	}, [effectiveSlashCommands, replyText, slashCommandOpen]);
 
 	const safeSlashIndex = Math.min(
 		Math.max(0, selectedSlashCommandIndex),
@@ -1107,11 +1122,13 @@ export default function FocusModeView({
 							onChange={(e) => {
 								const value = e.target.value;
 								setReplyText(value);
-								// Detect slash command trigger
-								if (value.startsWith('/') && !value.includes(' ') && !value.includes('\n')) {
-									if (!slashCommandOpen) setSelectedSlashCommandIndex(0);
+								// Detect slash command trigger — use ref to avoid stale closure + skip no-op state updates
+								const shouldOpen =
+									value.startsWith('/') && !value.includes(' ') && !value.includes('\n');
+								if (shouldOpen && !slashCommandOpenRef.current) {
+									setSelectedSlashCommandIndex(0);
 									setSlashCommandOpen(true);
-								} else {
+								} else if (!shouldOpen && slashCommandOpenRef.current) {
 									setSlashCommandOpen(false);
 								}
 							}}
