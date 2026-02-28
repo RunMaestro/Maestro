@@ -294,6 +294,21 @@ describe('useAppInitialization', () => {
 
 			expect(result.current.ghCliAvailable).toBe(false);
 		});
+
+		it('should not crash when maestro bridge is unavailable', async () => {
+			const originalMaestro = (window as any).maestro;
+			(window as any).maestro = undefined;
+
+			try {
+				const { result } = renderHook(() => useAppInitialization());
+				await act(flushPromises);
+
+				expect(result.current.ghCliAvailable).toBe(false);
+				expect(mockCheckGhCli).not.toHaveBeenCalled();
+			} finally {
+				(window as any).maestro = originalMaestro;
+			}
+		});
 	});
 
 	// --- Windows warning modal ---
