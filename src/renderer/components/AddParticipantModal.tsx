@@ -19,7 +19,6 @@ type ParticipantMode = 'fresh' | 'existing';
 interface AddParticipantModalProps {
 	theme: Theme;
 	isOpen: boolean;
-	groupChatId: string;
 	sessions: Session[];
 	participants: GroupChatParticipant[];
 	onClose: () => void;
@@ -30,7 +29,6 @@ interface AddParticipantModalProps {
 export function AddParticipantModal({
 	theme,
 	isOpen,
-	groupChatId,
 	sessions,
 	participants,
 	onClose,

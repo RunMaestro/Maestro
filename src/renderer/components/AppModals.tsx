@@ -1545,7 +1545,6 @@ export function AppGroupChatModals({
 						<AddParticipantModal
 							theme={theme}
 							isOpen={!!showAddParticipantModal}
-							groupChatId={showAddParticipantModal}
 							sessions={sessions}
 							participants={addParticipantGroupChat?.participants || []}
 							onClose={onCloseAddParticipantModal}
