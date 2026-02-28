@@ -77,7 +77,8 @@ function getModelPricing(model: string): ModelPricing {
 	if (MODEL_PRICING[model]) {
 		return MODEL_PRICING[model];
 	}
-	for (const [prefix, pricing] of Object.entries(MODEL_PRICING)) {
+	const sorted = Object.entries(MODEL_PRICING).sort((a, b) => b[0].length - a[0].length);
+	for (const [prefix, pricing] of sorted) {
 		if (model.startsWith(prefix)) {
 			return pricing;
 		}
