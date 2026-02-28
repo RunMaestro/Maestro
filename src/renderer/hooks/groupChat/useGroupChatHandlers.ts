@@ -677,7 +677,7 @@ export function useGroupChatHandlers(): GroupChatHandlersReturn {
 		if (!id) return;
 
 		try {
-			await window.maestro.groupChat.addFreshParticipant(id, agentId, name);
+			await window.maestro.groupChat.addFreshParticipant(id, name, agentId);
 			useModalStore.getState().closeModal('addGroupChatParticipant');
 		} catch (err) {
 			notifyToast({

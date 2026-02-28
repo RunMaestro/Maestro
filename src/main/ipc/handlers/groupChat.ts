@@ -551,8 +551,8 @@ export function registerGroupChatHandlers(deps: GroupChatHandlerDependencies): v
 			handlerOpts('addFreshParticipant'),
 			async (
 				id: string,
-				agentId: string,
 				name: string,
+				agentId: string,
 				cwd?: string
 			): Promise<GroupChatParticipant> => {
 				id = validateGroupChatId(id);

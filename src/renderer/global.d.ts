@@ -1775,8 +1775,8 @@ interface MaestroAPI {
 		}>;
 		addFreshParticipant: (
 			id: string,
-			agentId: string,
 			name: string,
+			agentId: string,
 			cwd?: string
 		) => Promise<{
 			name: string;
