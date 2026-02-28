@@ -8,7 +8,6 @@ import {
 	acquireChatLock,
 	releaseChatLock,
 	isChatLocked,
-	forceReleaseChatLock,
 	isSynthesisInProgress,
 	markSynthesisStarted,
 	clearSynthesisInProgress,
@@ -121,22 +120,6 @@ describe('group-chat/group-chat-lock', () => {
 				vi.useRealTimers();
 				releaseChatLock(chatId);
 			}
-		});
-	});
-
-	describe('forceReleaseChatLock', () => {
-		it('should unconditionally release a lock', () => {
-			const chatId = getUniqueChatId();
-			acquireChatLock(chatId, 'force test');
-			forceReleaseChatLock(chatId);
-			expect(isChatLocked(chatId).locked).toBe(false);
-		});
-
-		it('should be a no-op for unlocked chat', () => {
-			const chatId = getUniqueChatId();
-			// Should not throw
-			forceReleaseChatLock(chatId);
-			expect(isChatLocked(chatId).locked).toBe(false);
 		});
 	});
 

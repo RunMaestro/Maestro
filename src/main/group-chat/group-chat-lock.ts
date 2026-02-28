@@ -60,7 +60,11 @@ export function releaseChatLock(chatId: string): void {
  * @param chatId - The group chat ID to check
  * @returns Lock state with optional operation and startedAt
  */
-export function isChatLocked(chatId: string): { locked: boolean; operation?: string; startedAt?: number } {
+export function isChatLocked(chatId: string): {
+	locked: boolean;
+	operation?: string;
+	startedAt?: number;
+} {
 	const existing = chatLocks.get(chatId);
 	if (!existing) {
 		return { locked: false };
@@ -70,15 +74,6 @@ export function isChatLocked(chatId: string): { locked: boolean; operation?: str
 		return { locked: false };
 	}
 	return { locked: true, operation: existing.operation, startedAt: existing.startedAt };
-}
-
-/**
- * Unconditionally release the lock on a group chat.
- *
- * @param chatId - The group chat ID to force-unlock
- */
-export function forceReleaseChatLock(chatId: string): void {
-	chatLocks.delete(chatId);
 }
 
 // ========== Synthesis Guards ==========
