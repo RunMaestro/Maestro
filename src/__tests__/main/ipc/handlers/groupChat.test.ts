@@ -101,6 +101,7 @@ describe('groupChat IPC handlers', () => {
 		spawn: ReturnType<typeof vi.fn>;
 		write: ReturnType<typeof vi.fn>;
 		kill: ReturnType<typeof vi.fn>;
+		killByPrefix: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: object;
 	let mockDeps: GroupChatHandlerDependencies;
