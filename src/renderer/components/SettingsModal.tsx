@@ -37,6 +37,7 @@ import {
 	Clapperboard,
 	HelpCircle,
 	AppWindow,
+	ExternalLink,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -55,6 +56,7 @@ import { AICommandsPanel } from './AICommandsPanel';
 import { SpecKitCommandsPanel } from './SpecKitCommandsPanel';
 import { OpenSpecCommandsPanel } from './OpenSpecCommandsPanel';
 import { formatShortcutKeys, formatMetaKey, formatEnterToSend } from '../utils/shortcutFormatter';
+import { getOpenInLabel } from '../utils/platformUtils';
 import { ToggleButtonGroup } from './ToggleButtonGroup';
 import { SettingCheckbox } from './SettingCheckbox';
 import { FontConfigurationPanel } from './FontConfigurationPanel';
@@ -2485,6 +2487,25 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											Restart Maestro for changes to take effect
 										</div>
 									)}
+
+									{/* Open in File Manager */}
+									<div className="flex justify-end">
+										<button
+											onClick={() => {
+												const folderPath = customSyncPath || defaultStoragePath;
+												if (folderPath) {
+													window.maestro?.shell?.openPath(folderPath);
+												}
+											}}
+											disabled={!defaultStoragePath && !customSyncPath}
+											className="flex items-center gap-1.5 text-[11px] opacity-60 hover:opacity-100 transition-opacity disabled:opacity-30"
+											style={{ color: theme.colors.textMain }}
+											title={customSyncPath || defaultStoragePath}
+										>
+											<ExternalLink className="w-3 h-3" />
+											{getOpenInLabel(window.maestro?.platform || 'darwin')}
+										</button>
+									</div>
 								</div>
 							</div>
 						</div>
