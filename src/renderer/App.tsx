@@ -1404,10 +1404,18 @@ function MaestroConsoleInner() {
 		previousActiveSessionId: string | null;
 		text: string;
 	} | null>(null);
+	// Synchronous guard ref — prevents the effect from re-firing before React commits
+	// the batched setPendingInboxQuickReply(null). Without this, the Zustand setSessions()
+	// inside processInput triggers a synchronous store update → sessions dep changes →
+	// effect re-runs → pendingInboxQuickReply is still non-null (batched) → infinite loop.
+	const inboxQuickReplyFiredRef = useRef(false);
 
 	// Flush pending quick-reply once target session is active (deterministic, no RAF timing chain).
 	useEffect(() => {
 		if (!pendingInboxQuickReply) return;
+		// Synchronous guard: processInput triggers Zustand setSessions (sync) which re-runs
+		// this effect before React commits the batched setPendingInboxQuickReply(null).
+		if (inboxQuickReplyFiredRef.current) return;
 		// Guard: if the target session was removed before activation, clear the stale pending.
 		if (!sessions.some((s) => s.id === pendingInboxQuickReply.targetSessionId)) {
 			setPendingInboxQuickReply(null);
@@ -1415,6 +1423,8 @@ function MaestroConsoleInner() {
 		}
 		if (activeSession?.id !== pendingInboxQuickReply.targetSessionId) return;
 
+		// Mark as fired BEFORE calling processInput to prevent re-entry
+		inboxQuickReplyFiredRef.current = true;
 		inboxProcessInputRef.current(pendingInboxQuickReply.text);
 		const previousActiveSessionId = pendingInboxQuickReply.previousActiveSessionId;
 		setPendingInboxQuickReply(null);
@@ -1435,6 +1445,9 @@ function MaestroConsoleInner() {
 		(sessionId: string, tabId: string, text: string) => {
 			// Guard: ignore if a quick reply is already in progress
 			if (pendingInboxQuickReply) return;
+
+			// Reset the synchronous guard so the effect can fire for this new reply
+			inboxQuickReplyFiredRef.current = false;
 
 			// Save current active session so we can restore it after sending.
 			const previousActiveSessionId = activeSessionIdRef.current;
