@@ -169,8 +169,13 @@ describe('useLiveMode', () => {
 			await result.current.toggleGlobalLive();
 		});
 
-		// State should NOT have changed because the error was caught before setState
-		expect(consoleSpy).toHaveBeenCalledWith('[toggleGlobalLive] Error:', error);
+		// State should have been updated before disableAll was called (stepwise)
+		expect(result.current.isLiveMode).toBe(false);
+		expect(result.current.webInterfaceUrl).toBeNull();
+		expect(consoleSpy).toHaveBeenCalledWith(
+			'[toggleGlobalLive] disableAll failed after tunnel stop:',
+			error
+		);
 
 		consoleSpy.mockRestore();
 	});

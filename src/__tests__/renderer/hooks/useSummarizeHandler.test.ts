@@ -243,6 +243,13 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 		// Session should have been updated in the store via setSessions
 		const updatedSessions = useSessionStore.getState().sessions;
 		expect(updatedSessions.length).toBeGreaterThan(0);
+
+		const updatedSession = updatedSessions.find((s) => s.id === session.id);
+		expect(updatedSession).toBeDefined();
+		// Should have a new tab added by createTabAtPosition
+		expect(updatedSession!.aiTabs.length).toBeGreaterThan(session.aiTabs.length);
+		// Active tab should be switched to the new tab
+		expect(updatedSession!.activeTabId).toBe('new-tab-1');
 	});
 
 	it('shows success toast on success', async () => {
@@ -315,5 +322,39 @@ describe('handleSummarizeAndContinue (Tier 3E)', () => {
 			expect.any(Array),
 			expect.any(Function)
 		);
+	});
+
+	it('shows error toast when summarization fails', async () => {
+		const session = createMockSession();
+		useSessionStore.setState({
+			sessions: [session],
+			activeSessionId: session.id,
+		});
+
+		// Make summarizeContext reject
+		(
+			contextSummarizationService.summarizeContext as ReturnType<typeof vi.fn>
+		).mockRejectedValueOnce(new Error('Summarization failed'));
+
+		const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		const { result } = renderHook(() => useSummarizeAndContinue(session));
+
+		await act(async () => {
+			result.current.handleSummarizeAndContinue();
+			await vi.waitFor(() => {
+				expect(notifyToast).toHaveBeenCalledWith(
+					expect.objectContaining({
+						type: 'error',
+						title: 'Compaction Failed',
+					})
+				);
+			});
+		});
+
+		// createTabAtPosition should NOT have been called
+		expect(createTabAtPosition).not.toHaveBeenCalled();
+
+		consoleSpy.mockRestore();
 	});
 });

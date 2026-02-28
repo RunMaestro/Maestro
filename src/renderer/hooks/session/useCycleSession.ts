@@ -147,7 +147,7 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 				// Group Chats section (if expanded and has group chats)
 				if (groupChatsExpanded && groupChats.length > 0) {
 					const sortedGroupChats = [...groupChats].sort((a, b) =>
-						a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+						compareNamesIgnoringEmojis(a.name, b.name)
 					);
 					visualOrder.push(
 						...sortedGroupChats.map((gc) => ({

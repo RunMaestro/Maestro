@@ -44,6 +44,9 @@ vi.mock('../../../renderer/components/KeyboardMasteryCelebration', () => ({
 			data-testid="keyboard-mastery-celebration"
 			data-level={props.level}
 			data-disable-confetti={String(props.disableConfetti)}
+			data-has-shortcuts={String(
+				!!props.shortcuts && Object.keys(props.shortcuts as object).length > 0
+			)}
 		>
 			KeyboardMasteryCelebration
 		</div>
@@ -164,7 +167,9 @@ describe('AppOverlays (Tier 1A self-sourcing)', () => {
 
 		render(<AppOverlays {...defaultProps} />);
 
-		expect(screen.getByTestId('keyboard-mastery-celebration')).toBeInTheDocument();
+		const el = screen.getByTestId('keyboard-mastery-celebration');
+		expect(el).toBeInTheDocument();
+		expect(el).toHaveAttribute('data-has-shortcuts', 'true');
 	});
 
 	it('renders multiple overlays simultaneously when multiple modal data is set', () => {

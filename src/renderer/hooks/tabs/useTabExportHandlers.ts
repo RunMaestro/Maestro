@@ -82,6 +82,8 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 		const tab = currentSession.aiTabs.find((t) => t.id === tabId);
 		if (!tab || !tab.logs || tab.logs.length === 0) return;
 
+		if (!themeRef.current) return;
+
 		try {
 			const { downloadTabExport } = await import('../../utils/tabExport');
 			await downloadTabExport(
@@ -91,7 +93,7 @@ export function useTabExportHandlers(deps: UseTabExportHandlersDeps): UseTabExpo
 					cwd: currentSession.cwd,
 					toolType: currentSession.toolType,
 				},
-				themeRef.current!
+				themeRef.current
 			);
 			notifyToast({
 				type: 'success',

@@ -1055,7 +1055,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 			];
 			// Add 'custom' as the last item in the cycle
 			const allThemeIds = [...allThemes.map((t) => t.id), 'custom'];
-			const currentIndex = allThemeIds.findIndex((id: string) => id === activeThemeId);
+			let currentIndex = allThemeIds.findIndex((id: string) => id === activeThemeId);
+			if (currentIndex === -1) currentIndex = 0;
 
 			let newThemeId: string;
 			if (e.shiftKey) {
@@ -1171,7 +1172,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('general')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'general' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="General"
 					>
 						<Settings className="w-4 h-4" />
@@ -1180,7 +1180,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('display')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'display' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="Display"
 					>
 						<Monitor className="w-4 h-4" />
@@ -1190,7 +1189,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						<button
 							onClick={() => setActiveTab('llm')}
 							className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'llm' ? 'border-indigo-500' : 'border-transparent'}`}
-							tabIndex={-1}
 							title="LLM"
 						>
 							LLM
@@ -1199,7 +1197,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('shortcuts')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'shortcuts' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="Shortcuts"
 					>
 						<Keyboard className="w-4 h-4" />
@@ -1208,7 +1205,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('theme')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'theme' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="Themes"
 					>
 						<Palette className="w-4 h-4" />
@@ -1217,7 +1213,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('notifications')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'notifications' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="Notifications"
 					>
 						<Bell className="w-4 h-4" />
@@ -1226,7 +1221,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('aicommands')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'aicommands' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="AI Commands"
 					>
 						<Cpu className="w-4 h-4" />
@@ -1235,7 +1229,6 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					<button
 						onClick={() => setActiveTab('ssh')}
 						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'ssh' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
-						tabIndex={-1}
 						title="SSH Hosts"
 					>
 						<Server className="w-4 h-4" />
@@ -1247,14 +1240,13 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						style={{
 							color: activeTab === 'encore' ? theme.colors.textMain : theme.colors.textDim,
 						}}
-						tabIndex={-1}
 						title="Encore Features"
 					>
 						<FlaskConical className="w-4 h-4" />
 						{activeTab === 'encore' && <span>Encore Features</span>}
 					</button>
 					<div className="flex-1 flex justify-end items-center pr-4">
-						<button onClick={onClose} tabIndex={-1} className="cursor-pointer">
+						<button onClick={onClose} className="cursor-pointer">
 							<X className="w-5 h-5 opacity-50 hover:opacity-100" />
 						</button>
 					</div>

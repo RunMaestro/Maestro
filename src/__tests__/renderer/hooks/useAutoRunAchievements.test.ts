@@ -148,6 +148,7 @@ describe('useAutoRunAchievements', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
+		vi.restoreAllMocks();
 	});
 
 	// ==========================================================================

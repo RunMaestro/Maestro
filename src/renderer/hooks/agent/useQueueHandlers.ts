@@ -54,6 +54,15 @@ export function useQueueHandlers(): UseQueueHandlersReturn {
 			setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== sessionId) return s;
+					const len = s.executionQueue.length;
+					if (
+						fromIndex === toIndex ||
+						fromIndex < 0 ||
+						fromIndex >= len ||
+						toIndex < 0 ||
+						toIndex >= len
+					)
+						return s;
 					const queue = [...s.executionQueue];
 					const [removed] = queue.splice(fromIndex, 1);
 					queue.splice(toIndex, 0, removed);

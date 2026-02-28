@@ -356,43 +356,60 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 			const sourceSessionName = session.name;
 			const { setSessions } = useSessionStore.getState();
 
-			startSummarize(targetTabId).then((result) => {
-				if (result) {
-					// Update session with the new tab
-					setSessions((prev) =>
-						prev.map((s) => (s.id === sourceSessionId ? result.updatedSession : s))
-					);
+			startSummarize(targetTabId)
+				.then((result) => {
+					if (result) {
+						// Atomic update: merge updatedSession and append systemLogEntry in one call
+						setSessions((prev) =>
+							prev.map((s) => {
+								if (s.id !== sourceSessionId) return s;
+								const merged = { ...s, ...result.updatedSession };
+								return {
+									...merged,
+									aiTabs: merged.aiTabs.map((tab) =>
+										tab.id === targetTabId
+											? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
+											: tab
+									),
+								};
+							})
+						);
 
-					// Add system log entry to the SOURCE tab's history
-					setSessions((prev) =>
-						prev.map((s) => {
-							if (s.id !== sourceSessionId) return s;
-							return {
-								...s,
-								aiTabs: s.aiTabs.map((tab) =>
-									tab.id === targetTabId
-										? { ...tab, logs: [...tab.logs, result.systemLogEntry] }
-										: tab
-								),
-							};
-						})
-					);
+						// Show success notification with click-to-navigate
+						const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
+						notifyToast({
+							type: 'success',
+							title: 'Context Compacted',
+							message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
+							sessionId: sourceSessionId,
+							tabId: result.newTabId,
+							project: sourceSessionName,
+						});
 
-					// Show success notification with click-to-navigate
-					const reductionPercent = result.systemLogEntry.text.match(/(\d+)%/)?.[1] ?? '0';
+						// Clear the summarization state for this tab
+						clearTabState(targetTabId);
+					} else {
+						// startSummarize returned null (error already set in operationStore)
+						notifyToast({
+							type: 'error',
+							title: 'Compaction Failed',
+							message: 'Failed to compact context. Check the tab for details.',
+							sessionId: sourceSessionId,
+							tabId: targetTabId,
+						});
+					}
+				})
+				.catch((err) => {
+					console.error('[handleSummarizeAndContinue] Unexpected error:', err);
 					notifyToast({
-						type: 'success',
-						title: 'Context Compacted',
-						message: `Reduced context by ${reductionPercent}%. Click to view the new tab.`,
+						type: 'error',
+						title: 'Compaction Failed',
+						message: 'An unexpected error occurred during compaction.',
 						sessionId: sourceSessionId,
-						tabId: result.newTabId,
-						project: sourceSessionName,
+						tabId: targetTabId,
 					});
-
-					// Clear the summarization state for this tab
 					clearTabState(targetTabId);
-				}
-			});
+				});
 		},
 		[session, canSummarize, startSummarize, clearTabState]
 	);

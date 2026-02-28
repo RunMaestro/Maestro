@@ -38,11 +38,15 @@ export function useLiveMode(): UseLiveModeReturn {
 	const toggleGlobalLive = useCallback(async () => {
 		try {
 			if (isLiveMode) {
-				// Stop tunnel first (if running), then stop web server
+				// Stop tunnel first, then update state, then stop web server
 				await (window as any).maestro.tunnel.stop();
-				await (window as any).maestro.live.disableAll();
 				setIsLiveMode(false);
 				setWebInterfaceUrl(null);
+				try {
+					await (window as any).maestro.live.disableAll();
+				} catch (disableErr) {
+					console.error('[toggleGlobalLive] disableAll failed after tunnel stop:', disableErr);
+				}
 			} else {
 				// Turn on - start the server and get the URL
 				const result = await (window as any).maestro.live.startServer();
