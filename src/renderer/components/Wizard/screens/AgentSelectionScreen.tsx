@@ -37,7 +37,7 @@ export interface AgentTile {
 
 /**
  * Define the agents to display in the grid
- * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, Gemini CLI (shown first)
+ * Supported agents: Claude Code, Codex, OpenCode, Factory Droid, Gemini CLI
  * Unsupported agents: shown ghosted with "Coming soon" (at bottom)
  */
 export const AGENT_TILES: AgentTile[] = [
