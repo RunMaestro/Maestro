@@ -71,7 +71,7 @@ export function AddParticipantModal({
 				} else if (available.length > 0) {
 					setSelectedAgentId(available[0].id);
 				}
-			} catch (err) {
+			} catch {
 				setError('Failed to detect available agents. Please try again.');
 			} finally {
 				setIsDetecting(false);
