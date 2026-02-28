@@ -2,13 +2,14 @@
  * @file agent-sessions.test.ts
  * @description Tests for the CLI agent-sessions service
  *
- * Tests session listing from Claude Code's .jsonl files on disk.
+ * Tests session listing from Claude Code's .jsonl files and Gemini CLI's JSON files on disk.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
-import { listClaudeSessions } from '../../../cli/services/agent-sessions';
+import * as path from 'path';
+import { listClaudeSessions, listGeminiSessions } from '../../../cli/services/agent-sessions';
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -474,5 +475,465 @@ describe('listClaudeSessions', () => {
 		expect(session.cacheCreationTokens).toBe(100);
 		expect(session.costUsd).toBeGreaterThan(0);
 		expect(session.durationSeconds).toBe(5);
+	});
+});
+
+describe('listGeminiSessions', () => {
+	const projectPath = '/path/to/project';
+	const geminiHistoryDir = '/home/testuser/.gemini/history/project';
+
+	const makeGeminiSession = (
+		opts: {
+			sessionId?: string;
+			messages?: Array<{ type: string; content: string }>;
+			startTime?: string;
+			lastUpdated?: string;
+			summary?: string;
+		} = {}
+	) => {
+		return JSON.stringify({
+			sessionId: opts.sessionId || 'test-session-id',
+			messages: opts.messages || [
+				{ type: 'user', content: 'Hello' },
+				{ type: 'gemini', content: 'Hi there' },
+			],
+			startTime: opts.startTime || '2026-02-08T10:00:00.000Z',
+			lastUpdated: opts.lastUpdated || '2026-02-08T10:05:00.000Z',
+			summary: opts.summary,
+		});
+	};
+
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it('should return empty result when history directory does not exist', () => {
+		vi.mocked(fs.existsSync).mockReturnValue(false);
+		vi.mocked(fs.readdirSync).mockImplementation(() => {
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.sessions).toEqual([]);
+		expect(result.totalCount).toBe(0);
+	});
+
+	it('should parse Gemini session JSON files and return sorted results', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return [
+					'session-1000-old-id.json' as unknown as fs.Dirent,
+					'session-2000-new-id.json' as unknown as fs.Dirent,
+				];
+			}
+			// Base history dir scan fallback
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('old-id')) {
+				return {
+					size: 500,
+					mtimeMs: new Date('2026-02-01T00:00:00Z').getTime(),
+					isDirectory: () => false,
+				} as unknown as fs.Stats;
+			}
+			return {
+				size: 800,
+				mtimeMs: new Date('2026-02-08T00:00:00Z').getTime(),
+				isDirectory: () => false,
+			} as unknown as fs.Stats;
+		});
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) {
+				return projectPath;
+			}
+			if (pStr.includes('old-id')) {
+				return makeGeminiSession({
+					sessionId: 'old-id',
+					startTime: '2026-02-01T00:00:00.000Z',
+					lastUpdated: '2026-02-01T00:05:00.000Z',
+					messages: [
+						{ type: 'user', content: 'Old task' },
+						{ type: 'gemini', content: 'Old response' },
+					],
+				});
+			}
+			if (pStr.includes('new-id')) {
+				return makeGeminiSession({
+					sessionId: 'new-id',
+					startTime: '2026-02-08T00:00:00.000Z',
+					lastUpdated: '2026-02-08T00:10:00.000Z',
+					messages: [
+						{ type: 'user', content: 'New task' },
+						{ type: 'gemini', content: 'New response' },
+					],
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.totalCount).toBe(2);
+		expect(result.sessions).toHaveLength(2);
+		// Newest first (by lastUpdated)
+		expect(result.sessions[0].sessionId).toBe('new-id');
+		expect(result.sessions[1].sessionId).toBe('old-id');
+	});
+
+	it('should skip empty session files', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return [
+					'session-1000-empty.json' as unknown as fs.Dirent,
+					'session-2000-valid.json' as unknown as fs.Dirent,
+				];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('empty')) {
+				return { size: 0, mtimeMs: Date.now(), isDirectory: () => false } as unknown as fs.Stats;
+			}
+			return { size: 500, mtimeMs: Date.now(), isDirectory: () => false } as unknown as fs.Stats;
+		});
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('valid')) {
+				return makeGeminiSession({ sessionId: 'valid-id' });
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.totalCount).toBe(1);
+		expect(result.sessions[0].sessionId).toBe('valid-id');
+	});
+
+	it('should count only conversation messages (not info/error/warning)', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return ['session-1000-mixed.json' as unknown as fs.Dirent];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('mixed')) {
+				return JSON.stringify({
+					sessionId: 'mixed-id',
+					messages: [
+						{ type: 'user', content: 'Hello' },
+						{ type: 'info', content: 'System info' },
+						{ type: 'gemini', content: 'Response' },
+						{ type: 'warning', content: 'Warning msg' },
+						{ type: 'error', content: 'Error msg' },
+						{ type: 'user', content: 'Follow up' },
+						{ type: 'gemini', content: 'Follow up response' },
+					],
+					startTime: '2026-02-08T10:00:00.000Z',
+					lastUpdated: '2026-02-08T10:05:00.000Z',
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.sessions).toHaveLength(1);
+		// Only user + gemini messages count: 2 user + 2 gemini = 4
+		expect(result.sessions[0].messageCount).toBe(4);
+	});
+
+	it('should apply limit and skip for pagination', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return [
+					'session-1000-a.json' as unknown as fs.Dirent,
+					'session-2000-b.json' as unknown as fs.Dirent,
+					'session-3000-c.json' as unknown as fs.Dirent,
+				];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('-a.json')) {
+				return makeGeminiSession({
+					sessionId: 'a',
+					lastUpdated: '2026-02-01T00:00:00.000Z',
+				});
+			}
+			if (pStr.includes('-b.json')) {
+				return makeGeminiSession({
+					sessionId: 'b',
+					lastUpdated: '2026-02-05T00:00:00.000Z',
+				});
+			}
+			if (pStr.includes('-c.json')) {
+				return makeGeminiSession({
+					sessionId: 'c',
+					lastUpdated: '2026-02-08T00:00:00.000Z',
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		// Skip 1, take 1
+		const result = listGeminiSessions(projectPath, { skip: 1, limit: 1 });
+
+		expect(result.totalCount).toBe(3);
+		expect(result.sessions).toHaveLength(1);
+		// Sorted newest first: c, b, a — skip 1 → b
+		expect(result.sessions[0].sessionId).toBe('b');
+	});
+
+	it('should filter sessions by search keyword', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return [
+					'session-1000-auth.json' as unknown as fs.Dirent,
+					'session-2000-tests.json' as unknown as fs.Dirent,
+				];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('auth')) {
+				return makeGeminiSession({
+					sessionId: 'auth-session',
+					messages: [
+						{ type: 'user', content: 'Fix authentication flow' },
+						{ type: 'gemini', content: 'I will fix it' },
+					],
+				});
+			}
+			if (pStr.includes('tests')) {
+				return makeGeminiSession({
+					sessionId: 'tests-session',
+					messages: [
+						{ type: 'user', content: 'Write unit tests' },
+						{ type: 'gemini', content: 'Writing tests' },
+					],
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath, { search: 'auth' });
+
+		expect(result.totalCount).toBe(2);
+		expect(result.filteredCount).toBe(1);
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0].sessionId).toBe('auth-session');
+	});
+
+	it('should attach origins metadata when available', () => {
+		vi.mocked(os.platform).mockReturnValue('darwin');
+
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return ['session-1000-named.json' as unknown as fs.Dirent];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		const resolvedProjectPath = path.resolve(projectPath);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('maestro-agent-session-origins.json')) {
+				return JSON.stringify({
+					origins: {
+						'gemini-cli': {
+							[resolvedProjectPath]: {
+								'named-session-id': {
+									origin: 'user',
+									sessionName: 'My Gemini Session',
+									starred: true,
+								},
+							},
+						},
+					},
+				});
+			}
+			if (pStr.includes('named')) {
+				return makeGeminiSession({
+					sessionId: 'named-session-id',
+					messages: [
+						{ type: 'user', content: 'Work on auth' },
+						{ type: 'gemini', content: 'OK' },
+					],
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0].sessionName).toBe('My Gemini Session');
+		expect(result.sessions[0].starred).toBe(true);
+		expect(result.sessions[0].origin).toBe('user');
+	});
+
+	it('should use summary as display name when available', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return ['session-1000-summary.json' as unknown as fs.Dirent];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('summary')) {
+				return makeGeminiSession({
+					sessionId: 'summary-id',
+					summary: 'Authentication refactor session',
+					messages: [
+						{ type: 'user', content: 'Help me refactor auth' },
+						{ type: 'gemini', content: 'Sure' },
+					],
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0].sessionName).toBe('Authentication refactor session');
+	});
+
+	it('should calculate duration from startTime and lastUpdated', () => {
+		vi.mocked(fs.existsSync).mockImplementation((p) => {
+			if (p === geminiHistoryDir) return true;
+			return false;
+		});
+
+		vi.mocked(fs.readdirSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr === geminiHistoryDir) {
+				return ['session-1000-timed.json' as unknown as fs.Dirent];
+			}
+			return [];
+		});
+
+		vi.mocked(fs.statSync).mockReturnValue({
+			size: 500,
+			mtimeMs: Date.now(),
+			isDirectory: () => false,
+		} as unknown as fs.Stats);
+
+		vi.mocked(fs.readFileSync).mockImplementation((p) => {
+			const pStr = p.toString();
+			if (pStr.includes('.project_root')) return projectPath;
+			if (pStr.includes('timed')) {
+				return makeGeminiSession({
+					sessionId: 'timed-id',
+					startTime: '2026-02-08T10:00:00.000Z',
+					lastUpdated: '2026-02-08T10:05:00.000Z',
+				});
+			}
+			throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+		});
+
+		const result = listGeminiSessions(projectPath);
+
+		expect(result.sessions).toHaveLength(1);
+		expect(result.sessions[0].durationSeconds).toBe(300); // 5 minutes
+		expect(result.sessions[0].costUsd).toBe(0); // Gemini doesn't expose cost
 	});
 });

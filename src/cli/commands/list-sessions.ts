@@ -1,8 +1,8 @@
 // List sessions command
-// Lists agent sessions (Claude Code) for a given Maestro agent
+// Lists agent sessions for a given Maestro agent (Claude Code, Gemini CLI)
 
 import { resolveAgentId, getSessionById } from '../services/storage';
-import { listClaudeSessions } from '../services/agent-sessions';
+import { listClaudeSessions, listGeminiSessions } from '../services/agent-sessions';
 import { formatSessions, formatError, SessionDisplay } from '../output/formatter';
 import type { ToolType } from '../../shared/types';
 
@@ -75,7 +75,8 @@ export function listSessions(agentIdArg: string, options: ListSessionsOptions): 
 		}
 
 		const projectPath = agent.cwd;
-		const result = listClaudeSessions(projectPath, {
+		const listFn = agent.toolType === 'gemini-cli' ? listGeminiSessions : listClaudeSessions;
+		const result = listFn(projectPath, {
 			limit,
 			skip,
 			search: options.search,
