@@ -51,13 +51,20 @@ vi.mock('os', () => ({
 /**
  * Helper to build a Gemini session JSON string
  */
-function buildSessionJson(messages: Array<{ type: string; content: string; toolCalls?: unknown[] }>, sessionId = 'test-session-id') {
-	return JSON.stringify({
-		sessionId,
-		messages,
-		startTime: '2026-01-01T00:00:00.000Z',
-		lastUpdated: '2026-01-01T01:00:00.000Z',
-	}, null, 2);
+function buildSessionJson(
+	messages: Array<{ type: string; content: string; toolCalls?: unknown[] }>,
+	sessionId = 'test-session-id'
+) {
+	return JSON.stringify(
+		{
+			sessionId,
+			messages,
+			startTime: '2026-01-01T00:00:00.000Z',
+			lastUpdated: '2026-01-01T01:00:00.000Z',
+		},
+		null,
+		2
+	);
 }
 
 describe('GeminiSessionStorage', () => {
@@ -80,8 +87,14 @@ describe('GeminiSessionStorage', () => {
 			}
 			return Promise.resolve(sessionContent);
 		});
-		(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
-		(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({ size: 1000, mtimeMs: Date.now(), isDirectory: () => true });
+		(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+			'session-123-test-session-id.json',
+		]);
+		(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
+			size: 1000,
+			mtimeMs: Date.now(),
+			isDirectory: () => true,
+		});
 		(fs.writeFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 		(fs.unlink as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 		(fs.copyFile as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
@@ -99,7 +112,9 @@ describe('GeminiSessionStorage', () => {
 
 			mockFindSessionFile(sessionContent);
 
-			const result = await storage.readSessionMessages('/test/project', 'test-session-id', { limit: 100 });
+			const result = await storage.readSessionMessages('/test/project', 'test-session-id', {
+				limit: 100,
+			});
 
 			// Should only include conversation messages (user + gemini), skip info
 			expect(result.messages.length).toBe(4);
@@ -121,7 +136,9 @@ describe('GeminiSessionStorage', () => {
 
 			mockFindSessionFile(sessionContent);
 
-			const result = await storage.readSessionMessages('/test/project', 'test-session-id', { limit: 100 });
+			const result = await storage.readSessionMessages('/test/project', 'test-session-id', {
+				limit: 100,
+			});
 
 			expect(result.messages.length).toBe(2);
 			expect(result.messages[0].uuid).toBe('0'); // user at original index 0
@@ -361,6 +378,86 @@ describe('GeminiSessionStorage', () => {
 			expect(writtenSession.messages[0].content).toBe('Next');
 		});
 
+		it('should include intermediates when no gemini response exists (no orphans)', async () => {
+			const messages = [
+				{ type: 'user', content: 'Hello' },
+				{ type: 'info', content: 'Processing...' },
+				{ type: 'warning', content: 'Slow response' },
+				{ type: 'user', content: 'Gave up waiting' },
+				{ type: 'gemini', content: 'Response to second' },
+			];
+			const sessionContent = buildSessionJson(messages);
+			mockFindSessionFile(sessionContent);
+
+			const result = await storage.deleteMessagePair('/test/project', 'test-session-id', '0');
+
+			expect(result.success).toBe(true);
+			// Should remove user + info + warning = 3 (not just the user message)
+			expect(result.linesRemoved).toBe(3);
+
+			const writeCall = (fs.writeFile as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call: unknown[]) => !(call[0] as string).endsWith('.bak')
+			);
+			const writtenSession = JSON.parse(writeCall![1] as string);
+			expect(writtenSession.messages.length).toBe(2);
+			expect(writtenSession.messages[0].content).toBe('Gave up waiting');
+			expect(writtenSession.messages[1].content).toBe('Response to second');
+		});
+
+		it('should include trailing intermediates after gemini response (no orphans)', async () => {
+			const messages = [
+				{ type: 'user', content: 'Run something' },
+				{ type: 'gemini', content: 'Done' },
+				{ type: 'info', content: 'Tool completed' },
+				{ type: 'warning', content: 'Cleanup note' },
+				{ type: 'user', content: 'Next question' },
+				{ type: 'gemini', content: 'Next answer' },
+			];
+			const sessionContent = buildSessionJson(messages);
+			mockFindSessionFile(sessionContent);
+
+			const result = await storage.deleteMessagePair('/test/project', 'test-session-id', '0');
+
+			expect(result.success).toBe(true);
+			// Should remove user + gemini + info + warning = 4
+			expect(result.linesRemoved).toBe(4);
+
+			const writeCall = (fs.writeFile as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call: unknown[]) => !(call[0] as string).endsWith('.bak')
+			);
+			const writtenSession = JSON.parse(writeCall![1] as string);
+			expect(writtenSession.messages.length).toBe(2);
+			expect(writtenSession.messages[0].content).toBe('Next question');
+			expect(writtenSession.messages[1].content).toBe('Next answer');
+		});
+
+		it('should include both leading and trailing intermediates around gemini response', async () => {
+			const messages = [
+				{ type: 'user', content: 'Do task' },
+				{ type: 'info', content: 'Starting tool...' },
+				{ type: 'gemini', content: 'Task done' },
+				{ type: 'info', content: 'Tool finished' },
+				{ type: 'user', content: 'Thanks' },
+				{ type: 'gemini', content: 'Welcome' },
+			];
+			const sessionContent = buildSessionJson(messages);
+			mockFindSessionFile(sessionContent);
+
+			const result = await storage.deleteMessagePair('/test/project', 'test-session-id', '0');
+
+			expect(result.success).toBe(true);
+			// Should remove user + info + gemini + info = 4
+			expect(result.linesRemoved).toBe(4);
+
+			const writeCall = (fs.writeFile as ReturnType<typeof vi.fn>).mock.calls.find(
+				(call: unknown[]) => !(call[0] as string).endsWith('.bak')
+			);
+			const writtenSession = JSON.parse(writeCall![1] as string);
+			expect(writtenSession.messages.length).toBe(2);
+			expect(writtenSession.messages[0].content).toBe('Thanks');
+			expect(writtenSession.messages[1].content).toBe('Welcome');
+		});
+
 		it('should update lastUpdated timestamp after deletion', async () => {
 			const messages = [
 				{ type: 'user', content: 'Hello' },
@@ -446,7 +543,7 @@ describe('GeminiSessionStorage', () => {
 						'gemini-session-1': { sessionName: 'Gemini Session' },
 					},
 				},
-				'codex': {
+				codex: {
 					'/test/project': {
 						'codex-session-1': { sessionName: 'Codex Session' },
 					},
@@ -468,8 +565,8 @@ describe('GeminiSessionStorage', () => {
 			expect(result[0].agentSessionId).toBe('gemini-session-1');
 			expect(result[0].sessionName).toBe('Gemini Session');
 			// Ensure no codex or claude sessions leak through
-			expect(result.find(s => s.agentSessionId === 'codex-session-1')).toBeUndefined();
-			expect(result.find(s => s.agentSessionId === 'claude-session-1')).toBeUndefined();
+			expect(result.find((s) => s.agentSessionId === 'codex-session-1')).toBeUndefined();
+			expect(result.find((s) => s.agentSessionId === 'claude-session-1')).toBeUndefined();
 		});
 
 		it('should pass through starred status correctly (true, false, undefined)', async () => {
@@ -490,9 +587,9 @@ describe('GeminiSessionStorage', () => {
 
 			expect(result).toHaveLength(3);
 
-			const starred = result.find(s => s.agentSessionId === 'session-starred');
-			const unstarred = result.find(s => s.agentSessionId === 'session-unstarred');
-			const noStar = result.find(s => s.agentSessionId === 'session-no-star');
+			const starred = result.find((s) => s.agentSessionId === 'session-starred');
+			const unstarred = result.find((s) => s.agentSessionId === 'session-unstarred');
+			const noStar = result.find((s) => s.agentSessionId === 'session-no-star');
 
 			expect(starred?.starred).toBe(true);
 			expect(unstarred?.starred).toBe(false);
@@ -517,7 +614,9 @@ describe('GeminiSessionStorage', () => {
 				}
 				return Promise.resolve('{}');
 			});
-			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+				'session-123-test-session-id.json',
+			]);
 			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
 				size: 500,
 				mtimeMs,
@@ -567,7 +666,9 @@ describe('GeminiSessionStorage', () => {
 				}
 				return Promise.resolve(sessionContent);
 			});
-			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+				'session-123-test-session-id.json',
+			]);
 			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
 				size: 1000,
 				mtimeMs: Date.now(),
@@ -600,7 +701,9 @@ describe('GeminiSessionStorage', () => {
 				}
 				return Promise.resolve(sessionContent);
 			});
-			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue(['session-123-test-session-id.json']);
+			(fs.readdir as ReturnType<typeof vi.fn>).mockResolvedValue([
+				'session-123-test-session-id.json',
+			]);
 			(fs.stat as ReturnType<typeof vi.fn>).mockResolvedValue({
 				size: 1000,
 				mtimeMs: Date.now(),

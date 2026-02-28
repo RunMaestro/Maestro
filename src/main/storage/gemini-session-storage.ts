@@ -168,7 +168,7 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
  *
  * Provides access to Gemini CLI's local session storage at ~/.gemini/history/
  */
-	export class GeminiSessionStorage implements AgentSessionStorage {
+export class GeminiSessionStorage implements AgentSessionStorage {
 	readonly agentId: ToolType = 'gemini-cli' as ToolType;
 	private originsStore?: Store<AgentSessionOriginsData>;
 
@@ -289,8 +289,9 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 			const firstUserText = getFirstUserMessageText(conversationMessages);
 			const displayName =
 				summary || firstUserText.slice(0, 50) || `Gemini session ${sessionId.slice(0, 8)}`;
-			const firstMessagePreview =
-				firstUserText ? firstUserText.slice(0, 200) : displayName.slice(0, 200);
+			const firstMessagePreview = firstUserText
+				? firstUserText.slice(0, 200)
+				: displayName.slice(0, 200);
 
 			const startedAt = session.startTime || new Date(stats.mtimeMs).toISOString();
 			const lastActiveAt = session.lastUpdated || new Date(stats.mtimeMs).toISOString();
@@ -662,29 +663,39 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 				return { success: false, error: 'Message not found' };
 			}
 
-			// Scan forward from userMessageIndex+1 to find the paired gemini response
-			// Collect intermediate info/error/warning messages along the way
+			// Scan forward from userMessageIndex+1 to find the paired gemini response.
+			// Track scanEndIndex through the scan to include intermediate messages
+			// (info/error/warning) in the deletion range, preventing orphans.
 			let pairedResponseIndex = -1;
+			let scanEndIndex = userMessageIndex + 1;
 			for (let i = userMessageIndex + 1; i < messages.length; i++) {
 				if (messages[i].type === 'gemini') {
 					pairedResponseIndex = i;
+					scanEndIndex = i + 1;
 					break;
 				}
 				if (messages[i].type === 'user') {
-					// Hit the next user message without finding a gemini response
+					// Hit the next user message without finding a gemini response.
+					// scanEndIndex already covers intermediates up to this point.
 					break;
+				}
+				// Intermediate message (info/error/warning) — include in deletion range
+				scanEndIndex = i + 1;
+			}
+
+			// If we found a gemini response, also scan past it for trailing intermediates
+			// (e.g., tool completion info) that belong to this exchange
+			if (pairedResponseIndex !== -1) {
+				for (let i = pairedResponseIndex + 1; i < messages.length; i++) {
+					if (messages[i].type === 'user' || messages[i].type === 'gemini') {
+						break;
+					}
+					// Trailing intermediate — include in deletion range
+					scanEndIndex = i + 1;
 				}
 			}
 
-			// Determine the range to remove:
-			// From userMessageIndex to pairedResponseIndex (inclusive), or just the user message
-			const endIndex = pairedResponseIndex !== -1 ? pairedResponseIndex + 1 : userMessageIndex + 1;
-			// Also include any trailing intermediate messages between user and next user/gemini
-			// that were already captured (endIndex already accounts for this via the scan)
-
-			// But we need to also capture intermediate messages between user and gemini response
-			// The scan above stops at the gemini response, so the range
-			// [userMessageIndex, endIndex) captures user + intermediates + gemini response
+			const endIndex = scanEndIndex;
 			const removedCount = endIndex - userMessageIndex;
 
 			// Create backup before modifying
@@ -693,10 +704,7 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 
 			try {
 				// Splice out the messages
-				session.messages = [
-					...messages.slice(0, userMessageIndex),
-					...messages.slice(endIndex),
-				];
+				session.messages = [...messages.slice(0, userMessageIndex), ...messages.slice(endIndex)];
 				session.lastUpdated = new Date().toISOString();
 
 				await fs.writeFile(sessionFilePath, JSON.stringify(session, null, 2), 'utf-8');
@@ -719,11 +727,17 @@ function formatToolCallSummaries(toolCalls: GeminiToolCall[]): string {
 					// Best effort restore
 				}
 				logger.error('Failed to write Gemini session file after deletion', LOG_CONTEXT, writeError);
-				captureException(writeError, { operation: 'geminiStorage:deleteMessagePair:write', sessionId });
+				captureException(writeError, {
+					operation: 'geminiStorage:deleteMessagePair:write',
+					sessionId,
+				});
 				return { success: false, error: 'Failed to write session file' };
 			}
 		} catch (error) {
-			logger.error('Error deleting message pair from Gemini session', LOG_CONTEXT, { sessionId, error });
+			logger.error('Error deleting message pair from Gemini session', LOG_CONTEXT, {
+				sessionId,
+				error,
+			});
 			captureException(error, { operation: 'geminiStorage:deleteMessagePair', sessionId });
 			return { success: false, error: String(error) };
 		}
