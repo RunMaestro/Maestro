@@ -1293,6 +1293,7 @@ export async function spawnModeratorSynthesis(
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 		clearSynthesisInProgress(groupChatId);
+		releaseChatLock(groupChatId);
 		return;
 	}
 
@@ -1302,6 +1303,7 @@ export async function spawnModeratorSynthesis(
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 		clearSynthesisInProgress(groupChatId);
+		releaseChatLock(groupChatId);
 		return;
 	}
 
@@ -1316,6 +1318,7 @@ export async function spawnModeratorSynthesis(
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 		clearSynthesisInProgress(groupChatId);
+		releaseChatLock(groupChatId);
 		return;
 	}
 
@@ -1334,6 +1337,7 @@ export async function spawnModeratorSynthesis(
 		groupChatEmitters.emitStateChange?.(groupChatId, 'idle');
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 		clearSynthesisInProgress(groupChatId);
+		releaseChatLock(groupChatId);
 		return;
 	}
 
@@ -1534,6 +1538,7 @@ Review the agent responses above. Either:
 		// Remove power block reason on synthesis error since we're going idle
 		powerManager.removeBlockReason(`groupchat:${groupChatId}`);
 		clearSynthesisInProgress(groupChatId);
+		releaseChatLock(groupChatId);
 	}
 }
 
