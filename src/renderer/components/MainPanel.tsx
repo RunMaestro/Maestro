@@ -39,6 +39,7 @@ import { useGitBranch, useGitDetail, useGitFileStatus } from '../contexts/GitSta
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { useAgentCapabilities, useHoverTooltip } from '../hooks';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import type {
@@ -771,13 +772,11 @@ export const MainPanel = React.memo(
 
 		// Copy to clipboard handler with flash notification
 		const copyToClipboard = async (text: string, message?: string) => {
-			try {
-				await navigator.clipboard.writeText(text);
+			const ok = await safeClipboardWrite(text);
+			if (ok) {
 				// Show centered flash notification
 				setCopyNotification(message || 'Copied to Clipboard');
 				setTimeout(() => setCopyNotification(null), 2000);
-			} catch (err) {
-				console.error('Failed to copy to clipboard:', err);
 			}
 		};
 

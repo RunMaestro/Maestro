@@ -20,6 +20,7 @@ import { StandingOvationOverlay } from './StandingOvationOverlay';
 import { KeyboardMasteryCelebration } from './KeyboardMasteryCelebration';
 import { CONDUCTOR_BADGES, getBadgeForTime } from '../constants/conductorBadges';
 import { KEYBOARD_MASTERY_LEVELS } from '../constants/keyboardMastery';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface PlaygroundPanelProps {
 	theme: Theme;
@@ -427,12 +428,10 @@ confetti({
 	},
 });`;
 
-		try {
-			await navigator.clipboard.writeText(codeSnippet);
+		const ok = await safeClipboardWrite(codeSnippet);
+		if (ok) {
 			setCopySuccess(true);
 			setTimeout(() => setCopySuccess(false), 2000);
-		} catch (err) {
-			console.error('Failed to copy settings:', err);
 		}
 	}, [
 		selectedOrigins,
@@ -557,12 +556,10 @@ ${staggerDelays.map((delay, i) => `svg.wand-sparkle-active path:nth-child(${i + 
   }
 }`;
 
-		try {
-			await navigator.clipboard.writeText(cssSnippet);
+		const ok = await safeClipboardWrite(cssSnippet);
+		if (ok) {
 			setBatonCopySuccess(true);
 			setTimeout(() => setBatonCopySuccess(false), 2000);
-		} catch (err) {
-			console.error('Failed to copy baton settings:', err);
 		}
 	}, [
 		batonDuration,

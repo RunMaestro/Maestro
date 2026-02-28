@@ -12,6 +12,7 @@ import { FileText, ExternalLink, Copy, Focus } from 'lucide-react';
 import type { Theme } from '../../types';
 import type { GraphNodeData } from './graphDataBuilder';
 import { useClickOutside, useContextMenuPosition } from '../../hooks/ui';
+import { safeClipboardWrite } from '../../utils/clipboard';
 
 /**
  * Props for the NodeContextMenu component
@@ -93,16 +94,12 @@ export function NodeContextMenu({
 	 * Handle Copy Path/URL action
 	 */
 	const handleCopy = useCallback(async () => {
-		try {
-			if (isDocument) {
-				await navigator.clipboard.writeText(nodeData.filePath);
-			} else if (isExternal) {
-				// Copy all URLs if multiple, or just the single URL
-				const textToCopy = nodeData.urls.length > 1 ? nodeData.urls.join('\n') : nodeData.urls[0];
-				await navigator.clipboard.writeText(textToCopy);
-			}
-		} catch (err) {
-			console.error('Failed to copy to clipboard:', err);
+		if (isDocument) {
+			await safeClipboardWrite(nodeData.filePath);
+		} else if (isExternal) {
+			// Copy all URLs if multiple, or just the single URL
+			const textToCopy = nodeData.urls.length > 1 ? nodeData.urls.join('\n') : nodeData.urls[0];
+			await safeClipboardWrite(textToCopy);
 		}
 		onDismiss();
 	}, [isDocument, isExternal, nodeData, onDismiss]);

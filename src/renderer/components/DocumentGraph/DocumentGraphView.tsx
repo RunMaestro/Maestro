@@ -57,6 +57,7 @@ import { NodeContextMenu } from './NodeContextMenu';
 import { GraphLegend } from './GraphLegend';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateProseStyles } from '../../utils/markdownConfig';
+import { safeClipboardWrite } from '../../utils/clipboard';
 import type { FileNode } from '../../types/fileTree';
 
 /** Debounce delay for graph rebuilds when settings change (ms) */
@@ -1827,11 +1828,7 @@ export function DocumentGraphView({
 										content={previewFile.content}
 										theme={theme}
 										onCopy={async (text: string) => {
-											try {
-												await navigator.clipboard.writeText(text);
-											} catch (err) {
-												console.error('Failed to copy to clipboard:', err);
-											}
+											await safeClipboardWrite(text);
 										}}
 										fileTree={previewFileTree}
 										projectRoot={rootPath}

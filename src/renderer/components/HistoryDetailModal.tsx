@@ -27,6 +27,7 @@ import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { calculateContextDisplay } from '../utils/contextUsage';
 import { getContextColor } from '../utils/theme';
 import { DoubleCheck } from './History';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface HistoryDetailModalProps {
 	theme: Theme;
@@ -317,7 +318,7 @@ export function HistoryDetailModal({
 									{/* Copy button */}
 									<button
 										onClick={async () => {
-											await navigator.clipboard.writeText(entry.agentSessionId!);
+											await safeClipboardWrite(entry.agentSessionId!);
 											setCopiedSessionId(true);
 											setTimeout(() => setCopiedSessionId(false), 2000);
 										}}
@@ -516,7 +517,7 @@ export function HistoryDetailModal({
 					<MarkdownRenderer
 						content={cleanResponse}
 						theme={theme}
-						onCopy={(text) => navigator.clipboard.writeText(text)}
+						onCopy={(text) => safeClipboardWrite(text)}
 						fileTree={fileTree}
 						cwd={cwd}
 						projectRoot={projectRoot}

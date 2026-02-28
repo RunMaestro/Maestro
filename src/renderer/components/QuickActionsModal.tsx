@@ -7,6 +7,7 @@ import { notifyToast } from '../stores/notificationStore';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { gitService } from '../services/git';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { safeClipboardWrite } from '../utils/clipboard';
 import type { WizardStep } from './Wizard/WizardContext';
 import { useListNavigation } from '../hooks';
 import { useUIStore } from '../stores/uiStore';
@@ -1320,7 +1321,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				try {
 					const installationId = await window.maestro.leaderboard.getInstallationId();
 					if (installationId) {
-						await navigator.clipboard.writeText(installationId);
+						await safeClipboardWrite(installationId);
 						notifyToast({ type: 'success', title: 'Install GUID Copied', message: installationId });
 						console.log('[Debug] Installation GUID copied to clipboard:', installationId);
 					} else {

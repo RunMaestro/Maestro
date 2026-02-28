@@ -31,6 +31,7 @@ import { QueuedItemsList } from './QueuedItemsList';
 import { LogFilterControls } from './LogFilterControls';
 import { SaveMarkdownModal } from './SaveMarkdownModal';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 // ============================================================================
 // Tool display helpers (pure functions, hoisted out of render path)
@@ -1141,12 +1142,10 @@ export const TerminalOutput = memo(
 
 		// Copy text to clipboard with notification
 		const copyToClipboard = useCallback(async (text: string) => {
-			try {
-				await navigator.clipboard.writeText(text);
+			const ok = await safeClipboardWrite(text);
+			if (ok) {
 				setShowCopiedNotification(true);
 				setTimeout(() => setShowCopiedNotification(false), 1500);
-			} catch (err) {
-				console.error('Failed to copy to clipboard:', err);
 			}
 		}, []);
 

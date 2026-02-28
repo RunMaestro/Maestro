@@ -10,6 +10,7 @@ import { useState, useCallback } from 'react';
 import type { Theme, GroupChatParticipant, SessionState } from '../types';
 import { getStatusColor } from '../utils/theme';
 import { formatCost } from '../utils/formatters';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface ParticipantCardProps {
 	theme: Theme;
@@ -46,9 +47,9 @@ export function ParticipantCard({
 	const agentSessionId = participant.agentSessionId;
 	const isPending = !agentSessionId;
 
-	const copySessionId = useCallback(() => {
+	const copySessionId = useCallback(async () => {
 		if (agentSessionId) {
-			navigator.clipboard.writeText(agentSessionId);
+			await safeClipboardWrite(agentSessionId);
 			setCopied(true);
 			setTimeout(() => setCopied(false), 2000);
 		}

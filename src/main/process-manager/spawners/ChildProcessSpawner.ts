@@ -429,18 +429,6 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stdout.on('data', (data: Buffer | string) => {
 					const output = data.toString();
-
-					// Debug: Log all stdout data for group chat sessions
-					if (sessionId.includes('group-chat-')) {
-						console.log(
-							`[GroupChat:Debug:ProcessManager] STDOUT received for session ${sessionId}`
-						);
-						console.log(`[GroupChat:Debug:ProcessManager] Raw output length: ${output.length}`);
-						console.log(
-							`[GroupChat:Debug:ProcessManager] Raw output preview: "${output.substring(0, 500)}${output.length > 500 ? '...' : ''}"`
-						);
-					}
-
 					this.stdoutHandler.handleData(sessionId, output);
 				});
 			} else {
@@ -463,18 +451,6 @@ export class ChildProcessSpawner {
 				});
 				childProcess.stderr.on('data', (data: Buffer | string) => {
 					const stderrData = data.toString();
-
-					// Debug: Log all stderr data for group chat sessions
-					if (sessionId.includes('group-chat-')) {
-						console.log(
-							`[GroupChat:Debug:ProcessManager] STDERR received for session ${sessionId}`
-						);
-						console.log(`[GroupChat:Debug:ProcessManager] Stderr length: ${stderrData.length}`);
-						console.log(
-							`[GroupChat:Debug:ProcessManager] Stderr preview: "${stderrData.substring(0, 500)}${stderrData.length > 500 ? '...' : ''}"`
-						);
-					}
-
 					this.stderrHandler.handleData(sessionId, stderrData);
 				});
 			}

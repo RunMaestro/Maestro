@@ -53,29 +53,6 @@ export class ExitHandler {
 			jsonBufferPreview: managedProcess.jsonBuffer?.substring(0, 200),
 		});
 
-		// Debug: Log exit details for group chat sessions
-		if (sessionId.includes('group-chat-')) {
-			console.log(`[GroupChat:Debug:ProcessManager] EXIT for session ${sessionId}`);
-			console.log(`[GroupChat:Debug:ProcessManager] Exit code: ${code}`);
-			console.log(`[GroupChat:Debug:ProcessManager] isStreamJsonMode: ${isStreamJsonMode}`);
-			console.log(`[GroupChat:Debug:ProcessManager] isBatchMode: ${isBatchMode}`);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] resultEmitted: ${managedProcess.resultEmitted}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] streamedText length: ${managedProcess.streamedText?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] jsonBuffer length: ${managedProcess.jsonBuffer?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] stderrBuffer length: ${managedProcess.stderrBuffer?.length || 0}`
-			);
-			console.log(
-				`[GroupChat:Debug:ProcessManager] stderrBuffer preview: "${(managedProcess.stderrBuffer || '').substring(0, 500)}"`
-			);
-		}
-
 		// Debug: Log exit details for synopsis sessions
 		if (sessionId.includes('-synopsis-')) {
 			logger.info('[ProcessManager] Synopsis session exit', 'ProcessManager', {

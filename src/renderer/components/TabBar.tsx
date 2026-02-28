@@ -26,6 +26,7 @@ import { hasDraft } from '../utils/tabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getRevealLabel } from '../utils/platformUtils';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface TabBarProps {
 	tabs: AITab[];
@@ -309,7 +310,7 @@ const Tab = memo(function Tab({
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
 			if (tab.agentSessionId) {
-				navigator.clipboard.writeText(tab.agentSessionId);
+				safeClipboardWrite(tab.agentSessionId);
 				setShowCopied(true);
 				setTimeout(() => setShowCopied(false), 1500);
 			}
@@ -1078,7 +1079,7 @@ const FileTab = memo(function FileTab({
 	const handleCopyFilePath = useCallback(
 		(e: React.MouseEvent) => {
 			e.stopPropagation();
-			navigator.clipboard.writeText(tab.path);
+			safeClipboardWrite(tab.path);
 			setShowCopied('path');
 			setTimeout(() => setShowCopied(null), 1500);
 		},
@@ -1090,7 +1091,7 @@ const FileTab = memo(function FileTab({
 			e.stopPropagation();
 			// Copy filename with extension
 			const fullName = tab.name + tab.extension;
-			navigator.clipboard.writeText(fullName);
+			safeClipboardWrite(fullName);
 			setShowCopied('name');
 			setTimeout(() => setShowCopied(null), 1500);
 		},

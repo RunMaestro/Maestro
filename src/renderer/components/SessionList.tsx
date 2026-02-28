@@ -58,6 +58,7 @@ import { useBatchStore, selectActiveBatchSessionIds } from '../stores/batchStore
 import { useShallow } from 'zustand/react/shallow';
 import { useGroupChatStore } from '../stores/groupChatStore';
 import { getModalActions } from '../stores/modalStore';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 // ============================================================================
 // SessionContextMenu - Right-click context menu for session items
@@ -2221,7 +2222,7 @@ function SessionListInner(props: SessionListProps) {
 														onClick={() => {
 															const url = activeUrlTab === 'local' ? webInterfaceUrl : tunnelUrl;
 															if (url) {
-																navigator.clipboard.writeText(url);
+																safeClipboardWrite(url);
 																setCopyFlash(
 																	activeUrlTab === 'local'
 																		? 'Local URL copied!'

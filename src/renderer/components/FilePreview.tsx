@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 import { visit } from 'unist-util-visit';
 import { captureException } from '../utils/sentry';
+import { safeClipboardWrite, safeClipboardWriteBlob } from '../utils/clipboard';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
@@ -983,6 +984,12 @@ export const FilePreview = React.memo(
 						/>
 					);
 				},
+				// Strip event handler attributes (e.g. onToggle) that rehype-raw may
+				// pass through as strings from AI-generated HTML, which React rejects.
+				// Fixes MAESTRO-8Q
+				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
+					<details {...props} />
+				),
 			}),
 			[onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]
 		);
@@ -1464,13 +1471,8 @@ export const FilePreview = React.memo(
 
 		const copyPathToClipboard = async () => {
 			if (!file) return;
-			try {
-				await navigator.clipboard.writeText(file.path);
-				setCopyNotificationMessage('File Path Copied to Clipboard');
-			} catch (err) {
-				captureException(err);
-				setCopyNotificationMessage('Failed to Copy Path');
-			}
+			const ok = await safeClipboardWrite(file.path);
+			setCopyNotificationMessage(ok ? 'File Path Copied to Clipboard' : 'Failed to Copy Path');
 			setShowCopyNotification(true);
 			setTimeout(() => setShowCopyNotification(false), 2000);
 		};
@@ -1482,23 +1484,24 @@ export const FilePreview = React.memo(
 				try {
 					const response = await fetch(file.content);
 					const blob = await response.blob();
-					await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-					setCopyNotificationMessage('Image Copied to Clipboard');
+					const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
+					if (ok) {
+						setCopyNotificationMessage('Image Copied to Clipboard');
+					} else {
+						// Fallback: copy the data URL if image copy fails
+						const fallbackOk = await safeClipboardWrite(file.content);
+						setCopyNotificationMessage(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
+					}
 				} catch (err) {
 					captureException(err);
-					// Fallback: copy the data URL if image copy fails
-					try {
-						await navigator.clipboard.writeText(file.content);
-						setCopyNotificationMessage('Image URL Copied to Clipboard');
-					} catch (fallbackErr) {
-						captureException(fallbackErr);
-						setCopyNotificationMessage('Failed to Copy Image');
-					}
+					// Fallback: copy the data URL if fetch/blob fails
+					const fallbackOk = await safeClipboardWrite(file.content);
+					setCopyNotificationMessage(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
 				}
 			} else {
 				// For text files, copy the content
-				await navigator.clipboard.writeText(file.content);
-				setCopyNotificationMessage('Content Copied to Clipboard');
+				const ok = await safeClipboardWrite(file.content);
+				setCopyNotificationMessage(ok ? 'Content Copied to Clipboard' : 'Failed to Copy Content');
 			}
 			setShowCopyNotification(true);
 			setTimeout(() => setShowCopyNotification(false), 2000);

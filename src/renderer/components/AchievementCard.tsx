@@ -26,6 +26,7 @@ import {
 import { MaestroSilhouette } from './MaestroSilhouette';
 import { formatTokensCompact } from '../utils/formatters';
 import maestroWandIcon from '../assets/icon-wand.png';
+import { safeClipboardWriteBlob } from '../utils/clipboard';
 
 /**
  * Circular progress ring with 11 segments that fill as badges are unlocked
@@ -933,12 +934,15 @@ export function AchievementCard({
 				canvas.toBlob((b) => resolve(b), 'image/png');
 			});
 			if (blob) {
-				await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-				setCopySuccess(true);
-				setTimeout(() => setCopySuccess(false), 2000);
+				const ok = await safeClipboardWriteBlob([new ClipboardItem({ 'image/png': blob })]);
+				if (ok) {
+					setCopySuccess(true);
+					setTimeout(() => setCopySuccess(false), 2000);
+				}
 			}
 		} catch (error) {
-			console.error('Failed to copy to clipboard:', error);
+			// Canvas/image generation errors — not clipboard
+			console.error('Failed to generate share image:', error);
 		}
 	}, [generateShareImage]);
 

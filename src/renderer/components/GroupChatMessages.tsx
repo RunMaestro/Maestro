@@ -21,6 +21,7 @@ import { stripMarkdown } from '../utils/textProcessing';
 import { generateParticipantColor, buildParticipantColorMap } from '../utils/participantColors';
 import { generateTerminalProseStyles } from '../utils/markdownConfig';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface GroupChatMessagesProps {
 	theme: Theme;
@@ -114,11 +115,7 @@ export const GroupChatMessages = forwardRef<GroupChatMessagesHandle, GroupChatMe
 		);
 
 		const copyToClipboard = useCallback(async (text: string) => {
-			try {
-				await navigator.clipboard.writeText(text);
-			} catch {
-				// Ignore clipboard errors (e.g. document not focused)
-			}
+			await safeClipboardWrite(text);
 		}, []);
 
 		const toggleExpanded = useCallback((msgKey: string) => {

@@ -436,6 +436,12 @@ export const MarkdownRenderer = memo(
 								}}
 							/>
 						),
+						// Strip event handler attributes (e.g. onToggle) that rehype-raw may
+						// pass through as strings from AI-generated HTML, which React rejects.
+						// Fixes MAESTRO-8Q
+						details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
+							<details {...props} />
+						),
 					}}
 				>
 					{sanitizedContent}

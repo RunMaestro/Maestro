@@ -11,6 +11,7 @@ import {
 	formatTimeRemaining,
 	getNextBadge,
 } from '../constants/conductorBadges';
+import { safeClipboardWriteBlob } from '../utils/clipboard';
 
 interface StandingOvationOverlayProps {
 	theme: Theme;
@@ -337,12 +338,15 @@ export function StandingOvationOverlay({
 				canvas.toBlob((b) => resolve(b), 'image/png');
 			});
 			if (blob) {
-				await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
-				setCopySuccess(true);
-				setTimeout(() => setCopySuccess(false), 2000);
+				const ok = await safeClipboardWriteBlob([new ClipboardItem({ 'image/png': blob })]);
+				if (ok) {
+					setCopySuccess(true);
+					setTimeout(() => setCopySuccess(false), 2000);
+				}
 			}
 		} catch (error) {
-			console.error('Failed to copy to clipboard:', error);
+			// Canvas/image generation errors — not clipboard
+			console.error('Failed to generate share image:', error);
 		}
 	}, [generateShareImage]);
 

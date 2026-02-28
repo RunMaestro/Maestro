@@ -159,6 +159,7 @@ import type { RightPanelTab, Session, QueuedItem, CustomAICommand, ThinkingItem 
 import { THEMES } from './constants/themes';
 import { generateId } from './utils/ids';
 import { getContextColor } from './utils/theme';
+import { safeClipboardWrite } from './utils/clipboard';
 import {
 	createTab,
 	closeTab,
@@ -2820,7 +2821,7 @@ function MaestroConsoleInner() {
 								});
 							}
 							// Copy the gist URL to clipboard
-							navigator.clipboard.writeText(gistUrl).catch(() => {});
+							safeClipboardWrite(gistUrl);
 							// Show a toast notification
 							notifyToast({
 								type: 'success',

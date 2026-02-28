@@ -3,6 +3,7 @@ import { Share2, Copy, Check, ExternalLink } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 export interface GistInfo {
 	gistUrl: string;
@@ -76,11 +77,13 @@ export function GistPublishModal({
 		handlePublish(true);
 	}, [handlePublish]);
 
-	const handleCopyUrl = useCallback(() => {
+	const handleCopyUrl = useCallback(async () => {
 		if (existingGist?.gistUrl) {
-			navigator.clipboard.writeText(existingGist.gistUrl);
-			setCopied(true);
-			setTimeout(() => setCopied(false), 2000);
+			const ok = await safeClipboardWrite(existingGist.gistUrl);
+			if (ok) {
+				setCopied(true);
+				setTimeout(() => setCopied(false), 2000);
+			}
 		}
 	}, [existingGist?.gistUrl]);
 

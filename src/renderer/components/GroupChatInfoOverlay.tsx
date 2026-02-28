@@ -7,6 +7,7 @@
  */
 
 import { useCallback, useMemo, useState } from 'react';
+import { safeClipboardWrite } from '../utils/clipboard';
 import {
 	Copy,
 	FolderOpen,
@@ -108,11 +109,7 @@ export function GroupChatInfoOverlay({
 	const [isExporting, setIsExporting] = useState(false);
 
 	const copyToClipboard = useCallback(async (text: string) => {
-		try {
-			await navigator.clipboard.writeText(text);
-		} catch {
-			// Ignore clipboard errors (e.g. document not focused)
-		}
+		await safeClipboardWrite(text);
 	}, []);
 
 	const openInFinder = useCallback(() => {

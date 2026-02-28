@@ -11,6 +11,7 @@
 import React, { useState, useCallback, memo } from 'react';
 import { ChevronRight, ChevronDown, Copy, Check } from 'lucide-react';
 import type { Theme } from '../types';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 interface CollapsibleJsonViewerProps {
 	data: unknown;
@@ -107,13 +108,11 @@ const CopyButton = memo(({ value, theme }: { value: unknown; theme: Theme }) => 
 	const handleCopy = useCallback(
 		async (e: React.MouseEvent) => {
 			e.stopPropagation();
-			try {
-				const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
-				await navigator.clipboard.writeText(text);
+			const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+			const ok = await safeClipboardWrite(text);
+			if (ok) {
 				setCopied(true);
 				setTimeout(() => setCopied(false), 1500);
-			} catch (err) {
-				console.error('Failed to copy:', err);
 			}
 		},
 		[value]

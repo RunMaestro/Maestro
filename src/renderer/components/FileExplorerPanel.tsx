@@ -38,6 +38,7 @@ import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useClickOutside } from '../hooks/ui/useClickOutside';
 import { useContextMenuPosition } from '../hooks/ui/useContextMenuPosition';
 import { getRevealLabel } from '../utils/platformUtils';
+import { safeClipboardWrite } from '../utils/clipboard';
 import { Modal, ModalFooter } from './ui/Modal';
 import { FormInput } from './ui/FormInput';
 
@@ -612,7 +613,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 	const handleCopyPath = useCallback(() => {
 		if (contextMenu) {
 			const absolutePath = `${session.fullPath}/${contextMenu.path}`;
-			navigator.clipboard.writeText(absolutePath);
+			safeClipboardWrite(absolutePath);
 		}
 		setContextMenu(null);
 	}, [contextMenu, session.fullPath]);
@@ -1101,7 +1102,7 @@ function FileExplorerPanelInner(props: FileExplorerPanelProps) {
 								: session.projectRoot
 						}
 						onDoubleClick={() => {
-							navigator.clipboard.writeText(session.projectRoot);
+							safeClipboardWrite(session.projectRoot);
 							onShowFlash?.('Path copied to clipboard');
 						}}
 					>

@@ -9,6 +9,7 @@ import { Modal, ModalFooter } from './ui/Modal';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { SshRemoteSelector } from './shared/SshRemoteSelector';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
+import { safeClipboardWrite } from '../utils/clipboard';
 
 // Maximum character length for nudge message
 const NUDGE_MESSAGE_MAX_LENGTH = 1000;
@@ -1243,12 +1244,10 @@ export function EditAgentModal({
 	// Copy session ID to clipboard
 	const handleCopySessionId = useCallback(async () => {
 		if (!session) return;
-		try {
-			await navigator.clipboard.writeText(session.id);
+		const ok = await safeClipboardWrite(session.id);
+		if (ok) {
 			setCopiedId(true);
 			setTimeout(() => setCopiedId(false), 2000);
-		} catch (err) {
-			console.error('Failed to copy session ID:', err);
 		}
 	}, [session]);
 

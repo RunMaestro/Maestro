@@ -5,6 +5,7 @@ import { MarkdownRenderer } from '../MarkdownRenderer';
 import { SaveMarkdownModal } from '../SaveMarkdownModal';
 import { useSettings } from '../../hooks';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
+import { safeClipboardWrite } from '../../utils/clipboard';
 
 type SynopsisStats = NonNullable<
 	Awaited<ReturnType<typeof window.maestro.directorNotes.generateSynopsis>>['stats']
@@ -75,9 +76,11 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 	// Copy synopsis markdown to clipboard
 	const copyToClipboard = useCallback(async () => {
 		if (!synopsis) return;
-		await navigator.clipboard.writeText(synopsis);
-		setCopied(true);
-		setTimeout(() => setCopied(false), 2000);
+		const ok = await safeClipboardWrite(synopsis);
+		if (ok) {
+			setCopied(true);
+			setTimeout(() => setCopied(false), 2000);
+		}
 	}, [synopsis]);
 
 	// Generate synopsis — the handler reads history files directly via file paths,
@@ -315,7 +318,7 @@ export function AIOverviewTab({ theme, onSynopsisReady }: AIOverviewTabProps) {
 						<MarkdownRenderer
 							content={synopsis}
 							theme={theme}
-							onCopy={(text) => navigator.clipboard.writeText(text)}
+							onCopy={(text) => safeClipboardWrite(text)}
 						/>
 					</div>
 				) : isGenerating ? (

@@ -6,6 +6,7 @@ import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { ConfirmModal } from './ConfirmModal';
+import { safeClipboardWrite, safeClipboardWriteBlob } from '../utils/clipboard';
 
 // ============================================================================
 // AutoRunLightbox - Full-screen image viewer with navigation, copy, delete
@@ -120,9 +121,11 @@ export const AutoRunLightbox = memo(
 			try {
 				const response = await fetch(imageUrl);
 				const blob = await response.blob();
-				await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-				setCopied(true);
-				setTimeout(() => setCopied(false), 2000);
+				const ok = await safeClipboardWriteBlob([new ClipboardItem({ [blob.type]: blob })]);
+				if (ok) {
+					setCopied(true);
+					setTimeout(() => setCopied(false), 2000);
+				}
 			} catch (err) {
 				console.error('Failed to copy image to clipboard:', err);
 			}
@@ -147,12 +150,10 @@ export const AutoRunLightbox = memo(
 					?.replace(/\.[^.]+$/, '') || 'image';
 			const markdownString = `![${altText}](${imagePath})`;
 
-			try {
-				await navigator.clipboard.writeText(markdownString);
+			const ok = await safeClipboardWrite(markdownString);
+			if (ok) {
 				setCopiedMarkdown(true);
 				setTimeout(() => setCopiedMarkdown(false), 2000);
-			} catch (err) {
-				console.error('Failed to copy markdown reference:', err);
 			}
 		}, [lightboxFilename, lightboxExternalUrl]);
 
