@@ -879,6 +879,143 @@ describe('group-chat-router', () => {
 			);
 		});
 
+		it('excludes local-only paths from --include-directories for SSH Gemini CLI participants', async () => {
+			const chat = await createTestChatWithModerator('SSH Gemini Path Test');
+
+			// Configure agent detector to return a Gemini CLI agent with workingDirArgs
+			const geminiAgent = {
+				id: 'gemini-cli',
+				name: 'Gemini CLI',
+				binaryName: 'gemini',
+				command: 'gemini',
+				args: ['-y', '--output-format', 'stream-json'],
+				available: true,
+				path: '/usr/local/bin/gemini',
+				capabilities: {},
+				workingDirArgs: (dir: string) => ['--include-directories', dir],
+				promptArgs: (prompt: string) => ['-p', prompt],
+			};
+			(mockAgentDetector.getAgent as ReturnType<typeof vi.fn>).mockResolvedValue(geminiAgent);
+
+			// Set up a session with SSH config
+			const sshSession: SessionInfo = {
+				id: 'ses-ssh-gemini',
+				name: 'GeminiRemote',
+				toolType: 'gemini-cli',
+				cwd: '/home/remoteuser/project',
+				sshRemoteName: 'PedTome',
+				sshRemoteConfig,
+			};
+			setGetSessionsCallback(() => [sshSession]);
+			setSshStore(mockSshStore);
+
+			// Add participant and trigger spawn
+			await addParticipant(
+				chat.id,
+				'GeminiRemote',
+				'gemini-cli',
+				mockProcessManager,
+				'/home/remoteuser/project',
+				mockAgentDetector,
+				{},
+				undefined,
+				{ sshRemoteName: 'PedTome', sshRemoteConfig },
+				mockSshStore
+			);
+
+			mockWrapSpawnWithSsh.mockClear();
+
+			// Moderator mentions the SSH Gemini participant
+			await routeModeratorResponse(
+				chat.id,
+				'@GeminiRemote: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// Verify wrapSpawnWithSsh was called with args that include --include-directories
+			// for the remote cwd, but NOT for local groupChatFolder or os.homedir()
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalled();
+			const sshCallArgs = mockWrapSpawnWithSsh.mock.calls[0][0].args as string[];
+			const includeDirIndices: number[] = [];
+			sshCallArgs.forEach((arg: string, i: number) => {
+				if (arg === '--include-directories') includeDirIndices.push(i);
+			});
+
+			// All --include-directories paths should be the remote cwd only
+			// (buildAgentArgs adds one, buildGeminiWorkspaceDirArgs adds another for cwd)
+			const allDirPaths = includeDirIndices.map((i: number) => sshCallArgs[i + 1]);
+			expect(allDirPaths.every((p: string) => p === '/home/remoteuser/project')).toBe(true);
+			// Should NOT contain the local home directory or local config paths
+			expect(allDirPaths).not.toContain(os.homedir());
+		});
+
+		it('includes all workspace paths for local Gemini CLI participants', async () => {
+			const chat = await createTestChatWithModerator('Local Gemini Path Test');
+
+			// Configure agent detector to return a Gemini CLI agent
+			const geminiAgent = {
+				id: 'gemini-cli',
+				name: 'Gemini CLI',
+				binaryName: 'gemini',
+				command: 'gemini',
+				args: ['-y', '--output-format', 'stream-json'],
+				available: true,
+				path: '/usr/local/bin/gemini',
+				capabilities: {},
+				workingDirArgs: (dir: string) => ['--include-directories', dir],
+				promptArgs: (prompt: string) => ['-p', prompt],
+			};
+			(mockAgentDetector.getAgent as ReturnType<typeof vi.fn>).mockResolvedValue(geminiAgent);
+
+			// Session without SSH config (local)
+			const localSession: SessionInfo = {
+				id: 'ses-local-gemini',
+				name: 'GeminiLocal',
+				toolType: 'gemini-cli',
+				cwd: '/Users/dev/project',
+			};
+			setGetSessionsCallback(() => [localSession]);
+
+			// Add participant locally (no SSH)
+			await addParticipant(
+				chat.id,
+				'GeminiLocal',
+				'gemini-cli',
+				mockProcessManager,
+				'/Users/dev/project',
+				mockAgentDetector,
+				{}
+			);
+
+			mockProcessManager.spawn = vi.fn().mockReturnValue({ pid: 12345, success: true });
+
+			// Moderator mentions the local Gemini participant
+			await routeModeratorResponse(
+				chat.id,
+				'@GeminiLocal: implement the feature',
+				mockProcessManager,
+				mockAgentDetector
+			);
+
+			// For local sessions, spawn should include --include-directories for all paths
+			// including groupChatFolder and os.homedir()
+			const spawnCall = (mockProcessManager.spawn as ReturnType<typeof vi.fn>).mock.calls[0][0];
+			const spawnArgs = spawnCall.args as string[];
+			const includeDirIndices: number[] = [];
+			spawnArgs.forEach((arg: string, i: number) => {
+				if (arg === '--include-directories') includeDirIndices.push(i);
+			});
+
+			// Should have 4 --include-directories entries:
+			// 1 from buildAgentArgs(cwd) + 3 from buildGeminiWorkspaceDirArgs(cwd, groupChatFolder, homedir)
+			expect(includeDirIndices.length).toBe(4);
+			const allDirPaths = includeDirIndices.map((i: number) => spawnArgs[i + 1]);
+			// Should contain the cwd and os.homedir()
+			expect(allDirPaths).toContain('/Users/dev/project');
+			expect(allDirPaths).toContain(os.homedir());
+		});
+
 		it('does not apply SSH wrapping for non-SSH sessions', async () => {
 			const chat = await createTestChatWithModerator('No SSH Test');
 

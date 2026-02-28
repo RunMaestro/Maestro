@@ -194,13 +194,20 @@ export async function addParticipant(
 	});
 
 	// For Gemini CLI: add --include-directories for group chat folder and home dir
-	// so the sandboxed agent can access shared files and participant workspaces
+	// so the sandboxed agent can access shared files and participant workspaces.
+	// When SSH is configured, skip local-only paths (groupChatFolder is a local
+	// Maestro config path, os.homedir() is the local home) since they won't
+	// resolve on the remote host. Only pass cwd which is the remote project path.
 	const groupChatFolder = getGroupChatDir(groupChatId);
-	const geminiDirArgs = buildGeminiWorkspaceDirArgs(agentConfig, agentId, [
-		cwd,
-		groupChatFolder,
-		os.homedir(),
-	]);
+	const isAddParticipantSsh = !!(sshStore && sessionOverrides?.sshRemoteConfig?.enabled);
+	const addParticipantWorkspaceDirs = isAddParticipantSsh
+		? [cwd]
+		: [cwd, groupChatFolder, os.homedir()];
+	const geminiDirArgs = buildGeminiWorkspaceDirArgs(
+		agentConfig,
+		agentId,
+		addParticipantWorkspaceDirs
+	);
 	const finalArgs = [...configResolution.args, ...geminiDirArgs];
 
 	console.log(`[GroupChat:Debug] Command: ${command}`);

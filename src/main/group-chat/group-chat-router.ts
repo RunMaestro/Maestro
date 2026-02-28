@@ -926,11 +926,18 @@ export async function routeModeratorResponse(
 				sessionCustomEnvVars: matchingSession?.customEnvVars,
 			});
 
-			// For Gemini CLI: add --include-directories for project dir and group chat folder
+			// For Gemini CLI: add --include-directories for project dir and group chat folder.
+			// When SSH is configured, skip local-only paths (groupChatFolder is a local
+			// Maestro config path, os.homedir() is the local home) since they won't
+			// resolve on the remote host. Only pass cwd which is the remote project path.
+			const isParticipantSsh = !!(sshStore && matchingSession?.sshRemoteConfig?.enabled);
+			const participantWorkspaceDirs = isParticipantSsh
+				? [cwd]
+				: [cwd, groupChatFolder, os.homedir()];
 			const geminiParticipantDirArgs = buildGeminiWorkspaceDirArgs(
 				agent,
 				participant.agentId,
-				[cwd, groupChatFolder, os.homedir()]
+				participantWorkspaceDirs
 			);
 			const participantFinalArgs = [...configResolution.args, ...geminiParticipantDirArgs];
 
@@ -1493,11 +1500,14 @@ export async function respawnParticipantWithRecovery(
 		sessionCustomEnvVars: matchingSession?.customEnvVars,
 	});
 
-	// For Gemini CLI: add --include-directories for group chat folder and home dir
+	// For Gemini CLI: add --include-directories for group chat folder and home dir.
+	// When SSH is configured, skip local-only paths that won't resolve on the remote host.
+	const isRecoverySsh = !!(sshStore && matchingSession?.sshRemoteConfig?.enabled);
+	const recoveryWorkspaceDirs = isRecoverySsh ? [cwd] : [cwd, groupChatFolder, os.homedir()];
 	const geminiRecoveryDirArgs = buildGeminiWorkspaceDirArgs(
 		agent,
 		participant.agentId,
-		[cwd, groupChatFolder, os.homedir()]
+		recoveryWorkspaceDirs
 	);
 	const recoveryFinalArgs = [...configResolution.args, ...geminiRecoveryDirArgs];
 
