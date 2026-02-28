@@ -802,6 +802,11 @@ class ConversationManager {
 	 * - OpenCode: JSONL with { type: 'text', part: { text: '...' } }
 	 * - Codex: JSONL with { type: 'message', content: '...' } or similar
 	 * - Gemini: NDJSON with { type: 'message', role: 'assistant', content: '...' }
+	 *
+	 * NOTE: In the normal flow, outputBuffer contains parsed plain text (not raw
+	 * NDJSON) because the StdoutHandler parses NDJSON events and emits extracted
+	 * text via data/thinking-chunk events. The agent-specific branches below serve
+	 * as a safety net for edge cases where raw NDJSON reaches the buffer directly.
 	 */
 	private extractResultFromStreamJson(output: string): string | null {
 		const agentType = this.session?.agentType;
@@ -809,22 +814,35 @@ class ConversationManager {
 		try {
 			const lines = output.split('\n');
 
-			// For Gemini CLI: concatenate all assistant message content
+			// For Gemini CLI: extract assistant text from NDJSON events.
+			// Gemini stream-json events: init, message, tool_use, tool_result, error, result.
+			// Text content is in message events with role: 'assistant'.
+			// Messages can be delta (streaming chunks) or complete (delta: false/absent).
+			// Only use non-delta messages when present; fall back to delta accumulation.
 			if (agentType === 'gemini-cli') {
-				const textParts: string[] = [];
+				const deltaParts: string[] = [];
+				const completeParts: string[] = [];
 				for (const line of lines) {
 					if (!line.trim()) continue;
 					try {
 						const msg = JSON.parse(line);
 						if (msg.type === 'message' && msg.role === 'assistant' && msg.content) {
-							textParts.push(msg.content);
+							if (msg.delta === true) {
+								deltaParts.push(msg.content);
+							} else {
+								completeParts.push(msg.content);
+							}
 						}
 					} catch {
-						// Ignore non-JSON lines
+						// Ignore non-JSON lines (normal when buffer has parsed plain text)
 					}
 				}
-				if (textParts.length > 0) {
-					return textParts.join('');
+				// Prefer complete messages over deltas to avoid duplication
+				if (completeParts.length > 0) {
+					return completeParts.join('');
+				}
+				if (deltaParts.length > 0) {
+					return deltaParts.join('');
 				}
 			}
 

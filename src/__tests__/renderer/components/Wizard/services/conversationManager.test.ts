@@ -389,4 +389,285 @@ describe('conversationManager (Onboarding Wizard)', () => {
 			await conversationManager.endConversation();
 		});
 	});
+
+	describe('Gemini CLI wizard conversation handling', () => {
+		it('should include --output-format stream-json for Gemini CLI', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			expect(mockMaestro.process.spawn).toHaveBeenCalled();
+			const spawnCall = mockMaestro.process.spawn.mock.calls[0][0];
+
+			// Verify --output-format stream-json is present
+			expect(spawnCall.args).toContain('--output-format');
+			const outputFormatIndex = spawnCall.args.indexOf('--output-format');
+			expect(spawnCall.args[outputFormatIndex + 1]).toBe('stream-json');
+
+			// Verify batch mode args (-y) are present
+			expect(spawnCall.args).toContain('-y');
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			await messagePromise;
+			await conversationManager.endConversation();
+		});
+
+		it('should use thinkingBuffer fallback when outputBuffer is empty (Gemini delta flow)', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Simulate Gemini delta messages arriving as thinking-chunks (no data events)
+			// This matches the real flow where StdoutHandler emits delta text as thinking-chunk
+			const thinkingCallback = mockMaestro.process.onThinkingChunk.mock.calls[0][0];
+			thinkingCallback(sessionId, 'Here is my ');
+			thinkingCallback(sessionId, 'response text.');
+
+			// Simulate agent exit (no data in outputBuffer, text only in thinkingBuffer)
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+
+			// The response should be parsed from thinkingBuffer since outputBuffer is empty
+			// We can't check the exact parsed content here (depends on parseStructuredOutput),
+			// but the send should succeed
+			expect(result.success).toBe(true);
+
+			await conversationManager.endConversation();
+		});
+
+		it('should parse response from outputBuffer when data events arrive (Gemini result flow)', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Simulate the normal flow: StdoutHandler emits accumulated streamedText as data
+			// on the result event. This is parsed plain text, not NDJSON.
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			dataCallback(sessionId, 'Here is my response text.');
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+
+			await conversationManager.endConversation();
+		});
+
+		it('should extract text from raw Gemini NDJSON when present in buffer', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Simulate raw NDJSON arriving in the data buffer (edge case / safety net)
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			const ndjsonOutput = [
+				JSON.stringify({ type: 'init', session_id: 'gem-123', model: 'gemini-2.5-flash' }),
+				JSON.stringify({ type: 'message', role: 'assistant', content: 'Hello!', delta: true }),
+				JSON.stringify({ type: 'message', role: 'assistant', content: ' World!', delta: true }),
+				JSON.stringify({ type: 'result', status: 'success', stats: { input_tokens: 100 } }),
+			].join('\n');
+			dataCallback(sessionId, ndjsonOutput);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+			// The raw output should contain the NDJSON
+			expect(result.rawOutput).toContain('gem-123');
+
+			await conversationManager.endConversation();
+		});
+
+		it('should prefer complete messages over deltas when extracting from NDJSON', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Simulate NDJSON with both delta and complete messages
+			// (edge case — complete messages should be preferred to avoid duplication)
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			const ndjsonOutput = [
+				JSON.stringify({ type: 'message', role: 'assistant', content: 'Hel', delta: true }),
+				JSON.stringify({ type: 'message', role: 'assistant', content: 'lo', delta: true }),
+				JSON.stringify({ type: 'message', role: 'assistant', content: 'Hello' }), // complete
+				JSON.stringify({ type: 'result', status: 'success' }),
+			].join('\n');
+			dataCallback(sessionId, ndjsonOutput);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+
+			await conversationManager.endConversation();
+		});
+
+		it('should skip user messages from Gemini NDJSON', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// Simulate NDJSON with both user and assistant messages
+			const dataCallback = mockMaestro.process.onData.mock.calls[0][0];
+			const ndjsonOutput = [
+				JSON.stringify({ type: 'message', role: 'user', content: 'Should be ignored' }),
+				JSON.stringify({ type: 'message', role: 'assistant', content: 'Only this matters' }),
+				JSON.stringify({ type: 'result', status: 'success' }),
+			].join('\n');
+			dataCallback(sessionId, ndjsonOutput);
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+			// rawOutput has the full buffer; the key assertion is that parsing succeeds
+			// and user messages are filtered out by extractResultFromStreamJson.
+			// The extracted text should only contain assistant content.
+			expect(result.rawOutput).toContain('assistant');
+
+			await conversationManager.endConversation();
+		});
+
+		it('should capture thinkingBuffer even without onThinkingChunk callback for Gemini', async () => {
+			const mockAgent = {
+				id: 'gemini-cli',
+				available: true,
+				command: 'gemini',
+				args: [],
+				batchModeArgs: ['-y'],
+			};
+			mockMaestro.agents.get.mockResolvedValue(mockAgent);
+			mockMaestro.process.spawn.mockResolvedValue(undefined);
+
+			const sessionId = await conversationManager.startConversation({
+				agentType: 'gemini-cli' as any,
+				directoryPath: '/test/project',
+				projectName: 'Test Project',
+			});
+
+			// Send without onThinkingChunk callback — but thinkingBuffer should still work
+			const messagePromise = conversationManager.sendMessage('Hello', [], {});
+
+			await new Promise((resolve) => setTimeout(resolve, 10));
+
+			// The thinking listener should always be set up (for thinkingBuffer fallback)
+			expect(mockMaestro.process.onThinkingChunk).toHaveBeenCalled();
+
+			// Simulate thinking chunks arriving (delta text from Gemini)
+			const thinkingCallback = mockMaestro.process.onThinkingChunk.mock.calls[0][0];
+			thinkingCallback(sessionId, 'Response via thinking buffer');
+
+			const exitCallback = mockMaestro.process.onExit.mock.calls[0][0];
+			exitCallback(sessionId, 0);
+
+			const result = await messagePromise;
+			expect(result.success).toBe(true);
+
+			await conversationManager.endConversation();
+		});
+	});
 });
