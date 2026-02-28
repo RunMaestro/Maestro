@@ -113,9 +113,27 @@ describe('agent-capabilities', () => {
 		it('should have capabilities for gemini-cli', () => {
 			const capabilities = AGENT_CAPABILITIES['gemini-cli'];
 			expect(capabilities).toBeDefined();
-			// Gemini is multimodal but CLI has no image input flag
-			expect(capabilities.supportsImageInput).toBe(false);
-			expect(capabilities.supportsStreaming).toBe(true);
+			// Verified against Gemini CLI v0.29.5 docs
+			expect(capabilities.supportsResume).toBe(true); // --resume [index|UUID]
+			expect(capabilities.supportsReadOnlyMode).toBe(true); // --approval-mode plan (experimental)
+			expect(capabilities.supportsJsonOutput).toBe(true); // --output-format stream-json
+			expect(capabilities.supportsSessionId).toBe(true); // session_id in init event
+			expect(capabilities.supportsImageInput).toBe(false); // No --image flag for batch mode
+			expect(capabilities.supportsImageInputOnResume).toBe(false);
+			expect(capabilities.supportsSlashCommands).toBe(false); // Not in JSON output
+			expect(capabilities.supportsSessionStorage).toBe(true); // ~/.gemini/tmp/<hash>/chats/
+			expect(capabilities.supportsCostTracking).toBe(false); // Free tier
+			expect(capabilities.supportsUsageStats).toBe(true); // Token stats in result event
+			expect(capabilities.supportsBatchMode).toBe(true); // -p or positional args
+			expect(capabilities.requiresPromptToStart).toBe(true);
+			expect(capabilities.supportsStreaming).toBe(true); // NDJSON stream
+			expect(capabilities.supportsResultMessages).toBe(true); // 'result' event
+			expect(capabilities.supportsModelSelection).toBe(true); // -m/--model
+			expect(capabilities.supportsStreamJsonInput).toBe(false);
+			expect(capabilities.supportsThinkingDisplay).toBe(true); // includeThoughts
+			expect(capabilities.supportsContextMerge).toBe(true);
+			expect(capabilities.supportsContextExport).toBe(true);
+			expect(capabilities.imageResumeMode).toBeUndefined();
 		});
 
 		it('should have capabilities for qwen3-coder', () => {

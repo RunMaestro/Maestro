@@ -203,23 +203,23 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 	 * Verified capabilities based on Gemini CLI v0.29.5 flags and output format.
 	 */
 	'gemini-cli': {
-		supportsResume: true, // --resume latest|index
-		supportsReadOnlyMode: true, // --approval-mode plan
+		supportsResume: true, // --resume [index|UUID] (bare --resume = latest)
+		supportsReadOnlyMode: true, // --approval-mode plan (experimental; currently enforced via system prompt)
 		supportsJsonOutput: true, // --output-format json|stream-json
-		supportsSessionId: true, // session_id in JSON output
-		supportsImageInput: false, // Gemini is multimodal but CLI has no image input flag
+		supportsSessionId: true, // session_id in init event of stream-json output
+		supportsImageInput: false, // Gemini is multimodal but CLI has no --image flag for batch mode
 		supportsImageInputOnResume: false, // No image flag
-		supportsSlashCommands: false, // Gemini uses /slash commands but not exposed in JSON
-		supportsSessionStorage: true, // ~/.gemini/tmp/project/chats/
+		supportsSlashCommands: false, // Has 20+ slash commands in interactive mode but not exposed in JSON output
+		supportsSessionStorage: true, // ~/.gemini/tmp/<project_hash>/chats/
 		supportsCostTracking: false, // Free tier / no cost data in output
-		supportsUsageStats: true, // Token stats in JSON output
-		supportsBatchMode: true, // -p flag for non-interactive
-		requiresPromptToStart: true, // Needs -p for batch mode
-		supportsStreaming: true, // stream-json output
+		supportsUsageStats: true, // Token stats in stream-json result event
+		supportsBatchMode: true, // -p flag (deprecated) or positional args for non-interactive
+		requiresPromptToStart: true, // Needs prompt arg for batch mode
+		supportsStreaming: true, // stream-json NDJSON output
 		supportsResultMessages: true, // 'result' event in stream-json
-		supportsModelSelection: true, // -m/--model flag
+		supportsModelSelection: true, // -m/--model flag (auto, pro, flash, flash-lite, or full model name)
 		supportsStreamJsonInput: false, // No stdin JSON streaming
-		supportsThinkingDisplay: true, // Tracks thought tokens
+		supportsThinkingDisplay: true, // Thought tokens tracked via settings.json includeThoughts
 		supportsContextMerge: true, // Can receive transferred context
 		supportsContextExport: true, // Can export context for transfer
 	},
