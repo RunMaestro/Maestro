@@ -448,7 +448,7 @@ function FocusSidebar({
 								<div
 									key={`header-${row.groupKey}-${rowIdx}`}
 									tabIndex={0}
-									role="button"
+									role="presentation"
 									aria-expanded={!collapsedGroups.has(row.groupKey)}
 									onClick={() => {
 										setCollapsedGroups((prev) => {

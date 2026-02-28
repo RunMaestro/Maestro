@@ -12,7 +12,7 @@
 import { useCallback } from 'react';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
 import type { AtMentionSuggestion } from '../input/useAtMentionCompletion';
-import { fuzzyMatch } from '../../utils/search';
+import { fuzzyMatchWithScore } from '../../utils/search';
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -206,11 +206,23 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 			// Handle slash command autocomplete
 			if (slashCommandOpen) {
 				const isTerminalMode = activeSession?.inputMode === 'terminal';
-				const filteredCommands = allSlashCommands.filter((cmd) => {
-					if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
-					if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-					return fuzzyMatch(cmd.command, inputValue);
-				});
+				const inputLower = inputValue.toLowerCase();
+				const filteredCommands = allSlashCommands
+					.filter((cmd) => {
+						if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
+						if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
+						return true;
+					})
+					.map((cmd) => {
+						const result = fuzzyMatchWithScore(cmd.command, inputLower);
+						return result.matches ? { cmd, score: result.score } : null;
+					})
+					.filter(
+						(item): item is { cmd: (typeof allSlashCommands)[number]; score: number } =>
+							item !== null
+					)
+					.sort((a, b) => b.score - a.score)
+					.map((item) => item.cmd);
 
 				if (e.key === 'ArrowDown') {
 					e.preventDefault();
