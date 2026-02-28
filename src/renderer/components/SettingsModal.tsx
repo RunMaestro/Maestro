@@ -1170,7 +1170,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 				<div className="flex border-b" style={{ borderColor: theme.colors.border }}>
 					<button
 						onClick={() => setActiveTab('general')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'general' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'general' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="General"
 					>
@@ -1179,7 +1179,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('display')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'display' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'display' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="Display"
 					>
@@ -1189,7 +1189,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					{FEATURE_FLAGS.LLM_SETTINGS && (
 						<button
 							onClick={() => setActiveTab('llm')}
-							className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'llm' ? 'border-indigo-500' : 'border-transparent'}`}
+							className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'llm' ? 'border-indigo-500' : 'border-transparent'}`}
 							tabIndex={-1}
 							title="LLM"
 						>
@@ -1198,7 +1198,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					)}
 					<button
 						onClick={() => setActiveTab('shortcuts')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'shortcuts' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'shortcuts' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="Shortcuts"
 					>
@@ -1207,7 +1207,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('theme')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'theme' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'theme' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="Themes"
 					>
@@ -1216,7 +1216,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('notifications')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'notifications' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'notifications' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="Notifications"
 					>
@@ -1225,7 +1225,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('aicommands')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'aicommands' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'aicommands' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="AI Commands"
 					>
@@ -1234,7 +1234,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('ssh')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'ssh' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'ssh' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						tabIndex={-1}
 						title="SSH Hosts"
 					>
@@ -1243,7 +1243,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 					</button>
 					<button
 						onClick={() => setActiveTab('encore')}
-						className={`px-4 py-4 text-sm font-bold border-b-2 ${activeTab === 'encore' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
+						className={`px-4 py-4 text-sm font-bold border-b-2 cursor-pointer ${activeTab === 'encore' ? 'border-indigo-500' : 'border-transparent'} flex items-center gap-2`}
 						style={{
 							color: activeTab === 'encore' ? theme.colors.textMain : theme.colors.textDim,
 						}}
@@ -1254,7 +1254,7 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 						{activeTab === 'encore' && <span>Encore Features</span>}
 					</button>
 					<div className="flex-1 flex justify-end items-center pr-4">
-						<button onClick={onClose} tabIndex={-1}>
+						<button onClick={onClose} tabIndex={-1} className="cursor-pointer">
 							<X className="w-5 h-5 opacity-50 hover:opacity-100" />
 						</button>
 					</div>
