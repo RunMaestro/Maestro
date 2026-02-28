@@ -82,8 +82,13 @@ export function useAppInitialization(): AppInitializationReturn {
 
 	// --- GitHub CLI availability check ---
 	useEffect(() => {
-		window.maestro.git
-			.checkGhCli()
+		const checkGhCli = window.maestro?.git?.checkGhCli;
+		if (!checkGhCli) {
+			setGhCliAvailable(false);
+			return;
+		}
+
+		checkGhCli()
 			.then((status) => {
 				setGhCliAvailable(status.installed && status.authenticated);
 			})
@@ -101,9 +106,10 @@ export function useAppInitialization(): AppInitializationReturn {
 		if (!settingsLoaded) return;
 		if (suppressWindowsWarning) return;
 		if (windowsWarningShownRef.current) return;
+		const getPowerStatus = window.maestro?.power?.getStatus;
+		if (!getPowerStatus) return;
 
-		window.maestro.power
-			.getStatus()
+		getPowerStatus()
 			.then((status) => {
 				if (status.platform === 'win32') {
 					windowsWarningShownRef.current = true;
@@ -117,8 +123,10 @@ export function useAppInitialization(): AppInitializationReturn {
 
 	// --- Load file gist URLs from settings ---
 	useEffect(() => {
-		window.maestro.settings
-			.get('fileGistUrls')
+		const getSetting = window.maestro?.settings?.get;
+		if (!getSetting) return;
+
+		getSetting('fileGistUrls')
 			.then((savedUrls) => {
 				if (savedUrls && typeof savedUrls === 'object') {
 					useTabStore.getState().setFileGistUrls(savedUrls as Record<string, GistInfo>);
@@ -134,23 +142,26 @@ export function useAppInitialization(): AppInitializationReturn {
 		const { fileGistUrls: current } = useTabStore.getState();
 		const updated = { ...current, [filePath]: gistInfo };
 		useTabStore.getState().setFileGistUrls(updated);
-		window.maestro.settings.set('fileGistUrls', updated);
+		window.maestro?.settings?.set('fileGistUrls', updated);
 	}, []);
 
 	// --- Sync beta updates setting to electron-updater ---
 	useEffect(() => {
 		if (settingsLoaded) {
-			window.maestro.updates.setAllowPrerelease(enableBetaUpdates);
+			window.maestro?.updates?.setAllowPrerelease(enableBetaUpdates);
 		}
 	}, [settingsLoaded, enableBetaUpdates]);
 
 	// --- Check for updates on startup ---
 	useEffect(() => {
 		if (settingsLoaded && checkForUpdatesOnStartup) {
+			const checkForUpdates = window.maestro?.updates?.check;
+			if (!checkForUpdates) return;
+
 			const timer = setTimeout(async () => {
 				try {
-					const result = await window.maestro.updates.check(enableBetaUpdates);
-					if (result.updateAvailable && !result.error) {
+					const result = await checkForUpdates(enableBetaUpdates);
+					if (result?.updateAvailable && !result.error) {
 						getModalActions().setUpdateCheckModalOpen(true);
 					}
 				} catch (error) {
@@ -168,12 +179,14 @@ export function useAppInitialization(): AppInitializationReturn {
 		const authToken = leaderboardRegistration?.authToken;
 		const email = leaderboardRegistration?.email;
 		if (!authToken || !email) return;
+		const syncLeaderboard = window.maestro?.leaderboard?.sync;
+		if (!syncLeaderboard) return;
 
 		const timer = setTimeout(async () => {
 			try {
-				const result = await window.maestro.leaderboard.sync({ email, authToken });
+				const result = await syncLeaderboard({ email, authToken });
 
-				if (result.success && result.found && result.data) {
+				if (result?.success && result.found && result.data) {
 					// Read fresh autoRunStats at call time
 					const currentStats = useSettingsStore.getState().autoRunStats;
 					if (result.data.cumulativeTimeMs > currentStats.cumulativeTimeMs) {

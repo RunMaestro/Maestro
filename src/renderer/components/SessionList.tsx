@@ -20,6 +20,7 @@ import {
 	Bot,
 	Clock,
 	ScrollText,
+	Inbox,
 	Cpu,
 	Menu,
 	Bookmark,
@@ -444,6 +445,7 @@ function HamburgerMenuContent({
 }: HamburgerMenuContentProps) {
 	const shortcuts = useSettingsStore((s) => s.shortcuts);
 	const directorNotesEnabled = useSettingsStore((s) => s.encoreFeatures.directorNotes);
+	const unifiedInboxEnabled = useSettingsStore((s) => s.encoreFeatures.unifiedInbox);
 	const {
 		setShortcutsHelpOpen,
 		setSettingsModalOpen,
@@ -453,6 +455,7 @@ function HamburgerMenuContent({
 		setUsageDashboardOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setAgentInboxOpen,
 		setUpdateCheckModalOpen,
 		setAboutModalOpen,
 		setQuickActionOpen,
@@ -714,6 +717,33 @@ function HamburgerMenuContent({
 							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
 						>
 							{formatShortcutKeys(shortcuts.directorNotes.keys)}
+						</span>
+					)}
+				</button>
+			)}
+			{unifiedInboxEnabled && (
+				<button
+					onClick={() => {
+						setAgentInboxOpen(true);
+						setMenuOpen(false);
+					}}
+					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
+				>
+					<Inbox className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<div className="flex-1">
+						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							Unified Inbox
+						</div>
+						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+							Unified tabs inbox
+						</div>
+					</div>
+					{shortcuts.agentInbox && (
+						<span
+							className="text-xs font-mono px-1.5 py-0.5 rounded"
+							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
+						>
+							{formatShortcutKeys(shortcuts.agentInbox.keys)}
 						</span>
 					)}
 				</button>

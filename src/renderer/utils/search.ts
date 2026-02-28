@@ -14,6 +14,7 @@ export interface FuzzyMatchResult {
  */
 export const fuzzyMatch = (text: string, query: string): boolean => {
 	if (!query) return true;
+	if (!text || query.length > text.length) return false;
 	const lowerText = text.toLowerCase();
 	const lowerQuery = query.toLowerCase();
 	let queryIndex = 0;
@@ -43,6 +44,10 @@ export const fuzzyMatch = (text: string, query: string): boolean => {
 export const fuzzyMatchWithScore = (text: string, query: string): FuzzyMatchResult => {
 	if (!query) {
 		return { matches: true, score: 0 };
+	}
+
+	if (!text || query.length > text.length) {
+		return { matches: false, score: 0 };
 	}
 
 	const lowerText = text.toLowerCase();

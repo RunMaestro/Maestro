@@ -425,6 +425,8 @@ export interface AITab {
 	autoSendOnActivate?: boolean; // When true, automatically send inputValue when tab becomes active
 	wizardState?: SessionWizardState; // Per-tab inline wizard state for /wizard command
 	isGeneratingName?: boolean; // True while automatic tab naming is in progress
+	/** Optional user-defined description for tab context */
+	description?: string;
 }
 
 // A single "thinking item" — one busy tab within a session.
@@ -905,6 +907,8 @@ export interface LeaderboardSubmitResponse {
 // Each key is a feature ID, value indicates whether it's enabled
 export interface EncoreFeatureFlags {
 	directorNotes: boolean;
+	unifiedInbox: boolean;
+	tabDescription: boolean;
 }
 
 // Director's Notes settings for synopsis generation

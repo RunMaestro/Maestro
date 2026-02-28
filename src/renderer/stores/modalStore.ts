@@ -138,6 +138,15 @@ export interface KeyboardMasteryData {
 	level: number;
 }
 
+// Note: filterMode/sortMode typed as string (not InboxFilterMode/InboxSortMode)
+// to avoid circular dependency with types/agent-inbox.ts
+/** Agent Inbox modal data (persisted filter/sort/expand state) */
+export interface AgentInboxModalData {
+	filterMode?: string;
+	sortMode?: string;
+	isExpanded?: boolean;
+}
+
 // ============================================================================
 // Modal ID Registry
 // ============================================================================
@@ -218,7 +227,9 @@ export type ModalId =
 	// Platform Warnings
 	| 'windowsWarning'
 	// Director's Notes
-	| 'directorNotes';
+	| 'directorNotes'
+	// Agent Inbox (Unified Inbox)
+	| 'agentInbox';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -249,6 +260,7 @@ export interface ModalDataMap {
 	firstRunCelebration: FirstRunCelebrationData;
 	keyboardMastery: KeyboardMasteryData;
 	lightbox: LightboxData;
+	agentInbox: AgentInboxModalData;
 }
 
 // Helper type to get data type for a modal ID
@@ -318,10 +330,11 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	openModal: (id, data) => {
 		set((state) => {
 			const current = state.modals.get(id);
+			const nextData = data !== undefined ? data : current?.data;
 			// Skip if already open with same data reference
-			if (current?.open && current.data === data) return state;
+			if (current?.open && current.data === nextData) return state;
 			const newModals = new Map(state.modals);
-			newModals.set(id, { open: true, data });
+			newModals.set(id, { open: true, data: nextData });
 			return { modals: newModals };
 		});
 	},
@@ -353,11 +366,12 @@ export const useModalStore = create<ModalStore>()((set, get) => ({
 	updateModalData: (id, data) => {
 		set((state) => {
 			const current = state.modals.get(id);
-			if (!current || !current.data) return state;
 			const newModals = new Map(state.modals);
-			const mergedData = Object.assign({}, current.data, data);
+
+			const baseData = current?.data ?? {};
+			const mergedData = Object.assign({}, baseData, data);
 			newModals.set(id, {
-				...current,
+				open: current?.open ?? false,
 				data: mergedData,
 			});
 			return { modals: newModals };
@@ -757,6 +771,20 @@ export function getModalActions() {
 		setDirectorNotesOpen: (open: boolean) =>
 			open ? openModal('directorNotes') : closeModal('directorNotes'),
 
+		// Agent Inbox Modal (Unified Inbox)
+		// Preserve persisted view state (filter/sort/expand) when closing
+		setAgentInboxOpen: (open: boolean) => {
+			if (open) {
+				openModal('agentInbox');
+			} else {
+				const currentData = useModalStore.getState().getData('agentInbox');
+				const newModals = new Map(useModalStore.getState().modals);
+				newModals.set('agentInbox', { open: false, data: currentData });
+				useModalStore.setState({ modals: newModals });
+			}
+		},
+		updateAgentInboxData: (data: Record<string, unknown>) => updateModalData('agentInbox', data),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -846,6 +874,7 @@ export function useModalActions() {
 	const symphonyModalOpen = useModalStore(selectModalOpen('symphony'));
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
+	const agentInboxOpen = useModalStore(selectModalOpen('agentInbox'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1013,6 +1042,9 @@ export function useModalActions() {
 
 		// Director's Notes Modal
 		directorNotesOpen,
+
+		// Agent Inbox Modal (Unified Inbox)
+		agentInboxOpen,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,

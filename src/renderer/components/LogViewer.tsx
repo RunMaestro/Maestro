@@ -98,16 +98,16 @@ export function LogViewer({
 				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>)
 		) => {
 			setSelectedLevelsState((prev) => {
-				const newSet = typeof updater === 'function' ? updater(prev) : updater;
-				// Persist to settings
-				if (onSelectedLevelsChange) {
-					onSelectedLevelsChange(Array.from(newSet));
-				}
-				return newSet;
+				return typeof updater === 'function' ? updater(prev) : updater;
 			});
 		},
-		[onSelectedLevelsChange]
+		[]
 	);
+
+	// Persist selectedLevels to parent via effect (avoids setState-during-render warning)
+	useEffect(() => {
+		onSelectedLevelsChange?.(Array.from(selectedLevels));
+	}, [selectedLevels, onSelectedLevelsChange]);
 	const [expandedData, setExpandedData] = useState<Set<number>>(new Set());
 	const [showClearConfirm, setShowClearConfirm] = useState(false);
 	const searchInputRef = useRef<HTMLInputElement>(null);

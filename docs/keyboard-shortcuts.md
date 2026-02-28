@@ -42,6 +42,10 @@ The command palette is your gateway to nearly every action in Maestro. Press `Cm
 | Maestro Symphony            | `Cmd+Shift+Y`         | `Ctrl+Shift+Y`         |
 | Cycle Focus Areas           | `Tab`                 | `Tab`                  |
 | Cycle Focus Backwards       | `Shift+Tab`           | `Shift+Tab`            |
+| Unified Inbox \*            | `Opt+I`               | `Alt+I`                |
+| Director's Notes \*         | `Cmd+Shift+O`         | `Ctrl+Shift+O`         |
+
+\* Requires the corresponding [Encore Feature](./encore-features) to be enabled in Settings.
 
 ## Panel Shortcuts
 

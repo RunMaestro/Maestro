@@ -20,6 +20,7 @@ import {
 	Loader2,
 	ExternalLink,
 	FolderOpen,
+	FileText,
 } from 'lucide-react';
 import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
@@ -38,6 +39,7 @@ interface TabBarProps {
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	/** Handler to reorder tabs in unified tab order (AI + file tabs) */
 	onUnifiedTabReorder?: (fromIndex: number, toIndex: number) => void;
+	onUpdateTabDescription?: (tabId: string, description: string) => void;
 	onTabStar?: (tabId: string, starred: boolean) => void;
 	onTabMarkUnread?: (tabId: string) => void;
 	/** Handler to open merge session modal with this tab as source */
@@ -118,6 +120,8 @@ interface TabProps {
 	onExportHtml?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
 	onPublishGist?: (tabId: string) => void;
+	/** Stable callback - receives tabId and new description */
+	onUpdateTabDescription?: (tabId: string, description: string) => void;
 	/** Stable callback - receives tabId */
 	onMoveToFirst?: (tabId: string) => void;
 	/** Stable callback - receives tabId */
@@ -214,6 +218,7 @@ const Tab = memo(function Tab({
 	onCopyContext,
 	onExportHtml,
 	onPublishGist,
+	onUpdateTabDescription,
 	onMoveToFirst,
 	onMoveToLast,
 	isFirstTab,
@@ -231,6 +236,9 @@ const Tab = memo(function Tab({
 	const [isHovered, setIsHovered] = useState(false);
 	const [overlayOpen, setOverlayOpen] = useState(false);
 	const [showCopied, setShowCopied] = useState(false);
+	const [isEditingDescription, setIsEditingDescription] = useState(false);
+	const [descriptionDraft, setDescriptionDraft] = useState(tab.description ?? '');
+	const descriptionDraftRef = useRef(descriptionDraft);
 	const [overlayPosition, setOverlayPosition] = useState<{
 		top: number;
 		left: number;
@@ -453,6 +461,83 @@ const Tab = memo(function Tab({
 		[onCloseTabsRight, tabId]
 	);
 
+	// Description editing handlers
+	const descriptionButtonRef = useRef<HTMLButtonElement>(null);
+	const descriptionTextareaRef = useCallback((el: HTMLTextAreaElement | null) => {
+		el?.focus();
+	}, []);
+	const skipBlurSaveRef = useRef(false);
+
+	const handleDescriptionSave = useCallback(
+		(value: string) => {
+			skipBlurSaveRef.current = false;
+			const trimmed = value.trim();
+			if (trimmed !== (tab.description ?? '')) {
+				onUpdateTabDescription?.(tabId, trimmed);
+			}
+			setIsEditingDescription(false);
+			setDescriptionDraft(trimmed || (tab.description ?? ''));
+			requestAnimationFrame(() => {
+				descriptionButtonRef.current?.focus();
+			});
+		},
+		[onUpdateTabDescription, tabId, tab.description]
+	);
+
+	const handleDescriptionCancel = useCallback(() => {
+		skipBlurSaveRef.current = true;
+		setDescriptionDraft(tab.description ?? '');
+		setIsEditingDescription(false);
+		requestAnimationFrame(() => {
+			descriptionButtonRef.current?.focus();
+		});
+	}, [tab.description]);
+
+	const handleDescriptionKeyDown = useCallback(
+		(e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+			if (e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				handleDescriptionSave(descriptionDraft);
+			} else if (e.key === 'Escape') {
+				e.preventDefault();
+				handleDescriptionCancel();
+			}
+		},
+		[descriptionDraft, handleDescriptionSave, handleDescriptionCancel]
+	);
+
+	const handleDescriptionBlur = useCallback(() => {
+		if (skipBlurSaveRef.current) {
+			skipBlurSaveRef.current = false;
+			return;
+		}
+		handleDescriptionSave(descriptionDraft);
+	}, [descriptionDraft, handleDescriptionSave]);
+
+	// Sync draft with tab.description when it changes externally
+	useEffect(() => {
+		if (!isEditingDescription) {
+			setDescriptionDraft(tab.description ?? '');
+		}
+	}, [tab.description, isEditingDescription]);
+
+	// Keep ref in sync with latest draft value to avoid stale closures in cleanup
+	useEffect(() => {
+		descriptionDraftRef.current = descriptionDraft;
+	}, [descriptionDraft]);
+
+	// Save description draft when overlay closes while editing
+	useEffect(() => {
+		if (!overlayOpen && isEditingDescription) {
+			const draft = descriptionDraftRef.current.trim();
+			if (draft !== (tab.description ?? '')) {
+				onUpdateTabDescription?.(tabId, draft);
+			}
+			setIsEditingDescription(false);
+			setDescriptionDraft(draft || (tab.description ?? ''));
+		}
+	}, [overlayOpen, isEditingDescription, tab.description, onUpdateTabDescription, tabId]);
+
 	// Handlers for drag events using stable tabId
 	const handleTabSelect = useCallback(() => {
 		onSelect(tabId);
@@ -650,6 +735,7 @@ const Tab = memo(function Tab({
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
 								minWidth: '220px',
+								maxWidth: '220px',
 							}}
 						>
 							{/* Header with session name and ID - only show for tabs with sessions */}
@@ -678,6 +764,70 @@ const Tab = memo(function Tab({
 									>
 										{tab.agentSessionId}
 									</div>
+								</div>
+							)}
+
+							{/* Description section - only render when feature is enabled */}
+							{onUpdateTabDescription && (
+								<div
+									className="px-3 py-2 border-b overflow-hidden"
+									style={{ borderColor: theme.colors.border }}
+								>
+									{isEditingDescription ? (
+										<textarea
+											ref={descriptionTextareaRef}
+											value={descriptionDraft}
+											onChange={(e) => setDescriptionDraft(e.target.value)}
+											onKeyDown={handleDescriptionKeyDown}
+											onBlur={handleDescriptionBlur}
+											placeholder="Add a description..."
+											rows={2}
+											aria-label="Tab description"
+											className="w-full text-xs resize-none outline-none rounded px-2 py-1.5"
+											style={{
+												backgroundColor: theme.colors.bgMain,
+												color: theme.colors.textMain,
+												border: `1px solid ${theme.colors.border}`,
+												maxHeight: '100px',
+												overflowY: 'auto',
+											}}
+										/>
+									) : (
+										<button
+											ref={descriptionButtonRef}
+											onClick={() => setIsEditingDescription(true)}
+											className="w-full flex items-start gap-2 rounded text-xs text-left cursor-pointer hover:bg-white/5 transition-colors px-1 py-0.5"
+											aria-label={tab.description ? 'Edit tab description' : 'Add tab description'}
+										>
+											<FileText
+												className="w-3.5 h-3.5 shrink-0 mt-0.5"
+												style={{ color: theme.colors.textDim }}
+											/>
+											{tab.description ? (
+												<span
+													style={{
+														color: theme.colors.textMain,
+														display: '-webkit-box',
+														WebkitLineClamp: 3,
+														WebkitBoxOrient: 'vertical',
+														overflow: 'hidden',
+														wordBreak: 'break-word',
+													}}
+												>
+													{tab.description}
+												</span>
+											) : (
+												<span
+													style={{
+														color: theme.colors.textDim,
+														fontStyle: 'italic',
+													}}
+												>
+													Add description...
+												</span>
+											)}
+										</button>
+									)}
 								</div>
 							)}
 
@@ -1350,6 +1500,7 @@ const FileTab = memo(function FileTab({
 								borderBottomLeftRadius: '8px',
 								borderBottomRightRadius: '8px',
 								minWidth: '220px',
+								maxWidth: '220px',
 							}}
 						>
 							{/* Actions */}
@@ -1512,6 +1663,7 @@ function TabBarInner({
 	onNewTab,
 	onRequestRename,
 	onTabReorder,
+	onUpdateTabDescription,
 	onTabStar,
 	onTabMarkUnread,
 	onMergeWith,
@@ -1975,6 +2127,7 @@ function TabBarInner({
 												? handleTabPublishGist
 												: undefined
 										}
+										onUpdateTabDescription={onUpdateTabDescription}
 										onMoveToFirst={
 											!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
 										}
@@ -2092,6 +2245,7 @@ function TabBarInner({
 											? handleTabPublishGist
 											: undefined
 									}
+									onUpdateTabDescription={onUpdateTabDescription}
 									onMoveToFirst={!isFirstTab && onTabReorder ? handleMoveToFirst : undefined}
 									onMoveToLast={!isLastTab && onTabReorder ? handleMoveToLast : undefined}
 									isFirstTab={isFirstTab}

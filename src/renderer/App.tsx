@@ -41,6 +41,7 @@ const DocumentGraphView = lazy(() =>
 const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
+const AgentInbox = lazy(() => import('./components/AgentInbox'));
 
 // SymphonyContributionData type moved to useSymphonyContribution hook
 
@@ -325,6 +326,9 @@ function MaestroConsoleInner() {
 		// Director's Notes Modal
 		directorNotesOpen,
 		setDirectorNotesOpen,
+		// Agent Inbox Modal (Unified Inbox)
+		agentInboxOpen,
+		setAgentInboxOpen,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -755,6 +759,7 @@ function MaestroConsoleInner() {
 		handleCloseCurrentTab,
 		handleRequestTabRename,
 		handleUpdateTabByClaudeSessionId,
+		handleUpdateTabDescription,
 		handleTabStar,
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
@@ -1181,6 +1186,171 @@ function MaestroConsoleInner() {
 	// Bridge: keep handleResumeSessionRef in sync for useModalHandlers
 	handleResumeSessionRef.current = handleResumeSession;
 
+	// --- AGENT INBOX SESSION NAVIGATION ---
+	// Close inbox modal and switch to the target agent session
+	const handleAgentInboxNavigateToSession = useCallback(
+		(sessionId: string, tabId?: string) => {
+			setAgentInboxOpen(false);
+			setActiveSessionId(sessionId);
+			if (tabId) {
+				setSessions((prev) =>
+					prev.map((s) =>
+						s.id === sessionId
+							? { ...s, activeTabId: tabId, activeFileTabId: null, inputMode: 'ai' as const }
+							: s
+					)
+				);
+			}
+		},
+		[setAgentInboxOpen, setActiveSessionId, setSessions]
+	);
+
+	// Ref for processInput — populated after useInputHandlers (declared later in component).
+	// Handlers below close over this ref so they always call the latest version.
+	const inboxProcessInputRef = useRef<(text?: string) => void>(() => {});
+	const [pendingInboxQuickReply, setPendingInboxQuickReply] = useState<{
+		targetSessionId: string;
+		previousActiveSessionId: string | null;
+		text: string;
+	} | null>(null);
+	// Synchronous guard ref — prevents the effect from re-firing before React commits
+	// the batched setPendingInboxQuickReply(null). Without this, the Zustand setSessions()
+	// inside processInput triggers a synchronous store update → sessions dep changes →
+	// effect re-runs → pendingInboxQuickReply is still non-null (batched) → infinite loop.
+	const inboxQuickReplyFiredRef = useRef(false);
+
+	// Flush pending quick-reply once target session is active (deterministic, no RAF timing chain).
+	useEffect(() => {
+		if (!pendingInboxQuickReply) return;
+		// Synchronous guard: processInput triggers Zustand setSessions (sync) which re-runs
+		// this effect before React commits the batched setPendingInboxQuickReply(null).
+		if (inboxQuickReplyFiredRef.current) return;
+		// Guard: if the target session was removed before activation, clear the stale pending.
+		if (!sessions.some((s) => s.id === pendingInboxQuickReply.targetSessionId)) {
+			setPendingInboxQuickReply(null);
+			return;
+		}
+		if (activeSession?.id !== pendingInboxQuickReply.targetSessionId) return;
+
+		// Mark as fired BEFORE calling processInput to prevent re-entry
+		inboxQuickReplyFiredRef.current = true;
+		inboxProcessInputRef.current(pendingInboxQuickReply.text);
+		const previousActiveSessionId = pendingInboxQuickReply.previousActiveSessionId;
+		setPendingInboxQuickReply(null);
+
+		if (
+			previousActiveSessionId &&
+			previousActiveSessionId !== pendingInboxQuickReply.targetSessionId &&
+			sessions.some((s) => s.id === previousActiveSessionId)
+		) {
+			queueMicrotask(() => {
+				setActiveSessionId(previousActiveSessionId);
+			});
+		}
+	}, [pendingInboxQuickReply, activeSession?.id, setActiveSessionId, sessions]);
+
+	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
+	const handleAgentInboxQuickReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			// Guard: ignore if a quick reply is already in progress
+			if (pendingInboxQuickReply) return;
+
+			// Reset the synchronous guard so the effect can fire for this new reply
+			inboxQuickReplyFiredRef.current = false;
+
+			// Save current active session so we can restore it after sending.
+			const previousActiveSessionId = activeSessionIdRef.current;
+
+			// Activate the target tab and mark as read (processInput adds the user log entry)
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						activeFileTabId: null,
+						inputMode: 'ai' as const,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+
+			// Switch to target session and let the effect above send once state is committed.
+			setPendingInboxQuickReply({
+				targetSessionId: sessionId,
+				previousActiveSessionId,
+				text,
+			});
+			setActiveSessionId(sessionId);
+		},
+		[pendingInboxQuickReply, setSessions, setActiveSessionId, activeSessionIdRef]
+	);
+
+	// Agent Inbox: Open & Reply — navigates to session with pre-filled input
+	const handleAgentInboxOpenAndReply = useCallback(
+		(sessionId: string, tabId: string, text: string) => {
+			setActiveSessionId(sessionId);
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						activeTabId: tabId,
+						activeFileTabId: null,
+						inputMode: 'ai' as const,
+						aiTabs: s.aiTabs.map((t) =>
+							t.id === tabId ? { ...t, inputValue: text, hasUnread: false } : t
+						),
+					};
+				})
+			);
+			setAgentInboxOpen(false);
+		},
+		[setActiveSessionId, setSessions, setAgentInboxOpen]
+	);
+
+	// Agent Inbox: Mark as Read — dismiss unread badge without replying
+	const handleAgentInboxMarkAsRead = useCallback(
+		(sessionId: string, tabId: string) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, hasUnread: false } : t)),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
+	// Agent Inbox: Toggle thinking mode on a specific tab
+	const handleAgentInboxToggleThinking = useCallback(
+		(sessionId: string, tabId: string, mode: ThinkingMode) => {
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs.map((t) => {
+							if (t.id !== tabId) return t;
+							if (mode === 'off') {
+								return {
+									...t,
+									showThinking: 'off',
+									logs: t.logs.filter((l) => l.source !== 'thinking' && l.source !== 'tool'),
+								};
+							}
+							return { ...t, showThinking: mode };
+						}),
+					};
+				})
+			);
+		},
+		[setSessions]
+	);
+
 	// --- BATCH HANDLERS (Auto Run processing, quit confirmation, error handling) ---
 	const {
 		startBatchRun,
@@ -1334,6 +1504,9 @@ function MaestroConsoleInner() {
 		sessionsRef,
 		activeSessionIdRef,
 	});
+
+	// Bind the ref so Inbox Quick Reply handlers always call the latest processInput.
+	inboxProcessInputRef.current = processInput;
 
 	// This is used by context transfer to automatically send the transferred context to the agent
 	useEffect(() => {
@@ -1935,6 +2108,7 @@ function MaestroConsoleInner() {
 		setMarketplaceModalOpen,
 		setSymphonyModalOpen,
 		setDirectorNotesOpen,
+		setAgentInboxOpen: encoreFeatures.unifiedInbox ? setAgentInboxOpen : undefined,
 		encoreFeatures,
 		setShowNewGroupChatModal,
 		deleteGroupChatWithConfirmation,
@@ -2138,6 +2312,9 @@ function MaestroConsoleInner() {
 		handleTabReorder,
 		handleUnifiedTabReorder,
 		handleUpdateTabByClaudeSessionId,
+		handleUpdateTabDescription: encoreFeatures.tabDescription
+			? handleUpdateTabDescription
+			: undefined,
 		handleTabStar,
 		handleTabMarkUnread,
 		handleToggleTabReadOnlyMode,
@@ -2606,6 +2783,7 @@ function MaestroConsoleInner() {
 					onOpenDirectorNotes={
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
+					onOpenAgentInbox={encoreFeatures.unifiedInbox ? () => setAgentInboxOpen(true) : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
@@ -2792,6 +2970,25 @@ function MaestroConsoleInner() {
 							onFileClick={(path: string) =>
 								handleFileClick({ name: path.split('/').pop() || path, type: 'file' }, path)
 							}
+						/>
+					</Suspense>
+				)}
+
+				{/* --- AGENT INBOX MODAL (lazy-loaded, Encore Feature) --- */}
+				{encoreFeatures.unifiedInbox && agentInboxOpen && (
+					<Suspense fallback={null}>
+						<AgentInbox
+							sessions={sessions}
+							groups={groups}
+							theme={theme}
+							enterToSendAI={enterToSendAI}
+							slashCommands={allSlashCommands}
+							onClose={() => setAgentInboxOpen(false)}
+							onNavigateToSession={handleAgentInboxNavigateToSession}
+							onQuickReply={handleAgentInboxQuickReply}
+							onOpenAndReply={handleAgentInboxOpenAndReply}
+							onMarkAsRead={handleAgentInboxMarkAsRead}
+							onToggleThinking={handleAgentInboxToggleThinking}
 						/>
 					</Suspense>
 				)}
