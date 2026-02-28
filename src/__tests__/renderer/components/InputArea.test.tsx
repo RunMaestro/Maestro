@@ -694,10 +694,10 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			// The second command (/help) should have accent background
-			// Find the parent div that has the background style (px-4 py-3 class)
-			const helpCmd = screen.getByText('/help').closest('.px-4');
-			expect(helpCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			// With fuzzy scoring, /help (shorter) scores higher than /clear for query "/"
+			// So order is: /help (0), /clear (1). Index 1 = /clear has accent background.
+			const clearCmd = screen.getByText('/clear').closest('.px-4');
+			expect(clearCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
 		it('updates selection on mouse enter', () => {
@@ -709,8 +709,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('.px-4');
-			fireEvent.mouseEnter(helpCmd!);
+			// With fuzzy scoring, /help is at index 0, /clear at index 1
+			const clearCmd = screen.getByText('/clear').closest('.px-4');
+			fireEvent.mouseEnter(clearCmd!);
 
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
 		});
@@ -812,8 +813,9 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			const helpCmd = screen.getByText('/help').closest('.px-4');
-			fireEvent.click(helpCmd!);
+			// With fuzzy scoring, /help is at index 0, /clear at index 1
+			const clearCmd = screen.getByText('/clear').closest('.px-4');
+			fireEvent.click(clearCmd!);
 
 			// Single click should update selection
 			expect(setSelectedSlashCommandIndex).toHaveBeenCalledWith(1);
@@ -841,13 +843,13 @@ describe('InputArea', () => {
 			});
 			render(<InputArea {...props} />);
 
-			// The second item (/help) should NOT have accent background since index 0 is selected
+			// With fuzzy scoring, order is: /help (0), /clear (1)
+			// Index 0 is selected, so /help has accent background
 			const helpCmd = screen.getByText('/help').closest('.px-4');
-			// Unselected items don't have the accent color background
-			expect(helpCmd).not.toHaveStyle({ backgroundColor: mockTheme.colors.accent });
-			// First item (selected) should have accent background
+			expect(helpCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			// /clear (index 1) should NOT have accent background
 			const clearCmd = screen.getByText('/clear').closest('.px-4');
-			expect(clearCmd).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+			expect(clearCmd).not.toHaveStyle({ backgroundColor: mockTheme.colors.accent });
 		});
 
 		it('scrolls selected item into view via refs', () => {

@@ -12,6 +12,7 @@
 import { useCallback } from 'react';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
 import type { AtMentionSuggestion } from '../input/useAtMentionCompletion';
+import { fuzzyMatch } from '../../utils/search';
 import { useInputContext } from '../../contexts/InputContext';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useUIStore } from '../../stores/uiStore';
@@ -208,7 +209,7 @@ export function useInputKeyDown(deps: InputKeyDownDeps): InputKeyDownReturn {
 				const filteredCommands = allSlashCommands.filter((cmd) => {
 					if ('terminalOnly' in cmd && cmd.terminalOnly && !isTerminalMode) return false;
 					if ('aiOnly' in cmd && cmd.aiOnly && isTerminalMode) return false;
-					return cmd.command.toLowerCase().startsWith(inputValue.toLowerCase());
+					return fuzzyMatch(cmd.command, inputValue);
 				});
 
 				if (e.key === 'ArrowDown') {

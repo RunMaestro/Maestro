@@ -23,6 +23,7 @@ import {
 	formatEnterToSend,
 	formatEnterToSendTooltip,
 } from '../utils/shortcutFormatter';
+import { fuzzyMatchWithScore } from '../utils/search';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../hooks';
 import type {
 	SummarizeProgress,
@@ -318,14 +319,20 @@ export const InputArea = React.memo(function InputArea(props: InputAreaProps) {
 	// recalculating on every render - inputValue changes on every keystroke
 	const inputValueLower = useMemo(() => inputValue.toLowerCase(), [inputValue]);
 	const filteredSlashCommands = useMemo(() => {
-		return slashCommands.filter((cmd) => {
-			// Check if command is only available in terminal mode
-			if (cmd.terminalOnly && !isTerminalMode) return false;
-			// Check if command is only available in AI mode
-			if (cmd.aiOnly && isTerminalMode) return false;
-			// Check if command matches input
-			return cmd.command.toLowerCase().startsWith(inputValueLower);
-		});
+		return slashCommands
+			.map((cmd) => {
+				// Check if command is only available in terminal mode
+				if (cmd.terminalOnly && !isTerminalMode) return null;
+				// Check if command is only available in AI mode
+				if (cmd.aiOnly && isTerminalMode) return null;
+				// Fuzzy match command against input
+				const result = fuzzyMatchWithScore(cmd.command, inputValueLower);
+				if (!result.matches) return null;
+				return { cmd, score: result.score };
+			})
+			.filter((item): item is { cmd: SlashCommand; score: number } => item !== null)
+			.sort((a, b) => b.score - a.score)
+			.map((item) => item.cmd);
 	}, [slashCommands, isTerminalMode, inputValueLower]);
 
 	// Ensure selectedSlashCommandIndex is valid for the filtered list
