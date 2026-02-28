@@ -225,7 +225,7 @@ export async function addParticipant(
 		const sshWrapped = await wrapSpawnWithSsh(
 			{
 				command,
-				args: configResolution.args,
+				args: finalArgs,
 				cwd,
 				prompt,
 				customEnvVars: configResolution.effectiveCustomEnvVars ?? effectiveEnvVars,
