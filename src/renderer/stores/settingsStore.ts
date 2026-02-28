@@ -30,6 +30,7 @@ import type {
 	KeyboardMasteryStats,
 	ThinkingMode,
 	DirectorNotesSettings,
+	EncoreFeatureFlags,
 } from '../types';
 import { DEFAULT_CUSTOM_THEME_COLORS } from '../constants/themes';
 import { DEFAULT_SHORTCUTS, TAB_SHORTCUTS, FIXED_SHORTCUTS } from '../constants/shortcuts';
@@ -113,6 +114,10 @@ export const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 	averagePhasesPerWizard: 0,
 	totalTasksGenerated: 0,
 	averageTasksPerPhase: 0,
+};
+
+export const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
+	directorNotes: false,
 };
 
 export const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
@@ -237,9 +242,13 @@ export interface SettingsStoreState {
 	fileTabAutoRefreshEnabled: boolean;
 	suppressWindowsWarning: boolean;
 	autoScrollAiMode: boolean;
+	userMessageAlignment: 'left' | 'right';
+	encoreFeatures: EncoreFeatureFlags;
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
 	wakatimeEnabled: boolean;
+	useNativeTitleBar: boolean;
+	autoHideMenuBar: boolean;
 }
 
 export interface SettingsStoreActions {
@@ -300,9 +309,13 @@ export interface SettingsStoreActions {
 	setFileTabAutoRefreshEnabled: (value: boolean) => void;
 	setSuppressWindowsWarning: (value: boolean) => void;
 	setAutoScrollAiMode: (value: boolean) => void;
+	setUserMessageAlignment: (value: 'left' | 'right') => void;
+	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
 	setWakatimeEnabled: (value: boolean) => void;
+	setUseNativeTitleBar: (value: boolean) => void;
+	setAutoHideMenuBar: (value: boolean) => void;
 
 	// Async setters
 	setLogLevel: (value: string) => Promise<void>;
@@ -439,9 +452,13 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	fileTabAutoRefreshEnabled: false,
 	suppressWindowsWarning: false,
 	autoScrollAiMode: false,
+	userMessageAlignment: 'right',
+	encoreFeatures: DEFAULT_ENCORE_FEATURES,
 	directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 	wakatimeApiKey: '',
 	wakatimeEnabled: false,
+	useNativeTitleBar: false,
+	autoHideMenuBar: false,
 
 	// ============================================================================
 	// Simple Setters
@@ -735,6 +752,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 		window.maestro.settings.set('autoScrollAiMode', value);
 	},
 
+	setUserMessageAlignment: (value) => {
+		set({ userMessageAlignment: value });
+		window.maestro.settings.set('userMessageAlignment', value);
+	},
+
+	setEncoreFeatures: (value) => {
+		set({ encoreFeatures: value });
+		window.maestro.settings.set('encoreFeatures', value);
+	},
+
 	setDirectorNotesSettings: (value) => {
 		set({ directorNotesSettings: value });
 		window.maestro.settings.set('directorNotesSettings', value);
@@ -748,6 +775,16 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => ({
 	setWakatimeEnabled: (value) => {
 		set({ wakatimeEnabled: value });
 		window.maestro.settings.set('wakatimeEnabled', value);
+	},
+
+	setUseNativeTitleBar: (value) => {
+		set({ useNativeTitleBar: value });
+		window.maestro.settings.set('useNativeTitleBar', value);
+	},
+
+	setAutoHideMenuBar: (value) => {
+		set({ autoHideMenuBar: value });
+		window.maestro.settings.set('autoHideMenuBar', value);
 	},
 
 	// ============================================================================
@@ -1300,8 +1337,13 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['activeThemeId'] !== undefined)
 			patch.activeThemeId = allSettings['activeThemeId'] as ThemeId;
 
+		// Custom theme migration: merge saved tokens with defaults so themes
+		// created with 13 tokens gain the 17 new tokens added in the WCAG update.
 		if (allSettings['customThemeColors'] !== undefined)
-			patch.customThemeColors = allSettings['customThemeColors'] as ThemeColors;
+			patch.customThemeColors = {
+				...DEFAULT_CUSTOM_THEME_COLORS,
+				...(allSettings['customThemeColors'] as ThemeColors),
+			};
 
 		if (allSettings['customThemeBaseId'] !== undefined)
 			patch.customThemeBaseId = allSettings['customThemeBaseId'] as ThemeId;
@@ -1602,6 +1644,17 @@ export async function loadAllSettings(): Promise<void> {
 		if (allSettings['autoScrollAiMode'] !== undefined)
 			patch.autoScrollAiMode = allSettings['autoScrollAiMode'] as boolean;
 
+		if (allSettings['userMessageAlignment'] !== undefined)
+			patch.userMessageAlignment = allSettings['userMessageAlignment'] as 'left' | 'right';
+
+		// Encore Features (merge with defaults to preserve new flags)
+		if (allSettings['encoreFeatures'] !== undefined) {
+			patch.encoreFeatures = {
+				...DEFAULT_ENCORE_FEATURES,
+				...(allSettings['encoreFeatures'] as Partial<EncoreFeatureFlags>),
+			};
+		}
+
 		// Director's Notes settings (merge with defaults to preserve new fields)
 		if (allSettings['directorNotesSettings'] !== undefined) {
 			patch.directorNotesSettings = {
@@ -1615,6 +1668,12 @@ export async function loadAllSettings(): Promise<void> {
 
 		if (allSettings['wakatimeEnabled'] !== undefined)
 			patch.wakatimeEnabled = allSettings['wakatimeEnabled'] as boolean;
+
+		if (allSettings['useNativeTitleBar'] !== undefined)
+			patch.useNativeTitleBar = allSettings['useNativeTitleBar'] as boolean;
+
+		if (allSettings['autoHideMenuBar'] !== undefined)
+			patch.autoHideMenuBar = allSettings['autoHideMenuBar'] as boolean;
 
 		// Apply the entire patch in one setState call
 		patch.settingsLoaded = true;
@@ -1720,8 +1779,11 @@ export function getSettingsActions() {
 		setFileTabAutoRefreshEnabled: state.setFileTabAutoRefreshEnabled,
 		setSuppressWindowsWarning: state.setSuppressWindowsWarning,
 		setAutoScrollAiMode: state.setAutoScrollAiMode,
+		setEncoreFeatures: state.setEncoreFeatures,
 		setDirectorNotesSettings: state.setDirectorNotesSettings,
 		setWakatimeApiKey: state.setWakatimeApiKey,
 		setWakatimeEnabled: state.setWakatimeEnabled,
+		setUseNativeTitleBar: state.setUseNativeTitleBar,
+		setAutoHideMenuBar: state.setAutoHideMenuBar,
 	};
 }

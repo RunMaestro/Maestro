@@ -26,6 +26,7 @@ import type {
 	KeyboardMasteryStats,
 	ThinkingMode,
 	DirectorNotesSettings,
+	EncoreFeatureFlags,
 } from '../../types';
 import {
 	useSettingsStore,
@@ -274,6 +275,14 @@ export interface UseSettingsReturn {
 	autoScrollAiMode: boolean;
 	setAutoScrollAiMode: (value: boolean) => void;
 
+	// Message alignment
+	userMessageAlignment: 'left' | 'right';
+	setUserMessageAlignment: (value: 'left' | 'right') => void;
+
+	// Encore Features - optional features disabled by default
+	encoreFeatures: EncoreFeatureFlags;
+	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
+
 	// Director's Notes settings
 	directorNotesSettings: DirectorNotesSettings;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
@@ -283,6 +292,12 @@ export interface UseSettingsReturn {
 	setWakatimeApiKey: (value: string) => void;
 	wakatimeEnabled: boolean;
 	setWakatimeEnabled: (value: boolean) => void;
+
+	// Window chrome settings
+	useNativeTitleBar: boolean;
+	setUseNativeTitleBar: (value: boolean) => void;
+	autoHideMenuBar: boolean;
+	setAutoHideMenuBar: (value: boolean) => void;
 }
 
 export function useSettings(): UseSettingsReturn {
