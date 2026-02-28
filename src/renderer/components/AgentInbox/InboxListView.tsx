@@ -72,6 +72,11 @@ function buildRows(items: InboxItem[], sortMode: InboxSortMode): ListRow[] {
 	return rows;
 }
 
+/** Derive the collapse key for a given item row — must stay aligned with buildRows groupKey. */
+function getGroupCollapseKey(item: InboxItem, sortMode: InboxSortMode): string {
+	return sortMode === 'byAgent' ? item.sessionId : (item.groupId ?? item.groupName ?? 'Ungrouped');
+}
+
 // ============================================================================
 // STATUS color resolver — maps STATUS_COLORS key to actual hex
 // ============================================================================
@@ -559,9 +564,7 @@ export default function InboxListView({
 			return allRows;
 		return allRows.filter((row) => {
 			if (row.type === 'header') return true;
-			const collapseKey =
-				sortMode === 'byAgent' ? row.item.sessionId : (row.item.groupName ?? 'Ungrouped');
-			return !collapsedGroups.has(collapseKey);
+			return !collapsedGroups.has(getGroupCollapseKey(row.item, sortMode));
 		});
 	}, [allRows, collapsedGroups, sortMode]);
 
@@ -885,9 +888,7 @@ export default function InboxListView({
 					if (row.type === 'header') {
 						toggleGroup(row.groupKey);
 					} else {
-						const groupKey =
-							sortMode === 'byAgent' ? row.item.sessionId : (row.item.groupName ?? 'Ungrouped');
-						toggleGroup(groupKey);
+						toggleGroup(getGroupCollapseKey(row.item, sortMode));
 					}
 				}
 				return;
@@ -1001,6 +1002,12 @@ export default function InboxListView({
 									e.currentTarget.style.backgroundColor = `${theme.colors.accent}15`;
 								}
 							}}
+							onFocus={(e) => {
+								e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
+							}}
+							onBlur={(e) => {
+								e.currentTarget.style.outline = 'none';
+							}}
 							title="Enter Focus Mode (F)"
 						>
 							Focus ▶
@@ -1013,6 +1020,12 @@ export default function InboxListView({
 								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 							}
 							onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+							onFocus={(e) => {
+								e.currentTarget.style.outline = `2px solid ${theme.colors.accent}`;
+							}}
+							onBlur={(e) => {
+								e.currentTarget.style.outline = 'none';
+							}}
 							title={isExpanded ? 'Collapse' : 'Expand'}
 							aria-label={isExpanded ? 'Collapse modal' : 'Expand modal'}
 						>

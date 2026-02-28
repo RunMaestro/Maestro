@@ -21,6 +21,8 @@ import { resolveContextUsageColor } from './InboxListView';
 import { formatRelativeTime } from '../../utils/formatters';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { generateTerminalProseStyles } from '../../utils/markdownConfig';
+import { slashCommands } from '../../slashCommands';
+import { fuzzyMatchWithScore } from '../../utils/search';
 
 /* POLISH-04 Token Audit (@architect)
  * Line 166: bgSidebar in user bubble color-mix — CORRECT (chrome blend for user messages)
@@ -430,7 +432,7 @@ function FocusSidebar({
 				</div>
 			)}
 			{/* Item list */}
-			<div role="listbox" aria-label="Inbox items" className="flex-1 overflow-y-auto py-1">
+			<div role="list" aria-label="Inbox items" className="flex-1 overflow-y-auto py-1">
 				{(() => {
 					let activeGroup: string | null = null;
 					return rows.map((row, rowIdx) => {
@@ -505,8 +507,8 @@ function FocusSidebar({
 								key={`${itm.sessionId}-${itm.tabId}`}
 								ref={isCurrent ? currentRowRef : undefined}
 								tabIndex={0}
-								role="option"
-								aria-selected={isCurrent}
+								role="listitem"
+								aria-current={isCurrent ? 'true' : undefined}
 								onClick={() => onNavigateItem(idx)}
 								onKeyDown={(e) => {
 									if (e.key === 'Enter' || e.key === ' ') {
@@ -733,6 +735,31 @@ export default function FocusModeView({
 	const [replyText, setReplyText] = useState('');
 	const replyInputRef = useRef<HTMLTextAreaElement>(null);
 
+	// ---- Slash command autocomplete state ----
+	const [slashCommandOpen, setSlashCommandOpen] = useState(false);
+	const [selectedSlashCommandIndex, setSelectedSlashCommandIndex] = useState(0);
+
+	const replyTextLower = useMemo(() => replyText.toLowerCase(), [replyText]);
+	const filteredSlashCommands = useMemo(() => {
+		return slashCommands
+			.filter((cmd) => !cmd.terminalOnly) // Focus mode is always AI mode
+			.map((cmd) => {
+				const result = fuzzyMatchWithScore(cmd.command, replyTextLower);
+				if (!result.matches) return null;
+				return { cmd, score: result.score };
+			})
+			.filter(
+				(item): item is { cmd: (typeof slashCommands)[number]; score: number } => item !== null
+			)
+			.sort((a, b) => b.score - a.score)
+			.map((item) => item.cmd);
+	}, [replyTextLower]);
+
+	const safeSlashIndex = Math.min(
+		Math.max(0, selectedSlashCommandIndex),
+		Math.max(0, filteredSlashCommands.length - 1)
+	);
+
 	// Auto-focus reply input when entering focus mode or switching items.
 	useEffect(() => {
 		const rafId = requestAnimationFrame(() => {
@@ -741,9 +768,10 @@ export default function FocusModeView({
 		return () => cancelAnimationFrame(rafId);
 	}, [item.sessionId, item.tabId]);
 
-	// Reset reply text and textarea height when item changes (prev/next navigation)
+	// Reset reply text, slash command state, and textarea height when item changes (prev/next navigation)
 	useEffect(() => {
 		setReplyText('');
+		setSlashCommandOpen(false);
 		if (replyInputRef.current) {
 			replyInputRef.current.style.height = 'auto';
 		}
@@ -751,20 +779,16 @@ export default function FocusModeView({
 
 	const handleQuickReply = useCallback(() => {
 		const text = replyText.trim();
-		if (!text) return;
-		if (onQuickReply) {
-			onQuickReply(item.sessionId, item.tabId, text);
-		}
+		if (!text || !onQuickReply) return;
+		onQuickReply(item.sessionId, item.tabId, text);
 		onMarkAsRead?.(item.sessionId, item.tabId);
 		setReplyText('');
 	}, [replyText, item, onQuickReply, onMarkAsRead]);
 
 	const handleOpenAndReply = useCallback(() => {
 		const text = replyText.trim();
-		if (!text) return;
-		if (onOpenAndReply) {
-			onOpenAndReply(item.sessionId, item.tabId, text);
-		}
+		if (!text || !onOpenAndReply) return;
+		onOpenAndReply(item.sessionId, item.tabId, text);
 		onMarkAsRead?.(item.sessionId, item.tabId);
 	}, [replyText, item, onOpenAndReply, onMarkAsRead]);
 
@@ -1033,14 +1057,97 @@ export default function FocusModeView({
 
 					{/* Reply input bar */}
 					<div
-						className="flex items-center gap-2 px-4 py-3 border-t"
+						className="relative flex items-center gap-2 px-4 py-3 border-t"
 						style={{ borderColor: theme.colors.border }}
 					>
+						{/* Slash Command Autocomplete Dropdown */}
+						{slashCommandOpen && filteredSlashCommands.length > 0 && (
+							<div
+								className="absolute bottom-full left-0 right-0 mb-1 mx-4 border rounded-lg shadow-2xl overflow-hidden z-50"
+								style={{
+									backgroundColor: theme.colors.bgSidebar,
+									borderColor: theme.colors.border,
+								}}
+							>
+								<div
+									className="overflow-y-auto max-h-48 scrollbar-thin"
+									style={{ overscrollBehavior: 'contain' }}
+								>
+									{filteredSlashCommands.map((cmd, idx) => (
+										<button
+											type="button"
+											key={cmd.command}
+											className={`w-full px-4 py-2.5 text-left transition-colors ${
+												idx === safeSlashIndex ? 'font-semibold' : ''
+											}`}
+											style={{
+												backgroundColor:
+													idx === safeSlashIndex ? theme.colors.accent : 'transparent',
+												color: idx === safeSlashIndex ? theme.colors.bgMain : theme.colors.textMain,
+											}}
+											onMouseDown={(e) => {
+												// Use mouseDown instead of click to fire before textarea blur
+												e.preventDefault();
+												setReplyText(cmd.command);
+												setSlashCommandOpen(false);
+												replyInputRef.current?.focus();
+											}}
+											onMouseEnter={() => setSelectedSlashCommandIndex(idx)}
+										>
+											<div className="font-mono text-sm">{cmd.command}</div>
+											<div className="text-xs opacity-70 mt-0.5">{cmd.description}</div>
+										</button>
+									))}
+								</div>
+							</div>
+						)}
 						<textarea
 							ref={replyInputRef}
 							value={replyText}
-							onChange={(e) => setReplyText(e.target.value)}
+							onChange={(e) => {
+								const value = e.target.value;
+								setReplyText(value);
+								// Detect slash command trigger
+								if (value.startsWith('/') && !value.includes(' ') && !value.includes('\n')) {
+									if (!slashCommandOpen) setSelectedSlashCommandIndex(0);
+									setSlashCommandOpen(true);
+								} else {
+									setSlashCommandOpen(false);
+								}
+							}}
+							disabled={!sessionExists}
 							onKeyDown={(e) => {
+								if (!sessionExists) return;
+								// Slash command navigation
+								if (slashCommandOpen && filteredSlashCommands.length > 0) {
+									if (e.key === 'ArrowDown') {
+										e.preventDefault();
+										e.stopPropagation();
+										setSelectedSlashCommandIndex(
+											Math.min(safeSlashIndex + 1, filteredSlashCommands.length - 1)
+										);
+										return;
+									}
+									if (e.key === 'ArrowUp') {
+										e.preventDefault();
+										e.stopPropagation();
+										setSelectedSlashCommandIndex(Math.max(safeSlashIndex - 1, 0));
+										return;
+									}
+									if (e.key === 'Enter' && !e.shiftKey && !e.metaKey) {
+										e.preventDefault();
+										e.stopPropagation();
+										setReplyText(filteredSlashCommands[safeSlashIndex].command);
+										setSlashCommandOpen(false);
+										return;
+									}
+									if (e.key === 'Escape') {
+										e.preventDefault();
+										e.stopPropagation();
+										setSlashCommandOpen(false);
+										return;
+									}
+								}
 								if (e.key === 'Enter') {
 									if (enterToSendAI) {
 										// Enter sends, Shift+Enter = Open & Reply
@@ -1067,7 +1174,7 @@ export default function FocusModeView({
 								// CRITICAL: Prevent focus-mode keyboard shortcuts from firing while typing
 								e.stopPropagation();
 							}}
-							placeholder="Reply to agent..."
+							placeholder={sessionExists ? 'Reply to agent...' : 'Session unavailable'}
 							rows={1}
 							aria-label="Reply to agent"
 							className="flex-1 resize-none rounded-lg px-3 py-2 text-sm outline-none"
@@ -1088,7 +1195,7 @@ export default function FocusModeView({
 						{/* Quick Reply button (primary) */}
 						<button
 							onClick={handleQuickReply}
-							disabled={!replyText.trim()}
+							disabled={!sessionExists || !replyText.trim()}
 							className="p-2 rounded-lg transition-colors flex-shrink-0"
 							style={{
 								backgroundColor: replyText.trim()
@@ -1104,7 +1211,7 @@ export default function FocusModeView({
 						{/* Open & Reply button (secondary) */}
 						<button
 							onClick={handleOpenAndReply}
-							disabled={!replyText.trim()}
+							disabled={!sessionExists || !replyText.trim()}
 							className="p-1.5 rounded-lg transition-colors flex-shrink-0 text-xs"
 							style={{
 								border: `1px solid ${theme.colors.border}`,

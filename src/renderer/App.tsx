@@ -1408,6 +1408,11 @@ function MaestroConsoleInner() {
 	// Flush pending quick-reply once target session is active (deterministic, no RAF timing chain).
 	useEffect(() => {
 		if (!pendingInboxQuickReply) return;
+		// Guard: if the target session was removed before activation, clear the stale pending.
+		if (!sessions.some((s) => s.id === pendingInboxQuickReply.targetSessionId)) {
+			setPendingInboxQuickReply(null);
+			return;
+		}
 		if (activeSession?.id !== pendingInboxQuickReply.targetSessionId) return;
 
 		inboxProcessInputRef.current(pendingInboxQuickReply.text);
@@ -1416,13 +1421,14 @@ function MaestroConsoleInner() {
 
 		if (
 			previousActiveSessionId &&
-			previousActiveSessionId !== pendingInboxQuickReply.targetSessionId
+			previousActiveSessionId !== pendingInboxQuickReply.targetSessionId &&
+			sessions.some((s) => s.id === previousActiveSessionId)
 		) {
 			queueMicrotask(() => {
 				setActiveSessionId(previousActiveSessionId);
 			});
 		}
-	}, [pendingInboxQuickReply, activeSession?.id, setActiveSessionId]);
+	}, [pendingInboxQuickReply, activeSession?.id, setActiveSessionId, sessions]);
 
 	// Agent Inbox: Quick Reply — sends text to target session/tab via processInput
 	const handleAgentInboxQuickReply = useCallback(
