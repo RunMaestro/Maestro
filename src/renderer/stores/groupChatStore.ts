@@ -192,7 +192,6 @@ export const useGroupChatStore = create<GroupChatStore>()((set) => ({
 			groupChatError: null,
 			moderatorUsage: null,
 			groupChatExecutionQueue: [],
-			groupChatStagedImages: [],
 			groupChatReadOnlyMode: false,
 		}),
 }));
