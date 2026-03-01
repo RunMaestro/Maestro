@@ -551,7 +551,12 @@ function HamburgerMenuContent({
 				color: theme.colors.textDim,
 			},
 		};
-	}, [theme.colors]);
+	}, [
+		theme.colors,
+		session.contextUsage,
+		contextWarningYellowThreshold,
+		contextWarningRedThreshold,
+	]);
 	return (
 		<div className="p-1">
 			{onNewAgentSession && (
@@ -1679,6 +1684,9 @@ function SessionListInner(props: SessionListProps) {
 					overlay: {
 						width: '280px',
 					},
+					qrWrapper: {
+						backgroundColor: '#ffffff',
+					},
 					panel: {
 						backgroundColor: theme.colors.bgSidebar,
 						border: `1px solid ${theme.colors.border}`,
@@ -1711,6 +1719,20 @@ function SessionListInner(props: SessionListProps) {
 						backgroundColor: theme.colors.bgSidebar,
 						border: `1px solid ${theme.colors.border}`,
 						maxHeight: 'calc(100vh - 90px)',
+					},
+					copyFlashOverlay: {
+						backgroundColor: 'rgba(0, 0, 0, 0.75)',
+					},
+					loadingOverlay: {
+						backgroundColor: 'rgba(0, 0, 0, 0.85)',
+					},
+					copyFlashBadgeLocal: {
+						backgroundColor: '#22c55e',
+						color: '#ffffff',
+					},
+					copyFlashBadgeRemote: {
+						backgroundColor: '#3b82f6',
+						color: '#ffffff',
 					},
 					copyActionButton: {
 						color: theme.colors.textDim,
@@ -2658,7 +2680,7 @@ function SessionListInner(props: SessionListProps) {
 
 												{/* QR Code with optional loading overlay */}
 												<div className="relative">
-													<div className="p-2 rounded" style={{ backgroundColor: 'white' }}>
+													<div className="p-2 rounded" style={sessionListStyles.root.live.qrWrapper}>
 														<QRCodeSVG
 															value={
 																activeUrlTab === 'local'
@@ -2676,7 +2698,7 @@ function SessionListInner(props: SessionListProps) {
 													{tunnelStatus === 'starting' && (
 														<div
 															className="absolute inset-0 flex flex-col items-center justify-center rounded"
-															style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
+															style={sessionListStyles.root.live.loadingOverlay}
 														>
 															<div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-3" />
 															<div className="text-white text-[11px] font-medium">
@@ -2689,14 +2711,15 @@ function SessionListInner(props: SessionListProps) {
 													{copyFlash && (
 														<div
 															className="absolute inset-0 flex items-center justify-center rounded pointer-events-none animate-pulse"
-															style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+															style={sessionListStyles.root.live.copyFlashOverlay}
 														>
 															<div
 																className="px-4 py-2 rounded-full text-[12px] font-bold"
-																style={{
-																	backgroundColor: activeUrlTab === 'local' ? '#22c55e' : '#3b82f6',
-																	color: 'white',
-																}}
+																style={
+																	activeUrlTab === 'local'
+																		? sessionListStyles.root.live.copyFlashBadgeLocal
+																		: sessionListStyles.root.live.copyFlashBadgeRemote
+																}
 															>
 																{copyFlash}
 															</div>
