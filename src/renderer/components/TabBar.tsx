@@ -1789,6 +1789,7 @@ const TerminalTabItem = memo(function TerminalTabItem({
         ${isDragOver ? 'ring-2 ring-inset' : ''}
       `}
 			style={tabStyle}
+			title={tab.cwd ? `${tab.shellType} — ${tab.cwd}` : tab.shellType}
 			onClick={handleTabSelect}
 			onDoubleClick={handleDoubleClick}
 			onMouseDown={handleMouseDown}
@@ -1815,7 +1816,7 @@ const TerminalTabItem = memo(function TerminalTabItem({
 
 			{/* Tab display name */}
 			<span
-				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[150px]'}`}
 				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
 			>
 				{displayName}
