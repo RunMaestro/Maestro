@@ -43,7 +43,7 @@ export interface GroomingProcessManager {
 		sessionCustomPath?: string;
 		sessionCustomArgs?: string;
 		sessionCustomEnvVars?: Record<string, string>;
-	}): { pid: number; success?: boolean } | null;
+	}): Promise<{ pid: number; success?: boolean } | null>;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
 	kill(sessionId: string): void;
