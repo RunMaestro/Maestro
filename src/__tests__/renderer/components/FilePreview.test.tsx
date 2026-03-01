@@ -109,8 +109,20 @@ vi.mock('../../../renderer/components/MermaidRenderer', () => ({
 
 // Mock CsvTableRenderer
 vi.mock('../../../renderer/components/CsvTableRenderer', () => ({
-	CsvTableRenderer: ({ content, searchQuery, delimiter }: { content: string; searchQuery?: string; delimiter?: string }) => (
-		<div data-testid="csv-table-renderer" data-search={searchQuery ?? ''} data-delimiter={delimiter ?? ','}>
+	CsvTableRenderer: ({
+		content,
+		searchQuery,
+		delimiter,
+	}: {
+		content: string;
+		searchQuery?: string;
+		delimiter?: string;
+	}) => (
+		<div
+			data-testid="csv-table-renderer"
+			data-search={searchQuery ?? ''}
+			data-delimiter={delimiter ?? ','}
+		>
 			{content.substring(0, 50)}
 		</div>
 	),
@@ -125,7 +137,12 @@ vi.mock('../../../renderer/utils/tokenCounter', () => ({
 // Mock shortcut formatter
 vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 	formatShortcutKeys: vi.fn((keys: string[]) => {
-		const keyMap: Record<string, string> = { Meta: 'Ctrl', Alt: 'Alt', Shift: 'Shift', Control: 'Ctrl' };
+		const keyMap: Record<string, string> = {
+			Meta: 'Ctrl',
+			Alt: 'Alt',
+			Shift: 'Shift',
+			Control: 'Ctrl',
+		};
 		return keys.map((k: string) => keyMap[k] || k.toUpperCase()).join('+');
 	}),
 	isMacOS: vi.fn(() => false),
@@ -189,7 +206,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`);
+			const graphButton = screen.getByTitle(
+				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
+			);
 			expect(graphButton).toBeInTheDocument();
 			expect(screen.getByTestId('gitgraph-icon')).toBeInTheDocument();
 		});
@@ -204,7 +223,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			const graphButton = screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`);
+			const graphButton = screen.getByTitle(
+				`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
+			);
 			fireEvent.click(graphButton);
 
 			expect(onOpenInGraph).toHaveBeenCalledOnce();
@@ -218,7 +239,11 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(screen.queryByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle(
+					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
+				)
+			).not.toBeInTheDocument();
 		});
 
 		it('does not show Document Graph button for non-markdown files', () => {
@@ -231,7 +256,11 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(screen.queryByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)).not.toBeInTheDocument();
+			expect(
+				screen.queryByTitle(
+					`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`
+				)
+			).not.toBeInTheDocument();
 		});
 
 		it('shows Document Graph button for uppercase .MD extension', () => {
@@ -244,7 +273,9 @@ describe('FilePreview', () => {
 				/>
 			);
 
-			expect(screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)).toBeInTheDocument();
+			expect(
+				screen.getByTitle(`View in Document Graph (${formatShortcutKeys(['Meta', 'Shift', 'g'])})`)
+			).toBeInTheDocument();
 		});
 	});
 
@@ -272,12 +303,7 @@ describe('FilePreview', () => {
 		});
 
 		it('hides Open in Default App button for SSH remote sessions', () => {
-			render(
-				<FilePreview
-					{...defaultProps}
-					sshRemoteId="remote-host-1"
-				/>
-			);
+			render(<FilePreview {...defaultProps} sshRemoteId="remote-host-1" />);
 
 			expect(screen.queryByTitle('Open in Default App')).not.toBeInTheDocument();
 		});
@@ -297,13 +323,7 @@ describe('FilePreview', () => {
 			});
 			window.maestro.fs.stat = mockStat;
 
-			render(
-				<FilePreview
-					{...defaultProps}
-					lastModified={1000}
-					onReloadFile={onReloadFile}
-				/>
-			);
+			render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={onReloadFile} />);
 
 			// Banner should not be visible initially
 			expect(screen.queryByText('File changed on disk.')).not.toBeInTheDocument();
@@ -330,13 +350,7 @@ describe('FilePreview', () => {
 				isDirectory: false,
 			});
 
-			render(
-				<FilePreview
-					{...defaultProps}
-					lastModified={1000}
-					onReloadFile={onReloadFile}
-				/>
-			);
+			render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={onReloadFile} />);
 
 			await act(async () => {
 				vi.advanceTimersByTime(3000);
@@ -362,13 +376,7 @@ describe('FilePreview', () => {
 				isDirectory: false,
 			});
 
-			render(
-				<FilePreview
-					{...defaultProps}
-					lastModified={1000}
-					onReloadFile={vi.fn()}
-				/>
-			);
+			render(<FilePreview {...defaultProps} lastModified={1000} onReloadFile={vi.fn()} />);
 
 			await act(async () => {
 				vi.advanceTimersByTime(3000);
@@ -409,9 +417,7 @@ describe('FilePreview', () => {
 				vi.advanceTimersByTime(3000);
 			});
 
-			expect(
-				screen.getByText(/File changed on disk\. You have unsaved edits/)
-			).toBeInTheDocument();
+			expect(screen.getByText(/File changed on disk\. You have unsaved edits/)).toBeInTheDocument();
 
 			vi.useRealTimers();
 		});
@@ -426,12 +432,7 @@ describe('FilePreview', () => {
 			});
 			window.maestro.fs.stat = mockStat;
 
-			render(
-				<FilePreview
-					{...defaultProps}
-					onReloadFile={vi.fn()}
-				/>
-			);
+			render(<FilePreview {...defaultProps} onReloadFile={vi.fn()} />);
 
 			// Allow the initial file stats fetch to complete
 			await act(async () => {
@@ -1214,6 +1215,32 @@ print("world")
 
 			// Search should not be open
 			expect(screen.queryByPlaceholderText(/Search in file/)).not.toBeInTheDocument();
+		});
+
+		it('trims whitespace from search query for regex matching', async () => {
+			const onSearchQueryChange = vi.fn();
+			const { container } = render(
+				<FilePreview
+					{...defaultProps}
+					file={{ name: 'test.ts', content: 'const searchable = true;', path: '/test/test.ts' }}
+					onSearchQueryChange={onSearchQueryChange}
+				/>
+			);
+
+			// Open search
+			const mainContainer = container.firstChild as HTMLElement;
+			fireEvent.keyDown(mainContainer, { key: 'f', metaKey: true });
+
+			// Type query with leading/trailing whitespace
+			const searchInput = screen.getByPlaceholderText(/Search in file/);
+			fireEvent.change(searchInput, { target: { value: '  searchable  ' } });
+
+			// Should still show search UI without errors (regex uses trimmed query)
+			expect(searchInput).toHaveValue('  searchable  ');
+			expect(onSearchQueryChange).toHaveBeenCalledWith('  searchable  ');
+			// The search bar should not show "No matches" for content that exists
+			// (previously, whitespace in raw query would prevent matching)
+			expect(screen.queryByText('No matches')).not.toBeInTheDocument();
 		});
 
 		it('does not throw when onSearchQueryChange is not provided', async () => {

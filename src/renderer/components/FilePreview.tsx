@@ -676,8 +676,8 @@ export const FilePreview = React.memo(
 			if (!hasSearchQuery) {
 				return null;
 			}
-			return new RegExp(escapeRegexCharacters(searchQuery), 'gi');
-		}, [hasSearchQuery, searchQuery]);
+			return new RegExp(escapeRegexCharacters(trimmedSearchQuery), 'gi');
+		}, [hasSearchQuery, trimmedSearchQuery]);
 		// If initialSearchQuery is provided and non-empty, auto-open search
 		const [searchOpen, setSearchOpen] = useState(Boolean(initialSearchQuery));
 		const [showCopyNotification, setShowCopyNotification] = useState(false);
@@ -1327,9 +1327,7 @@ export const FilePreview = React.memo(
 					});
 
 					if (lastIndex < textNodeContent.length) {
-						fragment.appendChild(
-							document.createTextNode(textNodeContent.substring(lastIndex))
-						);
+						fragment.appendChild(document.createTextNode(textNodeContent.substring(lastIndex)));
 					}
 
 					textNode.parentNode?.replaceChild(fragment, textNode);
@@ -1357,7 +1355,15 @@ export const FilePreview = React.memo(
 				matchElementsRef.current = [];
 				regex.lastIndex = 0;
 			};
-		}, [hasSearchQuery, searchRegex, file?.content, isMarkdown, isImage, isCsv, theme.colors.accent]);
+		}, [
+			hasSearchQuery,
+			searchRegex,
+			file?.content,
+			isMarkdown,
+			isImage,
+			isCsv,
+			theme.colors.accent,
+		]);
 
 		// Search matches in markdown preview mode - use CSS Custom Highlight API
 		useEffect(() => {
@@ -1628,7 +1634,9 @@ export const FilePreview = React.memo(
 					textarea.focus();
 					textarea.setSelectionRange(currentMatch.start, currentMatch.end);
 					textarea.scrollTo({
-						top: textarea.scrollHeight * (currentMatch.start / content.length) - textarea.clientHeight / 2,
+						top:
+							textarea.scrollHeight * (currentMatch.start / content.length) -
+							textarea.clientHeight / 2,
 						behavior: 'smooth',
 					});
 				}
@@ -1852,7 +1860,11 @@ export const FilePreview = React.memo(
 										opacity: hasChanges && !isSaving ? 1 : 0.5,
 										cursor: hasChanges && !isSaving ? 'pointer' : 'default',
 									}}
-									title={hasChanges ? `Save changes (${formatShortcutKeys(['Meta', 's'])})` : 'No changes to save'}
+									title={
+										hasChanges
+											? `Save changes (${formatShortcutKeys(['Meta', 's'])})`
+											: 'No changes to save'
+									}
 								>
 									{isSaving ? (
 										<Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1888,7 +1900,11 @@ export const FilePreview = React.memo(
 								onClick={copyContentToClipboard}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
 								style={{ color: theme.colors.textDim }}
-								title={isImage ? `Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})` : 'Copy content to clipboard'}
+								title={
+									isImage
+										? `Copy image to clipboard (${formatShortcutKeys(['Meta', 'c'])})`
+										: 'Copy content to clipboard'
+								}
 							>
 								<Clipboard className="w-4 h-4" />
 							</button>
@@ -1963,15 +1979,11 @@ export const FilePreview = React.memo(
 									<>
 										<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
 											<span className="opacity-60">Modified:</span>{' '}
-											<span style={{ color: theme.colors.textMain }}>
-												{formattedModifiedAt}
-											</span>
+											<span style={{ color: theme.colors.textMain }}>{formattedModifiedAt}</span>
 										</div>
 										<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
 											<span className="opacity-60">Created:</span>{' '}
-											<span style={{ color: theme.colors.textMain }}>
-												{formattedCreatedAt}
-											</span>
+											<span style={{ color: theme.colors.textMain }}>{formattedCreatedAt}</span>
 										</div>
 									</>
 								)}
@@ -2276,9 +2288,10 @@ export const FilePreview = React.memo(
 									e.preventDefault();
 									const textarea = e.currentTarget;
 									if (e.shiftKey) {
-										const anchor = textarea.selectionDirection === 'backward'
-											? textarea.selectionEnd
-											: textarea.selectionStart;
+										const anchor =
+											textarea.selectionDirection === 'backward'
+												? textarea.selectionEnd
+												: textarea.selectionStart;
 										textarea.setSelectionRange(0, anchor, 'backward');
 									} else {
 										textarea.setSelectionRange(0, 0);
@@ -2291,9 +2304,10 @@ export const FilePreview = React.memo(
 									const textarea = e.currentTarget;
 									const len = textarea.value.length;
 									if (e.shiftKey) {
-										const anchor = textarea.selectionDirection === 'forward'
-											? textarea.selectionStart
-											: textarea.selectionEnd;
+										const anchor =
+											textarea.selectionDirection === 'forward'
+												? textarea.selectionStart
+												: textarea.selectionEnd;
 										textarea.setSelectionRange(anchor, len, 'forward');
 									} else {
 										textarea.setSelectionRange(len, len);
