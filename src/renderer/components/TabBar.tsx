@@ -2027,7 +2027,7 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-						} else {
+						} else if (unifiedTab.type === 'file') {
 							// File tab
 							const fileTab = unifiedTab.data;
 							return (
@@ -2067,7 +2067,10 @@ function TabBarInner({
 									/>
 								</React.Fragment>
 							);
-						}
+					} else {
+						// Terminal tab — rendering implemented in Phase 8
+						return null;
+					}
 					})
 				: // Fallback: render AI tabs only (legacy mode when unifiedTabs not provided)
 					displayedTabs.map((tab, index) => {

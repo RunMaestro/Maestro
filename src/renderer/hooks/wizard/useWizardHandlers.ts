@@ -1168,6 +1168,8 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
+				terminalTabs: [],
+				activeTerminalTabId: null,
 				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 				unifiedClosedTabHistory: [],
 				autoRunFolderPath,

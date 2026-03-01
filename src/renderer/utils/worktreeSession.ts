@@ -109,6 +109,8 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
 		unifiedClosedTabHistory: [],
 		customPath: params.parentSession.customPath,
