@@ -154,7 +154,11 @@ export function SwitchProviderModal({
 		(async () => {
 			try {
 				const saved = await window.maestro.settings.get('providerSwitchConfig');
-				if (saved && typeof saved === 'object' && 'switchBehavior' in (saved as Record<string, unknown>)) {
+				if (
+					saved &&
+					typeof saved === 'object' &&
+					'switchBehavior' in (saved as Record<string, unknown>)
+				) {
 					setSwitchBehavior((saved as { switchBehavior: ProviderSwitchBehavior }).switchBehavior);
 				}
 			} catch {
@@ -187,10 +191,7 @@ export function SwitchProviderModal({
 	}, [sourceSession, sourceTabId]);
 
 	// Available (selectable) providers for keyboard nav
-	const selectableProviders = useMemo(
-		() => providers.filter((p) => p.available),
-		[providers]
-	);
+	const selectableProviders = useMemo(() => providers.filter((p) => p.available), [providers]);
 
 	// Find archived predecessor when target provider changes
 	const archivedPredecessor = useMemo(() => {
@@ -212,18 +213,24 @@ export function SwitchProviderModal({
 			targetProvider: selectedProvider,
 			groomContext,
 			archiveSource,
-			mergeBackInto: archivedPredecessor && mergeChoice === 'merge' ? archivedPredecessor : undefined,
+			mergeBackInto:
+				archivedPredecessor && mergeChoice === 'merge' ? archivedPredecessor : undefined,
 		});
-	}, [selectedProvider, groomContext, archiveSource, archivedPredecessor, mergeChoice, onConfirmSwitch]);
+	}, [
+		selectedProvider,
+		groomContext,
+		archiveSource,
+		archivedPredecessor,
+		mergeChoice,
+		onConfirmSwitch,
+	]);
 
 	// Keyboard navigation handler
 	const handleKeyDown = useCallback(
 		(e: React.KeyboardEvent) => {
 			if (e.key === 'ArrowDown') {
 				e.preventDefault();
-				setHighlightedIndex((prev) =>
-					prev + 1 < selectableProviders.length ? prev + 1 : prev
-				);
+				setHighlightedIndex((prev) => (prev + 1 < selectableProviders.length ? prev + 1 : prev));
 				return;
 			}
 
@@ -294,18 +301,23 @@ export function SwitchProviderModal({
 							color: theme.colors.accentForeground,
 						}}
 					>
-						{archivedPredecessor && mergeChoice === 'merge'
-							? 'Merge & Switch'
-							: 'Switch Provider'}
+						{archivedPredecessor && mergeChoice === 'merge' ? 'Merge & Switch' : 'Switch Provider'}
 					</button>
 				</div>
 			}
 		>
-			{/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
-			<div className="flex flex-col gap-4" onKeyDown={handleKeyDown}>
+			<div
+				className="flex flex-col gap-4 outline-none"
+				onKeyDown={handleKeyDown}
+				tabIndex={0}
+				ref={(el) => el?.focus()}
+			>
 				{/* Current Provider */}
 				<div>
-					<div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: theme.colors.textDim }}>
+					<div
+						className="text-[10px] uppercase tracking-wider mb-2"
+						style={{ color: theme.colors.textDim }}
+					>
 						Current Provider
 					</div>
 					<div
@@ -317,7 +329,10 @@ export function SwitchProviderModal({
 					>
 						<span className="text-lg shrink-0">{currentProviderIcon}</span>
 						<div className="flex-1 min-w-0">
-							<div className="text-xs font-medium truncate" style={{ color: theme.colors.textMain }}>
+							<div
+								className="text-xs font-medium truncate"
+								style={{ color: theme.colors.textMain }}
+							>
 								{currentProviderName}
 							</div>
 						</div>
@@ -340,7 +355,10 @@ export function SwitchProviderModal({
 
 				{/* Target Provider Selection */}
 				<div>
-					<div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: theme.colors.textDim }}>
+					<div
+						className="text-[10px] uppercase tracking-wider mb-2"
+						style={{ color: theme.colors.textDim }}
+					>
 						Select target provider:
 					</div>
 					<div
@@ -353,10 +371,7 @@ export function SwitchProviderModal({
 						aria-label="Target provider"
 					>
 						{providers.length === 0 ? (
-							<div
-								className="p-4 text-center text-xs"
-								style={{ color: theme.colors.textDim }}
-							>
+							<div className="p-4 text-center text-xs" style={{ color: theme.colors.textDim }}>
 								No other providers detected
 							</div>
 						) : (
@@ -426,7 +441,9 @@ export function SwitchProviderModal({
 											<span
 												className="w-1.5 h-1.5 rounded-full inline-block"
 												style={{
-													backgroundColor: isAvailable ? theme.colors.success : theme.colors.textDim,
+													backgroundColor: isAvailable
+														? theme.colors.success
+														: theme.colors.textDim,
 												}}
 											/>
 											{isAvailable ? 'available' : 'Not Installed'}
@@ -448,12 +465,21 @@ export function SwitchProviderModal({
 						}}
 					>
 						<div className="flex items-start gap-2 mb-3">
-							<Info className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: theme.colors.accent }} />
+							<Info
+								className="w-3.5 h-3.5 mt-0.5 shrink-0"
+								style={{ color: theme.colors.accent }}
+							/>
 							<div className="text-xs" style={{ color: theme.colors.textMain }}>
-								<span className="font-medium">Previous {getAgentDisplayName(selectedProvider)} session found</span>
+								<span className="font-medium">
+									Previous {getAgentDisplayName(selectedProvider)} session found
+								</span>
 								<div className="mt-1" style={{ color: theme.colors.textDim }}>
-									&ldquo;{archivedPredecessor.name || 'Unnamed Agent'}&rdquo; was previously on {getAgentDisplayName(selectedProvider)} before switching to {currentProviderName}
-									{archivedPredecessor.migratedAt ? ` ${formatRelativeTime(archivedPredecessor.migratedAt)}` : ''}.
+									&ldquo;{archivedPredecessor.name || 'Unnamed Agent'}&rdquo; was previously on{' '}
+									{getAgentDisplayName(selectedProvider)} before switching to {currentProviderName}
+									{archivedPredecessor.migratedAt
+										? ` ${formatRelativeTime(archivedPredecessor.migratedAt)}`
+										: ''}
+									.
 								</div>
 							</div>
 						</div>
@@ -473,7 +499,8 @@ export function SwitchProviderModal({
 										Create new session
 									</div>
 									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
-										Start fresh on {getAgentDisplayName(selectedProvider)} with transferred context (creates a new agent entry)
+										Start fresh on {getAgentDisplayName(selectedProvider)} with transferred context
+										(creates a new agent entry)
 									</div>
 								</div>
 							</label>
@@ -490,7 +517,8 @@ export function SwitchProviderModal({
 										Merge & update existing session
 									</div>
 									<div className="text-[10px]" style={{ color: theme.colors.textDim }}>
-										Reactivate the archived {getAgentDisplayName(selectedProvider)} session and append current context to it
+										Reactivate the archived {getAgentDisplayName(selectedProvider)} session and
+										append current context to it
 									</div>
 								</div>
 							</label>
@@ -500,7 +528,10 @@ export function SwitchProviderModal({
 
 				{/* Options */}
 				<div>
-					<div className="text-[10px] uppercase tracking-wider mb-2" style={{ color: theme.colors.textDim }}>
+					<div
+						className="text-[10px] uppercase tracking-wider mb-2"
+						style={{ color: theme.colors.textDim }}
+					>
 						Options
 					</div>
 					<div className="space-y-2">
