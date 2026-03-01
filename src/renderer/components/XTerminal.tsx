@@ -130,6 +130,7 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 	const searchAddonRef = useRef<SearchAddon | null>(null);
 	const resizeObserverRef = useRef<ResizeObserver | null>(null);
 	const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const lastSearchQueryRef = useRef<string>('');
 
 	// Expose handle to parent
 	useImperativeHandle(
@@ -149,15 +150,16 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			},
 			search(query: string, options?: ISearchOptions): boolean {
 				if (!searchAddonRef.current) return false;
-				return searchAddonRef.current.findNext(query, options);
+				lastSearchQueryRef.current = query;
+				return searchAddonRef.current.findNext(query, { incremental: true, ...options });
 			},
 			searchNext(): boolean {
-				if (!searchAddonRef.current) return false;
-				return searchAddonRef.current.findNext('', { incremental: true });
+				if (!searchAddonRef.current || !lastSearchQueryRef.current) return false;
+				return searchAddonRef.current.findNext(lastSearchQueryRef.current);
 			},
 			searchPrevious(): boolean {
-				if (!searchAddonRef.current) return false;
-				return searchAddonRef.current.findPrevious('', { incremental: true });
+				if (!searchAddonRef.current || !lastSearchQueryRef.current) return false;
+				return searchAddonRef.current.findPrevious(lastSearchQueryRef.current);
 			},
 			getSelection(): string {
 				return terminalRef.current?.getSelection() ?? '';
