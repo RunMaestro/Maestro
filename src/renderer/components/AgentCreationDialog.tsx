@@ -121,15 +121,17 @@ export function AgentCreationDialog({
 			if (repo && issue) {
 				setSessionName(`Symphony: ${repo.slug} #${issue.number}`);
 				const [owner, repoName] = repo.slug.split('/');
+				// Include issue number in directory name to avoid collisions across contributions
+				const dirName = `${owner}-${repoName}-${issue.number}`;
 				// Get actual home directory from main process to avoid tilde expansion issues
 				window.maestro.fs
 					.homeDir()
 					.then((homeDir) => {
-						setWorkingDirectory(`${homeDir}/Maestro-Symphony/${owner}-${repoName}`);
+						setWorkingDirectory(`${homeDir}/Maestro-Symphony/${dirName}`);
 					})
 					.catch(() => {
 						// Fallback to tilde (will be expanded in process-manager)
-						setWorkingDirectory(`~/Maestro-Symphony/${owner}-${repoName}`);
+						setWorkingDirectory(`~/Maestro-Symphony/${dirName}`);
 					});
 			}
 		}
