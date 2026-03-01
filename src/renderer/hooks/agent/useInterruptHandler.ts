@@ -274,7 +274,10 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 									});
 								}
 							} else {
-								updatedSession.shellLogs = [...s.shellLogs, killLog];
+								// TODO: Remove shellLogs once terminal tabs migration is complete
+								if (!s.terminalTabs?.length) {
+									updatedSession.shellLogs = [...s.shellLogs, killLog];
+								}
 							}
 
 							// If there are queued items, start processing the next one
@@ -429,7 +432,8 @@ export function useInterruptHandler(deps: UseInterruptHandlerDeps): UseInterrupt
 							}
 							return {
 								...s,
-								shellLogs: [...s.shellLogs, errorLog],
+								// TODO: Remove shellLogs once terminal tabs migration is complete
+								...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, errorLog] }),
 								state: 'idle',
 								busySource: undefined,
 								thinkingStartTime: undefined,

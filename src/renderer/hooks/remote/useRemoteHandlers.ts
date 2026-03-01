@@ -154,7 +154,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 							...s,
 							state: 'busy' as SessionState,
 							busySource: 'terminal',
-							shellLogs: [
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!(s.terminalTabs?.length) && { shellLogs: [
 								...s.shellLogs,
 								{
 									id: generateId(),
@@ -162,7 +163,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 									source: 'user',
 									text: command,
 								},
-							],
+							] }),
 						};
 					})
 				);
@@ -199,7 +200,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 								state: 'idle' as SessionState,
 								busySource: undefined,
 								thinkingStartTime: undefined,
-								shellLogs: [
+								// TODO: Remove shellLogs once terminal tabs migration is complete
+								...(!(s.terminalTabs?.length) && { shellLogs: [
 									...s.shellLogs,
 									{
 										id: generateId(),
@@ -207,7 +209,7 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 										source: 'system',
 										text: `Error: Failed to run command - ${errorMessage}`,
 									},
-								],
+								] }),
 							};
 						})
 					);
