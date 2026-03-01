@@ -172,6 +172,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		cwd: '/test',
 		projectRoot: '/test',
 		terminalDraftInput: '',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

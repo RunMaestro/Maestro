@@ -329,6 +329,13 @@ describe('MainPanel', () => {
 			},
 		],
 		activeTabId: 'tab-1',
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
+		unifiedTabOrder: [{ type: 'ai' as const, id: 'tab-1' }],
+		unifiedClosedTabHistory: [],
+		closedTabHistory: [],
 		...overrides,
 	});
 
@@ -738,12 +745,13 @@ describe('MainPanel', () => {
 			expect(screen.getByTestId('tab-tab-2')).toBeInTheDocument();
 		});
 
-		it('should not render TabBar in terminal mode', () => {
+		it('should render TabBar in terminal mode (unified tab system shows tabs in all modes)', () => {
 			const session = createSession({ inputMode: 'terminal' });
 
 			render(<MainPanel {...defaultProps} activeSession={session} />);
 
-			expect(screen.queryByTestId('tab-bar')).not.toBeInTheDocument();
+			// TabBar renders in both AI and terminal modes when aiTabs exist
+			expect(screen.queryByTestId('tab-bar')).toBeInTheDocument();
 		});
 
 		it('should call onTabSelect when tab is clicked', () => {

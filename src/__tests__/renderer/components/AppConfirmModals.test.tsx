@@ -50,6 +50,8 @@ function createMockSession(overrides: Partial<Session>): Session {
 		state: 'idle',
 		toolType: 'claude-code',
 		cwd: '/tmp',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

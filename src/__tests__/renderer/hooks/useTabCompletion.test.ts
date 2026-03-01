@@ -33,6 +33,8 @@ const createMockSession = (overrides: Partial<Session> = {}): Session =>
 		inputHistoryIndex: -1,
 		shellCommandHistory: [],
 		shellCwd: '/project',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	}) as Session;
 

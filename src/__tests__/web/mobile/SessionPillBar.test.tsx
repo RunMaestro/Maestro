@@ -59,6 +59,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		groupId: null,
 		groupName: null,
 		groupEmoji: null,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

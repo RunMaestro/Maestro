@@ -120,6 +120,7 @@ vi.mock('../../../prompts', () => ({
 	maestroSystemPrompt: 'Mock system prompt for {{CWD}}',
 	autorunSynopsisPrompt: '',
 	imageOnlyDefaultPrompt: 'Describe this image',
+	commitCommandPrompt: '',
 }));
 
 // Mock substituteTemplateVariables — pass through the template as-is for simplicity

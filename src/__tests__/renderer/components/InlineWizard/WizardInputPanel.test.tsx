@@ -98,6 +98,8 @@ const createMockSession = (overrides?: Partial<Session>): Session =>
 				showThinking: 'off',
 			},
 		},
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	}) as Session;
 
