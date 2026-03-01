@@ -3,17 +3,30 @@
  *
  * Discovers maestro-cue.yaml files per session, manages interval timers,
  * file watchers, and agent completion listeners. Runs in the Electron main process.
+ *
+ * Supports agent completion chains:
+ * - Fan-out: a subscription fires its prompt against multiple target sessions
+ * - Fan-in: a subscription waits for multiple source sessions to complete before firing
+ * - Session bridging: completion events from user sessions (non-Cue) trigger Cue subscriptions
  */
 
 import * as crypto from 'crypto';
 import type { MainLogLevel } from '../../shared/logger-types';
 import type { SessionInfo } from '../../shared/types';
-import type { CueConfig, CueEvent, CueRunResult, CueSessionStatus } from './cue-types';
+import type {
+	AgentCompletionData,
+	CueConfig,
+	CueEvent,
+	CueRunResult,
+	CueSessionStatus,
+	CueSubscription,
+} from './cue-types';
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
 
 const ACTIVITY_LOG_MAX = 500;
 const DEFAULT_FILE_DEBOUNCE_MS = 5000;
+const SOURCE_OUTPUT_MAX_CHARS = 5000;
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -38,12 +51,20 @@ interface ActiveRun {
 	abortController?: AbortController;
 }
 
+/** Stored data for a single fan-in source completion */
+interface FanInSourceCompletion {
+	sessionId: string;
+	sessionName: string;
+	output: string;
+}
+
 export class CueEngine {
 	private enabled = false;
 	private sessions = new Map<string, SessionState>();
 	private activeRuns = new Map<string, ActiveRun>();
 	private activityLog: CueRunResult[] = [];
-	private fanInTrackers = new Map<string, Set<string>>();
+	private fanInTrackers = new Map<string, Map<string, FanInSourceCompletion>>();
+	private fanInTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private deps: CueEngineDeps;
 
 	constructor(deps: CueEngineDeps) {
@@ -165,9 +186,44 @@ export class CueEngine {
 		return this.enabled;
 	}
 
+	/**
+	 * Check if any Cue subscriptions are listening for a given session's completion.
+	 * Used to avoid emitting completion events for sessions nobody cares about.
+	 */
+	hasCompletionSubscribers(sessionId: string): boolean {
+		if (!this.enabled) return false;
+
+		const allSessions = this.deps.getSessions();
+		const completingSession = allSessions.find((s) => s.id === sessionId);
+		const completingName = completingSession?.name ?? sessionId;
+
+		for (const [, state] of this.sessions) {
+			for (const sub of state.config.subscriptions) {
+				if (sub.event !== 'agent.completed' || sub.enabled === false) continue;
+
+				const sources = Array.isArray(sub.source_session)
+					? sub.source_session
+					: sub.source_session
+						? [sub.source_session]
+						: [];
+
+				if (sources.some((src) => src === sessionId || src === completingName)) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	/** Notify the engine that an agent session has completed (for agent.completed triggers) */
-	notifyAgentCompleted(sessionId: string): void {
+	notifyAgentCompleted(sessionId: string, completionData?: AgentCompletionData): void {
 		if (!this.enabled) return;
+
+		// Resolve the completing session's name for matching
+		const allSessions = this.deps.getSessions();
+		const completingSession = allSessions.find((s) => s.id === sessionId);
+		const completingName = completionData?.sessionName ?? completingSession?.name ?? sessionId;
 
 		for (const [ownerSessionId, state] of this.sessions) {
 			for (const sub of state.config.subscriptions) {
@@ -179,7 +235,8 @@ export class CueEngine {
 						? [sub.source_session]
 						: [];
 
-				if (!sources.includes(sessionId)) continue;
+				// Match by session name or ID
+				if (!sources.some((src) => src === sessionId || src === completingName)) continue;
 
 				if (sources.length === 1) {
 					// Single source — fire immediately
@@ -188,42 +245,223 @@ export class CueEngine {
 						type: 'agent.completed',
 						timestamp: new Date().toISOString(),
 						triggerName: sub.name,
-						payload: { completedSessionId: sessionId },
+						payload: {
+							sourceSession: completingName,
+							sourceSessionId: sessionId,
+							status: completionData?.status ?? 'completed',
+							exitCode: completionData?.exitCode ?? null,
+							durationMs: completionData?.durationMs ?? 0,
+							sourceOutput: (completionData?.stdout ?? '').slice(-SOURCE_OUTPUT_MAX_CHARS),
+							triggeredBy: completionData?.triggeredBy,
+						},
 					};
 					this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed)`);
-					this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name);
+					this.dispatchSubscription(ownerSessionId, sub, event, completingName);
 				} else {
-					// Fan-in: track completions
-					const key = `${ownerSessionId}:${sub.name}`;
-					if (!this.fanInTrackers.has(key)) {
-						this.fanInTrackers.set(key, new Set());
-					}
-					const tracker = this.fanInTrackers.get(key)!;
-					tracker.add(sessionId);
+					// Fan-in: track completions with data
+					this.handleFanIn(
+						ownerSessionId,
+						state,
+						sub,
+						sources,
+						sessionId,
+						completingName,
+						completionData
+					);
+				}
+			}
+		}
+	}
 
-					if (tracker.size >= sources.length) {
-						this.fanInTrackers.delete(key);
-						const event: CueEvent = {
-							id: crypto.randomUUID(),
-							type: 'agent.completed',
-							timestamp: new Date().toISOString(),
-							triggerName: sub.name,
-							payload: {
-								completedSessions: [...tracker],
-							},
-						};
-						this.deps.onLog(
-							'cue',
-							`[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`
-						);
-						this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name);
-					}
+	/** Clear all fan-in state for a session (when Cue is disabled or session removed) */
+	clearFanInState(sessionId: string): void {
+		for (const key of [...this.fanInTrackers.keys()]) {
+			if (key.startsWith(`${sessionId}:`)) {
+				this.fanInTrackers.delete(key);
+				const timer = this.fanInTimers.get(key);
+				if (timer) {
+					clearTimeout(timer);
+					this.fanInTimers.delete(key);
 				}
 			}
 		}
 	}
 
 	// --- Private methods ---
+
+	/**
+	 * Dispatch a subscription, handling fan-out if configured.
+	 * If the subscription has fan_out targets, fires against each target session.
+	 * Otherwise fires against the owner session.
+	 */
+	private dispatchSubscription(
+		ownerSessionId: string,
+		sub: CueSubscription,
+		event: CueEvent,
+		sourceSessionName: string
+	): void {
+		if (sub.fan_out && sub.fan_out.length > 0) {
+			// Fan-out: fire against each target session
+			const targetNames = sub.fan_out.join(', ');
+			this.deps.onLog('cue', `[CUE] Fan-out: "${sub.name}" → ${targetNames}`);
+
+			const allSessions = this.deps.getSessions();
+			for (let i = 0; i < sub.fan_out.length; i++) {
+				const targetName = sub.fan_out[i];
+				const targetSession = allSessions.find((s) => s.name === targetName || s.id === targetName);
+
+				if (!targetSession) {
+					this.deps.onLog('cue', `[CUE] Fan-out target not found: "${targetName}" — skipping`);
+					continue;
+				}
+
+				const fanOutEvent: CueEvent = {
+					...event,
+					id: crypto.randomUUID(),
+					payload: {
+						...event.payload,
+						fanOutSource: sourceSessionName,
+						fanOutIndex: i,
+					},
+				};
+				this.executeCueRun(targetSession.id, sub.prompt, fanOutEvent, sub.name);
+			}
+		} else {
+			this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name);
+		}
+	}
+
+	/**
+	 * Handle fan-in logic: track which sources have completed, fire when all done.
+	 * Supports timeout handling based on the subscription's settings.
+	 */
+	private handleFanIn(
+		ownerSessionId: string,
+		state: SessionState,
+		sub: CueSubscription,
+		sources: string[],
+		completedSessionId: string,
+		completedSessionName: string,
+		completionData?: AgentCompletionData
+	): void {
+		const key = `${ownerSessionId}:${sub.name}`;
+
+		if (!this.fanInTrackers.has(key)) {
+			this.fanInTrackers.set(key, new Map());
+		}
+		const tracker = this.fanInTrackers.get(key)!;
+		tracker.set(completedSessionId, {
+			sessionId: completedSessionId,
+			sessionName: completedSessionName,
+			output: (completionData?.stdout ?? '').slice(-SOURCE_OUTPUT_MAX_CHARS),
+		});
+
+		// Start timeout timer on first source completion
+		if (tracker.size === 1 && !this.fanInTimers.has(key)) {
+			const timeoutMs = (state.config.settings.timeout_minutes ?? 30) * 60 * 1000;
+			const timer = setTimeout(() => {
+				this.handleFanInTimeout(key, ownerSessionId, state, sub, sources);
+			}, timeoutMs);
+			this.fanInTimers.set(key, timer);
+		}
+
+		const remaining = sources.length - tracker.size;
+		if (remaining > 0) {
+			this.deps.onLog(
+				'cue',
+				`[CUE] Fan-in "${sub.name}": waiting for ${remaining} more session(s)`
+			);
+			return;
+		}
+
+		// All sources completed — clear timer and fire
+		const timer = this.fanInTimers.get(key);
+		if (timer) {
+			clearTimeout(timer);
+			this.fanInTimers.delete(key);
+		}
+		this.fanInTrackers.delete(key);
+
+		const completions = [...tracker.values()];
+		const event: CueEvent = {
+			id: crypto.randomUUID(),
+			type: 'agent.completed',
+			timestamp: new Date().toISOString(),
+			triggerName: sub.name,
+			payload: {
+				completedSessions: completions.map((c) => c.sessionId),
+				sourceSession: completions.map((c) => c.sessionName).join(', '),
+				sourceOutput: completions.map((c) => c.output).join('\n---\n'),
+			},
+		};
+		this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed, fan-in complete)`);
+		this.dispatchSubscription(
+			ownerSessionId,
+			sub,
+			event,
+			completions.map((c) => c.sessionName).join(', ')
+		);
+	}
+
+	/**
+	 * Handle fan-in timeout. Behavior depends on timeout_on_fail setting:
+	 * - 'break': log failure and clear the tracker
+	 * - 'continue': fire the downstream subscription with partial data
+	 */
+	private handleFanInTimeout(
+		key: string,
+		ownerSessionId: string,
+		state: SessionState,
+		sub: CueSubscription,
+		sources: string[]
+	): void {
+		this.fanInTimers.delete(key);
+		const tracker = this.fanInTrackers.get(key);
+		if (!tracker) return;
+
+		const completedNames = [...tracker.values()].map((c) => c.sessionName);
+		const completedIds = [...tracker.keys()];
+
+		// Determine which sources haven't completed yet
+		const allSessions = this.deps.getSessions();
+		const timedOutSources = sources.filter((src) => {
+			const session = allSessions.find((s) => s.name === src || s.id === src);
+			const sessionId = session?.id ?? src;
+			return !completedIds.includes(sessionId) && !completedIds.includes(src);
+		});
+
+		if (state.config.settings.timeout_on_fail === 'continue') {
+			// Fire with partial data
+			const completions = [...tracker.values()];
+			this.fanInTrackers.delete(key);
+
+			const event: CueEvent = {
+				id: crypto.randomUUID(),
+				type: 'agent.completed',
+				timestamp: new Date().toISOString(),
+				triggerName: sub.name,
+				payload: {
+					completedSessions: completions.map((c) => c.sessionId),
+					timedOutSessions: timedOutSources,
+					sourceSession: completions.map((c) => c.sessionName).join(', '),
+					sourceOutput: completions.map((c) => c.output).join('\n---\n'),
+					partial: true,
+				},
+			};
+			this.deps.onLog(
+				'cue',
+				`[CUE] Fan-in "${sub.name}" timed out (continue mode) — firing with ${completedNames.length}/${sources.length} sources`
+			);
+			this.dispatchSubscription(ownerSessionId, sub, event, completedNames.join(', '));
+		} else {
+			// 'break' mode — log failure and clear
+			this.fanInTrackers.delete(key);
+			this.deps.onLog(
+				'cue',
+				`[CUE] Fan-in "${sub.name}" timed out (break mode) — ${completedNames.length}/${sources.length} completed, waiting for: ${timedOutSources.join(', ')}`
+			);
+		}
+	}
 
 	private initSession(session: SessionInfo): void {
 		if (!this.enabled) return;
@@ -368,6 +606,17 @@ export class CueEngine {
 			result.durationMs = Date.now() - new Date(result.startedAt).getTime();
 			this.activeRuns.delete(runId);
 			this.pushActivityLog(result);
+
+			// Emit completion event for agent completion chains
+			// This allows downstream subscriptions to react to this Cue run's completion
+			this.notifyAgentCompleted(sessionId, {
+				sessionName: result.sessionName,
+				status: result.status,
+				exitCode: result.exitCode,
+				durationMs: result.durationMs,
+				stdout: result.stdout,
+				triggeredBy: subscriptionName,
+			});
 		}
 	}
 
@@ -392,11 +641,7 @@ export class CueEngine {
 			state.yamlWatcher();
 		}
 
-		// Clean up fan-in trackers for this session
-		for (const key of this.fanInTrackers.keys()) {
-			if (key.startsWith(`${sessionId}:`)) {
-				this.fanInTrackers.delete(key);
-			}
-		}
+		// Clean up fan-in trackers and timers for this session
+		this.clearFanInState(sessionId);
 	}
 }
