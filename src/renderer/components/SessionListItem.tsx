@@ -15,7 +15,7 @@
  * @module components/SessionListItem
  */
 
-import React from 'react';
+import React, { memo, useMemo } from 'react';
 import {
 	Star,
 	Play,
@@ -85,7 +85,7 @@ export interface SessionListItemProps {
 /**
  * SessionListItem component for rendering a single session row
  */
-export function SessionListItem({
+export const SessionListItem = memo(function SessionListItem({
 	session,
 	index,
 	selectedIndex,
@@ -109,16 +109,27 @@ export function SessionListItem({
 	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
+	const containerStyle = useMemo(
+		() => ({
+			backgroundColor: isSelected ? `${theme.colors.accent}15` : 'transparent',
+			borderColor: `${theme.colors.border}50`,
+		}),
+		[isSelected, theme.colors.accent, theme.colors.border]
+	);
+	const searchMatchStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.accent}20`,
+			color: theme.colors.accent,
+		}),
+		[theme.colors.accent]
+	);
 
 	return (
 		<div
 			ref={isSelected ? (selectedItemRef as React.RefObject<HTMLDivElement>) : null}
 			onClick={() => onSessionClick(session)}
 			className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-white/5 transition-colors border-b group cursor-pointer"
-			style={{
-				backgroundColor: isSelected ? theme.colors.accent + '15' : 'transparent',
-				borderColor: theme.colors.border + '50',
-			}}
+			style={containerStyle}
 		>
 			{/* Star button */}
 			<button
@@ -281,7 +292,7 @@ export function SessionListItem({
 					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
 						<span
 							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.accent + '20', color: theme.colors.accent }}
+							style={searchMatchStyle}
 						>
 							<Search className="w-3 h-3" />
 							{searchResultInfo.matchCount}
@@ -308,4 +319,4 @@ export function SessionListItem({
 			)}
 		</div>
 	);
-}
+});
