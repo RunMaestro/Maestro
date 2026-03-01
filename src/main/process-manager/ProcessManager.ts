@@ -232,6 +232,42 @@ export class ProcessManager extends EventEmitter {
 	}
 
 	/**
+	 * Convenience wrapper for spawning a terminal tab PTY.
+	 * Uses the terminal tab session ID format {sessionId}-terminal-{tabId},
+	 * which causes PtySpawner to forward raw PTY data without filtering.
+	 */
+	spawnTerminalTab(config: {
+		sessionId: string;
+		cwd: string;
+		shell?: string;
+		shellArgs?: string;
+		shellEnvVars?: Record<string, string>;
+		cols?: number;
+		rows?: number;
+	}): SpawnResult {
+		const shell = config.shell || (process.platform === 'win32' ? 'powershell.exe' : 'zsh');
+		logger.info('[ProcessManager] Spawning terminal tab PTY', 'ProcessManager', {
+			sessionId: config.sessionId,
+			cwd: config.cwd,
+			shell,
+			cols: config.cols || 80,
+			rows: config.rows || 24,
+		});
+		return this.spawn({
+			sessionId: config.sessionId,
+			toolType: 'terminal',
+			cwd: config.cwd,
+			command: shell,
+			args: [],
+			shell,
+			shellArgs: config.shellArgs,
+			shellEnvVars: config.shellEnvVars,
+			cols: config.cols || 80,
+			rows: config.rows || 24,
+		});
+	}
+
+	/**
 	 * Run a single command and capture stdout/stderr cleanly
 	 */
 	runCommand(

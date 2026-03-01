@@ -141,6 +141,25 @@ export function createProcessApi() {
 			ipcRenderer.invoke('process:spawn', config),
 
 		/**
+		 * Spawn a terminal tab PTY (convenience wrapper for xterm.js terminal tabs)
+		 */
+		spawnTerminalTab: (config: {
+			sessionId: string;
+			cwd: string;
+			shell?: string;
+			shellArgs?: string;
+			shellEnvVars?: Record<string, string>;
+			cols?: number;
+			rows?: number;
+			sessionSshRemoteConfig?: {
+				enabled: boolean;
+				remoteId: string | null;
+				workingDirOverride?: string;
+			};
+		}): Promise<{ pid: number; success: boolean }> =>
+			ipcRenderer.invoke('process:spawnTerminalTab', config),
+
+		/**
 		 * Write data to a process stdin
 		 */
 		write: (sessionId: string, data: string): Promise<boolean> =>
