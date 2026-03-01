@@ -72,6 +72,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
+			// CRITICAL: When in terminal mode, let xterm.js handle Ctrl+[A-Z] control sequences.
+			// These include Ctrl+C (SIGINT), Ctrl+D (EOF), Ctrl+Z (suspend), Ctrl+\ (quit), etc.
+			// Only intercept Meta (Cmd) key combos from terminal mode — those are Maestro shortcuts.
+			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode.
+			if (
+				ctx.activeSession?.inputMode === 'terminal' &&
+				e.ctrlKey &&
+				!e.metaKey &&
+				!e.altKey &&
+				!(e.shiftKey && e.code === 'Backquote') // Allow Ctrl+Shift+` for new terminal tab
+			) {
+				return;
+			}
+
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
 			// - Tab: allowed for accessibility navigation
@@ -265,12 +279,21 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				);
 				if (activeTab?.wizardState?.isActive) return;
 				e.preventDefault();
+				const wasAiMode = ctx.activeSession?.inputMode === 'ai';
 				ctx.toggleInputMode();
+				// When switching to terminal mode, focus the active terminal after the DOM updates
+				if (wasAiMode) {
+					setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
+				}
 				trackShortcut('toggleMode');
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
-				// Only open quick actions if there are agents
-				if (ctx.sessions.length > 0) {
+				// In terminal mode, Cmd+K clears the active terminal instead of opening Quick Actions
+				if (ctx.activeSession?.inputMode === 'terminal') {
+					ctx.mainPanelRef?.current?.clearActiveTerminal();
+					trackShortcut('clearTerminal');
+				} else if (ctx.sessions.length > 0) {
+					// Only open quick actions if there are agents
 					ctx.setQuickActionInitialMode('main');
 					ctx.setQuickActionOpen(true);
 					trackShortcut('quickAction');
@@ -455,6 +478,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.rightPanelRef?.current?.toggleAutoRunExpanded();
 				trackShortcut('toggleAutoRunExpanded');
+			}
+
+			// Ctrl+Shift+` — Create a new terminal tab (works regardless of inputMode)
+			// Use e.code to reliably detect the backtick key (Shift+` produces ~ via e.key on US layout)
+			if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'Backquote') {
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					ctx.handleOpenTerminalTab();
+					// Switch to terminal mode if currently in AI mode so the new tab is visible
+					if (ctx.activeSession?.inputMode === 'ai') {
+						ctx.toggleInputMode();
+					}
+					trackShortcut('newTerminalTab');
+				}
 			}
 
 			// Opt+Cmd+NUMBER: Jump to visible session by number (1-9, 0=10th)
@@ -734,9 +771,74 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
+			// Tab shortcuts (terminal mode), requires an explicitly selected session, disabled in group chat
+			if (
+				ctx.activeSessionId &&
+				ctx.activeSession?.inputMode === 'terminal' &&
+				ctx.activeSession?.terminalTabs?.length > 0 &&
+				!ctx.activeGroupChatId
+			) {
+				const terminalTabs = ctx.activeSession.terminalTabs;
+				const activeTerminalTabId = ctx.activeSession.activeTerminalTabId;
+				const activeTerminalIndex = terminalTabs.findIndex(
+					(t: { id: string }) => t.id === activeTerminalTabId
+				);
+
+				// Cmd+W: Close the active terminal tab (only if more than one exists)
+				if (ctx.isTabShortcut(e, 'closeTab') && terminalTabs.length > 1 && activeTerminalTabId) {
+					e.preventDefault();
+					ctx.handleCloseTerminalTab(activeTerminalTabId);
+					trackShortcut('closeTab');
+				}
+
+				// Cmd+Shift+] — Navigate to next terminal tab
+				if (ctx.isTabShortcut(e, 'nextTab')) {
+					e.preventDefault();
+					const nextIndex = (activeTerminalIndex + 1) % terminalTabs.length;
+					ctx.handleSelectTerminalTab(terminalTabs[nextIndex].id);
+					trackShortcut('nextTab');
+				}
+
+				// Cmd+Shift+[ — Navigate to previous terminal tab
+				if (ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					const prevIndex = (activeTerminalIndex - 1 + terminalTabs.length) % terminalTabs.length;
+					ctx.handleSelectTerminalTab(terminalTabs[prevIndex].id);
+					trackShortcut('prevTab');
+				}
+
+				// Cmd+1-9 — Jump to terminal tab by index
+				for (let i = 1; i <= 9; i++) {
+					if (ctx.isTabShortcut(e, `goToTab${i}`)) {
+						e.preventDefault();
+						const targetTab = terminalTabs[i - 1];
+						if (targetTab) {
+							ctx.handleSelectTerminalTab(targetTab.id);
+							trackShortcut(`goToTab${i}`);
+						}
+						break;
+					}
+				}
+
+				// Cmd+0 — Jump to last terminal tab
+				if (ctx.isTabShortcut(e, 'goToLastTab')) {
+					e.preventDefault();
+					const lastTab = terminalTabs[terminalTabs.length - 1];
+					if (lastTab) {
+						ctx.handleSelectTerminalTab(lastTab.id);
+						trackShortcut('goToLastTab');
+					}
+				}
+			}
+
 			// Cmd+F contextual shortcuts - track based on current focus/context
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-				if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
+				if (ctx.activeSession?.inputMode === 'terminal') {
+					// In terminal mode, Cmd+F opens the terminal search overlay (Phase 10 renders the UI)
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.openTerminalSearch();
+					trackShortcut('searchTerminal');
+				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
 					e.preventDefault();
 					ctx.setFileTreeFilterOpen(true);
 					trackShortcut('filterFiles');

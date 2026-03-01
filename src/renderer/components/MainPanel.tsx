@@ -65,6 +65,12 @@ export interface MainPanelHandle {
 	refreshGitInfo: () => Promise<void>;
 	/** Focus the file preview container (if open) */
 	focusFilePreview: () => void;
+	/** Clear the active terminal (xterm.js clear) */
+	clearActiveTerminal: () => void;
+	/** Focus the active terminal xterm.js instance */
+	focusActiveTerminal: () => void;
+	/** Open the terminal search overlay */
+	openTerminalSearch: () => void;
 }
 
 interface MainPanelProps {
@@ -455,6 +461,7 @@ export const MainPanel = React.memo(
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
 		const terminalViewRef = useRef<TerminalViewHandle>(null);
+		const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 
 		// Extract tab handlers from props
@@ -642,6 +649,15 @@ export const MainPanel = React.memo(
 					} else {
 						filePreviewContainerRef.current?.focus();
 					}
+				},
+				clearActiveTerminal: () => {
+					terminalViewRef.current?.clearActiveTerminal();
+				},
+				focusActiveTerminal: () => {
+					terminalViewRef.current?.focusActiveTerminal();
+				},
+				openTerminalSearch: () => {
+					setTerminalSearchOpen(true);
 				},
 			}),
 			[refreshGitStatus]
@@ -1695,6 +1711,8 @@ export const MainPanel = React.memo(
 											defaultShell={defaultShell}
 											onTabStateChange={createTabStateChangeHandler(activeSession.id)}
 											onTabPidChange={createTabPidChangeHandler(activeSession.id)}
+											searchOpen={terminalSearchOpen}
+											onSearchClose={() => setTerminalSearchOpen(false)}
 										/>
 									) : (
 										<TerminalOutput
