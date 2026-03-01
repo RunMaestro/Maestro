@@ -83,6 +83,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'Reset Font Size',
 		keys: ['Meta', 'Shift', '0'],
 	},
+	maestroCue: {
+		id: 'maestroCue',
+		label: 'Maestro Cue',
+		keys: ['Meta', 'Shift', 'u'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)

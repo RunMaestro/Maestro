@@ -862,6 +862,9 @@ export interface AppUtilityModalsProps {
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
 
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
+
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -1063,6 +1066,8 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 	onOpenSymphony,
 	// Director's Notes
 	onOpenDirectorNotes,
+	// Maestro Cue
+	onOpenMaestroCue,
 	// Auto-scroll
 	autoScrollAiMode,
 	setAutoScrollAiMode,
@@ -1221,6 +1226,7 @@ export const AppUtilityModals = memo(function AppUtilityModals({
 					onOpenLastDocumentGraph={onOpenLastDocumentGraph}
 					onOpenSymphony={onOpenSymphony}
 					onOpenDirectorNotes={onOpenDirectorNotes}
+					onOpenMaestroCue={onOpenMaestroCue}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 				/>
@@ -1999,6 +2005,8 @@ export interface AppModalsProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -2366,6 +2374,8 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 		onOpenSymphony,
 		// Director's Notes
 		onOpenDirectorNotes,
+		// Maestro Cue
+		onOpenMaestroCue,
 		// Auto-scroll
 		autoScrollAiMode,
 		setAutoScrollAiMode,
@@ -2672,6 +2682,7 @@ export const AppModals = memo(function AppModals(props: AppModalsProps) {
 				onOpenMarketplace={onOpenMarketplace}
 				onOpenSymphony={onOpenSymphony}
 				onOpenDirectorNotes={onOpenDirectorNotes}
+				onOpenMaestroCue={onOpenMaestroCue}
 				autoScrollAiMode={autoScrollAiMode}
 				setAutoScrollAiMode={setAutoScrollAiMode}
 				tabSwitcherOpen={tabSwitcherOpen}

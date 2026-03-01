@@ -203,8 +203,14 @@ export const MODAL_PRIORITIES = {
 	/** System log viewer overlay */
 	LOG_VIEWER: 500,
 
+	/** Maestro Cue help modal (above Cue modal) */
+	CUE_HELP: 465,
+
+	/** Maestro Cue dashboard modal */
+	CUE_MODAL: 460,
+
 	/** SSH Remote configuration modal (above settings) */
-	SSH_REMOTE: 460,
+	SSH_REMOTE: 458,
 
 	/** Settings modal */
 	SETTINGS: 450,
