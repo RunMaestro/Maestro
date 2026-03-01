@@ -17,8 +17,10 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
+import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 
 // ============================================================================
@@ -274,11 +276,43 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
+			// Migration: ensure terminalTabs exists with at least one default tab
+			if (!correctedSession.terminalTabs || correctedSession.terminalTabs.length === 0) {
+				console.log('[session migration] Added terminal tabs to session', correctedSession.id);
+				const defaultTerminalTab = createTerminalTab(
+					useSettingsStore.getState().defaultShell || 'zsh',
+					correctedSession.cwd,
+					null
+				);
+				correctedSession = {
+					...correctedSession,
+					terminalTabs: [defaultTerminalTab],
+					activeTerminalTabId: null,
+					unifiedTabOrder: [
+						...(correctedSession.unifiedTabOrder || []),
+						{ type: 'terminal' as const, id: defaultTerminalTab.id },
+					],
+				};
+			}
+
+			// Migration: ensure activeTerminalTabId is null if undefined
+			if (correctedSession.activeTerminalTabId === undefined) {
+				correctedSession = { ...correctedSession, activeTerminalTabId: null };
+			}
+
 			// Reset all tab states to idle - processes don't survive app restart
 			const resetAiTabs = correctedSession.aiTabs.map((tab) => ({
 				...tab,
 				state: 'idle' as const,
 				thinkingStartTime: undefined,
+			}));
+
+			// Reset terminal tab runtime state - PTY processes don't survive app restart
+			const resetTerminalTabs = (correctedSession.terminalTabs || []).map((tab) => ({
+				...tab,
+				pid: 0,
+				state: 'idle' as const,
+				exitCode: undefined,
 			}));
 
 			return {
@@ -307,10 +341,16 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				closedTabHistory: [],
 				filePreviewTabs: correctedSession.filePreviewTabs || [],
 				activeFileTabId: correctedSession.activeFileTabId ?? null,
+				terminalTabs: resetTerminalTabs,
+				activeTerminalTabId: correctedSession.activeTerminalTabId ?? null,
 				unifiedTabOrder: correctedSession.unifiedTabOrder || [
 					...resetAiTabs.map((tab) => ({ type: 'ai' as const, id: tab.id })),
 					...(correctedSession.filePreviewTabs || []).map((tab) => ({
 						type: 'file' as const,
+						id: tab.id,
+					})),
+					...resetTerminalTabs.map((tab) => ({
+						type: 'terminal' as const,
 						id: tab.id,
 					})),
 				],

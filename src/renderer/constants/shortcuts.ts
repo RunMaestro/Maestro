@@ -121,6 +121,20 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 	},
 };
 
+// Terminal tab shortcuts
+export const TERMINAL_SHORTCUTS: Record<string, Shortcut> = {
+	newTerminalTab: {
+		id: 'newTerminalTab',
+		label: 'New Terminal Tab',
+		keys: ['Control', 'Shift', '`'],
+	},
+	clearTerminal: {
+		id: 'clearTerminal',
+		label: 'Clear Terminal',
+		keys: ['Meta', 'k'],
+	},
+};
+
 // Tab navigation shortcuts (AI mode only)
 export const TAB_SHORTCUTS: Record<string, Shortcut> = {
 	tabSwitcher: { id: 'tabSwitcher', label: 'Tab Switcher', keys: ['Alt', 'Meta', 't'] },

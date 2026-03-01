@@ -638,8 +638,104 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 		})
 	);
 
+	// Spawn a terminal tab PTY process.
+	// Uses session ID format {sessionId}-terminal-{tabId} so PtySpawner forwards raw output.
+	// SSH remote support: if the session has SSH config enabled, the shell command is
+	// wrapped with ssh to execute on the remote host.
+	ipcMain.handle(
+		'process:spawnTerminalTab',
+		withIpcErrorLogging(
+			handlerOpts('spawnTerminalTab'),
+			async (config: {
+				sessionId: string;
+				cwd: string;
+				shell?: string;
+				shellArgs?: string;
+				shellEnvVars?: Record<string, string>;
+				cols?: number;
+				rows?: number;
+				// Per-session SSH remote config
+				sessionSshRemoteConfig?: {
+					enabled: boolean;
+					remoteId: string | null;
+					workingDirOverride?: string;
+				};
+			}) => {
+				const processManager = requireProcessManager(getProcessManager);
+
+				// Resolve shell: prefer config.shell, then settings default
+				const globalShellEnvVars = settingsStore.get('shellEnvVars', {}) as Record<string, string>;
+				let shellToUse = config.shell || settingsStore.get('defaultShell', 'zsh');
+				const customShellPath = settingsStore.get('customShellPath', '');
+				if (customShellPath && (customShellPath as string).trim()) {
+					shellToUse = (customShellPath as string).trim();
+				}
+
+				// Merge global env vars with any per-invocation env vars (per-invocation takes precedence)
+				const mergedEnvVars = { ...globalShellEnvVars, ...(config.shellEnvVars || {}) };
+
+				logger.info(`Spawning terminal tab: ${config.sessionId}`, LOG_CONTEXT, {
+					sessionId: config.sessionId,
+					cwd: config.cwd,
+					shell: shellToUse,
+					cols: config.cols,
+					rows: config.rows,
+					hasSshConfig: !!config.sessionSshRemoteConfig?.enabled,
+				});
+
+				// SSH remote support for terminal tabs
+				if (config.sessionSshRemoteConfig?.enabled) {
+					const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
+					const sshResult = getSshRemoteConfig(sshStoreAdapter, {
+						sessionSshConfig: config.sessionSshRemoteConfig,
+					});
+					if (sshResult.config) {
+						logger.info(`Terminal tab will connect via SSH`, LOG_CONTEXT, {
+							sessionId: config.sessionId,
+							remoteName: sshResult.config.name,
+							remoteHost: sshResult.config.host,
+						});
+						// For SSH terminal tabs we spawn ssh interactively so xterm.js can interact
+						const sshArgs = [
+							sshResult.config.user
+								? `${sshResult.config.user}@${sshResult.config.host}`
+								: sshResult.config.host,
+						];
+						if (sshResult.config.port && sshResult.config.port !== 22) {
+							sshArgs.unshift('-p', String(sshResult.config.port));
+						}
+						if (sshResult.config.keyPath) {
+							sshArgs.unshift('-i', sshResult.config.keyPath);
+						}
+						return processManager.spawn({
+							sessionId: config.sessionId,
+							toolType: 'terminal',
+							cwd: os.homedir(),
+							command: 'ssh',
+							args: sshArgs,
+							shellEnvVars: mergedEnvVars,
+							cols: config.cols || 80,
+							rows: config.rows || 24,
+						});
+					}
+				}
+
+				return processManager.spawnTerminalTab({
+					sessionId: config.sessionId,
+					cwd: config.cwd,
+					shell: shellToUse,
+					shellArgs: config.shellArgs || settingsStore.get('shellArgs', ''),
+					shellEnvVars: mergedEnvVars,
+					cols: config.cols || 80,
+					rows: config.rows || 24,
+				});
+			}
+		)
+	);
+
 	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
 	// Supports SSH remote execution when sessionSshRemoteConfig is provided
+	// TODO: Remove this handler once all callers migrate to process:spawnTerminalTab for persistent PTY sessions
 	ipcMain.handle(
 		'process:runCommand',
 		withIpcErrorLogging(
@@ -656,6 +752,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					workingDirOverride?: string;
 				};
 			}) => {
+				logger.warn(
+					'process:runCommand is deprecated — use process:spawnTerminalTab for persistent PTY sessions'
+				);
 				const processManager = requireProcessManager(getProcessManager);
 
 				// Get the shell from settings if not provided

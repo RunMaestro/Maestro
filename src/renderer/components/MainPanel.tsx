@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { LogViewer } from './LogViewer';
 import { TerminalOutput } from './TerminalOutput';
+import { TerminalView, TerminalViewHandle, createTabStateChangeHandler, createTabPidChangeHandler } from './TerminalView';
 import { InputArea } from './InputArea';
 import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -64,6 +65,12 @@ export interface MainPanelHandle {
 	refreshGitInfo: () => Promise<void>;
 	/** Focus the file preview container (if open) */
 	focusFilePreview: () => void;
+	/** Clear the active terminal (xterm.js clear) */
+	clearActiveTerminal: () => void;
+	/** Focus the active terminal xterm.js instance */
+	focusActiveTerminal: () => void;
+	/** Open the terminal search overlay */
+	openTerminalSearch: () => void;
 }
 
 interface MainPanelProps {
@@ -191,6 +198,11 @@ interface MainPanelProps {
 	activeFileTab?: FilePreviewTab | null;
 	onFileTabSelect?: (tabId: string) => void;
 	onFileTabClose?: (tabId: string) => void;
+
+	// Terminal tab callbacks (Phase 8)
+	onTerminalTabSelect?: (tabId: string) => void;
+	onTerminalTabClose?: (tabId: string) => void;
+	onTerminalTabRename?: (tabId: string) => void;
 	onOpenFileTab?: (filePath: string) => void;
 	/** Handler to update file tab editMode when toggled in FilePreview */
 	onFileTabEditModeChange?: (tabId: string, editMode: boolean) => void;
@@ -411,6 +423,8 @@ export const MainPanel = React.memo(
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const fontFamily = useSettingsStore((s) => s.fontFamily);
+		const defaultShell = useSettingsStore((s) => s.defaultShell);
+		const fontSize = useSettingsStore((s) => s.fontSize);
 		const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 		const enterToSendTerminal = useSettingsStore((s) => s.enterToSendTerminal);
 		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
@@ -446,7 +460,16 @@ export const MainPanel = React.memo(
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		const terminalViewRef = useRef<TerminalViewHandle>(null);
+		const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
+
+		// Close terminal search when switching away from terminal mode
+		useEffect(() => {
+			if (activeSession?.inputMode !== 'terminal') {
+				setTerminalSearchOpen(false);
+			}
+		}, [activeSession?.inputMode]);
 
 		// Extract tab handlers from props
 		const {
@@ -474,6 +497,10 @@ export const MainPanel = React.memo(
 			onFileTabEditContentChange,
 			onFileTabScrollPositionChange,
 			onFileTabSearchQueryChange,
+			// Terminal tab callbacks (Phase 8)
+			onTerminalTabSelect,
+			onTerminalTabClose,
+			onTerminalTabRename,
 		} = props;
 
 		// Get the active tab for header display
@@ -629,6 +656,15 @@ export const MainPanel = React.memo(
 					} else {
 						filePreviewContainerRef.current?.focus();
 					}
+				},
+				clearActiveTerminal: () => {
+					terminalViewRef.current?.clearActiveTerminal();
+				},
+				focusActiveTerminal: () => {
+					terminalViewRef.current?.focusActiveTerminal();
+				},
+				openTerminalSearch: () => {
+					setTerminalSearchOpen(true);
 				},
 			}),
 			[refreshGitStatus]
@@ -1452,9 +1488,8 @@ export const MainPanel = React.memo(
 							</div>
 						)}
 
-						{/* Tab Bar - always shown in AI mode when we have tabs (includes both AI and file tabs) */}
-						{activeSession.inputMode === 'ai' &&
-							activeSession.aiTabs &&
+						{/* Tab Bar - shown in AI and terminal modes when we have tabs (AI + file + terminal) */}
+						{activeSession.aiTabs &&
 							activeSession.aiTabs.length > 0 &&
 							onTabSelect &&
 							onTabClose &&
@@ -1490,6 +1525,12 @@ export const MainPanel = React.memo(
 									activeFileTabId={activeFileTabId}
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
+									// Terminal tab props (Phase 8)
+									activeTerminalTabId={activeSession.activeTerminalTabId}
+									inputMode={activeSession.inputMode}
+									onTerminalTabSelect={onTerminalTabSelect}
+									onTerminalTabClose={onTerminalTabClose}
+									onTerminalTabRename={onTerminalTabRename}
 									// Accessibility
 									colorBlindMode={colorBlindMode}
 								/>
@@ -1667,6 +1708,19 @@ export const MainPanel = React.memo(
 											}
 											setLightboxImage={setLightboxImage}
 										/>
+									) : activeSession.inputMode === 'terminal' ? (
+										<TerminalView
+											ref={terminalViewRef}
+											session={activeSession}
+											theme={theme}
+											fontFamily={fontFamily}
+											fontSize={fontSize}
+											defaultShell={defaultShell}
+											onTabStateChange={createTabStateChangeHandler(activeSession.id)}
+											onTabPidChange={createTabPidChangeHandler(activeSession.id)}
+											searchOpen={terminalSearchOpen}
+											onSearchClose={() => setTerminalSearchOpen(false)}
+										/>
 									) : (
 										<TerminalOutput
 											key={`${activeSession.id}-${activeSession.activeTabId}`}
@@ -1689,11 +1743,7 @@ export const MainPanel = React.memo(
 											onInterrupt={handleInterrupt}
 											onScrollPositionChange={props.onScrollPositionChange}
 											onAtBottomChange={props.onAtBottomChange}
-											initialScrollTop={
-												activeSession.inputMode === 'ai'
-													? activeTab?.scrollTop
-													: activeSession.terminalScrollTop
-											}
+											initialScrollTop={activeTab?.scrollTop}
 											markdownEditMode={chatRawTextMode}
 											setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 											onReplayMessage={props.onReplayMessage}
@@ -1719,22 +1769,16 @@ export const MainPanel = React.memo(
 									)}
 								</div>
 
-								{/* Input Area (hidden in mobile landscape for focused reading, and during wizard doc generation) */}
-								{!isMobileLandscape && !activeTab?.wizardState?.isGeneratingDocs && (
+								{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
+								{!isMobileLandscape && !activeTab?.wizardState?.isGeneratingDocs && activeSession.inputMode !== 'terminal' && (
 									<div data-tour="input-area">
 										<InputArea
 											session={activeSession}
 											theme={theme}
 											inputValue={inputValue}
 											setInputValue={setInputValue}
-											enterToSend={
-												activeSession.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI
-											}
-											setEnterToSend={
-												activeSession.inputMode === 'terminal'
-													? useSettingsStore.getState().setEnterToSendTerminal
-													: useSettingsStore.getState().setEnterToSendAI
-											}
+											enterToSend={enterToSendAI}
+											setEnterToSend={useSettingsStore.getState().setEnterToSendAI}
 											stagedImages={stagedImages}
 											setStagedImages={setStagedImages}
 											setLightboxImage={setLightboxImage}

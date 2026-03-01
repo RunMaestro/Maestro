@@ -36,6 +36,10 @@ export interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	/** PTY terminal width in columns (default 80) */
+	cols?: number;
+	/** PTY terminal height in rows (default 24) */
+	rows?: number;
 }
 
 /**

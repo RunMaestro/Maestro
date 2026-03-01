@@ -103,8 +103,8 @@ export class PtySpawner {
 
 			const ptyProcess = pty.spawn(ptyCommand, ptyArgs, {
 				name: 'xterm-256color',
-				cols: 100,
-				rows: 30,
+				cols: config.cols || 100,
+				rows: config.rows || 30,
 				cwd: cwd,
 				env: ptyEnv as Record<string, string>,
 			});
@@ -123,18 +123,35 @@ export class PtySpawner {
 
 			this.processes.set(sessionId, managedProcess);
 
+			// Terminal tab session IDs use the format {sessionId}-terminal-{tabId}.
+			// xterm.js renders escape sequences itself, so raw PTY data must be forwarded
+			// without any stripping. All other sessions go through stripControlSequences.
+			const isTerminalTab = sessionId.includes('-terminal-');
+
 			// Handle output
 			ptyProcess.onData((data) => {
-				const managedProc = this.processes.get(sessionId);
-				const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
-				logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
-					sessionId,
-					pid: ptyProcess.pid,
-					dataPreview: cleanedData.substring(0, 100),
-				});
-				// Only emit if there's actual content after filtering
-				if (cleanedData.trim()) {
-					this.bufferManager.emitDataBuffered(sessionId, cleanedData);
+				if (isTerminalTab) {
+					// Raw pass-through for xterm.js terminal tabs — no filtering
+					if (data.length > 0) {
+						logger.debug('[ProcessManager] PTY onData (raw)', 'ProcessManager', {
+							sessionId,
+							pid: ptyProcess.pid,
+							dataLength: data.length,
+						});
+						this.bufferManager.emitDataBuffered(sessionId, data);
+					}
+				} else {
+					const managedProc = this.processes.get(sessionId);
+					const cleanedData = stripControlSequences(data, managedProc?.lastCommand, isTerminal);
+					logger.debug('[ProcessManager] PTY onData', 'ProcessManager', {
+						sessionId,
+						pid: ptyProcess.pid,
+						dataPreview: cleanedData.substring(0, 100),
+					});
+					// Only emit if there's actual content after filtering
+					if (cleanedData.trim()) {
+						this.bufferManager.emitDataBuffered(sessionId, cleanedData);
+					}
 				}
 			});
 

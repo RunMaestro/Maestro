@@ -202,6 +202,8 @@ src/
 | Add Director's Notes feature | `src/renderer/components/DirectorNotes/`, `src/main/ipc/handlers/director-notes.ts`                                                   |
 | Add Encore Feature           | `src/renderer/types/index.ts` (flag), `useSettings.ts` (state), `SettingsModal.tsx` (toggle UI), gate in `App.tsx` + keyboard handler |
 | Modify history components    | `src/renderer/components/History/`                                                                                                    |
+| Add terminal feature         | `src/renderer/components/XTerminal.tsx`, `src/renderer/components/TerminalView.tsx`                                                   |
+| Modify terminal tabs         | `src/renderer/utils/terminalTabHelpers.ts`, `src/renderer/stores/tabStore.ts`                                                         |
 
 ---
 

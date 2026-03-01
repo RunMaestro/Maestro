@@ -25,7 +25,7 @@
  */
 
 import { create } from 'zustand';
-import type { AITab, FilePreviewTab, UnifiedTab, Session } from '../types';
+import type { AITab, FilePreviewTab, UnifiedTab, TerminalTab, Session } from '../types';
 import type { GistInfo } from '../components/GistPublishModal';
 import {
 	createTab as createTabHelper,
@@ -48,6 +48,14 @@ import {
 	type SetActiveTabResult,
 	type NavigateToUnifiedTabResult,
 } from '../utils/tabHelpers';
+import {
+	createTerminalTab as createTerminalTabHelper,
+	addTerminalTab as addTerminalTabHelper,
+	closeTerminalTab as closeTerminalTabHelper,
+	selectTerminalTab as selectTerminalTabHelper,
+	renameTerminalTab as renameTerminalTabHelper,
+	getTerminalSessionId,
+} from '../utils/terminalTabHelpers';
 import { useSessionStore, selectActiveSession } from './sessionStore';
 
 // ============================================================================
@@ -175,6 +183,31 @@ export interface TabStoreActions {
 	 * Moves tab from fromIndex to toIndex in unifiedTabOrder.
 	 */
 	reorderUnifiedTabs: (fromIndex: number, toIndex: number) => void;
+
+	// === Terminal tab CRUD ===
+
+	/**
+	 * Create a new terminal tab in the active session.
+	 * Switches inputMode to 'terminal' and sets activeTerminalTabId.
+	 */
+	createTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
+
+	/**
+	 * Close a terminal tab in the active session.
+	 * Kills the associated PTY process. Refuses to close the last terminal tab.
+	 */
+	closeTerminalTab: (tabId: string) => void;
+
+	/**
+	 * Set the active terminal tab in the active session.
+	 * Switches inputMode to 'terminal'.
+	 */
+	selectTerminalTab: (tabId: string) => void;
+
+	/**
+	 * Rename a terminal tab in the active session.
+	 */
+	renameTerminalTab: (tabId: string, name: string) => void;
 
 	// === File tab content operations ===
 
@@ -444,6 +477,38 @@ export const useTabStore = create<TabStore>()((set) => ({
 		updateActiveSession({ ...session, unifiedTabOrder: order });
 	},
 
+	// Terminal tab CRUD
+	createTerminalTab: (options?) => {
+		const session = getActiveSession();
+		if (!session) return;
+		const tab = createTerminalTabHelper(options?.shell, options?.cwd, options?.name);
+		const updatedSession = addTerminalTabHelper(session, tab);
+		updateActiveSession({ ...updatedSession, inputMode: 'terminal' });
+	},
+
+	closeTerminalTab: (tabId) => {
+		const session = getActiveSession();
+		if (!session) return;
+		// Kill the PTY process before removing the tab
+		window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		const updatedSession = closeTerminalTabHelper(session, tabId);
+		updateActiveSession(updatedSession);
+	},
+
+	selectTerminalTab: (tabId) => {
+		const session = getActiveSession();
+		if (!session) return;
+		const updatedSession = selectTerminalTabHelper(session, tabId);
+		updateActiveSession({ ...updatedSession, inputMode: 'terminal' });
+	},
+
+	renameTerminalTab: (tabId, name) => {
+		const session = getActiveSession();
+		if (!session) return;
+		const updatedSession = renameTerminalTabHelper(session, tabId, name);
+		updateActiveSession(updatedSession);
+	},
+
 	// File tab content operations
 	updateFileTabEditContent: (tabId, content) => updateFileTab(tabId, { editContent: content }),
 	updateFileTabScrollPosition: (tabId, scrollTop) => updateFileTab(tabId, { scrollTop }),
@@ -567,6 +632,35 @@ export const selectAllFileTabs = (
 	return session?.filePreviewTabs ?? [];
 };
 
+/**
+ * Select the active terminal tab from the active session.
+ * Use with useSessionStore: `useSessionStore(selectActiveTerminalTab)`
+ *
+ * @example
+ * const activeTerminalTab = useSessionStore(selectActiveTerminalTab);
+ */
+export const selectActiveTerminalTab = (
+	state: ReturnType<typeof useSessionStore.getState>
+): TerminalTab | undefined => {
+	const session = selectActiveSession(state);
+	if (!session || !session.activeTerminalTabId) return undefined;
+	return session.terminalTabs?.find((t) => t.id === session.activeTerminalTabId);
+};
+
+/**
+ * Select all terminal tabs in the active session.
+ * Use with useSessionStore: `useSessionStore(selectTerminalTabs)`
+ *
+ * @example
+ * const terminalTabs = useSessionStore(selectTerminalTabs);
+ */
+export const selectTerminalTabs = (
+	state: ReturnType<typeof useSessionStore.getState>
+): TerminalTab[] => {
+	const session = selectActiveSession(state);
+	return session?.terminalTabs ?? [];
+};
+
 // ============================================================================
 // Non-React Access
 // ============================================================================
@@ -622,5 +716,10 @@ export function getTabActions() {
 		updateFileTabScrollPosition: state.updateFileTabScrollPosition,
 		updateFileTabSearchQuery: state.updateFileTabSearchQuery,
 		toggleFileTabEditMode: state.toggleFileTabEditMode,
+		// Terminal tab CRUD
+		createTerminalTab: state.createTerminalTab,
+		closeTerminalTab: state.closeTerminalTab,
+		selectTerminalTab: state.selectTerminalTab,
+		renameTerminalTab: state.renameTerminalTab,
 	};
 }
