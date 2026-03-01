@@ -352,11 +352,16 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 			// This can happen with Codex if the process exits cleanly but emits no agent_message.
 			// We proceed with an empty result rather than leaving the task stuck in busy state.
 			if (result.success && !result.response) {
-				window.maestro.logger.log('warn', 'Auto Run task completed with no result text', 'DocumentProcessor', {
-					agentType: session.toolType,
-					agentSessionId: result.agentSessionId,
-					document: filename,
-				});
+				window.maestro.logger.log(
+					'warn',
+					'Auto Run task completed with no result text',
+					'DocumentProcessor',
+					{
+						agentType: session.toolType,
+						agentSessionId: result.agentSessionId,
+						document: filename,
+					}
+				);
 			}
 
 			// Register agent session origin for Auto Run tracking
@@ -419,29 +424,25 @@ export function useDocumentProcessor(): UseDocumentProcessorReturn {
 						// use the entire cleaned text as the short summary instead of just
 						// the first paragraph. This improves synopsis quality for agents
 						// like Codex that return concise, direct answers.
-						const isStructuredFormat = /\*\*Summary:\*\*/i.test(responseText) ||
-							/\*\*Details:\*\*/i.test(responseText);
-						const useFullText = responseText.length < 500 &&
-							!isStructuredFormat &&
-							paragraphs.length <= 1;
+						const isStructuredFormat =
+							/\*\*Summary:\*\*/i.test(responseText) || /\*\*Details:\*\*/i.test(responseText);
+						const useFullText =
+							responseText.length < 500 && !isStructuredFormat && paragraphs.length <= 1;
 
 						const summarySource = useFullText
 							? responseText
-								.replace(/^#+\s*/, '')
-								.replace(/\*\*/g, '')
-								.trim()
+									.replace(/^#+\s*/, '')
+									.replace(/\*\*/g, '')
+									.trim()
 							: cleanFirstParagraph;
 
 						// Use first sentence or first 150 chars as short summary
 						// Match sentence-ending punctuation followed by space+capital, newline, or end of string
 						// This avoids splitting on periods in file extensions like "file.tsx"
-						const firstSentenceMatch = summarySource.match(
-							/^.+?[.!?](?=\s+[A-Z]|\s*\n|\s*$)/
-						);
+						const firstSentenceMatch = summarySource.match(/^.+?[.!?](?=\s+[A-Z]|\s*\n|\s*$)/);
 						shortSummary = firstSentenceMatch
 							? firstSentenceMatch[0].trim()
-							: summarySource.substring(0, 150) +
-								(summarySource.length > 150 ? '...' : '');
+							: summarySource.substring(0, 150) + (summarySource.length > 150 ? '...' : '');
 
 						// Full synopsis is the complete response
 						fullSynopsis = responseText;

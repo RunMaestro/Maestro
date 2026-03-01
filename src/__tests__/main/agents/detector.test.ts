@@ -1400,7 +1400,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.detectedVersion).toBe('0.103.0');
 		});
@@ -1417,7 +1417,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const claude = agents.find(a => a.id === 'claude-code');
+			const claude = agents.find((a) => a.id === 'claude-code');
 
 			expect(claude?.detectedVersion).toBe('2.1.45');
 		});
@@ -1435,7 +1435,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.detectedVersion).toBeUndefined();
 			expect(logger.warn).toHaveBeenCalledWith(
@@ -1456,7 +1456,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.detectedVersion).toBeUndefined();
 			expect(logger.warn).toHaveBeenCalledWith(
@@ -1477,7 +1477,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.detectedVersion).toBeUndefined();
 			expect(logger.warn).toHaveBeenCalledWith(
@@ -1491,7 +1491,7 @@ describe('agent-detector', () => {
 			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
 
 			const agents = await detector.detectAgents();
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.available).toBe(false);
 			expect(codex?.detectedVersion).toBeUndefined();
@@ -1515,7 +1515,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const terminal = agents.find(a => a.id === 'terminal');
+			const terminal = agents.find((a) => a.id === 'terminal');
 
 			expect(terminal?.available).toBe(true);
 			expect(terminal?.detectedVersion).toBeUndefined();
@@ -1544,7 +1544,7 @@ describe('agent-detector', () => {
 			}
 
 			const agents = await detectPromise;
-			const codex = agents.find(a => a.id === 'codex');
+			const codex = agents.find((a) => a.id === 'codex');
 
 			expect(codex?.available).toBe(true);
 			expect(codex?.detectedVersion).toBeUndefined();
@@ -1568,7 +1568,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const gemini = agents.find(a => a.id === 'gemini-cli');
+			const gemini = agents.find((a) => a.id === 'gemini-cli');
 
 			expect(gemini?.detectedVersion).toBe('0.29.0');
 		});
@@ -1585,7 +1585,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const opencode = agents.find(a => a.id === 'opencode');
+			const opencode = agents.find((a) => a.id === 'opencode');
 
 			expect(opencode?.detectedVersion).toBe('0.0.55');
 		});
@@ -1602,7 +1602,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const aider = agents.find(a => a.id === 'aider');
+			const aider = agents.find((a) => a.id === 'aider');
 
 			expect(aider?.detectedVersion).toBe('0.86.3');
 		});
@@ -1619,7 +1619,7 @@ describe('agent-detector', () => {
 			});
 
 			const agents = await detector.detectAgents();
-			const droid = agents.find(a => a.id === 'factory-droid');
+			const droid = agents.find((a) => a.id === 'factory-droid');
 
 			expect(droid?.detectedVersion).toBe('0.4.0');
 		});
