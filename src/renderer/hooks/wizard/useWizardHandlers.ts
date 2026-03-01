@@ -32,6 +32,7 @@ import { useUIStore } from '../../stores/uiStore';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab, createTab } from '../../utils/tabHelpers';
+import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { generateId } from '../../utils/ids';
 import { getSlashCommandDescription } from '../../constants/app';
 import { validateNewSession } from '../../utils/sessionValidation';
@@ -1106,6 +1107,7 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 
 			const initialTabId = generateId();
 			const currentDefaults = useSettingsStore.getState();
+			const initialTerminalTab = createTerminalTab(currentDefaults.defaultShell || 'zsh', directoryPath, null);
 			const initialTab: AITab = {
 				id: initialTabId,
 				agentSessionId: null,
@@ -1167,9 +1169,12 @@ export function useWizardHandlers(deps: UseWizardHandlersDeps): UseWizardHandler
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
-				terminalTabs: [],
+				terminalTabs: [initialTerminalTab],
 				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: initialTabId },
+					{ type: 'terminal' as const, id: initialTerminalTab.id },
+				],
 				unifiedClosedTabHistory: [],
 				autoRunFolderPath,
 				autoRunSelectedFile,

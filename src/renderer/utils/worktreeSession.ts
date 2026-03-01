@@ -7,6 +7,8 @@
 
 import type { Session, AITab, ThinkingMode } from '../types';
 import { generateId } from './ids';
+import { createTerminalTab } from './terminalTabHelpers';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * Parameters for building a worktree Session object.
@@ -37,6 +39,11 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 	const newId = generateId();
 	const initialTabId = generateId();
 	const isLegacy = !!params.worktreeParentPath;
+	const initialTerminalTab = createTerminalTab(
+		useSettingsStore.getState().defaultShell || 'zsh',
+		params.path,
+		null
+	);
 
 	const initialTab: AITab = {
 		id: initialTabId,
@@ -109,9 +116,12 @@ export function buildWorktreeSession(params: BuildWorktreeSessionParams): Sessio
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
-		terminalTabs: [],
+		terminalTabs: [initialTerminalTab],
 		activeTerminalTabId: null,
-		unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
+		unifiedTabOrder: [
+			{ type: 'ai' as const, id: initialTabId },
+			{ type: 'terminal' as const, id: initialTerminalTab.id },
+		],
 		unifiedClosedTabHistory: [],
 		customPath: params.parentSession.customPath,
 		customArgs: params.parentSession.customArgs,

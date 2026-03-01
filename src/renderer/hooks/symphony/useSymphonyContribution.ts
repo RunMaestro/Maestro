@@ -19,6 +19,7 @@ import { useSettingsStore } from '../../stores/settingsStore';
 import { getModalActions } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { generateId } from '../../utils/ids';
+import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { validateNewSession } from '../../utils/sessionValidation';
 import { gitService } from '../../services/git';
 import { notifyToast } from '../../stores/notificationStore';
@@ -114,7 +115,12 @@ export function useSymphonyContribution(
 				gitRefsCacheTime = Date.now();
 			}
 
-			// Create initial tab
+			// Create initial tabs
+			const initialTerminalTab = createTerminalTab(
+				useSettingsStore.getState().defaultShell || 'zsh',
+				data.localPath,
+				null
+			);
 			const initialTab: AITab = {
 				id: initialTabId,
 				agentSessionId: null,
@@ -172,9 +178,12 @@ export function useSymphonyContribution(
 				closedTabHistory: [],
 				filePreviewTabs: [],
 				activeFileTabId: null,
-				terminalTabs: [],
+				terminalTabs: [initialTerminalTab],
 				activeTerminalTabId: null,
-				unifiedTabOrder: [{ type: 'ai' as const, id: initialTabId }],
+				unifiedTabOrder: [
+					{ type: 'ai' as const, id: initialTabId },
+					{ type: 'terminal' as const, id: initialTerminalTab.id },
+				],
 				unifiedClosedTabHistory: [],
 				// Custom agent config
 				customPath: data.customPath,

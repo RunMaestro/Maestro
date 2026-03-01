@@ -16,6 +16,8 @@ import {
 } from '../types';
 import { generateId } from './ids';
 import { getAutoRunFolderPath } from './existingDocsDetector';
+import { createTerminalTab } from './terminalTabHelpers';
+import { useSettingsStore } from '../stores/settingsStore';
 
 /**
  * Build the unified tab list from a session's tab data.
@@ -1702,6 +1704,11 @@ export function createMergedSession(
 
 	// Create the merged session with standard structure
 	// Matches the pattern from App.tsx createNewSession
+	const initialMergeTerminalTab = createTerminalTab(
+		useSettingsStore.getState().defaultShell || 'zsh',
+		projectRoot,
+		null
+	);
 	const session: Session = {
 		id: sessionId,
 		name,
@@ -1743,9 +1750,12 @@ export function createMergedSession(
 		closedTabHistory: [],
 		filePreviewTabs: [],
 		activeFileTabId: null,
-		terminalTabs: [],
+		terminalTabs: [initialMergeTerminalTab],
 		activeTerminalTabId: null,
-		unifiedTabOrder: [{ type: 'ai' as const, id: tabId }],
+		unifiedTabOrder: [
+			{ type: 'ai' as const, id: tabId },
+			{ type: 'terminal' as const, id: initialMergeTerminalTab.id },
+		],
 		unifiedClosedTabHistory: [],
 		// Default Auto Run folder path (user can change later)
 		autoRunFolderPath: getAutoRunFolderPath(projectRoot),
