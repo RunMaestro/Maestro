@@ -1,4 +1,4 @@
-import { Zap, FileText, Radio, Code, GitBranch, Clock, Sparkles, Layers } from 'lucide-react';
+import { Zap, FileText, Radio, Code, GitBranch, Clock, Sparkles, Layers, Moon } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -421,7 +421,31 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 					</div>
 				</section>
 
-				{/* Section 8: AI YAML Editor */}
+				{/* Section 8: Sleep & Recovery */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Moon className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Sleep & Recovery</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Maestro Cue automatically detects when your computer sleeps and catches up on missed
+							time-based triggers when it wakes. File watchers re-initialize automatically.
+						</p>
+						<p>
+							Catch-up events are marked with a{' '}
+							<span
+								className="inline-block px-1.5 py-0.5 rounded text-[10px] font-bold"
+								style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
+							>
+								catch-up
+							</span>{' '}
+							badge in the activity log so you can distinguish them from regular triggers.
+						</p>
+					</div>
+				</section>
+
+				{/* Section 9: AI YAML Editor */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
 						<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />

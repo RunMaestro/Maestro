@@ -218,6 +218,7 @@ function ActivityLog({ log, theme }: { log: CueRunResult[]; theme: Theme }) {
 					eventType === 'file.changed' && entry.event.payload?.file
 						? ` (${String(entry.event.payload.file).split('/').pop()})`
 						: '';
+				const isReconciled = entry.event.payload?.reconciled === true;
 
 				return (
 					<div key={entry.runId} className="flex items-center gap-2 py-1.5 text-xs">
@@ -227,6 +228,14 @@ function ActivityLog({ log, theme }: { log: CueRunResult[]; theme: Theme }) {
 						<Zap className="w-3 h-3 flex-shrink-0" style={{ color: CUE_TEAL }} />
 						<span className="flex-1 min-w-0 truncate">
 							<span style={{ color: theme.colors.textMain }}>"{entry.subscriptionName}"</span>
+							{isReconciled && (
+								<span
+									className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold"
+									style={{ backgroundColor: '#f59e0b20', color: '#f59e0b' }}
+								>
+									catch-up
+								</span>
+							)}
 							<span style={{ color: theme.colors.textDim }}>
 								{' '}
 								triggered ({eventType}){filePayload} →{' '}

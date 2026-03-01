@@ -23,10 +23,16 @@ import type {
 } from './cue-types';
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
+import { initCueDb, closeCueDb, updateHeartbeat, getLastHeartbeat, pruneCueEvents } from './cue-db';
+import { reconcileMissedTimeEvents } from './cue-reconciler';
+import type { ReconcileSessionInfo } from './cue-reconciler';
 
 const ACTIVITY_LOG_MAX = 500;
 const DEFAULT_FILE_DEBOUNCE_MS = 5000;
 const SOURCE_OUTPUT_MAX_CHARS = 5000;
+const HEARTBEAT_INTERVAL_MS = 30_000; // 30 seconds
+const SLEEP_THRESHOLD_MS = 120_000; // 2 minutes
+const EVENT_PRUNE_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /** Dependencies injected into the CueEngine */
 export interface CueEngineDeps {
@@ -77,6 +83,7 @@ export class CueEngine {
 	private pendingYamlWatchers = new Map<string, () => void>();
 	private activeRunCount = new Map<string, number>();
 	private eventQueue = new Map<string, QueuedEvent[]>();
+	private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 	private deps: CueEngineDeps;
 
 	constructor(deps: CueEngineDeps) {
@@ -88,10 +95,24 @@ export class CueEngine {
 		this.enabled = true;
 		this.deps.onLog('cue', '[CUE] Engine started');
 
+		// Initialize Cue database and prune old events
+		try {
+			initCueDb((level, msg) => this.deps.onLog(level as MainLogLevel, msg));
+			pruneCueEvents(EVENT_PRUNE_AGE_MS);
+		} catch (error) {
+			this.deps.onLog('warn', `[CUE] Failed to initialize Cue database: ${error}`);
+		}
+
 		const sessions = this.deps.getSessions();
 		for (const session of sessions) {
 			this.initSession(session);
 		}
+
+		// Detect sleep gap from previous heartbeat
+		this.detectSleepAndReconcile();
+
+		// Start heartbeat writer (30s interval)
+		this.startHeartbeat();
 	}
 
 	/** Disable the engine, clearing all timers and watchers */
@@ -111,6 +132,14 @@ export class CueEngine {
 		// Clear concurrency state
 		this.eventQueue.clear();
 		this.activeRunCount.clear();
+
+		// Stop heartbeat and close database
+		this.stopHeartbeat();
+		try {
+			closeCueDb();
+		} catch {
+			// Non-fatal — database may not have been initialized
+		}
 
 		this.deps.onLog('cue', '[CUE] Engine stopped');
 	}
@@ -821,5 +850,77 @@ export class CueEngine {
 
 		// Clean up fan-in trackers and timers for this session
 		this.clearFanInState(sessionId);
+	}
+
+	// --- Heartbeat & Sleep Detection ---
+
+	private startHeartbeat(): void {
+		this.stopHeartbeat();
+		try {
+			updateHeartbeat();
+		} catch {
+			// Non-fatal if DB not ready
+		}
+		this.heartbeatInterval = setInterval(() => {
+			try {
+				updateHeartbeat();
+			} catch {
+				// Non-fatal
+			}
+		}, HEARTBEAT_INTERVAL_MS);
+	}
+
+	private stopHeartbeat(): void {
+		if (this.heartbeatInterval) {
+			clearInterval(this.heartbeatInterval);
+			this.heartbeatInterval = null;
+		}
+	}
+
+	/**
+	 * Check the last heartbeat to detect if the machine slept.
+	 * If a gap >= SLEEP_THRESHOLD_MS is found, run the reconciler.
+	 */
+	private detectSleepAndReconcile(): void {
+		try {
+			const lastHeartbeat = getLastHeartbeat();
+			if (lastHeartbeat === null) return; // First ever start — nothing to reconcile
+
+			const now = Date.now();
+			const gapMs = now - lastHeartbeat;
+
+			if (gapMs < SLEEP_THRESHOLD_MS) return;
+
+			const gapMinutes = Math.round(gapMs / 60_000);
+			this.deps.onLog(
+				'cue',
+				`[CUE] Sleep detected (gap: ${gapMinutes}m). Reconciling missed events.`
+			);
+
+			// Build session info map for the reconciler
+			const reconcileSessions = new Map<string, ReconcileSessionInfo>();
+			const allSessions = this.deps.getSessions();
+			for (const [sessionId, state] of this.sessions) {
+				const session = allSessions.find((s) => s.id === sessionId);
+				reconcileSessions.set(sessionId, {
+					config: state.config,
+					sessionName: session?.name ?? sessionId,
+				});
+			}
+
+			reconcileMissedTimeEvents({
+				sleepStartMs: lastHeartbeat,
+				wakeTimeMs: now,
+				sessions: reconcileSessions,
+				onDispatch: (sessionId, sub, event) => {
+					this.executeCueRun(sessionId, sub.prompt, event, sub.name);
+				},
+				onLog: (level, message) => {
+					this.deps.onLog(level as MainLogLevel, message);
+				},
+			});
+		} catch (error) {
+			this.deps.onLog('warn', `[CUE] Sleep detection failed: ${error}`);
+		}
 	}
 }
