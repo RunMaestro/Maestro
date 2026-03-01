@@ -23,6 +23,7 @@ import type {
 } from './cue-types';
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
+import { matchesFilter, describeFilter } from './cue-filter';
 import { initCueDb, closeCueDb, updateHeartbeat, getLastHeartbeat, pruneCueEvents } from './cue-db';
 import { reconcileMissedTimeEvents } from './cue-reconciler';
 import type { ReconcileSessionInfo } from './cue-reconciler';
@@ -363,6 +364,16 @@ export class CueEngine {
 							triggeredBy: completionData?.triggeredBy,
 						},
 					};
+
+					// Check payload filter
+					if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
+						this.deps.onLog(
+							'cue',
+							`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+						);
+						continue;
+					}
+
 					this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (agent.completed)`);
 					this.dispatchSubscription(ownerSessionId, sub, event, completingName);
 				} else {
@@ -612,7 +623,12 @@ export class CueEngine {
 	private setupTimerSubscription(
 		session: SessionInfo,
 		state: SessionState,
-		sub: { name: string; prompt: string; interval_minutes?: number }
+		sub: {
+			name: string;
+			prompt: string;
+			interval_minutes?: number;
+			filter?: Record<string, string | number | boolean>;
+		}
 	): void {
 		const intervalMs = (sub.interval_minutes ?? 0) * 60 * 1000;
 		if (intervalMs <= 0) return;
@@ -625,8 +641,17 @@ export class CueEngine {
 			triggerName: sub.name,
 			payload: { interval_minutes: sub.interval_minutes },
 		};
-		this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval, initial)`);
-		this.executeCueRun(session.id, sub.prompt, immediateEvent, sub.name);
+
+		// Check payload filter (even for timer events)
+		if (!sub.filter || matchesFilter(immediateEvent.payload, sub.filter)) {
+			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval, initial)`);
+			this.executeCueRun(session.id, sub.prompt, immediateEvent, sub.name);
+		} else {
+			this.deps.onLog(
+				'cue',
+				`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+			);
+		}
 
 		// Then on the interval
 		const timer = setInterval(() => {
@@ -639,6 +664,16 @@ export class CueEngine {
 				triggerName: sub.name,
 				payload: { interval_minutes: sub.interval_minutes },
 			};
+
+			// Check payload filter
+			if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
+				this.deps.onLog(
+					'cue',
+					`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+				);
+				return;
+			}
+
 			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval)`);
 			state.lastTriggered = event.timestamp;
 			state.nextTriggers.set(sub.name, Date.now() + intervalMs);
@@ -652,7 +687,12 @@ export class CueEngine {
 	private setupFileWatcherSubscription(
 		session: SessionInfo,
 		state: SessionState,
-		sub: { name: string; prompt: string; watch?: string }
+		sub: {
+			name: string;
+			prompt: string;
+			watch?: string;
+			filter?: Record<string, string | number | boolean>;
+		}
 	): void {
 		if (!sub.watch) return;
 
@@ -663,6 +703,16 @@ export class CueEngine {
 			triggerName: sub.name,
 			onEvent: (event) => {
 				if (!this.enabled) return;
+
+				// Check payload filter
+				if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
+					this.deps.onLog(
+						'cue',
+						`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+					);
+					return;
+				}
+
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (file.changed)`);
 				state.lastTriggered = event.timestamp;
 				this.executeCueRun(session.id, sub.prompt, event, sub.name);

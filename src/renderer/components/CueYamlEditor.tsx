@@ -42,6 +42,18 @@ Available event types:
 - file.changed: Runs when files matching a glob pattern change. Requires \`watch\` (glob pattern).
 - agent.completed: Runs when another agent session completes. Requires \`source_session\` (name or array for fan-in). Optional \`fan_out\` array to trigger multiple sessions.
 
+Event filtering (optional \`filter\` block on any subscription):
+- All conditions are AND'd together. Keys are payload field names (dot-notation for nested).
+- "value" — exact string match
+- "!value" — not equal
+- ">N" / "<N" / ">=N" / "<=N" — numeric comparison
+- "glob*" or "src/**/*.ts" — glob pattern match (any string containing *)
+- true / false — boolean match
+- Plain number — numeric equality
+
+file.changed payload fields: path, filename, directory, extension, changeType
+agent.completed payload fields: sourceSession, sourceSessionId, status, exitCode, durationMs
+
 YAML format:
 subscriptions:
   - name: "descriptive name"
@@ -50,6 +62,9 @@ subscriptions:
     watch: "glob/pattern/**"     # for file.changed
     source_session: "name"       # for agent.completed (string or string[])
     fan_out: ["name1", "name2"]  # optional, for agent.completed
+    filter:                      # optional, narrow when subscription fires
+      extension: ".ts"           # example: only .ts files
+      path: "!*.test.ts"         # example: exclude test files
     prompt: path/to/prompt.md    # relative to project root
     enabled: true
 

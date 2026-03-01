@@ -20,6 +20,7 @@ export interface CueSubscription {
 	watch?: string;
 	source_session?: string | string[];
 	fan_out?: string[];
+	filter?: Record<string, string | number | boolean>;
 }
 
 /** Global Cue settings */

@@ -39,6 +39,24 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 	if (Array.isArray(rawSubs)) {
 		for (const sub of rawSubs) {
 			if (sub && typeof sub === 'object') {
+				// Parse filter field: accept plain object with string/number/boolean values
+				let filter: Record<string, string | number | boolean> | undefined;
+				if (sub.filter && typeof sub.filter === 'object' && !Array.isArray(sub.filter)) {
+					const filterObj: Record<string, string | number | boolean> = {};
+					let valid = true;
+					for (const [k, v] of Object.entries(sub.filter as Record<string, unknown>)) {
+						if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+							filterObj[k] = v;
+						} else {
+							valid = false;
+							break;
+						}
+					}
+					if (valid) {
+						filter = filterObj;
+					}
+				}
+
 				subscriptions.push({
 					name: String(sub.name ?? ''),
 					event: String(sub.event ?? '') as CueSubscription['event'],
@@ -49,6 +67,7 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					watch: typeof sub.watch === 'string' ? sub.watch : undefined,
 					source_session: sub.source_session,
 					fan_out: Array.isArray(sub.fan_out) ? sub.fan_out : undefined,
+					filter,
 				});
 			}
 		}
@@ -169,6 +188,27 @@ export function validateCueConfig(config: unknown): { valid: boolean; errors: st
 					errors.push(
 						`${prefix}: "source_session" must be a string or array of strings for agent.completed events`
 					);
+				}
+			}
+
+			// Validate filter field
+			if (sub.filter !== undefined) {
+				if (typeof sub.filter !== 'object' || sub.filter === null || Array.isArray(sub.filter)) {
+					errors.push(`${prefix}: "filter" must be a plain object`);
+				} else {
+					for (const [filterKey, filterVal] of Object.entries(
+						sub.filter as Record<string, unknown>
+					)) {
+						if (
+							typeof filterVal !== 'string' &&
+							typeof filterVal !== 'number' &&
+							typeof filterVal !== 'boolean'
+						) {
+							errors.push(
+								`${prefix}: filter key "${filterKey}" must be a string, number, or boolean (got ${typeof filterVal})`
+							);
+						}
+					}
 				}
 			}
 		}

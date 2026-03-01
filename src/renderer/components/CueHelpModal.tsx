@@ -1,4 +1,15 @@
-import { Zap, FileText, Radio, Code, GitBranch, Clock, Sparkles, Layers, Moon } from 'lucide-react';
+import {
+	Zap,
+	FileText,
+	Radio,
+	Code,
+	GitBranch,
+	Clock,
+	Sparkles,
+	Layers,
+	Moon,
+	Filter,
+} from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -211,7 +222,104 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 					</div>
 				</section>
 
-				{/* Section 4: Template Variables */}
+				{/* Section 4: Event Filtering */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Filter className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Event Filtering</h3>
+					</div>
+					<div className="text-sm space-y-3 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							Add a{' '}
+							<code
+								className="px-1 rounded text-xs"
+								style={{ backgroundColor: theme.colors.bgActivity }}
+							>
+								filter
+							</code>{' '}
+							block to any subscription to narrow when it fires. All conditions must match (AND
+							logic).
+						</p>
+						<table className="w-full text-xs border-collapse">
+							<thead>
+								<tr>
+									<th
+										className="text-left py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									>
+										Expression
+									</th>
+									<th
+										className="text-left py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									>
+										Meaning
+									</th>
+									<th
+										className="text-left py-1 px-2 border-b"
+										style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+									>
+										Example
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{[
+									['"value"', 'Exact match', 'extension: ".ts"'],
+									['"!value"', 'Not equal', 'status: "!archived"'],
+									['">N"', 'Greater than', 'size: ">1000"'],
+									['"<N"', 'Less than', 'priority: "<5"'],
+									['"glob*"', 'Glob pattern', 'path: "src/**/*.ts"'],
+									['true/false', 'Boolean', 'active: true'],
+								].map(([expr, meaning, example], i) => (
+									<tr key={i}>
+										<td
+											className="py-1 px-2 border-b font-mono"
+											style={{ borderColor: theme.colors.border + '50' }}
+										>
+											{expr}
+										</td>
+										<td
+											className="py-1 px-2 border-b"
+											style={{ borderColor: theme.colors.border + '50' }}
+										>
+											{meaning}
+										</td>
+										<td
+											className="py-1 px-2 border-b font-mono"
+											style={{ borderColor: theme.colors.border + '50' }}
+										>
+											{example}
+										</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+						<div
+							className="font-mono text-xs p-3 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							- name: "TypeScript changes only"
+							<br />
+							{'  '}event: file.changed
+							<br />
+							{'  '}watch: "src/**/*"
+							<br />
+							{'  '}filter:
+							<br />
+							{'    '}extension: ".ts"
+							<br />
+							{'    '}path: "!*.test.ts"
+							<br />
+							{'  '}prompt: prompts/ts-review.md
+						</div>
+					</div>
+				</section>
+
+				{/* Section 5: Template Variables */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
 						<Code className="w-5 h-5" style={{ color: theme.colors.accent }} />

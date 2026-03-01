@@ -380,5 +380,136 @@ subscriptions:
 			expect(result.valid).toBe(false);
 			expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining('"prompt"')]));
 		});
+
+		it('accepts valid filter with string/number/boolean values', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'file.changed',
+						prompt: 'Do it',
+						watch: 'src/**',
+						filter: { extension: '.ts', active: true, priority: 5 },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects filter with nested object values', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'file.changed',
+						prompt: 'Do it',
+						watch: 'src/**',
+						filter: { nested: { deep: 'value' } },
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('filter key "nested"')])
+			);
+		});
+
+		it('rejects filter that is an array', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'file.changed',
+						prompt: 'Do it',
+						watch: 'src/**',
+						filter: ['not', 'valid'],
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"filter" must be a plain object')])
+			);
+		});
+
+		it('rejects filter with null value', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'test',
+						event: 'file.changed',
+						prompt: 'Do it',
+						watch: 'src/**',
+						filter: null,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"filter" must be a plain object')])
+			);
+		});
+	});
+
+	describe('loadCueConfig with filter', () => {
+		it('parses filter field from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: ts-only
+    event: file.changed
+    prompt: Review it
+    watch: "src/**/*"
+    filter:
+      extension: ".ts"
+      path: "!*.test.ts"
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].filter).toEqual({
+				extension: '.ts',
+				path: '!*.test.ts',
+			});
+		});
+
+		it('parses filter with boolean and numeric values', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: filtered
+    event: agent.completed
+    prompt: Do it
+    source_session: agent-1
+    filter:
+      active: true
+      exitCode: 0
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].filter).toEqual({
+				active: true,
+				exitCode: 0,
+			});
+		});
+
+		it('ignores filter with invalid nested values', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: bad-filter
+    event: file.changed
+    prompt: Do it
+    watch: "src/**"
+    filter:
+      nested:
+        deep: value
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].filter).toBeUndefined();
+		});
 	});
 });
