@@ -118,13 +118,25 @@ export function registerFeedbackHandlers(deps: FeedbackHandlerDependencies): voi
 				sessionId: string;
 				feedbackText: string;
 			}): Promise<{ success: boolean; error?: string }> => {
+				if (!sessionId || typeof sessionId !== 'string') {
+					return { success: false, error: 'No target agent was selected.' };
+				}
+
+				const trimmedFeedback = typeof feedbackText === 'string' ? feedbackText.trim() : '';
+				if (!trimmedFeedback) {
+					return { success: false, error: 'Feedback cannot be empty.' };
+				}
+				if (trimmedFeedback.length > 5000) {
+					return { success: false, error: 'Feedback exceeds the maximum length (5000).' };
+				}
+
 				const processManager = getProcessManager();
 				if (!processManager) {
 					return { success: false, error: 'Agent process not available' };
 				}
 
 				const promptTemplate = await fs.readFile(getPromptPath(), 'utf-8');
-				const finalPrompt = promptTemplate.replace('{{FEEDBACK}}', feedbackText);
+				const finalPrompt = promptTemplate.replace('{{FEEDBACK}}', trimmedFeedback);
 				const writeSuccess = processManager.write(sessionId, `${finalPrompt}\n`);
 
 				if (!writeSuccess) {

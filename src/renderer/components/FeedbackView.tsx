@@ -24,7 +24,10 @@ function isRunningSession(session: Session): boolean {
 	}
 
 	return (
-		session.state === 'busy' || session.state === 'waiting_input' || session.state === 'connecting'
+		session.state === 'idle' ||
+		session.state === 'busy' ||
+		session.state === 'waiting_input' ||
+		session.state === 'connecting'
 	);
 }
 
@@ -63,6 +66,7 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 	}, []);
 
 	const isSubmittingDisabled = submitting || authState.checking;
+	const isFormDisabled = isSubmittingDisabled || !authState.authenticated;
 
 	const canSubmit =
 		!submitting &&
@@ -111,7 +115,9 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 			const result = await window.maestro.feedback.submit(selectedSessionId, feedbackText.trim());
 
 			if (!result.success) {
-				setSubmitError('The selected agent is no longer running. Please select another agent.');
+				setSubmitError(
+					result.error || 'The selected agent is no longer running. Please select another agent.'
+				);
 				setSubmitting(false);
 				return;
 			}
@@ -153,7 +159,10 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 				</p>
 			)}
 
-			<div className={!authState.authenticated ? 'opacity-40 pointer-events-none' : ''}>
+			<div
+				className={!authState.authenticated ? 'opacity-40 pointer-events-none' : ''}
+				aria-disabled={!authState.authenticated}
+			>
 				{runningSessions.length === 0 ? (
 					<div className="text-sm" style={{ color: theme.colors.textDim }}>
 						No running agents available. Start an agent first, then try again.
@@ -161,13 +170,18 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 				) : (
 					<>
 						<div className="space-y-2">
-							<label className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
-								Target Agent Session
+							<label
+								htmlFor="feedback-target-agent"
+								className="text-sm font-medium"
+								style={{ color: theme.colors.textMain }}
+							>
+								Target Agent
 							</label>
 							<select
+								id="feedback-target-agent"
 								value={selectedSessionId}
 								onChange={(event) => setSelectedSessionId(event.target.value)}
-								disabled={isSubmittingDisabled}
+								disabled={isFormDisabled}
 								className="w-full rounded border bg-transparent px-2 py-2 text-sm outline-none focus:ring-2"
 								style={{
 									borderColor: theme.colors.border,
@@ -184,16 +198,21 @@ export function FeedbackView({ theme, sessions, onCancel, onSubmitSuccess }: Fee
 						</div>
 
 						<div className="space-y-2">
-							<label className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+							<label
+								htmlFor="feedback-text"
+								className="text-sm font-medium"
+								style={{ color: theme.colors.textMain }}
+							>
 								Feedback
 							</label>
 							<textarea
+								id="feedback-text"
 								value={feedbackText}
 								onChange={(event) =>
 									setFeedbackText(event.target.value.slice(0, MAX_FEEDBACK_LENGTH))
 								}
 								onKeyDown={handleTextareaKeyDown}
-								disabled={isSubmittingDisabled}
+								disabled={isFormDisabled}
 								placeholder="Describe the bug, feature request, or feedback..."
 								className="w-full rounded border px-2 py-2 text-sm outline-none focus:ring-2 min-h-[120px] resize-y"
 								style={{
