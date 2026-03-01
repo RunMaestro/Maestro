@@ -11,6 +11,10 @@ import { getActiveTab } from '../../utils/tabHelpers';
 import { getStdinFlags } from '../../utils/spawnHelpers';
 import { generateId } from '../../utils/ids';
 
+/** Per-task inactivity timeout for Auto Run: if no activity (data, thinking, tool) for
+ *  this duration, assume the agent is hung and kill it. TODO: make configurable via settings. */
+const AUTO_RUN_ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+
 /**
  * Result from agent spawn operations.
  */
@@ -212,10 +216,9 @@ export function useAgentExecution(deps: UseAgentExecutionDeps): UseAgentExecutio
 					// this duration, assume the agent is hung and kill it. This catches
 					// mid-execution hangs that the post-execution stall detector in
 					// useBatchProcessor cannot detect (it only triggers after task completion).
-					const ACTIVITY_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 					const activityCheckInterval = setInterval(() => {
 						const idleMs = Date.now() - lastActivityTime;
-						if (idleMs > ACTIVITY_TIMEOUT_MS) {
+						if (idleMs > AUTO_RUN_ACTIVITY_TIMEOUT_MS) {
 							clearInterval(activityCheckInterval);
 							window.maestro.logger.log(
 								'warn',

@@ -26,6 +26,7 @@
 import type { ToolType, AgentError } from '../../shared/types';
 import type { AgentOutputParser, ParsedEvent } from './agent-output-parser';
 import { captureException } from '../utils/sentry';
+import { logger } from '../utils/logger';
 import { getErrorPatterns, matchErrorPattern } from './error-patterns';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -493,8 +494,9 @@ export class CodexOutputParser implements AgentOutputParser {
 			this.toolNamesByCallId.delete(msg.call_id);
 		}
 
-		// Use aggregated_output or stdout, with truncation
-		const rawOutput = msg.aggregated_output || msg.stdout || msg.formatted_output || '';
+		// Use aggregated_output, stdout, stderr, or formatted_output, with truncation
+		const rawOutput =
+			msg.aggregated_output || msg.stdout || msg.stderr || msg.formatted_output || '';
 		const output = this.truncateToolOutput(rawOutput);
 
 		return {
@@ -707,6 +709,10 @@ export class CodexOutputParser implements AgentOutputParser {
 	private truncateToolOutput(output: string): string {
 		if (output.length > CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) {
 			const originalLength = output.length;
+			logger.warn(
+				`Tool output truncated: ${originalLength} chars → ${CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH} chars`,
+				'CodexOutputParser'
+			);
 			return (
 				output.substring(0, CodexOutputParser.MAX_TOOL_OUTPUT_LENGTH) +
 				`\n... [output truncated, ${originalLength} chars total]`

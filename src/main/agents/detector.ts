@@ -28,10 +28,19 @@ const LOG_CONTEXT = 'AgentDetector';
 /** Default cache TTL: 5 minutes (model lists don't change frequently) */
 const DEFAULT_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 
-/** Minimum supported agent versions. Agents below these versions may have incompatible output formats. */
+/**
+ * Minimum supported agent versions. Agents below these versions may have
+ * incompatible output formats that Maestro's parsers cannot handle.
+ *
+ * Maintenance: update an entry when a parser is changed to depend on a newer
+ * output format (e.g., new envelope fields, changed JSON structure). The
+ * version should match the agent release that introduced the format change.
+ * Add new entries when onboarding a new agent whose parser targets a specific
+ * CLI version. Remove entries only if backward compatibility is restored.
+ */
 export const AGENT_MIN_VERSIONS: Record<string, string> = {
-	'codex': '0.41.0',        // New msg-envelope JSONL format
-	'claude-code': '1.0.0',   // Baseline for --output-format stream-json
+	codex: '0.41.0', // New msg-envelope JSONL format
+	'claude-code': '1.0.0', // Baseline for --output-format stream-json
 };
 
 /** Timeout for agent version probes (ms) */
@@ -77,9 +86,7 @@ async function detectAgentVersion(
 		// Parse version from output: try each whitespace-separated part
 		// to find one that looks like a semver (starts with digit, contains dots)
 		const parts = stdout.split(/\s+/);
-		const version = parts
-			.map(p => p.replace(/^v/i, ''))
-			.find(p => /^\d+\.\d+/.test(p));
+		const version = parts.map((p) => p.replace(/^v/i, '')).find((p) => /^\d+\.\d+/.test(p));
 
 		if (!version) {
 			logger.warn(`Could not parse version from ${agentId} output: "${stdout}"`, LOG_CONTEXT);
@@ -202,12 +209,13 @@ export class AgentDetector {
 			// Version detection for agents that define versionArgs (non-blocking, 3s timeout)
 			let detectedVersion: string | undefined;
 			if (detection.exists && detection.path && agentDef.versionArgs) {
-				detectedVersion = await detectAgentVersion(
-					detection.path,
-					agentDef.versionArgs,
-					agentDef.id,
-					expandedEnv
-				) ?? undefined;
+				detectedVersion =
+					(await detectAgentVersion(
+						detection.path,
+						agentDef.versionArgs,
+						agentDef.id,
+						expandedEnv
+					)) ?? undefined;
 			}
 
 			agents.push({
@@ -242,7 +250,7 @@ export class AgentDetector {
 			});
 		} else {
 			logger.info(
-				`Agent detection complete. Available: ${availableAgents.map((a) => a.detectedVersion ? `${a.name} v${a.detectedVersion}` : a.name).join(', ') || 'none'}`,
+				`Agent detection complete. Available: ${availableAgents.map((a) => (a.detectedVersion ? `${a.name} v${a.detectedVersion}` : a.name)).join(', ') || 'none'}`,
 				LOG_CONTEXT
 			);
 		}

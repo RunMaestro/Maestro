@@ -935,6 +935,11 @@ export function useBatchProcessor({
 
 					const docEntry = documents[docIndex];
 
+					// Skip documents that have already been marked as stalled
+					if (stalledDocuments.has(docEntry.filename)) {
+						continue;
+					}
+
 					// Read document and count tasks
 					let {
 						taskCount: remainingTasks,
@@ -1428,6 +1433,12 @@ export function useBatchProcessor({
 				// Check for stop request after full pass
 				if (stopRequestedRefs.current[sessionId]) {
 					addFinalLoopSummary('Stopped by user');
+					break;
+				}
+
+				// Safety check: if all documents are stalled, exit to avoid infinite loop
+				if (stalledDocuments.size >= documents.length) {
+					addFinalLoopSummary('All documents stalled');
 					break;
 				}
 
