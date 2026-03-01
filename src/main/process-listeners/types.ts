@@ -6,6 +6,7 @@
 import type { ProcessManager } from '../process-manager';
 import type { WebServer } from '../web-server';
 import type { AgentDetector } from '../agents';
+import type { CueEngine } from '../cue/cue-engine';
 import type { SafeSendFn } from '../utils/safe-send';
 import type { StatsDB } from '../stats';
 import type { GroupChat, GroupChatParticipant } from '../group-chat/group-chat-storage';
@@ -163,4 +164,8 @@ export interface ProcessListenerDependencies {
 		warn: (message: string, context: string, data?: Record<string, unknown>) => void;
 		debug: (message: string, context: string, data?: Record<string, unknown>) => void;
 	};
+	/** Function to get the Cue engine (for agent completion chain notifications) */
+	getCueEngine?: () => CueEngine | null;
+	/** Function to check if the Maestro Cue Encore Feature is enabled */
+	isCueEnabled?: () => boolean;
 }

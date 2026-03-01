@@ -796,6 +796,11 @@ function setupProcessListeners() {
 				REGEX_SYNOPSIS_SESSION,
 			},
 			logger,
+			getCueEngine: () => cueEngine,
+			isCueEnabled: () => {
+				const ef = store.get('encoreFeatures', {}) as Record<string, boolean>;
+				return !!ef.maestroCue;
+			},
 		});
 
 		// WakaTime heartbeat listener (query-complete → heartbeat, exit → cleanup)

@@ -34,6 +34,8 @@ export function setupExitListener(
 		| 'debugLog'
 		| 'logger'
 		| 'patterns'
+		| 'getCueEngine'
+		| 'isCueEnabled'
 	>
 ): void {
 	const {
@@ -51,6 +53,8 @@ export function setupExitListener(
 		debugLog,
 		logger,
 		patterns,
+		getCueEngine,
+		isCueEnabled,
 	} = deps;
 	const { REGEX_MODERATOR_SESSION } = patterns;
 
@@ -439,6 +443,18 @@ export function setupExitListener(
 				exitCode: code,
 				timestamp: Date.now(),
 			});
+		}
+
+		// Notify Cue engine that this agent session has completed.
+		// This triggers agent.completed subscriptions for completion chains.
+		if (isCueEnabled?.() && getCueEngine) {
+			const cueEngine = getCueEngine();
+			if (cueEngine?.hasCompletionSubscribers(sessionId)) {
+				cueEngine.notifyAgentCompleted(sessionId, {
+					status: code === 0 ? 'completed' : 'failed',
+					exitCode: code,
+				});
+			}
 		}
 	});
 }
