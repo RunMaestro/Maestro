@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import { LogViewer } from './LogViewer';
 import { TerminalOutput } from './TerminalOutput';
+import { TerminalView, TerminalViewHandle, createTabStateChangeHandler, createTabPidChangeHandler } from './TerminalView';
 import { InputArea } from './InputArea';
 import { FilePreview, FilePreviewHandle } from './FilePreview';
 import { ErrorBoundary } from './ErrorBoundary';
@@ -412,6 +413,8 @@ export const MainPanel = React.memo(
 
 		// Phase 3C: Direct store subscriptions (migrated from props)
 		const fontFamily = useSettingsStore((s) => s.fontFamily);
+		const defaultShell = useSettingsStore((s) => s.defaultShell);
+		const fontSize = useSettingsStore((s) => s.fontSize);
 		const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
 		const enterToSendTerminal = useSettingsStore((s) => s.enterToSendTerminal);
 		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
@@ -447,6 +450,7 @@ export const MainPanel = React.memo(
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
+		const terminalViewRef = useRef<TerminalViewHandle>(null);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 
 		// Extract tab handlers from props
@@ -1667,6 +1671,17 @@ export const MainPanel = React.memo(
 											}
 											setLightboxImage={setLightboxImage}
 										/>
+									) : activeSession.inputMode === 'terminal' ? (
+										<TerminalView
+											ref={terminalViewRef}
+											session={activeSession}
+											theme={theme}
+											fontFamily={fontFamily}
+											fontSize={fontSize}
+											defaultShell={defaultShell}
+											onTabStateChange={createTabStateChangeHandler(activeSession.id)}
+											onTabPidChange={createTabPidChangeHandler(activeSession.id)}
+										/>
 									) : (
 										<TerminalOutput
 											key={`${activeSession.id}-${activeSession.activeTabId}`}
@@ -1689,11 +1704,7 @@ export const MainPanel = React.memo(
 											onInterrupt={handleInterrupt}
 											onScrollPositionChange={props.onScrollPositionChange}
 											onAtBottomChange={props.onAtBottomChange}
-											initialScrollTop={
-												activeSession.inputMode === 'ai'
-													? activeTab?.scrollTop
-													: activeSession.terminalScrollTop
-											}
+											initialScrollTop={activeTab?.scrollTop}
 											markdownEditMode={chatRawTextMode}
 											setMarkdownEditMode={useSettingsStore.getState().setChatRawTextMode}
 											onReplayMessage={props.onReplayMessage}
@@ -1718,22 +1729,16 @@ export const MainPanel = React.memo(
 									)}
 								</div>
 
-								{/* Input Area (hidden in mobile landscape for focused reading, and during wizard doc generation) */}
-								{!isMobileLandscape && !activeTab?.wizardState?.isGeneratingDocs && (
+								{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}
+								{!isMobileLandscape && !activeTab?.wizardState?.isGeneratingDocs && activeSession.inputMode !== 'terminal' && (
 									<div data-tour="input-area">
 										<InputArea
 											session={activeSession}
 											theme={theme}
 											inputValue={inputValue}
 											setInputValue={setInputValue}
-											enterToSend={
-												activeSession.inputMode === 'terminal' ? enterToSendTerminal : enterToSendAI
-											}
-											setEnterToSend={
-												activeSession.inputMode === 'terminal'
-													? useSettingsStore.getState().setEnterToSendTerminal
-													: useSettingsStore.getState().setEnterToSendAI
-											}
+											enterToSend={enterToSendAI}
+											setEnterToSend={useSettingsStore.getState().setEnterToSendAI}
 											stagedImages={stagedImages}
 											setStagedImages={setStagedImages}
 											setLightboxImage={setLightboxImage}
