@@ -5039,7 +5039,6 @@ You are taking over this conversation. Based on the context above, provide a bri
 				sourceTabId: activeTab.id,
 				targetProvider: request.targetProvider,
 				groomContext: request.groomContext,
-				archiveSource: request.archiveSource,
 				mergeBackInto: request.mergeBackInto,
 			});
 
