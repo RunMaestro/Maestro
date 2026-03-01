@@ -33,9 +33,10 @@ export type ThemeCSSProperty =
 	| '--maestro-mode';
 
 /**
- * Maps theme color keys to CSS custom property names
+ * Maps base theme color keys to CSS custom property names.
+ * ANSI fields are excluded — they are only used for terminal emulation, not CSS variables.
  */
-const colorToCSSProperty: Record<keyof ThemeColors, ThemeCSSProperty> = {
+const colorToCSSProperty: Partial<Record<keyof ThemeColors, ThemeCSSProperty>> = {
 	bgMain: '--maestro-bg-main',
 	bgSidebar: '--maestro-bg-sidebar',
 	bgActivity: '--maestro-bg-activity',
@@ -92,10 +93,12 @@ export const THEME_CSS_PROPERTIES: ThemeCSSProperty[] = [
 export function generateCSSProperties(theme: Theme): Record<ThemeCSSProperty, string> {
 	const properties: Partial<Record<ThemeCSSProperty, string>> = {};
 
-	// Add color properties
-	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty)) {
+	// Add color properties (skip ANSI fields which don't have CSS variable mappings)
+	for (const [colorKey, cssProperty] of Object.entries(colorToCSSProperty) as [string, ThemeCSSProperty][]) {
 		const colorValue = theme.colors[colorKey as keyof ThemeColors];
-		properties[cssProperty] = colorValue;
+		if (colorValue !== undefined) {
+			properties[cssProperty] = colorValue;
+		}
 	}
 
 	// Add mode property for CSS selectors based on theme mode
