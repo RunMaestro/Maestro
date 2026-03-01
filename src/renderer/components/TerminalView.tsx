@@ -1,5 +1,6 @@
 import { memo, forwardRef, useImperativeHandle, useRef, useEffect } from 'react';
 import { XTerminal, XTerminalHandle } from './XTerminal';
+import { TerminalSearchBar } from './TerminalSearchBar';
 import { getActiveTerminalTab, getTerminalSessionId, parseTerminalSessionId, updateTerminalTabState, updateTerminalTabPid } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
 import type { Session, TerminalTab } from '../types';
@@ -47,6 +48,8 @@ export const TerminalView = memo(
 			shellEnvVars,
 			onTabStateChange,
 			onTabPidChange,
+			searchOpen,
+			onSearchClose,
 		},
 		ref
 	) {
@@ -126,6 +129,14 @@ export const TerminalView = memo(
 			}
 		}, [activeTab?.id]);
 
+		// Close search when the active terminal tab changes
+		useEffect(() => {
+			if (searchOpen) {
+				onSearchClose?.();
+			}
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		}, [activeTab?.id]);
+
 		// Subscribe to PTY exit events for terminal tabs in this session
 		useEffect(() => {
 			const cleanup = window.maestro.process.onExit((exitSessionId: string, code: number) => {
@@ -147,8 +158,33 @@ export const TerminalView = memo(
 			);
 		}
 
+		const handleSearchClose = () => {
+			onSearchClose?.();
+			// Return focus to the active terminal
+			if (activeTab) {
+				terminalRefs.current.get(activeTab.id)?.focus();
+			}
+		};
+
 		return (
 			<div className="flex-1 relative overflow-hidden">
+				<TerminalSearchBar
+					theme={theme}
+					isOpen={!!searchOpen}
+					onClose={handleSearchClose}
+					onSearch={(q) => {
+						if (!activeTab) return false;
+						return terminalRefs.current.get(activeTab.id)?.search(q) ?? false;
+					}}
+					onSearchNext={() => {
+						if (!activeTab) return false;
+						return terminalRefs.current.get(activeTab.id)?.searchNext() ?? false;
+					}}
+					onSearchPrevious={() => {
+						if (!activeTab) return false;
+						return terminalRefs.current.get(activeTab.id)?.searchPrevious() ?? false;
+					}}
+				/>
 				{terminalTabs.map((tab) => {
 					const isActive = tab.id === session.activeTerminalTabId;
 					const terminalSessionId = getTerminalSessionId(session.id, tab.id);

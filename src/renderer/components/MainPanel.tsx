@@ -465,6 +465,13 @@ export const MainPanel = React.memo(
 		const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
 
+		// Close terminal search when switching away from terminal mode
+		useEffect(() => {
+			if (activeSession?.inputMode !== 'terminal') {
+				setTerminalSearchOpen(false);
+			}
+		}, [activeSession?.inputMode]);
+
 		// Extract tab handlers from props
 		const {
 			onTabSelect,
