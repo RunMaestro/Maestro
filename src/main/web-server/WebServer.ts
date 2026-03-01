@@ -388,7 +388,7 @@ export class WebServer {
 			getTheme: () => this.callbackRegistry.getTheme(),
 			writeToSession: (sessionId, data) => this.callbackRegistry.writeToSession(sessionId, data),
 			interruptSession: async (sessionId) => this.callbackRegistry.interruptSession(sessionId),
-			getHistory: (projectPath, sessionId) =>
+			getHistory: async (projectPath, sessionId) =>
 				this.callbackRegistry.getHistory(projectPath, sessionId),
 			getLiveSessionInfo: (sessionId) => this.liveSessionManager.getLiveSessionInfo(sessionId),
 			isSessionLive: (sessionId) => this.liveSessionManager.isSessionLive(sessionId),

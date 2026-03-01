@@ -42,7 +42,7 @@ export interface ApiRouteCallbacks {
 	getTheme: () => Theme | null;
 	writeToSession: (sessionId: string, data: string) => boolean;
 	interruptSession: (sessionId: string) => Promise<boolean>;
-	getHistory: (projectPath?: string, sessionId?: string) => HistoryEntry[];
+	getHistory: (projectPath?: string, sessionId?: string) => Promise<HistoryEntry[]>;
 	getLiveSessionInfo: (sessionId: string) => LiveSessionInfo | undefined;
 	isSessionLive: (sessionId: string) => boolean;
 }
@@ -324,7 +324,7 @@ export class ApiRoutes {
 				};
 
 				try {
-					const entries = this.callbacks.getHistory(projectPath, sessionId);
+					const entries = await this.callbacks.getHistory(projectPath, sessionId);
 					return {
 						entries,
 						count: entries.length,
