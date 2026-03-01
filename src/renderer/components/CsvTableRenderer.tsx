@@ -4,6 +4,7 @@ import type { Theme } from '../types';
 
 const NUMBER_VALUE_REGEX = /^[($\-]*[\d,]+(\.\d+)?[%)]*$/;
 const REGEX_ESCAPE_REGEX = /[.*+?^${}()|[\]\\]/g;
+const NUMERIC_CLEANUP_REGEX = /[,$%()]/g;
 
 interface CsvTableRendererProps {
 	content: string;
@@ -128,8 +129,8 @@ function compareValues(a: string, b: string, direction: SortDirection): number {
 	if (bVal === '') return -1;
 
 	// Try numeric comparison
-	const aNum = parseFloat(aVal.replace(/[,$%()]/g, ''));
-	const bNum = parseFloat(bVal.replace(/[,$%()]/g, ''));
+	const aNum = parseFloat(aVal.replace(NUMERIC_CLEANUP_REGEX, ''));
+	const bNum = parseFloat(bVal.replace(NUMERIC_CLEANUP_REGEX, ''));
 
 	if (!isNaN(aNum) && !isNaN(bNum)) {
 		return direction === 'asc' ? aNum - bNum : bNum - aNum;
