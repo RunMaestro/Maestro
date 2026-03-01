@@ -2031,7 +2031,6 @@ function MaestroConsoleInner() {
 				sourceTabId: activeTab.id,
 				targetProvider: request.targetProvider,
 				groomContext: request.groomContext,
-				archiveSource: request.archiveSource,
 				mergeBackInto: request.mergeBackInto,
 			});
 

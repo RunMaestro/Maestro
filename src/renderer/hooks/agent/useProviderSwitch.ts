@@ -45,8 +45,6 @@ export interface ProviderSwitchRequest {
 	targetProvider: ToolType;
 	/** Whether to groom context for target provider */
 	groomContext: boolean;
-	/** Whether to auto-archive source session after switch */
-	archiveSource: boolean;
 	/**
 	 * When set, reactivate this archived session instead of creating a new one.
 	 * The groomed context from the source is appended to the target session's logs.
@@ -91,7 +89,7 @@ export interface UseProviderSwitchResult {
 export function findArchivedPredecessor(
 	sessions: Session[],
 	currentSession: Session,
-	targetProvider: ToolType,
+	targetProvider: ToolType
 ): Session | null {
 	let cursor: Session | undefined = currentSession;
 	const visited = new Set<string>();
@@ -109,7 +107,7 @@ export function findArchivedPredecessor(
 		}
 
 		if (cursor.migratedFromSessionId) {
-			cursor = sessions.find(s => s.id === cursor!.migratedFromSessionId);
+			cursor = sessions.find((s) => s.id === cursor!.migratedFromSessionId);
 		} else {
 			break;
 		}
@@ -142,7 +140,6 @@ const INITIAL_PROGRESS: GroomingProgress = {
  *   sourceTabId: activeTabId,
  *   targetProvider: 'codex',
  *   groomContext: true,
- *   archiveSource: true,
  * });
  *
  * if (result.success && result.newSession) {
@@ -263,9 +260,7 @@ export function useProviderSwitch(): UseProviderSwitchResult {
 				});
 
 				const sessionDisplayName =
-					sourceSession.name ||
-					sourceSession.projectRoot.split('/').pop() ||
-					'Unnamed Session';
+					sourceSession.name || sourceSession.projectRoot.split('/').pop() || 'Unnamed Session';
 
 				const sourceContext = extractTabContext(sourceTab, sessionDisplayName, sourceSession);
 
@@ -286,10 +281,7 @@ export function useProviderSwitch(): UseProviderSwitchResult {
 						},
 					});
 
-					const transferPrompt = buildContextTransferPrompt(
-						sourceSession.toolType,
-						targetProvider
-					);
+					const transferPrompt = buildContextTransferPrompt(sourceSession.toolType, targetProvider);
 
 					const groomingRequest: MergeRequest = {
 						sources: [sourceContext],
