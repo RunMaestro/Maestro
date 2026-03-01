@@ -24,6 +24,7 @@ import { generateId } from '../../utils/ids';
 import { useSessionStore, selectActiveSession } from '../../stores/sessionStore';
 import { useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
+import { useTabStore } from '../../stores/tabStore';
 
 // ============================================================================
 // Types
@@ -1420,5 +1421,61 @@ export function useTabHandlers(): TabHandlersReturn {
 		handleScrollPositionChange,
 		handleAtBottomChange,
 		handleDeleteLog,
+	};
+}
+
+// ============================================================================
+// Terminal Tab Handlers
+// ============================================================================
+
+export interface TerminalTabHandlersReturn {
+	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
+	handleCloseTerminalTab: (tabId: string) => void;
+	handleSelectTerminalTab: (tabId: string) => void;
+	handleRenameTerminalTab: (tabId: string, name: string) => void;
+}
+
+/**
+ * Thin wrapper hook exposing terminal tab operations via the tabStore.
+ * Components call this hook to manipulate terminal tabs without directly
+ * importing the store.
+ */
+export function useTerminalTabHandlers(): TerminalTabHandlersReturn {
+	const { createTerminalTab, closeTerminalTab, selectTerminalTab, renameTerminalTab } =
+		useTabStore();
+
+	const handleOpenTerminalTab = useCallback(
+		(options?: { shell?: string; cwd?: string; name?: string | null }) => {
+			createTerminalTab(options);
+		},
+		[createTerminalTab]
+	);
+
+	const handleCloseTerminalTab = useCallback(
+		(tabId: string) => {
+			closeTerminalTab(tabId);
+		},
+		[closeTerminalTab]
+	);
+
+	const handleSelectTerminalTab = useCallback(
+		(tabId: string) => {
+			selectTerminalTab(tabId);
+		},
+		[selectTerminalTab]
+	);
+
+	const handleRenameTerminalTab = useCallback(
+		(tabId: string, name: string) => {
+			renameTerminalTab(tabId, name);
+		},
+		[renameTerminalTab]
+	);
+
+	return {
+		handleOpenTerminalTab,
+		handleCloseTerminalTab,
+		handleSelectTerminalTab,
+		handleRenameTerminalTab,
 	};
 }

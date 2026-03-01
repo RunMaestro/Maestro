@@ -945,8 +945,36 @@ export function reopenUnifiedClosedTab(session: Session): ReopenUnifiedClosedTab
 			wasDuplicate: false,
 		};
 	} else {
-		// Terminal tab restore — implemented in Phase 3 (terminalTabHelpers.ts)
-		return null;
+		// Terminal tab restore — create a fresh terminal tab (old PTY is gone, can't restore)
+		const closedTerminalTab = closedEntry.tab;
+		const freshTab = createTerminalTab(
+			closedTerminalTab.shellType,
+			closedTerminalTab.cwd,
+			closedTerminalTab.name
+		);
+
+		// Insert into unifiedTabOrder at the original position
+		const targetUnifiedIndex = Math.min(closedEntry.unifiedIndex, session.unifiedTabOrder.length);
+		const newTabRef: UnifiedTabRef = { type: 'terminal', id: freshTab.id };
+		const updatedUnifiedTabOrder = [
+			...session.unifiedTabOrder.slice(0, targetUnifiedIndex),
+			newTabRef,
+			...session.unifiedTabOrder.slice(targetUnifiedIndex),
+		];
+
+		return {
+			tabType: 'terminal',
+			tabId: freshTab.id,
+			session: {
+				...session,
+				terminalTabs: [...(session.terminalTabs || []), freshTab],
+				activeTerminalTabId: freshTab.id,
+				unifiedTabOrder: updatedUnifiedTabOrder,
+				unifiedClosedTabHistory: remainingHistory,
+				inputMode: 'terminal',
+			},
+			wasDuplicate: false,
+		};
 	}
 }
 
