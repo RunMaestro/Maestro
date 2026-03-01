@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { CheckCircle, XCircle, Copy, Zap } from 'lucide-react';
 import { Modal, ModalFooter } from './ui/Modal';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
+import { CUE_PATTERNS } from '../constants/cuePatterns';
 import type { Theme } from '../types';
 
 const CUE_TEAL = '#06b6d4';
@@ -73,6 +74,29 @@ settings:
   timeout_on_fail: break         # or "continue"
   max_concurrent: 1              # max simultaneous runs per session (1-10)
   queue_size: 10                 # max queued events per session (0-50)
+
+When the user describes a multi-agent workflow, identify the best matching pattern:
+
+- **Scheduled Task**: Single agent, periodic execution → time.interval
+- **File Enrichment**: React to file changes → file.changed with watch glob
+- **Research Swarm**: Multiple agents research in parallel, then synthesize → fan_out + fan-in with source_session array
+- **Sequential Chain**: A → B → C pipeline → agent.completed linking sessions
+- **Debate**: Multiple perspectives, then synthesis → fan_out to opposing agents + fan-in to moderator
+
+For multi-session patterns (Swarm, Chain, Debate), generate the YAML for the primary orchestrator session and include commented-out YAML for the secondary sessions, clearly labeled with which session each block belongs to.
+
+Available filter operators for narrowing events:
+- Exact: extension: ".ts"
+- Negation: status: "!archived"
+- Comparison: size: ">1000"
+- Glob: path: "src/**/*.ts"
+- Boolean: active: true
+
+Available settings:
+- timeout_minutes: 30 (default)
+- timeout_on_fail: break | continue
+- max_concurrent: 1 (default, max 10)
+- queue_size: 10 (default, max 50)
 
 Output ONLY the YAML content, no markdown code fences, no explanation.`;
 
@@ -186,6 +210,21 @@ export function CueYamlEditor({
 		onClose();
 	}, [yamlContent, originalContent, onClose]);
 
+	const handlePatternSelect = useCallback(
+		(yaml: string) => {
+			const editorDirty = yamlContent !== originalContent;
+			if (editorDirty) {
+				const confirmed = window.confirm(
+					'Replace current YAML with this pattern? Unsaved changes will be lost.'
+				);
+				if (!confirmed) return;
+			}
+			setYamlContent(yaml);
+			validateYaml(yaml);
+		},
+		[yamlContent, originalContent, validateYaml]
+	);
+
 	const handleCopyPrompt = useCallback(async () => {
 		const fullPrompt = `${AI_SYSTEM_PROMPT}\n\n---\n\nUser request:\n${aiDescription}`;
 		try {
@@ -268,6 +307,38 @@ export function CueYamlEditor({
 				<div className="flex gap-4" style={{ minHeight: 400 }}>
 					{/* Left side: AI input (40%) */}
 					<div className="flex flex-col gap-3" style={{ width: '40%' }}>
+						<h3
+							className="text-xs font-bold uppercase tracking-wider"
+							style={{ color: theme.colors.textDim }}
+						>
+							Start from a pattern
+						</h3>
+						<div className="grid grid-cols-2 gap-1.5" data-testid="pattern-presets">
+							{CUE_PATTERNS.map((pattern) => (
+								<button
+									key={pattern.id}
+									onClick={() => handlePatternSelect(pattern.yaml)}
+									className="text-left px-2 py-1.5 rounded border text-xs transition-colors hover:opacity-90"
+									style={{
+										borderColor: theme.colors.border,
+										color: theme.colors.textMain,
+										backgroundColor: theme.colors.bgActivity,
+									}}
+									data-testid={`pattern-${pattern.id}`}
+								>
+									<div className="font-medium truncate">{pattern.name}</div>
+									<div
+										className="truncate mt-0.5"
+										style={{ color: theme.colors.textDim, fontSize: 10 }}
+									>
+										{pattern.description}
+									</div>
+								</button>
+							))}
+						</div>
+
+						<div className="w-full border-t" style={{ borderColor: theme.colors.border }} />
+
 						<h3
 							className="text-xs font-bold uppercase tracking-wider"
 							style={{ color: theme.colors.textDim }}
