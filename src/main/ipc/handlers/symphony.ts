@@ -25,6 +25,7 @@ import {
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
 	STARS_CACHE_TTL_MS,
+	ISSUE_COUNTS_CACHE_TTL_MS,
 	SYMPHONY_STATE_PATH,
 	SYMPHONY_CACHE_PATH,
 	SYMPHONY_REPOS_DIR,
@@ -45,6 +46,7 @@ import type {
 	ContributionStatus,
 	GetRegistryResponse,
 	GetIssuesResponse,
+	GetIssueCountsResponse,
 	StartContributionResponse,
 	CompleteContributionResponse,
 	IssueStatus,
@@ -507,6 +509,54 @@ async function fetchIssues(repoSlug: string): Promise<SymphonyIssue[]> {
 			error
 		);
 	}
+}
+
+/**
+ * Fetch issue counts for all repos in a single GitHub Search API call.
+ * Uses the search/issues endpoint with multiple repo: qualifiers (OR'd together).
+ * Returns a map of slug -> open issue count with the runmaestro.ai label.
+ */
+async function fetchIssueCounts(repoSlugs: string[]): Promise<Record<string, number>> {
+	if (repoSlugs.length === 0) return {};
+
+	logger.info(`Fetching issue counts for ${repoSlugs.length} repos via Search API`, LOG_CONTEXT);
+
+	// Build query: label:runmaestro.ai state:open repo:A repo:B repo:C ...
+	const repoQualifiers = repoSlugs.map((s) => `repo:${s}`).join('+');
+	const query = `label:${encodeURIComponent(SYMPHONY_ISSUE_LABEL)}+state:open+${repoQualifiers}`;
+	const url = `${GITHUB_API_BASE}/search/issues?q=${query}&per_page=100`;
+
+	const response = await fetch(url, {
+		headers: {
+			Accept: 'application/vnd.github.v3+json',
+			'User-Agent': 'Maestro-Symphony',
+		},
+	});
+
+	if (!response.ok) {
+		throw new SymphonyError(`Search API failed: ${response.status}`, 'github_api');
+	}
+
+	const data = (await response.json()) as {
+		total_count: number;
+		items: Array<{ repository_url: string }>;
+	};
+
+	// Initialize all slugs to 0, then count from results
+	const counts: Record<string, number> = {};
+	for (const slug of repoSlugs) {
+		counts[slug] = 0;
+	}
+	for (const item of data.items) {
+		// repository_url looks like https://api.github.com/repos/RunMaestro/Maestro
+		const slug = item.repository_url.replace(`${GITHUB_API_BASE}/repos/`, '');
+		if (slug in counts) {
+			counts[slug]++;
+		}
+	}
+
+	logger.info(`Issue counts fetched: ${JSON.stringify(counts)}`, LOG_CONTEXT);
+	return counts;
 }
 
 /**
@@ -1157,6 +1207,73 @@ export function registerSymphonyHandlers({
 					}
 
 					// No cache available - re-throw to show error to user
+					throw error;
+				}
+			}
+		)
+	);
+
+	/**
+	 * Get issue counts for all active repos via GitHub Search API (single call).
+	 */
+	ipcMain.handle(
+		'symphony:getIssueCounts',
+		createIpcHandler(
+			handlerOpts('getIssueCounts'),
+			async (
+				repoSlugs: string[],
+				forceRefresh?: boolean
+			): Promise<Omit<GetIssueCountsResponse, 'success'>> => {
+				const cache = await readCache(app);
+
+				// Check cache
+				if (
+					!forceRefresh &&
+					cache?.issueCounts &&
+					isCacheValid(cache.issueCounts.fetchedAt, ISSUE_COUNTS_CACHE_TTL_MS)
+				) {
+					return {
+						counts: cache.issueCounts.data,
+						fromCache: true,
+						cacheAge: Date.now() - cache.issueCounts.fetchedAt,
+					};
+				}
+
+				// Fetch fresh via Search API
+				try {
+					const counts = await fetchIssueCounts(repoSlugs);
+
+					// Update cache
+					const newCache: SymphonyCache = {
+						...cache,
+						registry: cache?.registry,
+						issues: cache?.issues ?? {},
+						issueCounts: {
+							data: counts,
+							fetchedAt: Date.now(),
+						},
+					};
+					await writeCache(app, newCache);
+
+					return {
+						counts,
+						fromCache: false,
+					};
+				} catch (error) {
+					logger.warn('Failed to fetch issue counts from GitHub Search API', LOG_CONTEXT, {
+						error,
+					});
+
+					// Fallback to expired cache if available
+					if (cache?.issueCounts?.data) {
+						const cacheAge = Date.now() - cache.issueCounts.fetchedAt;
+						return {
+							counts: cache.issueCounts.data,
+							fromCache: true,
+							cacheAge,
+						};
+					}
+
 					throw error;
 				}
 			}

@@ -10,6 +10,7 @@ import {
 	type SymphonyCategory,
 	type SymphonyLabel,
 	type SymphonyIssue,
+	type SymphonyCache,
 	type ContributionStatus,
 	type IssueStatus,
 } from '../../shared/symphony-types';
@@ -196,6 +197,29 @@ describe('shared/symphony-types', () => {
 				status: 'available',
 			};
 			expect(issue.labels).toEqual([]);
+		});
+	});
+
+	// ==========================================================================
+	// SymphonyCache Type Tests
+	// ==========================================================================
+	describe('SymphonyCache type', () => {
+		it('should allow issueCounts field to be omitted (optional)', () => {
+			const cache: SymphonyCache = { issues: {} };
+			expect(cache.issueCounts).toBeUndefined();
+		});
+
+		it('should accept issueCounts with data and fetchedAt', () => {
+			const cache: SymphonyCache = {
+				issues: {},
+				issueCounts: {
+					data: { 'owner/repo': 5, 'owner/other': 0 },
+					fetchedAt: 1700000000000,
+				},
+			};
+			expect(cache.issueCounts?.data['owner/repo']).toBe(5);
+			expect(cache.issueCounts?.data['owner/other']).toBe(0);
+			expect(cache.issueCounts?.fetchedAt).toBe(1700000000000);
 		});
 	});
 });

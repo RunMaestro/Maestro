@@ -2321,6 +2321,16 @@ interface MaestroAPI {
 			cacheAge?: number;
 			error?: string;
 		}>;
+		getIssueCounts: (
+			repoSlugs: string[],
+			forceRefresh?: boolean
+		) => Promise<{
+			success: boolean;
+			counts?: Record<string, number>;
+			fromCache?: boolean;
+			cacheAge?: number;
+			error?: string;
+		}>;
 		// State operations
 		getState: () => Promise<{
 			success: boolean;

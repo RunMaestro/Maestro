@@ -150,6 +150,14 @@ export interface GetIssuesResponse {
 	error?: string;
 }
 
+export interface GetIssueCountsResponse {
+	success: boolean;
+	counts?: Record<string, number>;
+	fromCache?: boolean;
+	cacheAge?: number;
+	error?: string;
+}
+
 export interface GetStateResponse {
 	success: boolean;
 	state?: SymphonyState;
@@ -202,6 +210,12 @@ export function createSymphonyApi() {
 
 		getIssues: (repoSlug: string, forceRefresh?: boolean): Promise<GetIssuesResponse> =>
 			ipcRenderer.invoke('symphony:getIssues', repoSlug, forceRefresh),
+
+		getIssueCounts: (
+			repoSlugs: string[],
+			forceRefresh?: boolean
+		): Promise<GetIssueCountsResponse> =>
+			ipcRenderer.invoke('symphony:getIssueCounts', repoSlugs, forceRefresh),
 
 		// State operations
 		getState: (): Promise<GetStateResponse> => ipcRenderer.invoke('symphony:getState'),

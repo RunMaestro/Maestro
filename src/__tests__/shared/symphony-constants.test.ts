@@ -12,6 +12,7 @@ import {
 	REGISTRY_CACHE_TTL_MS,
 	ISSUES_CACHE_TTL_MS,
 	STARS_CACHE_TTL_MS,
+	ISSUE_COUNTS_CACHE_TTL_MS,
 	BRANCH_TEMPLATE,
 	SYMPHONY_CATEGORIES,
 	DOCUMENT_PATH_PATTERNS,
@@ -75,6 +76,13 @@ describe('shared/symphony-constants', () => {
 		it('should be 24 hours in milliseconds', () => {
 			const twentyFourHoursMs = 24 * 60 * 60 * 1000;
 			expect(STARS_CACHE_TTL_MS).toBe(twentyFourHoursMs);
+		});
+	});
+
+	describe('ISSUE_COUNTS_CACHE_TTL_MS', () => {
+		it('should be 30 minutes in milliseconds', () => {
+			const thirtyMinutesMs = 30 * 60 * 1000;
+			expect(ISSUE_COUNTS_CACHE_TTL_MS).toBe(thirtyMinutesMs);
 		});
 	});
 

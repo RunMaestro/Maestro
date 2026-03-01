@@ -33,6 +33,10 @@ export interface UseSymphonyReturn {
 	fromCache: boolean;
 	cacheAge: number | null;
 
+	// Issue counts (per-repo, fetched via Search API)
+	issueCounts: Record<string, number> | null;
+	isLoadingIssueCounts: boolean;
+
 	// Filtering
 	selectedCategory: SymphonyCategory | 'all';
 	setSelectedCategory: (category: SymphonyCategory | 'all') => void;
@@ -98,6 +102,10 @@ export function useSymphony(): UseSymphonyReturn {
 	const [selectedRepo, setSelectedRepo] = useState<RegisteredRepository | null>(null);
 	const [repoIssues, setRepoIssues] = useState<SymphonyIssue[]>([]);
 	const [isLoadingIssues, setIsLoadingIssues] = useState(false);
+
+	// Issue counts (from Search API batch query)
+	const [issueCounts, setIssueCounts] = useState<Record<string, number> | null>(null);
+	const [isLoadingIssueCounts, setIsLoadingIssueCounts] = useState(false);
 
 	// Symphony state
 	const [symphonyState, setSymphonyState] = useState<SymphonyState | null>(null);
@@ -187,11 +195,34 @@ export function useSymphony(): UseSymphonyReturn {
 		}
 	}, []);
 
+	const fetchIssueCounts = useCallback(async (repos: RegisteredRepository[]) => {
+		if (repos.length === 0) return;
+		setIsLoadingIssueCounts(true);
+		try {
+			const slugs = repos.map((r) => r.slug);
+			const response = await window.maestro.symphony.getIssueCounts(slugs);
+			if (response.counts) {
+				setIssueCounts(response.counts);
+			}
+		} catch (err) {
+			console.error('Failed to fetch issue counts:', err);
+		} finally {
+			setIsLoadingIssueCounts(false);
+		}
+	}, []);
+
 	// Initial fetch
 	useEffect(() => {
 		fetchRegistry();
 		fetchSymphonyState();
 	}, [fetchRegistry, fetchSymphonyState]);
+
+	// Fetch issue counts once repositories are loaded
+	useEffect(() => {
+		if (repositories.length > 0) {
+			fetchIssueCounts(repositories);
+		}
+	}, [repositories, fetchIssueCounts]);
 
 	// Real-time updates (matches Usage Dashboard pattern)
 	useEffect(() => {
@@ -428,6 +459,10 @@ export function useSymphony(): UseSymphonyReturn {
 		error,
 		fromCache,
 		cacheAge,
+
+		// Issue counts
+		issueCounts,
+		isLoadingIssueCounts,
 
 		// Filtering
 		selectedCategory,

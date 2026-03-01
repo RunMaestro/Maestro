@@ -212,14 +212,17 @@ function RepositoryTile({
 	theme,
 	isSelected,
 	onSelect,
+	issueCount,
 }: {
 	repo: RegisteredRepository;
 	theme: Theme;
 	isSelected: boolean;
 	onSelect: () => void;
+	issueCount: number | null;
 }) {
 	const tileRef = useRef<HTMLButtonElement>(null);
 	const categoryInfo = SYMPHONY_CATEGORIES[repo.category] ?? { label: repo.category, emoji: '📦' };
+	const hasNoIssues = issueCount !== null && issueCount === 0;
 
 	useEffect(() => {
 		if (isSelected && tileRef.current) {
@@ -235,6 +238,7 @@ function RepositoryTile({
 			style={{
 				backgroundColor: theme.colors.bgActivity,
 				borderColor: isSelected ? theme.colors.accent : theme.colors.border,
+				opacity: hasNoIssues ? 0.45 : 1,
 				...(isSelected && { boxShadow: `0 0 0 2px ${theme.colors.accent}` }),
 			}}
 		>
@@ -274,10 +278,21 @@ function RepositoryTile({
 				style={{ color: theme.colors.textDim }}
 			>
 				<span>{repo.maintainer.name}</span>
-				<span className="flex items-center gap-1" style={{ color: theme.colors.accent }}>
-					<Hash className="w-3 h-3" />
-					View Issues
-				</span>
+				{issueCount === null ? (
+					<span className="flex items-center gap-1" style={{ color: theme.colors.accent }}>
+						<Hash className="w-3 h-3" />
+						View Issues
+					</span>
+				) : issueCount > 0 ? (
+					<span className="flex items-center gap-1" style={{ color: theme.colors.accent }}>
+						<Hash className="w-3 h-3" />
+						View {issueCount} {issueCount === 1 ? 'Issue' : 'Issues'}
+					</span>
+				) : (
+					<span className="flex items-center gap-1" style={{ color: theme.colors.textDim }}>
+						No Issues
+					</span>
+				)}
 			</div>
 		</button>
 	);
@@ -782,7 +797,7 @@ function RepositoryDetailView({
 									<FileText className="w-3 h-3" />
 									<span>{selectedIssue.documentPaths.length} Auto Run documents to process</span>
 								</div>
-														</div>
+							</div>
 
 							{/* Document selector dropdown */}
 							<div
@@ -1313,6 +1328,8 @@ export function SymphonyModal({
 		activeContributions,
 		completedContributions,
 		finalizeContribution,
+		issueCounts,
+		isLoadingIssueCounts,
 	} = useSymphony();
 
 	const {
@@ -2016,6 +2033,7 @@ export function SymphonyModal({
 														theme={theme}
 														isSelected={index === selectedTileIndex}
 														onSelect={() => handleSelectRepo(repo)}
+														issueCount={issueCounts?.[repo.slug] ?? null}
 													/>
 												))}
 											</div>
@@ -2027,8 +2045,11 @@ export function SymphonyModal({
 										className="px-4 py-2 border-t flex items-center justify-between text-xs"
 										style={{ borderColor: theme.colors.border, color: theme.colors.textDim }}
 									>
-										<span>
+										<span className="flex items-center gap-1">
 											{filteredRepositories.length} repositories • Contribute to open source with AI
+											{isLoadingIssueCounts && (
+												<Loader2 className="w-3 h-3 animate-spin ml-1" />
+											)}
 										</span>
 										<span>{`↑↓←→ navigate • Enter select • / search • ${formatShortcutKeys(['Meta', 'Shift'])}[] tabs`}</span>
 									</div>

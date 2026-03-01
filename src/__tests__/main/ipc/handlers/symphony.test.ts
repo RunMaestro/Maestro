@@ -969,6 +969,7 @@ describe('Symphony IPC handlers', () => {
 			const expectedChannels = [
 				'symphony:getRegistry',
 				'symphony:getIssues',
+				'symphony:getIssueCounts',
 				'symphony:getState',
 				'symphony:getActive',
 				'symphony:getCompleted',

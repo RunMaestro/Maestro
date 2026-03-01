@@ -158,6 +158,8 @@ const mockUseSymphonyReturn = {
 	startContribution: vi.fn(),
 	cancelContribution: vi.fn(),
 	finalizeContribution: vi.fn(),
+	issueCounts: null as Record<string, number> | null,
+	isLoadingIssueCounts: false,
 };
 
 const mockContributorStatsReturn = {
