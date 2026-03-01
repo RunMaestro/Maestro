@@ -128,7 +128,7 @@ export class CallbackRegistry {
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
 
-	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
+	async getHistory(projectPath?: string, sessionId?: string): Promise<import('../../shared/types').HistoryEntry[]> {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
 
