@@ -52,7 +52,7 @@ function createMockSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
 function createMockConfig(overrides: Partial<CueConfig> = {}): CueConfig {
 	return {
 		subscriptions: [],
-		settings: { timeout_minutes: 30, timeout_on_fail: 'break' },
+		settings: { timeout_minutes: 30, timeout_on_fail: 'break', max_concurrent: 1, queue_size: 10 },
 		...overrides,
 	};
 }
@@ -229,14 +229,16 @@ describe('CueEngine', () => {
 			const engine = new CueEngine(deps);
 			engine.start();
 
+			// Flush microtasks to let the initial run complete and free the concurrency slot
+			await vi.advanceTimersByTimeAsync(0);
 			vi.clearAllMocks();
 
 			// Advance 5 minutes
-			vi.advanceTimersByTime(5 * 60 * 1000);
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(1);
 
 			// Advance another 5 minutes
-			vi.advanceTimersByTime(5 * 60 * 1000);
+			await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
 			expect(deps.onCueRun).toHaveBeenCalledTimes(2);
 
 			engine.stop();

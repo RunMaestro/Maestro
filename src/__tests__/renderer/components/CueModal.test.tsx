@@ -50,6 +50,7 @@ const defaultUseCueReturn = {
 	sessions: [],
 	activeRuns: [],
 	activityLog: [],
+	queueStatus: {} as Record<string, number>,
 	loading: false,
 	enable: mockEnable,
 	disable: mockDisable,

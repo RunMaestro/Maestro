@@ -64,6 +64,14 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 			rawSettings?.timeout_on_fail === 'break' || rawSettings?.timeout_on_fail === 'continue'
 				? rawSettings.timeout_on_fail
 				: DEFAULT_CUE_SETTINGS.timeout_on_fail,
+		max_concurrent:
+			typeof rawSettings?.max_concurrent === 'number'
+				? rawSettings.max_concurrent
+				: DEFAULT_CUE_SETTINGS.max_concurrent,
+		queue_size:
+			typeof rawSettings?.queue_size === 'number'
+				? rawSettings.queue_size
+				: DEFAULT_CUE_SETTINGS.queue_size,
 	};
 
 	return { subscriptions, settings };
@@ -174,6 +182,26 @@ export function validateCueConfig(config: unknown): { valid: boolean; errors: st
 			if (settings.timeout_on_fail !== undefined) {
 				if (settings.timeout_on_fail !== 'break' && settings.timeout_on_fail !== 'continue') {
 					errors.push('"settings.timeout_on_fail" must be "break" or "continue"');
+				}
+			}
+			if (settings.max_concurrent !== undefined) {
+				if (
+					typeof settings.max_concurrent !== 'number' ||
+					!Number.isInteger(settings.max_concurrent) ||
+					settings.max_concurrent < 1 ||
+					settings.max_concurrent > 10
+				) {
+					errors.push('"settings.max_concurrent" must be a positive integer between 1 and 10');
+				}
+			}
+			if (settings.queue_size !== undefined) {
+				if (
+					typeof settings.queue_size !== 'number' ||
+					!Number.isInteger(settings.queue_size) ||
+					settings.queue_size < 0 ||
+					settings.queue_size > 50
+				) {
+					errors.push('"settings.queue_size" must be a non-negative integer between 0 and 50');
 				}
 			}
 		}

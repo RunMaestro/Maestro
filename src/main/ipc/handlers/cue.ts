@@ -114,6 +114,22 @@ export function registerCueHandlers(deps: CueHandlerDependencies): void {
 		})
 	);
 
+	// Get queue status per session
+	ipcMain.handle(
+		'cue:getQueueStatus',
+		withIpcErrorLogging(
+			handlerOpts('getQueueStatus'),
+			async (): Promise<Record<string, number>> => {
+				const queueMap = requireEngine().getQueueStatus();
+				const result: Record<string, number> = {};
+				for (const [sessionId, count] of queueMap) {
+					result[sessionId] = count;
+				}
+				return result;
+			}
+		)
+	);
+
 	// Refresh a session's Cue configuration
 	ipcMain.handle(
 		'cue:refreshSession',

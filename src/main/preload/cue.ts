@@ -81,6 +81,9 @@ export function createCueApi() {
 		// Stop all running Cue executions
 		stopAll: (): Promise<void> => ipcRenderer.invoke('cue:stopAll'),
 
+		// Get queue status per session
+		getQueueStatus: (): Promise<Record<string, number>> => ipcRenderer.invoke('cue:getQueueStatus'),
+
 		// Refresh a session's Cue configuration
 		refreshSession: (sessionId: string, projectRoot: string): Promise<void> =>
 			ipcRenderer.invoke('cue:refreshSession', { sessionId, projectRoot }),

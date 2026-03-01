@@ -31,6 +31,8 @@ const YAML_TEMPLATE = `# maestro-cue.yaml
 # settings:
 #   timeout_minutes: 30
 #   timeout_on_fail: break
+#   max_concurrent: 1
+#   queue_size: 10
 `;
 
 const AI_SYSTEM_PROMPT = `You are a Maestro Cue configuration generator. Generate valid maestro-cue.yaml content based on the user's description.
@@ -54,6 +56,8 @@ subscriptions:
 settings:
   timeout_minutes: 30
   timeout_on_fail: break         # or "continue"
+  max_concurrent: 1              # max simultaneous runs per session (1-10)
+  queue_size: 10                 # max queued events per session (0-50)
 
 Output ONLY the YAML content, no markdown code fences, no explanation.`;
 

@@ -58,6 +58,15 @@ interface FanInSourceCompletion {
 	output: string;
 }
 
+/** A queued event waiting for a concurrency slot */
+interface QueuedEvent {
+	event: CueEvent;
+	subscription: CueSubscription;
+	prompt: string;
+	subscriptionName: string;
+	queuedAt: number;
+}
+
 export class CueEngine {
 	private enabled = false;
 	private sessions = new Map<string, SessionState>();
@@ -66,6 +75,8 @@ export class CueEngine {
 	private fanInTrackers = new Map<string, Map<string, FanInSourceCompletion>>();
 	private fanInTimers = new Map<string, ReturnType<typeof setTimeout>>();
 	private pendingYamlWatchers = new Map<string, () => void>();
+	private activeRunCount = new Map<string, number>();
+	private eventQueue = new Map<string, QueuedEvent[]>();
 	private deps: CueEngineDeps;
 
 	constructor(deps: CueEngineDeps) {
@@ -96,6 +107,10 @@ export class CueEngine {
 			cleanup();
 		}
 		this.pendingYamlWatchers.clear();
+
+		// Clear concurrency state
+		this.eventQueue.clear();
+		this.activeRunCount.clear();
 
 		this.deps.onLog('cue', '[CUE] Engine stopped');
 	}
@@ -144,6 +159,8 @@ export class CueEngine {
 	removeSession(sessionId: string): void {
 		this.teardownSession(sessionId);
 		this.sessions.delete(sessionId);
+		this.clearQueue(sessionId);
+		this.activeRunCount.delete(sessionId);
 
 		const pendingWatcher = this.pendingYamlWatchers.get(sessionId);
 		if (pendingWatcher) {
@@ -218,16 +235,34 @@ export class CueEngine {
 		return true;
 	}
 
-	/** Stops all running executions */
+	/** Stops all running executions and clears all queues */
 	stopAll(): void {
 		for (const [runId] of this.activeRuns) {
 			this.stopRun(runId);
 		}
+		this.eventQueue.clear();
+		this.activeRunCount.clear();
 	}
 
 	/** Returns master enabled state */
 	isEnabled(): boolean {
 		return this.enabled;
+	}
+
+	/** Returns queue depth per session (for the Cue Modal) */
+	getQueueStatus(): Map<string, number> {
+		const result = new Map<string, number>();
+		for (const [sessionId, queue] of this.eventQueue) {
+			if (queue.length > 0) {
+				result.set(sessionId, queue.length);
+			}
+		}
+		return result;
+	}
+
+	/** Clears queued events for a session */
+	clearQueue(sessionId: string): void {
+		this.eventQueue.delete(sessionId);
 	}
 
 	/**
@@ -608,7 +643,61 @@ export class CueEngine {
 		state.watchers.push(cleanup);
 	}
 
-	private async executeCueRun(
+	/**
+	 * Gate for concurrency control. Checks if a slot is available for this session.
+	 * If at limit, queues the event. Otherwise dispatches immediately.
+	 */
+	private executeCueRun(
+		sessionId: string,
+		prompt: string,
+		event: CueEvent,
+		subscriptionName: string
+	): void {
+		// Look up the config for this session to get concurrency settings
+		const state = this.sessions.get(sessionId);
+		const maxConcurrent = state?.config.settings.max_concurrent ?? 1;
+		const queueSize = state?.config.settings.queue_size ?? 10;
+		const currentCount = this.activeRunCount.get(sessionId) ?? 0;
+
+		if (currentCount >= maxConcurrent) {
+			// At concurrency limit — queue the event
+			const sessionName =
+				this.deps.getSessions().find((s) => s.id === sessionId)?.name ?? sessionId;
+			if (!this.eventQueue.has(sessionId)) {
+				this.eventQueue.set(sessionId, []);
+			}
+			const queue = this.eventQueue.get(sessionId)!;
+
+			if (queue.length >= queueSize) {
+				// Drop the oldest entry
+				queue.shift();
+				this.deps.onLog('cue', `[CUE] Queue full for "${sessionName}", dropping oldest event`);
+			}
+
+			queue.push({
+				event,
+				subscription: { name: subscriptionName, event: event.type, enabled: true, prompt },
+				prompt,
+				subscriptionName,
+				queuedAt: Date.now(),
+			});
+
+			this.deps.onLog(
+				'cue',
+				`[CUE] Event queued for "${sessionName}" (${queue.length}/${queueSize} in queue, ${currentCount}/${maxConcurrent} concurrent)`
+			);
+			return;
+		}
+
+		// Slot available — dispatch immediately
+		this.activeRunCount.set(sessionId, currentCount + 1);
+		this.doExecuteCueRun(sessionId, prompt, event, subscriptionName);
+	}
+
+	/**
+	 * Actually executes a Cue run. Called when a concurrency slot is available.
+	 */
+	private async doExecuteCueRun(
 		sessionId: string,
 		prompt: string,
 		event: CueEvent,
@@ -650,6 +739,11 @@ export class CueEngine {
 			this.activeRuns.delete(runId);
 			this.pushActivityLog(result);
 
+			// Decrement active run count and drain queue
+			const count = this.activeRunCount.get(sessionId) ?? 1;
+			this.activeRunCount.set(sessionId, Math.max(0, count - 1));
+			this.drainQueue(sessionId);
+
 			// Emit completion event for agent completion chains
 			// This allows downstream subscriptions to react to this Cue run's completion
 			this.notifyAgentCompleted(sessionId, {
@@ -660,6 +754,47 @@ export class CueEngine {
 				stdout: result.stdout,
 				triggeredBy: subscriptionName,
 			});
+		}
+	}
+
+	/**
+	 * Drain the event queue for a session, dispatching events while slots are available.
+	 * Drops stale events that have exceeded the timeout.
+	 */
+	private drainQueue(sessionId: string): void {
+		const queue = this.eventQueue.get(sessionId);
+		if (!queue || queue.length === 0) return;
+
+		const state = this.sessions.get(sessionId);
+		const maxConcurrent = state?.config.settings.max_concurrent ?? 1;
+		const timeoutMs = (state?.config.settings.timeout_minutes ?? 30) * 60 * 1000;
+		const sessionName = this.deps.getSessions().find((s) => s.id === sessionId)?.name ?? sessionId;
+
+		while (queue.length > 0) {
+			const currentCount = this.activeRunCount.get(sessionId) ?? 0;
+			if (currentCount >= maxConcurrent) break;
+
+			const entry = queue.shift()!;
+			const ageMs = Date.now() - entry.queuedAt;
+
+			// Check for stale events
+			if (ageMs > timeoutMs) {
+				const ageMinutes = Math.round(ageMs / 60000);
+				this.deps.onLog(
+					'cue',
+					`[CUE] Dropping stale queued event for "${sessionName}" (queued ${ageMinutes}m ago)`
+				);
+				continue;
+			}
+
+			// Dispatch the queued event
+			this.activeRunCount.set(sessionId, currentCount + 1);
+			this.doExecuteCueRun(sessionId, entry.prompt, entry.event, entry.subscriptionName);
+		}
+
+		// Clean up empty queue
+		if (queue.length === 0) {
+			this.eventQueue.delete(sessionId);
 		}
 	}
 

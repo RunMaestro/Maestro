@@ -95,6 +95,8 @@ subscriptions:
 			expect(result).not.toBeNull();
 			expect(result!.settings.timeout_minutes).toBe(30);
 			expect(result!.settings.timeout_on_fail).toBe('break');
+			expect(result!.settings.max_concurrent).toBe(1);
+			expect(result!.settings.queue_size).toBe(10);
 		});
 
 		it('defaults enabled to true when not specified', () => {
@@ -298,6 +300,77 @@ subscriptions:
 				settings: { timeout_on_fail: 'continue' },
 			});
 			expect(continueResult.valid).toBe(true);
+		});
+
+		it('rejects invalid max_concurrent value', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent: 0 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('max_concurrent')])
+			);
+		});
+
+		it('rejects max_concurrent above 10', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent: 11 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('max_concurrent')])
+			);
+		});
+
+		it('rejects non-integer max_concurrent', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent: 1.5 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('max_concurrent')])
+			);
+		});
+
+		it('accepts valid max_concurrent values', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { max_concurrent: 5 },
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects negative queue_size', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { queue_size: -1 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('queue_size')])
+			);
+		});
+
+		it('rejects queue_size above 50', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { queue_size: 51 },
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('queue_size')])
+			);
+		});
+
+		it('accepts valid queue_size values including 0', () => {
+			const result = validateCueConfig({
+				subscriptions: [],
+				settings: { queue_size: 0 },
+			});
+			expect(result.valid).toBe(true);
 		});
 
 		it('requires prompt to be a non-empty string', () => {

@@ -52,10 +52,12 @@ function SessionsTable({
 	sessions,
 	theme,
 	onEditYaml,
+	queueStatus,
 }: {
 	sessions: CueSessionStatus[];
 	theme: Theme;
 	onEditYaml: (session: CueSessionStatus) => void;
+	queueStatus: Record<string, number>;
 }) {
 	if (sessions.length === 0) {
 		return (
@@ -77,6 +79,7 @@ function SessionsTable({
 					<th className="pb-2 font-medium">Status</th>
 					<th className="pb-2 font-medium text-right">Last Triggered</th>
 					<th className="pb-2 font-medium text-right">Subs</th>
+					<th className="pb-2 font-medium text-right">Queue</th>
 					<th className="pb-2 font-medium text-right"></th>
 				</tr>
 			</thead>
@@ -108,6 +111,9 @@ function SessionsTable({
 							</td>
 							<td className="py-2 text-right" style={{ color: theme.colors.textDim }}>
 								{s.subscriptionCount}
+							</td>
+							<td className="py-2 text-right" style={{ color: theme.colors.textDim }}>
+								{queueStatus[s.sessionId] ? `${queueStatus[s.sessionId]} queued` : '—'}
 							</td>
 							<td className="py-2 text-right">
 								<button
@@ -255,8 +261,17 @@ export function CueModal({ theme, onClose }: CueModalProps) {
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
-	const { sessions, activeRuns, activityLog, loading, enable, disable, stopRun, stopAll } =
-		useCue();
+	const {
+		sessions,
+		activeRuns,
+		activityLog,
+		queueStatus,
+		loading,
+		enable,
+		disable,
+		stopRun,
+		stopAll,
+	} = useCue();
 
 	const isEnabled = sessions.some((s) => s.enabled);
 
@@ -401,7 +416,12 @@ export function CueModal({ theme, onClose }: CueModalProps) {
 										>
 											Sessions with Cue
 										</h3>
-										<SessionsTable sessions={sessions} theme={theme} onEditYaml={handleEditYaml} />
+										<SessionsTable
+											sessions={sessions}
+											theme={theme}
+											onEditYaml={handleEditYaml}
+											queueStatus={queueStatus}
+										/>
 									</div>
 
 									{/* Section 2: Active Runs */}
@@ -418,6 +438,20 @@ export function CueModal({ theme, onClose }: CueModalProps) {
 													style={{ backgroundColor: CUE_TEAL, color: '#fff' }}
 												>
 													{activeRuns.length}
+												</span>
+											)}
+											{activeRuns.length > 0 && sessions.some((s) => s.activeRuns > 0) && (
+												<span
+													className="text-[10px] font-normal normal-case tracking-normal"
+													style={{ color: theme.colors.textDim }}
+												>
+													{sessions
+														.filter((s) => s.activeRuns > 0)
+														.map(
+															(s) =>
+																`${s.sessionName}: ${s.activeRuns} slot${s.activeRuns !== 1 ? 's' : ''} used`
+														)
+														.join(' · ')}
 												</span>
 											)}
 										</button>

@@ -26,12 +26,16 @@ export interface CueSubscription {
 export interface CueSettings {
 	timeout_minutes: number;
 	timeout_on_fail: 'break' | 'continue';
+	max_concurrent: number;
+	queue_size: number;
 }
 
 /** Default Cue settings */
 export const DEFAULT_CUE_SETTINGS: CueSettings = {
 	timeout_minutes: 30,
 	timeout_on_fail: 'break',
+	max_concurrent: 1,
+	queue_size: 10,
 };
 
 /** Top-level Cue configuration (parsed from YAML) */

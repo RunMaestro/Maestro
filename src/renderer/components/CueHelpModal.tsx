@@ -1,4 +1,4 @@
-import { Zap, FileText, Radio, Code, GitBranch, Clock, Sparkles } from 'lucide-react';
+import { Zap, FileText, Radio, Code, GitBranch, Clock, Sparkles, Layers } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { Modal } from './ui/Modal';
@@ -391,7 +391,37 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 					</div>
 				</section>
 
-				{/* Section 7: AI YAML Editor */}
+				{/* Section 7: Concurrency Control */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<Layers className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Concurrency Control</h3>
+					</div>
+					<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>
+							By default, each session runs one Cue task at a time. Additional events are queued (up
+							to 10) and processed as slots free.
+						</p>
+						<p>Stale queued events (older than the timeout) are automatically dropped.</p>
+						<div
+							className="font-mono text-xs p-3 rounded border"
+							style={{
+								backgroundColor: theme.colors.bgActivity,
+								borderColor: theme.colors.border,
+							}}
+						>
+							settings:
+							<br />
+							{'  '}max_concurrent: 3{'    '}# Up to 3 parallel runs
+							<br />
+							{'  '}queue_size: 20{'       '}# Queue up to 20 events
+							<br />
+							{'  '}timeout_minutes: 30
+						</div>
+					</div>
+				</section>
+
+				{/* Section 8: AI YAML Editor */}
 				<section>
 					<div className="flex items-center gap-2 mb-3">
 						<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />

@@ -51,7 +51,7 @@ function createMockSession(overrides: Partial<SessionInfo> = {}): SessionInfo {
 function createMockConfig(overrides: Partial<CueConfig> = {}): CueConfig {
 	return {
 		subscriptions: [],
-		settings: { timeout_minutes: 30, timeout_on_fail: 'break' },
+		settings: { timeout_minutes: 30, timeout_on_fail: 'break', max_concurrent: 1, queue_size: 10 },
 		...overrides,
 	};
 }

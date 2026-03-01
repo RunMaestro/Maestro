@@ -14,6 +14,7 @@ import { useCue } from '../../../renderer/hooks/useCue';
 const mockGetStatus = vi.fn();
 const mockGetActiveRuns = vi.fn();
 const mockGetActivityLog = vi.fn();
+const mockGetQueueStatus = vi.fn();
 const mockEnable = vi.fn();
 const mockDisable = vi.fn();
 const mockStopRun = vi.fn();
@@ -37,6 +38,7 @@ beforeEach(() => {
 	mockGetStatus.mockResolvedValue([]);
 	mockGetActiveRuns.mockResolvedValue([]);
 	mockGetActivityLog.mockResolvedValue([]);
+	mockGetQueueStatus.mockResolvedValue({});
 	mockEnable.mockResolvedValue(undefined);
 	mockDisable.mockResolvedValue(undefined);
 	mockStopRun.mockResolvedValue(true);
@@ -49,6 +51,7 @@ beforeEach(() => {
 			getStatus: mockGetStatus,
 			getActiveRuns: mockGetActiveRuns,
 			getActivityLog: mockGetActivityLog,
+			getQueueStatus: mockGetQueueStatus,
 			enable: mockEnable,
 			disable: mockDisable,
 			stopRun: mockStopRun,
@@ -236,6 +239,7 @@ describe('useCue', () => {
 			expect(Array.isArray(result.current.sessions)).toBe(true);
 			expect(Array.isArray(result.current.activeRuns)).toBe(true);
 			expect(Array.isArray(result.current.activityLog)).toBe(true);
+			expect(typeof result.current.queueStatus).toBe('object');
 			expect(typeof result.current.enable).toBe('function');
 			expect(typeof result.current.disable).toBe('function');
 			expect(typeof result.current.stopRun).toBe('function');
