@@ -259,7 +259,6 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			fitAddonRef.current = null;
 			searchAddonRef.current = null;
 		};
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []); // Mount once — other effects handle dynamic prop changes
 
 	// IPC: receive data from PTY → write to terminal

@@ -427,8 +427,7 @@ export const MainPanel = React.memo(
 		const defaultShell = useSettingsStore((s) => s.defaultShell);
 		const fontSize = useSettingsStore((s) => s.fontSize);
 		const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
-		const enterToSendTerminal = useSettingsStore((s) => s.enterToSendTerminal);
-		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 		const autoScrollAiMode = useSettingsStore((s) => s.autoScrollAiMode);
 		const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
