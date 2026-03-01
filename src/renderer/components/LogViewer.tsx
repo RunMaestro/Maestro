@@ -18,7 +18,7 @@ import { ConfirmModal } from './ConfirmModal';
 
 interface SystemLogEntry {
 	timestamp: number;
-	level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun';
+	level: 'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue';
 	message: string;
 	context?: string;
 	data?: unknown;
@@ -49,6 +49,7 @@ const LOG_LEVEL_COLORS: Record<string, { fg: string; bg: string }> = {
 	error: { fg: '#ef4444', bg: 'rgba(239, 68, 68, 0.15)' }, // Red
 	toast: { fg: '#a855f7', bg: 'rgba(168, 85, 247, 0.15)' }, // Purple
 	autorun: { fg: '#f97316', bg: 'rgba(249, 115, 22, 0.15)' }, // Orange
+	cue: { fg: '#06b6d4', bg: 'rgba(6, 182, 212, 0.15)' }, // Teal
 };
 
 export function LogViewer({
@@ -66,7 +67,7 @@ export function LogViewer({
 
 	// Determine which log levels are enabled based on current log level setting
 	// Levels with priority >= current level are enabled
-	const enabledLevels = new Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>(
+	const enabledLevels = new Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>(
 		(['debug', 'info', 'warn', 'error'] as const).filter(
 			(level) => LOG_LEVEL_PRIORITY[level] >= LOG_LEVEL_PRIORITY[logLevel]
 		)
@@ -75,27 +76,29 @@ export function LogViewer({
 	enabledLevels.add('toast');
 	// Auto Run is always enabled (workflow tracking cannot be turned off)
 	enabledLevels.add('autorun');
+	// Cue is always enabled (event-driven automation tracking)
+	enabledLevels.add('cue');
 
 	// Initialize selectedLevels from saved settings if available
 	const [selectedLevels, setSelectedLevelsState] = useState<
-		Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
+		Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
 	>(() => {
 		if (savedSelectedLevels && savedSelectedLevels.length > 0) {
 			return new Set(
-				savedSelectedLevels as ('debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun')[]
+				savedSelectedLevels as ('debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue')[]
 			);
 		}
-		return new Set(['debug', 'info', 'warn', 'error', 'toast', 'autorun']);
+		return new Set(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue']);
 	});
 
 	// Wrapper to persist changes when selectedLevels changes
 	const setSelectedLevels = useCallback(
 		(
 			updater:
-				| Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
+				| Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
 				| ((
-						prev: Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>
-				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun'>)
+						prev: Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>
+				  ) => Set<'debug' | 'info' | 'warn' | 'error' | 'toast' | 'autorun' | 'cue'>)
 		) => {
 			setSelectedLevelsState((prev) => {
 				const newSet = typeof updater === 'function' ? updater(prev) : updater;
@@ -484,7 +487,7 @@ export function LogViewer({
 					ALL
 				</button>
 				{/* Individual level toggle buttons */}
-				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun'] as const).map((level) => {
+				{(['debug', 'info', 'warn', 'error', 'toast', 'autorun', 'cue'] as const).map((level) => {
 					const isSelected = selectedLevels.has(level);
 					const isEnabled = enabledLevels.has(level);
 					return (
@@ -626,14 +629,20 @@ export function LogViewer({
 											{new Date(log.timestamp).toLocaleTimeString()}
 										</span>
 										{/* Context pill - show for non-toast/autorun entries */}
-										{log.level !== 'toast' && log.level !== 'autorun' && log.context && (
-											<span
-												className="text-xs px-1.5 py-0.5 rounded font-mono"
-												style={{ backgroundColor: theme.colors.bgMain, color: theme.colors.accent }}
-											>
-												{log.context}
-											</span>
-										)}
+										{log.level !== 'toast' &&
+											log.level !== 'autorun' &&
+											log.level !== 'cue' &&
+											log.context && (
+												<span
+													className="text-xs px-1.5 py-0.5 rounded font-mono"
+													style={{
+														backgroundColor: theme.colors.bgMain,
+														color: theme.colors.accent,
+													}}
+												>
+													{log.context}
+												</span>
+											)}
 										{/* Agent name pill for toast entries (from data.project) */}
 										{(() => {
 											if (log.level !== 'toast') return null;
@@ -655,6 +664,16 @@ export function LogViewer({
 											<span
 												className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
 												style={{ backgroundColor: 'rgba(34, 197, 94, 0.2)', color: '#22c55e' }}
+											>
+												<Pencil className="w-3 h-3" />
+												{log.context}
+											</span>
+										)}
+										{/* Agent name pill for cue entries (from context) */}
+										{log.level === 'cue' && log.context && (
+											<span
+												className="text-xs px-1.5 py-0.5 rounded flex items-center gap-1"
+												style={{ backgroundColor: 'rgba(6, 182, 212, 0.2)', color: '#06b6d4' }}
 											>
 												<Pencil className="w-3 h-3" />
 												{log.context}
