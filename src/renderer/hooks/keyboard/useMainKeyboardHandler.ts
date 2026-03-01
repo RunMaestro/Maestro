@@ -420,6 +420,10 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
+			} else if (ctx.isShortcut(e, 'maestroCue') && ctx.encoreFeatures?.maestroCue) {
+				e.preventDefault();
+				ctx.setCueModalOpen?.(true);
+				trackShortcut('maestroCue');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)

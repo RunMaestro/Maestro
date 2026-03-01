@@ -118,6 +118,8 @@ interface QuickActionsModalProps {
 	onOpenSymphony?: () => void;
 	// Director's Notes
 	onOpenDirectorNotes?: () => void;
+	// Maestro Cue
+	onOpenMaestroCue?: () => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -205,6 +207,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenLastDocumentGraph,
 		onOpenSymphony,
 		onOpenDirectorNotes,
+		onOpenMaestroCue,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 	} = props;
@@ -1030,6 +1033,21 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'View unified history and AI synopsis across all sessions',
 						action: () => {
 							onOpenDirectorNotes();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Maestro Cue - event-driven automation dashboard
+		...(onOpenMaestroCue
+			? [
+					{
+						id: 'maestro-cue',
+						label: 'Maestro Cue',
+						shortcut: shortcuts.maestroCue,
+						subtext: 'Event-driven automation dashboard',
+						action: () => {
+							onOpenMaestroCue();
 							setQuickActionOpen(false);
 						},
 					},

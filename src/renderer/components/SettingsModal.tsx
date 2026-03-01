@@ -38,6 +38,7 @@ import {
 	HelpCircle,
 	AppWindow,
 	ExternalLink,
+	Zap,
 } from 'lucide-react';
 import { useSettings } from '../hooks';
 import type {
@@ -3660,6 +3661,105 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 											</div>
 										);
 									})()}
+							</div>
+
+							{/* Maestro Cue Feature Section */}
+							<div
+								className="rounded-lg border"
+								style={{
+									borderColor: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.border,
+									backgroundColor: encoreFeatures.maestroCue ? '#06b6d408' : 'transparent',
+								}}
+							>
+								{/* Feature Toggle Header */}
+								<button
+									className="w-full flex items-center justify-between p-4 text-left"
+									onClick={() =>
+										setEncoreFeatures({
+											...encoreFeatures,
+											maestroCue: !encoreFeatures.maestroCue,
+										})
+									}
+								>
+									<div className="flex items-center gap-3">
+										<Zap
+											className="w-5 h-5"
+											style={{
+												color: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.textDim,
+											}}
+										/>
+										<div>
+											<div
+												className="text-sm font-bold flex items-center gap-2"
+												style={{ color: theme.colors.textMain }}
+											>
+												Maestro Cue
+												<span
+													className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
+													style={{
+														backgroundColor: theme.colors.warning + '30',
+														color: theme.colors.warning,
+													}}
+												>
+													Beta
+												</span>
+											</div>
+											<div className="text-xs mt-0.5" style={{ color: theme.colors.textDim }}>
+												Event-driven automation — trigger agent prompts on timers, file changes, and
+												agent completions
+											</div>
+										</div>
+									</div>
+									<div
+										className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
+										style={{
+											backgroundColor: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.border,
+										}}
+									>
+										<div
+											className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform"
+											style={{
+												transform: encoreFeatures.maestroCue
+													? 'translateX(22px)'
+													: 'translateX(2px)',
+											}}
+										/>
+									</div>
+								</button>
+
+								{/* Maestro Cue Settings (shown when enabled) */}
+								{encoreFeatures.maestroCue && (
+									<div className="px-4 pb-4 space-y-3">
+										<div
+											className="rounded-md p-3 text-xs"
+											style={{
+												backgroundColor: theme.colors.bgActivity,
+												color: theme.colors.textDim,
+											}}
+										>
+											<p className="mb-2">
+												Create a{' '}
+												<code
+													className="px-1 py-0.5 rounded"
+													style={{ backgroundColor: theme.colors.border }}
+												>
+													maestro-cue.yaml
+												</code>{' '}
+												file in your project root to define event-driven automations.
+											</p>
+											<p>
+												Open the Cue dashboard with{' '}
+												<kbd
+													className="px-1.5 py-0.5 rounded text-[10px] font-mono"
+													style={{ backgroundColor: theme.colors.border }}
+												>
+													⌘⇧U
+												</kbd>{' '}
+												or via the command palette.
+											</p>
+										</div>
+									</div>
+								)}
 							</div>
 						</div>
 					)}

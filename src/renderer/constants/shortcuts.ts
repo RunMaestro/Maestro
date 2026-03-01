@@ -78,6 +78,11 @@ export const DEFAULT_SHORTCUTS: Record<string, Shortcut> = {
 		label: "Director's Notes",
 		keys: ['Meta', 'Shift', 'o'],
 	},
+	maestroCue: {
+		id: 'maestroCue',
+		label: 'Maestro Cue',
+		keys: ['Meta', 'Shift', 'u'],
+	},
 };
 
 // Non-editable shortcuts (displayed in help but not configurable)
