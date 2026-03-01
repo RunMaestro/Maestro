@@ -458,8 +458,8 @@ const MarkdownImage = React.memo(function MarkdownImage({
 		window.maestro.fs
 			.readFile(cacheKey, sshRemoteId)
 			.then((result) => {
-				// readFile returns a data URL for images
-				if (result.startsWith('data:')) {
+				// readFile returns a data URL for images (or null for missing files)
+				if (result && result.startsWith('data:')) {
 					setDataUrl(result);
 					// Cache the result
 					imageCache.set(cacheKey, { dataUrl: result, loadedAt: Date.now() });
@@ -798,7 +798,13 @@ export const FilePreview = React.memo(
 		// For very large files, truncate content for syntax highlighting to prevent freezes
 		const displayContent = useMemo(() => {
 			if (!file?.content) return '';
-			if (!showFullContent && !isMarkdown && !isImage && !isBinary && file.content.length > LARGE_FILE_PREVIEW_LIMIT) {
+			if (
+				!showFullContent &&
+				!isMarkdown &&
+				!isImage &&
+				!isBinary &&
+				file.content.length > LARGE_FILE_PREVIEW_LIMIT
+			) {
 				return file.content.substring(0, LARGE_FILE_PREVIEW_LIMIT);
 			}
 			return file.content;

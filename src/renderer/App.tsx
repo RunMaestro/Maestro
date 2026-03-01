@@ -527,8 +527,11 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
-	const { setSelectedFileIndex: _setSelectedFileIndex, setFileTreeFilter: _setFileTreeFilter, setFileTreeFilterOpen } =
-		useFileExplorerStore.getState();
+	const {
+		setSelectedFileIndex: _setSelectedFileIndex,
+		setFileTreeFilter: _setFileTreeFilter,
+		setFileTreeFilterOpen,
+	} = useFileExplorerStore.getState();
 
 	// --- GROUP CHAT STATE (now in groupChatStore) ---
 
@@ -2927,9 +2930,7 @@ function MaestroConsoleInner() {
 								if (activeSession) {
 									setSessions((prev) =>
 										prev.map((s) =>
-											s.id === activeSession.id
-												? { ...s, documentGraphLayout: type }
-												: s
+											s.id === activeSession.id ? { ...s, documentGraphLayout: type } : s
 										)
 									);
 								}

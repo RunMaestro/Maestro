@@ -24,7 +24,9 @@ import { countUnfinishedTasks, uncheckAllTasks, useBatchProcessor } from '../../
 import { useBatchStore } from '../../../renderer/stores/batchStore';
 
 // Mock notifyToast so we can verify toast notifications
-const mockNotifyToast = vi.fn();
+const { mockNotifyToast } = vi.hoisted(() => ({
+	mockNotifyToast: vi.fn(),
+}));
 vi.mock('../../../renderer/stores/notificationStore', () => ({
 	notifyToast: (...args: unknown[]) => mockNotifyToast(...args),
 }));
@@ -5807,7 +5809,9 @@ describe('useBatchProcessor hook', () => {
 				(call: unknown[]) => (call[0] as { title?: string })?.title === 'Auto Run Started'
 			);
 			expect(toastCall).toBeDefined();
-			expect((toastCall![0] as { message: string }).message).toMatch(/\d+ tasks? across \d+ documents?/);
+			expect((toastCall![0] as { message: string }).message).toMatch(
+				/\d+ tasks? across \d+ documents?/
+			);
 		});
 
 		it('should add history entry with PR URL on successful PR creation', async () => {
@@ -5885,12 +5889,10 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			// Verify the full response contains PR details
-			const prHistoryCall = mockOnAddHistoryEntry.mock.calls.find(
-				(call: unknown[]) => {
-					const entry = call[0] as { summary?: string };
-					return entry.summary?.includes('PR created');
-				}
-			);
+			const prHistoryCall = mockOnAddHistoryEntry.mock.calls.find((call: unknown[]) => {
+				const entry = call[0] as { summary?: string };
+				return entry.summary?.includes('PR created');
+			});
 			expect(prHistoryCall).toBeDefined();
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Created');
@@ -5973,12 +5975,10 @@ describe('useBatchProcessor hook', () => {
 			);
 
 			// Verify error details in full response
-			const prHistoryCall = mockOnAddHistoryEntry.mock.calls.find(
-				(call: unknown[]) => {
-					const entry = call[0] as { summary?: string };
-					return entry.summary?.includes('PR creation failed');
-				}
-			);
+			const prHistoryCall = mockOnAddHistoryEntry.mock.calls.find((call: unknown[]) => {
+				const entry = call[0] as { summary?: string };
+				return entry.summary?.includes('PR creation failed');
+			});
 			expect(prHistoryCall).toBeDefined();
 			const prEntry = prHistoryCall![0] as { fullResponse: string };
 			expect(prEntry.fullResponse).toContain('Pull Request Creation Failed');

@@ -219,6 +219,7 @@ export function useAppHandlers(deps: UseAppHandlersDeps): UseAppHandlersReturn {
 						window.maestro.fs.readFile(fullPath, sshRemoteId),
 						window.maestro.fs.stat(fullPath, sshRemoteId),
 					]);
+					if (content === null) return;
 					const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
 					// Open file in tab-based file preview

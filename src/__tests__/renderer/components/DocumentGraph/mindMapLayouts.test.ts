@@ -6,7 +6,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import type { MindMapNode, MindMapLink } from '../../../../renderer/components/DocumentGraph/MindMap';
+import type {
+	MindMapNode,
+	MindMapLink,
+} from '../../../../renderer/components/DocumentGraph/MindMap';
 import {
 	type MindMapLayoutType,
 	LAYOUT_LABELS,
@@ -33,10 +36,7 @@ import {
 // Test Helpers
 // ============================================================================
 
-function createNode(
-	id: string,
-	overrides: Partial<MindMapNode> = {},
-): MindMapNode {
+function createNode(id: string, overrides: Partial<MindMapNode> = {}): MindMapNode {
 	return {
 		id,
 		x: 0,
@@ -63,7 +63,11 @@ function createExternalNode(domain: string): MindMapNode {
 	});
 }
 
-function createLink(source: string, target: string, type: 'internal' | 'external' = 'internal'): MindMapLink {
+function createLink(
+	source: string,
+	target: string,
+	type: 'internal' | 'external' = 'internal'
+): MindMapLink {
 	return { source, target, type };
 }
 
@@ -209,7 +213,16 @@ describe('mindMapLayouts', () => {
 
 		it('dispatches to mindmap layout', () => {
 			const result = calculateLayout(
-				'mindmap', nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				'mindmap',
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes.length).toBeGreaterThan(0);
 			expect(result.links.length).toBeGreaterThan(0);
@@ -218,14 +231,32 @@ describe('mindMapLayouts', () => {
 
 		it('dispatches to radial layout', () => {
 			const result = calculateLayout(
-				'radial', nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				'radial',
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes.length).toBeGreaterThan(0);
 		});
 
 		it('dispatches to force layout', () => {
 			const result = calculateLayout(
-				'force', nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				'force',
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes.length).toBeGreaterThan(0);
 		});
@@ -233,7 +264,15 @@ describe('mindMapLayouts', () => {
 		it('falls back to mindmap for unknown type', () => {
 			const result = calculateLayout(
 				'unknown' as MindMapLayoutType,
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes.length).toBeGreaterThan(0);
 		});
@@ -246,7 +285,15 @@ describe('mindMapLayouts', () => {
 	describe('calculateMindMapLayout', () => {
 		it('returns empty result when no nodes match centerFilePath', () => {
 			const result = calculateMindMapLayout(
-				[], [], buildAdjacencyMap([]), 'nonexistent', 2, 1200, 800, false, 100,
+				[],
+				[],
+				buildAdjacencyMap([]),
+				'nonexistent',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes).toEqual([]);
 			expect(result.links).toEqual([]);
@@ -256,7 +303,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const centerNode = result.nodes.find((n) => n.id === 'center');
 			expect(centerNode).toBeDefined();
@@ -267,7 +322,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const children = result.nodes.filter((n) => n.id !== 'center');
 			const sides = new Set(children.map((n) => n.side));
@@ -281,7 +344,15 @@ describe('mindMapLayouts', () => {
 			const adjacency = buildAdjacencyMap(links);
 			// maxDepth=1 should exclude node D (depth 2)
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 1, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				1,
+				1200,
+				800,
+				false,
+				100
 			);
 			const nodeIds = result.nodes.map((n) => n.id);
 			expect(nodeIds).not.toContain('D');
@@ -295,7 +366,15 @@ describe('mindMapLayouts', () => {
 			const adjacency = buildAdjacencyMap(links);
 
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, true, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				true,
+				100
 			);
 			const hasExternal = result.nodes.some((n) => n.nodeType === 'external');
 			expect(hasExternal).toBe(true);
@@ -308,7 +387,15 @@ describe('mindMapLayouts', () => {
 			const adjacency = buildAdjacencyMap(links);
 
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const hasExternal = result.nodes.some((n) => n.nodeType === 'external');
 			expect(hasExternal).toBe(false);
@@ -318,7 +405,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateMindMapLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.bounds.minX).toBeLessThanOrEqual(result.bounds.maxX);
 			expect(result.bounds.minY).toBeLessThanOrEqual(result.bounds.maxY);
@@ -332,7 +427,15 @@ describe('mindMapLayouts', () => {
 	describe('calculateRadialLayout', () => {
 		it('returns empty result when center node not found', () => {
 			const result = calculateRadialLayout(
-				[], [], buildAdjacencyMap([]), 'nonexistent', 2, 1200, 800, false, 100,
+				[],
+				[],
+				buildAdjacencyMap([]),
+				'nonexistent',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes).toEqual([]);
 		});
@@ -341,7 +444,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateRadialLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const centerNode = result.nodes.find((n) => n.id === 'center');
 			expect(centerNode).toBeDefined();
@@ -352,7 +463,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateRadialLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const centerNode = result.nodes.find((n) => n.id === 'center')!;
 			const depth1Nodes = result.nodes.filter((n) => n.depth === 1);
@@ -374,7 +493,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateRadialLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.bounds.minX).toBeLessThanOrEqual(result.bounds.maxX);
 			expect(result.bounds.minY).toBeLessThanOrEqual(result.bounds.maxY);
@@ -388,7 +515,15 @@ describe('mindMapLayouts', () => {
 	describe('calculateForceLayout', () => {
 		it('returns empty result when center node not found', () => {
 			const result = calculateForceLayout(
-				[], [], buildAdjacencyMap([]), 'nonexistent', 2, 1200, 800, false, 100,
+				[],
+				[],
+				buildAdjacencyMap([]),
+				'nonexistent',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.nodes).toEqual([]);
 		});
@@ -397,7 +532,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			// center + A + B + C
 			expect(result.nodes.length).toBe(4);
@@ -407,7 +550,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			const centerNode = result.nodes.find((n) => n.id === 'center')!;
 			// Center should be pinned near (600, 400) ± some tolerance
@@ -418,12 +569,8 @@ describe('mindMapLayouts', () => {
 		it('produces deterministic results (same input, same output)', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
-			const r1 = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
-			);
-			const r2 = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
-			);
+			const r1 = calculateForceLayout(nodes, links, adjacency, 'center', 2, 1200, 800, false, 100);
+			const r2 = calculateForceLayout(nodes, links, adjacency, 'center', 2, 1200, 800, false, 100);
 			// Same input should produce same positions (deterministic seed)
 			for (let i = 0; i < r1.nodes.length; i++) {
 				expect(r1.nodes[i].x).toBeCloseTo(r2.nodes[i].x, 0);
@@ -435,7 +582,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.bounds.minX).toBeLessThanOrEqual(result.bounds.maxX);
 			expect(result.bounds.minY).toBeLessThanOrEqual(result.bounds.maxY);
@@ -445,7 +600,15 @@ describe('mindMapLayouts', () => {
 			const { nodes, links } = buildStarGraph();
 			const adjacency = buildAdjacencyMap(links);
 			const result = calculateForceLayout(
-				nodes, links, adjacency, 'center', 2, 1200, 800, false, 100,
+				nodes,
+				links,
+				adjacency,
+				'center',
+				2,
+				1200,
+				800,
+				false,
+				100
 			);
 			expect(result.links.length).toBeGreaterThan(0);
 		});
@@ -483,9 +646,7 @@ describe('mindMapLayouts', () => {
 					{ x: fcA.x, y: fcA.y },
 				];
 				// Not all three should be identical
-				const allSame = positions.every(
-					(p) => p.x === positions[0].x && p.y === positions[0].y,
-				);
+				const allSame = positions.every((p) => p.x === positions[0].x && p.y === positions[0].y);
 				expect(allSame).toBe(false);
 			}
 		});

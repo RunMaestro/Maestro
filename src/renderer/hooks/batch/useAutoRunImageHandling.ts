@@ -176,7 +176,7 @@ export function useAutoRunImageHandling({
 									.readFile(absolutePath, sshRemoteId)
 									.then((dataUrl) => {
 										if (isStale) return;
-										if (dataUrl.startsWith('data:')) {
+										if (dataUrl && dataUrl.startsWith('data:')) {
 											setAttachmentPreviews((prev) => new Map(prev).set(img.relativePath, dataUrl));
 										}
 									})

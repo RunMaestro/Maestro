@@ -388,6 +388,8 @@ export interface SymphonyCache {
 	issueCounts?: {
 		data: Record<string, number>;
 		fetchedAt: number;
+		/** Slugs the cache was fetched for (cache invalidates on slug mismatch) */
+		repoSlugs: string[];
 	};
 }
 

@@ -353,9 +353,9 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 
 			console.log('[WorktreeManager] Creating PR from worktree branch', worktree.branchName);
 
+			let baseBranch: string | undefined = worktree.prTargetBranch;
 			try {
 				// Use the user-selected target branch, or fall back to default branch detection
-				let baseBranch = worktree.prTargetBranch;
 				if (!baseBranch) {
 					const defaultBranchResult = await window.maestro.git.getDefaultBranch(mainRepoCwd);
 					baseBranch =
@@ -409,6 +409,7 @@ export function useWorktreeManager(): UseWorktreeManagerReturn {
 				return {
 					success: false,
 					error: error instanceof Error ? error.message : 'Unknown error',
+					targetBranch: baseBranch,
 				};
 			}
 		},

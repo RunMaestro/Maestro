@@ -209,17 +209,19 @@ describe('shared/symphony-types', () => {
 			expect(cache.issueCounts).toBeUndefined();
 		});
 
-		it('should accept issueCounts with data and fetchedAt', () => {
+		it('should accept issueCounts with data, fetchedAt, and repoSlugs', () => {
 			const cache: SymphonyCache = {
 				issues: {},
 				issueCounts: {
 					data: { 'owner/repo': 5, 'owner/other': 0 },
 					fetchedAt: 1700000000000,
+					repoSlugs: ['owner/other', 'owner/repo'],
 				},
 			};
 			expect(cache.issueCounts?.data['owner/repo']).toBe(5);
 			expect(cache.issueCounts?.data['owner/other']).toBe(0);
 			expect(cache.issueCounts?.fetchedAt).toBe(1700000000000);
+			expect(cache.issueCounts?.repoSlugs).toEqual(['owner/other', 'owner/repo']);
 		});
 	});
 });

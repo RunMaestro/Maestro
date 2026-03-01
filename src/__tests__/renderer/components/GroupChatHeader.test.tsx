@@ -37,7 +37,7 @@ const mockTheme = {
 } as Theme;
 
 const mockShortcuts: Record<string, Shortcut> = {
-	toggleRightPanel: { keys: ['Cmd', 'B'], description: 'Toggle right panel' } as Shortcut,
+	toggleRightPanel: { id: 'toggleRightPanel', label: 'Toggle right panel', keys: ['Cmd', 'B'] },
 };
 
 const defaultProps = {
@@ -52,6 +52,10 @@ const defaultProps = {
 };
 
 describe('GroupChatHeader', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
 	it('renders group chat name and participant count', () => {
 		render(<GroupChatHeader {...defaultProps} />);
 		expect(screen.getByText('Group Chat: Test Chat')).toBeTruthy();

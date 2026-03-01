@@ -1793,7 +1793,11 @@ describe('TerminalOutput', () => {
 							status: 'completed',
 							input: {
 								todos: [
-									{ content: 'Fix lint issues', status: 'completed', activeForm: 'Fixing lint issues' },
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
 									{ content: 'Run tests', status: 'in_progress', activeForm: 'Running tests' },
 									{ content: 'Build project', status: 'pending', activeForm: 'Building project' },
 								],
@@ -1826,7 +1830,11 @@ describe('TerminalOutput', () => {
 							status: 'completed',
 							input: {
 								todos: [
-									{ content: 'Fix lint issues', status: 'completed', activeForm: 'Fixing lint issues' },
+									{
+										content: 'Fix lint issues',
+										status: 'completed',
+										activeForm: 'Fixing lint issues',
+									},
 									{ content: 'Run tests', status: 'completed', activeForm: 'Running tests' },
 								],
 							},

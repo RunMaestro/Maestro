@@ -524,35 +524,42 @@ async function fetchIssueCounts(repoSlugs: string[]): Promise<Record<string, num
 	// Build query: label:runmaestro.ai state:open repo:A repo:B repo:C ...
 	const repoQualifiers = repoSlugs.map((s) => `repo:${s}`).join('+');
 	const query = `label:${encodeURIComponent(SYMPHONY_ISSUE_LABEL)}+state:open+${repoQualifiers}`;
-	const url = `${GITHUB_API_BASE}/search/issues?q=${query}&per_page=100`;
-
-	const response = await fetch(url, {
-		headers: {
-			Accept: 'application/vnd.github.v3+json',
-			'User-Agent': 'Maestro-Symphony',
-		},
-	});
-
-	if (!response.ok) {
-		throw new SymphonyError(`Search API failed: ${response.status}`, 'github_api');
-	}
-
-	const data = (await response.json()) as {
-		total_count: number;
-		items: Array<{ repository_url: string }>;
-	};
-
-	// Initialize all slugs to 0, then count from results
+	// Initialize all slugs to 0, then count from paginated results
 	const counts: Record<string, number> = {};
 	for (const slug of repoSlugs) {
 		counts[slug] = 0;
 	}
-	for (const item of data.items) {
-		// repository_url looks like https://api.github.com/repos/RunMaestro/Maestro
-		const slug = item.repository_url.replace(`${GITHUB_API_BASE}/repos/`, '');
-		if (slug in counts) {
-			counts[slug]++;
+
+	let page = 1;
+	while (true) {
+		const url = `${GITHUB_API_BASE}/search/issues?q=${query}&per_page=100&page=${page}`;
+		const response = await fetch(url, {
+			headers: {
+				Accept: 'application/vnd.github.v3+json',
+				'User-Agent': 'Maestro-Symphony',
+			},
+		});
+
+		if (!response.ok) {
+			throw new SymphonyError(`Search API failed: ${response.status}`, 'github_api');
 		}
+
+		const data = (await response.json()) as {
+			total_count: number;
+			items: Array<{ repository_url: string }>;
+		};
+
+		for (const item of data.items) {
+			// repository_url looks like https://api.github.com/repos/RunMaestro/Maestro
+			const slug = item.repository_url.replace(`${GITHUB_API_BASE}/repos/`, '');
+			if (slug in counts) {
+				counts[slug]++;
+			}
+		}
+
+		// Stop if we got fewer than a full page or hit GitHub's 1,000-result cap
+		if (data.items.length < 100 || page >= 10) break;
+		page++;
 	}
 
 	logger.info(`Issue counts fetched: ${JSON.stringify(counts)}`, LOG_CONTEXT);
@@ -1225,12 +1232,16 @@ export function registerSymphonyHandlers({
 				forceRefresh?: boolean
 			): Promise<Omit<GetIssueCountsResponse, 'success'>> => {
 				const cache = await readCache(app);
+				const requestedSlugs = [...new Set(repoSlugs)].sort();
 
-				// Check cache
+				// Check cache (must match requested slugs AND be within TTL)
 				if (
 					!forceRefresh &&
 					cache?.issueCounts &&
-					isCacheValid(cache.issueCounts.fetchedAt, ISSUE_COUNTS_CACHE_TTL_MS)
+					isCacheValid(cache.issueCounts.fetchedAt, ISSUE_COUNTS_CACHE_TTL_MS) &&
+					cache.issueCounts.repoSlugs &&
+					requestedSlugs.length === cache.issueCounts.repoSlugs.length &&
+					requestedSlugs.every((s) => cache.issueCounts!.repoSlugs.includes(s))
 				) {
 					return {
 						counts: cache.issueCounts.data,
@@ -1251,6 +1262,7 @@ export function registerSymphonyHandlers({
 						issueCounts: {
 							data: counts,
 							fetchedAt: Date.now(),
+							repoSlugs: requestedSlugs,
 						},
 					};
 					await writeCache(app, newCache);

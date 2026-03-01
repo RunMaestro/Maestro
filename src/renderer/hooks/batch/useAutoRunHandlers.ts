@@ -116,12 +116,18 @@ async function spawnWorktreeAgentAndDispatch(
 		markWorktreePathAsRecentlyCreated(worktreePath);
 
 		// Step 2: Create worktree on disk
-		const result = await window.maestro.git.worktreeSetup(
-			parentSession.cwd,
-			worktreePath,
-			branchName,
-			sshRemoteId
-		);
+		let result;
+		try {
+			result = await window.maestro.git.worktreeSetup(
+				parentSession.cwd,
+				worktreePath,
+				branchName,
+				sshRemoteId
+			);
+		} catch (error) {
+			clearRecentlyCreatedWorktreePath(worktreePath);
+			throw error;
+		}
 		if (!result.success) {
 			clearRecentlyCreatedWorktreePath(worktreePath);
 			notifyToast({

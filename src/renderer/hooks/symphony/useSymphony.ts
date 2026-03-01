@@ -196,7 +196,10 @@ export function useSymphony(): UseSymphonyReturn {
 	}, []);
 
 	const fetchIssueCounts = useCallback(async (repos: RegisteredRepository[]) => {
-		if (repos.length === 0) return;
+		if (repos.length === 0) {
+			setIssueCounts(null);
+			return;
+		}
 		setIsLoadingIssueCounts(true);
 		try {
 			const slugs = repos.map((r) => r.slug);
@@ -206,6 +209,7 @@ export function useSymphony(): UseSymphonyReturn {
 			}
 		} catch (err) {
 			console.error('Failed to fetch issue counts:', err);
+			setIssueCounts(null);
 		} finally {
 			setIsLoadingIssueCounts(false);
 		}

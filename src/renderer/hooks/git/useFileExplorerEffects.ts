@@ -152,6 +152,7 @@ export function useFileExplorerEffects(
 						return null;
 					}),
 				]);
+				if (content === null) return;
 				const lastModified = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : undefined;
 				handleOpenFileTab(
 					{
