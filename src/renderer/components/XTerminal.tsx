@@ -15,14 +15,14 @@ import type { ITheme } from '@xterm/xterm';
 
 /**
  * Map a Maestro Theme to xterm.js ITheme.
- * ANSI colors use sensible defaults based on mode; Phase 11 will add proper
- * ANSI fields to ThemeColors and update these defaults.
+ * Uses ANSI fields from ThemeColors when available, falling back to
+ * mode-appropriate defaults (dark → One Dark palette, light → GitHub palette).
  */
 function mapThemeToXterm(theme: Theme): ITheme {
 	const { colors, mode } = theme;
 
-	// Default ANSI palettes per mode
-	const darkAnsi = {
+	// Default ANSI palettes per mode (used only when theme lacks ANSI fields)
+	const darkAnsiDefaults = {
 		black: '#21222c',
 		red: '#ff5555',
 		green: '#50fa7b',
@@ -41,7 +41,7 @@ function mapThemeToXterm(theme: Theme): ITheme {
 		brightWhite: '#ffffff',
 	};
 
-	const lightAnsi = {
+	const lightAnsiDefaults = {
 		black: '#24292e',
 		red: '#d73a49',
 		green: '#22863a',
@@ -60,16 +60,31 @@ function mapThemeToXterm(theme: Theme): ITheme {
 		brightWhite: '#2f363d',
 	};
 
-	const ansi = mode === 'light' ? lightAnsi : darkAnsi;
+	const defaults = mode === 'light' ? lightAnsiDefaults : darkAnsiDefaults;
 
 	return {
 		background: colors.bgMain,
 		foreground: colors.textMain,
 		cursor: colors.accent,
 		cursorAccent: colors.bgMain,
-		selectionBackground: colors.accentDim,
+		selectionBackground: colors.selection ?? colors.accentDim,
 		selectionForeground: colors.textMain,
-		...ansi,
+		black: colors.ansiBlack ?? defaults.black,
+		red: colors.ansiRed ?? defaults.red,
+		green: colors.ansiGreen ?? defaults.green,
+		yellow: colors.ansiYellow ?? defaults.yellow,
+		blue: colors.ansiBlue ?? defaults.blue,
+		magenta: colors.ansiMagenta ?? defaults.magenta,
+		cyan: colors.ansiCyan ?? defaults.cyan,
+		white: colors.ansiWhite ?? defaults.white,
+		brightBlack: colors.ansiBrightBlack ?? defaults.brightBlack,
+		brightRed: colors.ansiBrightRed ?? defaults.brightRed,
+		brightGreen: colors.ansiBrightGreen ?? defaults.brightGreen,
+		brightYellow: colors.ansiBrightYellow ?? defaults.brightYellow,
+		brightBlue: colors.ansiBrightBlue ?? defaults.brightBlue,
+		brightMagenta: colors.ansiBrightMagenta ?? defaults.brightMagenta,
+		brightCyan: colors.ansiBrightCyan ?? defaults.brightCyan,
+		brightWhite: colors.ansiBrightWhite ?? defaults.brightWhite,
 	};
 }
 
