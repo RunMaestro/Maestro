@@ -27,6 +27,7 @@ import {
 	CREATE_COMPOUND_INDEXES_SQL,
 	CREATE_AGENT_TIME_INDEX_SQL,
 	CREATE_SOURCE_TIME_INDEX_SQL,
+	CREATE_PROJECT_TIME_INDEX_SQL,
 	runStatements,
 } from './schema';
 import { LOG_CONTEXT } from './utils';
@@ -71,6 +72,11 @@ export function getMigrations(): Migration[] {
 			version: 6,
 			description: 'Add source-first time index for source-filtered time-range queries',
 			up: (db) => migrateV6(db),
+		},
+		{
+			version: 7,
+			description: 'Add project-path-first time index for project-filtered time-range queries',
+			up: (db) => migrateV7(db),
 		},
 	];
 }
@@ -276,4 +282,13 @@ function migrateV6(db: Database.Database): void {
 	db.prepare(CREATE_SOURCE_TIME_INDEX_SQL).run();
 
 	logger.debug('Added source-time compound index on query_events', LOG_CONTEXT);
+}
+
+/**
+ * Migration v7: Add project-path-first time index for project-filtered time-range queries
+ */
+function migrateV7(db: Database.Database): void {
+	db.prepare(CREATE_PROJECT_TIME_INDEX_SQL).run();
+
+	logger.debug('Added project-path-time compound index on query_events', LOG_CONTEXT);
 }

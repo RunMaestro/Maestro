@@ -306,13 +306,13 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			await db.initialize();
 
-			// Currently we have version 5 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: agent-time index)
-			expect(db.getTargetVersion()).toBe(5);
+			// Currently we have version 7 migration (v1: initial schema, v2: is_remote column, v3: session_lifecycle table, v4: compound indexes, v5: agent-time index, v6: source-time index, v7: project-path-time index)
+			expect(db.getTargetVersion()).toBe(7);
 		});
 
 		it('should return false from hasPendingMigrations() when up to date', async () => {
 			mockDb.pragma.mockImplementation((sql: string) => {
-				if (sql === 'user_version') return [{ user_version: 5 }];
+				if (sql === 'user_version') return [{ user_version: 7 }];
 				return undefined;
 			});
 
@@ -327,8 +327,8 @@ describe('StatsDB class (mocked)', () => {
 			// This test verifies the hasPendingMigrations() logic
 			// by checking current version < target version
 
-			// Simulate a database that's already at version 5 (target version)
-			let currentVersion = 5;
+			// Simulate a database that's already at version 7 (target version)
+			let currentVersion = 7;
 			mockDb.pragma.mockImplementation((sql: string) => {
 				if (sql === 'user_version') return [{ user_version: currentVersion }];
 				// Handle version updates from migration
@@ -342,9 +342,9 @@ describe('StatsDB class (mocked)', () => {
 			const db = new StatsDB();
 			await db.initialize();
 
-			// At version 5, target is 5, so no pending migrations
-			expect(db.getCurrentVersion()).toBe(5);
-			expect(db.getTargetVersion()).toBe(5);
+			// At version 7, target is 7, so no pending migrations
+			expect(db.getCurrentVersion()).toBe(7);
+			expect(db.getTargetVersion()).toBe(7);
 			expect(db.hasPendingMigrations()).toBe(false);
 		});
 
@@ -642,12 +642,13 @@ describe('Database file creation on first launch', () => {
 
 			const prepareCalls = mockDb.prepare.mock.calls.map((call) => call[0]);
 
-			// Verify all 7 indexes are created
+			// Verify all required indexes are created
 			const expectedIndexes = [
 				'idx_query_start_time',
 				'idx_query_agent_type',
 				'idx_query_source',
 				'idx_query_session',
+				'idx_query_project_time',
 				'idx_query_agent_time',
 				'idx_auto_session_start',
 				'idx_task_auto_session',

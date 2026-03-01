@@ -145,6 +145,10 @@ export const CREATE_SOURCE_TIME_INDEX_SQL = `
 	CREATE INDEX IF NOT EXISTS idx_query_source_time ON query_events(source, start_time)
 `;
 
+export const CREATE_PROJECT_TIME_INDEX_SQL = `
+	CREATE INDEX IF NOT EXISTS idx_query_project_time ON query_events(project_path, start_time)
+`;
+
 // ============================================================================
 // Utilities
 // ============================================================================
