@@ -59,7 +59,7 @@ export const HistoryPanel = React.memo(
 	) {
 		const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>([]);
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			new Set(['AUTO', 'USER'])
+			new Set(['AUTO', 'USER', 'CUE'])
 		);
 		const [isLoading, setIsLoading] = useState(true);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);

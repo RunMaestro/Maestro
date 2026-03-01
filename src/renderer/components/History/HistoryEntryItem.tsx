@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Bot, User, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
+import { Bot, User, Zap, ExternalLink, Check, X, Clock, Award } from 'lucide-react';
 import type { Theme, HistoryEntry, HistoryEntryType } from '../../types';
 import { formatElapsedTime } from '../../utils/formatters';
 import { stripMarkdown } from '../../utils/textProcessing';
@@ -20,6 +20,12 @@ const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 				text: theme.colors.accent,
 				border: theme.colors.accent + '40',
 			};
+		case 'CUE':
+			return {
+				bg: '#06b6d420',
+				text: '#06b6d4',
+				border: '#06b6d440',
+			};
 		default:
 			return {
 				bg: theme.colors.bgActivity,
@@ -36,6 +42,8 @@ const getEntryIcon = (type: HistoryEntryType) => {
 			return Bot;
 		case 'USER':
 			return User;
+		case 'CUE':
+			return Zap;
 		default:
 			return Bot;
 	}
@@ -134,8 +142,8 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 						</button>
 					)}
 
-					{/* Success/Failure Indicator for AUTO entries */}
-					{entry.type === 'AUTO' && entry.success !== undefined && (
+					{/* Success/Failure Indicator for AUTO and CUE entries */}
+					{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
 						<span
 							className="flex items-center justify-center w-5 h-5 rounded-full flex-shrink-0"
 							style={{
@@ -204,6 +212,13 @@ export const HistoryEntryItem = memo(function HistoryEntryItem({
 			>
 				{entry.summary ? stripMarkdown(entry.summary) : 'No summary available'}
 			</p>
+
+			{/* CUE metadata subtitle */}
+			{entry.type === 'CUE' && entry.cueEventType && (
+				<p className="text-[10px] mt-1" style={{ color: theme.colors.textDim }}>
+					Triggered by: {entry.cueEventType}
+				</p>
+			)}
 
 			{/* Footer Row - Time, Cost, and Achievement Action */}
 			{(entry.elapsedTimeMs !== undefined ||

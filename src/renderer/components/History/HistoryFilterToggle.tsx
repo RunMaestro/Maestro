@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { Bot, User } from 'lucide-react';
+import { Bot, User, Zap } from 'lucide-react';
 import type { Theme, HistoryEntryType } from '../../types';
 
 export interface HistoryFilterToggleProps {
@@ -23,6 +23,12 @@ const getPillColor = (type: HistoryEntryType, theme: Theme) => {
 				text: theme.colors.accent,
 				border: theme.colors.accent + '40',
 			};
+		case 'CUE':
+			return {
+				bg: '#06b6d420',
+				text: '#06b6d4',
+				border: '#06b6d440',
+			};
 		default:
 			return {
 				bg: theme.colors.bgActivity,
@@ -39,6 +45,8 @@ const getEntryIcon = (type: HistoryEntryType) => {
 			return Bot;
 		case 'USER':
 			return User;
+		case 'CUE':
+			return Zap;
 		default:
 			return Bot;
 	}
@@ -51,7 +59,7 @@ export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 }: HistoryFilterToggleProps) {
 	return (
 		<div className="flex gap-2 flex-shrink-0">
-			{(['AUTO', 'USER'] as HistoryEntryType[]).map((type) => {
+			{(['AUTO', 'USER', 'CUE'] as HistoryEntryType[]).map((type) => {
 				const isActive = activeFilters.has(type);
 				const colors = getPillColor(type, theme);
 				const Icon = getEntryIcon(type);

@@ -174,6 +174,13 @@ export function HistoryDetailModal({
 				border: theme.colors.warning + '40',
 			};
 		}
+		if (entry.type === 'CUE') {
+			return {
+				bg: '#06b6d420',
+				text: '#06b6d4',
+				border: '#06b6d440',
+			};
+		}
 		return {
 			bg: theme.colors.accent + '20',
 			text: theme.colors.accent,
@@ -182,7 +189,7 @@ export function HistoryDetailModal({
 	};
 
 	const colors = getPillColor();
-	const Icon = entry.type === 'AUTO' ? Bot : User;
+	const Icon = entry.type === 'AUTO' ? Bot : entry.type === 'CUE' ? Zap : User;
 
 	// Access agentName from unified history entries (Director's Notes)
 	const agentName = (entry as HistoryEntry & { agentName?: string }).agentName;
@@ -246,8 +253,8 @@ export function HistoryDetailModal({
 						)}
 
 						<div className="flex items-center gap-3 flex-wrap">
-							{/* Success/Failure Indicator for AUTO entries */}
-							{entry.type === 'AUTO' && entry.success !== undefined && (
+							{/* Success/Failure Indicator for AUTO and CUE entries */}
+							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success !== undefined && (
 								<span
 									className="flex items-center justify-center w-6 h-6 rounded-full"
 									style={{
@@ -364,8 +371,24 @@ export function HistoryDetailModal({
 								{formatTime(entry.timestamp)}
 							</span>
 
-							{/* Validated toggle for AUTO entries */}
-							{entry.type === 'AUTO' && entry.success && onUpdate && (
+							{/* CUE metadata */}
+							{entry.type === 'CUE' && entry.cueTriggerName && (
+								<span
+									className="px-2 py-0.5 rounded-full text-[10px] font-bold"
+									style={{
+										backgroundColor: '#06b6d420',
+										color: '#06b6d4',
+										border: '1px solid #06b6d440',
+									}}
+									title={`Trigger: ${entry.cueTriggerName}`}
+								>
+									{entry.cueTriggerName}
+									{entry.cueEventType && ` \u2022 ${entry.cueEventType}`}
+								</span>
+							)}
+
+							{/* Validated toggle for AUTO and CUE entries */}
+							{(entry.type === 'AUTO' || entry.type === 'CUE') && entry.success && onUpdate && (
 								<button
 									onClick={() => onUpdate(entry.id, { validated: !entry.validated })}
 									className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase transition-colors hover:opacity-80"
@@ -641,8 +664,9 @@ export function HistoryDetailModal({
 									<AlertTriangle className="w-5 h-5" style={{ color: theme.colors.error }} />
 								</div>
 								<p className="leading-relaxed" style={{ color: theme.colors.textMain }}>
-									Are you sure you want to delete this {entry.type === 'AUTO' ? 'auto' : 'user'}{' '}
-									history entry? This action cannot be undone.
+									Are you sure you want to delete this{' '}
+									{entry.type === 'AUTO' ? 'auto' : entry.type === 'CUE' ? 'cue' : 'user'} history
+									entry? This action cannot be undone.
 								</p>
 							</div>
 							<div className="mt-6 flex justify-end gap-2">

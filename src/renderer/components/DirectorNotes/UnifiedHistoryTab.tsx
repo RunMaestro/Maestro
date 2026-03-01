@@ -70,7 +70,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const [hasMore, setHasMore] = useState(true);
 		const [totalEntries, setTotalEntries] = useState(0);
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			new Set(['AUTO', 'USER'])
+			new Set(['AUTO', 'USER', 'CUE'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>

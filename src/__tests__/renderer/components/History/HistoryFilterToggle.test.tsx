@@ -135,7 +135,7 @@ describe('HistoryFilterToggle', () => {
 		expect(userButton).toHaveStyle({ color: mockTheme.colors.textDim });
 	});
 
-	it('renders both buttons even when no filters are active', () => {
+	it('renders all three buttons even when no filters are active', () => {
 		render(
 			<HistoryFilterToggle
 				activeFilters={new Set<HistoryEntryType>([])}
@@ -145,5 +145,54 @@ describe('HistoryFilterToggle', () => {
 		);
 		expect(screen.getByText('AUTO')).toBeInTheDocument();
 		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('renders CUE filter button', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('calls onToggleFilter with CUE when CUE button is clicked', () => {
+		const onToggleFilter = vi.fn();
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={onToggleFilter}
+				theme={mockTheme}
+			/>
+		);
+		fireEvent.click(screen.getByText('CUE'));
+		expect(onToggleFilter).toHaveBeenCalledWith('CUE');
+	});
+
+	it('styles active CUE button with teal colors', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		const cueButton = screen.getByText('CUE').closest('button')!;
+		expect(cueButton).toHaveStyle({ color: '#06b6d4' });
+	});
+
+	it('shows CUE button as inactive when not in active filters', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+			/>
+		);
+		const cueButton = screen.getByText('CUE').closest('button')!;
+		expect(cueButton.className).toContain('opacity-40');
 	});
 });

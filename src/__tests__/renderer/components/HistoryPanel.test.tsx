@@ -507,6 +507,41 @@ describe('HistoryPanel', () => {
 			});
 		});
 
+		it('should toggle CUE filter', async () => {
+			const autoEntry = createMockEntry({ type: 'AUTO', summary: 'Auto task' });
+			const cueEntry = createMockEntry({
+				id: 'cue-1',
+				type: 'CUE',
+				summary: 'Cue triggered task',
+				cueTriggerName: 'lint-on-save',
+				cueEventType: 'file_change',
+			});
+			mockHistoryGetAll.mockResolvedValue([autoEntry, cueEntry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Auto task')).toBeInTheDocument();
+				expect(screen.getByText('Cue triggered task')).toBeInTheDocument();
+			});
+
+			// Toggle off CUE
+			const cueFilter = screen.getByRole('button', { name: /CUE/i });
+			fireEvent.click(cueFilter);
+
+			await waitFor(() => {
+				expect(screen.getByText('Auto task')).toBeInTheDocument();
+				expect(screen.queryByText('Cue triggered task')).not.toBeInTheDocument();
+			});
+
+			// Toggle CUE back on
+			fireEvent.click(cueFilter);
+
+			await waitFor(() => {
+				expect(screen.getByText('Cue triggered task')).toBeInTheDocument();
+			});
+		});
+
 		it('should filter by search text in summary', async () => {
 			const entry1 = createMockEntry({ summary: 'Alpha task' });
 			const entry2 = createMockEntry({ summary: 'Beta task' });
@@ -1666,10 +1701,12 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				const autoFilter = screen.getByRole('button', { name: /AUTO/i });
 				const userFilter = screen.getByRole('button', { name: /USER/i });
+				const cueFilter = screen.getByRole('button', { name: /CUE/i });
 
-				// Both should be active by default
+				// All should be active by default
 				expect(autoFilter).toHaveClass('opacity-100');
 				expect(userFilter).toHaveClass('opacity-100');
+				expect(cueFilter).toHaveClass('opacity-100');
 			});
 		});
 

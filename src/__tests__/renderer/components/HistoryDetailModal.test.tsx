@@ -207,6 +207,74 @@ describe('HistoryDetailModal', () => {
 			);
 			expect(validatedIndicator).toBeInTheDocument();
 		});
+
+		it('should render CUE type with correct pill and teal color', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const cuePill = screen.getByText('CUE');
+			expect(cuePill).toBeInTheDocument();
+			expect(cuePill.closest('span')).toHaveStyle({ color: '#06b6d4' });
+		});
+
+		it('should show success indicator for CUE entries with success=true', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: true })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const successIndicator = screen.getByTitle('Task completed successfully');
+			expect(successIndicator).toBeInTheDocument();
+		});
+
+		it('should show failure indicator for CUE entries with success=false', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE', success: false })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			const failureIndicator = screen.getByTitle('Task failed');
+			expect(failureIndicator).toBeInTheDocument();
+		});
+
+		it('should display CUE trigger metadata when available', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({
+						type: 'CUE',
+						cueTriggerName: 'lint-on-save',
+						cueEventType: 'file_change',
+					})}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.getByTitle('Trigger: lint-on-save')).toBeInTheDocument();
+		});
+
+		it('should not display CUE trigger metadata for non-CUE entries', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'AUTO' })}
+					onClose={mockOnClose}
+				/>
+			);
+
+			expect(screen.queryByTitle(/Trigger:/)).not.toBeInTheDocument();
+		});
 	});
 
 	describe('Content Display', () => {
@@ -808,6 +876,21 @@ describe('HistoryDetailModal', () => {
 			fireEvent.click(screen.getByTitle('Delete this history entry'));
 
 			expect(screen.getByText(/auto history entry/)).toBeInTheDocument();
+		});
+
+		it('should show correct type in delete confirmation for CUE entry', () => {
+			render(
+				<HistoryDetailModal
+					theme={mockTheme}
+					entry={createMockEntry({ type: 'CUE' })}
+					onClose={mockOnClose}
+					onDelete={mockOnDelete}
+				/>
+			);
+
+			fireEvent.click(screen.getByTitle('Delete this history entry'));
+
+			expect(screen.getByText(/cue history entry/)).toBeInTheDocument();
 		});
 
 		it('should cancel delete when Cancel button is clicked', () => {

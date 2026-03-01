@@ -97,6 +97,85 @@ describe('HistoryEntryItem', () => {
 		expect(screen.getByText('USER')).toBeInTheDocument();
 	});
 
+	it('shows CUE type pill for CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
+	it('shows CUE pill with teal color', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		const cuePill = screen.getByText('CUE').closest('span')!;
+		expect(cuePill).toHaveStyle({ color: '#06b6d4' });
+	});
+
+	it('shows success indicator for successful CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', success: true })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Task completed successfully')).toBeInTheDocument();
+	});
+
+	it('shows failure indicator for failed CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', success: false })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByTitle('Task failed')).toBeInTheDocument();
+	});
+
+	it('shows CUE event type metadata when present', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'CUE', cueEventType: 'file_change' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.getByText('Triggered by: file_change')).toBeInTheDocument();
+	});
+
+	it('does not show CUE metadata for non-CUE entries', () => {
+		render(
+			<HistoryEntryItem
+				entry={createMockEntry({ type: 'AUTO' })}
+				index={0}
+				isSelected={false}
+				theme={mockTheme}
+				onOpenDetailModal={vi.fn()}
+			/>
+		);
+		expect(screen.queryByText(/Triggered by:/)).not.toBeInTheDocument();
+	});
+
 	it('shows success indicator for successful AUTO entries', () => {
 		render(
 			<HistoryEntryItem
