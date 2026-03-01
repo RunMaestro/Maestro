@@ -75,6 +75,8 @@ import { QuitConfirmModal } from './QuitConfirmModal';
 import { NewInstanceModal, EditAgentModal } from './NewInstanceModal';
 import { RenameSessionModal } from './RenameSessionModal';
 import { RenameTabModal } from './RenameTabModal';
+import { TerminalTabRenameModal } from './TerminalTabRenameModal';
+import { getTerminalTabDisplayName } from '../utils/terminalTabHelpers';
 
 // Group Modal Components
 import { CreateGroupModal } from './CreateGroupModal';
@@ -485,6 +487,15 @@ export const AppSessionModals = memo(function AppSessionModals({
 	onCloseRenameTabModal,
 	onRenameTab,
 }: AppSessionModalsProps) {
+	// Determine if the rename modal is for a terminal tab or an AI tab
+	const terminalTabs = activeSession?.terminalTabs ?? [];
+	const renamingTerminalTab = renameTabId
+		? terminalTabs.find((t) => t.id === renameTabId)
+		: null;
+	const renamingTerminalTabIndex = renamingTerminalTab
+		? terminalTabs.findIndex((t) => t.id === renameTabId)
+		: -1;
+
 	return (
 		<>
 			{/* --- NEW INSTANCE MODAL --- */}
@@ -526,14 +537,26 @@ export const AppSessionModals = memo(function AppSessionModals({
 				/>
 			)}
 
-			{/* --- RENAME TAB MODAL --- */}
-			{renameTabModalOpen && renameTabId && (
+			{/* --- RENAME TAB MODAL (AI tabs) --- */}
+			{renameTabModalOpen && renameTabId && !renamingTerminalTab && (
 				<RenameTabModal
 					theme={theme}
 					initialName={renameTabInitialName}
 					agentSessionId={activeSession?.aiTabs?.find((t) => t.id === renameTabId)?.agentSessionId}
 					onClose={onCloseRenameTabModal}
 					onRename={onRenameTab}
+				/>
+			)}
+
+			{/* --- RENAME TERMINAL TAB MODAL --- */}
+			{renameTabModalOpen && renamingTerminalTab && (
+				<TerminalTabRenameModal
+					theme={theme}
+					isOpen={true}
+					currentName={renamingTerminalTab.name ?? null}
+					defaultName={getTerminalTabDisplayName(renamingTerminalTab, renamingTerminalTabIndex)}
+					onSave={onRenameTab}
+					onClose={onCloseRenameTabModal}
 				/>
 			)}
 		</>
