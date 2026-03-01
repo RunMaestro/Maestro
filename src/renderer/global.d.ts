@@ -83,6 +83,7 @@ interface AgentConfig {
 	binaryName?: string;
 	available: boolean;
 	path?: string;
+	detectedVersion?: string;
 	customPath?: string;
 	command: string;
 	args?: string[];

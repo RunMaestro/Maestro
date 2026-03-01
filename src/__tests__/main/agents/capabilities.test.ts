@@ -106,7 +106,7 @@ describe('agent-capabilities', () => {
 			expect(capabilities.supportsBatchMode).toBe(true);
 			expect(capabilities.supportsStreaming).toBe(true);
 			expect(capabilities.supportsSlashCommands).toBe(false);
-			expect(capabilities.supportsResultMessages).toBe(false);
+			expect(capabilities.supportsResultMessages).toBe(true);
 			expect(capabilities.imageResumeMode).toBe('prompt-embed');
 		});
 

@@ -3,6 +3,7 @@ import Store from 'electron-store';
 import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
+import { AGENT_MIN_VERSIONS } from '../../agents/detector';
 import { logger } from '../../utils/logger';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
@@ -21,7 +22,7 @@ import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh
 import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { buildStreamJsonMessage } from '../../process-manager/utils/streamJsonBuilder';
 import { getWindowsShellForAgentExecution } from '../../process-manager/utils/shellEscape';
-import { buildExpandedEnv } from '../../../shared/pathUtils';
+import { buildExpandedEnv, compareVersions } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
@@ -271,6 +272,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					args: finalArgs,
 					requiresPty: agent?.requiresPty || false,
 					shell: shellToUse,
+					agentVersion: agent?.detectedVersion,
 					...(agentSessionId && { agentSessionId }),
 					...(config.readOnlyMode && { readOnlyMode: true }),
 					...(config.yoloMode && { yoloMode: true }),
@@ -534,6 +536,28 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						sshRemoteName: sshRemoteUsed.name,
 					}),
 				});
+
+				// Emit inline version warning for agents below minimum supported version
+				// Skipped for SSH remote sessions (local version is irrelevant for remote execution)
+				const minVersion = AGENT_MIN_VERSIONS[config.toolType];
+				if (
+					minVersion &&
+					agent?.detectedVersion &&
+					!sshRemoteUsed &&
+					compareVersions(agent.detectedVersion, minVersion) < 0
+				) {
+					const warningText =
+						`[Maestro] Warning: ${agent.name} v${agent.detectedVersion} is below the minimum ` +
+						`supported version (v${minVersion}). Some features may not work correctly. ` +
+						`Update to the latest version for full compatibility.\n`;
+					logger.warn('Agent version below minimum', LOG_CONTEXT, {
+						sessionId: config.sessionId,
+						agentId: config.toolType,
+						detectedVersion: agent.detectedVersion,
+						minimumVersion: minVersion,
+					});
+					processManager.emit('data', config.sessionId, warningText);
+				}
 
 				// Add power block reason for AI sessions (not terminals)
 				// This prevents system sleep while AI is processing

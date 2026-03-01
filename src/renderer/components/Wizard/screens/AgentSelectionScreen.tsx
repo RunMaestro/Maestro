@@ -695,6 +695,15 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 		[detectedAgents]
 	);
 
+	// Get detected version for an agent
+	const getAgentVersion = useCallback(
+		(agentId: string): string | undefined => {
+			const detected = detectedAgents.find((a) => a.id === agentId);
+			return detected?.detectedVersion;
+		},
+		[detectedAgents]
+	);
+
 	/**
 	 * Open the configuration panel for an agent
 	 * Uses wizard state for customPath/Args/EnvVars - no provider-level storage
@@ -1304,6 +1313,16 @@ export function AgentSelectionScreen({ theme }: AgentSelectionScreenProps): JSX.
 												: 'Not installed'
 											: 'Coming soon'}
 									</p>
+
+									{/* Version (only for detected agents) */}
+									{isSupported && isDetected && getAgentVersion(tile.id) && (
+										<p
+											className="text-[10px] text-center mt-0.5"
+											style={{ color: theme.colors.textDim, opacity: 0.6 }}
+										>
+											v{getAgentVersion(tile.id)}
+										</p>
+									)}
 
 									{/* "Soon" badge for unsupported agents */}
 									{!isSupported && (

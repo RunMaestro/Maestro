@@ -187,7 +187,7 @@ export const AGENT_CAPABILITIES: Record<string, AgentCapabilities> = {
 		supportsBatchMode: true, // exec subcommand - Verified
 		requiresPromptToStart: true, // Codex requires 'exec' subcommand with prompt, no interactive mode via PTY
 		supportsStreaming: true, // Streams JSONL events - Verified
-		supportsResultMessages: false, // All messages are agent_message type (no distinct result) - Verified
+		supportsResultMessages: true, // agent_message items emitted as result; deferred to turn.completed in StdoutHandler
 		supportsModelSelection: true, // -m, --model flag - Documented
 		supportsStreamJsonInput: false, // Uses -i, --image flag instead
 		supportsThinkingDisplay: true, // Emits reasoning tokens (o3/o4-mini)

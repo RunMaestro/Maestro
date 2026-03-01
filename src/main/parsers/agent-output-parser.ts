@@ -215,6 +215,13 @@ export interface AgentOutputParser {
 	 * @returns AgentError if an error was detected, null otherwise
 	 */
 	detectErrorFromExit(exitCode: number, stderr: string, stdout: string): AgentError | null;
+
+	/**
+	 * Optional: Refresh cached configuration before a new process spawn.
+	 * Parsers are singletons — this allows re-reading config files (e.g., ~/.codex/config.toml)
+	 * without restarting the app.
+	 */
+	refreshConfig?(): void;
 }
 
 /**

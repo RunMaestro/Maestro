@@ -385,13 +385,16 @@ describe('StdoutHandler', () => {
 	});
 
 	describe('codex multi-message turn handling', () => {
-		it('should emit only the final Codex result at turn completion', () => {
-			const parser = {
+		function createCodexParser() {
+			return {
 				agentId: 'codex',
 				parseJsonLine: vi.fn((line: string) => {
 					const parsed = JSON.parse(line);
 					if (parsed.type === 'agent') {
 						return { type: 'result', text: parsed.text };
+					}
+					if (parsed.type === 'reasoning') {
+						return { type: 'text', text: parsed.text, isPartial: true };
 					}
 					if (parsed.type === 'done') {
 						return {
@@ -405,6 +408,9 @@ describe('StdoutHandler', () => {
 							},
 						};
 					}
+					if (parsed.type === 'turn.started') {
+						return { type: 'system', raw: { type: 'turn.started' } };
+					}
 					return { type: 'system' };
 				}),
 				extractUsage: vi.fn((event: any) => event.usage || null),
@@ -413,6 +419,10 @@ describe('StdoutHandler', () => {
 				isResultMessage: vi.fn((event: any) => event.type === 'result' && !!event.text),
 				detectErrorFromLine: vi.fn(() => null),
 			};
+		}
+
+		it('should emit only the final Codex result at turn completion', () => {
+			const parser = createCodexParser();
 
 			const { handler, bufferManager, sessionId, proc } = createTestContext({
 				isStreamJsonMode: true,
@@ -426,6 +436,8 @@ describe('StdoutHandler', () => {
 			});
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.resultEmitted).toBe(false);
+			// Result should be captured in codexPendingResult, not streamedText
+			expect(proc.codexPendingResult).toBe("I'm checking the project directory now.");
 
 			sendJsonLine(handler, sessionId, {
 				type: 'agent',
@@ -433,6 +445,8 @@ describe('StdoutHandler', () => {
 			});
 			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
 			expect(proc.resultEmitted).toBe(false);
+			// codexPendingResult should be overwritten with latest agent_message
+			expect(proc.codexPendingResult).toBe('{"confidence":55,"ready":false,"message":"README.md"}');
 
 			sendJsonLine(handler, sessionId, { type: 'done' });
 
@@ -442,6 +456,39 @@ describe('StdoutHandler', () => {
 				sessionId,
 				'{"confidence":55,"ready":false,"message":"README.md"}'
 			);
+		});
+
+		it('should not emit reasoning text as result when no agent_message is received', () => {
+			const parser = createCodexParser();
+
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				toolType: 'codex',
+				outputParser: parser as any,
+			});
+
+			// Send reasoning items (these accumulate in streamedText)
+			sendJsonLine(handler, sessionId, {
+				type: 'reasoning',
+				text: 'Let me think about this...',
+			});
+			sendJsonLine(handler, sessionId, {
+				type: 'reasoning',
+				text: 'I should check the files.',
+			});
+
+			// Verify reasoning accumulated in streamedText
+			expect(proc.streamedText).toBe('Let me think about this...I should check the files.');
+			// But codexPendingResult should be empty (no agent_message received)
+			expect(proc.codexPendingResult).toBeUndefined();
+
+			// Turn completes (usage event) with no agent_message
+			sendJsonLine(handler, sessionId, { type: 'done' });
+
+			// Result should NOT have been emitted (no codexPendingResult)
+			expect(bufferManager.emitDataBuffered).not.toHaveBeenCalled();
+			// resultEmitted stays false since there was no result to emit
+			expect(proc.resultEmitted).toBe(false);
 		});
 	});
 

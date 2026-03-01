@@ -3,3 +3,9 @@ release/
 node_modules/
 coverage/
 *.min.js
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.svg
