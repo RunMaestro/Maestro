@@ -43,6 +43,8 @@ function createMockSession(fileTree: FileNode[] | null = []): Session {
 		aiTabs: [],
 		activeTabId: '',
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	};
 }
 

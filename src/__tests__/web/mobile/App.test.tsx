@@ -525,6 +525,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		activeTabId: undefined,
 		agentSessionId: undefined,
 		usageStats: undefined,
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

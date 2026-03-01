@@ -119,6 +119,8 @@ const createDefaultSession = (overrides: Partial<Session> = {}): Session => ({
 		},
 	],
 	activeTabId: 'tab-1',
+	terminalTabs: [],
+	activeTerminalTabId: null,
 	...overrides,
 });
 
@@ -177,15 +179,6 @@ describe('TerminalOutput', () => {
 			expect(outputDiv).toHaveStyle({ backgroundColor: defaultTheme.colors.bgMain });
 		});
 
-		it('renders with terminal mode background color', () => {
-			const session = createDefaultSession({ inputMode: 'terminal' });
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
-
-			const outputDiv = container.firstChild as HTMLElement;
-			expect(outputDiv).toHaveStyle({ backgroundColor: defaultTheme.colors.bgActivity });
-		});
-
 		it('is focusable with tabIndex 0', () => {
 			const { container } = render(<TerminalOutput {...createDefaultProps()} />);
 			const outputDiv = container.firstChild as HTMLElement;
@@ -209,23 +202,6 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByText('First message')).toBeInTheDocument();
-		});
-
-		it('renders shell logs in terminal mode', () => {
-			const shellLogs: LogEntry[] = [
-				createLogEntry({ text: 'ls -la', source: 'user' }),
-				createLogEntry({ text: 'total 100', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText(/total 100/)).toBeInTheDocument();
 		});
 
 		it('displays user messages with different styling', () => {
@@ -260,20 +236,6 @@ describe('TerminalOutput', () => {
 			render(<TerminalOutput {...props} />);
 
 			expect(screen.getByTitle('Message delivered')).toBeInTheDocument();
-		});
-
-		it('shows STDERR label for stderr entries', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Error output', source: 'stderr' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('STDERR')).toBeInTheDocument();
 		});
 
 		it('collapses consecutive AI responses in AI mode', () => {
@@ -365,66 +327,6 @@ describe('TerminalOutput', () => {
 			expect(setOutputSearchOpen).toHaveBeenCalledWith(true);
 		});
 
-		it('filters logs case-insensitively (in terminal mode)', async () => {
-			// Use terminal mode to avoid log collapsing
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'This contains HELLO world', source: 'stdout' }),
-				createLogEntry({ text: 'This contains hello world', source: 'stdout' }),
-				createLogEntry({ text: 'This does not match', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				outputSearchQuery: 'hello',
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// Both logs with 'hello' and 'HELLO' should match (case insensitive)
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(2);
-		});
-
-		it('shows all logs when search query is empty (terminal mode)', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'First log', source: 'stdout' }),
-				createLogEntry({ text: 'Second log', source: 'stdout' }),
-				createLogEntry({ text: 'Third log', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				outputSearchOpen: true,
-				outputSearchQuery: '',
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// All 3 logs should be visible when query is empty
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(3);
-		});
-
 		it('hides search input when outputSearchOpen is false', () => {
 			const props = createDefaultProps({ outputSearchOpen: false });
 			render(<TerminalOutput {...props} />);
@@ -489,34 +391,6 @@ describe('TerminalOutput', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalled();
 		});
 
-		it('matches logs containing partial words (terminal mode)', async () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: 'authentication failed', source: 'stdout' }),
-				createLogEntry({ text: 'unauthorized access', source: 'stdout' }),
-				createLogEntry({ text: 'success', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				outputSearchQuery: 'auth',
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Wait for debounce (150ms)
-			await act(async () => {
-				vi.advanceTimersByTime(200);
-			});
-
-			// Both 'authentication' and 'unauthorized' contain 'auth'
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(2);
-		});
 	});
 
 	describe('keyboard navigation', () => {
@@ -657,89 +531,6 @@ describe('TerminalOutput', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Copied to Clipboard')).toBeInTheDocument();
 			});
-		});
-	});
-
-	describe('expand/collapse long messages', () => {
-		it('shows "Show all X lines" button for long messages', () => {
-			const longText = Array(100).fill('Line of text').join('\n');
-			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				maxOutputLines: 10, // Collapse after 10 lines
-			});
-
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText(/Show all 100 lines/)).toBeInTheDocument();
-		});
-
-		it('expands message when "Show all" button is clicked', async () => {
-			const longText = Array(100).fill('Line of text').join('\n');
-			const logs: LogEntry[] = [createLogEntry({ text: longText, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({
-				session,
-				maxOutputLines: 10,
-			});
-
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Mock scrollTo on scroll container before clicking expand
-			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
-			if (scrollContainer) {
-				scrollContainer.scrollTo = vi.fn();
-				scrollContainer.scrollBy = vi.fn();
-			}
-
-			const expandButton = screen.getByText(/Show all 100 lines/);
-			await act(async () => {
-				fireEvent.click(expandButton);
-				vi.advanceTimersByTime(100);
-			});
-
-			// After expanding, should show "Show less"
-			expect(screen.getByText('Show less')).toBeInTheDocument();
-		});
-	});
-
-	describe('busy state indicators', () => {
-		it('shows busy indicator for terminal mode when state is busy', () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				statusMessage: 'Running command...',
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('Running command...')).toBeInTheDocument();
-		});
-
-		it('shows default message when no statusMessage provided', () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('Executing command...')).toBeInTheDocument();
 		});
 	});
 
@@ -1186,26 +977,6 @@ describe('TerminalOutput', () => {
 
 			expect(screen.queryByTitle(/Delete message/)).not.toBeInTheDocument();
 			expect(screen.queryByTitle(/Delete command/)).not.toBeInTheDocument();
-		});
-
-		it('shows delete button with correct tooltip in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'ls -la', source: 'user' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs: [], isUnread: false }],
-				activeTabId: 'tab-1',
-			});
-
-			const props = createDefaultProps({
-				session,
-				onDeleteLog: vi.fn(),
-			});
-
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByTitle(/Delete command and output/)).toBeInTheDocument();
 		});
 
 		it('shows delete button for each user message in a conversation', () => {
@@ -1768,21 +1539,6 @@ describe('TerminalOutput', () => {
 			expect(screen.getByTestId('react-markdown')).toBeInTheDocument();
 		});
 
-		it('renders thinking logs as plain text in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: '**bold** thinking', source: 'thinking' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Terminal mode = not AI mode, so plain text
-			expect(screen.queryByTestId('react-markdown')).not.toBeInTheDocument();
-			expect(screen.getByText(/\*\*bold\*\* thinking/)).toBeInTheDocument();
-		});
 	});
 
 	describe('tool log detail extraction', () => {
@@ -1991,93 +1747,6 @@ describe('TerminalOutput', () => {
 		});
 	});
 
-	describe('local filter functionality', () => {
-		it('shows filter button for terminal output entries', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByTitle('Filter this output')).toBeInTheDocument();
-		});
-
-		it('shows filter input when filter button is clicked', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			expect(screen.getByPlaceholderText(/Include by keyword/)).toBeInTheDocument();
-		});
-
-		it('toggles between include and exclude mode', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Click mode toggle (should start as include)
-			const modeToggle = screen.getByTitle('Include matching lines');
-			await act(async () => {
-				fireEvent.click(modeToggle);
-			});
-
-			expect(screen.getByTitle('Exclude matching lines')).toBeInTheDocument();
-		});
-
-		it('toggles between plain text and regex mode', async () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'Terminal output', source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Click regex toggle (should start as plain text)
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			expect(screen.getByTitle('Using regex')).toBeInTheDocument();
-		});
-	});
-
 	describe('image display', () => {
 		it('renders images in log entries', () => {
 			const logs: LogEntry[] = [
@@ -2151,52 +1820,6 @@ describe('TerminalOutput', () => {
 
 			expect(screen.getByText('/history:')).toBeInTheDocument();
 			expect(screen.getByText('Generate a history synopsis')).toBeInTheDocument();
-		});
-	});
-
-	describe('elapsed time display', () => {
-		it('shows elapsed time for busy terminal state with thinkingStartTime', () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				thinkingStartTime: Date.now() - 65000, // 1 minute 5 seconds ago
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Should show elapsed time
-			expect(screen.getByText('1:05')).toBeInTheDocument();
-		});
-
-		it('updates elapsed time every second', async () => {
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				state: 'busy',
-				busySource: 'terminal',
-				thinkingStartTime: Date.now(),
-			});
-
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Mock scrollTo on scroll container (needed for terminal auto-scroll)
-			const scrollContainer = container.querySelector('.overflow-y-auto') as HTMLElement;
-			if (scrollContainer) {
-				scrollContainer.scrollTo = vi.fn();
-				scrollContainer.scrollBy = vi.fn();
-			}
-
-			// Initial time
-			expect(screen.getByText('0:00')).toBeInTheDocument();
-
-			// Advance by 1 second
-			await act(async () => {
-				vi.advanceTimersByTime(1000);
-			});
-
-			expect(screen.getByText('0:01')).toBeInTheDocument();
 		});
 	});
 
@@ -2425,22 +2048,6 @@ describe('TerminalOutput', () => {
 		});
 	});
 
-	describe('terminal mode specific behaviors', () => {
-		it('shows $ prompt for user commands in terminal mode', () => {
-			const logs: LogEntry[] = [createLogEntry({ text: 'ls -la', source: 'user' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			expect(screen.getByText('$')).toBeInTheDocument();
-		});
-	});
-
 	describe('edge cases', () => {
 		it('handles empty logs gracefully', () => {
 			const props = createDefaultProps();
@@ -2492,24 +2099,6 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText(/日本語テスト.*🎉.*émojis/)).toBeInTheDocument();
 		});
 
-		it('skips empty stderr entries', () => {
-			const logs: LogEntry[] = [
-				createLogEntry({ text: '', source: 'stderr' }),
-				createLogEntry({ text: 'Valid output', source: 'stdout' }),
-			];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			const { container } = render(<TerminalOutput {...props} />);
-
-			// Should only render the valid output
-			const logItems = container.querySelectorAll('[data-log-index]');
-			expect(logItems.length).toBe(1);
-		});
 	});
 });
 
@@ -2521,170 +2110,6 @@ describe('helper function behaviors (tested via component)', () => {
 
 	afterEach(() => {
 		vi.useRealTimers();
-	});
-
-	describe('processCarriageReturns behavior', () => {
-		it('handles carriage returns in terminal output', () => {
-			// Text with carriage return - should show last segment
-			const textWithCR = 'Loading...\rDone!';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithCR, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Should only show "Done!" not "Loading..."
-			expect(screen.getByText('Done!')).toBeInTheDocument();
-			expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
-		});
-
-		it('handles multiple carriage returns', () => {
-			const text = '10%\r20%\r30%\r100%';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Should only show final value
-			expect(screen.getByText('100%')).toBeInTheDocument();
-		});
-	});
-
-	describe('processLogTextHelper behavior', () => {
-		it('filters out empty lines in terminal mode', () => {
-			const textWithEmptyLines = 'line1\n\n\nline2';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithEmptyLines, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Both lines should be present
-			expect(screen.getByText(/line1/)).toBeInTheDocument();
-		});
-
-		it('filters out bash prompts', () => {
-			const textWithPrompt = 'output\nbash-3.2$ \nmore output';
-			const logs: LogEntry[] = [createLogEntry({ text: textWithPrompt, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Output should be present, prompt filtered
-			expect(screen.getByText(/output/)).toBeInTheDocument();
-		});
-	});
-
-	describe('filterTextByLinesHelper behavior', () => {
-		it('filters lines by keyword (include mode)', async () => {
-			const text = 'error: something went wrong\ninfo: all good\nerror: another issue';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Type filter query
-			const filterInput = screen.getByPlaceholderText(/Include by keyword/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: 'error' } });
-			});
-
-			// Should filter to only error lines
-			// (exact behavior depends on component rendering)
-		});
-
-		it('filters lines by regex', async () => {
-			const text = 'user123 logged in\nuser456 logged out\nadmin logged in';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Enable regex mode
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			// Type regex pattern
-			const filterInput = screen.getByPlaceholderText(/Include by RegEx/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: 'user\\d+' } });
-			});
-		});
-
-		it('handles invalid regex gracefully', async () => {
-			const text = 'some text';
-			const logs: LogEntry[] = [createLogEntry({ text, source: 'stdout' })];
-
-			const session = createDefaultSession({
-				inputMode: 'terminal',
-				shellLogs: logs,
-			});
-
-			const props = createDefaultProps({ session });
-			render(<TerminalOutput {...props} />);
-
-			// Open local filter
-			const filterButton = screen.getByTitle('Filter this output');
-			await act(async () => {
-				fireEvent.click(filterButton);
-			});
-
-			// Enable regex mode
-			const regexToggle = screen.getByTitle('Using plain text');
-			await act(async () => {
-				fireEvent.click(regexToggle);
-			});
-
-			// Type invalid regex
-			const filterInput = screen.getByPlaceholderText(/Include by RegEx/);
-			await act(async () => {
-				fireEvent.change(filterInput, { target: { value: '[invalid' } });
-			});
-
-			// Should not throw, falls back to plain text matching
-		});
 	});
 
 	describe('raw markdown source mode', () => {

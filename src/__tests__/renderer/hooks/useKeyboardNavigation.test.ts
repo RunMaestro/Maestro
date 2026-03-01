@@ -37,6 +37,8 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => ({
 	fileExplorerExpanded: [],
 	fileExplorerScrollPos: 0,
 	isLive: false,
+	terminalTabs: [],
+	activeTerminalTabId: null,
 	...overrides,
 });
 

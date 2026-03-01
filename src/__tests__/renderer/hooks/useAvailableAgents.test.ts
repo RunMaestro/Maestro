@@ -83,6 +83,8 @@ function createMockSession(
 		aiTabs: [],
 		activeTabId: '',
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	};
 }
 

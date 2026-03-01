@@ -56,6 +56,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 			basePath: '/project/worktrees',
 			watchEnabled: false,
 		},
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

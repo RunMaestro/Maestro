@@ -81,6 +81,8 @@ function createSession(overrides: Partial<Session> = {}): Session {
 		unifiedTabOrder: [{ type: 'ai' as const, id: tab.id }],
 		unifiedClosedTabHistory: [],
 		autoRunFolderPath: '/test/project/Auto Run Docs',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

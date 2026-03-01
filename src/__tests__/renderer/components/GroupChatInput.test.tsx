@@ -74,6 +74,8 @@ function createMockSession(id: string, name: string, toolType: string = 'claude-
 		aiTabs: [],
 		activeTabId: '',
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	};
 }
 
