@@ -116,6 +116,7 @@ export function DebugWizardModal({
 			for (const filename of files) {
 				try {
 					const content = await window.maestro.fs.readFile(`${autoRunPath}/${filename}`);
+					if (!content) continue;
 					// Count tasks (markdown checkboxes)
 					const taskCount = (content.match(/^-\s*\[\s*[xX ]?\s*\]/gm) || []).length;
 					documents.push({ filename, content, taskCount });

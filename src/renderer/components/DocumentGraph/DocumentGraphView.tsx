@@ -221,6 +221,11 @@ export function DocumentGraphView({
 	const [layoutType, setLayoutType] = useState<MindMapLayoutType>(defaultLayoutType);
 	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 
+	// Sync settings state with prop changes
+	useEffect(() => {
+		setLayoutType(defaultLayoutType);
+	}, [defaultLayoutType]);
+
 	// Selection state
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedNode, setSelectedNode] = useState<MindMapNode | null>(null);
@@ -785,6 +790,7 @@ export function DocumentGraphView({
 		window.maestro.fs
 			.readFile(fullPath, sshRemoteId)
 			.then((content) => {
+				if (!content) return;
 				const tasks = countMarkdownTasks(content);
 				setSelectedNodeTasks(tasks.total > 0 ? tasks : null);
 			})
@@ -1387,29 +1393,19 @@ export function DocumentGraphView({
 											className="w-full px-3 py-2 text-left text-sm transition-colors flex items-center justify-between"
 											style={{
 												backgroundColor:
-													layoutType === type
-														? `${theme.colors.accent}15`
-														: 'transparent',
-												color:
-													layoutType === type
-														? theme.colors.accent
-														: theme.colors.textMain,
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+												color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
 											}}
 											onMouseEnter={(e) =>
 												(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
 											}
 											onMouseLeave={(e) =>
 												(e.currentTarget.style.backgroundColor =
-													layoutType === type
-														? `${theme.colors.accent}15`
-														: 'transparent')
+													layoutType === type ? `${theme.colors.accent}15` : 'transparent')
 											}
 										>
 											<span>{LAYOUT_LABELS[type].name}</span>
-											<span
-												className="text-xs"
-												style={{ color: theme.colors.textDim }}
-											>
+											<span className="text-xs" style={{ color: theme.colors.textDim }}>
 												{LAYOUT_LABELS[type].description}
 											</span>
 										</button>

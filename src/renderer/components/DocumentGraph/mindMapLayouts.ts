@@ -54,7 +54,7 @@ type LayoutFunction = (
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number,
+	previewCharLimit: number
 ) => LayoutResult;
 
 // ============================================================================
@@ -114,7 +114,10 @@ const nodeHeightCache = new Map<string, number>();
 /**
  * Calculate node height based on actual content length (with caching)
  */
-export function calculateNodeHeight(previewText: string | undefined, previewCharLimit: number): number {
+export function calculateNodeHeight(
+	previewText: string | undefined,
+	previewCharLimit: number
+): number {
 	if (!previewText) {
 		return NODE_HEIGHT_BASE;
 	}
@@ -184,7 +187,7 @@ function prepareLayoutInput(
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number,
+	previewCharLimit: number
 ): LayoutInput | null {
 	// Find center node - try multiple path variations
 	let centerNode: MindMapNode | undefined;
@@ -315,7 +318,7 @@ function prepareLayoutInput(
  */
 function calculateBounds(
 	positionedNodes: MindMapNode[],
-	previewCharLimit: number,
+	previewCharLimit: number
 ): LayoutResult['bounds'] {
 	if (positionedNodes.length === 0) {
 		return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
@@ -339,7 +342,7 @@ function calculateBounds(
 function filterLinks(
 	allLinks: MindMapLink[],
 	positionedNodes: MindMapNode[],
-	adjacentDepthOnly: boolean,
+	adjacentDepthOnly: boolean
 ): MindMapLink[] {
 	const positionedNodeIds = new Set(positionedNodes.map((n) => n.id));
 	const nodeDepthMap = new Map(positionedNodes.map((n) => [n.id, n.depth]));
@@ -378,21 +381,46 @@ function filterLinks(
  * This is the original layout algorithm — deterministic, alphabetized.
  */
 export const calculateMindMapLayout: LayoutFunction = (
-	allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-	canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+	allNodes,
+	allLinks,
+	adjacency,
+	centerFilePath,
+	maxDepth,
+	canvasWidth,
+	canvasHeight,
+	showExternalLinks,
+	previewCharLimit
 ) => {
 	const input = prepareLayoutInput(
-		allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-		canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+		allNodes,
+		allLinks,
+		adjacency,
+		centerFilePath,
+		maxDepth,
+		canvasWidth,
+		canvasHeight,
+		showExternalLinks,
+		previewCharLimit
 	);
 
 	if (!input) {
-		return { nodes: [], links: [], bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight } };
+		return {
+			nodes: [],
+			links: [],
+			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
+		};
 	}
 
 	const {
-		centerNode, actualCenterNodeId, visited, visibleDocumentNodes,
-		externalNodes, centerX, centerY, centerWidth, centerHeight,
+		centerNode,
+		actualCenterNodeId,
+		visited,
+		visibleDocumentNodes,
+		externalNodes,
+		centerX,
+		centerY,
+		centerWidth,
+		centerHeight,
 	} = input;
 
 	const positionedNodes: MindMapNode[] = [];
@@ -445,7 +473,12 @@ export const calculateMindMapLayout: LayoutFunction = (
 			const nodeY = leftCurrentY + height / 2;
 			positionedNodes.push({
 				...node,
-				x: leftX, y: nodeY, width: NODE_WIDTH, height, depth, side: 'left',
+				x: leftX,
+				y: nodeY,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side: 'left',
 			});
 			leftCurrentY += height + VERTICAL_GAP;
 		});
@@ -466,7 +499,12 @@ export const calculateMindMapLayout: LayoutFunction = (
 			const nodeY = rightCurrentY + height / 2;
 			positionedNodes.push({
 				...node,
-				x: rightX, y: nodeY, width: NODE_WIDTH, height, depth, side: 'right',
+				x: rightX,
+				y: nodeY,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side: 'right',
 			});
 			rightCurrentY += height + VERTICAL_GAP;
 		});
@@ -492,21 +530,46 @@ export const calculateMindMapLayout: LayoutFunction = (
  * Deterministic — no physics, pure trigonometry.
  */
 export const calculateRadialLayout: LayoutFunction = (
-	allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-	canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+	allNodes,
+	allLinks,
+	adjacency,
+	centerFilePath,
+	maxDepth,
+	canvasWidth,
+	canvasHeight,
+	showExternalLinks,
+	previewCharLimit
 ) => {
 	const input = prepareLayoutInput(
-		allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-		canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+		allNodes,
+		allLinks,
+		adjacency,
+		centerFilePath,
+		maxDepth,
+		canvasWidth,
+		canvasHeight,
+		showExternalLinks,
+		previewCharLimit
 	);
 
 	if (!input) {
-		return { nodes: [], links: [], bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight } };
+		return {
+			nodes: [],
+			links: [],
+			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
+		};
 	}
 
 	const {
-		centerNode, actualCenterNodeId, visited, visibleDocumentNodes,
-		externalNodes, centerX, centerY, centerWidth, centerHeight,
+		centerNode,
+		actualCenterNodeId,
+		visited,
+		visibleDocumentNodes,
+		externalNodes,
+		centerX,
+		centerY,
+		centerWidth,
+		centerHeight,
 	} = input;
 
 	const positionedNodes: MindMapNode[] = [];
@@ -557,11 +620,17 @@ export const calculateRadialLayout: LayoutFunction = (
 			const height = calculateNodeHeight(previewText, previewCharLimit);
 
 			// Determine side based on which half of the circle
-			const side: MindMapNode['side'] = x < centerX - 10 ? 'left' : x > centerX + 10 ? 'right' : 'right';
+			const side: MindMapNode['side'] =
+				x < centerX - 10 ? 'left' : x > centerX + 10 ? 'right' : 'right';
 
 			positionedNodes.push({
 				...node,
-				x, y, width: NODE_WIDTH, height, depth, side,
+				x,
+				y,
+				width: NODE_WIDTH,
+				height,
+				depth,
+				side,
 			});
 		});
 	}
@@ -617,21 +686,46 @@ interface ForceLinkDatum extends SimulationLinkDatum<ForceNode> {
  * Initial positions are seeded deterministically to avoid jitter on re-renders.
  */
 export const calculateForceLayout: LayoutFunction = (
-	allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-	canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+	allNodes,
+	allLinks,
+	adjacency,
+	centerFilePath,
+	maxDepth,
+	canvasWidth,
+	canvasHeight,
+	showExternalLinks,
+	previewCharLimit
 ) => {
 	const input = prepareLayoutInput(
-		allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-		canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+		allNodes,
+		allLinks,
+		adjacency,
+		centerFilePath,
+		maxDepth,
+		canvasWidth,
+		canvasHeight,
+		showExternalLinks,
+		previewCharLimit
 	);
 
 	if (!input) {
-		return { nodes: [], links: [], bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight } };
+		return {
+			nodes: [],
+			links: [],
+			bounds: { minX: 0, maxX: canvasWidth, minY: 0, maxY: canvasHeight },
+		};
 	}
 
 	const {
-		centerNode, actualCenterNodeId, visited, visibleDocumentNodes,
-		externalNodes, centerX, centerY, centerWidth, centerHeight,
+		centerNode,
+		actualCenterNodeId,
+		visited,
+		visibleDocumentNodes,
+		externalNodes,
+		centerX,
+		centerY,
+		centerWidth,
+		centerHeight,
 	} = input;
 
 	// Build simulation nodes — seed positions deterministically from index
@@ -744,7 +838,10 @@ export const calculateForceLayout: LayoutFunction = (
 		externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
 
 		// Find bounding box of document nodes
-		let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+		let minX = Infinity,
+			maxX = -Infinity,
+			minY = Infinity,
+			maxY = -Infinity;
 		for (const n of positionedNodes) {
 			minX = Math.min(minX, n.x - n.width / 2);
 			maxX = Math.max(maxX, n.x + n.width / 2);
@@ -793,7 +890,7 @@ function positionExternalNodesBottom(
 	externalNodes: MindMapNode[],
 	positionedNodes: MindMapNode[],
 	centerX: number,
-	centerY: number,
+	centerY: number
 ): void {
 	externalNodes.sort((a, b) => (a.domain || '').localeCompare(b.domain || ''));
 
@@ -843,11 +940,18 @@ export function calculateLayout(
 	canvasWidth: number,
 	canvasHeight: number,
 	showExternalLinks: boolean,
-	previewCharLimit: number,
+	previewCharLimit: number
 ): LayoutResult {
 	const algorithm = LAYOUT_ALGORITHMS[layoutType] || calculateMindMapLayout;
 	return algorithm(
-		allNodes, allLinks, adjacency, centerFilePath, maxDepth,
-		canvasWidth, canvasHeight, showExternalLinks, previewCharLimit,
+		allNodes,
+		allLinks,
+		adjacency,
+		centerFilePath,
+		maxDepth,
+		canvasWidth,
+		canvasHeight,
+		showExternalLinks,
+		previewCharLimit
 	);
 }

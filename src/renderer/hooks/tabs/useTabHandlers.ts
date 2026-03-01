@@ -520,6 +520,7 @@ export function useTabHandlers(): TabHandlersReturn {
 				window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId),
 				window.maestro.fs.stat(fileTab.path, fileTab.sshRemoteId),
 			]);
+			if (content === null) return;
 			const newMtime = stat?.modifiedAt ? new Date(stat.modifiedAt).getTime() : Date.now();
 
 			useSessionStore.getState().setSessions((prev: Session[]) =>
@@ -575,6 +576,7 @@ export function useTabHandlers(): TabHandlersReturn {
 
 				if (currentMtime > fileTab.lastModified) {
 					const content = await window.maestro.fs.readFile(fileTab.path, fileTab.sshRemoteId);
+					if (content === null) return;
 					useSessionStore.getState().setSessions((prev: Session[]) =>
 						prev.map((s) => {
 							if (s.id !== useSessionStore.getState().activeSessionId) return s;

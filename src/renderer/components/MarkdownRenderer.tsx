@@ -96,7 +96,7 @@ const LocalImage = memo(({ src, alt, theme, width, sshRemoteId }: LocalImageProp
 			.readFile(filePath, sshRemoteId)
 			.then((result) => {
 				if (isStale) return;
-				if (result.startsWith('data:')) {
+				if (result && result.startsWith('data:')) {
 					localImageCache.set(filePath, result);
 					setDataUrl(result);
 				} else {

@@ -258,8 +258,8 @@ function MarkdownImage({
 			const absolutePath = `${folderPath}/${src}`;
 			window.maestro.fs
 				.readFile(absolutePath)
-				.then((result: string) => {
-					if (result.startsWith('data:')) {
+				.then((result) => {
+					if (result && result.startsWith('data:')) {
 						setDataUrl(result);
 					} else {
 						setError('Invalid image data');

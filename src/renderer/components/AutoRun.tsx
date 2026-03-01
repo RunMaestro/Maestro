@@ -262,7 +262,7 @@ const AttachmentImage = memo(function AttachmentImage({
 				.readFile(absolutePath, sshRemoteId)
 				.then((result) => {
 					if (isStale) return;
-					if (result.startsWith('data:')) {
+					if (result && result.startsWith('data:')) {
 						imageCache.set(cacheKey, result);
 						setDataUrl(result);
 					} else {
@@ -282,7 +282,7 @@ const AttachmentImage = memo(function AttachmentImage({
 				.readFile(src, sshRemoteId)
 				.then((result) => {
 					if (isStale) return;
-					if (result.startsWith('data:')) {
+					if (result && result.startsWith('data:')) {
 						setDataUrl(result);
 					} else {
 						setError('Invalid image data');
@@ -311,7 +311,7 @@ const AttachmentImage = memo(function AttachmentImage({
 				.readFile(pathToLoad, sshRemoteId)
 				.then((result) => {
 					if (isStale) return;
-					if (result.startsWith('data:')) {
+					if (result && result.startsWith('data:')) {
 						if (folderPath) {
 							imageCache.set(cacheKey, result);
 						}

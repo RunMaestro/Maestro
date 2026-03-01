@@ -49,6 +49,14 @@ export function GroupChatHeader({
 					className="text-lg font-semibold cursor-pointer hover:opacity-80"
 					style={{ color: theme.colors.textMain }}
 					onClick={onRename}
+					onKeyDown={(e) => {
+						if (e.key === 'Enter' || e.key === ' ') {
+							e.preventDefault();
+							onRename();
+						}
+					}}
+					tabIndex={0}
+					role="button"
 					title="Click to rename"
 				>
 					Group Chat: {name}

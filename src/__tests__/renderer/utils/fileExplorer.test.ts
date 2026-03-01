@@ -468,6 +468,8 @@ describe('fileExplorer utils', () => {
 
 			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
+
+			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 
 			expect(result).toHaveLength(2);
@@ -487,6 +489,8 @@ describe('fileExplorer utils', () => {
 
 			const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 			const result = await loadFileTree('/project');
+
+			expect(consoleSpy).toHaveBeenCalled();
 			consoleSpy.mockRestore();
 
 			expect(result).toHaveLength(1);
