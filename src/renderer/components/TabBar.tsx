@@ -20,9 +20,11 @@ import {
 	Loader2,
 	ExternalLink,
 	FolderOpen,
+	Terminal,
 } from 'lucide-react';
-import type { AITab, Theme, FilePreviewTab, UnifiedTab } from '../types';
+import type { AITab, Theme, FilePreviewTab, UnifiedTab, TerminalTab } from '../types';
 import { hasDraft } from '../utils/tabHelpers';
+import { getTerminalTabDisplayName } from '../utils/terminalTabHelpers';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { getExtensionColor } from '../utils/extensionColors';
 import { getRevealLabel } from '../utils/platformUtils';
@@ -76,6 +78,18 @@ interface TabBarProps {
 	onFileTabSelect?: (tabId: string) => void;
 	/** Handler to close a file preview tab */
 	onFileTabClose?: (tabId: string) => void;
+
+	// === Terminal Tab Props (Phase 8) ===
+	/** Currently active terminal tab ID (null if no terminal tab is active) */
+	activeTerminalTabId?: string | null;
+	/** Current input mode — used to determine which tab type shows as active */
+	inputMode?: 'ai' | 'terminal';
+	/** Handler to select a terminal tab */
+	onTerminalTabSelect?: (tabId: string) => void;
+	/** Handler to close a terminal tab */
+	onTerminalTabClose?: (tabId: string) => void;
+	/** Handler to rename a terminal tab */
+	onTerminalTabRename?: (tabId: string) => void;
 
 	// === Accessibility ===
 	/** Whether colorblind-friendly colors should be used for extension badges */
@@ -1499,6 +1513,444 @@ const FileTab = memo(function FileTab({
 	);
 });
 
+// ─── Terminal Tab Component ───────────────────────────────────────────────────
+
+/**
+ * Props for the TerminalTabItem component.
+ * Similar to FileTabProps but tailored for terminal tab rendering.
+ */
+interface TerminalTabItemProps {
+	tab: TerminalTab;
+	/** Zero-based index among terminal tabs only (for display name generation) */
+	terminalIndex: number;
+	isActive: boolean;
+	theme: Theme;
+	onSelect: (tabId: string) => void;
+	onClose: (tabId: string) => void;
+	onRename?: (tabId: string) => void;
+	onDragStart: (tabId: string, e: React.DragEvent) => void;
+	onDragOver: (tabId: string, e: React.DragEvent) => void;
+	onDragEnd: () => void;
+	onDrop: (tabId: string, e: React.DragEvent) => void;
+	isDragging: boolean;
+	isDragOver: boolean;
+	registerRef?: (el: HTMLDivElement | null) => void;
+	onMoveToFirst?: (tabId: string) => void;
+	onMoveToLast?: (tabId: string) => void;
+	isFirstTab?: boolean;
+	isLastTab?: boolean;
+	onCloseOtherTabs?: (tabId: string) => void;
+	onCloseTabsLeft?: (tabId: string) => void;
+	onCloseTabsRight?: (tabId: string) => void;
+	totalTabs?: number;
+	tabIndex?: number;
+	shortcutHint?: number | null;
+}
+
+/**
+ * Individual terminal tab component.
+ * Shows a Terminal icon with state-color indicator, the tab display name,
+ * an optional exit-code badge, and a hover overlay with tab management actions.
+ */
+const TerminalTabItem = memo(function TerminalTabItem({
+	tab,
+	terminalIndex,
+	isActive,
+	theme,
+	onSelect,
+	onClose,
+	onRename,
+	onDragStart,
+	onDragOver,
+	onDragEnd,
+	onDrop,
+	isDragging,
+	isDragOver,
+	registerRef,
+	onMoveToFirst,
+	onMoveToLast,
+	isFirstTab,
+	isLastTab,
+	onCloseOtherTabs,
+	onCloseTabsLeft,
+	onCloseTabsRight,
+	totalTabs,
+	tabIndex,
+	shortcutHint,
+}: TerminalTabItemProps) {
+	const [isHovered, setIsHovered] = useState(false);
+	const [overlayOpen, setOverlayOpen] = useState(false);
+	const [overlayPosition, setOverlayPosition] = useState<{
+		top: number;
+		left: number;
+		tabWidth?: number;
+	} | null>(null);
+	const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const tabRef = useRef<HTMLDivElement>(null);
+	const isOverOverlayRef = useRef(false);
+
+	const setTabRef = useCallback(
+		(el: HTMLDivElement | null) => {
+			(tabRef as React.MutableRefObject<HTMLDivElement | null>).current = el;
+			registerRef?.(el);
+		},
+		[registerRef]
+	);
+
+	const handleMouseEnter = () => {
+		setIsHovered(true);
+		hoverTimeoutRef.current = setTimeout(() => {
+			if (tabRef.current) {
+				const rect = tabRef.current.getBoundingClientRect();
+				setOverlayPosition({ top: rect.bottom, left: rect.left, tabWidth: rect.width });
+			}
+			setOverlayOpen(true);
+		}, 400);
+	};
+
+	const handleMouseLeave = () => {
+		setIsHovered(false);
+		if (hoverTimeoutRef.current) {
+			clearTimeout(hoverTimeoutRef.current);
+			hoverTimeoutRef.current = null;
+		}
+		hoverTimeoutRef.current = setTimeout(() => {
+			if (!isOverOverlayRef.current) {
+				setOverlayOpen(false);
+			}
+		}, 100);
+	};
+
+	const handleMouseDown = useCallback(
+		(e: React.MouseEvent) => {
+			if (e.button === 1) {
+				e.preventDefault();
+				onClose(tab.id);
+			}
+		},
+		[onClose, tab.id]
+	);
+
+	const handleDoubleClick = useCallback(() => {
+		onRename?.(tab.id);
+	}, [onRename, tab.id]);
+
+	const handleCloseClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onClose(tab.id);
+		},
+		[onClose, tab.id]
+	);
+
+	const handleTabSelect = useCallback(() => onSelect(tab.id), [onSelect, tab.id]);
+
+	const handleTabDragStart = useCallback(
+		(e: React.DragEvent) => onDragStart(tab.id, e),
+		[onDragStart, tab.id]
+	);
+	const handleTabDragOver = useCallback(
+		(e: React.DragEvent) => onDragOver(tab.id, e),
+		[onDragOver, tab.id]
+	);
+	const handleTabDrop = useCallback(
+		(e: React.DragEvent) => onDrop(tab.id, e),
+		[onDrop, tab.id]
+	);
+
+	// Overlay action handlers
+	const handleRenameClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onRename?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onRename, tab.id]
+	);
+	const handleMoveToFirstClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToFirst?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onMoveToFirst, tab.id]
+	);
+	const handleMoveToLastClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onMoveToLast?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onMoveToLast, tab.id]
+	);
+	const handleCloseTabClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onClose(tab.id);
+			setOverlayOpen(false);
+		},
+		[onClose, tab.id]
+	);
+	const handleCloseOtherTabsClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCloseOtherTabs?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCloseOtherTabs, tab.id]
+	);
+	const handleCloseTabsLeftClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCloseTabsLeft?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCloseTabsLeft, tab.id]
+	);
+	const handleCloseTabsRightClick = useCallback(
+		(e: React.MouseEvent) => {
+			e.stopPropagation();
+			onCloseTabsRight?.(tab.id);
+			setOverlayOpen(false);
+		},
+		[onCloseTabsRight, tab.id]
+	);
+
+	// Determine icon state color
+	const iconColor = useMemo(() => {
+		if (tab.state === 'idle') return theme.colors.success;
+		if (tab.state === 'busy') return theme.colors.warning;
+		if (tab.state === 'exited') {
+			return (tab.exitCode ?? 0) !== 0 ? theme.colors.error : theme.colors.textDim;
+		}
+		return theme.colors.textDim;
+	}, [tab.state, tab.exitCode, theme.colors]);
+
+	const displayName = getTerminalTabDisplayName(tab, terminalIndex);
+
+	const hoverBgColor = theme.mode === 'light' ? 'rgba(0, 0, 0, 0.06)' : 'rgba(255, 255, 255, 0.08)';
+
+	const tabStyle = useMemo(
+		() =>
+			({
+				borderTopLeftRadius: '6px',
+				borderTopRightRadius: '6px',
+				backgroundColor: isActive ? theme.colors.bgMain : isHovered ? hoverBgColor : 'transparent',
+				borderTop: isActive ? `1px solid ${theme.colors.border}` : '1px solid transparent',
+				borderLeft: isActive ? `1px solid ${theme.colors.border}` : '1px solid transparent',
+				borderRight: isActive ? `1px solid ${theme.colors.border}` : '1px solid transparent',
+				borderBottom: isActive ? `1px solid ${theme.colors.bgMain}` : '1px solid transparent',
+				marginBottom: isActive ? '-1px' : '0',
+				zIndex: isActive ? 1 : 0,
+				'--tw-ring-color': isDragOver ? theme.colors.accent : 'transparent',
+			}) as React.CSSProperties,
+		[isActive, isHovered, isDragOver, theme.colors.bgMain, theme.colors.border, theme.colors.accent, hoverBgColor]
+	);
+
+	return (
+		<div
+			ref={setTabRef}
+			data-tab-id={tab.id}
+			className={`
+        relative flex items-center gap-1.5 px-3 py-1.5 cursor-pointer
+        transition-all duration-150 select-none shrink-0
+        ${isDragging ? 'opacity-50' : ''}
+        ${isDragOver ? 'ring-2 ring-inset' : ''}
+      `}
+			style={tabStyle}
+			onClick={handleTabSelect}
+			onDoubleClick={handleDoubleClick}
+			onMouseDown={handleMouseDown}
+			onMouseEnter={handleMouseEnter}
+			onMouseLeave={handleMouseLeave}
+			draggable
+			onDragStart={handleTabDragStart}
+			onDragOver={handleTabDragOver}
+			onDragEnd={onDragEnd}
+			onDrop={handleTabDrop}
+		>
+			{/* Shortcut hint badge */}
+			{shortcutHint !== null && shortcutHint !== undefined && (
+				<span
+					className="w-4 h-4 flex items-center justify-center rounded text-[10px] font-medium shrink-0 opacity-50"
+					style={{ backgroundColor: theme.colors.border, color: theme.colors.textMain }}
+				>
+					{shortcutHint}
+				</span>
+			)}
+
+			{/* Terminal icon with state color */}
+			<Terminal className="w-3.5 h-3.5 shrink-0" style={{ color: iconColor }} />
+
+			{/* Tab display name */}
+			<span
+				className={`text-xs font-medium ${isActive ? 'whitespace-nowrap' : 'truncate max-w-[120px]'}`}
+				style={{ color: isActive ? theme.colors.textMain : theme.colors.textDim }}
+			>
+				{displayName}
+			</span>
+
+			{/* Exit code badge — only when exited with non-zero code */}
+			{tab.state === 'exited' && (tab.exitCode ?? 0) !== 0 && (
+				<span
+					className="px-1 rounded text-[9px] font-semibold shrink-0"
+					style={{
+						backgroundColor: theme.colors.error + '30',
+						color: theme.colors.error,
+						paddingTop: '2px',
+						paddingBottom: '2px',
+					}}
+				>
+					{tab.exitCode}
+				</span>
+			)}
+
+			{/* Close button — visible on hover or active */}
+			{(isHovered || isActive) && (
+				<button
+					onClick={handleCloseClick}
+					className="p-0.5 rounded hover:bg-white/10 transition-colors shrink-0"
+					title="Close tab"
+				>
+					<X className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+				</button>
+			)}
+
+			{/* Hover overlay with tab actions */}
+			{overlayOpen &&
+				overlayPosition &&
+				createPortal(
+					<div
+						className="fixed z-[100]"
+						style={{ top: overlayPosition.top, left: overlayPosition.left }}
+						onClick={(e) => e.stopPropagation()}
+						onMouseEnter={() => {
+							isOverOverlayRef.current = true;
+							if (hoverTimeoutRef.current) {
+								clearTimeout(hoverTimeoutRef.current);
+								hoverTimeoutRef.current = null;
+							}
+						}}
+						onMouseLeave={() => {
+							isOverOverlayRef.current = false;
+							setOverlayOpen(false);
+							setIsHovered(false);
+						}}
+					>
+						<div
+							className="shadow-xl overflow-hidden"
+							style={{
+								backgroundColor: theme.colors.bgSidebar,
+								borderLeft: `1px solid ${theme.colors.border}`,
+								borderRight: `1px solid ${theme.colors.border}`,
+								borderBottom: `1px solid ${theme.colors.border}`,
+								borderBottomLeftRadius: '8px',
+								borderBottomRightRadius: '8px',
+								minWidth: '200px',
+							}}
+						>
+							<div className="p-1">
+								{/* Rename */}
+								{onRename && (
+									<button
+										onClick={handleRenameClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<Pencil className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Rename
+									</button>
+								)}
+
+								{/* Move to First/Last */}
+								{(onMoveToFirst || onMoveToLast) && (
+									<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+								)}
+								{onMoveToFirst && !isFirstTab && (
+									<button
+										onClick={handleMoveToFirstClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to First Position
+									</button>
+								)}
+								{onMoveToLast && !isLastTab && (
+									<button
+										onClick={handleMoveToLastClick}
+										className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+										style={{ color: theme.colors.textMain }}
+									>
+										<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Move to Last Position
+									</button>
+								)}
+
+								{/* Close actions */}
+								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+
+								<button
+									onClick={handleCloseTabClick}
+									className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs hover:bg-white/10 transition-colors"
+									style={{ color: theme.colors.textMain }}
+								>
+									<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+									Close Tab
+								</button>
+
+								{onCloseOtherTabs && (
+									<button
+										onClick={handleCloseOtherTabsClick}
+										className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+											totalTabs === 1 ? 'opacity-40 cursor-default' : 'hover:bg-white/10'
+										}`}
+										style={{ color: theme.colors.textMain }}
+										disabled={totalTabs === 1}
+									>
+										<X className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Close Other Tabs
+									</button>
+								)}
+
+								{onCloseTabsLeft && (
+									<button
+										onClick={handleCloseTabsLeftClick}
+										className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+											tabIndex === 0 ? 'opacity-40 cursor-default' : 'hover:bg-white/10'
+										}`}
+										style={{ color: theme.colors.textMain }}
+										disabled={tabIndex === 0}
+									>
+										<ChevronsLeft className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Close Tabs to Left
+									</button>
+								)}
+
+								{onCloseTabsRight && (
+									<button
+										onClick={handleCloseTabsRightClick}
+										className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+											tabIndex === (totalTabs ?? 1) - 1
+												? 'opacity-40 cursor-default'
+												: 'hover:bg-white/10'
+										}`}
+										style={{ color: theme.colors.textMain }}
+										disabled={tabIndex === (totalTabs ?? 1) - 1}
+									>
+										<ChevronsRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+										Close Tabs to Right
+									</button>
+								)}
+							</div>
+						</div>
+					</div>,
+					document.body
+				)}
+		</div>
+	);
+});
+
 /**
  * TabBar component for displaying AI session tabs.
  * Shows tabs for each Claude Code conversation within a Maestro session.
@@ -1535,6 +1987,12 @@ function TabBarInner({
 	onFileTabSelect,
 	onFileTabClose,
 	onUnifiedTabReorder,
+	// Terminal tab props (Phase 8)
+	activeTerminalTabId,
+	inputMode,
+	onTerminalTabSelect,
+	onTerminalTabClose,
+	onTerminalTabRename,
 	// Accessibility
 	colorBlindMode,
 }: TabBarProps) {
@@ -1605,19 +2063,22 @@ function TabBarInner({
 		: tabs;
 
 	// When unifiedTabs is provided, filter it similarly for display
-	// File tabs don't have "unread" state, so they only show in filtered mode if active
+	// File and terminal tabs don't have "unread" state, so they only show in filtered mode if active
 	const displayedUnifiedTabs = useMemo(() => {
 		if (!unifiedTabs) return null;
 		if (!showUnreadOnly) return unifiedTabs;
-		// In filter mode: show AI tabs that are unread/active/have drafts, plus file tabs that are active
+		// In filter mode: show AI tabs that are unread/active/have drafts, plus file/terminal tabs that are active
 		return unifiedTabs.filter((ut) => {
 			if (ut.type === 'ai') {
 				return ut.data.hasUnread || ut.id === activeTabId || hasDraft(ut.data);
 			}
-			// File tabs: only show if active
-			return ut.id === activeFileTabId;
+			if (ut.type === 'file') {
+				return ut.id === activeFileTabId;
+			}
+			// Terminal tabs: only show if active
+			return ut.id === activeTerminalTabId;
 		});
-	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId]);
+	}, [unifiedTabs, showUnreadOnly, activeTabId, activeFileTabId, activeTerminalTabId]);
 
 	const handleDragStart = useCallback((tabId: string, e: React.DragEvent) => {
 		e.dataTransfer.effectAllowed = 'move';
@@ -1895,20 +2356,25 @@ function TabBarInner({
 			{/* When unifiedTabs is provided, render both AI and file tabs from unified list */}
 			{displayedUnifiedTabs
 				? displayedUnifiedTabs.map((unifiedTab, index) => {
-						// Determine if this tab is active (based on type)
-						// AI tabs are active when: they match activeTabId AND no file tab is selected
-						// File tabs are active when: they match activeFileTabId
+						// Determine if this tab is active (based on type and current input mode):
+						// - AI tabs: active when they match activeTabId AND no file/terminal tab is active
+						// - File tabs: active when they match activeFileTabId
+						// - Terminal tabs: active when they match activeTerminalTabId AND we're in terminal mode
 						const isActive =
 							unifiedTab.type === 'ai'
-								? unifiedTab.id === activeTabId && !activeFileTabId
-								: unifiedTab.id === activeFileTabId;
+								? unifiedTab.id === activeTabId && !activeFileTabId && inputMode !== 'terminal'
+								: unifiedTab.type === 'file'
+								? unifiedTab.id === activeFileTabId
+								: unifiedTab.id === activeTerminalTabId && inputMode === 'terminal';
 
 						// Check previous tab's active state for separator logic
 						const prevUnifiedTab = index > 0 ? displayedUnifiedTabs[index - 1] : null;
 						const isPrevActive = prevUnifiedTab
 							? prevUnifiedTab.type === 'ai'
-								? prevUnifiedTab.id === activeTabId && !activeFileTabId
-								: prevUnifiedTab.id === activeFileTabId
+								? prevUnifiedTab.id === activeTabId && !activeFileTabId && inputMode !== 'terminal'
+								: prevUnifiedTab.type === 'file'
+								? prevUnifiedTab.id === activeFileTabId
+								: prevUnifiedTab.id === activeTerminalTabId && inputMode === 'terminal'
 							: false;
 
 						// Get original index in the FULL unified list (not filtered)
@@ -2035,8 +2501,50 @@ function TabBarInner({
 								</React.Fragment>
 							);
 					} else {
-						// Terminal tab — rendering implemented in Phase 8
-						return null;
+						// Terminal tab
+						const terminalTab = unifiedTab.data;
+						// Compute this tab's position among terminal tabs only (for "Terminal N" display name)
+						const terminalIndex = allTabs
+							.filter((ut) => ut.type === 'terminal')
+							.findIndex((ut) => ut.id === unifiedTab.id);
+						return (
+							<React.Fragment key={unifiedTab.id}>
+								{showSeparator && (
+									<div
+										className="w-px h-4 self-center shrink-0"
+										style={{ backgroundColor: theme.colors.border }}
+									/>
+								)}
+								<TerminalTabItem
+									tab={terminalTab}
+									terminalIndex={terminalIndex >= 0 ? terminalIndex : 0}
+									isActive={isActive}
+									theme={theme}
+									onSelect={onTerminalTabSelect || (() => {})}
+									onClose={onTerminalTabClose || (() => {})}
+									onRename={onTerminalTabRename}
+									onDragStart={handleDragStart}
+									onDragOver={handleDragOver}
+									onDragEnd={handleDragEnd}
+									onDrop={handleDrop}
+									isDragging={draggingTabId === terminalTab.id}
+									isDragOver={dragOverTabId === terminalTab.id}
+									registerRef={(el) => registerTabRef(terminalTab.id, el)}
+									onMoveToFirst={
+										!isFirstTab && onUnifiedTabReorder ? handleMoveToFirst : undefined
+									}
+									onMoveToLast={!isLastTab && onUnifiedTabReorder ? handleMoveToLast : undefined}
+									isFirstTab={isFirstTab}
+									isLastTab={isLastTab}
+									onCloseOtherTabs={onCloseOtherTabs ? handleTabCloseOther : undefined}
+									onCloseTabsLeft={onCloseTabsLeft ? handleTabCloseLeft : undefined}
+									onCloseTabsRight={onCloseTabsRight ? handleTabCloseRight : undefined}
+									totalTabs={allTabs.length}
+									tabIndex={originalIndex}
+									shortcutHint={shortcutHint}
+								/>
+							</React.Fragment>
+						);
 					}
 					})
 				: // Fallback: render AI tabs only (legacy mode when unifiedTabs not provided)

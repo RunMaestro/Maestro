@@ -25,6 +25,7 @@ import { useModalStore } from '../../stores/modalStore';
 import { useUIStore } from '../../stores/uiStore';
 import { notifyToast } from '../../stores/notificationStore';
 import { getActiveTab } from '../../utils/tabHelpers';
+import { renameTerminalTab as renameTerminalTabHelper } from '../../utils/terminalTabHelpers';
 import type { NavHistoryEntry } from './useNavigationHistory';
 import { captureException } from '../../utils/sentry';
 
@@ -192,6 +193,19 @@ export function useSessionLifecycle(deps: SessionLifecycleDeps): SessionLifecycl
 	const handleRenameTab = useCallback(
 		(newName: string) => {
 			if (!activeSession || !renameTabId) return;
+
+			// If this is a terminal tab, delegate to terminal tab rename helper
+			if (activeSession.terminalTabs?.some((t) => t.id === renameTabId)) {
+				useSessionStore.getState().setSessions((prev) =>
+					prev.map((s) =>
+						s.id === activeSession.id
+							? renameTerminalTabHelper(s, renameTabId, newName)
+							: s
+					)
+				);
+				return;
+			}
+
 			useSessionStore.getState().setSessions((prev) =>
 				prev.map((s) => {
 					if (s.id !== activeSession.id) return s;
