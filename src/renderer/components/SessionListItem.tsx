@@ -44,8 +44,10 @@ export interface SearchResultInfo {
 export interface SessionListItemProps {
 	/** The Claude session data */
 	session: ClaudeSession;
-	/** Whether this row is currently selected for keyboard navigation */
-	isSelected: boolean;
+	/** Zero-based index in the list */
+	index: number;
+	/** Currently selected index for keyboard navigation */
+	selectedIndex: number;
 	/** Whether this session is starred */
 	isStarred: boolean;
 	/** Currently active Claude session ID (if any) */
@@ -85,7 +87,8 @@ export interface SessionListItemProps {
  */
 export const SessionListItem = memo(function SessionListItem({
 	session,
-	isSelected,
+	index,
+	selectedIndex,
 	isStarred,
 	activeAgentSessionId,
 	renamingSessionId,
@@ -103,100 +106,58 @@ export const SessionListItem = memo(function SessionListItem({
 	onSubmitRename,
 	onCancelRename,
 }: SessionListItemProps) {
+	const isSelected = index === selectedIndex;
 	const isRenaming = renamingSessionId === session.sessionId;
 	const isActive = activeAgentSessionId === session.sessionId;
-	const styles = useMemo(
+	const containerStyle = useMemo(
 		() => ({
-			container: {
-				backgroundColor: isSelected ? `${theme.colors.accent}15` : 'transparent',
-				borderColor: `${theme.colors.border}50`,
-			},
-			searchMatch: {
-				backgroundColor: `${theme.colors.accent}20`,
-				color: theme.colors.accent,
-			},
-			statsText: {
-				color: theme.colors.textDim,
-			},
-			sessionName: {
-				color: theme.colors.accent,
-			},
-			firstMessageText: {
-				color: session.sessionName ? theme.colors.textDim : theme.colors.textMain,
-			},
-			renameInput: {
-				color: theme.colors.accent,
-				borderColor: theme.colors.accent,
-				backgroundColor: theme.colors.bgActivity,
-			},
-			starIcon: {
-				color: isStarred ? theme.colors.warning : theme.colors.textDim,
-				fill: isStarred ? theme.colors.warning : 'transparent',
-			},
-			playIcon: {
-				color: theme.colors.success,
-			},
-			editIcon: {
-				color: theme.colors.accent,
-			},
-			ghostEditIcon: {
-				color: theme.colors.textDim,
-			},
-			costText: {
-				color: theme.colors.success,
-			},
-			sessionOrigin: {
-				user: {
-					backgroundColor: `${theme.colors.accent}30`,
-					color: theme.colors.accent,
-				},
-				auto: {
-					backgroundColor: `${theme.colors.warning}30`,
-					color: theme.colors.warning,
-				},
-				cli: {
-					backgroundColor: theme.colors.border,
-					color: theme.colors.textDim,
-				},
-			},
-			sessionIdPill: {
-				backgroundColor: `${theme.colors.border}60`,
-				color: theme.colors.textDim,
-			},
-			searchPreview: {
-				color: theme.colors.accent,
-			},
-			activeBadge: {
-				backgroundColor: `${theme.colors.success}20`,
-				color: theme.colors.success,
-			},
+			backgroundColor: isSelected ? `${theme.colors.accent}15` : 'transparent',
+			borderColor: `${theme.colors.border}50`,
 		}),
-		[
-			isSelected,
-			isStarred,
-			session.sessionName,
-			theme.colors.accent,
-			theme.colors.bgActivity,
-			theme.colors.border,
-			theme.colors.textDim,
-			theme.colors.textMain,
-			theme.colors.warning,
-			theme.colors.success,
-		]
+		[isSelected, theme.colors.accent, theme.colors.border],
 	);
-
-	const originStyles = session.origin === 'user'
-		? styles.sessionOrigin.user
-		: session.origin === 'auto'
-			? styles.sessionOrigin.auto
-			: styles.sessionOrigin.cli;
+	const userOriginPillStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.accent}30`,
+			color: theme.colors.accent,
+		}),
+		[theme.colors.accent],
+	);
+	const autoOriginPillStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.warning}30`,
+			color: theme.colors.warning,
+		}),
+		[theme.colors.warning],
+	);
+	const sessionIdPillStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.border}60`,
+			color: theme.colors.textDim,
+		}),
+		[theme.colors.border, theme.colors.textDim],
+	);
+	const searchMatchPillStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.accent}20`,
+			color: theme.colors.accent,
+		}),
+		[theme.colors.accent],
+	);
+	const activeBadgeStyle = useMemo(
+		() => ({
+			backgroundColor: `${theme.colors.success}20`,
+			color: theme.colors.success,
+		}),
+		[theme.colors.success],
+	);
 
 	return (
 		<div
 			ref={isSelected ? (selectedItemRef as React.RefObject<HTMLDivElement>) : null}
 			onClick={() => onSessionClick(session)}
 			className="w-full text-left px-6 py-4 flex items-start gap-4 hover:bg-white/5 transition-colors border-b group cursor-pointer"
-			style={styles.container}
+			style={containerStyle}
 		>
 			{/* Star button */}
 			<button
@@ -206,7 +167,10 @@ export const SessionListItem = memo(function SessionListItem({
 			>
 				<Star
 					className="w-4 h-4"
-					style={styles.starIcon}
+					style={{
+						color: isStarred ? theme.colors.warning : theme.colors.textDim,
+						fill: isStarred ? theme.colors.warning : 'transparent',
+					}}
 				/>
 			</button>
 
@@ -216,7 +180,7 @@ export const SessionListItem = memo(function SessionListItem({
 				className="p-1 rounded hover:bg-white/10 transition-colors shrink-0 opacity-0 group-hover:opacity-100"
 				title="Resume session in new tab"
 			>
-				<Play className="w-4 h-4" style={styles.playIcon} />
+				<Play className="w-4 h-4" style={{ color: theme.colors.success }} />
 			</button>
 
 			<div className="flex-1 min-w-0">
@@ -242,12 +206,16 @@ export const SessionListItem = memo(function SessionListItem({
 							onBlur={() => onSubmitRename(session.sessionId)}
 							placeholder="Enter session name..."
 							className="flex-1 bg-transparent outline-none text-sm font-semibold px-2 py-0.5 rounded border min-w-0"
-							style={styles.renameInput}
+							style={{
+								color: theme.colors.accent,
+								borderColor: theme.colors.accent,
+								backgroundColor: theme.colors.bgActivity,
+							}}
 						/>
 					</div>
 				) : session.sessionName ? (
 					<div className="flex items-center gap-1.5 mb-1 group/name">
-						<span className="font-semibold text-sm truncate" style={styles.sessionName}>
+						<span className="font-semibold text-sm truncate" style={{ color: theme.colors.accent }}>
 							{session.sessionName}
 						</span>
 						<button
@@ -255,7 +223,7 @@ export const SessionListItem = memo(function SessionListItem({
 							className="p-0.5 rounded opacity-0 group-hover/name:opacity-100 hover:bg-white/10 transition-all"
 							title="Rename session"
 						>
-							<Edit3 className="w-3 h-3" style={styles.editIcon} />
+							<Edit3 className="w-3 h-3" style={{ color: theme.colors.accent }} />
 						</button>
 					</div>
 				) : null}
@@ -266,7 +234,7 @@ export const SessionListItem = memo(function SessionListItem({
 				>
 					<span
 						className="font-medium truncate text-sm flex-1 min-w-0"
-						style={styles.firstMessageText}
+						style={{ color: session.sessionName ? theme.colors.textDim : theme.colors.textMain }}
 					>
 						{session.firstMessage || `Session ${session.sessionId.slice(0, 8)}...`}
 					</span>
@@ -277,18 +245,18 @@ export const SessionListItem = memo(function SessionListItem({
 							className="p-0.5 rounded opacity-0 group-hover/title:opacity-100 hover:bg-white/10 transition-all shrink-0"
 							title="Add session name"
 						>
-							<Edit3 className="w-3 h-3" style={styles.ghostEditIcon} />
+							<Edit3 className="w-3 h-3" style={{ color: theme.colors.textDim }} />
 						</button>
 					)}
 				</div>
 
 				{/* Stats row: origin pill + session ID + stats + match info */}
-				<div className="flex items-center gap-3 text-xs" style={styles.statsText}>
+				<div className="flex items-center gap-3 text-xs" style={{ color: theme.colors.textDim }}>
 					{/* Session origin pill */}
 					{session.origin === 'user' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={originStyles}
+							style={userOriginPillStyle}
 							title="User-initiated through Maestro"
 						>
 							MAESTRO
@@ -297,7 +265,7 @@ export const SessionListItem = memo(function SessionListItem({
 					{session.origin === 'auto' && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={originStyles}
+							style={autoOriginPillStyle}
 							title="Auto-run session"
 						>
 							AUTO
@@ -306,7 +274,7 @@ export const SessionListItem = memo(function SessionListItem({
 					{!session.origin && (
 						<span
 							className="text-[10px] font-bold px-1.5 py-0.5 rounded"
-							style={originStyles}
+							style={{ backgroundColor: theme.colors.border, color: theme.colors.textDim }}
 							title="Claude Code CLI session"
 						>
 							CLI
@@ -316,7 +284,7 @@ export const SessionListItem = memo(function SessionListItem({
 					{/* Session ID pill */}
 					<span
 						className="text-[10px] font-mono px-1.5 py-0.5 rounded"
-						style={styles.sessionIdPill}
+						style={sessionIdPillStyle}
 					>
 						{session.sessionId.startsWith('agent-')
 							? `AGENT-${session.sessionId.split('-')[1]?.toUpperCase() || ''}`
@@ -341,7 +309,7 @@ export const SessionListItem = memo(function SessionListItem({
 					{(session.costUsd ?? 0) > 0 && (
 						<span
 							className="flex items-center gap-1 font-mono"
-							style={styles.costText}
+							style={{ color: theme.colors.success }}
 						>
 							<DollarSign className="w-3 h-3" />
 							{(session.costUsd ?? 0).toFixed(2)}
@@ -352,7 +320,7 @@ export const SessionListItem = memo(function SessionListItem({
 					{searchResultInfo && searchResultInfo.matchCount > 0 && searchMode !== 'title' && (
 						<span
 							className="flex items-center gap-1 px-1.5 py-0.5 rounded"
-							style={styles.searchMatch}
+							style={searchMatchPillStyle}
 						>
 							<Search className="w-3 h-3" />
 							{searchResultInfo.matchCount}
@@ -361,7 +329,7 @@ export const SessionListItem = memo(function SessionListItem({
 
 					{/* Show match preview for content searches */}
 					{searchResultInfo && searchResultInfo.matchPreview && searchMode !== 'title' && (
-						<span className="truncate italic max-w-[400px]" style={styles.searchPreview}>
+						<span className="truncate italic max-w-[400px]" style={{ color: theme.colors.accent }}>
 							"{searchResultInfo.matchPreview}"
 						</span>
 					)}
@@ -372,7 +340,7 @@ export const SessionListItem = memo(function SessionListItem({
 			{isActive && (
 				<span
 					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-					style={styles.activeBadge}
+					style={activeBadgeStyle}
 				>
 					ACTIVE
 				</span>
