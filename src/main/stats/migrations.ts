@@ -57,9 +57,9 @@ export function getMigrations(): Migration[] {
 			up: (db) => migrateV3(db),
 		},
 		{
-			version: 4,
+			version: 5,
 			description: 'Add window_usage_events table for multi-window analytics',
-			up: (db) => migrateV4(db),
+			up: (db) => migrateV5(db),
 		},
 	];
 }
@@ -241,9 +241,9 @@ function migrateV3(db: Database.Database): void {
 }
 
 /**
- * Migration v4: Add window_usage_events table
+ * Migration v5: Add window_usage_events table
  */
-function migrateV4(db: Database.Database): void {
+function migrateV5(db: Database.Database): void {
 	db.prepare(CREATE_WINDOW_USAGE_EVENTS_SQL).run();
 	runStatements(db, CREATE_WINDOW_USAGE_EVENTS_INDEXES_SQL);
 	logger.debug('Created window_usage_events table', LOG_CONTEXT);

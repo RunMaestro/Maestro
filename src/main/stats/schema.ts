@@ -126,7 +126,7 @@ export const CREATE_SESSION_LIFECYCLE_INDEXES_SQL = `
 `;
 
 // ============================================================================
-// Window Usage Snapshots (Migration v4)
+// Window Usage Snapshots (Migration v5)
 // ============================================================================
 
 export const CREATE_WINDOW_USAGE_EVENTS_SQL = `
