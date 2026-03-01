@@ -1,5 +1,5 @@
 import React, { memo } from 'react';
-import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server } from 'lucide-react';
+import { Activity, GitBranch, Bot, Bookmark, AlertCircle, Server, Zap } from 'lucide-react';
 import type { Session, Group, Theme } from '../types';
 import { getStatusColor } from '../utils/theme';
 
@@ -35,6 +35,7 @@ export interface SessionItemProps {
 	gitFileCount?: number;
 	isInBatch?: boolean;
 	jumpNumber?: string | null; // Session jump shortcut number (1-9, 0)
+	cueSubscriptionCount?: number; // Number of active Cue subscriptions (0 or undefined = no indicator)
 
 	// Handlers
 	onSelect: () => void;
@@ -75,6 +76,7 @@ export const SessionItem = memo(function SessionItem({
 	gitFileCount,
 	isInBatch = false,
 	jumpNumber,
+	cueSubscriptionCount,
 	onSelect,
 	onDragStart,
 	onDragOver,
@@ -156,6 +158,14 @@ export const SessionItem = memo(function SessionItem({
 						>
 							{session.name}
 						</span>
+						{cueSubscriptionCount != null && cueSubscriptionCount > 0 && (
+							<span
+								className="shrink-0 flex items-center"
+								title={`Maestro Cue active (${cueSubscriptionCount} subscription${cueSubscriptionCount === 1 ? '' : 's'})`}
+							>
+								<Zap className="w-3 h-3" style={{ color: '#2dd4bf' }} fill="#2dd4bf" />
+							</span>
+						)}
 					</div>
 				)}
 
