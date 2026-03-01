@@ -6,8 +6,15 @@ const SettingsModal = lazy(() =>
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';
 import { slashCommands } from './slashCommands';
-import { AppModals, type PRDetails, type FlatFileItem } from './components/AppModals';
+import {
+	AppModals,
+	type PRDetails,
+	type FlatFileItem,
+	type MergeOptions,
+	type SendToAgentOptions,
+} from './components/AppModals';
 // DEFAULT_BATCH_PROMPT moved to useSymphonyContribution hook
+import * as Sentry from '@sentry/electron/renderer';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { MainPanel, type MainPanelHandle } from './components/MainPanel';
 import { AppOverlays } from './components/AppOverlays';
@@ -719,7 +726,6 @@ function MaestroConsoleInner() {
 
 	// Session restoration (load, restore, git info, group chats) — provided by useSessionRestoration hook
 
-
 	// Note: Standing ovation and keyboard mastery startup checks are now in useModalHandlers
 
 	// IPC process event listeners are now in useAgentListeners hook (called after useAgentSessionManagement)
@@ -806,13 +812,91 @@ function MaestroConsoleInner() {
 			unsubWarning();
 			unsubReached();
 		};
-	}, []);
+	}, [encoreFeatures.virtuosos]);
+
+	// Subscribe to account recovery events for auto-resume of paused Auto Runs
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+		const unsubRecovery = window.maestro.accounts.onRecoveryAvailable((data) => {
+			notifyToast({
+				type: 'success',
+				title: 'Virtuoso Recovered',
+				message:
+					data.recoveredCount === 1
+						? 'Virtuoso is available again'
+						: `${data.recoveredCount} virtuosos are available again`,
+				duration: 8_000,
+			});
+
+			// Auto-resume any Auto Runs that are paused due to rate limiting
+			const currentSessions = sessionsRef.current;
+			for (const session of currentSessions) {
+				const batchState = getBatchStateRef.current?.(session.id);
+				if (!batchState?.isRunning || batchState.processingState !== 'PAUSED_ERROR') continue;
+				if (!batchState.error) continue;
+
+				// Check if the pause was due to rate limiting
+				const isRateLimitPause =
+					batchState.error.type === 'rate_limited' ||
+					(batchState.error.message?.includes('rate') ?? false) ||
+					(batchState.error.message?.includes('throttle') ?? false) ||
+					(batchState.error.message?.includes('All virtuosos') ?? false);
+
+				if (isRateLimitPause) {
+					const recoveredForThis = data.recoveredAccountIds.includes(session.accountId || '');
+					if (recoveredForThis || data.recoveredAccountIds.length > 0) {
+						resumeAfterErrorRef.current?.(session.id);
+
+						notifyToast({
+							type: 'info',
+							title: 'Auto Run Resuming',
+							message: 'Resuming after virtuoso recovery',
+							duration: 5_000,
+						});
+					}
+				}
+			}
+		});
+
+		return () => unsubRecovery();
+	}, [encoreFeatures.virtuosos]);
+
+	// Subscribe to all-accounts-exhausted throttle events for Auto Run pause
+	useEffect(() => {
+		if (!encoreFeatures.virtuosos) return;
+		const unsubThrottled = window.maestro.accounts.onThrottled((data) => {
+			if (!data.noAlternatives) return; // Only handle the exhausted case
+
+			const sessionId = data.sessionId as string;
+			if (!sessionId) return;
+
+			// Check if this session has an active Auto Run
+			const batchState = getBatchStateRef.current?.(sessionId);
+			if (!batchState?.isRunning || batchState.errorPaused) return;
+
+			// Pause the batch with a specific rate_limited error so recovery can auto-resolve it
+			pauseBatchOnErrorRef.current?.(
+				sessionId,
+				{
+					type: 'rate_limited',
+					message: 'All virtuosos have been rate-limited. Waiting for automatic recovery...',
+					recoverable: true,
+					agentId: 'claude-code',
+					timestamp: Date.now(),
+				},
+				batchState.currentDocumentIndex,
+				'Waiting for virtuoso recovery'
+			);
+		});
+
+		return () => unsubThrottled();
+	}, [encoreFeatures.virtuosos]);
 
 	// Subscribe to account assignment events (update session state when main process assigns an account)
 	useEffect(() => {
 		const unsubAssigned = window.maestro.accounts.onAssigned((data) => {
 			setSessions((prev) =>
-				prev.map(s => {
+				prev.map((s) => {
 					if (!data.sessionId.startsWith(s.id)) return s;
 					return { ...s, accountId: data.accountId, accountName: data.accountName };
 				})
@@ -824,18 +908,27 @@ function MaestroConsoleInner() {
 	// Subscribe to account switch events (respawn agent with new account after switch)
 	useEffect(() => {
 		const unsubRespawn = window.maestro.accounts.onSwitchRespawn(async (data) => {
-			const { sessionId: switchSessionId, toAccountId, toAccountName, configDir, lastPrompt, reason } = data;
+			const {
+				sessionId: switchSessionId,
+				toAccountId,
+				toAccountName,
+				configDir,
+				lastPrompt,
+				reason,
+			} = data;
 
 			// Find the session that needs respawning (match by base session ID)
-			const session = sessionsRef.current.find(s => switchSessionId.startsWith(s.id));
+			const session = sessionsRef.current.find((s) => switchSessionId.startsWith(s.id));
 			if (!session) {
-				console.error('[AccountSwitch] Session not found for respawn:', switchSessionId);
+				Sentry.captureException(new Error('[AccountSwitch] Session not found for respawn'), {
+					extra: { operation: 'account:switchRespawn', switchSessionId },
+				});
 				return;
 			}
 
 			// Update session with new account info and CLAUDE_CONFIG_DIR
 			setSessions((prev) =>
-				prev.map(s => {
+				prev.map((s) => {
 					if (s.id !== session.id) return s;
 					return {
 						...s,
@@ -853,7 +946,13 @@ function MaestroConsoleInner() {
 				// Get agent config for respawn
 				const agent = await window.maestro.agents.get(session.toolType);
 				if (!agent) {
-					console.error('[AccountSwitch] Agent not found for respawn:', session.toolType);
+					Sentry.captureException(new Error('[AccountSwitch] Agent not found for respawn'), {
+						extra: {
+							operation: 'account:switchRespawn',
+							toolType: session.toolType,
+							sessionId: session.id,
+						},
+					});
 					return;
 				}
 
@@ -900,7 +999,9 @@ function MaestroConsoleInner() {
 					duration: 5_000,
 				});
 			} catch (error) {
-				console.error('[AccountSwitch] Failed to respawn agent:', error);
+				Sentry.captureException(error, {
+					extra: { operation: 'account:switchRespawn', sessionId: session.id, toAccountId },
+				});
 				notifyToast({
 					type: 'error',
 					title: 'Account Switch Failed',
@@ -931,7 +1032,14 @@ function MaestroConsoleInner() {
 					automatic: true,
 				});
 			} catch (error) {
-				console.error('[AccountSwitch] Auto-switch execution failed:', error);
+				Sentry.captureException(error, {
+					extra: {
+						operation: 'account:autoSwitchExecution',
+						switchSessionId,
+						fromAccountId,
+						toAccountId,
+					},
+				});
 			}
 		});
 
@@ -978,7 +1086,7 @@ function MaestroConsoleInner() {
 
 		const cleanup = window.maestro.providers.onFailoverSuggest(async (suggestion) => {
 			// Find the session
-			const session = sessionsRef.current.find(s => s.id === suggestion.sessionId);
+			const session = sessionsRef.current.find((s) => s.id === suggestion.sessionId);
 			if (!session) return;
 
 			// Load provider switch config from settings
@@ -1900,87 +2008,100 @@ function MaestroConsoleInner() {
 
 	// Provider Switch handlers (Virtuosos)
 	const handleSwitchProvider = useCallback((sessionId: string) => {
-		const session = sessionsRef.current.find(s => s.id === sessionId);
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (session && session.toolType !== 'terminal') {
 			setSwitchProviderSession(session);
 		}
 	}, []);
 
-	const handleConfirmProviderSwitch = useCallback(async (request: {
-		targetProvider: ToolType;
-		groomContext: boolean;
-		archiveSource: boolean;
-		mergeBackInto?: Session;
-	}) => {
-		if (!switchProviderSession) return;
+	const handleConfirmProviderSwitch = useCallback(
+		async (request: {
+			targetProvider: ToolType;
+			groomContext: boolean;
+			archiveSource: boolean;
+			mergeBackInto?: Session;
+		}) => {
+			if (!switchProviderSession) return;
 
-		const activeTab = getActiveTab(switchProviderSession);
-		if (!activeTab) return;
+			const activeTab = getActiveTab(switchProviderSession);
+			if (!activeTab) return;
 
-		const result = await switchProvider({
-			sourceSession: switchProviderSession,
-			sourceTabId: activeTab.id,
-			targetProvider: request.targetProvider,
-			groomContext: request.groomContext,
-			archiveSource: request.archiveSource,
-			mergeBackInto: request.mergeBackInto,
-		});
-
-		if (result.success && result.newSession) {
-			if (result.mergedBack && request.mergeBackInto) {
-				// Merge-back: replace the archived session with the reactivated one
-				setSessions(prev => prev.map(s =>
-					s.id === request.mergeBackInto!.id ? result.newSession! : s
-				));
-			} else {
-				// Always-new: add the new session to state
-				setSessions(prev => [...prev, result.newSession!]);
-			}
-
-			// Mark source as archived if requested
-			if (request.archiveSource) {
-				setSessions(prev => prev.map(s =>
-					s.id === switchProviderSession.id
-						? {
-							...s,
-							archivedByMigration: true,
-							migratedToSessionId: result.newSessionId,
-						}
-						: s
-				));
-			}
-
-			// Clear provider error tracking for source session
-			window.maestro.providers.clearSessionErrors(switchProviderSession.id).catch(() => {});
-
-			// Navigate to the new/reactivated session
-			setActiveSessionId(result.newSessionId!);
-
-			// Show success toast
-			const action = result.mergedBack ? 'Merged back to' : 'Switched to';
-			notifyToast({
-				type: 'success',
-				title: 'Provider Switched',
-				message: `${action} ${getAgentDisplayName(request.targetProvider)}`,
-				duration: 5_000,
+			const result = await switchProvider({
+				sourceSession: switchProviderSession,
+				sourceTabId: activeTab.id,
+				targetProvider: request.targetProvider,
+				groomContext: request.groomContext,
+				archiveSource: request.archiveSource,
+				mergeBackInto: request.mergeBackInto,
 			});
-		}
 
-		// Close the modal
-		setSwitchProviderSession(null);
-	}, [switchProviderSession, switchProvider, setActiveSessionId]);
+			if (result.success && result.newSession) {
+				if (result.mergedBack && request.mergeBackInto) {
+					// Merge-back: replace the archived session with the reactivated one
+					setSessions((prev) =>
+						prev.map((s) => (s.id === request.mergeBackInto!.id ? result.newSession! : s))
+					);
+				} else {
+					// Always-new: add the new session to state
+					setSessions((prev) => [...prev, result.newSession!]);
+				}
+
+				// Mark source as archived if requested
+				if (request.archiveSource) {
+					setSessions((prev) =>
+						prev.map((s) =>
+							s.id === switchProviderSession.id
+								? {
+										...s,
+										archivedByMigration: true,
+										migratedToSessionId: result.newSessionId,
+									}
+								: s
+						)
+					);
+				}
+
+				// Clear provider error tracking for source session
+				window.maestro.providers.clearSessionErrors(switchProviderSession.id).catch((err) => {
+					Sentry.captureException(err, {
+						extra: {
+							operation: 'provider:clearSessionErrors',
+							sessionId: switchProviderSession.id,
+						},
+					});
+				});
+
+				// Navigate to the new/reactivated session
+				setActiveSessionId(result.newSessionId!);
+
+				// Show success toast
+				const action = result.mergedBack ? 'Merged back to' : 'Switched to';
+				notifyToast({
+					type: 'success',
+					title: 'Provider Switched',
+					message: `${action} ${getAgentDisplayName(request.targetProvider)}`,
+					duration: 5_000,
+				});
+			}
+
+			// Close the modal
+			setSwitchProviderSession(null);
+		},
+		[switchProviderSession, switchProvider, setActiveSessionId]
+	);
 
 	// Unarchive handlers
 	const handleUnarchive = useCallback((sessionId: string) => {
-		const session = sessionsRef.current.find(s => s.id === sessionId);
+		const session = sessionsRef.current.find((s) => s.id === sessionId);
 		if (!session || !session.archivedByMigration) return;
 
 		// Check for conflict: another non-archived session with the same name AND toolType
 		const conflicting = sessionsRef.current.find(
-			s => s.id !== sessionId
-				&& s.toolType === session.toolType
-				&& s.name === session.name
-				&& !s.archivedByMigration
+			(s) =>
+				s.id !== sessionId &&
+				s.toolType === session.toolType &&
+				s.name === session.name &&
+				!s.archivedByMigration
 		);
 
 		if (conflicting) {
@@ -1990,11 +2111,13 @@ function MaestroConsoleInner() {
 			});
 		} else {
 			// No conflict — directly unarchive
-			setSessions(prev => prev.map(s =>
-				s.id === sessionId
-					? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
-					: s
-			));
+			setSessions((prev) =>
+				prev.map((s) =>
+					s.id === sessionId
+						? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+						: s
+				)
+			);
 			notifyToast({
 				type: 'success',
 				title: 'Agent Unarchived',
@@ -2008,15 +2131,17 @@ function MaestroConsoleInner() {
 		if (!unarchiveConflictState) return;
 		const { archivedSession, conflictingSession } = unarchiveConflictState;
 
-		setSessions(prev => prev.map(s => {
-			if (s.id === archivedSession.id) {
-				return { ...s, archivedByMigration: false, migratedToSessionId: undefined };
-			}
-			if (s.id === conflictingSession.id) {
-				return { ...s, archivedByMigration: true };
-			}
-			return s;
-		}));
+		setSessions((prev) =>
+			prev.map((s) => {
+				if (s.id === archivedSession.id) {
+					return { ...s, archivedByMigration: false, migratedToSessionId: undefined };
+				}
+				if (s.id === conflictingSession.id) {
+					return { ...s, archivedByMigration: true };
+				}
+				return s;
+			})
+		);
 
 		notifyToast({
 			type: 'success',
@@ -2032,17 +2157,25 @@ function MaestroConsoleInner() {
 		if (!unarchiveConflictState) return;
 		const { archivedSession, conflictingSession } = unarchiveConflictState;
 
-		setSessions(prev => prev
-			.filter(s => s.id !== conflictingSession.id)
-			.map(s =>
-				s.id === archivedSession.id
-					? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
-					: s
-			)
+		setSessions((prev) =>
+			prev
+				.filter((s) => s.id !== conflictingSession.id)
+				.map((s) =>
+					s.id === archivedSession.id
+						? { ...s, archivedByMigration: false, migratedToSessionId: undefined }
+						: s
+				)
 		);
 
 		// Kill process for deleted session if running
-		window.maestro.process.kill(conflictingSession.id).catch(() => {});
+		window.maestro.process.kill(conflictingSession.id).catch((err) => {
+			Sentry.captureException(err, {
+				extra: {
+					operation: 'account:killConflictingOnUnarchive',
+					sessionId: conflictingSession.id,
+				},
+			});
+		});
 
 		notifyToast({
 			type: 'success',
@@ -2100,6 +2233,7 @@ function MaestroConsoleInner() {
 	// startRenamingSession, finishRenamingSession — provided by useSessionCrud hook
 
 	// handleDragStart, handleDragOver — provided by useSessionCrud hook
+
 
 	// Note: processInput has been extracted to useInputProcessing hook (see line ~2128)
 
@@ -3021,7 +3155,11 @@ function MaestroConsoleInner() {
 					onCloseEditAgentModal={handleCloseEditAgentModal}
 					onSaveEditAgent={handleSaveEditAgent}
 					editAgentSession={editAgentSession}
-					onSwitchProviderFromEdit={encoreFeatures.virtuosos && editAgentSession ? () => handleSwitchProvider(editAgentSession.id) : undefined}
+					onSwitchProviderFromEdit={
+						encoreFeatures.virtuosos && editAgentSession
+							? () => handleSwitchProvider(editAgentSession.id)
+							: undefined
+					}
 					renameSessionValue={renameInstanceValue}
 					setRenameSessionValue={setRenameInstanceValue}
 					onCloseRenameSessionModal={handleCloseRenameSessionModal}

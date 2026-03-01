@@ -16,6 +16,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import * as Sentry from '@sentry/electron/renderer';
 import { ArrowDown, Shuffle, Info } from 'lucide-react';
 import type { Theme, Session, ToolType, AgentConfig } from '../types';
 import type { ProviderSwitchBehavior } from '../../shared/account-types';
@@ -138,7 +139,12 @@ export function SwitchProviderModal({
 
 				setProviders(options);
 			} catch (err) {
-				console.error('Failed to detect agents for provider switch:', err);
+				Sentry.captureException(err, {
+					extra: {
+						operation: 'provider:detectAgentsForSwitch',
+						sourceToolType: sourceSession.toolType,
+					},
+				});
 			}
 		})();
 

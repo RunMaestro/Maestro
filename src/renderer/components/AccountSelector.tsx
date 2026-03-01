@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import * as Sentry from '@sentry/electron/renderer';
 import { User, ChevronDown, Settings } from 'lucide-react';
 import type { Theme } from '../types';
 import type { AccountProfile } from '../../shared/account-types';
@@ -47,7 +48,7 @@ export function AccountSelector({
 	onManageAccounts,
 	compact = false,
 }: AccountSelectorProps) {
-	const virtuososEnabled = useSettingsStore(state => state.encoreFeatures.virtuosos);
+	const virtuososEnabled = useSettingsStore((state) => state.encoreFeatures.virtuosos);
 	const [accounts, setAccounts] = useState<AccountProfile[]>([]);
 	const [isOpen, setIsOpen] = useState(false);
 	const dropdownRef = useRef<HTMLDivElement>(null);
@@ -61,10 +62,12 @@ export function AccountSelector({
 				const list = (await window.maestro.accounts.list()) as AccountProfile[];
 				if (!cancelled) setAccounts(list);
 			} catch (err) {
-				console.warn('[AccountSelector] Failed to fetch accounts:', err);
+				Sentry.captureException(err, { extra: { operation: 'account:fetchAccountList' } });
 			}
 		})();
-		return () => { cancelled = true; };
+		return () => {
+			cancelled = true;
+		};
 	}, [isOpen, currentAccountId]);
 
 	// Close dropdown on outside click
@@ -93,7 +96,8 @@ export function AccountSelector({
 	}, [isOpen]);
 
 	const currentAccount = accounts.find((a) => a.id === currentAccountId);
-	const displayName = currentAccount?.name ?? currentAccount?.email ?? currentAccountName ?? 'No Virtuoso';
+	const displayName =
+		currentAccount?.name ?? currentAccount?.email ?? currentAccountName ?? 'No Virtuoso';
 
 	const handleSelect = useCallback(
 		(accountId: string) => {
@@ -117,7 +121,9 @@ export function AccountSelector({
 					className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-full cursor-pointer transition-all hover:brightness-125"
 					style={{
 						color: currentAccountId ? theme.colors.textMain : theme.colors.textDim,
-						backgroundColor: currentAccountId ? `${theme.colors.accent}20` : `${theme.colors.border}30`,
+						backgroundColor: currentAccountId
+							? `${theme.colors.accent}20`
+							: `${theme.colors.border}30`,
 						border: currentAccountId
 							? `1px solid ${theme.colors.accent}50`
 							: `1px solid ${theme.colors.border}60`,
@@ -208,16 +214,23 @@ export function AccountSelector({
 															className="h-full rounded-full transition-all"
 															style={{
 																width: `${Math.min(100, usage.usagePercent)}%`,
-																backgroundColor: usage.usagePercent >= 95
-																	? theme.colors.error
-																	: usage.usagePercent >= 80
-																		? theme.colors.warning
-																		: theme.colors.accent,
+																backgroundColor:
+																	usage.usagePercent >= 95
+																		? theme.colors.error
+																		: usage.usagePercent >= 80
+																			? theme.colors.warning
+																			: theme.colors.accent,
 															}}
 														/>
 													</div>
-													<div className="flex justify-between mt-0.5 text-[10px]" style={{ color: theme.colors.textDim }}>
-														<span>{formatTokenCount(usage.totalTokens)} / {formatTokenCount(usage.limitTokens)}</span>
+													<div
+														className="flex justify-between mt-0.5 text-[10px]"
+														style={{ color: theme.colors.textDim }}
+													>
+														<span>
+															{formatTokenCount(usage.totalTokens)} /{' '}
+															{formatTokenCount(usage.limitTokens)}
+														</span>
 														<span>{formatTimeRemaining(usage.timeRemainingMs)}</span>
 													</div>
 												</div>
@@ -242,10 +255,7 @@ export function AccountSelector({
 					</div>
 					{/* Manage Accounts link */}
 					{onManageAccounts && (
-						<div
-							className="border-t"
-							style={{ borderColor: theme.colors.border }}
-						>
+						<div className="border-t" style={{ borderColor: theme.colors.border }}>
 							<button
 								type="button"
 								onClick={() => {
