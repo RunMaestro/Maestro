@@ -479,10 +479,28 @@ export interface FilePreviewTab {
 }
 
 /**
+ * Terminal Tab — represents a PTY shell session with full terminal emulation via xterm.js.
+ * Unlike AITab (which stores logs), TerminalTab relies on xterm.js to manage its own scrollback
+ * buffer. The PTY process is identified by pid (0 = not yet spawned / lazy init).
+ */
+export interface TerminalTab {
+	id: string; // Unique tab ID (UUID)
+	name: string | null; // User-defined name; null displays "Terminal N" (auto-numbered)
+	shellType: string; // Shell binary name, e.g. 'zsh', 'bash', 'sh'
+	pid: number; // PTY process ID; 0 if PTY has not been spawned yet
+	cwd: string; // Current working directory for this shell session
+	createdAt: number; // Unix timestamp (ms) when the tab was created
+	state: 'idle' | 'busy' | 'exited'; // PTY lifecycle state
+	exitCode?: number; // Exit code when state === 'exited'
+	scrollTop?: number; // Saved scroll position (restored on tab re-focus)
+	searchQuery?: string; // Preserved search query for the xterm.js search addon
+}
+
+/**
  * Reference to any tab in the unified tab system.
  * Used for unified tab ordering across different tab types.
  */
-export type UnifiedTabRef = { type: 'ai' | 'file'; id: string };
+export type UnifiedTabRef = { type: 'ai' | 'file' | 'terminal'; id: string };
 
 /**
  * Unified tab entry for rendering in TabBar.
@@ -491,16 +509,18 @@ export type UnifiedTabRef = { type: 'ai' | 'file'; id: string };
  */
 export type UnifiedTab =
 	| { type: 'ai'; id: string; data: AITab }
-	| { type: 'file'; id: string; data: FilePreviewTab };
+	| { type: 'file'; id: string; data: FilePreviewTab }
+	| { type: 'terminal'; id: string; data: TerminalTab };
 
 /**
  * Unified closed tab entry for undo functionality (Cmd+Shift+T).
- * Can hold either an AITab or FilePreviewTab with type discrimination.
+ * Can hold an AITab, FilePreviewTab, or TerminalTab with type discrimination.
  * Uses unifiedIndex for restoring position in the unified tab order.
  */
 export type ClosedTabEntry =
 	| { type: 'ai'; tab: AITab; unifiedIndex: number; closedAt: number }
-	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number };
+	| { type: 'file'; tab: FilePreviewTab; unifiedIndex: number; closedAt: number }
+	| { type: 'terminal'; tab: TerminalTab; unifiedIndex: number; closedAt: number };
 
 export interface Session {
 	id: string;
@@ -512,6 +532,7 @@ export interface Session {
 	fullPath: string;
 	projectRoot: string; // The initial working directory (never changes, used for Claude session storage)
 	aiLogs: LogEntry[];
+	// DEPRECATED: Legacy shell output logs — terminal tabs use xterm.js with direct PTY streaming
 	shellLogs: LogEntry[];
 	workLog: WorkLogItem[];
 	contextUsage: number;
@@ -521,8 +542,7 @@ export interface Session {
 	// AI process PID (for agents with persistent processes)
 	// For batch mode agents, this is 0 since processes spawn per-message
 	aiPid: number;
-	// Terminal uses runCommand() which spawns fresh shells per command
-	// This field is kept for backwards compatibility but is always 0
+	// DEPRECATED: Replaced by terminalTabs[].pid — each terminal tab now has its own PTY pid
 	terminalPid: number;
 	port: number;
 	// Live mode - makes session accessible via web interface
@@ -620,14 +640,20 @@ export interface Session {
 	// Stack of recently closed tabs for undo (max 25, runtime-only, not persisted)
 	closedTabHistory: ClosedTab[];
 
-	// File Preview Tabs - in-tab file viewing (coexists with AI tabs and future terminal tabs)
+	// File Preview Tabs - in-tab file viewing (coexists with AI tabs and terminal tabs)
 	// Tabs are interspersed visually but stored separately for type safety
 	filePreviewTabs: FilePreviewTab[];
-	// Currently active file tab ID (null if an AI tab is active)
+	// Currently active file tab ID (null if an AI tab or terminal tab is active)
 	activeFileTabId: string | null;
-	// Unified tab ordering - determines visual order of all tabs (AI and file)
+
+	// Terminal tab management — each tab has its own PTY session with xterm.js rendering
+	terminalTabs: TerminalTab[];
+	// Currently active terminal tab ID (null if an AI or file tab is active)
+	activeTerminalTabId: string | null;
+
+	// Unified tab ordering - determines visual order of all tabs (AI, file, and terminal)
 	unifiedTabOrder: UnifiedTabRef[];
-	// Stack of recently closed tabs (both AI and file) for undo (max 25, runtime-only, not persisted)
+	// Stack of recently closed tabs (AI, file, and terminal) for undo (max 25, runtime-only, not persisted)
 	// Used by Cmd+Shift+T to restore any recently closed tab
 	unifiedClosedTabHistory: ClosedTabEntry[];
 
