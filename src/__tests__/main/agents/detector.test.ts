@@ -5,6 +5,8 @@ import {
 	AgentConfigOption,
 	AgentCapabilities,
 } from '../../../main/agents';
+import { AGENT_MIN_VERSIONS } from '../../../main/agents/detector';
+import { compareVersions } from '../../../shared/pathUtils';
 
 // Mock dependencies
 vi.mock('../../../main/utils/execFile', () => ({
@@ -107,6 +109,7 @@ describe('agent-detector', () => {
 				requiresPty: true,
 				configOptions: [{ key: 'k', type: 'text', label: 'L', description: 'D', default: '' }],
 				hidden: true,
+				detectedVersion: '1.2.3',
 				defaultEnvVars: { TEST_VAR: 'test-value' },
 				capabilities: {
 					supportsResume: true,
@@ -128,6 +131,7 @@ describe('agent-detector', () => {
 			expect(config.customPath).toBe('/custom/path');
 			expect(config.requiresPty).toBe(true);
 			expect(config.hidden).toBe(true);
+			expect(config.detectedVersion).toBe('1.2.3');
 			expect(config.defaultEnvVars).toEqual({ TEST_VAR: 'test-value' });
 			expect(config.capabilities.supportsResume).toBe(true);
 		});
@@ -1378,6 +1382,268 @@ describe('agent-detector', () => {
 
 			expect(models).toEqual(['refreshed-model']);
 			expect(mockExecFileNoThrow).toHaveBeenCalled();
+		});
+	});
+
+	describe('version detection', () => {
+		it('should populate detectedVersion for agents with versionArgs', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				// Binary detection (which/where)
+				if (args[0] === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				// Version check
+				if (cmd === '/usr/bin/codex' && args[0] === '--version') {
+					return { stdout: 'codex-cli 0.103.0\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.detectedVersion).toBe('0.103.0');
+		});
+
+		it('should parse Claude Code version format', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'claude') {
+					return { stdout: '/usr/bin/claude\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/claude' && args[0] === '--version') {
+					return { stdout: '2.1.45 (Claude Code)\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const claude = agents.find((a) => a.id === 'claude-code');
+
+			expect(claude?.detectedVersion).toBe('2.1.45');
+		});
+
+		it('should set detectedVersion to undefined when version check fails', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				// Version check fails
+				if (cmd === '/usr/bin/codex' && args[0] === '--version') {
+					return { stdout: '', stderr: 'unknown flag', exitCode: 1 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.detectedVersion).toBeUndefined();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('version check failed'),
+				'AgentDetector'
+			);
+		});
+
+		it('should set detectedVersion to undefined when version output is unparseable', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/codex' && args[0] === '--version') {
+					return { stdout: 'some random text without numbers\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.detectedVersion).toBeUndefined();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('Could not parse version'),
+				'AgentDetector'
+			);
+		});
+
+		it('should set detectedVersion to undefined when version check returns empty output', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/codex' && args[0] === '--version') {
+					return { stdout: '', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.detectedVersion).toBeUndefined();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('empty output'),
+				'AgentDetector'
+			);
+		});
+
+		it('should not attempt version detection for unavailable agents', async () => {
+			// All binaries not found
+			mockExecFileNoThrow.mockResolvedValue({ stdout: '', stderr: '', exitCode: 1 });
+
+			const agents = await detector.detectAgents();
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.available).toBe(false);
+			expect(codex?.detectedVersion).toBeUndefined();
+			// Should NOT have called version check for unavailable agent
+			expect(mockExecFileNoThrow).not.toHaveBeenCalledWith(
+				expect.any(String),
+				['--version'],
+				undefined,
+				expect.any(Object)
+			);
+		});
+
+		it('should not attempt version detection for agents without versionArgs', async () => {
+			// Terminal agent has no versionArgs
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				const terminalBinary = process.platform === 'win32' ? 'powershell.exe' : 'bash';
+				if (args[0] === terminalBinary) {
+					return { stdout: `/usr/bin/${terminalBinary}\n`, stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const terminal = agents.find((a) => a.id === 'terminal');
+
+			expect(terminal?.available).toBe(true);
+			expect(terminal?.detectedVersion).toBeUndefined();
+		});
+
+		it('should handle version check timeout gracefully', async () => {
+			vi.useFakeTimers();
+
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'codex') {
+					return { stdout: '/usr/bin/codex\n', stderr: '', exitCode: 0 };
+				}
+				// Version check hangs forever
+				if (cmd === '/usr/bin/codex' && args[0] === '--version') {
+					return new Promise(() => {}); // Never resolves
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const detectPromise = detector.detectAgents();
+
+			// Repeatedly advance timers and flush microtasks to allow the detection loop
+			// to progress through all agents while the version check times out
+			for (let i = 0; i < 20; i++) {
+				await vi.advanceTimersByTimeAsync(500);
+			}
+
+			const agents = await detectPromise;
+			const codex = agents.find((a) => a.id === 'codex');
+
+			expect(codex?.available).toBe(true);
+			expect(codex?.detectedVersion).toBeUndefined();
+			expect(logger.warn).toHaveBeenCalledWith(
+				expect.stringContaining('timed out'),
+				'AgentDetector'
+			);
+
+			vi.useRealTimers();
+		});
+
+		it('should parse version with v prefix', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'gemini') {
+					return { stdout: '/usr/bin/gemini\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/gemini' && args[0] === '--version') {
+					return { stdout: 'Gemini CLI v0.29.0\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const gemini = agents.find((a) => a.id === 'gemini-cli');
+
+			expect(gemini?.detectedVersion).toBe('0.29.0');
+		});
+
+		it('should parse version from path-prefixed output', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'opencode') {
+					return { stdout: '/usr/bin/opencode\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/opencode' && args[0] === '--version') {
+					return { stdout: '/opt/homebrew/bin/opencode 0.0.55\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const opencode = agents.find((a) => a.id === 'opencode');
+
+			expect(opencode?.detectedVersion).toBe('0.0.55');
+		});
+
+		it('should parse aider version format', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'aider') {
+					return { stdout: '/usr/bin/aider\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/aider' && args[0] === '--version') {
+					return { stdout: 'aider 0.86.3\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const aider = agents.find((a) => a.id === 'aider');
+
+			expect(aider?.detectedVersion).toBe('0.86.3');
+		});
+
+		it('should handle uppercase V prefix', async () => {
+			mockExecFileNoThrow.mockImplementation(async (cmd, args) => {
+				if (args[0] === 'droid') {
+					return { stdout: '/usr/bin/droid\n', stderr: '', exitCode: 0 };
+				}
+				if (cmd === '/usr/bin/droid' && args[0] === '--version') {
+					return { stdout: 'Factory Droid V0.4.0\n', stderr: '', exitCode: 0 };
+				}
+				return { stdout: '', stderr: '', exitCode: 1 };
+			});
+
+			const agents = await detector.detectAgents();
+			const droid = agents.find((a) => a.id === 'factory-droid');
+
+			expect(droid?.detectedVersion).toBe('0.4.0');
+		});
+	});
+
+	describe('version comparison with AGENT_MIN_VERSIONS', () => {
+		it('should export AGENT_MIN_VERSIONS with expected agents', () => {
+			expect(AGENT_MIN_VERSIONS).toBeDefined();
+			expect(AGENT_MIN_VERSIONS['codex']).toBeDefined();
+			expect(AGENT_MIN_VERSIONS['claude-code']).toBeDefined();
+		});
+
+		it('should correctly identify versions below minimum', () => {
+			const minCodex = AGENT_MIN_VERSIONS['codex']; // '0.41.0'
+			expect(compareVersions('0.40.0', minCodex)).toBe(-1);
+			expect(compareVersions('0.41.0', minCodex)).toBe(0);
+			expect(compareVersions('0.103.0', minCodex)).toBe(1);
+		});
+
+		it('should correctly identify Claude Code versions below minimum', () => {
+			const minClaude = AGENT_MIN_VERSIONS['claude-code']; // '1.0.0'
+			expect(compareVersions('0.99.0', minClaude)).toBe(-1);
+			expect(compareVersions('1.0.0', minClaude)).toBe(0);
+			expect(compareVersions('2.1.45', minClaude)).toBe(1);
 		});
 	});
 });

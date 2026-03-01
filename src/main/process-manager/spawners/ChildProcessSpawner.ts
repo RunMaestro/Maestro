@@ -348,6 +348,11 @@ export class ChildProcessSpawner {
 			// Get the output parser for this agent type
 			const outputParser = getOutputParser(toolType) || undefined;
 
+			// Parsers are singletons — refresh config before each spawn to pick up changes
+			if (outputParser?.refreshConfig) {
+				outputParser.refreshConfig();
+			}
+
 			logger.debug('[ProcessManager] Output parser lookup', 'ProcessManager', {
 				sessionId,
 				toolType,

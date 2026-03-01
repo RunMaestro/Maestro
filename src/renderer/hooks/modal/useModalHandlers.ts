@@ -353,9 +353,11 @@ export function useModalHandlers(
 	const handleStartNewSessionAfterError = useCallback(
 		(sessionId: string) => {
 			const { defaultSaveToHistory, defaultShowThinking } = useSettingsStore.getState();
+			const session = useSessionStore.getState().sessions.find((s) => s.id === sessionId);
 			useAgentStore.getState().startNewSessionAfterError(sessionId, {
 				saveToHistory: defaultSaveToHistory,
-				showThinking: defaultShowThinking,
+				// Codex: default thinking to 'on' since reasoning is the main visibility into agent activity
+				showThinking: session?.toolType === 'codex' ? 'on' : defaultShowThinking,
 			});
 			getModalActions().setAgentErrorModalSessionId(null);
 			setTimeout(() => inputRef.current?.focus(), 0);

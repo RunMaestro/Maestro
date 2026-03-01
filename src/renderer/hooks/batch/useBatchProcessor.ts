@@ -682,10 +682,7 @@ export function useBatchProcessor({
 			} else {
 				// Normal path: set up worktree from scratch if config.worktree is enabled
 				const worktreeWithSsh = worktree ? { ...worktree, sshRemoteId } : undefined;
-				const worktreeResult = await worktreeManager.setupWorktree(
-					session.cwd,
-					worktreeWithSsh
-				);
+				const worktreeResult = await worktreeManager.setupWorktree(session.cwd, worktreeWithSsh);
 				if (!worktreeResult.success) {
 					window.maestro.logger.log('error', 'Worktree setup failed', 'BatchProcessor', {
 						sessionId,
@@ -870,9 +867,17 @@ export function useBatchProcessor({
 			let totalOutputTokens = 0;
 			let totalCost = 0;
 
-			// Track consecutive runs where document content didn't change to detect stalling
-			// If the document hash is identical before/after a run (and no tasks checked), the LLM is stuck
-			// Note: This counter is reset per-document, so stalling one document doesn't affect others
+			// Stall Detection Mechanism:
+			// Post-execution detection via consecutive no-change counter.
+			// After each task completes, we compare the document content before and after.
+			// If neither the content changed nor any tasks were checked off, the counter increments.
+			// After MAX_CONSECUTIVE_NO_CHANGES consecutive runs with no progress, the document
+			// is marked as stalled and skipped. Counter resets per-document.
+			//
+			// Mid-execution activity tracking is handled in useAgentExecution.ts, which listens
+			// for onData, onThinkingChunk, and onToolExecution events. This bridges the IPC channel
+			// gap for agents like Codex whose reasoning and tool events travel on separate channels
+			// from the data channel used for result output.
 			let consecutiveNoChangeCount = 0;
 			const MAX_CONSECUTIVE_NO_CHANGES = 2; // Skip document after 2 consecutive runs with no changes
 
@@ -929,6 +934,11 @@ export function useBatchProcessor({
 					}
 
 					const docEntry = documents[docIndex];
+
+					// Skip documents that have already been marked as stalled
+					if (stalledDocuments.has(docEntry.filename)) {
+						continue;
+					}
 
 					// Read document and count tasks
 					let {
@@ -1027,6 +1037,14 @@ export function useBatchProcessor({
 					let skipCurrentDocumentAfterError = false;
 
 					// Process tasks in this document until none remain
+					// NOTE: No per-task timeout is implemented. If an agent hangs mid-execution
+					// (no output, no exit), the batch will stall on the awaited processTask() call.
+					// The user can manually cancel via Stop/Kill Auto Run controls.
+					// The stall detection (consecutiveNoChangeCount) only triggers after a task
+					// completes, so it cannot detect in-flight hangs. A future enhancement could
+					// add a configurable per-task timeout using Promise.race() against
+					// useAgentExecution's lastActivityTime (which tracks activity from all IPC
+					// channels including thinking-chunk and tool-execution events).
 					while (remainingTasks > 0) {
 						// Check for stop request before each task
 						if (stopRequestedRefs.current[sessionId]) {
@@ -1095,6 +1113,19 @@ export function useBatchProcessor({
 								agentSessionId,
 								success,
 							} = taskResult;
+
+							// Log task completion details for debugging (especially useful for Codex)
+							window.maestro.logger.log('info', 'Auto Run task completed', 'BatchProcessor', {
+								agentType: session.toolType,
+								hasResult:
+									!!shortSummary && shortSummary !== `[${effectiveFilename}] Task completed`,
+								resultLength: fullSynopsis?.length ?? 0,
+								elapsedTimeMs,
+								tasksCompletedThisRun,
+								documentChanged,
+								success,
+								agentSessionId,
+							});
 
 							// Detect stalling: if document content is unchanged and no tasks were checked off
 							if (!documentChanged && tasksCompletedThisRun === 0) {
@@ -1402,6 +1433,12 @@ export function useBatchProcessor({
 				// Check for stop request after full pass
 				if (stopRequestedRefs.current[sessionId]) {
 					addFinalLoopSummary('Stopped by user');
+					break;
+				}
+
+				// Safety check: if all documents are stalled, exit to avoid infinite loop
+				if (stalledDocuments.size >= documents.length) {
+					addFinalLoopSummary('All documents stalled');
 					break;
 				}
 

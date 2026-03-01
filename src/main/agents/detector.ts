@@ -28,6 +28,81 @@ const LOG_CONTEXT = 'AgentDetector';
 /** Default cache TTL: 5 minutes (model lists don't change frequently) */
 const DEFAULT_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 
+/**
+ * Minimum supported agent versions. Agents below these versions may have
+ * incompatible output formats that Maestro's parsers cannot handle.
+ *
+ * Maintenance: update an entry when a parser is changed to depend on a newer
+ * output format (e.g., new envelope fields, changed JSON structure). The
+ * version should match the agent release that introduced the format change.
+ * Add new entries when onboarding a new agent whose parser targets a specific
+ * CLI version. Remove entries only if backward compatibility is restored.
+ */
+export const AGENT_MIN_VERSIONS: Record<string, string> = {
+	codex: '0.41.0', // New msg-envelope JSONL format
+	'claude-code': '1.0.0', // Baseline for --output-format stream-json
+};
+
+/** Timeout for agent version probes (ms) */
+const VERSION_DETECT_TIMEOUT_MS = 3_000;
+
+/**
+ * Run `<binary> <versionArgs>` and parse the version string from stdout.
+ * Returns the parsed version string, or null on failure.
+ * Uses a fixed timeout to avoid blocking detection.
+ */
+async function detectAgentVersion(
+	binaryPath: string,
+	versionArgs: string[],
+	agentId: string,
+	env: NodeJS.ProcessEnv
+): Promise<string | null> {
+	try {
+		const resultPromise = execFileNoThrow(binaryPath, versionArgs, undefined, env);
+		const timeoutPromise = new Promise<null>((resolve) =>
+			setTimeout(() => resolve(null), VERSION_DETECT_TIMEOUT_MS)
+		);
+
+		const result = await Promise.race([resultPromise, timeoutPromise]);
+		if (!result) {
+			logger.warn(`${agentId} version check timed out`, LOG_CONTEXT);
+			return null;
+		}
+
+		if (result.exitCode !== 0) {
+			logger.warn(
+				`${agentId} version check failed (exit ${result.exitCode}): ${result.stderr.trim()}`,
+				LOG_CONTEXT
+			);
+			return null;
+		}
+
+		const stdout = result.stdout.trim();
+		if (!stdout) {
+			logger.warn(`${agentId} version check returned empty output`, LOG_CONTEXT);
+			return null;
+		}
+
+		// Parse version from output: try each whitespace-separated part
+		// to find one that looks like a semver (starts with digit, contains dots)
+		const parts = stdout.split(/\s+/);
+		const version = parts.map((p) => p.replace(/^v/i, '')).find((p) => /^\d+\.\d+/.test(p));
+
+		if (!version) {
+			logger.warn(`Could not parse version from ${agentId} output: "${stdout}"`, LOG_CONTEXT);
+			return null;
+		}
+
+		logger.info(`${agentId} version detected: ${version}`, LOG_CONTEXT);
+		return version;
+	} catch (error) {
+		logger.warn(`${agentId} version check threw exception`, LOG_CONTEXT, {
+			error: String(error),
+		});
+		return null;
+	}
+}
+
 export class AgentDetector {
 	private cachedAgents: AgentConfig[] | null = null;
 	private detectionInProgress: Promise<AgentConfig[]> | null = null;
@@ -131,12 +206,25 @@ export class AgentDetector {
 				}
 			}
 
+			// Version detection for agents that define versionArgs (non-blocking, 3s timeout)
+			let detectedVersion: string | undefined;
+			if (detection.exists && detection.path && agentDef.versionArgs) {
+				detectedVersion =
+					(await detectAgentVersion(
+						detection.path,
+						agentDef.versionArgs,
+						agentDef.id,
+						expandedEnv
+					)) ?? undefined;
+			}
+
 			agents.push({
 				...agentDef,
 				available: detection.exists,
 				path: detection.path,
 				customPath: customPath || undefined,
 				capabilities: getAgentCapabilities(agentDef.id),
+				detectedVersion,
 			});
 		}
 
@@ -162,7 +250,7 @@ export class AgentDetector {
 			});
 		} else {
 			logger.info(
-				`Agent detection complete. Available: ${availableAgents.map((a) => a.name).join(', ') || 'none'}`,
+				`Agent detection complete. Available: ${availableAgents.map((a) => (a.detectedVersion ? `${a.name} v${a.detectedVersion}` : a.name)).join(', ') || 'none'}`,
 				LOG_CONTEXT
 			);
 		}

@@ -926,7 +926,9 @@ function RepositoryDetailView({
 						{isIssueBlocked(selectedIssue) ? (
 							<>
 								<Lock className="w-4 h-4" />
-								<span>Blocked by a dependency — the maintainer will unblock when prerequisites are met</span>
+								<span>
+									Blocked by a dependency — the maintainer will unblock when prerequisites are met
+								</span>
 							</>
 						) : (
 							<>
@@ -2047,9 +2049,7 @@ export function SymphonyModal({
 									>
 										<span className="flex items-center gap-1">
 											{filteredRepositories.length} repositories • Contribute to open source with AI
-											{isLoadingIssueCounts && (
-												<Loader2 className="w-3 h-3 animate-spin ml-1" />
-											)}
+											{isLoadingIssueCounts && <Loader2 className="w-3 h-3 animate-spin ml-1" />}
 										</span>
 										<span>{`↑↓←→ navigate • Enter select • / search • ${formatShortcutKeys(['Meta', 'Shift'])}[] tabs`}</span>
 									</div>

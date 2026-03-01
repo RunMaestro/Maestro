@@ -69,6 +69,8 @@ describe('useAgentExecution', () => {
 		onSessionId: vi.fn(),
 		onUsage: vi.fn(),
 		onExit: vi.fn(),
+		onThinkingChunk: vi.fn(),
+		onToolExecution: vi.fn(),
 	};
 
 	let onDataHandler: ((sid: string, data: string) => void) | undefined;
@@ -103,6 +105,8 @@ describe('useAgentExecution', () => {
 			onExitHandler = handler;
 			return () => {};
 		});
+		mockProcess.onThinkingChunk.mockImplementation(() => () => {});
+		mockProcess.onToolExecution.mockImplementation(() => () => {});
 
 		window.maestro = {
 			...window.maestro,

@@ -503,7 +503,6 @@ function MaestroConsoleInner() {
 	const bookmarksCollapsed = useUIStore((s) => s.bookmarksCollapsed);
 	// groupChatsExpanded moved to useCycleSession hook
 	const showUnreadOnly = useUIStore((s) => s.showUnreadOnly);
-	const _selectedFileIndex = useFileExplorerStore((s) => s.selectedFileIndex);
 	const fileTreeFilter = useFileExplorerStore((s) => s.fileTreeFilter);
 	const fileTreeFilterOpen = useFileExplorerStore((s) => s.fileTreeFilterOpen);
 	const editingGroupId = useUIStore((s) => s.editingGroupId);
@@ -527,8 +526,11 @@ function MaestroConsoleInner() {
 		setSelectedSidebarIndex,
 	} = useUIStore.getState();
 
-	const { setSelectedFileIndex: _setSelectedFileIndex, setFileTreeFilter: _setFileTreeFilter, setFileTreeFilterOpen } =
-		useFileExplorerStore.getState();
+	const {
+		setSelectedFileIndex: _setSelectedFileIndex,
+		setFileTreeFilter: _setFileTreeFilter,
+		setFileTreeFilterOpen,
+	} = useFileExplorerStore.getState();
 
 	// --- GROUP CHAT STATE (now in groupChatStore) ---
 
@@ -639,8 +641,6 @@ function MaestroConsoleInner() {
 	// Content is per-session in session.autoRunContent
 	const autoRunDocumentList = useBatchStore((s) => s.documentList);
 	const autoRunDocumentTree = useBatchStore((s) => s.documentTree);
-	const _autoRunIsLoadingDocuments = useBatchStore((s) => s.isLoadingDocuments);
-	const _autoRunDocumentTaskCounts = useBatchStore((s) => s.documentTaskCounts);
 	const {
 		setDocumentList: setAutoRunDocumentList,
 		setDocumentTree: setAutoRunDocumentTree,
@@ -2927,9 +2927,7 @@ function MaestroConsoleInner() {
 								if (activeSession) {
 									setSessions((prev) =>
 										prev.map((s) =>
-											s.id === activeSession.id
-												? { ...s, documentGraphLayout: type }
-												: s
+											s.id === activeSession.id ? { ...s, documentGraphLayout: type } : s
 										)
 									);
 								}

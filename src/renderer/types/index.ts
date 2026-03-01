@@ -746,6 +746,7 @@ export interface AgentConfig {
 	binaryName?: string;
 	available: boolean;
 	path?: string;
+	detectedVersion?: string; // Version string detected by running `<binary> --version`
 	customPath?: string; // User-specified custom path (shown in UI even if not available)
 	command?: string;
 	args?: string[];

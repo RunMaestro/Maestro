@@ -124,6 +124,9 @@ export function AgentCard({
 					</div>
 					<p className="text-xs truncate" style={{ color: theme.colors.textDim }}>
 						{agent.path ?? agent.command}
+						{agent.detectedVersion && (
+							<span style={{ opacity: 0.7 }}> · v{agent.detectedVersion}</span>
+						)}
 					</p>
 				</div>
 				<div className="flex items-center gap-2">

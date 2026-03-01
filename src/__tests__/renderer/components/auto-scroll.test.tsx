@@ -123,7 +123,9 @@ const createDefaultSession = (overrides: Partial<Session> = {}): Session => ({
 		{
 			id: 'tab-1',
 			agentSessionId: 'claude-123',
-			logs: [{ id: 'default-log', text: 'Default log entry', timestamp: 0, source: 'stdout' as const }],
+			logs: [
+				{ id: 'default-log', text: 'Default log entry', timestamp: 0, source: 'stdout' as const },
+			],
 			isUnread: false,
 		},
 	],
