@@ -62,20 +62,20 @@
       "featured": false,
       "addedAt": "2026-02-14"
     },
-        {
-      "slug": "billchirico/bills-bot",
-      "name": "bills-bot",
-      "description": "An AI-powered Discord bot used for managing servers that includes interaction, question answering, full memory of users, and more.",
-      "url": "https://github.com/BillChirico/bills-bot",
+    {
+      "slug": "volvoxllc/volvox-bot",
+      "name": "volvox-bot",
+      "description": "An AI-powered Discord bot used for managing servers that includes interaction, question answering, full memory of users, interaction, games, and much more.",
+      "url": "https://github.com/VolvoxLLC/volvox-bot",
       "category": "ai-ml",
-      "tags": ["discord bot", "claude-sdk", "moderation", "discord.js", "typescript"],
+      "tags": ["discord-bot", "claude-sdk", "moderation", "discord.js", "typescript"],
       "maintainer": {
         "name": "BillChirico",
         "url": "https://github.com/BillChirico"
       },
       "isActive": true,
       "featured": false,
-      "addedAt": "2026-02-15"
+      "addedAt": "2026-02-28"
     }
   ]
 }
