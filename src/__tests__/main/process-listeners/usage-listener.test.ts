@@ -54,7 +54,7 @@ describe('Usage Listener', () => {
 		} as unknown as ProcessManager;
 
 		mockDeps = {
-			safeSend: vi.fn(),
+			broadcastToAllWindows: vi.fn(),
 			logger: {
 				info: vi.fn(),
 				error: vi.fn(),
@@ -107,7 +107,7 @@ describe('Usage Listener', () => {
 
 			handler?.('regular-session-123', usageStats);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:usage',
 				'regular-session-123',
 				usageStats
@@ -300,7 +300,7 @@ describe('Usage Listener', () => {
 
 			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', usageStats);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:usage',
 				'group-chat-test-chat-123-participant-TestAgent-abc123',
 				usageStats
@@ -349,7 +349,7 @@ describe('Usage Listener', () => {
 
 			handler?.('group-chat-test-chat-123-moderator-1234567890', usageStats);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:usage',
 				'group-chat-test-chat-123-moderator-1234567890',
 				usageStats
@@ -378,7 +378,7 @@ describe('Usage Listener', () => {
 
 			handler?.('regular-session-123', usageStats);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:usage',
 				'regular-session-123',
 				expect.objectContaining({ reasoningTokens: 1000 })
@@ -427,7 +427,7 @@ describe('Usage Listener', () => {
 			// Moderator usage should NOT be emitted for any regular sessions
 			expect(mockDeps.groupChatEmitters.emitModeratorUsage).not.toHaveBeenCalled();
 			// But all should still forward to renderer
-			expect(mockDeps.safeSend).toHaveBeenCalledTimes(100);
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledTimes(100);
 		});
 	});
 });

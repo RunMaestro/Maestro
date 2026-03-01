@@ -43,7 +43,7 @@ describe('Session ID Listener', () => {
 		} as unknown as ProcessManager;
 
 		mockDeps = {
-			safeSend: vi.fn(),
+			broadcastToAllWindows: vi.fn(),
 			logger: {
 				info: vi.fn(),
 				error: vi.fn(),
@@ -92,7 +92,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('regular-session-123', 'agent-session-abc');
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'regular-session-123',
 				'agent-session-abc'
@@ -234,7 +234,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('group-chat-test-chat-123-participant-TestAgent-abc123', 'agent-session-xyz');
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'group-chat-test-chat-123-participant-TestAgent-abc123',
 				'agent-session-xyz'
@@ -295,7 +295,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('group-chat-test-chat-123-moderator-1234567890', 'moderator-session-xyz');
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'group-chat-test-chat-123-moderator-1234567890',
 				'moderator-session-xyz'
@@ -322,7 +322,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('regular-session-123', '');
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'regular-session-123',
 				''
@@ -335,7 +335,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('regular-session-123', 'a1b2c3d4-e5f6-7890-abcd-ef1234567890');
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'regular-session-123',
 				'a1b2c3d4-e5f6-7890-abcd-ef1234567890'
@@ -349,7 +349,7 @@ describe('Session ID Listener', () => {
 
 			handler?.('regular-session-123', longSessionId);
 
-			expect(mockDeps.safeSend).toHaveBeenCalledWith(
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledWith(
 				'process:session-id',
 				'regular-session-123',
 				longSessionId
@@ -396,7 +396,7 @@ describe('Session ID Listener', () => {
 			expect(mockDeps.groupChatStorage.updateParticipant).not.toHaveBeenCalled();
 			expect(mockDeps.groupChatStorage.updateGroupChat).not.toHaveBeenCalled();
 			// But all should still forward to renderer
-			expect(mockDeps.safeSend).toHaveBeenCalledTimes(100);
+			expect(mockDeps.broadcastToAllWindows).toHaveBeenCalledTimes(100);
 		});
 	});
 });

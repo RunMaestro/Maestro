@@ -6,12 +6,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setupDataListener } from '../../../main/process-listeners/data-listener';
 import type { ProcessManager } from '../../../main/process-manager';
-import type { SafeSendFn } from '../../../main/utils/safe-send';
 import type { ProcessListenerDependencies } from '../../../main/process-listeners/types';
 
 describe('Data Listener', () => {
 	let mockProcessManager: ProcessManager;
-	let mockSafeSend: SafeSendFn;
+	let mockBroadcastToAllWindows: ReturnType<typeof vi.fn>;
 	let mockGetWebServer: ProcessListenerDependencies['getWebServer'];
 	let mockWebServer: { broadcastToSessionClients: ReturnType<typeof vi.fn> };
 	let mockOutputBuffer: ProcessListenerDependencies['outputBuffer'];
@@ -24,7 +23,7 @@ describe('Data Listener', () => {
 		vi.clearAllMocks();
 		eventHandlers = new Map();
 
-		mockSafeSend = vi.fn();
+		mockBroadcastToAllWindows = vi.fn();
 		mockWebServer = {
 			broadcastToSessionClients: vi.fn(),
 		};
@@ -57,7 +56,7 @@ describe('Data Listener', () => {
 
 	const setupListener = () => {
 		setupDataListener(mockProcessManager, {
-			safeSend: mockSafeSend,
+			broadcastToAllWindows: mockBroadcastToAllWindows,
 			getWebServer: mockGetWebServer,
 			outputBuffer: mockOutputBuffer,
 			outputParser: mockOutputParser,
@@ -80,7 +79,7 @@ describe('Data Listener', () => {
 
 			handler?.('regular-session-123', 'test output');
 
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcastToAllWindows).toHaveBeenCalledWith(
 				'process:data',
 				'regular-session-123',
 				'test output'
@@ -91,7 +90,10 @@ describe('Data Listener', () => {
 			setupListener();
 			const handler = eventHandlers.get('data');
 
-			handler?.('51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb', 'test output');
+			handler?.(
+				'51cee651-6629-4de8-abdd-1c1540555f2d-ai-73aaeb23-6673-45a4-8fdf-c769802f79bb',
+				'test output'
+			);
 
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				'51cee651-6629-4de8-abdd-1c1540555f2d',
@@ -109,7 +111,10 @@ describe('Data Listener', () => {
 			setupListener();
 			const handler = eventHandlers.get('data');
 
-			handler?.('a053b4b3-95af-46cc-aaa4-3d37785038be-ai-66fc905c-3062-4192-9a84-d239af5fc826', 'test output');
+			handler?.(
+				'a053b4b3-95af-46cc-aaa4-3d37785038be-ai-66fc905c-3062-4192-9a84-d239af5fc826',
+				'test output'
+			);
 
 			expect(mockWebServer.broadcastToSessionClients).toHaveBeenCalledWith(
 				'a053b4b3-95af-46cc-aaa4-3d37785038be',
@@ -133,7 +138,7 @@ describe('Data Listener', () => {
 				sessionId,
 				'moderator output'
 			);
-			expect(mockSafeSend).not.toHaveBeenCalled();
+			expect(mockBroadcastToAllWindows).not.toHaveBeenCalled();
 		});
 
 		it('should extract group chat ID from moderator session', () => {
@@ -183,7 +188,7 @@ describe('Data Listener', () => {
 				sessionId,
 				'participant output'
 			);
-			expect(mockSafeSend).not.toHaveBeenCalled();
+			expect(mockBroadcastToAllWindows).not.toHaveBeenCalled();
 		});
 
 		it('should warn when participant buffer size exceeds limit', () => {
@@ -210,7 +215,7 @@ describe('Data Listener', () => {
 
 			expect(mockWebServer.broadcastToSessionClients).not.toHaveBeenCalled();
 			// But should still forward to renderer
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcastToAllWindows).toHaveBeenCalledWith(
 				'process:data',
 				'session-123-terminal',
 				'terminal output'
@@ -254,7 +259,7 @@ describe('Data Listener', () => {
 			handler?.('session-123-ai-a1b2c3d4-e5f6-7890-abcd-ef1234567890', 'test output');
 
 			// Should still forward to renderer
-			expect(mockSafeSend).toHaveBeenCalledWith(
+			expect(mockBroadcastToAllWindows).toHaveBeenCalledWith(
 				'process:data',
 				'session-123-ai-a1b2c3d4-e5f6-7890-abcd-ef1234567890',
 				'test output'
