@@ -533,4 +533,96 @@ describe('CueYamlEditor', () => {
 			mockConfirm.mockRestore();
 		});
 	});
+
+	describe('pattern presets', () => {
+		it('should render pattern preset buttons', async () => {
+			render(<CueYamlEditor {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('pattern-presets')).toBeInTheDocument();
+			});
+
+			expect(screen.getByTestId('pattern-scheduled-task')).toBeInTheDocument();
+			expect(screen.getByTestId('pattern-file-enrichment')).toBeInTheDocument();
+			expect(screen.getByTestId('pattern-reactive')).toBeInTheDocument();
+			expect(screen.getByTestId('pattern-research-swarm')).toBeInTheDocument();
+			expect(screen.getByTestId('pattern-sequential-chain')).toBeInTheDocument();
+			expect(screen.getByTestId('pattern-debate')).toBeInTheDocument();
+		});
+
+		it('should render "Start from a pattern" heading', async () => {
+			render(<CueYamlEditor {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByText('Start from a pattern')).toBeInTheDocument();
+			});
+		});
+
+		it('should populate editor when a pattern is clicked', async () => {
+			render(<CueYamlEditor {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('pattern-scheduled-task')).toBeInTheDocument();
+			});
+
+			fireEvent.click(screen.getByTestId('pattern-scheduled-task'));
+
+			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
+			expect(editor.value).toContain('Scheduled Task');
+			expect(editor.value).toContain('time.interval');
+			expect(editor.value).toContain('interval_minutes: 60');
+		});
+
+		it('should prompt for confirmation when editor is dirty before applying pattern', async () => {
+			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+			mockReadYaml.mockResolvedValue('original content');
+
+			render(<CueYamlEditor {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('yaml-editor')).toBeInTheDocument();
+			});
+
+			// Make the editor dirty
+			fireEvent.change(screen.getByTestId('yaml-editor'), {
+				target: { value: 'modified content' },
+			});
+
+			fireEvent.click(screen.getByTestId('pattern-file-enrichment'));
+
+			expect(mockConfirm).toHaveBeenCalledWith(
+				'Replace current YAML with this pattern? Unsaved changes will be lost.'
+			);
+
+			// Should NOT have replaced content since user declined
+			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
+			expect(editor.value).toBe('modified content');
+
+			mockConfirm.mockRestore();
+		});
+
+		it('should replace content when user confirms dirty pattern switch', async () => {
+			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
+			mockReadYaml.mockResolvedValue('original content');
+
+			render(<CueYamlEditor {...defaultProps} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('yaml-editor')).toBeInTheDocument();
+			});
+
+			// Make the editor dirty
+			fireEvent.change(screen.getByTestId('yaml-editor'), {
+				target: { value: 'modified content' },
+			});
+
+			fireEvent.click(screen.getByTestId('pattern-debate'));
+
+			const editor = screen.getByTestId('yaml-editor') as HTMLTextAreaElement;
+			expect(editor.value).toContain('Debate');
+			expect(editor.value).toContain('debater-pro');
+
+			mockConfirm.mockRestore();
+		});
+	});
 });
