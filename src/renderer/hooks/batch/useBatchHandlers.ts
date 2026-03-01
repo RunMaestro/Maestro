@@ -403,6 +403,30 @@ export function useBatchHandlers(deps: UseBatchHandlersDeps): UseBatchHandlersRe
 								message: `PR opened: ${result.prUrl}`,
 								sessionId: info.sessionId,
 							});
+
+							// Record PR in session history so it appears in the History tab
+							try {
+								await window.maestro.history.add({
+									id: generateId(),
+									type: 'AUTO',
+									timestamp: Date.now(),
+									summary: `Symphony PR ready for review: ${result.prUrl}`,
+									fullResponse: [
+										'**Symphony: Pull Request Ready for Review**',
+										'',
+										`- **PR:** ${result.prUrl}`,
+										`- **Issue:** #${session.symphonyMetadata!.issueNumber} — ${session.symphonyMetadata!.issueTitle}`,
+										`- **Tasks Completed:** ${info.completedTasks}`,
+										`- **Documents Processed:** ${info.documentsProcessed}`,
+									].join('\n'),
+									projectPath: session.cwd,
+									sessionId: info.sessionId,
+									success: true,
+								});
+								rightPanelRef.current?.refreshHistoryPanel();
+							} catch {
+								// Best-effort history entry
+							}
 						} else {
 							// complete returned but no prUrl — set to completed for manual finalization
 							await window.maestro.symphony.updateStatus({
