@@ -35,7 +35,7 @@ export interface PaginatedUnifiedHistoryResult {
  */
 export interface UnifiedHistoryOptions {
 	lookbackDays: number;
-	filter?: 'AUTO' | 'USER' | null; // null = both
+	filter?: 'AUTO' | 'USER' | 'CUE' | null; // null = both
 	/** Number of entries to return per page (default: 100) */
 	limit?: number;
 	/** Number of entries to skip for pagination (default: 0) */
@@ -47,7 +47,7 @@ export interface UnifiedHistoryOptions {
  */
 export interface UnifiedHistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;

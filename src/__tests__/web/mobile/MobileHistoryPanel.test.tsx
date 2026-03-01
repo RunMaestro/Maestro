@@ -127,8 +127,10 @@ describe('MobileHistoryPanel', () => {
 		it('exports HistoryEntryType type', () => {
 			const autoType: HistoryEntryType = 'AUTO';
 			const userType: HistoryEntryType = 'USER';
+			const cueType: HistoryEntryType = 'CUE';
 			expect(autoType).toBe('AUTO');
 			expect(userType).toBe('USER');
+			expect(cueType).toBe('CUE');
 		});
 
 		it('exports HistoryEntry interface', () => {

@@ -9,7 +9,7 @@ import { FALLBACK_CONTEXT_WINDOW } from '../../../shared/agentConstants';
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
