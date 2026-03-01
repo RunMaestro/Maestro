@@ -1,4 +1,5 @@
-import { memo, forwardRef, useImperativeHandle, useRef, useEffect } from 'react';
+import { memo, forwardRef, useImperativeHandle, useRef, useEffect, useCallback } from 'react';
+import { AlertCircle } from 'lucide-react';
 import { XTerminal, XTerminalHandle } from './XTerminal';
 import { TerminalSearchBar } from './TerminalSearchBar';
 import { getActiveTerminalTab, getTerminalSessionId, parseTerminalSessionId, updateTerminalTabState, updateTerminalTabPid } from '../utils/terminalTabHelpers';
@@ -55,6 +56,8 @@ export const TerminalView = memo(
 	) {
 		// Map of tabId → XTerminalHandle ref for each tab instance
 		const terminalRefs = useRef<Map<string, XTerminalHandle>>(new Map());
+		// Track previous tab states to detect transitions (for exit message)
+		const prevTabStatesRef = useRef<Map<string, TerminalTab['state']>>(new Map());
 
 		const activeTab = getActiveTerminalTab(session);
 
@@ -88,34 +91,40 @@ export const TerminalView = memo(
 			[activeTab]
 		);
 
+		// Shared spawn function — used both on mount and for retry
+		const spawnPtyForTab = useCallback(
+			(tab: TerminalTab) => {
+				const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+				const tabId = tab.id;
+
+				window.maestro.process
+					.spawnTerminalTab({
+						sessionId: terminalSessionId,
+						cwd: tab.cwd || session.cwd,
+						shell: defaultShell || undefined,
+						shellArgs,
+						shellEnvVars,
+					})
+					.then((result) => {
+						if (result.success) {
+							onTabPidChange(tabId, result.pid);
+						} else {
+							onTabStateChange(tabId, 'exited', 1);
+						}
+					})
+					.catch(() => {
+						onTabStateChange(tabId, 'exited', 1);
+					});
+			},
+			[session.id, session.cwd, defaultShell, shellArgs, shellEnvVars]
+		);
+
 		// Spawn PTY when active tab changes and has no PID yet
 		useEffect(() => {
 			if (!activeTab || activeTab.pid !== 0 || activeTab.state === 'exited') {
 				return;
 			}
-
-			const terminalSessionId = getTerminalSessionId(session.id, activeTab.id);
-			const tabId = activeTab.id;
-
-			window.maestro.process
-				.spawnTerminalTab({
-					sessionId: terminalSessionId,
-					cwd: activeTab.cwd || session.cwd,
-					shell: defaultShell || undefined,
-					shellArgs,
-					shellEnvVars,
-				})
-				.then((result) => {
-					if (result.success) {
-						onTabPidChange(tabId, result.pid);
-					} else {
-						onTabStateChange(tabId, 'exited', 1);
-					}
-				})
-				.catch(() => {
-					onTabStateChange(tabId, 'exited', 1);
-				});
-		// eslint-disable-next-line react-hooks/exhaustive-deps
+			spawnPtyForTab(activeTab);
 		}, [activeTab?.id]);
 
 		// Focus the active terminal when the active tab changes
@@ -134,7 +143,6 @@ export const TerminalView = memo(
 			if (searchOpen) {
 				onSearchClose?.();
 			}
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [activeTab?.id]);
 
 		// Subscribe to PTY exit events for terminal tabs in this session
@@ -145,8 +153,23 @@ export const TerminalView = memo(
 				onTabStateChange(parsed.tabId, 'exited', code);
 			});
 			return cleanup;
-		// eslint-disable-next-line react-hooks/exhaustive-deps
 		}, [session.id]);
+
+		// Write shell exit message to xterm buffer when a tab transitions to 'exited'
+		useEffect(() => {
+			const terminalTabs = session.terminalTabs || [];
+			for (const tab of terminalTabs) {
+				const prev = prevTabStatesRef.current.get(tab.id);
+				if (prev !== undefined && prev !== 'exited' && tab.state === 'exited') {
+					const handle = terminalRefs.current.get(tab.id);
+					if (handle) {
+						const code = tab.exitCode ?? 0;
+						handle.write(`\r\n\x1b[33mShell exited (code: ${code}).\x1b[0m Press Ctrl+Shift+\` for new terminal.\r\n`);
+					}
+				}
+				prevTabStatesRef.current.set(tab.id, tab.state);
+			}
+		}, [session.terminalTabs]);
 
 		const terminalTabs = session.terminalTabs || [];
 
@@ -188,6 +211,8 @@ export const TerminalView = memo(
 				{terminalTabs.map((tab) => {
 					const isActive = tab.id === session.activeTerminalTabId;
 					const terminalSessionId = getTerminalSessionId(session.id, tab.id);
+					// Spawn failed: exited before getting a PID
+					const isSpawnFailed = tab.state === 'exited' && tab.pid === 0;
 
 					return (
 						<div
@@ -195,31 +220,63 @@ export const TerminalView = memo(
 							className={`absolute inset-0 ${isActive ? '' : 'invisible'}`}
 							style={{ pointerEvents: isActive ? 'auto' : 'none' }}
 						>
-							{tab.state === 'exited' && (
-								<div
-									className="absolute top-0 left-0 right-0 z-10 px-3 py-1 text-xs text-center"
-									style={{
-										background: theme.colors.bgSidebar,
-										color: theme.colors.textDim,
-										borderBottom: `1px solid ${theme.colors.accentDim}`,
-									}}
-								>
-									Process exited{tab.exitCode !== undefined ? ` (code ${tab.exitCode})` : ''} — press any key or create a new tab
+							{isSpawnFailed ? (
+								// Error state overlay for spawn failures
+								<div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
+									<AlertCircle className="w-8 h-8" style={{ color: theme.colors.error }} />
+									<span className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+										Failed to start terminal
+									</span>
+									<button
+										onClick={() => {
+											onTabStateChange(tab.id, 'idle');
+											onTabPidChange(tab.id, 0);
+											spawnPtyForTab({ ...tab, state: 'idle', pid: 0 });
+										}}
+										className="px-3 py-1.5 rounded text-xs font-medium transition-opacity hover:opacity-80"
+										style={{
+											backgroundColor: theme.colors.accent,
+											color: theme.colors.accentForeground,
+										}}
+									>
+										Retry
+									</button>
 								</div>
+							) : (
+								<>
+									{tab.state === 'exited' && (
+										<div
+											className="absolute top-0 left-0 right-0 z-10 px-3 py-1 text-xs text-center"
+											style={{
+												background: theme.colors.bgSidebar,
+												color: theme.colors.textDim,
+												borderBottom: `1px solid ${theme.colors.accentDim}`,
+											}}
+										>
+											Process exited{tab.exitCode !== undefined ? ` (code ${tab.exitCode})` : ''} — press any key or create a new tab
+										</div>
+									)}
+									<XTerminal
+										ref={(handle) => {
+											if (handle) {
+												terminalRefs.current.set(tab.id, handle);
+												// Write loading indicator when terminal mounts with no PTY yet
+												if (tab.pid === 0 && tab.state === 'idle') {
+													setTimeout(() => {
+														handle.write('\x1b[2mStarting terminal...\x1b[0m');
+													}, 0);
+												}
+											} else {
+												terminalRefs.current.delete(tab.id);
+											}
+										}}
+										sessionId={terminalSessionId}
+										theme={theme}
+										fontFamily={fontFamily}
+										fontSize={fontSize}
+									/>
+								</>
 							)}
-							<XTerminal
-								ref={(handle) => {
-									if (handle) {
-										terminalRefs.current.set(tab.id, handle);
-									} else {
-										terminalRefs.current.delete(tab.id);
-									}
-								}}
-								sessionId={terminalSessionId}
-								theme={theme}
-								fontFamily={fontFamily}
-								fontSize={fontSize}
-							/>
 						</div>
 					);
 				})}

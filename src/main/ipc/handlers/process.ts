@@ -735,6 +735,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 
 	// Run a single command and capture only stdout/stderr (no PTY echo/prompts)
 	// Supports SSH remote execution when sessionSshRemoteConfig is provided
+	// TODO: Remove this handler once all callers migrate to process:spawnTerminalTab for persistent PTY sessions
 	ipcMain.handle(
 		'process:runCommand',
 		withIpcErrorLogging(
@@ -751,6 +752,9 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					workingDirOverride?: string;
 				};
 			}) => {
+				logger.warn(
+					'process:runCommand is deprecated — use process:spawnTerminalTab for persistent PTY sessions'
+				);
 				const processManager = requireProcessManager(getProcessManager);
 
 				// Get the shell from settings if not provided
