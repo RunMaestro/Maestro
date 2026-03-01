@@ -2603,8 +2603,8 @@ export const SettingsModal = memo(function SettingsModal(props: SettingsModalPro
 								</div>
 								<ToggleButtonGroup
 									options={[
-										{ value: 'right', label: 'Right' },
 										{ value: 'left', label: 'Left' },
+										{ value: 'right', label: 'Right' },
 									]}
 									value={userMessageAlignment ?? 'right'}
 									onChange={setUserMessageAlignment}
