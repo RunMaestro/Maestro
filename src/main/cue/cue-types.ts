@@ -81,5 +81,15 @@ export interface CueSessionStatus {
 	nextTrigger?: string;
 }
 
+/** Data passed with an agent completion notification for chaining */
+export interface AgentCompletionData {
+	sessionName?: string;
+	status?: CueRunStatus;
+	exitCode?: number | null;
+	durationMs?: number;
+	stdout?: string;
+	triggeredBy?: string;
+}
+
 /** Default filename for Cue configuration */
 export const CUE_YAML_FILENAME = 'maestro-cue.yaml';

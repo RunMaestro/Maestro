@@ -350,6 +350,102 @@ describe('Exit Listener', () => {
 		});
 	});
 
+	describe('Cue Completion Notification', () => {
+		it('should notify Cue engine on regular session exit when enabled', () => {
+			const mockCueEngine = {
+				hasCompletionSubscribers: vi.fn().mockReturnValue(true),
+				notifyAgentCompleted: vi.fn(),
+			};
+			mockDeps.getCueEngine = () => mockCueEngine as any;
+			mockDeps.isCueEnabled = () => true;
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('regular-session-123', 0);
+
+			expect(mockCueEngine.hasCompletionSubscribers).toHaveBeenCalledWith('regular-session-123');
+			expect(mockCueEngine.notifyAgentCompleted).toHaveBeenCalledWith('regular-session-123', {
+				status: 'completed',
+				exitCode: 0,
+			});
+		});
+
+		it('should pass failed status when exit code is non-zero', () => {
+			const mockCueEngine = {
+				hasCompletionSubscribers: vi.fn().mockReturnValue(true),
+				notifyAgentCompleted: vi.fn(),
+			};
+			mockDeps.getCueEngine = () => mockCueEngine as any;
+			mockDeps.isCueEnabled = () => true;
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('regular-session-123', 1);
+
+			expect(mockCueEngine.notifyAgentCompleted).toHaveBeenCalledWith('regular-session-123', {
+				status: 'failed',
+				exitCode: 1,
+			});
+		});
+
+		it('should not notify when Cue feature is disabled', () => {
+			const mockCueEngine = {
+				hasCompletionSubscribers: vi.fn().mockReturnValue(true),
+				notifyAgentCompleted: vi.fn(),
+			};
+			mockDeps.getCueEngine = () => mockCueEngine as any;
+			mockDeps.isCueEnabled = () => false;
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('regular-session-123', 0);
+
+			expect(mockCueEngine.notifyAgentCompleted).not.toHaveBeenCalled();
+		});
+
+		it('should not notify when no completion subscribers exist', () => {
+			const mockCueEngine = {
+				hasCompletionSubscribers: vi.fn().mockReturnValue(false),
+				notifyAgentCompleted: vi.fn(),
+			};
+			mockDeps.getCueEngine = () => mockCueEngine as any;
+			mockDeps.isCueEnabled = () => true;
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			handler?.('regular-session-123', 0);
+
+			expect(mockCueEngine.hasCompletionSubscribers).toHaveBeenCalledWith('regular-session-123');
+			expect(mockCueEngine.notifyAgentCompleted).not.toHaveBeenCalled();
+		});
+
+		it('should not notify for group chat sessions', async () => {
+			const mockCueEngine = {
+				hasCompletionSubscribers: vi.fn().mockReturnValue(true),
+				notifyAgentCompleted: vi.fn(),
+			};
+			mockDeps.getCueEngine = () => mockCueEngine as any;
+			mockDeps.isCueEnabled = () => true;
+
+			setupListener();
+			const handler = eventHandlers.get('exit');
+
+			// Moderator session
+			handler?.('group-chat-test-chat-123-moderator-1234567890', 0);
+
+			await vi.waitFor(() => {
+				expect(mockDeps.groupChatRouter.routeModeratorResponse).toHaveBeenCalled();
+			});
+
+			// Moderator exits return early before reaching Cue notification
+			expect(mockCueEngine.notifyAgentCompleted).not.toHaveBeenCalled();
+		});
+	});
+
 	describe('Error Handling', () => {
 		beforeEach(() => {
 			mockDeps.outputParser.parseParticipantSessionId = vi.fn().mockReturnValue({
