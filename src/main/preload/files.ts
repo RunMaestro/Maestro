@@ -14,7 +14,7 @@ import { ipcRenderer } from 'electron';
  */
 export interface HistoryEntry {
 	id: string;
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	timestamp: number;
 	summary: string;
 	fullResponse?: string;

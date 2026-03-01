@@ -47,7 +47,7 @@ export interface UsageStats {
 }
 
 // History entry types for the History panel
-export type HistoryEntryType = 'AUTO' | 'USER';
+export type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
 
 export interface HistoryEntry {
 	id: string;
@@ -64,6 +64,9 @@ export interface HistoryEntry {
 	success?: boolean;
 	elapsedTimeMs?: number;
 	validated?: boolean;
+	cueTriggerName?: string;
+	cueEventType?: string;
+	cueSourceSession?: string;
 }
 
 // Document entry within a playbook

@@ -136,7 +136,7 @@ interface UsageStats {
 	reasoningTokens?: number; // Separate reasoning tokens (Codex o3/o4-mini)
 }
 
-type HistoryEntryType = 'AUTO' | 'USER';
+type HistoryEntryType = 'AUTO' | 'USER' | 'CUE';
 
 /**
  * Result type for reading session messages from agent storage.
@@ -2620,7 +2620,7 @@ interface MaestroAPI {
 	directorNotes: {
 		getUnifiedHistory: (options: {
 			lookbackDays: number;
-			filter?: 'AUTO' | 'USER' | null;
+			filter?: 'AUTO' | 'USER' | 'CUE' | null;
 			limit?: number;
 			offset?: number;
 		}) => Promise<{

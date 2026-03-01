@@ -8,7 +8,7 @@ import type { RightPanelHandle } from '../../components/RightPanel';
  * History entry for the addHistoryEntry function.
  */
 export interface HistoryEntryInput {
-	type: 'AUTO' | 'USER';
+	type: 'AUTO' | 'USER' | 'CUE';
 	summary: string;
 	fullResponse?: string;
 	agentSessionId?: string;
