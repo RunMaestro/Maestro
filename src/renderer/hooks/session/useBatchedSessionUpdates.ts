@@ -250,8 +250,9 @@ export function useBatchedSessionUpdates(
 						};
 					}
 
-					// Apply shell logs
-					if (shellStdout || shellStderr) {
+					// Apply shell logs (legacy fallback — only when no terminal tabs present)
+					// TODO: Remove shellLogs once terminal tabs migration is complete
+					if ((shellStdout || shellStderr) && !(updatedSession.terminalTabs?.length)) {
 						const shellLogs = [...updatedSession.shellLogs];
 
 						if (shellStdout) {

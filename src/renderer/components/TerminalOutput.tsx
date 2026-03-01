@@ -973,46 +973,6 @@ const LogItemComponent = memo(
 
 LogItemComponent.displayName = 'LogItemComponent';
 
-// ============================================================================
-// ElapsedTimeDisplay - Separate component for elapsed time
-// ============================================================================
-
-// Separate component for elapsed time to prevent re-renders of the entire list
-const ElapsedTimeDisplay = memo(
-	({ thinkingStartTime, textColor }: { thinkingStartTime: number; textColor: string }) => {
-		const [elapsedSeconds, setElapsedSeconds] = useState(() =>
-			Math.floor((Date.now() - thinkingStartTime) / 1000)
-		);
-
-		useEffect(() => {
-			// Update every second
-			const interval = setInterval(() => {
-				setElapsedSeconds(Math.floor((Date.now() - thinkingStartTime) / 1000));
-			}, 1000);
-
-			return () => clearInterval(interval);
-		}, [thinkingStartTime]);
-
-		// Format elapsed time as mm:ss or hh:mm:ss
-		const formatElapsedTime = (seconds: number): string => {
-			const hours = Math.floor(seconds / 3600);
-			const minutes = Math.floor((seconds % 3600) / 60);
-			const secs = seconds % 60;
-
-			if (hours > 0) {
-				return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-			}
-			return `${minutes}:${secs.toString().padStart(2, '0')}`;
-		};
-
-		return (
-			<span className="text-sm font-mono" style={{ color: textColor }}>
-				{formatElapsedTime(elapsedSeconds)}
-			</span>
-		);
-	}
-);
-
 interface TerminalOutputProps {
 	session: Session;
 	theme: Theme;
@@ -1164,7 +1124,7 @@ export const TerminalOutput = memo(
 		const hasRestoredScrollRef = useRef(false);
 
 		// Get active tab ID for resetting state on tab switch
-		const activeTabId = session.inputMode === 'ai' ? session.activeTabId : null;
+		const activeTabId = session.activeTabId;
 
 		// Copy text to clipboard with notification
 		const copyToClipboard = useCallback(async (text: string) => {
@@ -1329,23 +1289,21 @@ export const TerminalOutput = memo(
 
 		// PERF: Memoize active tab lookup to avoid O(n) .find() on every render
 		const activeTab = useMemo(
-			() => (session.inputMode === 'ai' ? getActiveTab(session) : undefined),
-			[session.inputMode, session.aiTabs, session.activeTabId]
+			() => getActiveTab(session),
+			[session.aiTabs, session.activeTabId]
 		);
 
 		// PERF: Memoize activeLogs to provide stable reference for collapsedLogs dependency
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
 		const activeLogs = useMemo(
-			(): LogEntry[] => (session.inputMode === 'ai' ? (activeTab?.logs ?? []) : session.shellLogs),
-			[session.inputMode, activeTab?.logs, session.shellLogs]
+			(): LogEntry[] => activeTab?.logs ?? [],
+			[activeTab?.logs]
 		);
 
 		// In AI mode, collapse consecutive non-user entries into single response blocks
 		// This provides a cleaner view where each user message gets one response
 		// Tool and thinking entries are kept separate (not collapsed)
 		const collapsedLogs = useMemo(() => {
-			// Only collapse in AI mode
-			if (session.inputMode !== 'ai') return activeLogs;
-
 			const result: LogEntry[] = [];
 			let currentResponseGroup: LogEntry[] = [];
 
@@ -1382,7 +1340,7 @@ export const TerminalOutput = memo(
 			flushResponseGroup();
 
 			return result;
-		}, [activeLogs, session.inputMode]);
+		}, [activeLogs]);
 
 		// PERF: Debounce search query to avoid filtering on every keystroke
 		const debouncedSearchQuery = useDebouncedValue(outputSearchQuery, 150);
@@ -1455,6 +1413,8 @@ export const TerminalOutput = memo(
 		// Restore read state when switching tabs
 		useEffect(() => {
 			if (!activeTabId) {
+				setHasNewMessages(false);
+				setNewMessageCount(0);
 				setIsAtBottom(true);
 				lastLogCountRef.current = filteredLogs.length;
 				return;
@@ -1527,9 +1487,8 @@ export const TerminalOutput = memo(
 			if (!container) return;
 
 			const shouldAutoScroll = () =>
-				session.inputMode === 'terminal' ||
-				(session.inputMode === 'ai' && autoScrollAiMode && !autoScrollPaused) ||
-				(session.inputMode === 'ai' && isAtBottomRef.current);
+				(autoScrollAiMode && !autoScrollPaused) ||
+				isAtBottomRef.current;
 
 			const scrollToBottom = () => {
 				if (!scrollContainerRef.current) return;
@@ -1573,7 +1532,7 @@ export const TerminalOutput = memo(
 			});
 
 			return () => observer.disconnect();
-		}, [session.inputMode, autoScrollAiMode, autoScrollPaused]);
+		}, [autoScrollAiMode, autoScrollPaused]);
 
 		// Restore scroll position when component mounts or initialScrollTop changes
 		// Uses requestAnimationFrame to ensure DOM is ready
@@ -1620,9 +1579,9 @@ export const TerminalOutput = memo(
 			[filteredLogs]
 		);
 
-		// Computed values for rendering
-		const isTerminal = session.inputMode === 'terminal';
-		const isAIMode = session.inputMode === 'ai';
+		// TerminalOutput only handles AI mode; terminal mode renders via TerminalView
+		const isTerminal = false;
+		const isAIMode = true;
 
 		// Memoized prose styles - applied once at container level instead of per-log-item
 		// IMPORTANT: Scoped to .terminal-output to avoid CSS conflicts with other prose containers (e.g., AutoRun panel)
@@ -1639,8 +1598,7 @@ export const TerminalOutput = memo(
 				aria-label="Terminal output"
 				className="terminal-output flex-1 flex flex-col overflow-hidden transition-colors outline-none relative"
 				style={{
-					backgroundColor:
-						session.inputMode === 'ai' ? theme.colors.bgMain : theme.colors.bgActivity,
+					backgroundColor: theme.colors.bgMain,
 				}}
 				onKeyDown={(e) => {
 					// Cmd+F to open search
@@ -1781,38 +1739,8 @@ export const TerminalOutput = memo(
 						/>
 					))}
 
-					{/* Terminal busy indicator - only show for terminal commands (AI thinking moved to ThinkingStatusPill) */}
-					{session.state === 'busy' &&
-						session.inputMode === 'terminal' &&
-						session.busySource === 'terminal' && (
-							<div
-								className="flex flex-col items-center justify-center gap-2 py-6 mx-6 my-4 rounded-xl border"
-								style={{
-									backgroundColor: theme.colors.bgActivity,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<div className="flex items-center gap-3">
-									<div
-										className="w-2 h-2 rounded-full animate-pulse"
-										style={{ backgroundColor: theme.colors.warning }}
-									/>
-									<span className="text-sm" style={{ color: theme.colors.textMain }}>
-										{session.statusMessage || 'Executing command...'}
-									</span>
-									{session.thinkingStartTime && (
-										<ElapsedTimeDisplay
-											thinkingStartTime={session.thinkingStartTime}
-											textColor={theme.colors.textDim}
-										/>
-									)}
-								</div>
-							</div>
-						)}
-
-					{/* Queued items section - only show in AI mode, filtered to active tab */}
-					{session.inputMode === 'ai' &&
-						session.executionQueue &&
+					{/* Queued items section - filtered to active tab */}
+					{session.executionQueue &&
 						session.executionQueue.length > 0 && (
 							<QueuedItemsList
 								executionQueue={session.executionQueue}
@@ -1826,7 +1754,64 @@ export const TerminalOutput = memo(
 					<div ref={logsEndRef} />
 				</div>
 
-				{/* Auto-scroll toggle removed — was too noisy */}
+				{/* Auto-scroll toggle — positioned opposite AI response side (AI mode only) */}
+				{/* Visible when: has content AND (not at bottom (dimmed, click to pin) OR pinned at bottom (accent, click to unpin)) */}
+				{setAutoScrollAiMode &&
+					filteredLogs.length > 0 &&
+					(!isAtBottom || isAutoScrollActive) && (
+						<button
+							onClick={() => {
+								if (isAutoScrollActive && isAtBottom) {
+									// Currently pinned at bottom — unpin
+									setAutoScrollAiMode(false);
+								} else {
+									// Not pinned — jump to bottom and pin
+									setAutoScrollPaused(false);
+									setAutoScrollAiMode(true);
+									setHasNewMessages(false);
+									setNewMessageCount(0);
+									if (scrollContainerRef.current) {
+										scrollContainerRef.current.scrollTo({
+											top: scrollContainerRef.current.scrollHeight,
+											behavior: 'smooth',
+										});
+									}
+								}
+							}}
+							className={`absolute bottom-4 ${userMessageAlignment === 'right' ? 'left-6' : 'right-6'} flex items-center gap-2 px-3 py-2 rounded-full shadow-lg transition-all hover:scale-105 z-20 outline-none`}
+							style={{
+								backgroundColor: isAutoScrollActive
+									? theme.colors.accent
+									: hasNewMessages
+										? theme.colors.accent
+										: theme.colors.bgSidebar,
+								color: isAutoScrollActive
+									? theme.colors.accentForeground
+									: hasNewMessages
+										? theme.colors.accentForeground
+										: theme.colors.textDim,
+								border: `1px solid ${isAutoScrollActive || hasNewMessages ? 'transparent' : theme.colors.border}`,
+								animation:
+									hasNewMessages && !isAutoScrollActive
+										? 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+										: undefined,
+							}}
+							title={
+								isAutoScrollActive
+									? 'Auto-scroll ON (click to unpin)'
+									: hasNewMessages
+										? 'New messages (click to pin to bottom)'
+										: 'Scroll to bottom (click to pin)'
+							}
+						>
+							<ArrowDown className="w-4 h-4" />
+							{newMessageCount > 0 && !isAutoScrollActive && (
+								<span className="text-xs font-bold">
+									{newMessageCount > 99 ? '99+' : newMessageCount}
+								</span>
+							)}
+						</button>
+					)}
 
 				{/* Copied to Clipboard Notification */}
 				{showCopiedNotification && (
