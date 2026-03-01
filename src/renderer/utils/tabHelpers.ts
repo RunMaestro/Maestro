@@ -1391,8 +1391,29 @@ export function navigateToUnifiedTabByIndex(
 			},
 		};
 	} else {
-		// Terminal tab navigation handled in Phase 3 (terminalTabHelpers.ts)
-		return null;
+		// Terminal tab — verify it exists and activate it
+		const terminalTab = (session.terminalTabs || []).find((tab) => tab.id === targetTabRef.id);
+		if (!terminalTab) return null;
+
+		// If already active, return current state (with repair if needed)
+		if (session.activeTerminalTabId === targetTabRef.id) {
+			return {
+				type: 'terminal',
+				id: targetTabRef.id,
+				session: repairedSession,
+			};
+		}
+
+		return {
+			type: 'terminal',
+			id: targetTabRef.id,
+			session: {
+				...repairedSession,
+				activeTerminalTabId: targetTabRef.id,
+				activeFileTabId: null,
+				inputMode: 'terminal',
+			},
+		};
 	}
 }
 
