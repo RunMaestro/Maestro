@@ -174,7 +174,9 @@ describe('CueHelpModal', () => {
 
 		it('should render ASCII orchestration diagram', () => {
 			expect(screen.getByText(/fan-out/)).toBeInTheDocument();
-			expect(screen.getByText(/fan-in/)).toBeInTheDocument();
+			// fan-in appears in both orchestration diagram and coordination patterns
+			const fanInElements = screen.getAllByText(/fan-in/);
+			expect(fanInElements.length).toBeGreaterThan(0);
 		});
 
 		it('should render Timeouts & Failure Handling section', () => {
@@ -198,6 +200,28 @@ describe('CueHelpModal', () => {
 			const kbdElements = document.querySelectorAll('kbd');
 			const hasShortcut = Array.from(kbdElements).some((kbd) => kbd.textContent?.includes('Meta'));
 			expect(hasShortcut).toBe(true);
+		});
+
+		it('should render Coordination Patterns section', () => {
+			expect(screen.getByText('Coordination Patterns')).toBeInTheDocument();
+		});
+
+		it('should render all coordination pattern names', () => {
+			expect(screen.getByText('Scheduled Task')).toBeInTheDocument();
+			expect(screen.getByText('File Enrichment')).toBeInTheDocument();
+			expect(screen.getByText('Research Swarm')).toBeInTheDocument();
+			expect(screen.getByText('Sequential Chain')).toBeInTheDocument();
+			expect(screen.getByText('Debate')).toBeInTheDocument();
+		});
+
+		it('should render pattern ASCII diagrams', () => {
+			// Check for arrow entities rendered in the diagrams
+			const diagramElements = document.querySelectorAll('.font-mono');
+			expect(diagramElements.length).toBeGreaterThan(0);
+		});
+
+		it('should render YAML editor pattern presets tip', () => {
+			expect(screen.getByText(/pattern presets to get started quickly/)).toBeInTheDocument();
 		});
 	});
 

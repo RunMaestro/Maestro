@@ -9,6 +9,7 @@ import {
 	Layers,
 	Moon,
 	Filter,
+	GitMerge,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -458,6 +459,105 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 							{'  '}Agent B ──┼── Event (fan-in)
 							<br />
 							{'  '}Agent C ──┘
+						</div>
+					</div>
+				</section>
+
+				{/* Section: Coordination Patterns */}
+				<section>
+					<div className="flex items-center gap-2 mb-3">
+						<GitMerge className="w-5 h-5" style={{ color: theme.colors.accent }} />
+						<h3 className="font-bold">Coordination Patterns</h3>
+					</div>
+					<div className="text-sm space-y-4 pl-7" style={{ color: theme.colors.textDim }}>
+						<p>Maestro Cue supports several coordination patterns for multi-agent workflows.</p>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Scheduled Task</strong> &mdash;
+								Single agent running on a timer.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[Timer] &rarr; [Agent]
+							</div>
+						</div>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>File Enrichment</strong> &mdash;
+								React to file system changes.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[File Change] &rarr; [Agent]
+							</div>
+						</div>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Research Swarm</strong> &mdash;
+								Fan-out to multiple agents, fan-in to synthesize.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[Timer] &rarr; [Agent 1, Agent 2, Agent 3] &rarr; [Synthesizer]
+							</div>
+						</div>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Sequential Chain</strong> &mdash;
+								Pipeline where each agent triggers the next.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[Agent A] &rarr; [Agent B] &rarr; [Agent C]
+							</div>
+						</div>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Debate</strong> &mdash; Multiple
+								perspectives, then moderator synthesizes.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[Moderator] &rarr; [Pro, Con] &rarr; [Moderator]
+							</div>
+						</div>
+
+						<div
+							className="flex items-center gap-2 px-3 py-2 rounded"
+							style={{ backgroundColor: theme.colors.accent + '15' }}
+						>
+							<Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
+							<span>Use the YAML editor's pattern presets to get started quickly.</span>
 						</div>
 					</div>
 				</section>
