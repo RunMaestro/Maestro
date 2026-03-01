@@ -38,7 +38,7 @@ import {
 	Command,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import type { Session, Group, Theme } from '../types';
+import type { Session, Group, Theme, SessionState } from '../types';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { getStatusColor, getContextColor, formatActiveTime } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -171,6 +171,42 @@ function SessionContextMenu({
 		};
 	}, [theme.colors, session.contextUsage, contextWarningYellowThreshold, contextWarningRedThreshold]);
 
+	const menuStyles = useMemo(() => {
+		const submenuPositionStyles =
+			submenuPosition.vertical === 'above'
+				? submenuPosition.horizontal === 'left'
+					? styles.submenuAboveLeft
+					: styles.submenuAboveRight
+				: submenuPosition.horizontal === 'left'
+					? styles.submenuBelowLeft
+					: styles.submenuBelowRight;
+
+		return {
+			container: {
+				left,
+				top,
+				opacity: ready ? 1 : 0,
+				...styles.container,
+				minWidth: '160px',
+			},
+			submenu: {
+				minWidth: '140px',
+				...submenuPositionStyles,
+			},
+		};
+	}, [
+		left,
+		top,
+		ready,
+		styles.container,
+		styles.submenuAboveLeft,
+		styles.submenuAboveRight,
+		styles.submenuBelowLeft,
+		styles.submenuBelowRight,
+		submenuPosition.horizontal,
+		submenuPosition.vertical,
+	]);
+
 	// Close on click outside
 	useClickOutside(menuRef, onDismiss);
 
@@ -227,13 +263,7 @@ function SessionContextMenu({
 		<div
 			ref={menuRef}
 			className="fixed z-50 py-1 rounded-md shadow-xl border"
-			style={{
-				left,
-				top,
-				opacity: ready ? 1 : 0,
-				...styles.container,
-				minWidth: '160px',
-			}}
+			style={menuStyles.container}
 		>
 			{/* Rename */}
 			<button
@@ -309,20 +339,11 @@ function SessionContextMenu({
 					</button>
 
 					{/* Submenu */}
-					{showMoveSubmenu && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border"
-							style={{
-								minWidth: '140px',
-								...(submenuPosition.vertical === 'above'
-									? submenuPosition.horizontal === 'left'
-										? styles.submenuAboveLeft
-										: styles.submenuAboveRight
-									: submenuPosition.horizontal === 'left'
-										? styles.submenuBelowLeft
-										: styles.submenuBelowRight),
-							}}
-						>
+						{showMoveSubmenu && (
+							<div
+								className="absolute py-1 rounded-md shadow-xl border"
+								style={menuStyles.submenu}
+							>
 							{/* No Group option */}
 							<button
 								onClick={() => {
@@ -1713,6 +1734,82 @@ function SessionListInner(props: SessionListProps) {
 		};
 	}, [theme.colors]);
 
+	const sessionListRenderStyles = useMemo(() => {
+		const sessionStates: SessionState[] = ['idle', 'busy', 'waiting_input', 'connecting', 'error'];
+		const collapsedPillByState = {} as Record<SessionState, React.CSSProperties>;
+		const skinnyDotActiveByState = {} as Record<SessionState, React.CSSProperties>;
+		const skinnyDotInactiveByState = {} as Record<SessionState, React.CSSProperties>;
+
+		sessionStates.forEach((state) => {
+			const statusColor = getStatusColor(state, theme);
+			collapsedPillByState[state] = {
+				...collapsedPillStyles.segment.base,
+				backgroundColor: statusColor,
+			};
+			skinnyDotActiveByState[state] = {
+				opacity: 1,
+				backgroundColor: statusColor,
+			};
+			skinnyDotInactiveByState[state] = {
+				opacity: 0.25,
+				backgroundColor: statusColor,
+			};
+		});
+
+		return {
+			collapsedPill: {
+				segment: {
+					byState: collapsedPillByState,
+					tooltip: {
+						...collapsedPillStyles.segment.tooltip,
+						left: `${leftSidebarWidthState + 8}px`,
+						top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
+					},
+				},
+			},
+			skinny: {
+				dot: {
+					activeByState: skinnyDotActiveByState,
+					inactiveByState: skinnyDotInactiveByState,
+					fallback: {
+						active: {
+							...sessionListStyles.skinny.skinnyDotFallback,
+							opacity: 1,
+						},
+						inactive: {
+							...sessionListStyles.skinny.skinnyDotFallback,
+							opacity: 0.25,
+						},
+					},
+				},
+				tooltip: {
+					...sessionListStyles.skinny.skinnyTooltip,
+					left: '80px',
+					...(tooltipPosition ? { top: `${tooltipPosition.y}px` } : {}),
+				},
+			},
+			autoRunBadge: autoRunStats
+				? {
+						color:
+							autoRunStats.currentBadgeLevel >= 8
+								? sessionListStyles.root.badge.color
+								: sessionListStyles.root.iconAccent.color,
+					}
+				: undefined,
+		};
+	}, [
+		autoRunStats?.currentBadgeLevel,
+		collapsedPillStyles.segment.base,
+		collapsedPillStyles.segment.tooltip,
+		leftSidebarWidthState,
+		theme,
+		sessionListStyles.skinny.skinnyDotFallback,
+		sessionListStyles.skinny.skinnyTooltip,
+		sessionListStyles.root.badge.color,
+		sessionListStyles.root.iconAccent.color,
+		tooltipPosition?.y,
+	]);
+
 	// Helper component: Renders a collapsed session pill with subdivided parts for worktrees
 	const renderCollapsedPill = (session: Session, keyPrefix: string, _onExpand: () => void) => {
 		const worktreeChildren = getWorktreeChildren(session.id);
@@ -1737,14 +1834,13 @@ function SessionListInner(props: SessionListProps) {
 							<div
 								key={`${keyPrefix}-part-${s.id}`}
 								className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''} ${hasWorktrees ? `${isFirst ? 'rounded-l-full' : ''} ${isLast ? 'rounded-r-full' : ''}` : 'rounded-full'}`}
-								style={{
-									...(isInBatch || isClaudeFallback
-										? (isInBatch ? collapsedPillStyles.segment.inBatch : collapsedPillStyles.segment.fallback)
-										: {
-												backgroundColor: getStatusColor(s.state, theme),
-												...(collapsedPillStyles.segment.base),
-											}),
-								}}
+								style={
+									isInBatch
+										? collapsedPillStyles.segment.inBatch
+										: isClaudeFallback
+											? collapsedPillStyles.segment.fallback
+											: sessionListRenderStyles.collapsedPill.segment.byState[s.state]
+								}
 								onMouseEnter={(e) => setTooltipPosition({ x: e.clientX, y: e.clientY })}
 								onMouseLeave={() => setTooltipPosition(null)}
 								onClick={(e) => {
@@ -1762,11 +1858,7 @@ function SessionListInner(props: SessionListProps) {
 							{/* Hover Tooltip - per segment */}
 							<div
 									className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
-									style={{
-										...collapsedPillStyles.segment.tooltip,
-										left: `${leftSidebarWidthState + 8}px`,
-										top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-									}}
+									style={sessionListRenderStyles.collapsedPill.segment.tooltip}
 								>
 								<SessionTooltipContent
 									session={s}
@@ -2240,12 +2332,7 @@ function SessionListInner(props: SessionListProps) {
 										onClick={() => setAboutModalOpen(true)}
 										className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
 										title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
-										style={{
-											color:
-												autoRunStats.currentBadgeLevel >= 8
-													? sessionListStyles.root.badge.color
-													: sessionListStyles.root.iconAccent.color,
-										}}
+										style={sessionListRenderStyles.autoRunBadge}
 									>
 									<Trophy className="w-3 h-3" />
 									<span>{autoRunStats.currentBadgeLevel}</span>
@@ -3076,12 +3163,6 @@ function SessionListInner(props: SessionListProps) {
 					{sortedSessions.map((session) => {
 						const isInBatch = activeBatchSessionIds.includes(session.id);
 						const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
-						// Sessions in Auto Run mode should show yellow/warning color
-						const effectiveStatusColor = isInBatch
-							? theme.colors.warning
-							: session.toolType === 'claude-code' && !session.agentSessionId
-								? undefined // Will use border style instead
-								: getStatusColor(session.state, theme);
 						const shouldPulse = session.state === 'busy' || isInBatch;
 
 						return (
@@ -3094,18 +3175,15 @@ function SessionListInner(props: SessionListProps) {
 								<div className="relative">
 									<div
 										className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
-										style={{
-											opacity: activeSessionId === session.id ? 1 : 0.25,
-											...(session.toolType === 'claude-code' &&
-											!session.agentSessionId &&
-											!isInBatch
-												? {
-														...sessionListStyles.skinny.skinnyDotFallback,
-													}
-												: {
-														backgroundColor: effectiveStatusColor,
-													}),
-										}}
+										style={
+											session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+												? activeSessionId === session.id
+													? sessionListRenderStyles.skinny.dot.fallback.active
+													: sessionListRenderStyles.skinny.dot.fallback.inactive
+												: activeSessionId === session.id
+													? sessionListRenderStyles.skinny.dot.activeByState[session.state]
+													: sessionListRenderStyles.skinny.dot.inactiveByState[session.state]
+										}
 										title={
 											session.toolType === 'claude-code' && !session.agentSessionId
 												? 'No active Claude session'
@@ -3125,11 +3203,7 @@ function SessionListInner(props: SessionListProps) {
 								{/* Hover Tooltip for Skinny Mode */}
 								<div
 									className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-xl"
-									style={{
-										...sessionListStyles.skinny.skinnyTooltip,
-										left: '80px',
-										...(tooltipPosition ? { top: `${tooltipPosition.y}px` } : {}),
-									}}
+									style={sessionListRenderStyles.skinny.tooltip}
 								>
 									<SessionTooltipContent
 										session={session}
