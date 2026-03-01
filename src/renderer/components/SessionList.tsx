@@ -163,7 +163,13 @@ function SessionContextMenu({
 			danger: { color: theme.colors.error },
 			divider: { borderColor: theme.colors.border },
 		};
-	}, [adjustedPosition.left, adjustedPosition.top, submenuPosition.horizontal, submenuPosition.vertical, theme]);
+	}, [
+		adjustedPosition.left,
+		adjustedPosition.top,
+		submenuPosition.horizontal,
+		submenuPosition.vertical,
+		theme,
+	]);
 
 	// Calculate submenu position when showing
 	const handleMoveToGroupHover = () => {
@@ -326,9 +332,7 @@ function SessionContextMenu({
 							))}
 
 							{/* Divider before Create New Group */}
-							{onCreateGroup && (
-								<div className="my-1 border-t" style={contextMenuStyles.divider} />
-							)}
+							{onCreateGroup && <div className="my-1 border-t" style={contextMenuStyles.divider} />}
 
 							{/* Create New Group option */}
 							{onCreateGroup && (
@@ -512,10 +516,7 @@ function HamburgerMenuContent({
 							Create a new agent session
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						style={menuStyles.badge}
-					>
+					<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 						{shortcuts.newInstance ? formatShortcutKeys(shortcuts.newInstance.keys) : '⌘N'}
 					</span>
 				</button>
@@ -537,10 +538,7 @@ function HamburgerMenuContent({
 							Get started with AI
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						style={menuStyles.badge}
-					>
+					<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 						{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
 					</span>
 				</button>
@@ -561,10 +559,7 @@ function HamburgerMenuContent({
 						Quick actions and navigation
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{shortcuts.quickAction ? formatShortcutKeys(shortcuts.quickAction.keys) : '⌘K'}
 				</span>
 			</button>
@@ -604,10 +599,7 @@ function HamburgerMenuContent({
 						View all available shortcuts
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{formatShortcutKeys(shortcuts.help.keys)}
 				</span>
 			</button>
@@ -628,10 +620,7 @@ function HamburgerMenuContent({
 						Configure preferences
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{formatShortcutKeys(shortcuts.settings.keys)}
 				</span>
 			</button>
@@ -651,10 +640,7 @@ function HamburgerMenuContent({
 						View application logs
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{formatShortcutKeys(shortcuts.systemLogs.keys)}
 				</span>
 			</button>
@@ -674,10 +660,7 @@ function HamburgerMenuContent({
 						View running processes
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
 				</span>
 			</button>
@@ -697,10 +680,7 @@ function HamburgerMenuContent({
 						View usage analytics
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{formatShortcutKeys(shortcuts.usageDashboard.keys)}
 				</span>
 			</button>
@@ -720,10 +700,7 @@ function HamburgerMenuContent({
 						Contribute to open source
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={menuStyles.badge}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 					{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
 				</span>
 			</button>
@@ -744,10 +721,7 @@ function HamburgerMenuContent({
 					</div>
 				</div>
 				{shortcuts.directorNotes && (
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						style={menuStyles.badge}
-					>
+					<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={menuStyles.badge}>
 						{formatShortcutKeys(shortcuts.directorNotes.keys)}
 					</span>
 				)}
@@ -1291,15 +1265,16 @@ function SessionListInner(props: SessionListProps) {
 	const isAnyBusy = useMemo(() => sessions.some((s) => s.state === 'busy'), [sessions]);
 
 	const [sessionFilter, setSessionFilter] = useState('');
-	const { onResizeStart: onSidebarResizeStart, transitionClass: sidebarTransitionClass } = useResizablePanel({
-		width: leftSidebarWidthState,
-		minWidth: 256,
-		maxWidth: 600,
-		settingsKey: 'leftSidebarWidth',
-		setWidth: setLeftSidebarWidthState,
-		side: 'left',
-		externalRef: sidebarContainerRef,
-	});
+	const { onResizeStart: onSidebarResizeStart, transitionClass: sidebarTransitionClass } =
+		useResizablePanel({
+			width: leftSidebarWidthState,
+			minWidth: 256,
+			maxWidth: 600,
+			settingsKey: 'leftSidebarWidth',
+			setWidth: setLeftSidebarWidthState,
+			side: 'left',
+			externalRef: sidebarContainerRef,
+		});
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
 	const [preFilterGroupStates, setPreFilterGroupStates] = useState<Map<string, boolean>>(new Map());
@@ -1429,7 +1404,7 @@ function SessionListInner(props: SessionListProps) {
 		[tooltipBaseStyle]
 	);
 	const skinnySessionRingStyle = useMemo(
-		() => ({ '--tw-ring-color': theme.colors.accent } as React.CSSProperties),
+		() => ({ '--tw-ring-color': theme.colors.accent }) as React.CSSProperties,
 		[theme]
 	);
 
@@ -1763,7 +1738,11 @@ function SessionListInner(props: SessionListProps) {
 				{hasWorktrees && worktreesExpanded && onToggleWorktreeExpanded && (
 					<div
 						className={`rounded-bl overflow-hidden ${needsWorktreeWrapper ? '' : 'ml-1'}`}
-						style={needsWorktreeWrapper ? sessionListStyles.worktreeDrawerNoBorder : sessionListStyles.worktreeDrawer}
+						style={
+							needsWorktreeWrapper
+								? sessionListStyles.worktreeDrawerNoBorder
+								: sessionListStyles.worktreeDrawer
+						}
 					>
 						{/* Worktree children list */}
 						<div>
@@ -1796,13 +1775,13 @@ function SessionListInner(props: SessionListProps) {
 							})}
 						</div>
 						{/* Drawer handle at bottom - click to collapse */}
-					<button
-						onClick={(e) => {
+						<button
+							onClick={(e) => {
 								e.stopPropagation();
 								onToggleWorktreeExpanded(session.id);
 							}}
-						className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-						style={sessionListStyles.worktreeCollapseButton}
+							className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
+							style={sessionListStyles.worktreeCollapseButton}
 							title="Click to collapse worktrees"
 						>
 							<GitBranch className="w-2.5 h-2.5" />
@@ -2093,11 +2072,11 @@ function SessionListInner(props: SessionListProps) {
 				{leftSidebarOpen ? (
 					<>
 						<div className="flex items-center gap-2">
-							<Wand2 className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`} style={sessionListStyles.accentText} />
-							<h1
-								className="font-bold tracking-widest text-lg"
-								style={sessionListStyles.textMain}
-							>
+							<Wand2
+								className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
+								style={sessionListStyles.accentText}
+							/>
+							<h1 className="font-bold tracking-widest text-lg" style={sessionListStyles.textMain}>
 								MAESTRO
 							</h1>
 							{/* Badge Level Indicator */}
@@ -2159,9 +2138,9 @@ function SessionListInner(props: SessionListProps) {
 											}
 										}}
 									>
-											<div
-												className="rounded-lg shadow-2xl overflow-hidden"
-												style={sessionListStyles.panelSurface}
+										<div
+											className="rounded-lg shadow-2xl overflow-hidden"
+											style={sessionListStyles.panelSurface}
 										>
 											{/* Description Header */}
 											<div className="p-3 border-b" style={sessionListStyles.border}>
@@ -2420,10 +2399,7 @@ function SessionListInner(props: SessionListProps) {
 														className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 														title="Open in Browser"
 													>
-														<ExternalLink
-															className="w-3 h-3"
-															style={sessionListStyles.textDim}
-														/>
+														<ExternalLink className="w-3 h-3" style={sessionListStyles.textDim} />
 													</button>
 												</div>
 
@@ -2614,7 +2590,10 @@ function SessionListInner(props: SessionListProps) {
 							className="p-2 rounded hover:bg-white/10 transition-colors"
 							title="Menu"
 						>
-							<Wand2 className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`} style={sessionListStyles.accentText} />
+							<Wand2
+								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
+								style={sessionListStyles.accentText}
+							/>
 						</button>
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
@@ -2796,10 +2775,7 @@ function SessionListInner(props: SessionListProps) {
 								</div>
 
 								{!group.collapsed ? (
-									<div
-										className="flex flex-col border-l ml-4"
-										style={sessionListStyles.border}
-									>
+									<div className="flex flex-col border-l ml-4" style={sessionListStyles.border}>
 										{groupSessions.map((session) =>
 											renderSessionWithWorktrees(session, 'group', {
 												keyPrefix: `group-${group.id}`,
@@ -2884,10 +2860,7 @@ function SessionListInner(props: SessionListProps) {
 							</div>
 
 							{!ungroupedCollapsed ? (
-								<div
-									className="flex flex-col border-l ml-4"
-									style={sessionListStyles.border}
-								>
+								<div className="flex flex-col border-l ml-4" style={sessionListStyles.border}>
 									{sortedUngroupedSessions.map((session) =>
 										renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
 									)}
@@ -3029,10 +3002,7 @@ function SessionListInner(props: SessionListProps) {
 			)}
 
 			{/* SIDEBAR BOTTOM ACTIONS */}
-			<div
-				className="p-2 border-t flex gap-2 items-center"
-				style={sessionListStyles.border}
-			>
+			<div className="p-2 border-t flex gap-2 items-center" style={sessionListStyles.border}>
 				<button
 					onClick={() => {
 						// Only allow collapsing when there are sessions (prevent collapse on empty state)
