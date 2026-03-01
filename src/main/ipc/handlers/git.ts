@@ -924,13 +924,16 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 				}
 			}
 
-			// Fallback: check if main or master exists locally
-			const mainResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd);
+			// Fallback: check if main or master exists locally in parallel
+			const [mainResult, masterResult] = await Promise.all([
+				execFileNoThrow('git', ['rev-parse', '--verify', 'main'], cwd),
+				execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd),
+			]);
+
 			if (mainResult.exitCode === 0) {
 				return { branch: 'main' };
 			}
 
-			const masterResult = await execFileNoThrow('git', ['rev-parse', '--verify', 'master'], cwd);
 			if (masterResult.exitCode === 0) {
 				return { branch: 'master' };
 			}

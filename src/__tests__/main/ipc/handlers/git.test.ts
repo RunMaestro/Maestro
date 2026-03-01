@@ -11,6 +11,27 @@ import { registerGitHandlers } from '../../../../main/ipc/handlers/git';
 import * as execFile from '../../../../main/utils/execFile';
 import path from 'path';
 
+type Deferred<T> = {
+	promise: Promise<T>;
+	resolve: (value: T) => void;
+	reject: (reason?: unknown) => void;
+};
+
+const createDeferred = <T>(): Deferred<T> => {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+
+	return {
+		promise,
+		resolve,
+		reject,
+	};
+};
+
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -3098,6 +3119,76 @@ export function Component() {
 
 			const handler = handlers.get('git:getDefaultBranch');
 			const result = await handler!({} as any, '/test/repo');
+
+			expect(result).toEqual({
+				success: true,
+				branch: 'master',
+			});
+		});
+
+		it('should check local branches in parallel when remote branch info is unavailable', async () => {
+			const callOrder: string[] = [];
+			const mainDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+			const masterDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd: string, args?: string[]) => {
+				if (args?.includes('show')) {
+					callOrder.push('remote');
+					return {
+						stdout: `* remote origin
+  Fetch URL: git@github.com:user/repo.git
+  Push  URL: git@github.com:user/repo.git
+  Remote branches:
+    feature tracked`,
+						stderr: '',
+						exitCode: 0,
+					};
+				}
+
+				if (args?.includes('--verify') && args?.includes('main')) {
+					callOrder.push('main');
+					return mainDeferred.promise;
+				}
+
+				if (args?.includes('--verify') && args?.includes('master')) {
+					callOrder.push('master');
+					return masterDeferred.promise;
+				}
+
+				return {
+					stdout: '',
+					stderr: `Unexpected command: ${args?.join(' ')}`,
+					exitCode: 1,
+				};
+			});
+
+			const handler = handlers.get('git:getDefaultBranch');
+			const handlerPromise = handler!({} as any, '/test/repo');
+
+			await Promise.resolve();
+
+			expect(callOrder).toEqual(['remote', 'main', 'master']);
+
+			mainDeferred.resolve({
+				stdout: '',
+				stderr: 'fatal: Needed a single revision',
+				exitCode: 128,
+			});
+			masterDeferred.resolve({
+				stdout: 'abc123def456\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await handlerPromise;
 
 			expect(result).toEqual({
 				success: true,
