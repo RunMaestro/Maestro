@@ -538,6 +538,20 @@ const mockMaestro = {
 		checkCli: vi.fn().mockResolvedValue({ available: false }),
 		validateApiKey: vi.fn().mockResolvedValue({ valid: false }),
 	},
+	cue: {
+		getStatus: vi.fn().mockResolvedValue([]),
+		getActiveRuns: vi.fn().mockResolvedValue([]),
+		getActivityLog: vi.fn().mockResolvedValue([]),
+		enable: vi.fn().mockResolvedValue(undefined),
+		disable: vi.fn().mockResolvedValue(undefined),
+		stopRun: vi.fn().mockResolvedValue(false),
+		stopAll: vi.fn().mockResolvedValue(undefined),
+		refreshSession: vi.fn().mockResolvedValue(undefined),
+		readYaml: vi.fn().mockResolvedValue(null),
+		writeYaml: vi.fn().mockResolvedValue(undefined),
+		validateYaml: vi.fn().mockResolvedValue({ valid: true, errors: [] }),
+		onActivityUpdate: vi.fn().mockReturnValue(() => {}),
+	},
 	// Synchronous platform string (replaces async os.getPlatform IPC)
 	platform: 'darwin',
 };

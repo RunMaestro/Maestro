@@ -124,7 +124,45 @@ function SessionListInner(props: SessionListProps) {
 	const contextWarningRedThreshold = useSettingsStore(
 		(s) => s.contextManagementSettings.contextWarningRedThreshold
 	);
+	const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
 	const activeBatchSessionIds = useBatchStore(useShallow(selectActiveBatchSessionIds));
+
+	// Cue session status map: sessionId → subscriptionCount (only active when Encore Feature enabled)
+	const [cueSessionMap, setCueSessionMap] = useState<Map<string, number>>(new Map());
+	useEffect(() => {
+		if (!maestroCueEnabled) {
+			setCueSessionMap(new Map());
+			return;
+		}
+
+		let mounted = true;
+
+		const fetchCueStatus = async () => {
+			try {
+				const statuses = await window.maestro.cue.getStatus();
+				if (!mounted) return;
+				const map = new Map<string, number>();
+				for (const s of statuses) {
+					if (s.subscriptionCount > 0) {
+						map.set(s.sessionId, s.subscriptionCount);
+					}
+				}
+				setCueSessionMap(map);
+			} catch {
+				// Cue engine may not be initialized yet
+			}
+		};
+
+		fetchCueStatus();
+		const unsubscribe = window.maestro.cue.onActivityUpdate(() => {
+			fetchCueStatus();
+		});
+
+		return () => {
+			mounted = false;
+			unsubscribe();
+		};
+	}, [maestroCueEnabled]);
 	const groupChats = useGroupChatStore((s) => s.groupChats);
 	const activeGroupChatId = useGroupChatStore((s) => s.activeGroupChatId);
 	const groupChatState = useGroupChatStore((s) => s.groupChatState);
@@ -463,6 +501,7 @@ function SessionListInner(props: SessionListProps) {
 					gitFileCount={getFileCount(session.id)}
 					isInBatch={activeBatchSessionIds.includes(session.id)}
 					jumpNumber={getSessionJumpNumber(session.id)}
+					cueSubscriptionCount={cueSessionMap.get(session.id)}
 					onSelect={selectHandlers.get(session.id)!}
 					onDragStart={dragStartHandlers.get(session.id)!}
 					onDragOver={handleDragOver}
@@ -525,6 +564,7 @@ function SessionListInner(props: SessionListProps) {
 										gitFileCount={getFileCount(child.id)}
 										isInBatch={activeBatchSessionIds.includes(child.id)}
 										jumpNumber={getSessionJumpNumber(child.id)}
+										cueSubscriptionCount={cueSessionMap.get(child.id)}
 										onSelect={selectHandlers.get(child.id)!}
 										onDragStart={dragStartHandlers.get(child.id)!}
 										onContextMenu={contextMenuHandlers.get(child.id)!}
