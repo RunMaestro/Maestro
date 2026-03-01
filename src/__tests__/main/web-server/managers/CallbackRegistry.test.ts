@@ -104,12 +104,12 @@ describe('CallbackRegistry', () => {
 			expect(await registry.renameTab('session-1', 'tab-1', 'New Name')).toBe(false);
 		});
 
-		it('getHistory() returns empty array when no callback set', () => {
-			expect(registry.getHistory()).toEqual([]);
+		it('getHistory() returns empty array when no callback set', async () => {
+			expect(await registry.getHistory()).toEqual([]);
 		});
 
-		it('getHistory() returns empty array with args when no callback set', () => {
-			expect(registry.getHistory('/project', 'session-1')).toEqual([]);
+		it('getHistory() returns empty array with args when no callback set', async () => {
+			expect(await registry.getHistory('/project', 'session-1')).toEqual([]);
 		});
 	});
 
@@ -207,7 +207,7 @@ describe('CallbackRegistry', () => {
 		});
 
 		it('returns true for getHistory after setting it', () => {
-			registry.setGetHistoryCallback(() => []);
+			registry.setGetHistoryCallback(async () => []);
 			expect(registry.hasCallback('getHistory')).toBe(true);
 		});
 
@@ -555,7 +555,7 @@ describe('CallbackRegistry', () => {
 	});
 
 	describe('setGetHistoryCallback / getHistory()', () => {
-		it('returns the callback result', () => {
+		it('returns the callback result', async () => {
 			const history = [
 				{
 					id: 'h1',
@@ -564,38 +564,38 @@ describe('CallbackRegistry', () => {
 					projectPath: '/project',
 				},
 			] as unknown as HistoryEntry[];
-			registry.setGetHistoryCallback(() => history);
-			expect(registry.getHistory()).toEqual(history);
+			registry.setGetHistoryCallback(async () => history);
+			expect(await registry.getHistory()).toEqual(history);
 		});
 
-		it('returns empty array when callback returns empty array', () => {
-			registry.setGetHistoryCallback(() => []);
-			expect(registry.getHistory()).toEqual([]);
+		it('returns empty array when callback returns empty array', async () => {
+			registry.setGetHistoryCallback(async () => []);
+			expect(await registry.getHistory()).toEqual([]);
 		});
 
-		it('passes no arguments when called without args', () => {
-			const callback = vi.fn().mockReturnValue([]);
+		it('passes no arguments when called without args', async () => {
+			const callback = vi.fn().mockResolvedValue([]);
 			registry.setGetHistoryCallback(callback);
 
-			registry.getHistory();
+			await registry.getHistory();
 
 			expect(callback).toHaveBeenCalledWith(undefined, undefined);
 		});
 
-		it('passes projectPath argument to the callback', () => {
-			const callback = vi.fn().mockReturnValue([]);
+		it('passes projectPath argument to the callback', async () => {
+			const callback = vi.fn().mockResolvedValue([]);
 			registry.setGetHistoryCallback(callback);
 
-			registry.getHistory('/home/user/project');
+			await registry.getHistory('/home/user/project');
 
 			expect(callback).toHaveBeenCalledWith('/home/user/project', undefined);
 		});
 
-		it('passes projectPath and sessionId arguments to the callback', () => {
-			const callback = vi.fn().mockReturnValue([]);
+		it('passes projectPath and sessionId arguments to the callback', async () => {
+			const callback = vi.fn().mockResolvedValue([]);
 			registry.setGetHistoryCallback(callback);
 
-			registry.getHistory('/home/user/project', 'session-20');
+			await registry.getHistory('/home/user/project', 'session-20');
 
 			expect(callback).toHaveBeenCalledWith('/home/user/project', 'session-20');
 		});
@@ -640,7 +640,7 @@ describe('CallbackRegistry', () => {
 	// =========================================================================
 
 	describe('independent callback registration', () => {
-		it('setting one callback does not affect others', () => {
+		it('setting one callback does not affect others', async () => {
 			const sessionsCallback = vi.fn().mockReturnValue([]);
 			registry.setGetSessionsCallback(sessionsCallback);
 
@@ -649,7 +649,7 @@ describe('CallbackRegistry', () => {
 			expect(registry.getTheme()).toBeNull();
 			expect(registry.getCustomCommands()).toEqual([]);
 			expect(registry.writeToSession('s1', 'data')).toBe(false);
-			expect(registry.getHistory()).toEqual([]);
+			expect(await registry.getHistory()).toEqual([]);
 
 			// The set callback should work
 			expect(registry.getSessions()).toEqual([]);
