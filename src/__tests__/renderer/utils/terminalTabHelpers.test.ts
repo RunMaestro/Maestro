@@ -320,10 +320,11 @@ describe('updateTerminalTabState', () => {
 		expect(updated.terminalTabs![0].exitCode).toBe(130);
 	});
 
-	it('does not set exitCode when not provided', () => {
-		const tab = createMockTerminalTab({ id: 'tab-1', state: 'idle' });
+	it('clears exitCode when not provided (stale value reset)', () => {
+		const tab = createMockTerminalTab({ id: 'tab-1', state: 'exited', exitCode: 130 });
 		const session = createMockSession({ terminalTabs: [tab] });
-		const updated = updateTerminalTabState(session, 'tab-1', 'busy');
+		// Transitioning back to idle without an exitCode should clear the stale code
+		const updated = updateTerminalTabState(session, 'tab-1', 'idle');
 		expect(updated.terminalTabs![0].exitCode).toBeUndefined();
 	});
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import {
 	useTabStore,
@@ -14,7 +14,7 @@ import {
 	getTabActions,
 } from '../../../renderer/stores/tabStore';
 import { useSessionStore } from '../../../renderer/stores/sessionStore';
-import type { Session, AITab, FilePreviewTab } from '../../../renderer/types';
+import type { Session, AITab, FilePreviewTab, TerminalTab } from '../../../renderer/types';
 
 // ============================================================================
 // Test Helpers
@@ -957,5 +957,110 @@ describe('tabStore', () => {
 			expect(session.aiTabs[1].starred).toBe(false);
 			expect(session.aiTabs[2].starred).toBe(true);
 		});
+	});
+});
+
+// ============================================================================
+// Terminal tab operations in tabStore
+// ============================================================================
+
+function createMockTerminalTabForStore(overrides: Partial<TerminalTab> = {}): TerminalTab {
+	const id = overrides.id ?? `term-${Math.random().toString(36).slice(2, 8)}`;
+	return {
+		id,
+		name: null,
+		shellType: 'zsh',
+		pid: overrides.pid ?? 0,
+		cwd: '/test',
+		createdAt: Date.now(),
+		state: overrides.state ?? 'idle',
+		...overrides,
+	} as TerminalTab;
+}
+
+function setupSessionWithTerminalTabs(terminalTabs: TerminalTab[]): string {
+	const sessionId = 'test-terminal-session';
+	const session = {
+		id: sessionId,
+		name: 'Test Session',
+		toolType: 'claude-code',
+		state: 'idle',
+		cwd: '/test',
+		fullPath: '/test',
+		projectRoot: '/test',
+		aiLogs: [],
+		shellLogs: [],
+		workLog: [],
+		contextUsage: 0,
+		inputMode: 'terminal' as const,
+		aiPid: 0,
+		terminalPid: 0,
+		port: 0,
+		isLive: false,
+		changedFiles: [],
+		isGitRepo: false,
+		fileTree: [],
+		fileExplorerExpanded: [],
+		fileExplorerScrollPos: 0,
+		executionQueue: [],
+		activeTimeMs: 0,
+		aiTabs: [],
+		activeTabId: '',
+		closedTabHistory: [],
+		filePreviewTabs: [],
+		activeFileTabId: null,
+		unifiedTabOrder: terminalTabs.map((t) => ({ type: 'terminal' as const, id: t.id })),
+		unifiedClosedTabHistory: [],
+		terminalTabs,
+		activeTerminalTabId: terminalTabs[0]?.id ?? null,
+	};
+
+	useSessionStore.setState({
+		sessions: [session as Session],
+		activeSessionId: sessionId,
+	});
+
+	return sessionId;
+}
+
+describe('closeTerminalTab', () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+		useSessionStore.setState({ sessions: [], activeSessionId: null });
+	});
+
+	it('kills PTY only after successful tab close validation', () => {
+		const tab1 = createMockTerminalTabForStore({ id: 'term-1', pid: 100 });
+		const tab2 = createMockTerminalTabForStore({ id: 'term-2', pid: 200 });
+		setupSessionWithTerminalTabs([tab1, tab2]);
+
+		act(() => {
+			getTabActions().closeTerminalTab('term-2');
+		});
+
+		expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
+		expect(window.maestro.process.kill).toHaveBeenCalledWith(
+			expect.stringContaining('term-2')
+		);
+
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.terminalTabs).toHaveLength(1);
+		expect(session.terminalTabs![0].id).toBe('term-1');
+	});
+
+	it('does not kill PTY when closing the last terminal tab', () => {
+		const tab1 = createMockTerminalTabForStore({ id: 'term-1', pid: 100 });
+		setupSessionWithTerminalTabs([tab1]);
+
+		act(() => {
+			getTabActions().closeTerminalTab('term-1');
+		});
+
+		// Close was rejected — kill must NOT be called
+		expect(window.maestro.process.kill).not.toHaveBeenCalled();
+
+		// Tab still present
+		const session = useSessionStore.getState().sessions[0];
+		expect(session.terminalTabs).toHaveLength(1);
 	});
 });

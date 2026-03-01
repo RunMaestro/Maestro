@@ -1603,6 +1603,63 @@ describe('useDebouncedPersistence', () => {
 			expect(persisted[0].terminalTabs).toEqual([]);
 		});
 
+		it('should preserve valid activeTerminalTabId on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1' }),
+					makeTerminalTab({ id: 'term-2' }),
+				],
+				activeTerminalTabId: 'term-2',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-2');
+		});
+
+		it('should normalize stale activeTerminalTabId to first tab on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1' }),
+					makeTerminalTab({ id: 'term-2' }),
+				],
+				activeTerminalTabId: 'term-stale-999',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-1');
+		});
+
+		it('should set activeTerminalTabId to null when terminalTabs is empty', () => {
+			const session = makeSession({
+				terminalTabs: [],
+				activeTerminalTabId: 'term-orphan',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBeNull();
+		});
+
 		it('should reset runtime state for multiple terminal tabs while preserving metadata', () => {
 			const session = makeSession({
 				terminalTabs: [
