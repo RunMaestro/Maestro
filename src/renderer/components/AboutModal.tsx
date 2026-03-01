@@ -10,23 +10,28 @@ import {
 	Globe,
 	Check,
 	BookOpen,
+	MessageSquarePlus,
+	ArrowLeft,
 } from 'lucide-react';
-import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration } from '../types';
+import type { Theme, AutoRunStats, MaestroUsageStats, LeaderboardRegistration, Session } from '../types';
 import type { GlobalAgentStats } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import pedramAvatar from '../assets/pedram-avatar.png';
 import { AchievementCard } from './AchievementCard';
 import { formatTokensCompact } from '../utils/formatters';
 import { Modal } from './ui/Modal';
+import { FeedbackView } from './FeedbackView';
 
 interface AboutModalProps {
 	theme: Theme;
 	autoRunStats: AutoRunStats;
 	usageStats?: MaestroUsageStats | null;
+	sessions: Session[];
 	/** Global hands-on time in milliseconds (from settings, persists across sessions) */
 	handsOnTimeMs: number;
 	onClose: () => void;
 	onOpenLeaderboardRegistration?: () => void;
+	onSwitchToSession: (sessionId: string) => void;
 	isLeaderboardRegistered?: boolean;
 	leaderboardRegistration?: LeaderboardRegistration | null;
 }
@@ -35,15 +40,18 @@ export function AboutModal({
 	theme,
 	autoRunStats,
 	usageStats,
+	sessions,
 	handsOnTimeMs,
 	onClose,
 	onOpenLeaderboardRegistration,
+	onSwitchToSession,
 	isLeaderboardRegistered,
 	leaderboardRegistration,
 }: AboutModalProps) {
 	const [globalStats, setGlobalStats] = useState<GlobalAgentStats | null>(null);
 	const [loading, setLoading] = useState(true);
 	const [isStatsComplete, setIsStatsComplete] = useState(false);
+	const [view, setView] = useState<'about' | 'feedback'>('about');
 	const badgeEscapeHandlerRef = useRef<(() => boolean) | null>(null);
 
 	// Use ref to avoid re-registering layer when onClose changes
@@ -111,12 +119,44 @@ export function AboutModal({
 			badgeEscapeHandlerRef.current();
 			return;
 		}
+		if (view === 'feedback') {
+			setView('about');
+			return;
+		}
 		// Otherwise close the modal
 		onCloseRef.current();
-	}, []); // No dependencies - uses refs
+	}, [view]);
 
 	// Custom header with Globe and Discord buttons (includes close button)
-	const customHeader = (
+	const customHeader = view === 'feedback' ? (
+		<div
+			className="p-4 border-b flex items-center justify-between shrink-0"
+			style={{ borderColor: theme.colors.border }}
+		>
+			<div className="flex items-center gap-2">
+				<button
+					onClick={() => setView('about')}
+					className="p-1 rounded hover:bg-white/10 transition-colors"
+					title="Back to About"
+					style={{ color: theme.colors.accent }}
+				>
+					<ArrowLeft className="w-4 h-4" />
+				</button>
+				<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+					Send Feedback
+				</h2>
+			</div>
+			<button
+				type="button"
+				onClick={onClose}
+				className="p-1 rounded hover:bg-white/10 transition-colors"
+				style={{ color: theme.colors.textDim }}
+				aria-label="Close modal"
+			>
+				<X className="w-4 h-4" />
+			</button>
+		</div>
+	) : (
 		<div
 			className="p-4 border-b flex items-center justify-between shrink-0"
 			style={{ borderColor: theme.colors.border }}
@@ -151,6 +191,14 @@ export function AboutModal({
 				>
 					<BookOpen className="w-4 h-4" />
 				</button>
+				<button
+					onClick={() => setView('feedback')}
+					className="p-1 rounded hover:bg-white/10 transition-colors"
+					title="Send Feedback"
+					style={{ color: theme.colors.accent }}
+				>
+					<MessageSquarePlus className="w-4 h-4" />
+				</button>
 			</div>
 			<button
 				type="button"
@@ -167,13 +215,14 @@ export function AboutModal({
 	return (
 		<Modal
 			theme={theme}
-			title="About Maestro"
+			title={view === 'feedback' ? 'Send Feedback' : 'About Maestro'}
 			priority={MODAL_PRIORITIES.ABOUT}
 			onClose={handleEscape}
 			width={450}
 			customHeader={customHeader}
 			showHeader={true}
 		>
+			{view === 'about' ? (
 			<div className="space-y-4">
 				{/* Logo and Title */}
 				<div className="flex items-center gap-4">
@@ -460,6 +509,17 @@ export function AboutModal({
 					</div>
 				</div>
 			</div>
+			) : (
+				<FeedbackView
+					theme={theme}
+					sessions={sessions}
+					onCancel={() => setView('about')}
+					onSubmitSuccess={(sessionId) => {
+						onSwitchToSession(sessionId);
+						onCloseRef.current();
+					}}
+				/>
+			)}
 		</Modal>
 	);
 }
