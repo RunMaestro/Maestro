@@ -10,7 +10,6 @@
 
 import Database from 'better-sqlite3';
 import * as path from 'path';
-import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
@@ -107,7 +106,7 @@ export class StatsDB {
 			const dbExists = await this.pathExists(this.dbPath);
 
 			if (dbExists) {
-				const db = this.openWithCorruptionHandling();
+				const db = await this.openWithCorruptionHandling();
 				if (!db) {
 					throw new Error('Failed to open or recover database');
 				}
@@ -338,7 +337,7 @@ export class StatsDB {
 	 * Checkpoint WAL to flush pending writes into the main database file,
 	 * then copy the database file to the destination path.
 	 *
-	 * Plain fs.copyFileSync on a WAL-mode database can produce an incomplete
+	 * Plain file copy on a WAL-mode database can produce an incomplete
 	 * copy because committed data may still reside in the -wal file.
 	 * PRAGMA wal_checkpoint(TRUNCATE) forces all WAL content into the main
 	 * file and resets the WAL, making the .db file self-contained.
@@ -446,11 +445,11 @@ export class StatsDB {
 	/**
 	 * Get available daily backups sorted by date (newest first).
 	 */
-	getAvailableBackups(): Array<{ path: string; date: string; size: number }> {
+	async getAvailableBackups(): Promise<Array<{ path: string; date: string; size: number }>> {
 		try {
 			const dir = path.dirname(this.dbPath);
 			const baseName = path.basename(this.dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const files = fs.readdirSync(dir);
+			const files = await fsp.readdir(dir);
 			const backups: Array<{ path: string; date: string; size: number }> = [];
 
 			for (const file of files) {
@@ -458,7 +457,7 @@ export class StatsDB {
 				const dailyMatch = file.match(new RegExp(`^${baseName}\\.daily\\.(\\d{4}-\\d{2}-\\d{2})$`));
 				if (dailyMatch) {
 					const fullPath = path.join(dir, file);
-					const stats = fs.statSync(fullPath);
+					const stats = await fsp.stat(fullPath);
 					backups.push({
 						path: fullPath,
 						date: dailyMatch[1],
@@ -470,7 +469,7 @@ export class StatsDB {
 				const timestampMatch = file.match(new RegExp(`^${baseName}\\.backup\\.(\\d+)$`));
 				if (timestampMatch) {
 					const fullPath = path.join(dir, file);
-					const stats = fs.statSync(fullPath);
+					const stats = await fsp.stat(fullPath);
 					const timestamp = parseInt(timestampMatch[1], 10);
 					const date = new Date(timestamp).toISOString().split('T')[0];
 					backups.push({
@@ -493,9 +492,9 @@ export class StatsDB {
 	 * Restore database from a backup file.
 	 * Returns true if restoration was successful.
 	 */
-	restoreFromBackup(backupPath: string): boolean {
+	async restoreFromBackup(backupPath: string): Promise<boolean> {
 		try {
-			if (!fs.existsSync(backupPath)) {
+			if (!(await this.pathExists(backupPath))) {
 				logger.error(`Backup file does not exist: ${backupPath}`, LOG_CONTEXT);
 				return false;
 			}
@@ -514,16 +513,20 @@ export class StatsDB {
 			// Remove WAL and SHM files if they exist
 			const walPath = `${this.dbPath}-wal`;
 			const shmPath = `${this.dbPath}-shm`;
-			if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-			if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+			if (await this.pathExists(walPath)) {
+				await fsp.unlink(walPath);
+			}
+			if (await this.pathExists(shmPath)) {
+				await fsp.unlink(shmPath);
+			}
 
 			// Remove current database if it exists
-			if (fs.existsSync(this.dbPath)) {
-				fs.unlinkSync(this.dbPath);
+			if (await this.pathExists(this.dbPath)) {
+				await fsp.unlink(this.dbPath);
 			}
 
 			// Copy backup to main database path
-			fs.copyFileSync(backupPath, this.dbPath);
+			await fsp.copyFile(backupPath, this.dbPath);
 			logger.info(`Restored database from backup: ${backupPath}`, LOG_CONTEXT);
 
 			return true;
@@ -537,7 +540,7 @@ export class StatsDB {
 	 * Handle a corrupted database by attempting to restore from the latest backup.
 	 * If no backup is available, creates a fresh database.
 	 */
-	private recoverFromCorruption(): CorruptionRecoveryResult {
+	private async recoverFromCorruption(): Promise<CorruptionRecoveryResult> {
 		logger.warn('Attempting to recover from database corruption...', LOG_CONTEXT);
 
 		try {
@@ -553,26 +556,30 @@ export class StatsDB {
 			}
 
 			// First, backup the corrupted database for forensics
-			if (fs.existsSync(this.dbPath)) {
+			if (await this.pathExists(this.dbPath)) {
 				const timestamp = Date.now();
 				const corruptedBackupPath = `${this.dbPath}.corrupted.${timestamp}`;
 				try {
-					fs.renameSync(this.dbPath, corruptedBackupPath);
+					await fsp.rename(this.dbPath, corruptedBackupPath);
 					logger.warn(`Corrupted database moved to: ${corruptedBackupPath}`, LOG_CONTEXT);
 				} catch {
 					logger.error('Failed to backup corrupted database', LOG_CONTEXT);
-					fs.unlinkSync(this.dbPath);
+					await fsp.unlink(this.dbPath);
 				}
 			}
 
 			// Delete WAL and SHM files
 			const walPath = `${this.dbPath}-wal`;
 			const shmPath = `${this.dbPath}-shm`;
-			if (fs.existsSync(walPath)) fs.unlinkSync(walPath);
-			if (fs.existsSync(shmPath)) fs.unlinkSync(shmPath);
+			if (await this.pathExists(walPath)) {
+				await fsp.unlink(walPath);
+			}
+			if (await this.pathExists(shmPath)) {
+				await fsp.unlink(shmPath);
+			}
 
 			// Try to restore from the latest backup
-			const backups = this.getAvailableBackups();
+			const backups = await this.getAvailableBackups();
 			for (const backup of backups) {
 				logger.info(
 					`Attempting to restore from backup: ${backup.path} (${backup.date})`,
@@ -581,7 +588,7 @@ export class StatsDB {
 
 				// Remove stale WAL/SHM sidecar files from backup before validating.
 				// These leftovers from previous sessions can cause false integrity failures.
-				this.removeStaleWalFiles(backup.path);
+				await this.removeStaleWalFiles(backup.path);
 
 				// Try to validate the backup before restoring
 				try {
@@ -591,7 +598,7 @@ export class StatsDB {
 
 					if (result.length === 1 && result[0].integrity_check === 'ok') {
 						// Backup is valid, restore it
-						if (this.restoreFromBackup(backup.path)) {
+						if (await this.restoreFromBackup(backup.path)) {
 							logger.info(
 								`Successfully restored database from backup: ${backup.date}`,
 								LOG_CONTEXT
@@ -633,16 +640,16 @@ export class StatsDB {
 	 * Remove stale WAL and SHM sidecar files for a database path.
 	 * These can cause false corruption detection when left over from crashes.
 	 */
-	private removeStaleWalFiles(dbFilePath: string): void {
+	private async removeStaleWalFiles(dbFilePath: string): Promise<void> {
 		const walPath = `${dbFilePath}-wal`;
 		const shmPath = `${dbFilePath}-shm`;
 		try {
-			if (fs.existsSync(walPath)) {
-				fs.unlinkSync(walPath);
+			if (await this.pathExists(walPath)) {
+				await fsp.unlink(walPath);
 				logger.debug(`Removed stale WAL file: ${walPath}`, LOG_CONTEXT);
 			}
-			if (fs.existsSync(shmPath)) {
-				fs.unlinkSync(shmPath);
+			if (await this.pathExists(shmPath)) {
+				await fsp.unlink(shmPath);
 				logger.debug(`Removed stale SHM file: ${shmPath}`, LOG_CONTEXT);
 			}
 		} catch (error) {
@@ -656,9 +663,9 @@ export class StatsDB {
 	 * Removes stale WAL/SHM sidecar files before opening to prevent false
 	 * corruption detection caused by leftover files from previous crashes.
 	 */
-	private openWithCorruptionHandling(): Database.Database | null {
+	private async openWithCorruptionHandling(): Promise<Database.Database | null> {
 		// Remove stale WAL/SHM files that may cause false corruption detection
-		this.removeStaleWalFiles(this.dbPath);
+		await this.removeStaleWalFiles(this.dbPath);
 
 		try {
 			const db = new Database(this.dbPath);
@@ -676,14 +683,14 @@ export class StatsDB {
 			logger.error(`Failed to open database: ${error}`, LOG_CONTEXT);
 		}
 
-		const recoveryResult = this.recoverFromCorruption();
+		const recoveryResult = await this.recoverFromCorruption();
 		if (!recoveryResult.recovered) {
 			logger.error('Database corruption recovery failed, creating fresh database', LOG_CONTEXT);
 		}
 
 		// Always ensure a valid database exists after recovery attempt
 		try {
-			if (!fs.existsSync(this.dbPath)) {
+			if (!(await this.pathExists(this.dbPath))) {
 				// No file exists (recovery may not have restored a backup) — create fresh
 				const db = new Database(this.dbPath);
 				logger.info('Fresh database created after corruption recovery', LOG_CONTEXT);

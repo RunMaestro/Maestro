@@ -3583,6 +3583,78 @@ branch refs/heads/bugfix-123
 			mockFs = (await import('fs/promises')).default;
 		});
 
+		it('should run directory metadata git commands while show-toplevel is pending', async () => {
+			const callOrder: string[] = [];
+			const toplevelDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+
+			vi.mocked(mockFs.readdir).mockResolvedValue([{ name: 'main-repo', isDirectory: () => true }] as any);
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				const command = args?.join(' ') || '';
+
+				if (command.includes('--is-inside-work-tree')) {
+					callOrder.push('isInside');
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--show-toplevel')) {
+					callOrder.push('toplevel');
+					return toplevelDeferred.promise;
+				}
+
+				if (command.includes('--git-dir')) {
+					callOrder.push('gitDir');
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--git-common-dir')) {
+					callOrder.push('gitCommonDir');
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--abbrev-ref')) {
+					callOrder.push('abbrevRef');
+					return { stdout: 'main\n', stderr: '', exitCode: 0 };
+				}
+
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const resultPromise = handler!({} as any, '/parent');
+
+			await Promise.resolve();
+
+			expect(callOrder[0]).toBe('isInside');
+			expect(callOrder).toEqual([
+				'isInside',
+				'toplevel',
+				'gitDir',
+				'gitCommonDir',
+				'abbrevRef',
+			]);
+
+			toplevelDeferred.resolve({ stdout: '/parent/main-repo', stderr: '', exitCode: 0 });
+			const result = await resultPromise;
+
+			expect(result).toEqual({
+				success: true,
+				gitSubdirs: [
+					{
+						path: path.join('/parent', 'main-repo'),
+						name: 'main-repo',
+						isWorktree: false,
+						branch: 'main',
+						repoRoot: '/parent/main-repo',
+					},
+				],
+			});
+		});
+
 		it('should find git repositories and worktrees in directory', async () => {
 			// Mock fs.readdir to return directory entries
 			vi.mocked(mockFs.readdir).mockResolvedValue([

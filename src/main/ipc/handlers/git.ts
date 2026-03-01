@@ -1065,7 +1065,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					// Process all subdirectories in parallel instead of sequentially
 					// This dramatically reduces the time for directories with many worktrees
 					const results = await Promise.all(
-						subdirs.map(async (subdir) => {
+				subdirs.map(async (subdir) => {
 							// Use POSIX path joining for remote paths
 							const subdirPath = sshRemote
 								? parentPath.endsWith('/')
@@ -1086,11 +1086,14 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
 							// Without this check, subdirectories like "build/" or "src/" inside a worktree
 							// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
-							const toplevelResult = await execGit(
-								['rev-parse', '--show-toplevel'],
-								subdirPath,
-								sshRemote
-							);
+							const [toplevelResult, gitDirResult, gitCommonDirResult, branchResult] =
+								await Promise.all([
+									execGit(['rev-parse', '--show-toplevel'], subdirPath, sshRemote),
+									execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
+									execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote),
+									execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote),
+								]);
+
 							if (toplevelResult.exitCode !== 0) {
 								return null; // Git command failed — treat as invalid
 							}
@@ -1101,13 +1104,6 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							if (normalizedSubdir !== normalizedToplevel) {
 								return null; // Subdirectory inside a repo, not a repo/worktree root
 							}
-
-							// Run remaining git commands in parallel for each subdirectory (SSH-aware via execGit)
-							const [gitDirResult, gitCommonDirResult, branchResult] = await Promise.all([
-								execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
-								execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote),
-								execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote),
-							]);
 
 							const gitDir = gitDirResult.exitCode === 0 ? gitDirResult.stdout.trim() : '';
 							const gitCommonDir =
@@ -1132,14 +1128,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 									repoRoot = path.dirname(commonDirAbs);
 								}
 							} else {
-								const repoRootResult = await execGit(
-									['rev-parse', '--show-toplevel'],
-									subdirPath,
-									sshRemote
-								);
-								if (repoRootResult.exitCode === 0) {
-									repoRoot = repoRootResult.stdout.trim();
-								}
+								repoRoot = toplevel;
 							}
 
 							return {

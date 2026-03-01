@@ -64,6 +64,9 @@ const AUTO_RUN_LIST_UNORDERED_LIST_REGEX = /^(\s*)([-*])\s+/;
 const AUTO_RUN_LIST_ORDERED_LIST_REGEX = /^(\s*)(\d+)\.\s+/;
 const AUTO_RUN_LIST_TASK_LIST_REGEX = /^(\s*)- \[([ x])\]\s+/;
 
+const getSearchMatches = (content: string, regex: RegExp | null): RegExpMatchArray[] =>
+	regex ? Array.from(content.matchAll(regex)) : [];
+
 interface AutoRunProps {
 	theme: Theme;
 	sessionId: string; // Maestro session ID for per-session attachment storage
@@ -1065,27 +1068,24 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	// Debounced search match counting - prevent expensive regex on every keystroke
 	const searchCountTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 	const trimmedSearchQuery = useMemo(() => searchQuery.trim(), [searchQuery]);
-	const escapedSearchQuery = useMemo(
-		() => trimmedSearchQuery.replace(AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX, '\\$&'),
-		[trimmedSearchQuery]
-	);
-	const searchQueryRegex = useMemo(
-		() => (trimmedSearchQuery ? new RegExp(escapedSearchQuery, 'gi') : null),
-		[trimmedSearchQuery, escapedSearchQuery]
-	);
+	const searchQueryRegex = useMemo(() => {
+		if (!trimmedSearchQuery) return null;
+		const escapedSearchQuery = trimmedSearchQuery.replace(AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX, '\\$&');
+		return new RegExp(escapedSearchQuery, 'gi');
+	}, [trimmedSearchQuery]);
+	const searchMatches = useMemo(() => getSearchMatches(localContent, searchQueryRegex), [localContent, searchQueryRegex]);
+	const searchMatchCount = useMemo(() => searchMatches.length, [searchMatches]);
 	useEffect(() => {
 		// Clear any pending count
 		if (searchCountTimeoutRef.current) {
 			clearTimeout(searchCountTimeoutRef.current);
 		}
 
-		if (searchQueryRegex) {
+		if (searchMatchCount > 0) {
 			// Debounce the match counting for large documents
 			searchCountTimeoutRef.current = setTimeout(() => {
-				const matches = localContent.match(searchQueryRegex) || [];
-				const count = matches ? matches.length : 0;
-				setTotalMatches(count);
-				if (count > 0 && currentMatchIndex >= count) {
+				setTotalMatches(searchMatchCount);
+				if (currentMatchIndex >= searchMatchCount) {
 					setCurrentMatchIndex(0);
 				}
 			}, 150); // Short delay for search responsiveness
@@ -1099,7 +1099,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				clearTimeout(searchCountTimeoutRef.current);
 			}
 		};
-	}, [searchQueryRegex, localContent, currentMatchIndex]);
+	}, [searchMatchCount, currentMatchIndex]);
 
 	// Navigate to next search match
 	const goToNextMatch = useCallback(() => {
@@ -1135,16 +1135,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	useEffect(() => {
 		// Only scroll when user explicitly navigated (prev/next buttons or Enter key)
 		if (!userNavigatedToMatchRef.current) return;
-		if (!searchOpen || !searchQueryRegex || totalMatches === 0) return;
+		if (!searchOpen || searchMatchCount === 0 || totalMatches === 0) return;
 		if (mode !== 'edit' || !textareaRef.current) return;
 
 		// For edit mode, find the match position in the text and scroll
 		let matchPosition = -1;
 
-		// Find the nth match position using matchAll
-		const matches = Array.from(localContent.matchAll(searchQueryRegex));
-		if (currentMatchIndex < matches.length) {
-			matchPosition = matches[currentMatchIndex].index!;
+		if (currentMatchIndex < searchMatches.length) {
+			matchPosition = searchMatches[currentMatchIndex].index!;
 		}
 
 		if (matchPosition >= 0 && textareaRef.current) {
@@ -1185,7 +1183,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			textarea.setSelectionRange(matchPosition, matchPosition + trimmedSearchQuery.length);
 			userNavigatedToMatchRef.current = false;
 			}
-		}, [currentMatchIndex, searchOpen, totalMatches, mode, localContent, searchQueryRegex, trimmedSearchQuery]);
+		}, [
+			currentMatchIndex,
+			searchOpen,
+			totalMatches,
+			mode,
+			localContent,
+			searchMatches,
+			searchMatchCount,
+			trimmedSearchQuery,
+		]);
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// Let template autocomplete handle keys first
