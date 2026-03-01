@@ -11,6 +11,7 @@
  *   - Ungrouped collapsed skips ungrouped sessions
  *   - Bookmarks collapsed skips bookmark section
  *   - Group chat cycling when groupChatsExpanded is true
+ *   - Archived group chats skipped during cycling
  *   - Collapsed sidebar uses sortedSessions from deps
  *   - Empty visual order is a no-op
  *   - Current item not visible selects first visible item
@@ -869,6 +870,50 @@ describe('useCycleSession', () => {
 
 			expect(useSessionStore.getState().activeSessionId).toBe('a');
 			expect(handleOpenGroupChat).not.toHaveBeenCalled();
+		});
+
+		it('archived group chats are skipped during cycling', () => {
+			const sessA = makeSession({ id: 'a', name: 'Alpha' });
+			const gcActive = makeGroupChat('gc-active', 'Active Chat');
+			const gcArchived = { ...makeGroupChat('gc-archived', 'Archived Chat'), archived: true };
+
+			useSessionStore.setState({
+				sessions: [sessA],
+				activeSessionId: 'a',
+				cyclePosition: -1,
+			} as any);
+			useGroupChatStore.setState({
+				groupChats: [gcActive, gcArchived],
+				activeGroupChatId: null,
+			} as any);
+			useUIStore.setState({
+				leftSidebarOpen: true,
+				bookmarksCollapsed: true,
+				groupChatsExpanded: true,
+			} as any);
+
+			const handleOpenGroupChat = vi.fn();
+			const deps = makeDeps({ handleOpenGroupChat });
+			const { result } = renderHook(() => useCycleSession(deps));
+
+			// Visual order: [Alpha(0), Active Chat(1)] — Archived Chat excluded
+			// next from Alpha → Active Chat
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(handleOpenGroupChat).toHaveBeenCalledWith('gc-active');
+
+			// Simulate being on Active Chat
+			act(() => {
+				useGroupChatStore.setState({ activeGroupChatId: 'gc-active' } as any);
+				useSessionStore.setState({ cyclePosition: 1 } as any);
+			});
+
+			// next from Active Chat → wraps to Alpha (skips archived)
+			act(() => {
+				result.current.cycleSession('next');
+			});
+			expect(useSessionStore.getState().activeSessionId).toBe('a');
 		});
 	});
 

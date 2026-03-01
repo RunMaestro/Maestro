@@ -144,9 +144,10 @@ export function useCycleSession(deps: UseCycleSessionDeps): UseCycleSessionRetur
 					ungroupedSessions.forEach(addSessionWithWorktrees);
 				}
 
-				// Group Chats section (if expanded and has group chats)
-				if (groupChatsExpanded && groupChats.length > 0) {
-					const sortedGroupChats = [...groupChats].sort((a, b) =>
+				// Group Chats section (if expanded and has non-archived group chats)
+				const activeGroupChats = groupChats.filter((gc) => !gc.archived);
+				if (groupChatsExpanded && activeGroupChats.length > 0) {
+					const sortedGroupChats = [...activeGroupChats].sort((a, b) =>
 						compareNamesIgnoringEmojis(a.name, b.name)
 					);
 					visualOrder.push(
