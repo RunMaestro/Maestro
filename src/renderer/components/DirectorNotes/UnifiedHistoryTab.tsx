@@ -18,10 +18,11 @@ import {
 	HistoryStatsBar,
 	ESTIMATED_ROW_HEIGHT,
 	ESTIMATED_ROW_HEIGHT_SIMPLE,
+	LOOKBACK_OPTIONS,
 } from '../History';
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
-import { useListNavigation } from '../../hooks';
+import { useListNavigation, useSettings } from '../../hooks';
 import type { TabFocusHandle } from './OverviewTab';
 
 /** Page size for progressive loading */
@@ -49,8 +50,18 @@ function lookbackHoursToDays(hours: number | null): number {
 	return Math.ceil(hours / 24);
 }
 
+/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. */
+function daysToLookbackHours(days: number): number | null {
+	const targetHours = days * 24;
+	for (const option of LOOKBACK_OPTIONS) {
+		if (option.hours !== null && option.hours >= targetHours) return option.hours;
+	}
+	return null; // all options too small — fall back to "All time"
+}
+
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab({ theme, onResumeSession, fileTree, onFileClick }, ref) {
+		const { directorNotesSettings } = useSettings();
 		const [entries, setEntries] = useState<UnifiedHistoryEntry[]>([]);
 		const [isLoading, setIsLoading] = useState(true);
 		const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -60,7 +71,9 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			new Set(['AUTO', 'USER'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
-		const [lookbackHours, setLookbackHours] = useState<number | null>(null); // null = all time
+		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
+			daysToLookbackHours(directorNotesSettings.defaultLookbackDays)
+		);
 		const [historyStats, setHistoryStats] = useState<HistoryStats | null>(null);
 		const [searchExpanded, setSearchExpanded] = useState(false);
 		const [searchQuery, setSearchQuery] = useState('');

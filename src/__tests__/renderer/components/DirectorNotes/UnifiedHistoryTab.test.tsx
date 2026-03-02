@@ -4,6 +4,16 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 import type { Theme } from '../../../../renderer/types';
 
+// Mock useSettings hook
+vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
+	useSettings: () => ({
+		directorNotesSettings: {
+			provider: 'claude-code',
+			defaultLookbackDays: 7,
+		},
+	}),
+}));
+
 // Mock useListNavigation
 const mockHandleKeyDown = vi.fn();
 const mockSetSelectedIndex = vi.fn();
@@ -125,6 +135,16 @@ vi.mock('../../../../renderer/components/History', () => ({
 	),
 	ESTIMATED_ROW_HEIGHT: 80,
 	ESTIMATED_ROW_HEIGHT_SIMPLE: 60,
+	LOOKBACK_OPTIONS: [
+		{ label: '24 hours', hours: 24, bucketCount: 24 },
+		{ label: '72 hours', hours: 72, bucketCount: 24 },
+		{ label: '1 week', hours: 168, bucketCount: 28 },
+		{ label: '2 weeks', hours: 336, bucketCount: 28 },
+		{ label: '1 month', hours: 720, bucketCount: 30 },
+		{ label: '6 months', hours: 4320, bucketCount: 24 },
+		{ label: '1 year', hours: 8760, bucketCount: 24 },
+		{ label: 'All time', hours: null, bucketCount: 24 },
+	],
 }));
 
 const mockTheme: Theme = {
@@ -226,12 +246,12 @@ describe('UnifiedHistoryTab', () => {
 			expect(screen.getByText('Loading history...')).toBeInTheDocument();
 		});
 
-		it('fetches unified history on mount with all-time lookback and pagination', async () => {
+		it('fetches unified history on mount using default lookback from settings', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
-					lookbackDays: 0,
+					lookbackDays: 7,
 					filter: null,
 					limit: 100,
 					offset: 0,
@@ -375,11 +395,12 @@ describe('UnifiedHistoryTab', () => {
 			});
 		});
 
-		it('passes null lookbackHours (all time) to activity graph by default', async () => {
+		it('passes default lookback from settings to activity graph', async () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
+				// 7 days → 168 hours (1 week)
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
 			});
 		});
 
@@ -388,7 +409,7 @@ describe('UnifiedHistoryTab', () => {
 
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith(
-					expect.objectContaining({ lookbackDays: 0 })
+					expect.objectContaining({ lookbackDays: 7 })
 				);
 			});
 
@@ -413,7 +434,8 @@ describe('UnifiedHistoryTab', () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
+				// Default: 7 days → 168 hours
+				expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('168');
 			});
 
 			mockGetUnifiedHistory.mockResolvedValue(
