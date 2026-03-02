@@ -66,6 +66,13 @@ describe('useRemoteIntegration', () => {
 	let onRemoteRenameTabHandler:
 		| ((sessionId: string, tabId: string, newName: string) => void)
 		| undefined;
+	let onRemoteStarTabHandler:
+		| ((sessionId: string, tabId: string, starred: boolean) => void)
+		| undefined;
+	let onRemoteReorderTabHandler:
+		| ((sessionId: string, fromIndex: number, toIndex: number) => void)
+		| undefined;
+	let onRemoteToggleBookmarkHandler: ((sessionId: string) => void) | undefined;
 
 	const mockProcess = {
 		...window.maestro.process,
@@ -102,6 +109,18 @@ describe('useRemoteIntegration', () => {
 			onRemoteRenameTabHandler = handler;
 			return () => {};
 		}),
+		onRemoteStarTab: vi.fn().mockImplementation((handler) => {
+			onRemoteStarTabHandler = handler;
+			return () => {};
+		}),
+		onRemoteReorderTab: vi.fn().mockImplementation((handler) => {
+			onRemoteReorderTabHandler = handler;
+			return () => {};
+		}),
+		onRemoteToggleBookmark: vi.fn().mockImplementation((handler) => {
+			onRemoteToggleBookmarkHandler = handler;
+			return () => {};
+		}),
 		sendRemoteNewTabResponse: vi.fn(),
 	};
 
@@ -113,6 +132,7 @@ describe('useRemoteIntegration', () => {
 	const mockWeb = {
 		...window.maestro.web,
 		broadcastTabsChange: vi.fn(),
+		broadcastSessionState: vi.fn(),
 	};
 
 	const mockClaude = {
@@ -141,6 +161,9 @@ describe('useRemoteIntegration', () => {
 		onRemoteNewTabHandler = undefined;
 		onRemoteCloseTabHandler = undefined;
 		onRemoteRenameTabHandler = undefined;
+		onRemoteStarTabHandler = undefined;
+		onRemoteReorderTabHandler = undefined;
+		onRemoteToggleBookmarkHandler = undefined;
 
 		window.maestro = {
 			...originalMaestro,
@@ -183,6 +206,7 @@ describe('useRemoteIntegration', () => {
 			setSessions,
 			setActiveSessionId,
 			defaultSaveToHistory: true,
+			defaultShowThinking: 'off' as const,
 		};
 	};
 

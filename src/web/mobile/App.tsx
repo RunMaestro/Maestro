@@ -448,6 +448,10 @@ export default function MobileApp() {
 		handleSelectTab,
 		handleNewTab,
 		handleCloseTab,
+		handleRenameTab,
+		handleStarTab,
+		handleReorderTab,
+		handleToggleBookmark,
 		addUserLogEntry,
 		sessionsHandlers,
 	} = useMobileSessionManagement({
@@ -1006,6 +1010,7 @@ export default function MobileApp() {
 					onSelectSession={handleSelectSession}
 					onOpenAllSessions={handleOpenAllSessions}
 					onOpenHistory={handleOpenHistoryPanel}
+					onToggleBookmark={handleToggleBookmark}
 				/>
 			)}
 
@@ -1021,6 +1026,9 @@ export default function MobileApp() {
 						onNewTab={handleNewTab}
 						onCloseTab={handleCloseTab}
 						onOpenTabSearch={handleOpenTabSearch}
+						onRenameTab={handleRenameTab}
+						onStarTab={handleStarTab}
+						onReorderTab={handleReorderTab}
 					/>
 				)}
 

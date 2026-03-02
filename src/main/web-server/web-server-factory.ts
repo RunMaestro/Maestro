@@ -436,6 +436,51 @@ export function createWebServerFactory(deps: WebServerFactoryDependencies) {
 			return true;
 		});
 
+		server.setStarTabCallback(async (sessionId: string, tabId: string, starred: boolean) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for starTab', 'WebServer');
+				return false;
+			}
+
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for starTab', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:starTab', sessionId, tabId, starred);
+			return true;
+		});
+
+		server.setReorderTabCallback(async (sessionId: string, fromIndex: number, toIndex: number) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for reorderTab', 'WebServer');
+				return false;
+			}
+
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for reorderTab', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:reorderTab', sessionId, fromIndex, toIndex);
+			return true;
+		});
+
+		server.setToggleBookmarkCallback(async (sessionId: string) => {
+			const mainWindow = getMainWindow();
+			if (!mainWindow) {
+				logger.warn('mainWindow is null for toggleBookmark', 'WebServer');
+				return false;
+			}
+
+			if (!isWebContentsAvailable(mainWindow)) {
+				logger.warn('webContents is not available for toggleBookmark', 'WebServer');
+				return false;
+			}
+			mainWindow.webContents.send('remote:toggleBookmark', sessionId);
+			return true;
+		});
+
 		return server;
 	};
 }

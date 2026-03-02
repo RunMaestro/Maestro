@@ -59,6 +59,9 @@ import type {
 	NewTabCallback,
 	CloseTabCallback,
 	RenameTabCallback,
+	StarTabCallback,
+	ReorderTabCallback,
+	ToggleBookmarkCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -286,6 +289,18 @@ export class WebServer {
 		this.callbackRegistry.setRenameTabCallback(callback);
 	}
 
+	setStarTabCallback(callback: StarTabCallback): void {
+		this.callbackRegistry.setStarTabCallback(callback);
+	}
+
+	setReorderTabCallback(callback: ReorderTabCallback): void {
+		this.callbackRegistry.setReorderTabCallback(callback);
+	}
+
+	setToggleBookmarkCallback(callback: ToggleBookmarkCallback): void {
+		this.callbackRegistry.setToggleBookmarkCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -431,6 +446,11 @@ export class WebServer {
 				this.callbackRegistry.closeTab(sessionId, tabId),
 			renameTab: async (sessionId: string, tabId: string, newName: string) =>
 				this.callbackRegistry.renameTab(sessionId, tabId, newName),
+			starTab: async (sessionId: string, tabId: string, starred: boolean) =>
+				this.callbackRegistry.starTab(sessionId, tabId, starred),
+			reorderTab: async (sessionId: string, fromIndex: number, toIndex: number) =>
+				this.callbackRegistry.reorderTab(sessionId, fromIndex, toIndex),
+			toggleBookmark: async (sessionId: string) => this.callbackRegistry.toggleBookmark(sessionId),
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getLiveSessionInfo: (sessionId: string) =>
 				this.liveSessionManager.getLiveSessionInfo(sessionId),

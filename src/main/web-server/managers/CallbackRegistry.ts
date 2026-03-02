@@ -18,6 +18,9 @@ import type {
 	NewTabCallback,
 	CloseTabCallback,
 	RenameTabCallback,
+	StarTabCallback,
+	ReorderTabCallback,
+	ToggleBookmarkCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -42,6 +45,9 @@ export interface WebServerCallbacks {
 	newTab: NewTabCallback | null;
 	closeTab: CloseTabCallback | null;
 	renameTab: RenameTabCallback | null;
+	starTab: StarTabCallback | null;
+	reorderTab: ReorderTabCallback | null;
+	toggleBookmark: ToggleBookmarkCallback | null;
 	getHistory: GetHistoryCallback | null;
 }
 
@@ -60,6 +66,9 @@ export class CallbackRegistry {
 		newTab: null,
 		closeTab: null,
 		renameTab: null,
+		starTab: null,
+		reorderTab: null,
+		toggleBookmark: null,
 		getHistory: null,
 	};
 
@@ -128,6 +137,21 @@ export class CallbackRegistry {
 		return this.callbacks.renameTab(sessionId, tabId, newName);
 	}
 
+	async starTab(sessionId: string, tabId: string, starred: boolean): Promise<boolean> {
+		if (!this.callbacks.starTab) return false;
+		return this.callbacks.starTab(sessionId, tabId, starred);
+	}
+
+	async reorderTab(sessionId: string, fromIndex: number, toIndex: number): Promise<boolean> {
+		if (!this.callbacks.reorderTab) return false;
+		return this.callbacks.reorderTab(sessionId, fromIndex, toIndex);
+	}
+
+	async toggleBookmark(sessionId: string): Promise<boolean> {
+		if (!this.callbacks.toggleBookmark) return false;
+		return this.callbacks.toggleBookmark(sessionId);
+	}
+
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
@@ -190,6 +214,18 @@ export class CallbackRegistry {
 	setRenameTabCallback(callback: RenameTabCallback): void {
 		logger.info('[CallbackRegistry] setRenameTabCallback called', LOG_CONTEXT);
 		this.callbacks.renameTab = callback;
+	}
+
+	setStarTabCallback(callback: StarTabCallback): void {
+		this.callbacks.starTab = callback;
+	}
+
+	setReorderTabCallback(callback: ReorderTabCallback): void {
+		this.callbacks.reorderTab = callback;
+	}
+
+	setToggleBookmarkCallback(callback: ToggleBookmarkCallback): void {
+		this.callbacks.toggleBookmark = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

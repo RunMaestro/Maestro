@@ -302,6 +302,13 @@ interface MaestroAPI {
 		onRemoteRenameTab: (
 			callback: (sessionId: string, tabId: string, newName: string) => void
 		) => () => void;
+		onRemoteStarTab: (
+			callback: (sessionId: string, tabId: string, starred: boolean) => void
+		) => () => void;
+		onRemoteReorderTab: (
+			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
+		) => () => void;
+		onRemoteToggleBookmark: (callback: (sessionId: string) => void) => () => void;
 		onStderr: (callback: (sessionId: string, data: string) => void) => () => void;
 		onCommandExit: (callback: (sessionId: string, code: number) => void) => () => void;
 		onUsage: (callback: (sessionId: string, usageStats: UsageStats) => void) => () => void;

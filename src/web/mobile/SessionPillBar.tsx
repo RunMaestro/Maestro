@@ -240,12 +240,18 @@ interface SessionInfoPopoverProps {
 	session: Session;
 	anchorRect: DOMRect;
 	onClose: () => void;
+	onToggleBookmark?: (sessionId: string) => void;
 }
 
 /**
  * Popover component displaying detailed session information
  */
-function SessionInfoPopover({ session, anchorRect, onClose }: SessionInfoPopoverProps) {
+function SessionInfoPopover({
+	session,
+	anchorRect,
+	onClose,
+	onToggleBookmark,
+}: SessionInfoPopoverProps) {
 	const colors = useThemeColors();
 	const popoverRef = useRef<HTMLDivElement>(null);
 
@@ -502,7 +508,7 @@ function SessionInfoPopover({ session, anchorRect, onClose }: SessionInfoPopover
 					</div>
 
 					{/* Working directory row */}
-					<div>
+					<div style={{ marginBottom: onToggleBookmark ? '12px' : undefined }}>
 						<span
 							style={{
 								fontSize: '11px',
@@ -527,6 +533,35 @@ function SessionInfoPopover({ session, anchorRect, onClose }: SessionInfoPopover
 							{truncatePath(session.cwd)}
 						</div>
 					</div>
+
+					{/* Bookmark toggle action */}
+					{onToggleBookmark && (
+						<button
+							onClick={() => {
+								triggerHaptic(HAPTIC_PATTERNS.tap);
+								onToggleBookmark(session.id);
+								onClose();
+							}}
+							style={{
+								display: 'flex',
+								alignItems: 'center',
+								gap: '8px',
+								width: '100%',
+								padding: '10px 12px',
+								borderRadius: '8px',
+								border: `1px solid ${colors.border}`,
+								backgroundColor: session.bookmarked ? `${colors.warning}15` : colors.bgMain,
+								color: colors.textMain,
+								fontSize: '14px',
+								fontWeight: 500,
+								cursor: 'pointer',
+								transition: 'background-color 0.15s ease',
+							}}
+						>
+							<span style={{ fontSize: '16px' }}>{session.bookmarked ? '★' : '☆'}</span>
+							{session.bookmarked ? 'Remove Bookmark' : 'Bookmark'}
+						</button>
+					)}
 				</div>
 			</div>
 
@@ -701,6 +736,8 @@ export interface SessionPillBarProps {
 	activeSessionId: string | null;
 	/** Callback when a session is selected */
 	onSelectSession: (sessionId: string) => void;
+	/** Callback to toggle bookmark on a session */
+	onToggleBookmark?: (sessionId: string) => void;
 	/** Callback to open the All Sessions view */
 	onOpenAllSessions?: () => void;
 	/** Callback to open the History panel */
@@ -739,6 +776,7 @@ export function SessionPillBar({
 	sessions,
 	activeSessionId,
 	onSelectSession,
+	onToggleBookmark,
 	onOpenAllSessions,
 	onOpenHistory,
 	className = '',
@@ -1124,6 +1162,7 @@ export function SessionPillBar({
 					session={popoverState.session}
 					anchorRect={popoverState.anchorRect}
 					onClose={handleClosePopover}
+					onToggleBookmark={onToggleBookmark}
 				/>
 			)}
 		</>

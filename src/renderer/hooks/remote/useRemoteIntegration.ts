@@ -365,12 +365,73 @@ export function useRemoteIntegration(deps: UseRemoteIntegrationDeps): UseRemoteI
 			}
 		);
 
+		// Handle remote star tab from web interface
+		const unsubscribeStarTab = window.maestro.process.onRemoteStarTab(
+			(sessionId: string, tabId: string, starred: boolean) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+
+						const tab = s.aiTabs.find((t) => t.id === tabId);
+						if (!tab?.agentSessionId) return s;
+
+						// Persist starred state (same logic as desktop handleTabStar)
+						const agentId = s.toolType || 'claude-code';
+						if (agentId === 'claude-code') {
+							window.maestro.claude
+								.updateSessionStarred(s.projectRoot, tab.agentSessionId, starred)
+								.catch((err) => console.error('Failed to persist tab starred:', err));
+						} else {
+							window.maestro.agentSessions
+								.setSessionStarred(agentId, s.projectRoot, tab.agentSessionId, starred)
+								.catch((err) => console.error('Failed to persist tab starred:', err));
+						}
+
+						return {
+							...s,
+							aiTabs: s.aiTabs.map((t) => (t.id === tabId ? { ...t, starred } : t)),
+						};
+					})
+				);
+			}
+		);
+
+		// Handle remote reorder tab from web interface
+		const unsubscribeReorderTab = window.maestro.process.onRemoteReorderTab(
+			(sessionId: string, fromIndex: number, toIndex: number) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId || !s.aiTabs) return s;
+						const tabs = [...s.aiTabs];
+						const [movedTab] = tabs.splice(fromIndex, 1);
+						tabs.splice(toIndex, 0, movedTab);
+						return { ...s, aiTabs: tabs };
+					})
+				);
+			}
+		);
+
+		// Handle remote bookmark toggle from web interface
+		const unsubscribeToggleBookmark = window.maestro.process.onRemoteToggleBookmark(
+			(sessionId: string) => {
+				setSessions((prev) =>
+					prev.map((s) => {
+						if (s.id !== sessionId) return s;
+						return { ...s, bookmarked: !s.bookmarked };
+					})
+				);
+			}
+		);
+
 		return () => {
 			unsubscribeSelectSession();
 			unsubscribeSelectTab();
 			unsubscribeNewTab();
 			unsubscribeCloseTab();
 			unsubscribeRenameTab();
+			unsubscribeStarTab();
+			unsubscribeReorderTab();
+			unsubscribeToggleBookmark();
 		};
 	}, [sessionsRef, activeSessionIdRef, setSessions, setActiveSessionId, defaultSaveToHistory]);
 

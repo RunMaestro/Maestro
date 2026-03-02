@@ -33,6 +33,9 @@ vi.mock('../../../main/web-server/WebServer', () => {
 			setNewTabCallback = vi.fn();
 			setCloseTabCallback = vi.fn();
 			setRenameTabCallback = vi.fn();
+			setStarTabCallback = vi.fn();
+			setReorderTabCallback = vi.fn();
+			setToggleBookmarkCallback = vi.fn();
 
 			constructor(port: number) {
 				this.port = port;

@@ -151,6 +151,14 @@ export interface UseMobileSessionManagementReturn {
 	handleNewTab: () => void;
 	/** Handler to close a tab in the active session */
 	handleCloseTab: (tabId: string) => void;
+	/** Handler to rename a tab in the active session */
+	handleRenameTab: (tabId: string, newName: string) => void;
+	/** Handler to star/unstar a tab in the active session */
+	handleStarTab: (tabId: string, starred: boolean) => void;
+	/** Handler to reorder a tab in the active session */
+	handleReorderTab: (fromIndex: number, toIndex: number) => void;
+	/** Handler to toggle bookmark on a session */
+	handleToggleBookmark: (sessionId: string) => void;
 	/** Add a user input log entry to session logs */
 	addUserLogEntry: (text: string, inputMode: 'ai' | 'terminal') => void;
 	/** WebSocket handlers for session state updates */
@@ -334,6 +342,68 @@ export function useMobileSessionManagement(
 			sendRef.current?.({ type: 'close_tab', sessionId: activeSessionId, tabId });
 		},
 		[activeSessionId, sendRef, triggerHaptic, hapticTapPattern]
+	);
+
+	// Handle renaming a tab
+	const handleRenameTab = useCallback(
+		(tabId: string, newName: string) => {
+			if (!activeSessionId) return;
+			sendRef.current?.({ type: 'rename_tab', sessionId: activeSessionId, tabId, newName });
+		},
+		[activeSessionId, sendRef]
+	);
+
+	// Handle starring/unstarring a tab
+	const handleStarTab = useCallback(
+		(tabId: string, starred: boolean) => {
+			if (!activeSessionId) return;
+			sendRef.current?.({ type: 'star_tab', sessionId: activeSessionId, tabId, starred });
+			// Optimistically update local state
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId) return s;
+					return {
+						...s,
+						aiTabs: s.aiTabs?.map((t: any) => (t.id === tabId ? { ...t, starred } : t)),
+					};
+				})
+			);
+		},
+		[activeSessionId, sendRef, setSessions]
+	);
+
+	// Handle reordering a tab
+	const handleReorderTab = useCallback(
+		(fromIndex: number, toIndex: number) => {
+			if (!activeSessionId) return;
+			sendRef.current?.({ type: 'reorder_tab', sessionId: activeSessionId, fromIndex, toIndex });
+			// Optimistically update local state
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== activeSessionId || !s.aiTabs) return s;
+					const tabs = [...s.aiTabs];
+					const [movedTab] = tabs.splice(fromIndex, 1);
+					tabs.splice(toIndex, 0, movedTab);
+					return { ...s, aiTabs: tabs };
+				})
+			);
+		},
+		[activeSessionId, sendRef, setSessions]
+	);
+
+	// Handle toggling bookmark on a session
+	const handleToggleBookmark = useCallback(
+		(sessionId: string) => {
+			sendRef.current?.({ type: 'toggle_bookmark', sessionId });
+			// Optimistically update local state
+			setSessions((prev) =>
+				prev.map((s) => {
+					if (s.id !== sessionId) return s;
+					return { ...s, bookmarked: !s.bookmarked };
+				})
+			);
+		},
+		[sendRef, setSessions]
 	);
 
 	// Add a user input log entry to session logs
@@ -622,6 +692,10 @@ export function useMobileSessionManagement(
 		handleSelectTab,
 		handleNewTab,
 		handleCloseTab,
+		handleRenameTab,
+		handleStarTab,
+		handleReorderTab,
+		handleToggleBookmark,
 		addUserLogEntry,
 		sessionsHandlers,
 	};

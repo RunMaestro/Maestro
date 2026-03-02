@@ -384,6 +384,39 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote star tab from web interface
+		 */
+		onRemoteStarTab: (
+			callback: (sessionId: string, tabId: string, starred: boolean) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, tabId: string, starred: boolean) =>
+				callback(sessionId, tabId, starred);
+			ipcRenderer.on('remote:starTab', handler);
+			return () => ipcRenderer.removeListener('remote:starTab', handler);
+		},
+
+		/**
+		 * Subscribe to remote reorder tab from web interface
+		 */
+		onRemoteReorderTab: (
+			callback: (sessionId: string, fromIndex: number, toIndex: number) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, fromIndex: number, toIndex: number) =>
+				callback(sessionId, fromIndex, toIndex);
+			ipcRenderer.on('remote:reorderTab', handler);
+			return () => ipcRenderer.removeListener('remote:reorderTab', handler);
+		},
+
+		/**
+		 * Subscribe to remote bookmark toggle from web interface
+		 */
+		onRemoteToggleBookmark: (callback: (sessionId: string) => void): (() => void) => {
+			const handler = (_: unknown, sessionId: string) => callback(sessionId);
+			ipcRenderer.on('remote:toggleBookmark', handler);
+			return () => ipcRenderer.removeListener('remote:toggleBookmark', handler);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {

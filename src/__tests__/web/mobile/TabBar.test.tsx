@@ -6,7 +6,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 import { TabBar } from '../../../web/mobile/TabBar';
 import type { AITabData } from '../../../web/hooks/useWebSocket';
 
@@ -30,6 +30,38 @@ vi.mock('../../../web/components/ThemeProvider', () => ({
 	useThemeColors: () => mockColors,
 }));
 
+// Mock useLongPress to make it testable without real touch events
+let capturedOnLongPress: ((rect: DOMRect) => void) | undefined;
+let capturedOnTap: (() => void) | undefined;
+vi.mock('../../../web/hooks/useLongPress', () => ({
+	useLongPress: ({
+		onLongPress,
+		onTap,
+	}: {
+		onLongPress: (rect: DOMRect) => void;
+		onTap?: () => void;
+	}) => {
+		capturedOnLongPress = onLongPress;
+		capturedOnTap = onTap;
+		const elementRef = { current: null };
+		return {
+			elementRef,
+			handlers: {
+				onTouchStart: () => {},
+				onTouchMove: () => {},
+				onTouchEnd: () => {},
+				onTouchCancel: () => {},
+			},
+			handleClick: () => onTap?.(),
+			handleContextMenu: (e: React.MouseEvent) => {
+				e.preventDefault();
+				const target = e.currentTarget as HTMLElement;
+				onLongPress(target.getBoundingClientRect());
+			},
+		};
+	},
+}));
+
 describe('TabBar', () => {
 	const defaultTab: AITabData = {
 		id: 'tab-1',
@@ -51,12 +83,18 @@ describe('TabBar', () => {
 	let mockOnNewTab: ReturnType<typeof vi.fn>;
 	let mockOnCloseTab: ReturnType<typeof vi.fn>;
 	let mockOnOpenTabSearch: ReturnType<typeof vi.fn>;
+	let mockOnRenameTab: ReturnType<typeof vi.fn>;
+	let mockOnStarTab: ReturnType<typeof vi.fn>;
+	let mockOnReorderTab: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		mockOnSelectTab = vi.fn();
 		mockOnNewTab = vi.fn();
 		mockOnCloseTab = vi.fn();
 		mockOnOpenTabSearch = vi.fn();
+		mockOnRenameTab = vi.fn();
+		mockOnStarTab = vi.fn();
+		mockOnReorderTab = vi.fn();
 		vi.clearAllMocks();
 	});
 
@@ -372,8 +410,9 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const activeButton = screen.getByText('Active').closest('button');
-			const closeButton = within(activeButton!).getByText('×');
+			// Close button is a sibling button with aria-label, inside the same wrapper div
+			const tabWrapper = screen.getByText('Active').closest('button')!.parentElement!;
+			const closeButton = within(tabWrapper).getByLabelText('Close tab');
 			expect(closeButton).toBeInTheDocument();
 		});
 
@@ -391,14 +430,15 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const inactiveButton = screen.getByText('Inactive').closest('button');
+			const inactiveButton = screen.getByText('Inactive').closest('button')!;
+			const tabWrapper = inactiveButton.parentElement!;
 
 			// Before hover - no close button
-			expect(within(inactiveButton!).queryByText('×')).not.toBeInTheDocument();
+			expect(within(tabWrapper).queryByLabelText('Close tab')).not.toBeInTheDocument();
 
 			// Hover - close button appears
-			fireEvent.mouseEnter(inactiveButton!);
-			expect(within(inactiveButton!).getByText('×')).toBeInTheDocument();
+			fireEvent.mouseEnter(inactiveButton);
+			expect(within(tabWrapper).getByLabelText('Close tab')).toBeInTheDocument();
 		});
 
 		it('hides close button when mouse leaves inactive tab', () => {
@@ -415,12 +455,13 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const inactiveButton = screen.getByText('Inactive').closest('button');
+			const inactiveButton = screen.getByText('Inactive').closest('button')!;
+			const tabWrapper = inactiveButton.parentElement!;
 
-			fireEvent.mouseEnter(inactiveButton!);
-			fireEvent.mouseLeave(inactiveButton!);
+			fireEvent.mouseEnter(inactiveButton);
+			fireEvent.mouseLeave(inactiveButton);
 
-			expect(within(inactiveButton!).queryByText('×')).not.toBeInTheDocument();
+			expect(within(tabWrapper).queryByLabelText('Close tab')).not.toBeInTheDocument();
 		});
 
 		it('calls onCloseTab with correct tab id when close button clicked', () => {
@@ -437,8 +478,8 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const activeButton = screen.getByText('Active').closest('button');
-			const closeButton = within(activeButton!).getByText('×');
+			const tabWrapper = screen.getByText('Active').closest('button')!.parentElement!;
+			const closeButton = within(tabWrapper).getByLabelText('Close tab');
 
 			fireEvent.click(closeButton);
 
@@ -460,8 +501,8 @@ describe('TabBar', () => {
 					onCloseTab={mockOnCloseTab}
 				/>
 			);
-			const activeButton = screen.getByText('Active').closest('button');
-			const closeButton = within(activeButton!).getByText('×');
+			const tabWrapper = screen.getByText('Active').closest('button')!.parentElement!;
+			const closeButton = within(tabWrapper).getByLabelText('Close tab');
 
 			mockOnSelectTab.mockClear();
 			fireEvent.click(closeButton);
@@ -1083,6 +1124,199 @@ describe('TabBar', () => {
 			expect(screen.getByText('Error')).toBeInTheDocument();
 			// 2 starred tabs
 			expect(screen.getAllByText('★')).toHaveLength(2);
+		});
+	});
+
+	describe('Tab actions popover', () => {
+		const twoTabs = [
+			createTab({ id: 'tab-1', name: 'First', starred: false }),
+			createTab({ id: 'tab-2', name: 'Second', starred: false }),
+		];
+
+		const threeTabs = [
+			createTab({ id: 'tab-1', name: 'First', starred: false }),
+			createTab({ id: 'tab-2', name: 'Second', starred: true }),
+			createTab({ id: 'tab-3', name: 'Third', starred: false }),
+		];
+
+		const renderWithActions = (tabs: AITabData[], activeTabId = 'tab-1') =>
+			render(
+				<TabBar
+					tabs={tabs}
+					activeTabId={activeTabId}
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+					onRenameTab={mockOnRenameTab}
+					onStarTab={mockOnStarTab}
+					onReorderTab={mockOnReorderTab}
+				/>
+			);
+
+		const openPopoverViaContextMenu = (tabName: string) => {
+			const tabButton = screen.getByText(tabName).closest('button')!;
+			fireEvent.contextMenu(tabButton);
+		};
+
+		it('opens popover on context menu (right-click)', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+		});
+
+		it('shows tab name in popover header', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			const dialog = screen.getByRole('dialog');
+			expect(within(dialog).getByText('First')).toBeInTheDocument();
+		});
+
+		it('shows Star action for unstarred tab', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByText('Star')).toBeInTheDocument();
+		});
+
+		it('shows Unstar action for starred tab', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Second');
+			expect(screen.getByText('Unstar')).toBeInTheDocument();
+		});
+
+		it('calls onStarTab when Star is clicked', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Star'));
+			expect(mockOnStarTab).toHaveBeenCalledWith('tab-1', true);
+		});
+
+		it('calls onStarTab with false when Unstar is clicked', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Second');
+			fireEvent.click(screen.getByText('Unstar'));
+			expect(mockOnStarTab).toHaveBeenCalledWith('tab-2', false);
+		});
+
+		it('shows Rename action', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByText('Rename')).toBeInTheDocument();
+		});
+
+		it('switches to rename input view when Rename is clicked', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+			expect(screen.getByPlaceholderText('Tab name')).toBeInTheDocument();
+			expect(screen.getByText('Save')).toBeInTheDocument();
+			expect(screen.getByText('Cancel')).toBeInTheDocument();
+		});
+
+		it('calls onRenameTab when Save is clicked in rename view', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+
+			const input = screen.getByPlaceholderText('Tab name');
+			fireEvent.change(input, { target: { value: 'Renamed Tab' } });
+			fireEvent.click(screen.getByText('Save'));
+
+			expect(mockOnRenameTab).toHaveBeenCalledWith('tab-1', 'Renamed Tab');
+		});
+
+		it('returns to action list when Cancel is clicked in rename view', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			fireEvent.click(screen.getByText('Rename'));
+
+			// Should be in rename view
+			expect(screen.getByPlaceholderText('Tab name')).toBeInTheDocument();
+
+			fireEvent.click(screen.getByText('Cancel'));
+
+			// Should be back to action list
+			expect(screen.queryByPlaceholderText('Tab name')).not.toBeInTheDocument();
+			expect(screen.getByText('Star')).toBeInTheDocument();
+		});
+
+		it('shows Move Left and Move Right actions', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Second');
+			expect(screen.getByText('Move Left')).toBeInTheDocument();
+			expect(screen.getByText('Move Right')).toBeInTheDocument();
+		});
+
+		it('disables Move Left for first tab', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('First');
+			const moveLeft = screen.getByText('Move Left').closest('button')!;
+			expect(moveLeft).toBeDisabled();
+		});
+
+		it('disables Move Right for last tab', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Third');
+			const moveRight = screen.getByText('Move Right').closest('button')!;
+			expect(moveRight).toBeDisabled();
+		});
+
+		it('calls onReorderTab when Move Left is clicked on middle tab', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Second');
+			fireEvent.click(screen.getByText('Move Left'));
+			expect(mockOnReorderTab).toHaveBeenCalledWith(1, 0);
+		});
+
+		it('calls onReorderTab when Move Right is clicked on middle tab', () => {
+			renderWithActions(threeTabs);
+			openPopoverViaContextMenu('Second');
+			fireEvent.click(screen.getByText('Move Right'));
+			expect(mockOnReorderTab).toHaveBeenCalledWith(1, 2);
+		});
+
+		it('closes popover when backdrop is clicked', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+			// Click the backdrop (the div with aria-hidden="true")
+			const backdrop = document.querySelector('[aria-hidden="true"]') as HTMLElement;
+			fireEvent.click(backdrop);
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('closes popover when close button in header is clicked', () => {
+			renderWithActions(twoTabs);
+			openPopoverViaContextMenu('First');
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+			const dialog = screen.getByRole('dialog');
+			const closeButton = within(dialog).getByLabelText('Close');
+			fireEvent.click(closeButton);
+
+			expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+		});
+
+		it('does not show action buttons when callbacks are not provided', () => {
+			render(
+				<TabBar
+					tabs={twoTabs}
+					activeTabId="tab-1"
+					onSelectTab={mockOnSelectTab}
+					onNewTab={mockOnNewTab}
+					onCloseTab={mockOnCloseTab}
+				/>
+			);
+			const tabButton = screen.getByText('First').closest('button')!;
+			fireEvent.contextMenu(tabButton);
+
+			// Popover should open but without action buttons
+			expect(screen.getByRole('dialog')).toBeInTheDocument();
+			expect(screen.queryByText('Star')).not.toBeInTheDocument();
+			expect(screen.queryByText('Rename')).not.toBeInTheDocument();
+			expect(screen.queryByText('Move Left')).not.toBeInTheDocument();
+			expect(screen.queryByText('Move Right')).not.toBeInTheDocument();
 		});
 	});
 

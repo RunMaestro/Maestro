@@ -276,6 +276,17 @@ export type RenameTabCallback = (
 	tabId: string,
 	newName: string
 ) => Promise<boolean>;
+export type StarTabCallback = (
+	sessionId: string,
+	tabId: string,
+	starred: boolean
+) => Promise<boolean>;
+export type ReorderTabCallback = (
+	sessionId: string,
+	fromIndex: number,
+	toIndex: number
+) => Promise<boolean>;
+export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 
 /**
  * Callback type for fetching current theme.

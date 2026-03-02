@@ -82,6 +82,9 @@ export interface MessageHandlerCallbacks {
 	newTab: (sessionId: string) => Promise<{ tabId: string } | null>;
 	closeTab: (sessionId: string, tabId: string) => Promise<boolean>;
 	renameTab: (sessionId: string, tabId: string, newName: string) => Promise<boolean>;
+	starTab: (sessionId: string, tabId: string, starred: boolean) => Promise<boolean>;
+	reorderTab: (sessionId: string, fromIndex: number, toIndex: number) => Promise<boolean>;
+	toggleBookmark: (sessionId: string) => Promise<boolean>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -177,6 +180,18 @@ export class WebSocketMessageHandler {
 
 			case 'rename_tab':
 				this.handleRenameTab(client, message);
+				break;
+
+			case 'star_tab':
+				this.handleStarTab(client, message);
+				break;
+
+			case 'reorder_tab':
+				this.handleReorderTab(client, message);
+				break;
+
+			case 'toggle_bookmark':
+				this.handleToggleBookmark(client, message);
 				break;
 
 			default:
@@ -520,6 +535,103 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to rename tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle star_tab message - star/unstar a tab within a session
+	 */
+	private handleStarTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const tabId = message.tabId as string;
+		const starred = message.starred as boolean;
+		logger.info(
+			`[Web] Received star_tab message: session=${sessionId}, tab=${tabId}, starred=${starred}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || !tabId) {
+			this.sendError(client, 'Missing sessionId or tabId');
+			return;
+		}
+
+		if (!this.callbacks.starTab) {
+			this.sendError(client, 'Tab starring not configured');
+			return;
+		}
+
+		this.callbacks
+			.starTab(sessionId, tabId, !!starred)
+			.then((success) => {
+				this.send(client, { type: 'star_tab_result', success, sessionId, tabId, starred });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to star tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle reorder_tab message - move a tab to a new position within a session
+	 */
+	private handleReorderTab(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const fromIndex = message.fromIndex as number;
+		const toIndex = message.toIndex as number;
+		logger.info(
+			`[Web] Received reorder_tab message: session=${sessionId}, from=${fromIndex}, to=${toIndex}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId || fromIndex == null || toIndex == null) {
+			this.sendError(client, 'Missing sessionId, fromIndex, or toIndex');
+			return;
+		}
+
+		if (!this.callbacks.reorderTab) {
+			this.sendError(client, 'Tab reordering not configured');
+			return;
+		}
+
+		this.callbacks
+			.reorderTab(sessionId, fromIndex, toIndex)
+			.then((success) => {
+				this.send(client, {
+					type: 'reorder_tab_result',
+					success,
+					sessionId,
+					fromIndex,
+					toIndex,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to reorder tab: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle toggle_bookmark message - toggle bookmark state on a session
+	 */
+	private handleToggleBookmark(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		logger.info(`[Web] Received toggle_bookmark message: session=${sessionId}`, LOG_CONTEXT);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!this.callbacks.toggleBookmark) {
+			this.sendError(client, 'Bookmark toggling not configured');
+			return;
+		}
+
+		this.callbacks
+			.toggleBookmark(sessionId)
+			.then((success) => {
+				this.send(client, { type: 'toggle_bookmark_result', success, sessionId });
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to toggle bookmark: ${error.message}`);
 			});
 	}
 
