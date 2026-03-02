@@ -12,7 +12,7 @@ import {
 	AlertCircle,
 	Save,
 } from 'lucide-react';
-import type { Session, Theme, LogEntry, FocusArea } from '../types';
+import type { Session, Theme, LogEntry, FocusArea, AgentError } from '../types';
 import type { FileNode } from '../types/fileTree';
 import Convert from 'ansi-to-html';
 import DOMPurify from 'dompurify';
@@ -122,8 +122,8 @@ interface LogItemProps {
 	cwd?: string;
 	projectRoot?: string;
 	onFileClick?: (path: string) => void;
-	// Error details callback
-	onShowErrorDetails?: () => void;
+	// Error details callback - receives the specific AgentError from the log entry
+	onShowErrorDetails?: (error: AgentError) => void;
 	// Save to file callback (AI mode only, non-user messages)
 	onSaveToFile?: (text: string) => void;
 	// Message alignment
@@ -487,7 +487,7 @@ const LogItemComponent = memo(
 							</p>
 							{!!log.agentError?.parsedJson && onShowErrorDetails && (
 								<button
-									onClick={onShowErrorDetails}
+									onClick={() => onShowErrorDetails(log.agentError!)}
 									className="self-start flex items-center gap-2 px-3 py-1.5 text-xs rounded border hover:opacity-80 transition-opacity"
 									style={{
 										backgroundColor: theme.colors.error + '15',
@@ -1028,7 +1028,7 @@ interface TerminalOutputProps {
 	cwd?: string; // Current working directory for proximity-based matching
 	projectRoot?: string; // Project root absolute path for converting absolute paths to relative
 	onFileClick?: (path: string) => void; // Callback when a file link is clicked
-	onShowErrorDetails?: () => void; // Callback to show the error modal (for error log entries)
+	onShowErrorDetails?: (error: AgentError) => void; // Callback to show the error modal (for error log entries)
 	onFileSaved?: () => void; // Callback when markdown content is saved to file (e.g., to refresh file list)
 	autoScrollAiMode?: boolean; // Whether to auto-scroll in AI mode (like terminal mode)
 	setAutoScrollAiMode?: (value: boolean) => void; // Toggle auto-scroll in AI mode

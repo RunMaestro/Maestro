@@ -664,6 +664,38 @@ describe('useModalHandlers', () => {
 			expect(useModalStore.getState().isOpen('agentError')).toBe(false);
 		});
 
+		it('handleShowAgentErrorModal opens modal with historical error when passed an AgentError', () => {
+			const tab = createMockAITab({ id: 'tab-1', agentSessionId: 'as-1' });
+			const session = createMockSession({
+				id: 'session-1',
+				activeTabId: 'tab-1',
+				aiTabs: [tab],
+			});
+			useSessionStore.setState({ sessions: [session], activeSessionId: 'session-1' });
+
+			const historicalError = {
+				message: 'historical error from chat log',
+				type: 'agent_crashed' as const,
+				recoverable: false,
+				agentId: 'claude-code',
+				timestamp: Date.now(),
+				parsedJson: { detail: 'some parsed data' },
+			};
+
+			const { result } = renderHook(() =>
+				useModalHandlers(createInputRef(), createTerminalOutputRef())
+			);
+			act(() => {
+				result.current.handleShowAgentErrorModal(historicalError);
+			});
+
+			expect(useModalStore.getState().isOpen('agentError')).toBe(true);
+			expect(useModalStore.getState().getData('agentError')).toEqual({
+				sessionId: 'session-1',
+				historicalError,
+			});
+		});
+
 		it('handleClearAgentError clears error on agent store and closes modal', () => {
 			const mockClearAgentError = vi.fn();
 			vi.spyOn(useAgentStore, 'getState').mockReturnValue({

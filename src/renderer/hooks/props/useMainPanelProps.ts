@@ -20,6 +20,7 @@ import type {
 	UnifiedTab,
 	FilePreviewTab,
 	ThinkingItem,
+	AgentError,
 } from '../../types';
 import type { FileTreeChanges } from '../../utils/fileExplorer';
 import type { TabCompletionSuggestion, TabCompletionFilter } from '../input/useTabCompletion';
@@ -209,7 +210,7 @@ export interface UseMainPanelPropsDeps {
 	handleNavigateToIndex: (index: number) => void;
 	handleClearFilePreviewHistory: () => void;
 	handleClearAgentErrorForMainPanel: () => void;
-	handleShowAgentErrorModal: () => void;
+	handleShowAgentErrorModal: (error?: AgentError) => void;
 	showSuccessFlash: (message: string) => void;
 	handleOpenFuzzySearch: () => void;
 	handleOpenWorktreeConfig: () => void;
@@ -392,9 +393,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onClearAgentError: deps.activeTab?.agentError
 				? deps.handleClearAgentErrorForMainPanel
 				: undefined,
-			onShowAgentErrorModal: deps.activeTab?.agentError
-				? deps.handleShowAgentErrorModal
-				: undefined,
+			onShowAgentErrorModal: deps.handleShowAgentErrorModal,
 			showFlashNotification: deps.showSuccessFlash,
 			onOpenFuzzySearch: deps.handleOpenFuzzySearch,
 			onOpenWorktreeConfig: deps.handleOpenWorktreeConfig,

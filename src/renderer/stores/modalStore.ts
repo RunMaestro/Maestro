@@ -15,7 +15,7 @@
  */
 
 import { create } from 'zustand';
-import type { Session, SettingsTab } from '../types';
+import type { Session, SettingsTab, AgentError } from '../types';
 import type { SerializableWizardState } from '../components/Wizard';
 import type { ConductorBadge } from '../constants/conductorBadges';
 
@@ -106,6 +106,8 @@ export interface WizardResumeModalData {
 /** Agent error modal data */
 export interface AgentErrorModalData {
 	sessionId: string;
+	/** Direct error for displaying historical errors from chat log entries */
+	historicalError?: AgentError;
 }
 
 /** Delete agent modal data */
@@ -684,6 +686,8 @@ export function getModalActions() {
 		// Agent Error Modal
 		setAgentErrorModalSessionId: (sessionId: string | null) =>
 			sessionId ? openModal('agentError', { sessionId }) : closeModal('agentError'),
+		showHistoricalAgentError: (sessionId: string, error: AgentError) =>
+			openModal('agentError', { sessionId, historicalError: error }),
 
 		// Worktree Modals
 		setWorktreeConfigModalOpen: (open: boolean) =>

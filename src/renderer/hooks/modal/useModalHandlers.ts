@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import type { Session, LeaderboardRegistration } from '../../types';
+import type { Session, LeaderboardRegistration, AgentError } from '../../types';
 import type { RecoveryAction } from '../../components/AgentErrorModal';
 import { getModalActions, useModalStore } from '../../stores/modalStore';
 import { useSettingsStore } from '../../stores/settingsStore';
@@ -33,6 +33,8 @@ import { gitService } from '../../services/git';
 export interface ModalHandlersReturn {
 	// Derived state
 	errorSession: Session | null;
+	/** The error to display — live session error or historical from chat log */
+	effectiveAgentError: AgentError | null;
 	recoveryActions: RecoveryAction[];
 
 	// Simple close handlers
@@ -73,7 +75,7 @@ export interface ModalHandlersReturn {
 
 	// Agent error handlers
 	handleCloseAgentErrorModal: () => void;
-	handleShowAgentErrorModal: () => void;
+	handleShowAgentErrorModal: (error?: AgentError) => void;
 	handleClearAgentError: (sessionId: string, tabId?: string) => void;
 	handleStartNewSessionAfterError: (sessionId: string) => void;
 	handleRetryAfterError: (sessionId: string) => void;
@@ -143,6 +145,8 @@ export interface ModalHandlersReturn {
 
 const selectAgentErrorSessionId = (s: ReturnType<typeof useModalStore.getState>) =>
 	s.getData('agentError')?.sessionId ?? null;
+const selectAgentErrorHistorical = (s: ReturnType<typeof useModalStore.getState>) =>
+	s.getData('agentError')?.historicalError ?? null;
 const selectLogViewerOpen = (s: ReturnType<typeof useModalStore.getState>) => s.isOpen('logViewer');
 const selectShortcutsHelpOpen = (s: ReturnType<typeof useModalStore.getState>) =>
 	s.isOpen('shortcutsHelp');
@@ -158,6 +162,7 @@ export function useModalHandlers(
 ): ModalHandlersReturn {
 	// --- Reactive subscriptions (for derived state & effects) ---
 	const agentErrorModalSessionId = useModalStore(selectAgentErrorSessionId);
+	const historicalAgentError = useModalStore(selectAgentErrorHistorical);
 	const sessions = useSessionStore((s) => s.sessions);
 	const logViewerOpen = useModalStore(selectLogViewerOpen);
 	const shortcutsHelpOpen = useModalStore(selectShortcutsHelpOpen);
@@ -336,13 +341,20 @@ export function useModalHandlers(
 		getModalActions().setAgentErrorModalSessionId(null);
 	}, []);
 
-	const handleShowAgentErrorModal = useCallback(() => {
+	const handleShowAgentErrorModal = useCallback((historicalError?: AgentError) => {
 		const { sessions: currentSessions, activeSessionId } = useSessionStore.getState();
 		const currentSession = currentSessions.find((s) => s.id === activeSessionId);
 		if (!currentSession) return;
-		const activeTab = currentSession.aiTabs.find((t) => t.id === currentSession.activeTabId);
-		if (!activeTab?.agentError) return;
-		getModalActions().setAgentErrorModalSessionId(currentSession.id);
+
+		if (historicalError) {
+			// Show a historical error from a chat log entry
+			getModalActions().showHistoricalAgentError(currentSession.id, historicalError);
+		} else {
+			// Show the current live error on the active tab
+			const activeTab = currentSession.aiTabs.find((t) => t.id === currentSession.activeTabId);
+			if (!activeTab?.agentError) return;
+			getModalActions().setAgentErrorModalSessionId(currentSession.id);
+		}
 	}, []);
 
 	const handleClearAgentError = useCallback((sessionId: string, tabId?: string) => {
@@ -390,16 +402,21 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
+	// Determine the effective error: prefer live session error, fall back to historical
+	const effectiveError = errorSession?.agentError ?? historicalAgentError ?? undefined;
+	const isHistorical = !errorSession?.agentError && !!historicalAgentError;
+
 	// Use the agent error recovery hook to get recovery actions
+	// Historical errors get no recovery actions (they're read-only)
 	const { recoveryActions } = useAgentErrorRecovery({
-		error: errorSession?.agentError,
+		error: effectiveError,
 		agentId: errorSession?.toolType || 'claude-code',
 		sessionId: errorSession?.id || '',
-		onNewSession: errorSession ? () => handleStartNewSessionAfterError(errorSession.id) : undefined,
-		onRetry: errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
-		onClearError: errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
-		onRestartAgent: errorSession ? () => handleRestartAgentAfterError(errorSession.id) : undefined,
-		onAuthenticate: errorSession ? () => handleAuthenticateAfterError(errorSession.id) : undefined,
+		onNewSession: !isHistorical && errorSession ? () => handleStartNewSessionAfterError(errorSession.id) : undefined,
+		onRetry: !isHistorical && errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
+		onClearError: !isHistorical && errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
+		onRestartAgent: !isHistorical && errorSession ? () => handleRestartAgentAfterError(errorSession.id) : undefined,
+		onAuthenticate: !isHistorical && errorSession ? () => handleAuthenticateAfterError(errorSession.id) : undefined,
 	});
 
 	// ====================================================================
@@ -825,6 +842,7 @@ export function useModalHandlers(
 	return {
 		// Derived state
 		errorSession,
+		effectiveAgentError: effectiveError ?? null,
 		recoveryActions,
 
 		// Simple close handlers

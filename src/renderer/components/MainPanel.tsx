@@ -49,6 +49,7 @@ import type {
 	UnifiedTab,
 	FilePreviewTab,
 	ThinkingItem,
+	AgentError,
 } from '../types';
 
 interface SlashCommand {
@@ -246,7 +247,7 @@ interface MainPanelProps {
 
 	// Agent error handling
 	onClearAgentError?: () => void;
-	onShowAgentErrorModal?: () => void;
+	onShowAgentErrorModal?: (error?: AgentError) => void;
 	// Flash notification callback
 	showFlashNotification?: (message: string) => void;
 	// Fuzzy file search callback (for FilePreview in preview mode)
@@ -1513,7 +1514,7 @@ export const MainPanel = React.memo(
 								<div className="flex items-center gap-2 shrink-0">
 									{props.onShowAgentErrorModal && (
 										<button
-											onClick={props.onShowAgentErrorModal}
+											onClick={() => props.onShowAgentErrorModal?.()}
 											className="px-2 py-1 text-xs font-medium rounded hover:opacity-80 transition-opacity"
 											style={{
 												backgroundColor: theme.colors.error,
