@@ -544,7 +544,6 @@ export function TabBar({
 		},
 		[]
 	);
-
 	const handleClosePopover = useCallback(() => {
 		setPopoverState(null);
 	}, []);
