@@ -44,7 +44,7 @@ The major contributions to 0.14.x remain:
 - Leaderboard tracking now works across multiple systems and syncs level from cloud 🏆
 - Agent duplication. Pro tip: Consider a group of unused "Template" agents ✌️
 - New setting to prevent system from going to sleep while agents are active 🛏️
-- The tab menu has a new "Publish as GitHub Gist" option  📝
+- The tab menu has a new "Publish as GitHub Gist" option 📝
 - The tab menu has options to move the tab to the first or last position 🔀
 - [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks) can now contain non-markdown assets 📙
 - Improved default shell detection 🐚
@@ -73,10 +73,12 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 - TAKE TWO! Fixed Linux ARM64 build architecture contamination issues 🏗️
 
 ### v0.13.1 Changes
+
 - Fixed Linux ARM64 build architecture contamination issues 🏗️
 - Enhanced error handling for Auto Run batch processing 🚨
 
 ### v0.13.0 Changes
+
 - Added a global usage dashboard, data collection begins with this install 🎛️
 - Added a Playbook Exchange for downloading pre-defined Auto Run playbooks from [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks) 📕
 - Bundled OpenSpec commands for structured change proposals 📝
@@ -100,15 +102,19 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 The big changes in the v0.12.x line are the following three:
 
 ## Show Thinking
-🤔 There is now a toggle to show thinking for the agent, the default for new tabs is off, though this can be changed under Settings > General. The toggle shows next to History and Read-Only. Very similar pattern. This has been the #1 most requested feature, though personally, I don't think I'll use it as I prefer to not see the details of the work, but the results of the work. Just as we work with our colleagues. 
+
+🤔 There is now a toggle to show thinking for the agent, the default for new tabs is off, though this can be changed under Settings > General. The toggle shows next to History and Read-Only. Very similar pattern. This has been the #1 most requested feature, though personally, I don't think I'll use it as I prefer to not see the details of the work, but the results of the work. Just as we work with our colleagues.
 
 ## GitHub Spec-Kit Integration
+
 🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
 
 ## Context Management Tools
+
 📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will received (configurable) warnings at 60% and 80% context consumption with a hint to compact.
 
 ## Changes Specific to v0.12.3:
+
 - We now have hosted documentation through Mintlify 📚
 - Export any tab conversation as self-contained themed HTML file 📄
 - Publish files as private/public Gists 🌐
@@ -221,6 +227,7 @@ The big changes in the v0.12.x line are the following three:
 Minor bugfixes on top of v0.7.3:
 
 # Onboarding, Wizard, and Tours
+
 - Implemented comprehensive onboarding wizard with integrated tour system 🚀
 - Added project-understanding confidence display to wizard UI 🎨
 - Enhanced keyboard navigation across all wizard screens ⌨️
@@ -228,6 +235,7 @@ Minor bugfixes on top of v0.7.3:
 - Added First Run Celebration modal with confetti animation 🎉
 
 # UI / UX Enhancements
+
 - Added expand-to-fullscreen button for Auto Run interface 🖥️
 - Created dedicated modal component and improved modal priority constants for expanded Auto Run view 📐
 - Enhanced user experience with fullscreen editing capabilities ✨
@@ -237,15 +245,18 @@ Minor bugfixes on top of v0.7.3:
 - Enhanced toast context with agent name for OS notifications 📢
 
 # Auto Run Workflow Improvements
+
 - Created phase document generation for Auto Run workflow 📄
 - Added real-time log streaming to the LogViewer component 📊
 
 # Application Behavior / Core Fixes
+
 - Added validation to prevent nested worktrees inside the main repository 🚫
 - Fixed process manager to properly emit exit events on errors 🔧
 - Fixed process exit handling to ensure proper cleanup 🧹
 
 # Update System
+
 - Implemented automatic update checking on application startup 🚀
 - Added settings toggle for enabling/disabling startup update checks ⚙️
 
@@ -263,6 +274,7 @@ Minor bugfixes on top of v0.7.3:
 **Latest: v0.6.1** | Released December 4, 2025
 
 In this release...
+
 - Added recursive subfolder support for Auto Run markdown files 🗂️
 - Enhanced document tree display with expandable folder navigation 🌳
 - Enabled creating documents in subfolders with path selection 📁
@@ -275,6 +287,7 @@ In this release...
 - Added support for nested folder structures in document management 🏗️
 
 Plus the pre-release ALPHA...
+
 - Template vars now set context in default autorun prompt 🚀
 - Added Enter key support for queued message confirmation dialog ⌨️
 - Kill process capability added to System Process Monitor 💀
@@ -434,6 +447,7 @@ Plus the pre-release ALPHA...
 All releases are available on the [GitHub Releases page](https://github.com/RunMaestro/Maestro/releases).
 
 Maestro is available for:
+
 - **macOS** - Apple Silicon (arm64) and Intel (x64)
 - **Windows** - x64
 - **Linux** - x64 and arm64, AppImage, deb, and rpm packages

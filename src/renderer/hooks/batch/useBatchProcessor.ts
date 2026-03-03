@@ -1164,10 +1164,7 @@ export function useBatchProcessor({
 										timeSpent: timeTracking.getElapsedTime(sessionId),
 									})
 									.catch((err: unknown) => {
-										console.warn(
-											'[BatchProcessor] Failed to update Symphony progress:',
-											err
-										);
+										console.warn('[BatchProcessor] Failed to update Symphony progress:', err);
 									});
 							}
 

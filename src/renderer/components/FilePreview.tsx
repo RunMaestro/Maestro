@@ -999,9 +999,7 @@ export const FilePreview = React.memo(
 				// Strip event handler attributes (e.g. onToggle) that rehype-raw may
 				// pass through as strings from AI-generated HTML, which React rejects.
 				// Fixes MAESTRO-8Q
-				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => (
-					<details {...props} />
-				),
+				details: ({ node: _node, onToggle: _onToggle, ...props }: any) => <details {...props} />,
 			}),
 			[onFileClick, theme, cwd, file, showRemoteImages, sshRemoteId]
 		);
@@ -1502,13 +1500,17 @@ export const FilePreview = React.memo(
 					} else {
 						// Fallback: copy the data URL if image copy fails
 						const fallbackOk = await safeClipboardWrite(file.content);
-						setCopyNotificationMessage(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
+						setCopyNotificationMessage(
+							fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image'
+						);
 					}
 				} catch (err) {
 					captureException(err);
 					// Fallback: copy the data URL if fetch/blob fails
 					const fallbackOk = await safeClipboardWrite(file.content);
-					setCopyNotificationMessage(fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image');
+					setCopyNotificationMessage(
+						fallbackOk ? 'Image URL Copied to Clipboard' : 'Failed to Copy Image'
+					);
 				}
 			} else {
 				// For text files, copy the content
