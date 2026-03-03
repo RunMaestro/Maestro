@@ -2,6 +2,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+
+let readFileSpy: ReturnType<typeof vi.fn>;
+
+vi.mock('node:fs/promises', async () => {
+	const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+	readFileSpy = vi.fn(actual.readFile);
+
+	return {
+		...actual,
+		readFile: readFileSpy,
+	};
+});
+
 import {
 	CodexOutputParser,
 	invalidateCodexConfigCache,
@@ -692,7 +705,7 @@ describe('CodexOutputParser', () => {
 
 		it('reads codex config from disk once and reuses cached value for additional parser instances', async () => {
 			await createTempCodexConfig('model = "gpt-5.1"\nmodel_context_window = 77777');
-			const readFileSpy = vi.spyOn(fs, 'readFile');
+			expect(readFileSpy).toBeDefined();
 
 			const config = await loadCodexConfig();
 			expect(config.contextWindow).toBe(77777);
