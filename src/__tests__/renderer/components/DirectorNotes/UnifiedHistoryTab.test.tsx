@@ -4,13 +4,15 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 import type { Theme } from '../../../../renderer/types';
 
-// Mock useSettings hook
+// Mock useSettings hook (mutable so individual tests can override)
+const mockDirNotesSettings = vi.hoisted(() => ({
+	provider: 'claude-code' as const,
+	defaultLookbackDays: 7,
+}));
+
 vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 	useSettings: () => ({
-		directorNotesSettings: {
-			provider: 'claude-code',
-			defaultLookbackDays: 7,
-		},
+		directorNotesSettings: mockDirNotesSettings,
 	}),
 }));
 
@@ -220,6 +222,7 @@ const createPaginatedResponse = (entries: any[], hasMore = false, total?: number
 });
 
 beforeEach(() => {
+	mockDirNotesSettings.defaultLookbackDays = 7;
 	(window as any).maestro = {
 		directorNotes: {
 			getUnifiedHistory: mockGetUnifiedHistory,
@@ -257,6 +260,21 @@ describe('UnifiedHistoryTab', () => {
 					offset: 0,
 				});
 			});
+		});
+
+		it('fetches all-time history when defaultLookbackDays is 0', async () => {
+			mockDirNotesSettings.defaultLookbackDays = 0;
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(mockGetUnifiedHistory).toHaveBeenCalledWith({
+					lookbackDays: 0,
+					filter: null,
+					limit: 100,
+					offset: 0,
+				});
+			});
+			expect(screen.getByTestId('activity-lookback-hours')).toHaveTextContent('null');
 		});
 
 		it('shows empty state when no entries found', async () => {

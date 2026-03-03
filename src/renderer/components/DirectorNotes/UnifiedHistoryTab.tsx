@@ -50,8 +50,9 @@ function lookbackHoursToDays(hours: number | null): number {
 	return Math.ceil(hours / 24);
 }
 
-/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. */
+/** Find the smallest LOOKBACK_OPTIONS entry that covers the given number of days. 0 => null (All time). */
 function daysToLookbackHours(days: number): number | null {
+	if (days <= 0) return null; // 0 encodes "All time"
 	const targetHours = days * 24;
 	for (const option of LOOKBACK_OPTIONS) {
 		if (option.hours !== null && option.hours >= targetHours) return option.hours;

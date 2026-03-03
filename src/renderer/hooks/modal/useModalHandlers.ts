@@ -402,9 +402,10 @@ export function useModalHandlers(
 		[inputRef]
 	);
 
-	// Determine the effective error: prefer live session error, fall back to historical
-	const effectiveError = errorSession?.agentError ?? historicalAgentError ?? undefined;
-	const isHistorical = !errorSession?.agentError && !!historicalAgentError;
+	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
+	// otherwise fall back to live session error
+	const isHistorical = !!historicalAgentError;
+	const effectiveError = isHistorical ? historicalAgentError : (errorSession?.agentError ?? undefined);
 
 	// Use the agent error recovery hook to get recovery actions
 	// Historical errors get no recovery actions (they're read-only)
