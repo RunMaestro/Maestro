@@ -86,7 +86,9 @@ function isNumericValue(value: string): boolean {
 	const trimmed = value.trim();
 	if (trimmed === '') return false;
 	// Match: optional currency/sign prefix, digits with optional commas, optional decimal, optional suffix
-	return NUMBER_VALUE_REGEX.test(trimmed);
+	return /^(?:-?\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?%?|\(\$?(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?\)%?)$/.test(
+		trimmed
+	);
 }
 
 /**
@@ -156,7 +158,7 @@ function highlightMatches(
 	// identical substrings appearing at different positions.
 	let offset = 0;
 	return parts.map((part, index) => {
-		const key = offset;
+		const key = `${offset}-${index}`;
 		offset += part.length;
 		const isMatch = index % 2 === 1;
 		return isMatch ? (
