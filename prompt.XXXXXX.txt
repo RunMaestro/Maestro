@@ -1,0 +1,17 @@
+You are an autonomous coding agent fixing a GitHub pull request for Maestro.
+
+Goal:
+- Fix only what is necessary to make the failing checks pass for PR #495.
+- Use the failure payload below to focus changes.
+- Keep changes minimal and scoped.
+- Do not add broad refactors or formatting churn.
+- If no safe fix exists, do not force risky behavior and return without edits.
+
+Context:
+- PR repo: RunMaestro/Maestro
+- PR number: 495
+- Head branch: group-css-fix
+- Head SHA: 5002a82e9a19591e7de9323fb2876e6b90989660
+
+Failing check payload:
+{"repo":"RunMaestro/Maestro","number":495,"title":"Fix collapsed group spacing for empty groups","htmlUrl":"https://github.com/RunMaestro/Maestro/pull/495","head":"5002a82e9a19591e7de9323fb2876e6b90989660","failures":[{"source":"check-run","id":65325337465,"name":"test","status":"completed","conclusion":"failure","htmlUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22552813651/job/65325337465","detailsUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22552813651/job/65325337465","summary":"","notes":".github:48776:failure Process completed with exit code 1. | src/__tests__/renderer/components/TerminalOutput.test.tsx:243:failure Error: expect(received).toBeInTheDocument()\n\nreceived value must be an HTMLElement or an SVGElement.\nReceived has type:  Null\nReceived has value: null\n ❯ src/__tests__/renderer/components/TerminalOutput.test.tsx:243:33\n\n","completedAt":"2026-03-01T21:23:04Z"},{"source":"check-run","id":65325337460,"name":"lint-and-format","status":"completed","conclusion":"failure","htmlUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22552813651/job/65325337460","detailsUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22552813651/job/65325337460","summary":"","notes":".github:10:failure Process completed with exit code 1.","completedAt":"2026-03-01T21:16:29Z"}]}

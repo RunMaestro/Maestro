@@ -2539,6 +2539,7 @@ function SessionListInner(props: SessionListProps) {
 					{/* GROUPS */}
 					{sortedGroups.map((group) => {
 						const groupSessions = sortedGroupSessionsById.get(group.id) || [];
+						const groupCollapsedPills = groupSessions.filter((session) => !session.parentSessionId);
 						return (
 							<div key={group.id} className="mb-1">
 								<div
@@ -2622,21 +2623,19 @@ function SessionListInner(props: SessionListProps) {
 											})
 										)}
 									</div>
-								) : (
+								) : groupCollapsedPills.length > 0 ? (
 									/* Collapsed Group Palette - uses subdivided pills for worktrees */
 									<div
 										className="ml-8 mr-3 mt-1 mb-2 flex gap-1 h-1.5 cursor-pointer"
 										onClick={() => toggleGroup(group.id)}
 									>
-										{groupSessions
-											.filter((s) => !s.parentSessionId)
-											.map((s) =>
-												renderCollapsedPill(s, `group-collapsed-${group.id}`, () =>
-													toggleGroup(group.id)
-												)
-											)}
+										{groupCollapsedPills.map((s) =>
+											renderCollapsedPill(s, `group-collapsed-${group.id}`, () =>
+												toggleGroup(group.id)
+											)
+										)}
 									</div>
-								)}
+								) : null}
 							</div>
 						);
 					})}
