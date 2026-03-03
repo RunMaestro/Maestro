@@ -20,7 +20,7 @@ export interface StorageInfo {
 		groupChats: string; // Sanitized
 		customSyncPath?: string; // Just "[SET]" or not present
 	};
-\tsizes: {
+	sizes: {
 		sessionsBytes: number;
 		historyBytes: number;
 		logsBytes: number;
