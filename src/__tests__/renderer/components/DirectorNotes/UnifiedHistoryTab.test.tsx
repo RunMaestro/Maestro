@@ -282,7 +282,8 @@ describe('UnifiedHistoryTab', () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/No history entries found across any agents/)).toBeInTheDocument();
+				// With defaultLookbackDays=7, lookbackHours=168 (not null), so time-range message shown
+				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
 		});
 
@@ -341,7 +342,7 @@ describe('UnifiedHistoryTab', () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/No history entries found across any agents/)).toBeInTheDocument();
+				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
 			expect(screen.queryByTestId('history-stats-bar')).not.toBeInTheDocument();
 		});
@@ -436,14 +437,14 @@ describe('UnifiedHistoryTab', () => {
 				createPaginatedResponse(createMockEntries().slice(0, 1))
 			);
 
-			// Change lookback to 1 week (168 hours = 7 days)
+			// Change lookback to "All Time" (null hours = 0 days) — different from initial 168h
 			await act(async () => {
-				fireEvent.click(screen.getByTestId('lookback-change-168'));
+				fireEvent.click(screen.getByTestId('lookback-change-null'));
 			});
 
 			await waitFor(() => {
 				expect(mockGetUnifiedHistory).toHaveBeenCalledWith(
-					expect.objectContaining({ lookbackDays: 7, offset: 0 })
+					expect.objectContaining({ lookbackDays: 0, offset: 0 })
 				);
 			});
 		});
@@ -715,7 +716,7 @@ describe('UnifiedHistoryTab', () => {
 			render(<UnifiedHistoryTab theme={mockTheme} />);
 
 			await waitFor(() => {
-				expect(screen.getByText(/No history entries found across any agents/)).toBeInTheDocument();
+				expect(screen.getByText(/No history entries in this time range/)).toBeInTheDocument();
 			});
 		});
 	});
