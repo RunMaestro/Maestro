@@ -128,7 +128,7 @@ interface GenericProcessManager {
 		customEnvVars?: Record<string, string>;
 		contextWindow?: number;
 		noPromptSeparator?: boolean;
-	}): { pid: number; success: boolean };
+	}): Promise<{ pid: number; success: boolean }>;
 	write(sessionId: string, data: string): boolean;
 	kill(sessionId: string): boolean;
 	on(event: string, handler: (...args: unknown[]) => void): void;

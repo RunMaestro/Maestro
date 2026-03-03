@@ -26,7 +26,7 @@ function formatDuration(ms: number): string {
 	return parts.join(' ') || '0s';
 }
 
-const ToastItem = memo(function ToastItem({
+const Toast = memo(function Toast({
 	toast,
 	theme,
 	onRemove,
@@ -314,7 +314,7 @@ export const ToastContainer = memo(function ToastContainer({
 		>
 			<div style={{ pointerEvents: 'auto' }}>
 				{toasts.map((toast) => (
-					<ToastItem
+					<Toast
 						key={toast.id}
 						toast={toast}
 						theme={theme}

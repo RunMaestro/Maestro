@@ -69,9 +69,21 @@ const mockFsRenameSync = vi.fn();
 const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
+const mockFsAccess = vi.fn((pathArg: string) => {
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
+const mockFsMkdir = vi.fn(() => Promise.resolve());
+const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
+const mockFsCopyFile = vi.fn(() => Promise.resolve());
+const mockFsUnlink = vi.fn(() => Promise.resolve());
+const mockFsRename = vi.fn(() => Promise.resolve());
+const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
 
 // Mock fs
-vi.mock('fs', () => ({
+const mockFsModule = {
 	existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
 	mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
 	copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
@@ -80,6 +92,20 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+};
+
+vi.mock('fs', () => ({
+	...mockFsModule,
+	default: mockFsModule,
 }));
 
 // Mock logger
@@ -140,7 +166,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should enable WAL journal mode on initialization', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			expect(mockDb.pragma).toHaveBeenCalledWith('journal_mode = WAL');
 		});
@@ -155,7 +181,7 @@ describe('Concurrent writes and database locking', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// WAL mode should be set early in initialization
 			const walIndex = pragmaCalls.indexOf('journal_mode = WAL');
@@ -170,7 +196,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 10 rapid sequential query event inserts', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -198,7 +224,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 10 rapid sequential Auto Run session inserts', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -226,7 +252,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 10 rapid sequential task inserts', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -256,7 +282,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle concurrent writes to different tables via Promise.all', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -304,7 +330,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 20 concurrent query event inserts via Promise.all', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -332,7 +358,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle mixed insert and update operations concurrently', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Clear mocks after initialize() to count only test operations
 			mockStatement.run.mockClear();
@@ -394,7 +420,7 @@ describe('Concurrent writes and database locking', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const operations = [
 				// Write
@@ -441,7 +467,7 @@ describe('Concurrent writes and database locking', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Start multiple writes
 			const writes = Array.from({ length: 5 }, (_, i) =>
@@ -470,7 +496,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle 50 concurrent writes without data loss', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Reset counter after initialize() to count only test operations
 			const insertedCount = { value: 0 };
@@ -525,7 +551,7 @@ describe('Concurrent writes and database locking', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// 40 query events + 30 sessions + 30 tasks = 100 writes
 			const queryWrites = Array.from({ length: 40 }, (_, i) =>
@@ -580,7 +606,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should generate unique IDs even with high-frequency calls', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Generate 100 IDs as fast as possible
 			const ids: string[] = [];
@@ -602,7 +628,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should generate IDs with timestamp-random format', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			const id = db.insertQueryEvent({
 				sessionId: 'session-1',
@@ -621,7 +647,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should maintain stable connection during intensive operations', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Perform many operations
 			for (let i = 0; i < 30; i++) {
@@ -641,7 +667,7 @@ describe('Concurrent writes and database locking', () => {
 		it('should handle operations after previous operations complete', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Track call count manually since we're testing sequential batches
 			// Set up tracking AFTER initialize() to count only test operations
@@ -983,7 +1009,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 			const db = new StatsDB();
 
 			// Should be able to initialize with mocked database
-			expect(() => db.initialize()).not.toThrow();
+			await expect(db.initialize()).resolves.toBeUndefined();
 			expect(db.isReady()).toBe(true);
 		});
 
@@ -993,7 +1019,7 @@ describe('electron-rebuild verification for better-sqlite3', () => {
 
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();
-			db.initialize();
+			await db.initialize();
 
 			// Database should be initialized and ready
 			expect(db.isReady()).toBe(true);

@@ -70,7 +70,7 @@ function createMockProcessManager(): IProcessManager & {
 				toolType: config.toolType,
 				prompt: config.prompt,
 			});
-			return { pid: Math.floor(Math.random() * 10000), success: true };
+			return Promise.resolve({ pid: Math.floor(Math.random() * 10000), success: true });
 		},
 
 		write(sessionId: string, data: string) {

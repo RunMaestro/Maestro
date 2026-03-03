@@ -7,8 +7,15 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ipcMain } from 'electron';
-import { registerAgentSessionsHandlers } from '../../../../main/ipc/handlers/agentSessions';
+import fs from 'fs/promises';
+import {
+	registerAgentSessionsHandlers,
+	__clearSessionDiscoveryCacheForTests,
+} from '../../../../main/ipc/handlers/agentSessions';
 import * as agentSessionStorage from '../../../../main/agents';
+import * as statsCache from '../../../../main/utils/statsCache';
+import os from 'os';
+import path from 'path';
 
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
@@ -34,6 +41,85 @@ vi.mock('../../../../main/utils/logger', () => ({
 		debug: vi.fn(),
 	},
 }));
+// Mock fs/promises for global stats discovery scanning
+vi.mock('fs/promises', () => {
+	const fsPromisesMock = {
+		access: vi.fn(),
+		readdir: vi.fn(),
+		stat: vi.fn(),
+		readFile: vi.fn(),
+		writeFile: vi.fn(),
+		mkdir: vi.fn(),
+	};
+
+	return {
+		...fsPromisesMock,
+		default: fsPromisesMock,
+	};
+});
+// Mock global stats cache so getGlobalStats remains deterministic
+vi.mock('../../../../main/utils/statsCache', () => ({
+	loadGlobalStatsCache: vi.fn(),
+	saveGlobalStatsCache: vi.fn(),
+	GLOBAL_STATS_CACHE_VERSION: 3,
+}));
+
+function setupInMemoryGlobalStatsCache() {
+	let cache: statsCache.GlobalStatsCache | null = null;
+
+	vi.mocked(statsCache.loadGlobalStatsCache).mockImplementation(async () => cache);
+	vi.mocked(statsCache.saveGlobalStatsCache).mockImplementation(async (nextCache) => {
+		cache = nextCache;
+	});
+
+	return () => cache;
+}
+
+function setupSingleClaudeSessionDiscoveryMock() {
+	const homeDir = os.homedir();
+	const claudeProjectsDir = path.join(homeDir, '.claude', 'projects');
+	const codexSessionsDir = path.join(homeDir, '.codex', 'sessions');
+	const projectDir = path.join(claudeProjectsDir, 'project-one');
+	const sessionFilePath = path.join(projectDir, 'abc.jsonl');
+
+	vi.mocked(fs.access).mockResolvedValue(undefined);
+	vi.mocked(fs.readdir).mockImplementation(async (target) => {
+		switch (target) {
+			case claudeProjectsDir:
+				return ['project-one'];
+			case projectDir:
+				return ['abc.jsonl'];
+			case codexSessionsDir:
+				return [];
+			default:
+				return [];
+		}
+	});
+	vi.mocked(fs.stat).mockImplementation(async (target) => {
+		if (target === projectDir) {
+			return {
+				isDirectory: () => true,
+				size: 0,
+				mtimeMs: 1,
+			} as fs.Stats;
+		}
+
+		if (target === sessionFilePath) {
+			return {
+				isDirectory: () => false,
+				size: 123,
+				mtimeMs: 1_700_000,
+			} as fs.Stats;
+		}
+
+		return {
+			isDirectory: () => false,
+			size: 0,
+			mtimeMs: 1,
+		} as fs.Stats;
+	});
+	vi.mocked(fs.readFile).mockResolvedValue('{"type":"user"}\n');
+}
 
 describe('agentSessions IPC handlers', () => {
 	let handlers: Map<string, Function>;
@@ -41,6 +127,7 @@ describe('agentSessions IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+		__clearSessionDiscoveryCacheForTests();
 
 		// Capture all registered handlers
 		handlers = new Map();
@@ -67,6 +154,7 @@ describe('agentSessions IPC handlers', () => {
 				'agentSessions:deleteMessagePair',
 				'agentSessions:hasStorage',
 				'agentSessions:getAvailableStorages',
+				'agentSessions:getGlobalStats',
 			];
 
 			for (const channel of expectedChannels) {
@@ -464,6 +552,76 @@ describe('agentSessions IPC handlers', () => {
 			const result = await handler!({} as any);
 
 			expect(result).toEqual(['claude-code', 'opencode']);
+		});
+	});
+
+	describe('agentSessions:getGlobalStats', () => {
+		it('reuses discovered session file list within the 30-second cache window', async () => {
+			const getCache = setupInMemoryGlobalStatsCache();
+			setupSingleClaudeSessionDiscoveryMock();
+
+			const handler = handlers.get('agentSessions:getGlobalStats');
+
+			await handler!({} as any);
+			const firstPassAccessCalls = vi.mocked(fs.access).mock.calls.length;
+			const firstPassReaddirCalls = vi.mocked(fs.readdir).mock.calls.length;
+			const firstPassStatCalls = vi.mocked(fs.stat).mock.calls.length;
+			const firstPassReadFileCalls = vi.mocked(fs.readFile).mock.calls.length;
+
+			await handler!({} as any);
+			const secondPassAccessCalls = vi.mocked(fs.access).mock.calls.length;
+			const secondPassReaddirCalls = vi.mocked(fs.readdir).mock.calls.length;
+			const secondPassStatCalls = vi.mocked(fs.stat).mock.calls.length;
+			const secondPassReadFileCalls = vi.mocked(fs.readFile).mock.calls.length;
+
+			expect(firstPassAccessCalls).toBe(2);
+			expect(firstPassReaddirCalls).toBe(3);
+			expect(firstPassStatCalls).toBe(3);
+			expect(firstPassReadFileCalls).toBe(1);
+
+			expect(secondPassAccessCalls).toBe(firstPassAccessCalls);
+			expect(secondPassReaddirCalls).toBe(firstPassReaddirCalls);
+			expect(secondPassStatCalls).toBe(firstPassStatCalls);
+			expect(secondPassReadFileCalls).toBe(firstPassReadFileCalls);
+
+			const cache = getCache();
+			expect(cache).toBeTruthy();
+			expect(cache!.providers['claude-code'].sessions['project-one/abc']).toBeDefined();
+		});
+
+		it('refreshes discovery when cache TTL has expired', async () => {
+			const getCache = setupInMemoryGlobalStatsCache();
+			setupSingleClaudeSessionDiscoveryMock();
+
+			let now = 1_700_000_000_000;
+			const dateNowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+			const handler = handlers.get('agentSessions:getGlobalStats');
+			try {
+				await handler!({} as any);
+				expect(vi.mocked(fs.access).mock.calls).toHaveLength(2);
+				expect(vi.mocked(fs.readdir).mock.calls).toHaveLength(3);
+				expect(vi.mocked(fs.stat).mock.calls).toHaveLength(3);
+				expect(vi.mocked(fs.readFile).mock.calls).toHaveLength(1);
+
+				await handler!({} as any);
+				expect(vi.mocked(fs.access).mock.calls).toHaveLength(2);
+				expect(vi.mocked(fs.readdir).mock.calls).toHaveLength(3);
+				expect(vi.mocked(fs.stat).mock.calls).toHaveLength(3);
+				expect(vi.mocked(fs.readFile).mock.calls).toHaveLength(1);
+
+				now += 31_000;
+				await handler!({} as any);
+				expect(vi.mocked(fs.access).mock.calls).toHaveLength(4);
+				expect(vi.mocked(fs.readdir).mock.calls).toHaveLength(6);
+				expect(vi.mocked(fs.stat).mock.calls).toHaveLength(6);
+				expect(vi.mocked(fs.readFile).mock.calls).toHaveLength(1);
+
+				const cache = getCache();
+				expect(cache).toBeTruthy();
+				expect(cache!.providers['claude-code'].sessions['project-one/abc']).toBeDefined();
+			} finally {
+				dateNowSpy.mockRestore();
+			}
 		});
 	});
 });

@@ -94,8 +94,8 @@ describe('director-notes IPC handlers', () => {
 
 		// Create mock history manager
 		mockHistoryManager = {
-			getEntries: vi.fn().mockReturnValue([]),
-			listSessionsWithHistory: vi.fn().mockReturnValue([]),
+			getEntries: vi.fn().mockResolvedValue([]),
+			listSessionsWithHistory: vi.fn().mockResolvedValue([]),
 			getHistoryFilePath: vi.fn().mockReturnValue(null),
 		};
 
@@ -141,13 +141,13 @@ describe('director-notes IPC handlers', () => {
 	describe('director-notes:getUnifiedHistory', () => {
 		it('should aggregate history from all sessions', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
 
 			vi.mocked(mockHistoryManager.getEntries)
-				.mockReturnValueOnce([
+				.mockResolvedValueOnce([
 					createMockEntry({
 						id: 'e1',
 						timestamp: now - 1000,
@@ -155,7 +155,7 @@ describe('director-notes IPC handlers', () => {
 						sessionName: 'Agent A',
 					}),
 				])
-				.mockReturnValueOnce([
+				.mockResolvedValueOnce([
 					createMockEntry({
 						id: 'e2',
 						timestamp: now - 2000,
@@ -178,13 +178,13 @@ describe('director-notes IPC handlers', () => {
 
 		it('should include stats in the response', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
 
 			vi.mocked(mockHistoryManager.getEntries)
-				.mockReturnValueOnce([
+				.mockResolvedValueOnce([
 					createMockEntry({
 						id: 'e1',
 						type: 'AUTO',
@@ -198,7 +198,7 @@ describe('director-notes IPC handlers', () => {
 						agentSessionId: 'as-1',
 					}),
 				])
-				.mockReturnValueOnce([
+				.mockResolvedValueOnce([
 					createMockEntry({
 						id: 'e3',
 						type: 'AUTO',
@@ -226,8 +226,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should compute stats from unfiltered data when type filter is applied', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'e1', type: 'AUTO', timestamp: now - 1000, agentSessionId: 'as-1' }),
 				createMockEntry({ id: 'e2', type: 'USER', timestamp: now - 2000, agentSessionId: 'as-1' }),
 				createMockEntry({ id: 'e3', type: 'AUTO', timestamp: now - 3000, agentSessionId: 'as-2' }),
@@ -249,8 +249,8 @@ describe('director-notes IPC handlers', () => {
 			const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
 			const tenDaysAgo = now - 10 * 24 * 60 * 60 * 1000;
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'recent', timestamp: twoDaysAgo }),
 				createMockEntry({ id: 'old', timestamp: tenDaysAgo }),
 			]);
@@ -267,8 +267,8 @@ describe('director-notes IPC handlers', () => {
 			const twoDaysAgo = now - 2 * 24 * 60 * 60 * 1000;
 			const yearAgo = now - 365 * 24 * 60 * 60 * 1000;
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'recent', timestamp: twoDaysAgo }),
 				createMockEntry({ id: 'ancient', timestamp: yearAgo }),
 			]);
@@ -283,8 +283,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should filter by type when filter is provided', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'auto-entry', type: 'AUTO', timestamp: now - 1000 }),
 				createMockEntry({ id: 'user-entry', type: 'USER', timestamp: now - 2000 }),
 			]);
@@ -298,8 +298,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should return both types when filter is null', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'auto-entry', type: 'AUTO', timestamp: now - 1000 }),
 				createMockEntry({ id: 'user-entry', type: 'USER', timestamp: now - 2000 }),
 			]);
@@ -312,15 +312,15 @@ describe('director-notes IPC handlers', () => {
 
 		it('should return entries sorted by timestamp descending', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 			]);
 
 			// Session 1 has older entry, session 2 has newer entry
 			vi.mocked(mockHistoryManager.getEntries)
-				.mockReturnValueOnce([createMockEntry({ id: 'oldest', timestamp: now - 3000 })])
-				.mockReturnValueOnce([
+				.mockResolvedValueOnce([createMockEntry({ id: 'oldest', timestamp: now - 3000 })])
+				.mockResolvedValueOnce([
 					createMockEntry({ id: 'newest', timestamp: now - 1000 }),
 					createMockEntry({ id: 'middle', timestamp: now - 2000 }),
 				]);
@@ -336,8 +336,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should use Maestro session name when available in sessions store', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'e1', timestamp: now, sessionName: 'Tab Name' }),
 			]);
 
@@ -363,8 +363,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should set agentName to undefined when Maestro session not found in store', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'e1', timestamp: now, sessionName: 'My Agent' }),
 			]);
 
@@ -392,8 +392,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should set agentName to undefined when session is not in store', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['claude-abc123']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['claude-abc123']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'e1', timestamp: now, sessionName: undefined }),
 			]);
 
@@ -405,7 +405,7 @@ describe('director-notes IPC handlers', () => {
 		});
 
 		it('should return empty entries when no sessions have history', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([]);
 
 			const handler = handlers.get('director-notes:getUnifiedHistory');
 			const result = await handler!({} as any, { lookbackDays: 7 });
@@ -417,8 +417,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should return empty entries when all entries are outside lookback window', async () => {
 			const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'old', timestamp: thirtyDaysAgo }),
 			]);
 
@@ -432,8 +432,8 @@ describe('director-notes IPC handlers', () => {
 
 		it('should support pagination with limit and offset', async () => {
 			const now = Date.now();
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
-			vi.mocked(mockHistoryManager.getEntries).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
+			vi.mocked(mockHistoryManager.getEntries).mockResolvedValue([
 				createMockEntry({ id: 'e1', timestamp: now - 1000 }),
 				createMockEntry({ id: 'e2', timestamp: now - 2000 }),
 				createMockEntry({ id: 'e3', timestamp: now - 3000 }),
@@ -480,7 +480,7 @@ describe('director-notes IPC handlers', () => {
 		});
 
 		it('should return empty-history message when no sessions have history files', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([]);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([]);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
 			const result = await handler!({} as any, { lookbackDays: 7, provider: 'claude-code' });
@@ -493,7 +493,7 @@ describe('director-notes IPC handlers', () => {
 		});
 
 		it('should return empty-history message when all file paths are null', async () => {
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(null);
 
 			const handler = handlers.get('director-notes:generateSynopsis');
@@ -511,7 +511,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -542,7 +542,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue([
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue([
 				'session-1',
 				'session-2',
 				'session-3',
@@ -569,7 +569,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -605,7 +605,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -640,7 +640,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['unknown-session']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['unknown-session']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/unknown-session.json'
 			);
@@ -656,7 +656,7 @@ describe('director-notes IPC handlers', () => {
 			const { groomContext } = await import('../../../../main/utils/context-groomer');
 			vi.mocked(groomContext).mockRejectedValue(new Error('Agent timed out'));
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -676,7 +676,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -696,7 +696,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);
@@ -732,7 +732,7 @@ describe('director-notes IPC handlers', () => {
 				completionReason: 'process exited with code 0',
 			});
 
-			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockReturnValue(['session-1']);
+			vi.mocked(mockHistoryManager.listSessionsWithHistory).mockResolvedValue(['session-1']);
 			vi.mocked(mockHistoryManager.getHistoryFilePath).mockReturnValue(
 				'/data/history/session-1.json'
 			);

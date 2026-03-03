@@ -544,7 +544,7 @@ ${message}`;
 					console.log(`[GroupChat:Debug] Windows shell config: ${winConfig.shell}`);
 				}
 
-				const spawnResult = processManager.spawn({
+				const spawnResult = await processManager.spawn({
 					sessionId,
 					toolType: chat.moderatorAgentId,
 					cwd: spawnCwd,
@@ -934,7 +934,7 @@ export async function routeModeratorResponse(
 					);
 				}
 
-				const spawnResult = processManager.spawn({
+				const spawnResult = await processManager.spawn({
 					sessionId,
 					toolType: participant.agentId,
 					cwd: finalSpawnCwd,
@@ -1262,7 +1262,7 @@ Review the agent responses above. Either:
 			console.log(`[GroupChat:Debug] Windows shell config for synthesis: ${winConfig.shell}`);
 		}
 
-		const spawnResult = processManager.spawn({
+		const spawnResult = await processManager.spawn({
 			sessionId,
 			toolType: chat.moderatorAgentId,
 			cwd: os.homedir(),
@@ -1462,7 +1462,7 @@ export async function respawnParticipantWithRecovery(
 		console.log(`[GroupChat:Debug] Windows shell config for recovery: ${winConfig.shell}`);
 	}
 
-	const spawnResult = processManager.spawn({
+	const spawnResult = await processManager.spawn({
 		sessionId,
 		toolType: participant.agentId,
 		cwd: finalSpawnCwd,

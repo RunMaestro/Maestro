@@ -56,6 +56,17 @@ import { generateAutoRunProseStyles, createMarkdownComponents } from '../utils/m
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { remarkFileLinks, buildFileTreeIndices } from '../utils/remarkFileLinks';
 
+const AUTO_RUN_COMPLETED_TASK_REGEX = /^[\s]*[-*]\s*\[x\]/gim;
+const AUTO_RUN_UNCHECKED_TASK_REGEX = /^[\s]*[-*]\s*\[\s\]/gim;
+const AUTO_RUN_RESET_TASK_REGEX = /^([\s]*[-*]\s*)\[x\]/gim;
+const AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX = /[.*+?^${}()|[\]\\]/g;
+const AUTO_RUN_LIST_UNORDERED_LIST_REGEX = /^(\s*)([-*])\s+/;
+const AUTO_RUN_LIST_ORDERED_LIST_REGEX = /^(\s*)(\d+)\.\s+/;
+const AUTO_RUN_LIST_TASK_LIST_REGEX = /^(\s*)- \[([ x])\]\s+/;
+
+const getSearchMatches = (content: string, regex: RegExp | null): RegExpMatchArray[] =>
+	regex ? Array.from(content.matchAll(regex)) : [];
+
 interface AutoRunProps {
 	theme: Theme;
 	sessionId: string; // Maestro session ID for per-session attachment storage
@@ -714,20 +725,27 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		resetUndoHistory(content);
 	}, [selectedFile, sessionId, content, resetUndoHistory]);
 
+	const completedTaskMatches = useMemo(
+		() => localContent.match(AUTO_RUN_COMPLETED_TASK_REGEX) || [],
+		[localContent]
+	);
+	const completedTaskCountFromLocalContent = useMemo(
+		() => completedTaskMatches.length,
+		[completedTaskMatches]
+	);
+
 	// Reset completed tasks - converts all '- [x]' to '- [ ]'
 	const handleResetTasks = useCallback(async () => {
 		if (!folderPath || !selectedFile) return;
 
 		// Count how many completed tasks we're resetting
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		const resetCount = completedMatches.length;
+		const resetCount = completedTaskCountFromLocalContent;
 
 		// Push undo state before resetting
 		pushUndoState();
 
 		// Replace all completed checkboxes with unchecked ones
-		const resetContent = localContent.replace(/^([\s]*[-*]\s*)\[x\]/gim, '$1[ ]');
+		const resetContent = localContent.replace(AUTO_RUN_RESET_TASK_REGEX, '$1[ ]');
 		setLocalContent(resetContent);
 		lastUndoSnapshotRef.current = resetContent;
 
@@ -751,6 +769,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	}, [
 		folderPath,
 		selectedFile,
+		completedTaskCountFromLocalContent,
 		localContent,
 		setLocalContent,
 		setSavedContent,
@@ -844,10 +863,8 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Helper function to count completed tasks (used by useImperativeHandle before taskCounts is defined)
 	const getCompletedTaskCountFromContent = useCallback(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const completedMatches = localContent.match(completedRegex) || [];
-		return completedMatches.length;
-	}, [localContent]);
+		return completedTaskCountFromLocalContent;
+	}, [completedTaskCountFromLocalContent]);
 
 	// Expose methods to parent via ref
 	useImperativeHandle(
@@ -1053,21 +1070,31 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Debounced search match counting - prevent expensive regex on every keystroke
 	const searchCountTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+	const trimmedSearchQuery = useMemo(() => searchQuery.trim(), [searchQuery]);
+	const searchQueryRegex = useMemo(() => {
+		if (!trimmedSearchQuery) return null;
+		const escapedSearchQuery = trimmedSearchQuery.replace(
+			AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX,
+			'\\$&'
+		);
+		return new RegExp(escapedSearchQuery, 'gi');
+	}, [trimmedSearchQuery]);
+	const searchMatches = useMemo(
+		() => getSearchMatches(localContent, searchQueryRegex),
+		[localContent, searchQueryRegex]
+	);
+	const searchMatchCount = useMemo(() => searchMatches.length, [searchMatches]);
 	useEffect(() => {
 		// Clear any pending count
 		if (searchCountTimeoutRef.current) {
 			clearTimeout(searchCountTimeoutRef.current);
 		}
 
-		if (searchQuery.trim()) {
+		if (searchMatchCount > 0) {
 			// Debounce the match counting for large documents
 			searchCountTimeoutRef.current = setTimeout(() => {
-				const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-				const regex = new RegExp(escapedQuery, 'gi');
-				const matches = localContent.match(regex);
-				const count = matches ? matches.length : 0;
-				setTotalMatches(count);
-				if (count > 0 && currentMatchIndex >= count) {
+				setTotalMatches(searchMatchCount);
+				if (currentMatchIndex >= searchMatchCount) {
 					setCurrentMatchIndex(0);
 				}
 			}, 150); // Short delay for search responsiveness
@@ -1081,7 +1108,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 				clearTimeout(searchCountTimeoutRef.current);
 			}
 		};
-	}, [searchQuery, localContent]);
+	}, [searchMatchCount, currentMatchIndex]);
 
 	// Navigate to next search match
 	const goToNextMatch = useCallback(() => {
@@ -1117,18 +1144,14 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	useEffect(() => {
 		// Only scroll when user explicitly navigated (prev/next buttons or Enter key)
 		if (!userNavigatedToMatchRef.current) return;
-		if (!searchOpen || !searchQuery.trim() || totalMatches === 0) return;
+		if (!searchOpen || searchMatchCount === 0 || totalMatches === 0) return;
 		if (mode !== 'edit' || !textareaRef.current) return;
 
 		// For edit mode, find the match position in the text and scroll
-		const escapedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		const regex = new RegExp(escapedQuery, 'gi');
 		let matchPosition = -1;
 
-		// Find the nth match position using matchAll
-		const matches = Array.from(localContent.matchAll(regex));
-		if (currentMatchIndex < matches.length) {
-			matchPosition = matches[currentMatchIndex].index!;
+		if (currentMatchIndex < searchMatches.length) {
+			matchPosition = searchMatches[currentMatchIndex].index!;
 		}
 
 		if (matchPosition >= 0 && textareaRef.current) {
@@ -1166,10 +1189,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 			// Focus textarea and select the match text
 			textarea.focus();
-			textarea.setSelectionRange(matchPosition, matchPosition + searchQuery.length);
+			textarea.setSelectionRange(matchPosition, matchPosition + trimmedSearchQuery.length);
 			userNavigatedToMatchRef.current = false;
 		}
-	}, [currentMatchIndex, searchOpen, searchQuery, totalMatches, mode, localContent]);
+	}, [
+		currentMatchIndex,
+		searchOpen,
+		totalMatches,
+		mode,
+		localContent,
+		searchMatches,
+		searchMatchCount,
+		trimmedSearchQuery,
+	]);
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// Let template autocomplete handle keys first
@@ -1290,11 +1322,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			const textAfterCursor = localContent.substring(cursorPos);
 			const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
 			const currentLine = textBeforeCursor.substring(currentLineStart);
-
 			// Check for list patterns
-			const unorderedListMatch = currentLine.match(/^(\s*)([-*])\s+/);
-			const orderedListMatch = currentLine.match(/^(\s*)(\d+)\.\s+/);
-			const taskListMatch = currentLine.match(/^(\s*)- \[([ x])\]\s+/);
+			const unorderedListMatch = currentLine.match(AUTO_RUN_LIST_UNORDERED_LIST_REGEX);
+			const orderedListMatch = currentLine.match(AUTO_RUN_LIST_ORDERED_LIST_REGEX);
+			const taskListMatch = currentLine.match(AUTO_RUN_LIST_TASK_LIST_REGEX);
 
 			if (taskListMatch) {
 				// Task list: continue with unchecked checkbox
@@ -1353,15 +1384,19 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 
 	// Parse task counts from saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes
+	const taskCountsMatches = useMemo(
+		() => ({
+			completedMatches: savedContent.match(AUTO_RUN_COMPLETED_TASK_REGEX) || [],
+			uncheckedMatches: savedContent.match(AUTO_RUN_UNCHECKED_TASK_REGEX) || [],
+		}),
+		[savedContent]
+	);
 	const taskCounts = useMemo(() => {
-		const completedRegex = /^[\s]*[-*]\s*\[x\]/gim;
-		const uncheckedRegex = /^[\s]*[-*]\s*\[\s\]/gim;
-		const completedMatches = savedContent.match(completedRegex) || [];
-		const uncheckedMatches = savedContent.match(uncheckedRegex) || [];
+		const { completedMatches, uncheckedMatches } = taskCountsMatches;
 		const completed = completedMatches.length;
 		const total = completed + uncheckedMatches.length;
 		return { completed, total };
-	}, [savedContent]);
+	}, [taskCountsMatches]);
 
 	// Token counting based on saved content only (not live during editing)
 	// Updates on: document load, save, and external file changes

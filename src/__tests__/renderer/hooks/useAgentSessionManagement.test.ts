@@ -269,7 +269,9 @@ describe('useAgentSessionManagement', () => {
 		const setSessions = vi.fn();
 
 		window.maestro.agentSessions.read = vi.fn().mockResolvedValue({
-			messages: [{ type: 'user', content: 'Hello', timestamp: '2024-01-01T00:00:00.000Z', uuid: 'msg-1' }],
+			messages: [
+				{ type: 'user', content: 'Hello', timestamp: '2024-01-01T00:00:00.000Z', uuid: 'msg-1' },
+			],
 			total: 1,
 			hasMore: false,
 		});

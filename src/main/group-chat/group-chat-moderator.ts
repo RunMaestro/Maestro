@@ -39,7 +39,7 @@ export interface IProcessManager {
 		sendPromptViaStdin?: boolean;
 		/** Send prompt via stdin as raw text (for non-stream-json agents on Windows) */
 		sendPromptViaStdinRaw?: boolean;
-	}): { pid: number; success: boolean };
+	}): Promise<{ pid: number; success: boolean }>;
 
 	write(sessionId: string, data: string): boolean;
 

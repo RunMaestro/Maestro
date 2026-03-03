@@ -11,6 +11,27 @@ import { registerGitHandlers } from '../../../../main/ipc/handlers/git';
 import * as execFile from '../../../../main/utils/execFile';
 import path from 'path';
 
+type Deferred<T> = {
+	promise: Promise<T>;
+	resolve: (value: T) => void;
+	reject: (reason?: unknown) => void;
+};
+
+const createDeferred = <T>(): Deferred<T> => {
+	let resolve!: (value: T) => void;
+	let reject!: (reason?: unknown) => void;
+	const promise = new Promise<T>((res, rej) => {
+		resolve = res;
+		reject = rej;
+	});
+
+	return {
+		promise,
+		resolve,
+		reject,
+	};
+};
+
 // Mock electron's ipcMain
 vi.mock('electron', () => ({
 	ipcMain: {
@@ -3105,6 +3126,78 @@ export function Component() {
 			});
 		});
 
+		it('should check local branches in parallel when remote branch info is unavailable', async () => {
+			const callOrder: string[] = [];
+			const mainDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+			const masterDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(
+				async (_cmd: string, args?: string[]) => {
+					if (args?.includes('show')) {
+						callOrder.push('remote');
+						return {
+							stdout: `* remote origin
+  Fetch URL: git@github.com:user/repo.git
+  Push  URL: git@github.com:user/repo.git
+  Remote branches:
+    feature tracked`,
+							stderr: '',
+							exitCode: 0,
+						};
+					}
+
+					if (args?.includes('--verify') && args?.includes('main')) {
+						callOrder.push('main');
+						return mainDeferred.promise;
+					}
+
+					if (args?.includes('--verify') && args?.includes('master')) {
+						callOrder.push('master');
+						return masterDeferred.promise;
+					}
+
+					return {
+						stdout: '',
+						stderr: `Unexpected command: ${args?.join(' ')}`,
+						exitCode: 1,
+					};
+				}
+			);
+
+			const handler = handlers.get('git:getDefaultBranch');
+			const handlerPromise = handler!({} as any, '/test/repo');
+
+			await Promise.resolve();
+
+			expect(callOrder).toEqual(['remote', 'main', 'master']);
+
+			mainDeferred.resolve({
+				stdout: '',
+				stderr: 'fatal: Needed a single revision',
+				exitCode: 128,
+			});
+			masterDeferred.resolve({
+				stdout: 'abc123def456\n',
+				stderr: '',
+				exitCode: 0,
+			});
+
+			const result = await handlerPromise;
+
+			expect(result).toEqual({
+				success: true,
+				branch: 'master',
+			});
+		});
+
 		it('should fallback to main branch when remote check fails but main exists locally', async () => {
 			vi.mocked(execFile.execFileNoThrow)
 				.mockResolvedValueOnce({
@@ -3490,6 +3583,78 @@ branch refs/heads/bugfix-123
 
 		beforeEach(async () => {
 			mockFs = (await import('fs/promises')).default;
+		});
+
+		it('should run directory metadata git commands while show-toplevel is pending', async () => {
+			const callOrder: string[] = [];
+			const toplevelDeferred = createDeferred<{
+				stdout: string;
+				stderr: string;
+				exitCode: number;
+			}>();
+
+			vi.mocked(mockFs.readdir).mockResolvedValue([
+				{ name: 'main-repo', isDirectory: () => true },
+			] as any);
+
+			vi.mocked(execFile.execFileNoThrow).mockImplementation(async (_cmd, args) => {
+				const command = args?.join(' ') || '';
+
+				if (command.includes('--is-inside-work-tree')) {
+					callOrder.push('isInside');
+					return { stdout: 'true\n', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--show-toplevel')) {
+					callOrder.push('toplevel');
+					return toplevelDeferred.promise;
+				}
+
+				if (command.includes('--git-dir')) {
+					callOrder.push('gitDir');
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--git-common-dir')) {
+					callOrder.push('gitCommonDir');
+					return { stdout: '.git', stderr: '', exitCode: 0 };
+				}
+
+				if (command.includes('--abbrev-ref')) {
+					callOrder.push('abbrevRef');
+					return { stdout: 'main\n', stderr: '', exitCode: 0 };
+				}
+
+				return { stdout: '', stderr: '', exitCode: 0 };
+			});
+
+			const handler = handlers.get('git:scanWorktreeDirectory');
+			const resultPromise = handler!({} as any, '/parent');
+
+			await Promise.resolve();
+
+			expect(callOrder[0]).toBe('isInside');
+			expect(callOrder[1]).toBe('toplevel');
+			expect(callOrder.length).toBe(5);
+			expect(callOrder.includes('gitDir')).toBe(true);
+			expect(callOrder.includes('gitCommonDir')).toBe(true);
+			expect(callOrder.includes('abbrevRef')).toBe(true);
+
+			toplevelDeferred.resolve({ stdout: '/parent/main-repo', stderr: '', exitCode: 0 });
+			const result = await resultPromise;
+
+			expect(result).toEqual({
+				success: true,
+				gitSubdirs: [
+					{
+						path: path.join('/parent', 'main-repo'),
+						name: 'main-repo',
+						isWorktree: false,
+						branch: 'main',
+						repoRoot: '/parent/main-repo',
+					},
+				],
+			});
 		});
 
 		it('should find git repositories and worktrees in directory', async () => {

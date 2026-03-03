@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
 	Plus,
 	Trash2,
@@ -154,6 +154,59 @@ export function AICommandsPanel({
 		setIsCreating(false);
 	};
 
+	const sortedCommands = useMemo(
+		() => [...customAICommands].sort((a, b) => a.command.localeCompare(b.command)),
+		[customAICommands]
+	);
+
+	const commandStyles = useMemo(
+		() => ({
+			textDim: { color: theme.colors.textDim },
+			textAccent: { color: theme.colors.accent },
+			addButton: {
+				backgroundColor: theme.colors.accent,
+				color: theme.colors.accentForeground,
+			},
+			mainPanel: {
+				backgroundColor: theme.colors.bgMain,
+				borderColor: theme.colors.border,
+			},
+			borderOnly: { borderColor: theme.colors.border },
+			fieldBase: {
+				borderColor: theme.colors.border,
+				color: theme.colors.textMain,
+			},
+			actionButton: {
+				backgroundColor: theme.colors.bgActivity,
+				color: theme.colors.textMain,
+				border: `1px solid ${theme.colors.border}`,
+			},
+			successButton: {
+				backgroundColor: theme.colors.success,
+				color: '#000000',
+			},
+			commandText: { color: theme.colors.accent },
+			builtInBadge: {
+				backgroundColor: theme.colors.bgActivity,
+				color: theme.colors.textDim,
+			},
+			promptPreview: {
+				backgroundColor: theme.colors.bgActivity,
+				color: theme.colors.textMain,
+			},
+			variableCode: {
+				backgroundColor: theme.colors.bgActivity,
+				color: theme.colors.accent,
+			},
+			createPanel: {
+				backgroundColor: theme.colors.bgMain,
+				borderColor: theme.colors.accent,
+			},
+			errorText: { color: theme.colors.error },
+		}),
+		[theme]
+	);
+
 	return (
 		<div className="space-y-4">
 			<div>
@@ -161,36 +214,33 @@ export function AICommandsPanel({
 					<Terminal className="w-3 h-3" />
 					Custom AI Commands
 				</label>
-				<p className="text-xs opacity-50" style={{ color: theme.colors.textDim }}>
+				<p className="text-xs opacity-50" style={commandStyles.textDim}>
 					Slash commands available in AI terminal mode. Built-in commands can be edited but not
 					deleted.
 				</p>
 			</div>
 
 			{/* Template Variables Documentation */}
-			<div
-				className="rounded-lg border overflow-hidden"
-				style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-			>
+			<div className="rounded-lg border overflow-hidden" style={commandStyles.mainPanel}>
 				<button
 					onClick={() => setVariablesExpanded(!variablesExpanded)}
 					className="w-full px-3 py-2 flex items-center justify-between hover:bg-white/5 transition-colors"
 				>
 					<div className="flex items-center gap-2">
-						<Variable className="w-3.5 h-3.5" style={{ color: theme.colors.accent }} />
-						<span className="text-xs font-bold uppercase" style={{ color: theme.colors.textDim }}>
+						<Variable className="w-3.5 h-3.5" style={commandStyles.textAccent} />
+						<span className="text-xs font-bold uppercase" style={commandStyles.textDim}>
 							Template Variables
 						</span>
 					</div>
 					{variablesExpanded ? (
-						<ChevronDown className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<ChevronDown className="w-3.5 h-3.5" style={commandStyles.textDim} />
 					) : (
-						<ChevronRight className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						<ChevronRight className="w-3.5 h-3.5" style={commandStyles.textDim} />
 					)}
 				</button>
 				{variablesExpanded && (
-					<div className="px-3 pb-3 pt-1 border-t" style={{ borderColor: theme.colors.border }}>
-						<p className="text-[10px] mb-2" style={{ color: theme.colors.textDim }}>
+					<div className="px-3 pb-3 pt-1 border-t" style={commandStyles.borderOnly}>
+						<p className="text-[10px] mb-2" style={commandStyles.textDim}>
 							Use these variables in your command prompts. They will be replaced with actual values
 							at runtime.
 						</p>
@@ -199,11 +249,11 @@ export function AICommandsPanel({
 								<div key={variable} className="flex items-center gap-2 py-0.5">
 									<code
 										className="text-[10px] font-mono px-1 py-0.5 rounded shrink-0"
-										style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.accent }}
+										style={commandStyles.variableCode}
 									>
 										{variable}
 									</code>
-									<span className="text-[10px] truncate" style={{ color: theme.colors.textDim }}>
+									<span className="text-[10px] truncate" style={commandStyles.textDim}>
 										{description}
 									</span>
 								</div>
@@ -218,10 +268,7 @@ export function AICommandsPanel({
 					<button
 						onClick={() => setIsCreating(true)}
 						className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-all"
-						style={{
-							backgroundColor: theme.colors.accent,
-							color: theme.colors.accentForeground,
-						}}
+						style={commandStyles.addButton}
 					>
 						<Plus className="w-4 h-4" />
 						Add Command
@@ -231,11 +278,8 @@ export function AICommandsPanel({
 
 			{/* Create new command form */}
 			{isCreating && (
-				<div
-					className="p-4 rounded-lg border space-y-3"
-					style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.accent }}
-				>
-					<div className="text-xs font-bold uppercase" style={{ color: theme.colors.accent }}>
+				<div className="p-4 rounded-lg border space-y-3" style={commandStyles.createPanel}>
+					<div className="text-xs font-bold uppercase" style={commandStyles.textAccent}>
 						New Command
 					</div>
 					<div className="grid grid-cols-2 gap-3">
@@ -247,7 +291,7 @@ export function AICommandsPanel({
 								onChange={(e) => setNewCommand({ ...newCommand, command: e.target.value })}
 								placeholder="/mycommand"
 								className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								style={commandStyles.fieldBase}
 							/>
 						</div>
 						<div>
@@ -258,7 +302,7 @@ export function AICommandsPanel({
 								onChange={(e) => setNewCommand({ ...newCommand, description: e.target.value })}
 								placeholder="Short description for autocomplete"
 								className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								style={commandStyles.fieldBase}
 							/>
 						</div>
 					</div>
@@ -289,7 +333,7 @@ export function AICommandsPanel({
 							placeholder="The actual prompt sent to the AI agent when this command is invoked... (type {{ for variables)"
 							rows={10}
 							className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[150px]"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+							style={commandStyles.fieldBase}
 						/>
 						<TemplateAutocompleteDropdown
 							ref={newAutocompleteRef}
@@ -302,11 +346,7 @@ export function AICommandsPanel({
 						<button
 							onClick={handleCancelCreate}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all"
-							style={{
-								backgroundColor: theme.colors.bgActivity,
-								color: theme.colors.textMain,
-								border: `1px solid ${theme.colors.border}`,
-							}}
+							style={commandStyles.actionButton}
 						>
 							<X className="w-3 h-3" />
 							Cancel
@@ -315,10 +355,7 @@ export function AICommandsPanel({
 							onClick={handleCreate}
 							disabled={!newCommand.command || !newCommand.description || !newCommand.prompt}
 							className="flex items-center gap-1 px-3 py-1.5 rounded text-xs font-medium transition-all disabled:opacity-50"
-							style={{
-								backgroundColor: theme.colors.success,
-								color: '#000000',
-							}}
+							style={commandStyles.successButton}
 						>
 							<Save className="w-3 h-3" />
 							Create
@@ -329,223 +366,186 @@ export function AICommandsPanel({
 
 			{/* Existing commands list - collapsible style */}
 			<div className="space-y-2 max-h-[500px] overflow-y-auto pr-1 scrollbar-thin">
-				{[...customAICommands]
-					.sort((a, b) => a.command.localeCompare(b.command))
-					.map((cmd) => (
-						<div
-							key={cmd.id}
-							className="rounded-lg border overflow-hidden"
-							style={{ backgroundColor: theme.colors.bgMain, borderColor: theme.colors.border }}
-						>
-							{editingCommand?.id === cmd.id ? (
-								// Editing mode
-								<div className="p-3 space-y-3">
-									<div className="flex items-center justify-between">
-										<span
-											className="font-mono font-bold text-sm"
-											style={{ color: theme.colors.accent }}
+				{sortedCommands.map((cmd) => (
+					<div
+						key={cmd.id}
+						className="rounded-lg border overflow-hidden"
+						style={commandStyles.mainPanel}
+					>
+						{editingCommand?.id === cmd.id ? (
+							// Editing mode
+							<div className="p-3 space-y-3">
+								<div className="flex items-center justify-between">
+									<span className="font-mono font-bold text-sm" style={commandStyles.commandText}>
+										{cmd.command}
+									</span>
+									<div className="flex items-center gap-1">
+										<button
+											onClick={handleCancelEdit}
+											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
+											style={commandStyles.actionButton}
 										>
-											{cmd.command}
-										</span>
-										<div className="flex items-center gap-1">
-											<button
-												onClick={handleCancelEdit}
-												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-												style={{
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.textMain,
-													border: `1px solid ${theme.colors.border}`,
-												}}
-											>
-												<X className="w-3 h-3" />
-												Cancel
-											</button>
-											<button
-												onClick={handleSaveEdit}
-												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
-												style={{
-													backgroundColor: theme.colors.success,
-													color: '#000000',
-												}}
-											>
-												<Save className="w-3 h-3" />
-												Save
-											</button>
-										</div>
+											<X className="w-3 h-3" />
+											Cancel
+										</button>
+										<button
+											onClick={handleSaveEdit}
+											className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all"
+											style={commandStyles.successButton}
+										>
+											<Save className="w-3 h-3" />
+											Save
+										</button>
 									</div>
-									<div className="grid grid-cols-2 gap-3">
-										<div>
-											<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
-											<input
-												type="text"
-												value={editingCommand.command}
-												onChange={(e) =>
-													setEditingCommand({ ...editingCommand, command: e.target.value })
-												}
-												className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-											/>
-										</div>
-										<div>
-											<label className="block text-xs font-medium opacity-70 mb-1">
-												Description
-											</label>
-											<input
-												type="text"
-												value={editingCommand.description}
-												onChange={(e) =>
-													setEditingCommand({ ...editingCommand, description: e.target.value })
-												}
-												className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-												style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-											/>
-										</div>
-									</div>
-									<div className="relative">
-										<textarea
-											ref={editCommandTextareaRef}
-											value={editingCommand.prompt}
-											onChange={handleEditAutocompleteChange}
-											onKeyDown={(e) => {
-												if (handleEditAutocompleteKeyDown(e)) {
-													return;
-												}
-												if (e.key === 'Tab') {
-													e.preventDefault();
-													const textarea = e.currentTarget;
-													const start = textarea.selectionStart;
-													const end = textarea.selectionEnd;
-													const value = textarea.value;
-													const newValue = value.substring(0, start) + '\t' + value.substring(end);
-													setEditingCommand({ ...editingCommand, prompt: newValue });
-													setTimeout(() => {
-														textarea.selectionStart = textarea.selectionEnd = start + 1;
-													}, 0);
-												}
-											}}
-											rows={15}
-											className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
-											style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
+								</div>
+								<div className="grid grid-cols-2 gap-3">
+									<div>
+										<label className="block text-xs font-medium opacity-70 mb-1">Command</label>
+										<input
+											type="text"
+											value={editingCommand.command}
+											onChange={(e) =>
+												setEditingCommand({ ...editingCommand, command: e.target.value })
+											}
+											className="w-full p-2 rounded border bg-transparent outline-none text-sm font-mono"
+											style={commandStyles.fieldBase}
 										/>
-										<TemplateAutocompleteDropdown
-											ref={editAutocompleteRef}
-											theme={theme}
-											state={editAutocompleteState}
-											onSelect={selectEditVariable}
+									</div>
+									<div>
+										<label className="block text-xs font-medium opacity-70 mb-1">Description</label>
+										<input
+											type="text"
+											value={editingCommand.description}
+											onChange={(e) =>
+												setEditingCommand({ ...editingCommand, description: e.target.value })
+											}
+											className="w-full p-2 rounded border bg-transparent outline-none text-sm"
+											style={commandStyles.fieldBase}
 										/>
 									</div>
 								</div>
-							) : (
-								// Display mode - collapsible
-								<>
-									<button
-										onClick={() => toggleExpanded(cmd.id)}
-										className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/5 transition-colors"
-									>
-										<div className="flex items-center gap-2">
-											{expandedCommands.has(cmd.id) ? (
-												<ChevronDown
-													className="w-3.5 h-3.5"
-													style={{ color: theme.colors.textDim }}
-												/>
-											) : (
-												<ChevronRight
-													className="w-3.5 h-3.5"
-													style={{ color: theme.colors.textDim }}
-												/>
-											)}
-											<span
-												className="font-mono font-bold text-sm"
-												style={{ color: theme.colors.accent }}
-											>
-												{cmd.command}
-											</span>
-											{cmd.isBuiltIn && (
-												<span
-													className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
-													style={{
-														backgroundColor: theme.colors.bgActivity,
-														color: theme.colors.textDim,
-													}}
-												>
-													<Lock className="w-2.5 h-2.5" />
-													Built-in
-												</span>
-											)}
-										</div>
-										<span
-											className="text-xs truncate max-w-[300px]"
-											style={{ color: theme.colors.textDim }}
-										>
-											{cmd.description}
+								<div className="relative">
+									<textarea
+										ref={editCommandTextareaRef}
+										value={editingCommand.prompt}
+										onChange={handleEditAutocompleteChange}
+										onKeyDown={(e) => {
+											if (handleEditAutocompleteKeyDown(e)) {
+												return;
+											}
+											if (e.key === 'Tab') {
+												e.preventDefault();
+												const textarea = e.currentTarget;
+												const start = textarea.selectionStart;
+												const end = textarea.selectionEnd;
+												const value = textarea.value;
+												const newValue = value.substring(0, start) + '\t' + value.substring(end);
+												setEditingCommand({ ...editingCommand, prompt: newValue });
+												setTimeout(() => {
+													textarea.selectionStart = textarea.selectionEnd = start + 1;
+												}, 0);
+											}
+										}}
+										rows={15}
+										className="w-full p-2 rounded border bg-transparent outline-none text-sm resize-y scrollbar-thin min-h-[300px] font-mono"
+										style={commandStyles.fieldBase}
+									/>
+									<TemplateAutocompleteDropdown
+										ref={editAutocompleteRef}
+										theme={theme}
+										state={editAutocompleteState}
+										onSelect={selectEditVariable}
+									/>
+								</div>
+							</div>
+						) : (
+							// Display mode - collapsible
+							<>
+								<button
+									onClick={() => toggleExpanded(cmd.id)}
+									className="w-full px-3 py-2.5 flex items-center justify-between hover:bg-white/5 transition-colors"
+								>
+									<div className="flex items-center gap-2">
+										{expandedCommands.has(cmd.id) ? (
+											<ChevronDown className="w-3.5 h-3.5" style={commandStyles.textDim} />
+										) : (
+											<ChevronRight className="w-3.5 h-3.5" style={commandStyles.textDim} />
+										)}
+										<span className="font-mono font-bold text-sm" style={commandStyles.commandText}>
+											{cmd.command}
 										</span>
-									</button>
-									{expandedCommands.has(cmd.id) && (
-										<div
-											className="px-3 pb-3 pt-1 border-t"
-											style={{ borderColor: theme.colors.border }}
-										>
-											<div className="flex items-center justify-end gap-1 mb-2">
-												<button
-													onClick={() =>
-														setEditingCommand({
-															id: cmd.id,
-															command: cmd.command,
-															description: cmd.description,
-															prompt: cmd.prompt,
-														})
-													}
-													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-													style={{ color: theme.colors.textDim }}
-													title="Edit command"
-												>
-													<Edit2 className="w-3 h-3" />
-													Edit
-												</button>
-												{!cmd.isBuiltIn && (
-													<button
-														onClick={() => handleDelete(cmd.id)}
-														className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
-														style={{ color: theme.colors.error }}
-														title="Delete command"
-													>
-														<Trash2 className="w-3 h-3" />
-														Delete
-													</button>
-												)}
-											</div>
-											<div
-												className="text-xs p-2 rounded font-mono overflow-y-auto max-h-48 scrollbar-thin whitespace-pre-wrap"
-												style={{
-													backgroundColor: theme.colors.bgActivity,
-													color: theme.colors.textMain,
-												}}
+										{cmd.isBuiltIn && (
+											<span
+												className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
+												style={commandStyles.builtInBadge}
 											>
-												{cmd.prompt.length > 500
-													? cmd.prompt.substring(0, 500) + '...'
-													: cmd.prompt}
-											</div>
+												<Lock className="w-2.5 h-2.5" />
+												Built-in
+											</span>
+										)}
+									</div>
+									<span className="text-xs truncate max-w-[300px]" style={commandStyles.textDim}>
+										{cmd.description}
+									</span>
+								</button>
+								{expandedCommands.has(cmd.id) && (
+									<div className="px-3 pb-3 pt-1 border-t" style={commandStyles.borderOnly}>
+										<div className="flex items-center justify-end gap-1 mb-2">
+											<button
+												onClick={() =>
+													setEditingCommand({
+														id: cmd.id,
+														command: cmd.command,
+														description: cmd.description,
+														prompt: cmd.prompt,
+													})
+												}
+												className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
+												style={commandStyles.textDim}
+												title="Edit command"
+											>
+												<Edit2 className="w-3 h-3" />
+												Edit
+											</button>
+											{!cmd.isBuiltIn && (
+												<button
+													onClick={() => handleDelete(cmd.id)}
+													className="flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-all hover:bg-white/10"
+													style={commandStyles.errorText}
+													title="Delete command"
+												>
+													<Trash2 className="w-3 h-3" />
+													Delete
+												</button>
+											)}
 										</div>
-									)}
-								</>
-							)}
-						</div>
-					))}
+										<div
+											className="text-xs p-2 rounded font-mono overflow-y-auto max-h-48 scrollbar-thin whitespace-pre-wrap"
+											style={commandStyles.promptPreview}
+										>
+											{cmd.prompt.length > 500 ? cmd.prompt.substring(0, 500) + '...' : cmd.prompt}
+										</div>
+									</div>
+								)}
+							</>
+						)}
+					</div>
+				))}
 			</div>
 
 			{customAICommands.length === 0 && !isCreating && (
 				<div
 					className="p-6 rounded-lg border border-dashed text-center"
-					style={{ borderColor: theme.colors.border }}
+					style={commandStyles.borderOnly}
 				>
 					<Terminal className="w-8 h-8 mx-auto mb-2 opacity-30" />
-					<p className="text-sm opacity-50" style={{ color: theme.colors.textDim }}>
+					<p className="text-sm opacity-50" style={commandStyles.textDim}>
 						No custom AI commands configured
 					</p>
 					<button
 						onClick={() => setIsCreating(true)}
 						className="mt-2 text-xs font-medium"
-						style={{ color: theme.colors.accent }}
+						style={commandStyles.textAccent}
 					>
 						Create your first command
 					</button>

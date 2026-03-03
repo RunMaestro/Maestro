@@ -38,7 +38,7 @@ import {
 	Command,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import type { Session, Group, Theme } from '../types';
+import type { Session, Group, Theme, SessionState } from '../types';
 import { getBadgeForTime } from '../constants/conductorBadges';
 import { getStatusColor, getContextColor, formatActiveTime } from '../utils/theme';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
@@ -118,6 +118,98 @@ function SessionContextMenu({
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
 
+	const styles = useMemo(() => {
+		return {
+			container: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+			},
+			textMain: {
+				color: theme.colors.textMain,
+			},
+			textAccent: {
+				color: theme.colors.accent,
+			},
+			textError: {
+				color: theme.colors.error,
+			},
+			divider: {
+				borderColor: theme.colors.border,
+			},
+			submenu: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+			},
+			submenuBelowLeft: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				top: 0,
+				left: '100%',
+				marginLeft: 4,
+			},
+			submenuBelowRight: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				top: 0,
+				right: '100%',
+				marginRight: 4,
+			},
+			submenuAboveLeft: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				bottom: 0,
+				left: '100%',
+				marginLeft: 4,
+			},
+			submenuAboveRight: {
+				backgroundColor: theme.colors.bgSidebar,
+				borderColor: theme.colors.border,
+				bottom: 0,
+				right: '100%',
+				marginRight: 4,
+			},
+		};
+	}, [theme.colors]);
+
+	// Measure menu and adjust position to stay within viewport
+	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
+
+	const menuStyles = useMemo(() => {
+		const submenuPositionStyles =
+			submenuPosition.vertical === 'above'
+				? submenuPosition.horizontal === 'left'
+					? styles.submenuAboveLeft
+					: styles.submenuAboveRight
+				: submenuPosition.horizontal === 'left'
+					? styles.submenuBelowLeft
+					: styles.submenuBelowRight;
+
+		return {
+			container: {
+				left,
+				top,
+				opacity: ready ? 1 : 0,
+				...styles.container,
+				minWidth: '160px',
+			},
+			submenu: {
+				minWidth: '140px',
+				...submenuPositionStyles,
+			},
+		};
+	}, [
+		left,
+		top,
+		ready,
+		styles.container,
+		styles.submenuAboveLeft,
+		styles.submenuAboveRight,
+		styles.submenuBelowLeft,
+		styles.submenuBelowRight,
+		submenuPosition.horizontal,
+		submenuPosition.vertical,
+	]);
+
 	// Close on click outside
 	useClickOutside(menuRef, onDismiss);
 
@@ -131,9 +223,6 @@ function SessionContextMenu({
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
-
-	// Measure menu and adjust position to stay within viewport
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// Calculate submenu position when showing
 	const handleMoveToGroupHover = () => {
@@ -174,14 +263,7 @@ function SessionContextMenu({
 		<div
 			ref={menuRef}
 			className="fixed z-50 py-1 rounded-md shadow-xl border"
-			style={{
-				left,
-				top,
-				opacity: ready ? 1 : 0,
-				backgroundColor: theme.colors.bgSidebar,
-				borderColor: theme.colors.border,
-				minWidth: '160px',
-			}}
+			style={menuStyles.container}
 		>
 			{/* Rename */}
 			<button
@@ -190,7 +272,7 @@ function SessionContextMenu({
 					onDismiss();
 				}}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
+				style={styles.textMain}
 			>
 				<Edit3 className="w-3.5 h-3.5" />
 				Rename
@@ -203,7 +285,7 @@ function SessionContextMenu({
 					onDismiss();
 				}}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
+				style={styles.textMain}
 			>
 				<Settings className="w-3.5 h-3.5" />
 				Edit Agent...
@@ -216,7 +298,7 @@ function SessionContextMenu({
 					onDismiss();
 				}}
 				className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-				style={{ color: theme.colors.textMain }}
+				style={styles.textMain}
 			>
 				<Copy className="w-3.5 h-3.5" />
 				Duplicate...
@@ -230,7 +312,7 @@ function SessionContextMenu({
 						onDismiss();
 					}}
 					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-					style={{ color: theme.colors.textMain }}
+					style={styles.textMain}
 				>
 					<Bookmark className="w-3.5 h-3.5" fill={session.bookmarked ? 'currentColor' : 'none'} />
 					{session.bookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
@@ -247,7 +329,7 @@ function SessionContextMenu({
 				>
 					<button
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center justify-between"
-						style={{ color: theme.colors.textMain }}
+						style={styles.textMain}
 					>
 						<span className="flex items-center gap-2">
 							<FolderInput className="w-3.5 h-3.5" />
@@ -258,18 +340,7 @@ function SessionContextMenu({
 
 					{/* Submenu */}
 					{showMoveSubmenu && (
-						<div
-							className="absolute py-1 rounded-md shadow-xl border"
-							style={{
-								backgroundColor: theme.colors.bgSidebar,
-								borderColor: theme.colors.border,
-								minWidth: '140px',
-								...(submenuPosition.vertical === 'above' ? { bottom: 0 } : { top: 0 }),
-								...(submenuPosition.horizontal === 'left'
-									? { right: '100%', marginRight: 4 }
-									: { left: '100%', marginLeft: 4 }),
-							}}
-						>
+						<div className="absolute py-1 rounded-md shadow-xl border" style={menuStyles.submenu}>
 							{/* No Group option */}
 							<button
 								onClick={() => {
@@ -277,7 +348,7 @@ function SessionContextMenu({
 									onDismiss();
 								}}
 								className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 ${!session.groupId ? 'opacity-50' : ''}`}
-								style={{ color: theme.colors.textMain }}
+								style={styles.textMain}
 								disabled={!session.groupId}
 							>
 								<Folder className="w-3.5 h-3.5" />
@@ -286,9 +357,7 @@ function SessionContextMenu({
 							</button>
 
 							{/* Divider if there are groups */}
-							{groups.length > 0 && (
-								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-							)}
+							{groups.length > 0 && <div className="my-1 border-t" style={styles.divider} />}
 
 							{/* Group options */}
 							{groups.map((group) => (
@@ -299,7 +368,7 @@ function SessionContextMenu({
 										onDismiss();
 									}}
 									className={`w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2 ${session.groupId === group.id ? 'opacity-50' : ''}`}
-									style={{ color: theme.colors.textMain }}
+									style={styles.textMain}
 									disabled={session.groupId === group.id}
 								>
 									<span>{group.emoji}</span>
@@ -311,9 +380,7 @@ function SessionContextMenu({
 							))}
 
 							{/* Divider before Create New Group */}
-							{onCreateGroup && (
-								<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
-							)}
+							{onCreateGroup && <div className="my-1 border-t" style={styles.divider} />}
 
 							{/* Create New Group option */}
 							{onCreateGroup && (
@@ -323,7 +390,7 @@ function SessionContextMenu({
 										onDismiss();
 									}}
 									className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-									style={{ color: theme.colors.accent }}
+									style={styles.textAccent}
 								>
 									<FolderPlus className="w-3.5 h-3.5" />
 									Create New Group
@@ -339,7 +406,7 @@ function SessionContextMenu({
 				!session.parentSessionId &&
 				(onQuickCreateWorktree || onConfigureWorktrees) && (
 					<>
-						<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+						<div className="my-1 border-t" style={styles.divider} />
 						{/* Only show Create Worktree if worktrees have been configured */}
 						{onQuickCreateWorktree && session.worktreeConfig && (
 							<button
@@ -348,7 +415,7 @@ function SessionContextMenu({
 									onDismiss();
 								}}
 								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-								style={{ color: theme.colors.accent }}
+								style={styles.textAccent}
 							>
 								<GitBranch className="w-3.5 h-3.5" />
 								Create Worktree
@@ -361,7 +428,7 @@ function SessionContextMenu({
 									onDismiss();
 								}}
 								className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-								style={{ color: theme.colors.accent }}
+								style={styles.textAccent}
 							>
 								<Settings className="w-3.5 h-3.5" />
 								Configure Worktrees
@@ -373,7 +440,7 @@ function SessionContextMenu({
 			{/* Worktree child session actions */}
 			{session.parentSessionId && session.worktreeBranch && (
 				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					<div className="my-1 border-t" style={styles.divider} />
 					{onCreatePR && (
 						<button
 							onClick={() => {
@@ -381,7 +448,7 @@ function SessionContextMenu({
 								onDismiss();
 							}}
 							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: theme.colors.accent }}
+							style={styles.textAccent}
 						>
 							<GitPullRequest className="w-3.5 h-3.5" />
 							Create Pull Request
@@ -394,7 +461,7 @@ function SessionContextMenu({
 								onDismiss();
 							}}
 							className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-							style={{ color: theme.colors.error }}
+							style={styles.textError}
 						>
 							<Trash2 className="w-3.5 h-3.5" />
 							Remove Worktree
@@ -406,14 +473,14 @@ function SessionContextMenu({
 			{/* Remove Agent - only for non-worktree sessions */}
 			{!session.parentSessionId && (
 				<>
-					<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+					<div className="my-1 border-t" style={styles.divider} />
 					<button
 						onClick={() => {
 							onDelete();
 							onDismiss();
 						}}
 						className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
-						style={{ color: theme.colors.error }}
+						style={styles.textError}
 					>
 						<Trash2 className="w-3.5 h-3.5" />
 						Remove Agent
@@ -458,6 +525,26 @@ function HamburgerMenuContent({
 		setAboutModalOpen,
 		setQuickActionOpen,
 	} = getModalActions();
+	const styles = useMemo(() => {
+		return {
+			icon: {
+				color: theme.colors.accent,
+			},
+			textMain: {
+				color: theme.colors.textMain,
+			},
+			textDim: {
+				color: theme.colors.textDim,
+			},
+			divider: {
+				borderColor: theme.colors.border,
+			},
+			shortcutBadge: {
+				backgroundColor: theme.colors.bgActivity,
+				color: theme.colors.textDim,
+			},
+		};
+	}, [theme.colors]);
 	return (
 		<div className="p-1">
 			{onNewAgentSession && (
@@ -468,19 +555,16 @@ function HamburgerMenuContent({
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Plus className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Plus className="w-5 h-5" style={styles.icon} />
 					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						<div className="text-sm font-medium" style={styles.textMain}>
 							New Agent
 						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs" style={styles.textDim}>
 							Create a new agent session
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
+					<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 						{shortcuts.newInstance ? formatShortcutKeys(shortcuts.newInstance.keys) : '⌘N'}
 					</span>
 				</button>
@@ -493,19 +577,16 @@ function HamburgerMenuContent({
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Wand2 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Wand2 className="w-5 h-5" style={styles.icon} />
 					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						<div className="text-sm font-medium" style={styles.textMain}>
 							New Agent Wizard
 						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs" style={styles.textDim}>
 							Get started with AI
 						</div>
 					</div>
-					<span
-						className="text-xs font-mono px-1.5 py-0.5 rounded"
-						style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-					>
+					<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 						{shortcuts.openWizard ? formatShortcutKeys(shortcuts.openWizard.keys) : '⇧⌘N'}
 					</span>
 				</button>
@@ -517,19 +598,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Command className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Command className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Command Palette
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Quick actions and navigation
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{shortcuts.quickAction ? formatShortcutKeys(shortcuts.quickAction.keys) : '⌘K'}
 				</span>
 			</button>
@@ -541,18 +619,18 @@ function HamburgerMenuContent({
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<Compass className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<Compass className="w-5 h-5" style={styles.icon} />
 					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						<div className="text-sm font-medium" style={styles.textMain}>
 							Introductory Tour
 						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs" style={styles.textDim}>
 							Learn how to use Maestro
 						</div>
 					</div>
 				</button>
 			)}
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			<div className="my-1 border-t" style={styles.divider} />
 			<button
 				onClick={() => {
 					setShortcutsHelpOpen(true);
@@ -560,19 +638,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Keyboard className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Keyboard className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Keyboard Shortcuts
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						View all available shortcuts
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{formatShortcutKeys(shortcuts.help.keys)}
 				</span>
 			</button>
@@ -584,19 +659,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Settings className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Settings className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Settings
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Configure preferences
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{formatShortcutKeys(shortcuts.settings.keys)}
 				</span>
 			</button>
@@ -607,19 +679,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<ScrollText className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<ScrollText className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						System Logs
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						View application logs
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{formatShortcutKeys(shortcuts.systemLogs.keys)}
 				</span>
 			</button>
@@ -630,19 +699,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Cpu className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Cpu className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Process Monitor
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						View running processes
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{formatShortcutKeys(shortcuts.processMonitor.keys)}
 				</span>
 			</button>
@@ -653,19 +719,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<BarChart3 className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<BarChart3 className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Usage Dashboard
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						View usage analytics
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{formatShortcutKeys(shortcuts.usageDashboard.keys)}
 				</span>
 			</button>
@@ -676,19 +739,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Music className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Music className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Maestro Symphony
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Contribute to open source
 					</div>
 				</div>
-				<span
-					className="text-xs font-mono px-1.5 py-0.5 rounded"
-					style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-				>
+				<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 					{shortcuts.openSymphony ? formatShortcutKeys(shortcuts.openSymphony.keys) : '⇧⌘Y'}
 				</span>
 			</button>
@@ -700,26 +760,23 @@ function HamburgerMenuContent({
 					}}
 					className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 				>
-					<ScrollText className="w-5 h-5" style={{ color: theme.colors.accent }} />
+					<ScrollText className="w-5 h-5" style={styles.icon} />
 					<div className="flex-1">
-						<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+						<div className="text-sm font-medium" style={styles.textMain}>
 							Director's Notes
 						</div>
-						<div className="text-xs" style={{ color: theme.colors.textDim }}>
+						<div className="text-xs" style={styles.textDim}>
 							Unified history & AI synopsis
 						</div>
 					</div>
 					{shortcuts.directorNotes && (
-						<span
-							className="text-xs font-mono px-1.5 py-0.5 rounded"
-							style={{ backgroundColor: theme.colors.bgActivity, color: theme.colors.textDim }}
-						>
+						<span className="text-xs font-mono px-1.5 py-0.5 rounded" style={styles.shortcutBadge}>
 							{formatShortcutKeys(shortcuts.directorNotes.keys)}
 						</span>
 					)}
 				</button>
 			)}
-			<div className="my-1 border-t" style={{ borderColor: theme.colors.border }} />
+			<div className="my-1 border-t" style={styles.divider} />
 			<button
 				onClick={() => {
 					window.maestro.shell.openExternal('https://runmaestro.ai');
@@ -727,16 +784,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Globe className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Globe className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Maestro Website
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Visit runmaestro.ai
 					</div>
 				</div>
-				<ExternalLink className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+				<ExternalLink className="w-4 h-4" style={styles.textDim} />
 			</button>
 			<button
 				onClick={() => {
@@ -745,16 +802,16 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<BookOpen className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<BookOpen className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Documentation
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						See usage docs on docs.runmaestro.ai
 					</div>
 				</div>
-				<ExternalLink className="w-4 h-4" style={{ color: theme.colors.textDim }} />
+				<ExternalLink className="w-4 h-4" style={styles.textDim} />
 			</button>
 			<button
 				onClick={() => {
@@ -763,12 +820,12 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Download className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Download className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						Check for Updates
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Get the latest version
 					</div>
 				</div>
@@ -780,12 +837,12 @@ function HamburgerMenuContent({
 				}}
 				className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md hover:bg-white/10 transition-colors text-left"
 			>
-				<Info className="w-5 h-5" style={{ color: theme.colors.accent }} />
+				<Info className="w-5 h-5" style={styles.icon} />
 				<div className="flex-1">
-					<div className="text-sm font-medium" style={{ color: theme.colors.textMain }}>
+					<div className="text-sm font-medium" style={styles.textMain}>
 						About Maestro
 					</div>
-					<div className="text-xs" style={{ color: theme.colors.textDim }}>
+					<div className="text-xs" style={styles.textDim}>
 						Version, Credits, Stats
 					</div>
 				</div>
@@ -818,18 +875,85 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 	contextWarningYellowThreshold = 60,
 	contextWarningRedThreshold = 80,
 }: SessionTooltipContentProps) {
+	const tooltipStyles = useMemo(() => {
+		const contextUsageColor = getContextColor(
+			session.contextUsage,
+			theme,
+			contextWarningYellowThreshold,
+			contextWarningRedThreshold
+		);
+
+		return {
+			groupName: {
+				color: theme.colors.textDim,
+			},
+			sessionName: {
+				color: theme.colors.textMain,
+			},
+			remoteErrorPill: {
+				backgroundColor: `${theme.colors.error}30`,
+				color: theme.colors.error,
+			},
+			remoteConnectedPill: {
+				backgroundColor: `${theme.colors.success}30`,
+				color: theme.colors.success,
+			},
+			gitPill: {
+				backgroundColor: `${theme.colors.accent}30`,
+				color: theme.colors.accent,
+			},
+			remoteBadgePill: {
+				backgroundColor: `${theme.colors.warning}30`,
+				color: theme.colors.warning,
+			},
+			localPill: {
+				backgroundColor: `${theme.colors.textDim}20`,
+				color: theme.colors.textDim,
+			},
+			autoPill: {
+				backgroundColor: `${theme.colors.warning}30`,
+				color: theme.colors.warning,
+			},
+			metaText: {
+				color: theme.colors.textDim,
+			},
+			metaValue: {
+				color: theme.colors.textMain,
+			},
+			divider: {
+				borderTop: `1px solid ${theme.colors.border}`,
+			},
+			contextTrack: {
+				backgroundColor: theme.colors.border,
+			},
+			contextUsage: {
+				width: `${session.contextUsage}%`,
+				backgroundColor: contextUsageColor,
+			},
+			gitChangeCount: {
+				color: theme.colors.warning,
+			},
+			sessionCostValue: {
+				color: theme.colors.success,
+			},
+			activeTime: {
+				color: theme.colors.accent,
+			},
+			path: {
+				color: theme.colors.textDim,
+			},
+		};
+	}, [theme.colors]);
+
 	return (
 		<>
 			{groupName && (
-				<div
-					className="text-[10px] font-bold uppercase mb-1"
-					style={{ color: theme.colors.textDim }}
-				>
+				<div className="text-[10px] font-bold uppercase mb-1" style={tooltipStyles.groupName}>
 					{groupName}
 				</div>
 			)}
 			<div className="flex items-center gap-2 mb-2">
-				<span className="text-xs font-bold" style={{ color: theme.colors.textMain }}>
+				<span className="text-xs font-bold" style={tooltipStyles.sessionName}>
 					{session.name}
 				</span>
 				{/* Location Indicator Pills */}
@@ -840,10 +964,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 						{session.sessionSshRemoteConfig?.enabled && session.sshConnectionFailed && (
 							<span
 								className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold"
-								style={{
-									backgroundColor: theme.colors.error + '30',
-									color: theme.colors.error,
-								}}
+								style={tooltipStyles.remoteErrorPill}
 								title="SSH connection failed"
 							>
 								<Server className="w-3 h-3" />
@@ -861,10 +982,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 								{session.sessionSshRemoteConfig?.enabled && !session.sshConnectionFailed && (
 									<span
 										className="flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold"
-										style={{
-											backgroundColor: theme.colors.success + '30',
-											color: theme.colors.success,
-										}}
+										style={tooltipStyles.remoteConnectedPill}
 										title="Remote SSH"
 									>
 										<Server className="w-3 h-3" />
@@ -872,10 +990,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 								)}
 								<span
 									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.accent + '30',
-										color: theme.colors.accent,
-									}}
+									style={tooltipStyles.gitPill}
 								>
 									GIT
 								</span>
@@ -887,10 +1002,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 							!session.sshConnectionFailed && (
 								<span
 									className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-									style={{
-										backgroundColor: theme.colors.warning + '30',
-										color: theme.colors.warning,
-									}}
+									style={tooltipStyles.remoteBadgePill}
 								>
 									REMOTE
 								</span>
@@ -899,10 +1011,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 							/* Local non-git: show LOCAL badge */
 							<span
 								className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-								style={{
-									backgroundColor: theme.colors.textDim + '20',
-									color: theme.colors.textDim,
-								}}
+								style={tooltipStyles.localPill}
 							>
 								LOCAL
 							</span>
@@ -913,63 +1022,43 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 				{isInBatch && (
 					<span
 						className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase animate-pulse"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
+						style={tooltipStyles.autoPill}
 					>
 						<Bot className="w-2.5 h-2.5" />
 						AUTO
 					</span>
 				)}
 			</div>
-			<div className="text-[10px] capitalize mb-2" style={{ color: theme.colors.textDim }}>
+			<div className="text-[10px] capitalize mb-2" style={tooltipStyles.metaText}>
 				{session.state} • {session.toolType}
 				{session.sessionSshRemoteConfig?.enabled ? ' (SSH)' : ''}
 			</div>
 
-			<div
-				className="pt-2 mt-2 space-y-1.5"
-				style={{ borderTop: `1px solid ${theme.colors.border}` }}
-			>
+			<div className="pt-2 mt-2 space-y-1.5" style={tooltipStyles.divider}>
 				<div className="flex items-center justify-between text-[10px]">
-					<span style={{ color: theme.colors.textDim }}>Context Window</span>
-					<span style={{ color: theme.colors.textMain }}>{session.contextUsage}%</span>
+					<span style={tooltipStyles.metaText}>Context Window</span>
+					<span style={tooltipStyles.metaValue}>{session.contextUsage}%</span>
 				</div>
-				<div
-					className="w-full h-1 rounded-full overflow-hidden"
-					style={{ backgroundColor: theme.colors.border }}
-				>
-					<div
-						className="h-full transition-all"
-						style={{
-							width: `${session.contextUsage}%`,
-							backgroundColor: getContextColor(
-								session.contextUsage,
-								theme,
-								contextWarningYellowThreshold,
-								contextWarningRedThreshold
-							),
-						}}
-					/>
+				<div className="w-full h-1 rounded-full overflow-hidden" style={tooltipStyles.contextTrack}>
+					<div className="h-full transition-all" style={tooltipStyles.contextUsage} />
 				</div>
 
 				{/* Git Status */}
 				{session.isGitRepo && gitFileCount !== undefined && gitFileCount > 0 && (
 					<div className="flex items-center justify-between text-[10px] pt-1">
-						<span className="flex items-center gap-1" style={{ color: theme.colors.textDim }}>
+						<span className="flex items-center gap-1" style={tooltipStyles.metaText}>
 							<GitBranch className="w-3 h-3" />
 							Git Changes
 						</span>
-						<span style={{ color: theme.colors.warning }}>{gitFileCount} files</span>
+						<span style={tooltipStyles.gitChangeCount}>{gitFileCount} files</span>
 					</div>
 				)}
 
 				{/* Session Cost */}
 				{session.usageStats && session.usageStats.totalCostUsd > 0 && (
 					<div className="flex items-center justify-between text-[10px] pt-1">
-						<span style={{ color: theme.colors.textDim }}>Session Cost</span>
-						<span className="font-mono font-bold" style={{ color: theme.colors.success }}>
+						<span style={tooltipStyles.metaText}>Session Cost</span>
+						<span className="font-mono font-bold" style={tooltipStyles.sessionCostValue}>
 							${session.usageStats.totalCostUsd.toFixed(2)}
 						</span>
 					</div>
@@ -978,11 +1067,11 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 				{/* Active Time */}
 				{session.activeTimeMs > 0 && (
 					<div className="flex items-center justify-between text-[10px] pt-1">
-						<span className="flex items-center gap-1" style={{ color: theme.colors.textDim }}>
+						<span className="flex items-center gap-1" style={tooltipStyles.metaText}>
 							<Clock className="w-3 h-3" />
 							Active Time
 						</span>
-						<span className="font-mono font-bold" style={{ color: theme.colors.accent }}>
+						<span className="font-mono font-bold" style={tooltipStyles.activeTime}>
 							{formatActiveTime(session.activeTimeMs)}
 						</span>
 					</div>
@@ -990,7 +1079,7 @@ const SessionTooltipContent = memo(function SessionTooltipContent({
 
 				<div
 					className="flex items-center gap-1.5 text-[10px] font-mono pt-1"
-					style={{ color: theme.colors.textDim }}
+					style={tooltipStyles.path}
 				>
 					<Folder className="w-3 h-3 shrink-0" />
 					<span className="truncate">{session.cwd}</span>
@@ -1392,6 +1481,303 @@ function SessionListInner(props: SessionListProps) {
 		return worktreeChildrenByParentId.get(parentId) || [];
 	};
 
+	const collapsedPillStyles = useMemo(() => {
+		return {
+			container: {
+				withWorktrees: {
+					gap: '1px',
+				},
+				withoutWorktrees: {
+					gap: 0,
+				},
+			},
+			segment: {
+				fallback: {
+					border: `1px solid ${theme.colors.textDim}`,
+					backgroundColor: 'transparent',
+				},
+				inBatch: {
+					backgroundColor: theme.colors.warning,
+				},
+				base: {
+					backgroundColor: 'transparent',
+				},
+				unreadDot: {
+					backgroundColor: theme.colors.error,
+				},
+				tooltip: {
+					minWidth: '240px',
+					backgroundColor: theme.colors.bgSidebar,
+					border: `1px solid ${theme.colors.border}`,
+				},
+			},
+		};
+	}, [theme.colors]);
+
+	const worktreeListStyles = useMemo(() => {
+		return {
+			groupedBand: {
+				backgroundColor: `${theme.colors.accent}15`,
+				color: theme.colors.accent,
+			},
+			drawerWrapper: {
+				backgroundColor: `${theme.colors.accent}10`,
+				borderBottom: `1px solid ${theme.colors.accent}30`,
+			},
+			drawerWrapperWithLeftBorder: {
+				borderLeft: `1px solid ${theme.colors.accent}30`,
+				borderBottom: `1px solid ${theme.colors.accent}30`,
+			},
+			drawerWrapperNoLeftBorder: {
+				borderLeft: 'none',
+				borderBottom: `1px solid ${theme.colors.accent}30`,
+			},
+			drawerBand: {
+				backgroundColor: `${theme.colors.accent}20`,
+				color: theme.colors.accent,
+			},
+			worktreeWrapper: {
+				borderColor: `${theme.colors.accent}50`,
+			},
+		};
+	}, [theme.colors]);
+
+	const sessionListStyles = useMemo(() => {
+		return {
+			root: {
+				container: {
+					backgroundColor: theme.colors.bgSidebar,
+					borderColor: theme.colors.border,
+					'--tw-ring-color': theme.colors.accent,
+				},
+				headerBorder: {
+					borderColor: theme.colors.border,
+				},
+				iconAccent: {
+					color: theme.colors.accent,
+				},
+				textMain: {
+					color: theme.colors.textMain,
+				},
+				borderDim: {
+					color: theme.colors.textDim,
+				},
+				borderError: {
+					color: theme.colors.error,
+				},
+				badgeColor: {
+					color: '#FFD700',
+				},
+				menuButtonColor: {
+					color: theme.colors.textDim,
+				},
+				actionDivider: {
+					borderColor: theme.colors.border,
+				},
+				bottomDivider: {
+					borderColor: theme.colors.border,
+				},
+				bottomPrimaryAction: {
+					backgroundColor: theme.colors.accent,
+					color: theme.colors.accentForeground,
+				},
+				bottomCollapse: {
+					borderColor: theme.colors.border,
+				},
+				sidebarFilterInput: {
+					borderColor: theme.colors.accent,
+					color: theme.colors.textMain,
+				},
+				sectionHeaderAccent: {
+					color: theme.colors.accent,
+				},
+				sectionHeaderDim: {
+					color: theme.colors.textDim,
+				},
+				sectionHeaderAccentFill: theme.colors.accent,
+				sectionBorderAccent: {
+					borderColor: theme.colors.accent,
+				},
+				sectionBorder: {
+					borderColor: theme.colors.border,
+				},
+				groupDelete: {
+					color: theme.colors.error,
+				},
+				newGroupButton: {
+					backgroundColor: `${theme.colors.accent}20`,
+					color: theme.colors.accent,
+					border: `1px solid ${theme.colors.accent}40`,
+				},
+				dropZone: {
+					borderColor: theme.colors.accent,
+					color: theme.colors.textDim,
+					backgroundColor: `${theme.colors.accent}10`,
+				},
+				unreadBadge: {
+					backgroundColor: theme.colors.error,
+				},
+				skinnyDotFallback: {
+					border: `1.5px solid ${theme.colors.textDim}`,
+					backgroundColor: 'transparent',
+				},
+				skinnyTooltip: {
+					minWidth: '240px',
+					backgroundColor: theme.colors.bgSidebar,
+					border: `1px solid ${theme.colors.border}`,
+				},
+				live: {
+					overlay: {
+						width: '280px',
+					},
+					qrWrapper: {
+						backgroundColor: '#ffffff',
+					},
+					panel: {
+						backgroundColor: theme.colors.bgSidebar,
+						border: `1px solid ${theme.colors.border}`,
+					},
+					panelSectionBorder: {
+						borderColor: theme.colors.border,
+					},
+					panelTextDim: {
+						color: theme.colors.textDim,
+					},
+					installBanner: {
+						backgroundColor: theme.colors.bgActivity,
+					},
+					customPortInput: {
+						backgroundColor: theme.colors.bgActivity,
+						borderColor: theme.colors.border,
+						color: theme.colors.textMain,
+					},
+					customPortCaption: {
+						color: theme.colors.textDim,
+						opacity: 0.7,
+					},
+					urlPillContainer: {
+						backgroundColor: theme.colors.bgActivity,
+					},
+					tabInactiveText: {
+						color: theme.colors.textDim,
+					},
+					overlayMenuPanel: {
+						backgroundColor: theme.colors.bgSidebar,
+						border: `1px solid ${theme.colors.border}`,
+						maxHeight: 'calc(100vh - 90px)',
+					},
+					copyFlashOverlay: {
+						backgroundColor: 'rgba(0, 0, 0, 0.75)',
+					},
+					loadingOverlay: {
+						backgroundColor: 'rgba(0, 0, 0, 0.85)',
+					},
+					copyFlashBadgeLocal: {
+						backgroundColor: '#22c55e',
+						color: '#ffffff',
+					},
+					copyFlashBadgeRemote: {
+						backgroundColor: '#3b82f6',
+						color: '#ffffff',
+					},
+					copyActionButton: {
+						color: theme.colors.textDim,
+					},
+					openBrowserLocal: {
+						color: '#4ade80',
+						borderColor: 'rgba(74, 222, 128, 0.3)',
+					},
+					openBrowserRemote: {
+						color: '#60a5fa',
+						borderColor: 'rgba(96, 165, 250, 0.3)',
+					},
+					webIcon: {
+						color: theme.colors.textDim,
+					},
+				},
+				badge: {
+					color: theme.colors.accent,
+				},
+			},
+		};
+	}, [theme.colors]);
+
+	const sessionListRenderStyles = useMemo(() => {
+		const sessionStates: SessionState[] = ['idle', 'busy', 'waiting_input', 'connecting', 'error'];
+		const collapsedPillByState = {} as Record<SessionState, React.CSSProperties>;
+		const skinnyDotActiveByState = {} as Record<SessionState, React.CSSProperties>;
+		const skinnyDotInactiveByState = {} as Record<SessionState, React.CSSProperties>;
+
+		sessionStates.forEach((state) => {
+			const statusColor = getStatusColor(state, theme);
+			collapsedPillByState[state] = {
+				...collapsedPillStyles.segment.base,
+				backgroundColor: statusColor,
+			};
+			skinnyDotActiveByState[state] = {
+				opacity: 1,
+				backgroundColor: statusColor,
+			};
+			skinnyDotInactiveByState[state] = {
+				opacity: 0.25,
+				backgroundColor: statusColor,
+			};
+		});
+
+		return {
+			collapsedPill: {
+				segment: {
+					byState: collapsedPillByState,
+					tooltip: {
+						...collapsedPillStyles.segment.tooltip,
+						left: `${leftSidebarWidthState + 8}px`,
+						top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
+					},
+				},
+			},
+			skinny: {
+				dot: {
+					activeByState: skinnyDotActiveByState,
+					inactiveByState: skinnyDotInactiveByState,
+					fallback: {
+						active: {
+							...sessionListStyles.root.skinnyDotFallback,
+							opacity: 1,
+						},
+						inactive: {
+							...sessionListStyles.root.skinnyDotFallback,
+							opacity: 0.25,
+						},
+					},
+				},
+				tooltip: {
+					...sessionListStyles.root.skinnyTooltip,
+					left: '80px',
+					...(tooltipPosition ? { top: `${tooltipPosition.y}px` } : {}),
+				},
+			},
+			autoRunBadge: autoRunStats
+				? {
+						color:
+							autoRunStats.currentBadgeLevel >= 8
+								? sessionListStyles.root.badge.color
+								: sessionListStyles.root.iconAccent.color,
+					}
+				: undefined,
+		};
+	}, [
+		autoRunStats?.currentBadgeLevel,
+		collapsedPillStyles.segment.base,
+		collapsedPillStyles.segment.tooltip,
+		leftSidebarWidthState,
+		theme,
+		sessionListStyles.root.skinnyDotFallback,
+		sessionListStyles.root.skinnyTooltip,
+		sessionListStyles.root.badge.color,
+		sessionListStyles.root.iconAccent.color,
+		tooltipPosition?.y,
+	]);
+
 	// Helper component: Renders a collapsed session pill with subdivided parts for worktrees
 	const renderCollapsedPill = (session: Session, keyPrefix: string, _onExpand: () => void) => {
 		const worktreeChildren = getWorktreeChildren(session.id);
@@ -1403,31 +1789,30 @@ function SessionListInner(props: SessionListProps) {
 			<div
 				key={`${keyPrefix}-${session.id}`}
 				className="relative flex-1 flex rounded-full overflow-hidden opacity-50 hover:opacity-100 transition-opacity"
-				style={{ gap: hasWorktrees ? '1px' : 0 }}
+				style={
+					hasWorktrees
+						? collapsedPillStyles.container.withWorktrees
+						: collapsedPillStyles.container.withoutWorktrees
+				}
 			>
 				{allSessions.map((s, idx) => {
 					const hasUnreadTabs = s.aiTabs?.some((tab) => tab.hasUnread);
 					const isFirst = idx === 0;
 					const isLast = idx === allSessions.length - 1;
 					const isInBatch = activeBatchSessionIds.includes(s.id);
+					const isClaudeFallback = s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch;
 
 					return (
 						<div
 							key={`${keyPrefix}-part-${s.id}`}
-							className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
-							style={{
-								...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
-									? { border: `1px solid ${theme.colors.textDim}`, backgroundColor: 'transparent' }
-									: {
-											backgroundColor: isInBatch
-												? theme.colors.warning
-												: getStatusColor(s.state, theme),
-										}),
-								// Rounded ends only on first/last
-								borderRadius: hasWorktrees
-									? `${isFirst ? '9999px' : '0'} ${isLast ? '9999px' : '0'} ${isLast ? '9999px' : '0'} ${isFirst ? '9999px' : '0'}`
-									: '9999px',
-							}}
+							className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''} ${hasWorktrees ? `${isFirst ? 'rounded-l-full' : ''} ${isLast ? 'rounded-r-full' : ''}` : 'rounded-full'}`}
+							style={
+								isInBatch
+									? collapsedPillStyles.segment.inBatch
+									: isClaudeFallback
+										? collapsedPillStyles.segment.fallback
+										: sessionListRenderStyles.collapsedPill.segment.byState[s.state]
+							}
 							onMouseEnter={(e) => setTooltipPosition({ x: e.clientX, y: e.clientY })}
 							onMouseLeave={() => setTooltipPosition(null)}
 							onClick={(e) => {
@@ -1439,19 +1824,13 @@ function SessionListInner(props: SessionListProps) {
 							{hasUnreadTabs && isLast && (
 								<div
 									className="absolute -right-0.5 top-1/2 -translate-y-1/2 w-1.5 h-1.5 rounded-full"
-									style={{ backgroundColor: theme.colors.error }}
+									style={collapsedPillStyles.segment.unreadDot}
 								/>
 							)}
 							{/* Hover Tooltip - per segment */}
 							<div
 								className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover/segment:opacity-100 pointer-events-none transition-opacity shadow-xl"
-								style={{
-									minWidth: '240px',
-									left: `${leftSidebarWidthState + 8}px`,
-									top: tooltipPosition ? `${tooltipPosition.y}px` : undefined,
-									backgroundColor: theme.colors.bgSidebar,
-									border: `1px solid ${theme.colors.border}`,
-								}}
+								style={sessionListRenderStyles.collapsedPill.segment.tooltip}
 							>
 								<SessionTooltipContent
 									session={s}
@@ -1571,10 +1950,7 @@ function SessionListInner(props: SessionListProps) {
 							onToggleWorktreeExpanded(session.id);
 						}}
 						className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-						style={{
-							backgroundColor: theme.colors.accent + '15',
-							color: theme.colors.accent,
-						}}
+						style={worktreeListStyles.groupedBand}
 						title={`${worktreeChildren.length} worktree${worktreeChildren.length > 1 ? 's' : ''} (click to expand)`}
 					>
 						<GitBranch className="w-2.5 h-2.5" />
@@ -1589,11 +1965,11 @@ function SessionListInner(props: SessionListProps) {
 				{hasWorktrees && worktreesExpanded && onToggleWorktreeExpanded && (
 					<div
 						className={`rounded-bl overflow-hidden ${needsWorktreeWrapper ? '' : 'ml-1'}`}
-						style={{
-							backgroundColor: theme.colors.accent + '10',
-							borderLeft: needsWorktreeWrapper ? 'none' : `1px solid ${theme.colors.accent}30`,
-							borderBottom: `1px solid ${theme.colors.accent}30`,
-						}}
+						style={
+							needsWorktreeWrapper
+								? worktreeListStyles.drawerWrapperNoLeftBorder
+								: worktreeListStyles.drawerWrapperWithLeftBorder
+						}
 					>
 						{/* Worktree children list */}
 						<div>
@@ -1632,10 +2008,7 @@ function SessionListInner(props: SessionListProps) {
 								onToggleWorktreeExpanded(session.id);
 							}}
 							className="w-full flex items-center justify-center gap-1.5 py-0.5 text-[9px] font-medium hover:opacity-80 transition-opacity cursor-pointer"
-							style={{
-								backgroundColor: theme.colors.accent + '20',
-								color: theme.colors.accent,
-							}}
+							style={worktreeListStyles.drawerBand}
 							title="Click to collapse worktrees"
 						>
 							<GitBranch className="w-2.5 h-2.5" />
@@ -1656,7 +2029,7 @@ function SessionListInner(props: SessionListProps) {
 				<div
 					key={`${options.keyPrefix}-${session.id}`}
 					className="border-l ml-3 mr-2 mb-1"
-					style={{ borderColor: theme.colors.accent + '50' }}
+					style={worktreeListStyles.worktreeWrapper}
 				>
 					{content}
 				</div>
@@ -1672,6 +2045,9 @@ function SessionListInner(props: SessionListProps) {
 		// Step 1: Filter sessions based on search query
 		const query = sessionFilter?.toLowerCase() ?? '';
 		const filtered: Session[] = [];
+		const bookmarked: Session[] = [];
+		const ungrouped: Session[] = [];
+		const groupedMap = new Map<string, Session[]>();
 
 		for (const s of sessions) {
 			// Exclude worktree children from main list (they appear under parent)
@@ -1705,10 +2081,6 @@ function SessionListInner(props: SessionListProps) {
 		}
 
 		// Step 2: Categorize sessions in a single pass
-		const bookmarked: Session[] = [];
-		const ungrouped: Session[] = [];
-		const groupedMap = new Map<string, Session[]>();
-
 		for (const s of filtered) {
 			if (s.bookmarked) {
 				bookmarked.push(s);
@@ -1730,9 +2102,9 @@ function SessionListInner(props: SessionListProps) {
 
 		const sortedFiltered = [...filtered].sort(sortFn);
 		const sortedBookmarked = [...bookmarked].sort(sortFn);
-		const sortedBookmarkedParent = bookmarked.filter((s) => !s.parentSessionId).sort(sortFn);
 		const sortedUngrouped = [...ungrouped].sort(sortFn);
-		const sortedUngroupedParent = ungrouped.filter((s) => !s.parentSessionId).sort(sortFn);
+		const sortedBookmarkedParent = sortedBookmarked.filter((s) => !s.parentSessionId);
+		const sortedUngroupedParent = sortedUngrouped.filter((s) => !s.parentSessionId);
 
 		// Sort sessions within each group
 		const sortedGrouped = new Map<string, Session[]>();
@@ -1881,9 +2253,7 @@ function SessionListInner(props: SessionListProps) {
 			style={
 				{
 					width: leftSidebarOpen ? `${leftSidebarWidthState}px` : '64px',
-					backgroundColor: theme.colors.bgSidebar,
-					borderColor: theme.colors.border,
-					'--tw-ring-color': theme.colors.accent,
+					...sessionListStyles.root.container,
 				} as React.CSSProperties
 			}
 			onClick={() => setActiveFocus('sidebar')}
@@ -1913,18 +2283,18 @@ function SessionListInner(props: SessionListProps) {
 			{/* Branding Header */}
 			<div
 				className="p-4 border-b flex items-center justify-between h-16 shrink-0"
-				style={{ borderColor: theme.colors.border }}
+				style={sessionListStyles.root.headerBorder}
 			>
 				{leftSidebarOpen ? (
 					<>
 						<div className="flex items-center gap-2">
 							<Wand2
 								className={`w-5 h-5${isAnyBusy ? ' wand-sparkle-active' : ''}`}
-								style={{ color: theme.colors.accent }}
+								style={sessionListStyles.root.iconAccent}
 							/>
 							<h1
 								className="font-bold tracking-widest text-lg"
-								style={{ color: theme.colors.textMain }}
+								style={sessionListStyles.root.textMain}
 							>
 								MAESTRO
 							</h1>
@@ -1934,9 +2304,7 @@ function SessionListInner(props: SessionListProps) {
 									onClick={() => setAboutModalOpen(true)}
 									className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold transition-colors hover:bg-white/10"
 									title={`${getBadgeForTime(autoRunStats.cumulativeTimeMs)?.name || 'Apprentice'} - Click to view achievements`}
-									style={{
-										color: autoRunStats.currentBadgeLevel >= 8 ? '#FFD700' : theme.colors.accent,
-									}}
+									style={sessionListRenderStyles.autoRunBadge}
 								>
 									<Trophy className="w-3 h-3" />
 									<span>{autoRunStats.currentBadgeLevel}</span>
@@ -1974,7 +2342,7 @@ function SessionListInner(props: SessionListProps) {
 								{isLiveMode && liveOverlayOpen && webInterfaceUrl && (
 									<div
 										className="absolute top-full left-0 pt-2 z-50 outline-none"
-										style={{ width: '280px' }}
+										style={sessionListStyles.root.live.overlay}
 										tabIndex={-1}
 										onKeyDown={(e) => {
 											// Arrow key navigation between Local/Remote
@@ -1989,16 +2357,16 @@ function SessionListInner(props: SessionListProps) {
 									>
 										<div
 											className="rounded-lg shadow-2xl overflow-hidden"
-											style={{
-												backgroundColor: theme.colors.bgSidebar,
-												border: `1px solid ${theme.colors.border}`,
-											}}
+											style={sessionListStyles.root.live.panel}
 										>
 											{/* Description Header */}
-											<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+											<div
+												className="p-3 border-b"
+												style={sessionListStyles.root.live.panelSectionBorder}
+											>
 												<div
 													className="text-[11px] leading-relaxed"
-													style={{ color: theme.colors.textDim }}
+													style={sessionListStyles.root.live.panelTextDim}
 												>
 													Control your AI sessions from your phone or tablet.
 													{tunnelStatus === 'connected' ? (
@@ -2018,12 +2386,15 @@ function SessionListInner(props: SessionListProps) {
 											</div>
 
 											{/* Remote Access Toggle Section */}
-											<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+											<div
+												className="p-3 border-b"
+												style={sessionListStyles.root.live.panelSectionBorder}
+											>
 												<div className="flex items-center justify-between">
 													<div>
 														<div
 															className="text-[10px] uppercase font-bold"
-															style={{ color: theme.colors.textDim }}
+															style={sessionListStyles.root.live.panelTextDim}
 														>
 															Remote Access
 														</div>
@@ -2075,7 +2446,7 @@ function SessionListInner(props: SessionListProps) {
 												{cloudflaredInstalled === false && (
 													<div
 														className="mt-2 p-2 rounded text-[10px]"
-														style={{ backgroundColor: theme.colors.bgActivity }}
+														style={sessionListStyles.root.live.installBanner}
 													>
 														<div className="font-medium mb-1">To enable remote access:</div>
 														<div className="opacity-70 font-mono">brew install cloudflared</div>
@@ -2094,18 +2465,21 @@ function SessionListInner(props: SessionListProps) {
 											</div>
 
 											{/* Custom Port Toggle Section */}
-											<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+											<div
+												className="p-3 border-b"
+												style={sessionListStyles.root.live.panelSectionBorder}
+											>
 												<div className="flex items-center justify-between">
 													<div>
 														<div
 															className="text-[10px] uppercase font-bold"
-															style={{ color: theme.colors.textDim }}
+															style={sessionListStyles.root.live.panelTextDim}
 														>
 															Custom Port
 														</div>
 														<div
 															className="text-[9px] mt-0.5"
-															style={{ color: theme.colors.textDim, opacity: 0.7 }}
+															style={sessionListStyles.root.live.customPortCaption}
 														>
 															For static proxy routes
 														</div>
@@ -2191,17 +2565,13 @@ function SessionListInner(props: SessionListProps) {
 																	}
 																}}
 																className="flex-1 px-2 py-1 text-[11px] font-mono rounded border outline-none"
-																style={{
-																	backgroundColor: theme.colors.bgActivity,
-																	borderColor: theme.colors.border,
-																	color: theme.colors.textMain,
-																}}
+																style={sessionListStyles.root.live.customPortInput}
 																placeholder="8080"
 															/>
 														</div>
 														<div
 															className="text-[9px] mt-1"
-															style={{ color: theme.colors.textDim, opacity: 0.7 }}
+															style={sessionListStyles.root.live.customPortCaption}
 														>
 															{isLiveMode
 																? 'Press Enter or click away to apply'
@@ -2212,7 +2582,10 @@ function SessionListInner(props: SessionListProps) {
 											</div>
 
 											{/* URL and QR Code Section - Single View */}
-											<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
+											<div
+												className="p-3 border-b"
+												style={sessionListStyles.root.live.panelSectionBorder}
+											>
 												{/* URL Display */}
 												<div className="flex items-center gap-2 mb-3">
 													<div
@@ -2241,7 +2614,10 @@ function SessionListInner(props: SessionListProps) {
 														className="p-1.5 rounded hover:bg-white/10 transition-colors shrink-0"
 														title="Copy URL"
 													>
-														<Copy className="w-3 h-3" style={{ color: theme.colors.textDim }} />
+														<Copy
+															className="w-3 h-3"
+															style={sessionListStyles.root.live.copyActionButton}
+														/>
 													</button>
 													<button
 														onClick={() => {
@@ -2253,14 +2629,17 @@ function SessionListInner(props: SessionListProps) {
 													>
 														<ExternalLink
 															className="w-3 h-3"
-															style={{ color: theme.colors.textDim }}
+															style={sessionListStyles.root.live.copyActionButton}
 														/>
 													</button>
 												</div>
 
 												{/* QR Code with optional loading overlay */}
 												<div className="relative">
-													<div className="p-2 rounded" style={{ backgroundColor: 'white' }}>
+													<div
+														className="p-2 rounded"
+														style={sessionListStyles.root.live.qrWrapper}
+													>
 														<QRCodeSVG
 															value={
 																activeUrlTab === 'local'
@@ -2278,7 +2657,7 @@ function SessionListInner(props: SessionListProps) {
 													{tunnelStatus === 'starting' && (
 														<div
 															className="absolute inset-0 flex flex-col items-center justify-center rounded"
-															style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
+															style={sessionListStyles.root.live.loadingOverlay}
 														>
 															<div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mb-3" />
 															<div className="text-white text-[11px] font-medium">
@@ -2291,14 +2670,15 @@ function SessionListInner(props: SessionListProps) {
 													{copyFlash && (
 														<div
 															className="absolute inset-0 flex items-center justify-center rounded pointer-events-none animate-pulse"
-															style={{ backgroundColor: 'rgba(0,0,0,0.75)' }}
+															style={sessionListStyles.root.live.copyFlashOverlay}
 														>
 															<div
 																className="px-4 py-2 rounded-full text-[12px] font-bold"
-																style={{
-																	backgroundColor: activeUrlTab === 'local' ? '#22c55e' : '#3b82f6',
-																	color: 'white',
-																}}
+																style={
+																	activeUrlTab === 'local'
+																		? sessionListStyles.root.live.copyFlashBadgeLocal
+																		: sessionListStyles.root.live.copyFlashBadgeRemote
+																}
 															>
 																{copyFlash}
 															</div>
@@ -2311,7 +2691,7 @@ function SessionListInner(props: SessionListProps) {
 													<div className="mt-3 flex flex-col items-center gap-2">
 														<div
 															className="inline-flex rounded-full p-0.5"
-															style={{ backgroundColor: theme.colors.bgActivity }}
+															style={sessionListStyles.root.live.urlPillContainer}
 														>
 															<button
 																onClick={() => setActiveUrlTab('local')}
@@ -2321,7 +2701,9 @@ function SessionListInner(props: SessionListProps) {
 																		: 'hover:bg-white/10'
 																}`}
 																style={
-																	activeUrlTab !== 'local' ? { color: theme.colors.textDim } : {}
+																	activeUrlTab !== 'local'
+																		? sessionListStyles.root.live.tabInactiveText
+																		: undefined
 																}
 															>
 																Local
@@ -2334,7 +2716,9 @@ function SessionListInner(props: SessionListProps) {
 																		: 'hover:bg-white/10'
 																}`}
 																style={
-																	activeUrlTab !== 'remote' ? { color: theme.colors.textDim } : {}
+																	activeUrlTab !== 'remote'
+																		? sessionListStyles.root.live.tabInactiveText
+																		: undefined
 																}
 															>
 																Remote
@@ -2368,13 +2752,11 @@ function SessionListInner(props: SessionListProps) {
 														if (url) window.maestro.shell.openExternal(url);
 													}}
 													className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10 border"
-													style={{
-														color: activeUrlTab === 'local' ? '#4ade80' : '#60a5fa',
-														borderColor:
-															activeUrlTab === 'local'
-																? 'rgba(74, 222, 128, 0.3)'
-																: 'rgba(96, 165, 250, 0.3)',
-													}}
+													style={
+														activeUrlTab === 'local'
+															? sessionListStyles.root.live.openBrowserLocal
+															: sessionListStyles.root.live.openBrowserRemote
+													}
 												>
 													Open in Browser
 												</button>
@@ -2399,7 +2781,7 @@ function SessionListInner(props: SessionListProps) {
 							<button
 								onClick={() => setMenuOpen(!menuOpen)}
 								className="p-2 rounded hover:bg-white/10 transition-colors"
-								style={{ color: theme.colors.textDim }}
+								style={sessionListStyles.root.menuButtonColor}
 								title="Menu"
 							>
 								<Menu className="w-4 h-4" />
@@ -2409,11 +2791,7 @@ function SessionListInner(props: SessionListProps) {
 								<div
 									className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
 									data-tour="hamburger-menu-contents"
-									style={{
-										backgroundColor: theme.colors.bgSidebar,
-										border: `1px solid ${theme.colors.border}`,
-										maxHeight: 'calc(100vh - 90px)',
-									}}
+									style={sessionListStyles.root.live.overlayMenuPanel}
 								>
 									<HamburgerMenuContent
 										theme={theme}
@@ -2435,18 +2813,14 @@ function SessionListInner(props: SessionListProps) {
 						>
 							<Wand2
 								className={`w-6 h-6${isAnyBusy ? ' wand-sparkle-active' : ''}`}
-								style={{ color: theme.colors.accent }}
+								style={sessionListStyles.root.iconAccent}
 							/>
 						</button>
 						{/* Menu Overlay for Collapsed Sidebar */}
 						{menuOpen && (
 							<div
 								className="absolute top-full left-0 mt-2 w-72 rounded-lg shadow-2xl z-50 overflow-y-auto scrollbar-thin"
-								style={{
-									backgroundColor: theme.colors.bgSidebar,
-									border: `1px solid ${theme.colors.border}`,
-									maxHeight: 'calc(100vh - 90px)',
-								}}
+								style={sessionListStyles.root.live.overlayMenuPanel}
 							>
 								<HamburgerMenuContent
 									theme={theme}
@@ -2483,7 +2857,7 @@ function SessionListInner(props: SessionListProps) {
 									}
 								}}
 								className="w-full px-3 py-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.accent, color: theme.colors.textMain }}
+								style={sessionListStyles.root.sidebarFilterInput}
 							/>
 						</div>
 					)}
@@ -2497,14 +2871,17 @@ function SessionListInner(props: SessionListProps) {
 							>
 								<div
 									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-									style={{ color: theme.colors.accent }}
+									style={sessionListStyles.root.sectionHeaderAccent}
 								>
 									{bookmarksCollapsed ? (
 										<ChevronRight className="w-3 h-3" />
 									) : (
 										<ChevronDown className="w-3 h-3" />
 									)}
-									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
+									<Bookmark
+										className="w-3.5 h-3.5"
+										fill={sessionListStyles.root.sectionHeaderAccentFill}
+									/>
 									<span>Bookmarks</span>
 								</div>
 							</div>
@@ -2512,7 +2889,7 @@ function SessionListInner(props: SessionListProps) {
 							{!bookmarksCollapsed ? (
 								<div
 									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.accent }}
+									style={sessionListStyles.root.sectionBorderAccent}
 								>
 									{sortedBookmarkedSessions.map((session) => {
 										const group = groups.find((g) => g.id === session.groupId);
@@ -2549,7 +2926,7 @@ function SessionListInner(props: SessionListProps) {
 								>
 									<div
 										className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-										style={{ color: theme.colors.textDim }}
+										style={sessionListStyles.root.sectionHeaderDim}
 									>
 										{group.collapsed ? (
 											<ChevronRight className="w-3 h-3" />
@@ -2587,7 +2964,7 @@ function SessionListInner(props: SessionListProps) {
 												);
 											}}
 											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
+											style={sessionListStyles.root.groupDelete}
 											title="Delete empty group"
 										>
 											<X className="w-3 h-3" />
@@ -2601,7 +2978,7 @@ function SessionListInner(props: SessionListProps) {
 												onDeleteWorktreeGroup(group.id);
 											}}
 											className="p-1 rounded hover:bg-red-500/20 opacity-0 group-hover:opacity-100 transition-opacity"
-											style={{ color: theme.colors.error }}
+											style={sessionListStyles.root.groupDelete}
 											title="Remove group and all agents"
 										>
 											<Trash2 className="w-3 h-3" />
@@ -2612,7 +2989,7 @@ function SessionListInner(props: SessionListProps) {
 								{!group.collapsed ? (
 									<div
 										className="flex flex-col border-l ml-4"
-										style={{ borderColor: theme.colors.border }}
+										style={sessionListStyles.root.sectionBorder}
 									>
 										{groupSessions.map((session) =>
 											renderSessionWithWorktrees(session, 'group', {
@@ -2654,11 +3031,7 @@ function SessionListInner(props: SessionListProps) {
 								<button
 									onClick={createNewGroup}
 									className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
-									style={{
-										backgroundColor: theme.colors.accent + '20',
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
+									style={sessionListStyles.root.newGroupButton}
 									title="Create new group"
 								>
 									<Plus className="w-3 h-3" />
@@ -2677,7 +3050,7 @@ function SessionListInner(props: SessionListProps) {
 							>
 								<div
 									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
-									style={{ color: theme.colors.textDim }}
+									style={sessionListStyles.root.sectionHeaderDim}
 								>
 									{ungroupedCollapsed ? (
 										<ChevronRight className="w-3 h-3" />
@@ -2693,11 +3066,7 @@ function SessionListInner(props: SessionListProps) {
 										createNewGroup();
 									}}
 									className="px-2 py-0.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center gap-1"
-									style={{
-										backgroundColor: theme.colors.accent + '20',
-										color: theme.colors.accent,
-										border: `1px solid ${theme.colors.accent}40`,
-									}}
+									style={sessionListStyles.root.newGroupButton}
 									title="Create new group"
 								>
 									<Plus className="w-3 h-3" />
@@ -2708,7 +3077,7 @@ function SessionListInner(props: SessionListProps) {
 							{!ungroupedCollapsed ? (
 								<div
 									className="flex flex-col border-l ml-4"
-									style={{ borderColor: theme.colors.border }}
+									style={sessionListStyles.root.sectionBorder}
 								>
 									{sortedUngroupedSessions.map((session) =>
 										renderSessionWithWorktrees(session, 'ungrouped', { keyPrefix: 'ungrouped' })
@@ -2735,11 +3104,7 @@ function SessionListInner(props: SessionListProps) {
 							{draggingSessionId && (
 								<div
 									className="mb-2 px-3 py-2 rounded border-2 border-dashed text-center text-xs"
-									style={{
-										borderColor: theme.colors.accent,
-										color: theme.colors.textDim,
-										backgroundColor: theme.colors.accent + '10',
-									}}
+									style={sessionListStyles.root.dropZone}
 								>
 									Drop here to ungroup
 								</div>
@@ -2747,11 +3112,7 @@ function SessionListInner(props: SessionListProps) {
 							<button
 								onClick={createNewGroup}
 								className="w-full px-2 py-1.5 rounded-full text-[10px] font-medium hover:opacity-80 transition-opacity flex items-center justify-center gap-1"
-								style={{
-									backgroundColor: theme.colors.accent + '20',
-									color: theme.colors.accent,
-									border: `1px solid ${theme.colors.accent}40`,
-								}}
+								style={sessionListStyles.root.newGroupButton}
 								title="Create new group"
 							>
 								<Plus className="w-3 h-3" />
@@ -2795,12 +3156,6 @@ function SessionListInner(props: SessionListProps) {
 					{sortedSessions.map((session) => {
 						const isInBatch = activeBatchSessionIds.includes(session.id);
 						const hasUnreadTabs = session.aiTabs?.some((tab) => tab.hasUnread);
-						// Sessions in Auto Run mode should show yellow/warning color
-						const effectiveStatusColor = isInBatch
-							? theme.colors.warning
-							: session.toolType === 'claude-code' && !session.agentSessionId
-								? undefined // Will use border style instead
-								: getStatusColor(session.state, theme);
 						const shouldPulse = session.state === 'busy' || isInBatch;
 
 						return (
@@ -2813,19 +3168,15 @@ function SessionListInner(props: SessionListProps) {
 								<div className="relative">
 									<div
 										className={`w-3 h-3 rounded-full ${shouldPulse ? 'animate-pulse' : ''}`}
-										style={{
-											opacity: activeSessionId === session.id ? 1 : 0.25,
-											...(session.toolType === 'claude-code' &&
-											!session.agentSessionId &&
-											!isInBatch
-												? {
-														border: `1.5px solid ${theme.colors.textDim}`,
-														backgroundColor: 'transparent',
-													}
-												: {
-														backgroundColor: effectiveStatusColor,
-													}),
-										}}
+										style={
+											session.toolType === 'claude-code' && !session.agentSessionId && !isInBatch
+												? activeSessionId === session.id
+													? sessionListRenderStyles.skinny.dot.fallback.active
+													: sessionListRenderStyles.skinny.dot.fallback.inactive
+												: activeSessionId === session.id
+													? sessionListRenderStyles.skinny.dot.activeByState[session.state]
+													: sessionListRenderStyles.skinny.dot.inactiveByState[session.state]
+										}
 										title={
 											session.toolType === 'claude-code' && !session.agentSessionId
 												? 'No active Claude session'
@@ -2836,7 +3187,7 @@ function SessionListInner(props: SessionListProps) {
 									{activeSessionId !== session.id && hasUnreadTabs && (
 										<div
 											className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 rounded-full"
-											style={{ backgroundColor: theme.colors.error }}
+											style={sessionListStyles.root.unreadBadge}
 											title="Unread messages"
 										/>
 									)}
@@ -2845,12 +3196,7 @@ function SessionListInner(props: SessionListProps) {
 								{/* Hover Tooltip for Skinny Mode */}
 								<div
 									className="fixed rounded px-3 py-2 z-[100] opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-xl"
-									style={{
-										minWidth: '240px',
-										left: '80px',
-										backgroundColor: theme.colors.bgSidebar,
-										border: `1px solid ${theme.colors.border}`,
-									}}
+									style={sessionListRenderStyles.skinny.tooltip}
 								>
 									<SessionTooltipContent
 										session={session}
@@ -2871,7 +3217,7 @@ function SessionListInner(props: SessionListProps) {
 			{/* SIDEBAR BOTTOM ACTIONS */}
 			<div
 				className="p-2 border-t flex gap-2 items-center"
-				style={{ borderColor: theme.colors.border }}
+				style={sessionListStyles.root.bottomDivider}
 			>
 				<button
 					onClick={() => {
@@ -2898,7 +3244,7 @@ function SessionListInner(props: SessionListProps) {
 					<button
 						onClick={addNewSession}
 						className="flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						style={sessionListStyles.root.bottomPrimaryAction}
 					>
 						<Bot className="w-3 h-3" /> New Agent
 					</button>
@@ -2908,7 +3254,7 @@ function SessionListInner(props: SessionListProps) {
 					<button
 						onClick={openWizard}
 						className="flex-1 flex items-center justify-center gap-2 py-2 rounded text-xs font-bold transition-colors hover:opacity-90"
-						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}
+						style={sessionListStyles.root.bottomPrimaryAction}
 						title="Get started with AI wizard"
 					>
 						<Wand2 className="w-3 h-3" /> Wizard
