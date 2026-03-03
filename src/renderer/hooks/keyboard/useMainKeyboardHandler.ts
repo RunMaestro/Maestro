@@ -23,6 +23,9 @@ import { useModalStore } from '../../stores/modalStore';
  * - onKeyboardMasteryLevelUp: Callback when user levels up in keyboard mastery
  */
 
+/** Delay (ms) to allow React re-render before focusing the input element. */
+const FOCUS_AFTER_RENDER_DELAY_MS = 50;
+
 export type KeyboardHandlerContext = any;
 
 /**
@@ -286,7 +289,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				ctx.toggleInputMode();
 				// Auto-focus the input so user can start typing immediately
 				ctx.setActiveFocus('main');
-				setTimeout(() => ctx.inputRef.current?.focus(), 50);
+				setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 				trackShortcut('toggleMode');
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
@@ -536,7 +539,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						);
 						// Auto-focus the input so user can start typing immediately
 						ctx.setActiveFocus('main');
-						setTimeout(() => ctx.inputRef.current?.focus(), 50);
+						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
 						trackShortcut('newTab');
 					}
 				}
