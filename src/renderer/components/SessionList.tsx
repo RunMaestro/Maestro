@@ -169,12 +169,10 @@ function SessionContextMenu({
 				marginRight: 4,
 			},
 		};
-	}, [
-		theme.colors,
-		session.contextUsage,
-		contextWarningYellowThreshold,
-		contextWarningRedThreshold,
-	]);
+	}, [theme.colors]);
+
+	// Measure menu and adjust position to stay within viewport
+	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
 	const menuStyles = useMemo(() => {
 		const submenuPositionStyles =
@@ -225,9 +223,6 @@ function SessionContextMenu({
 		document.addEventListener('keydown', handleKeyDown);
 		return () => document.removeEventListener('keydown', handleKeyDown);
 	}, []);
-
-	// Measure menu and adjust position to stay within viewport
-	const { left, top, ready } = useContextMenuPosition(menuRef, x, y);
 
 	// Calculate submenu position when showing
 	const handleMoveToGroupHover = () => {
@@ -549,12 +544,7 @@ function HamburgerMenuContent({
 				color: theme.colors.textDim,
 			},
 		};
-	}, [
-		theme.colors,
-		session.contextUsage,
-		contextWarningYellowThreshold,
-		contextWarningRedThreshold,
-	]);
+	}, [theme.colors]);
 	return (
 		<div className="p-1">
 			{onNewAgentSession && (
