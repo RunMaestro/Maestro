@@ -71,7 +71,7 @@ const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers
 const mockFsWriteFileSync = vi.fn();
 
 // Mock fs
-vi.mock('fs', () => ({
+const mockFsModule = {
 	existsSync: (...args: unknown[]) => mockFsExistsSync(...args),
 	mkdirSync: (...args: unknown[]) => mockFsMkdirSync(...args),
 	copyFileSync: (...args: unknown[]) => mockFsCopyFileSync(...args),
@@ -80,6 +80,11 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
+};
+
+vi.mock('fs', () => ({
+	...mockFsModule,
+	default: mockFsModule,
 }));
 
 // Mock logger

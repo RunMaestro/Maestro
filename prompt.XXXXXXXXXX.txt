@@ -1,0 +1,38 @@
+You are an autonomous coding agent fixing a GitHub pull request for Maestro.
+
+Goal:
+- Fix only what is necessary to make the failing checks pass for PR #496.
+- Use the failure payload below to focus changes.
+- Keep changes minimal and scoped.
+- Do not add broad refactors or formatting churn.
+- If no safe fix exists, do not force risky behavior and return without edits.
+
+Context:
+- PR repo: RunMaestro/Maestro
+- PR number: 496
+- Head branch: symphony/issue-373-mm85yqkw
+- Head SHA: 04437d0bb6a78a32017016aaca1d968a0d852834
+
+Failing check payload:
+{"repo":"RunMaestro/Maestro","number":496,"title":"perf: optimize SessionListItem style recalculation","htmlUrl":"https://github.com/RunMaestro/Maestro/pull/496","head":"04437d0bb6a78a32017016aaca1d968a0d852834","failures":[{"source":"check-run","id":65503776402,"name":"test","status":"completed","conclusion":"failure","htmlUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22607876365/job/65503776402","detailsUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22607876365/job/65503776402","summary":"","notes":"src/main/stats/stats-db.ts:13:failure Error: [vitest] No \"default\" export is defined on the \"fs\" mock. Did you forget to return it from \"vi.mock\"?\nIf you need to partially mock a module, you can use \"importOriginal\" helper inside:\n\nvi.mock(import(\"fs\"), async (importOriginal) => {\n  const actual = await importOriginal()\n  return {\n    ...actual,\n    // your mocked methods\n  }\n})\n\n ❯ src/main/stats/stats-db.ts:13:33\n ❯ src/main/stats/index.ts:33:1\n\n | src/main/stats/stats-db.ts:13:failure Error: [vitest] No \"default\" export is defined on the \"fs\" mock. Did you forget to return it from \"vi.mock\"?\nIf you need to partially mock a module, you can use \"importOriginal\" helper inside:\n\nvi.mock(import(\"fs\"), async (importOriginal) => {\n  const actual = await importOriginal()\n  return {\n    ...actual,\n    // your mocked methods\n  }\n})\n\n ❯ src/main/stats/stats-db.ts:13:33\n ❯ src/main/stats/index.ts:33:1\n\n | src/main/stats/stats-db.ts:13:failure Error: [vitest] No \"default\" export is defined on the \"fs\" mock. Did you forget to return it from \"vi.mock\"?\nIf you need to partially mock a module, you can use \"importOriginal\" helper inside:\n\nvi.mock(import(\"fs\"), async (importOriginal) => {\n  const actual = await importOriginal()\n  return {\n    ...actual,\n    // your mocked methods\n  }\n})\n\n ❯ src/main/stats/stats-db.ts:13:33\n ❯ src/main/stats/index.ts:33:1\n\n | src/main/stats/stats-db.ts:13:failure Error: [vitest] No \"default\" export is defined on the \"fs\" mock. Did you forget to return it from \"vi.mock\"?\nIf you need to partially mock a module, you can use \"importOriginal\" helper inside:\n\nvi.mock(import(\"fs\"), async (importOriginal) => {\n  const actual = await importOriginal()\n  return {\n    ...actual,\n    // your mocked methods\n  }\n})\n\n ❯ src/main/stats/stats-db.ts:13:33\n ❯ src/main/stats/index.ts:33:1\n\n | src/main/stats/stats-db.ts:13:failure Error: [vitest] No \"default\" export is defined on the \"fs\" mock. Did you forget to return it from \"vi.mock\"?\nIf you need to partially mock a module, you can use \"importOriginal\" helper inside:\n\nvi.mock(import(\"fs\"), async (importOriginal) => {\n  const actual = await importOriginal()\n  return {\n    ...actual,\n    // your mocked methods\n  }\n})\n\n ❯ src/main/stats/stats-db.ts:13:33\n ❯ src/main/stats/index.ts:33:1\n\n","completedAt":"2026-03-03T04:18:36Z"},{"source":"check-run","id":65503776381,"name":"lint-and-format","status":"completed","conclusion":"failure","htmlUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22607876365/job/65503776381","detailsUrl":"https://github.com/RunMaestro/Maestro/actions/runs/22607876365/job/65503776381","summary":"","notes":".github:8:failure Process completed with exit code 1.","completedAt":"2026-03-03T04:12:29Z"}]}
+Local check results (run before Codex edit attempt):
+
+### Local check: test
+command: pnpm test
+status: 1
+output (last 250 lines):
+
+> maestro@0.15.0 test /private/var/folders/md/v04xc5jj3g33bd37429j8r3r0000gn/T/maestro-pr-fix-XXXXXX.b7JzkKT6z8
+> vitest run
+
+sh: vitest: command not found
+ ELIFECYCLE  Test failed. See above for more details.
+ WARN   Local package.json exists, but node_modules missing, did you mean to install?
+
+### Local check: lint-and-format
+command: pnpm run lint-and-format
+status: 1
+output (last 250 lines):
+ ERR_PNPM_NO_SCRIPT  Missing script: lint-and-format
+
+Command "lint-and-format" not found. Did you mean "pnpm run format"?
