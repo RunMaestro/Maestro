@@ -175,7 +175,7 @@ export class StatsDB {
 	 */
 	async getDatabaseSize(): Promise<number> {
 		try {
-			const stats = await fsp.stat(this.dbPath);
+			const stats = statSync(this.dbPath);
 			return stats.size;
 		} catch {
 			return 0;

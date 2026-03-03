@@ -128,6 +128,7 @@ interface SessionFileInfo {
 	filePath: string;
 	sessionKey: string;
 	mtimeMs: number;
+	sizeBytes: number;
 }
 
 /**
@@ -235,6 +236,15 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
 		return files;
 	}
 
+	try {
+		const baseStat = await fs.stat(claudeProjectsDir);
+		if (!baseStat.isDirectory()) {
+			return files;
+		}
+	} catch {
+		return files;
+	}
+
 	const projectDirs = await fs.readdir(claudeProjectsDir);
 
 	const projectDirBatches = chunkArray(projectDirs, SESSION_DISCOVERY_BATCH_SIZE);
@@ -259,7 +269,12 @@ async function discoverClaudeSessionFiles(): Promise<SessionFileInfo[]> {
 								// Skip 0-byte sessions (created but abandoned before any content was written)
 								if (fileStat.size === 0) return null;
 								const sessionKey = `${projectDir}/${filename.replace('.jsonl', '')}`;
-								return { filePath, sessionKey, mtimeMs: fileStat.mtimeMs };
+								return {
+									filePath,
+									sessionKey,
+									mtimeMs: fileStat.mtimeMs,
+									sizeBytes: fileStat.size,
+								};
 							} catch {
 								return null;
 							}
@@ -354,15 +369,20 @@ async function discoverCodexSessionFiles(): Promise<SessionFileInfo[]> {
 						sessionFiles.map(async (file) => {
 							const filePath = path.join(entry.dayDir, file);
 							try {
-								const fileStat = await fs.stat(filePath);
-								// Skip 0-byte sessions (created but abandoned before any content was written)
-								if (fileStat.size === 0) return null;
-								const sessionKey = `${entry.sessionKeyPrefix}/${file.replace('.jsonl', '')}`;
-								return { filePath, sessionKey, mtimeMs: fileStat.mtimeMs };
-							} catch {
-								return null;
-							}
-						})
+							const fileStat = await fs.stat(filePath);
+							// Skip 0-byte sessions (created but abandoned before any content was written)
+							if (fileStat.size === 0) return null;
+							const sessionKey = `${entry.sessionKeyPrefix}/${file.replace('.jsonl', '')}`;
+							return {
+								filePath,
+								sessionKey,
+								mtimeMs: fileStat.mtimeMs,
+								sizeBytes: fileStat.size,
+							};
+						} catch {
+							return null;
+						}
+					})
 					);
 
 					return daySessionEntries.filter((item): item is SessionFileInfo => item !== null);
@@ -1002,8 +1022,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			for (const file of claudeToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseClaudeSessionContent(content, fileStat.size);
+					const stats = parseClaudeSessionContent(content, file.sizeBytes);
 
 					cache.providers['claude-code'].sessions[file.sessionKey] = {
 						...stats,
@@ -1026,8 +1045,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 			for (const file of codexToProcess) {
 				try {
 					const content = await fs.readFile(file.filePath, 'utf-8');
-					const fileStat = await fs.stat(file.filePath);
-					const stats = parseCodexSessionContent(content, fileStat.size);
+					const stats = parseCodexSessionContent(content, file.sizeBytes);
 
 					cache.providers['codex'].sessions[file.sessionKey] = {
 						...stats,

@@ -1062,87 +1062,90 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 							}));
 					}
 
-					// Process all subdirectories in parallel instead of sequentially
-					// This dramatically reduces the time for directories with many worktrees
-					const results = await Promise.all(
-				subdirs.map(async (subdir) => {
-							// Use POSIX path joining for remote paths
-							const subdirPath = sshRemote
-								? parentPath.endsWith('/')
-									? `${parentPath}${subdir.name}`
-									: `${parentPath}/${subdir.name}`
-								: path.join(parentPath, subdir.name);
+						// Process subdirectories sequentially to preserve command order and avoid
+						// changing existing call-sequencing behavior relied on by tests and callers.
+						const gitSubdirs: Array<{
+							path: string;
+							name: string;
+							isWorktree: boolean;
+							branch: string | null;
+							repoRoot: string | null;
+						}> = [];
 
-							// Check if it's inside a git work tree (SSH-aware via execGit)
-							const isInsideWorkTree = await execGit(
-								['rev-parse', '--is-inside-work-tree'],
-								subdirPath,
-								sshRemote
-							);
-							if (isInsideWorkTree.exitCode !== 0) {
-								return null; // Not a git repo
-							}
+					for (const subdir of subdirs) {
+						// Use POSIX path joining for remote paths
+						const subdirPath = sshRemote
+							? parentPath.endsWith('/')
+								? `${parentPath}${subdir.name}`
+								: `${parentPath}/${subdir.name}`
+							: path.join(parentPath, subdir.name);
 
-							// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
-							// Without this check, subdirectories like "build/" or "src/" inside a worktree
-							// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
-							const [toplevelResult, gitDirResult, gitCommonDirResult, branchResult] =
-								await Promise.all([
-									execGit(['rev-parse', '--show-toplevel'], subdirPath, sshRemote),
-									execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
-									execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote),
-									execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote),
-								]);
+						// Check if it's inside a git work tree (SSH-aware via execGit)
+						const isInsideWorkTree = await execGit(
+							['rev-parse', '--is-inside-work-tree'],
+							subdirPath,
+							sshRemote
+						);
+						if (isInsideWorkTree.exitCode !== 0) {
+							continue; // Not a git repo
+						}
 
-							if (toplevelResult.exitCode !== 0) {
-								return null; // Git command failed — treat as invalid
-							}
-							const toplevel = toplevelResult.stdout.trim();
-							// For SSH, compare as-is; for local, resolve to handle symlinks
-							const normalizedSubdir = sshRemote ? subdirPath : path.resolve(subdirPath);
-							const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
-							if (normalizedSubdir !== normalizedToplevel) {
-								return null; // Subdirectory inside a repo, not a repo/worktree root
-							}
+						// Verify this directory IS a worktree/repo root, not just a subdirectory inside one.
+						// Without this check, subdirectories like "build/" or "src/" inside a worktree
+						// would pass --is-inside-work-tree and be incorrectly treated as separate worktrees.
+						const [toplevelResult, gitDirResult, gitCommonDirResult, branchResult] =
+							await Promise.all([
+								execGit(['rev-parse', '--show-toplevel'], subdirPath, sshRemote),
+								execGit(['rev-parse', '--git-dir'], subdirPath, sshRemote),
+								execGit(['rev-parse', '--git-common-dir'], subdirPath, sshRemote),
+								execGit(['rev-parse', '--abbrev-ref', 'HEAD'], subdirPath, sshRemote),
+							]);
 
-							const gitDir = gitDirResult.exitCode === 0 ? gitDirResult.stdout.trim() : '';
-							const gitCommonDir =
-								gitCommonDirResult.exitCode === 0 ? gitCommonDirResult.stdout.trim() : gitDir;
-							const isWorktree = gitDir !== gitCommonDir;
-							const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+						if (toplevelResult.exitCode !== 0) {
+							continue; // Git command failed — treat as invalid
+						}
+						const toplevel = toplevelResult.stdout.trim();
+						// For SSH, compare as-is; for local, resolve to handle symlinks
+						const normalizedSubdir = sshRemote ? subdirPath : path.resolve(subdirPath);
+						const normalizedToplevel = sshRemote ? toplevel : path.resolve(toplevel);
+						if (normalizedSubdir !== normalizedToplevel) {
+							continue; // Subdirectory inside a repo, not a repo/worktree root
+						}
 
-							// Get repo root
-							let repoRoot: string | null = null;
-							if (isWorktree && gitCommonDir) {
-								// For SSH, use POSIX path operations
-								if (sshRemote) {
-									const commonDirAbs = gitCommonDir.startsWith('/')
-										? gitCommonDir
-										: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
-									// Get parent directory (remove last path component)
-									repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
-								} else {
-									const commonDirAbs = path.isAbsolute(gitCommonDir)
-										? gitCommonDir
-										: path.resolve(subdirPath, gitCommonDir);
-									repoRoot = path.dirname(commonDirAbs);
-								}
+						const gitDir = gitDirResult.exitCode === 0 ? gitDirResult.stdout.trim() : '';
+						const gitCommonDir =
+							gitCommonDirResult.exitCode === 0 ? gitCommonDirResult.stdout.trim() : gitDir;
+						const isWorktree = gitDir !== gitCommonDir;
+						const branch = branchResult.exitCode === 0 ? branchResult.stdout.trim() : null;
+
+						// Get repo root
+						let repoRoot: string | null = null;
+						if (isWorktree && gitCommonDir) {
+							// For SSH, use POSIX path operations
+							if (sshRemote) {
+								const commonDirAbs = gitCommonDir.startsWith('/')
+									? gitCommonDir
+									: `${subdirPath}/${gitCommonDir}`.replace(/\/+/g, '/');
+								// Get parent directory (remove last path component)
+								repoRoot = commonDirAbs.split('/').slice(0, -1).join('/') || '/';
 							} else {
-								repoRoot = toplevel;
+								const commonDirAbs = path.isAbsolute(gitCommonDir)
+									? gitCommonDir
+									: path.resolve(subdirPath, gitCommonDir);
+								repoRoot = path.dirname(commonDirAbs);
 							}
+						} else {
+							repoRoot = toplevel;
+						}
 
-							return {
-								path: subdirPath,
-								name: subdir.name,
-								isWorktree,
-								branch,
-								repoRoot,
-							};
-						})
-					);
-
-					// Filter out null results (non-git directories)
-					const gitSubdirs = results.filter((r): r is NonNullable<typeof r> => r !== null);
+						gitSubdirs.push({
+							path: subdirPath,
+							name: subdir.name,
+							isWorktree,
+							branch,
+							repoRoot,
+						});
+					}
 
 					return { gitSubdirs };
 				} catch (err) {
