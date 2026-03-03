@@ -42,14 +42,21 @@ vi.mock('../../../../main/utils/logger', () => ({
 },
 }));
 // Mock fs/promises for global stats discovery scanning
-vi.mock('fs/promises', () => ({
-	access: vi.fn(),
-	readdir: vi.fn(),
-	stat: vi.fn(),
-	readFile: vi.fn(),
-	writeFile: vi.fn(),
-	mkdir: vi.fn(),
-}));
+vi.mock('fs/promises', () => {
+	const fsPromisesMock = {
+		access: vi.fn(),
+		readdir: vi.fn(),
+		stat: vi.fn(),
+		readFile: vi.fn(),
+		writeFile: vi.fn(),
+		mkdir: vi.fn(),
+	};
+
+	return {
+		...fsPromisesMock,
+		default: fsPromisesMock,
+	};
+});
 // Mock global stats cache so getGlobalStats remains deterministic
 vi.mock('../../../../main/utils/statsCache', () => ({
 	loadGlobalStatsCache: vi.fn(),

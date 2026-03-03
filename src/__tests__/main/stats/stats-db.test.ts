@@ -873,7 +873,7 @@ describe('Daily backup system', () => {
 			await db.initialize();
 
 			// Should have attempted to copy the database for backup
-			expect(mockFsCopyFileSync).toHaveBeenCalled();
+			expect(mockFsCopyFile).toHaveBeenCalled();
 		});
 
 		it('should skip backup creation if today backup already exists', async () => {
@@ -888,7 +888,7 @@ describe('Daily backup system', () => {
 			await db.initialize();
 
 			// copyFileSync should not be called for daily backup (might be called for other reasons)
-			const dailyBackupCalls = mockFsCopyFileSync.mock.calls.filter(
+			const dailyBackupCalls = mockFsCopyFile.mock.calls.filter(
 				(call) => typeof call[1] === 'string' && call[1].includes('daily')
 			);
 			expect(dailyBackupCalls).toHaveLength(0);
@@ -899,8 +899,9 @@ describe('Daily backup system', () => {
 		it('should remove stale WAL/SHM files before integrity check on initialization', async () => {
 			// Track which files are checked/removed
 			const unlinkCalls: string[] = [];
-			mockFsUnlinkSync.mockImplementation((p: unknown) => {
+			mockFsUnlink.mockImplementation((p: unknown) => {
 				if (typeof p === 'string') unlinkCalls.push(p);
+				return Promise.resolve();
 			});
 
 			// existsSync returns true for WAL/SHM files
@@ -955,7 +956,7 @@ describe('Daily backup system', () => {
 			await db.initialize();
 
 			mockDb.pragma.mockClear();
-			db.backupDatabase();
+			await db.backupDatabase();
 
 			expect(mockDb.pragma).toHaveBeenCalledWith('wal_checkpoint(TRUNCATE)');
 		});
@@ -969,8 +970,9 @@ describe('Daily backup system', () => {
 				if (pragmaStr === 'integrity_check') return [{ integrity_check: 'ok' }];
 				return [{ user_version: 3 }];
 			});
-			mockFsCopyFileSync.mockImplementation(() => {
+			mockFsCopyFile.mockImplementation(() => {
 				callOrder.push('copy');
+				return Promise.resolve();
 			});
 
 			const { StatsDB } = await import('../../../main/stats');
@@ -978,10 +980,10 @@ describe('Daily backup system', () => {
 			await db.initialize();
 
 			mockDb.pragma.mockClear();
-			mockFsCopyFileSync.mockClear();
+			mockFsCopyFile.mockClear();
 			callOrder.length = 0;
 
-			db.backupDatabase();
+			await db.backupDatabase();
 
 			expect(callOrder).toEqual(['checkpoint', 'copy']);
 		});
