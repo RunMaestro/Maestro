@@ -10,7 +10,7 @@
 
 import Database from 'better-sqlite3';
 import * as path from 'path';
-import { existsSync, mkdirSync, promises as fsp } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, promises as fsp, readdirSync, statSync, unlinkSync } from 'fs';
 import { app } from 'electron';
 import { logger } from '../utils/logger';
 import type {
@@ -445,11 +445,11 @@ export class StatsDB {
 	/**
 	 * Get available daily backups sorted by date (newest first).
 	 */
-	async getAvailableBackups(): Promise<Array<{ path: string; date: string; size: number }>> {
+	getAvailableBackups(): Array<{ path: string; date: string; size: number }> {
 		try {
 			const dir = path.dirname(this.dbPath);
 			const baseName = path.basename(this.dbPath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-			const files = await fsp.readdir(dir);
+			const files = readdirSync(dir);
 			const backups: Array<{ path: string; date: string; size: number }> = [];
 
 			for (const file of files) {
@@ -457,7 +457,7 @@ export class StatsDB {
 				const dailyMatch = file.match(new RegExp(`^${baseName}\\.daily\\.(\\d{4}-\\d{2}-\\d{2})$`));
 				if (dailyMatch) {
 					const fullPath = path.join(dir, file);
-					const stats = await fsp.stat(fullPath);
+					const stats = statSync(fullPath);
 					backups.push({
 						path: fullPath,
 						date: dailyMatch[1],
@@ -469,7 +469,7 @@ export class StatsDB {
 				const timestampMatch = file.match(new RegExp(`^${baseName}\\.backup\\.(\\d+)$`));
 				if (timestampMatch) {
 					const fullPath = path.join(dir, file);
-					const stats = await fsp.stat(fullPath);
+					const stats = statSync(fullPath);
 					const timestamp = parseInt(timestampMatch[1], 10);
 					const date = new Date(timestamp).toISOString().split('T')[0];
 					backups.push({
@@ -492,9 +492,9 @@ export class StatsDB {
 	 * Restore database from a backup file.
 	 * Returns true if restoration was successful.
 	 */
-	async restoreFromBackup(backupPath: string): Promise<boolean> {
+	restoreFromBackup(backupPath: string): boolean {
 		try {
-			if (!(await this.pathExists(backupPath))) {
+			if (!existsSync(backupPath)) {
 				logger.error(`Backup file does not exist: ${backupPath}`, LOG_CONTEXT);
 				return false;
 			}
@@ -513,20 +513,20 @@ export class StatsDB {
 			// Remove WAL and SHM files if they exist
 			const walPath = `${this.dbPath}-wal`;
 			const shmPath = `${this.dbPath}-shm`;
-			if (await this.pathExists(walPath)) {
-				await fsp.unlink(walPath);
+			if (existsSync(walPath)) {
+				unlinkSync(walPath);
 			}
-			if (await this.pathExists(shmPath)) {
-				await fsp.unlink(shmPath);
+			if (existsSync(shmPath)) {
+				unlinkSync(shmPath);
 			}
 
 			// Remove current database if it exists
-			if (await this.pathExists(this.dbPath)) {
-				await fsp.unlink(this.dbPath);
+			if (existsSync(this.dbPath)) {
+				unlinkSync(this.dbPath);
 			}
 
 			// Copy backup to main database path
-			await fsp.copyFile(backupPath, this.dbPath);
+			copyFileSync(backupPath, this.dbPath);
 			logger.info(`Restored database from backup: ${backupPath}`, LOG_CONTEXT);
 
 			return true;
