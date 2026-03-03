@@ -17,7 +17,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 
 **Latest: v0.15.1** | Released March 3, 2026
 
-🎶 Maestro Symphony - Contribute to open source with AI assistance! Browse curated issues from projects with the `runmaestro.ai` label, clone repos with one click, and automatically process the relevant Auto Run playbooks. Track your contributions, streaks, and stats. You're contributing CPU and tokens towards your favorite open source projects and features. NOTE: Making changes here active based on user feedback 🙏
+🎶 Maestro Symphony - Contribute to open source with AI assistance! Browse curated issues from projects with the `runmaestro.ai` label, clone repos with one click, and automatically process the relevant Auto Run playbooks. Track your contributions, streaks, and stats. You're contributing CPU and tokens towards your favorite open-source projects and features. NOTE: Making changes here active based on user feedback 🙏
 
 🎬 Director's Notes. Aggregates history across all agents into a unified timeline with search, filters, and an activity graph. Includes an AI Overview tab that generates a structured synopsis of recent work. Off by default, gated behind a new "Encore Features" panel under settings. This is a precursor to an eventual plugin system. Allowing for extensions and customizations without bloating the core app.
 
@@ -32,6 +32,7 @@ Maestro can update itself automatically! This feature was introduced in **v0.8.7
 ## Security Fixes
 
 Addressed some security issues, all thanks to @VVX7
+
 - #421 History panel stored XSS
 - #422 Stored XSS to reverse shell
 - #423 Stored XSS to SSRF
@@ -39,7 +40,7 @@ Addressed some security issues, all thanks to @VVX7
 ## Smaller Changes in 0.15.x
 
 - Added safety controls around agent working directory deletion 🔒 (#206)
-- Added `/skills` command for enumerate Claude Code skills 🧰  (#154)
+- Added `/skills` command for enumerate Claude Code skills 🧰 (#154)
 - Renamed "Audio Notifications" to "Custom Notifications" 🔔 (#168)
 - Auto-scroll now respects user scroll position in AI mode 📜 (#237)
 - Spec-Kit and OpenSpec commands now accept arguments properly ⚙️ (#238)
@@ -57,7 +58,7 @@ Addressed some security issues, all thanks to @VVX7
 - Added option to open document preview from within the graph view 📈
 - Added configuration options to ignore remote file patterns over SSH connections 🚯
 - Fixed context consumption calculation bugs 🧮
-- AI responses can now be saved to markdown on disk 💾
+- AI responses can now be saved to Markdown on disk 💾
 - Hide Empty "Ungrouped Agents" Folder 📁
 - File preview detects updates on disk and shows refresh button ↪️
 - Auto Run task calculation is now dynamic to count tasks added mid-flight ✈️
@@ -82,7 +83,7 @@ Changes in this point release include:
 
 - Desktop app performance improvements (more to come on this, we want Maestro blazing fast) 🐌
 - Added local manifest feature for custom playbooks 📖
-- Agents are now inherently aware of your activity history as seen in the history panel 📜 (this is built-in cross context memory!)
+- Agents are now inherently aware of your activity history as seen in the history panel 📜 (this is built-in cross-context memory!)
 - Added markdown rendering support for AI responses in mobile view 📱
 - Bugfix in tracking costs from JSONL files that were aged out 🏦
 - Added BlueSky social media handle for leaderboard 🦋
@@ -105,7 +106,7 @@ The major contributions to 0.14.x remain:
 - Leaderboard tracking now works across multiple systems and syncs level from cloud 🏆
 - Agent duplication. Pro tip: Consider a group of unused "Template" agents ✌️
 - New setting to prevent system from going to sleep while agents are active 🛏️
-- The tab menu has a new "Publish as GitHub Gist" option  📝
+- The tab menu has a new "Publish as GitHub Gist" option 📝
 - The tab menu has options to move the tab to the first or last position 🔀
 - [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks) can now contain non-markdown assets 📙
 - Improved default shell detection 🐚
@@ -134,14 +135,16 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 - TAKE TWO! Fixed Linux ARM64 build architecture contamination issues 🏗️
 
 ### v0.13.1 Changes
+
 - Fixed Linux ARM64 build architecture contamination issues 🏗️
 - Enhanced error handling for Auto Run batch processing 🚨
 
 ### v0.13.0 Changes
+
 - Added a global usage dashboard, data collection begins with this install 🎛️
 - Added a Playbook Exchange for downloading pre-defined Auto Run playbooks from [Maestro-Playbooks](https://github.com/pedramamini/Maestro-Playbooks) 📕
 - Bundled OpenSpec commands for structured change proposals 📝
-- Added pre-release channel support for beta/RC updates 🧪
+- Added prerelease channel support for beta/RC updates 🧪
 - Implemented global hands-on time tracking across sessions ⏱️
 - Added new keyboard shortcut for agent settings (Opt+Cmd+, | Ctrl+Alt+,) ⌨️
 - Added directory size calculation with file/folder counts in file explorer 📊
@@ -161,15 +164,19 @@ Thanks for the contributions: @t1mmen @aejfager @Crumbgrabber @whglaser @b3nw @d
 The big changes in the v0.12.x line are the following three:
 
 ## Show Thinking
-🤔 There is now a toggle to show thinking for the agent, the default for new tabs is off, though this can be changed under Settings > General. The toggle shows next to History and Read-Only. Very similar pattern. This has been the #1 most requested feature, though personally, I don't think I'll use it as I prefer to not see the details of the work, but the results of the work. Just as we work with our colleagues. 
+
+🤔 There is now a toggle to show thinking for the agent, the default for new tabs is off, though this can be changed under Settings > General. The toggle shows next to History and Read-Only. Very similar pattern. This has been the #1 most requested feature, though personally, I don't think I'll use it as I prefer to not see the details of the work, but the results of the work. Just as we work with our colleagues.
 
 ## GitHub Spec-Kit Integration
-🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
+
+🎯 Added [GitHub Spec-Kit](https://github.com/github/spec-kit) commands into Maestro with a built-in updater to grab the latest prompts from the repository. We do override `/speckit-implement` (the final step) to create Auto Run docs and guide the user through their execution, which thanks to Wortrees from v0.11.x allows us to run in parallel!
 
 ## Context Management Tools
+
 📖 Added context management options from tab right-click menu. You can now compress, merge, and transfer contexts between agents. You will received (configurable) warnings at 60% and 80% context consumption with a hint to compact.
 
 ## Changes Specific to v0.12.3:
+
 - We now have hosted documentation through Mintlify 📚
 - Export any tab conversation as self-contained themed HTML file 📄
 - Publish files as private/public Gists 🌐
@@ -187,7 +194,7 @@ The big changes in the v0.12.x line are the following three:
 
 **Latest: v0.11.0** | Released December 22, 2025
 
-🌳 Github Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
+🌳 GitHub Worktree support was added. Any agent bound to a Git repository has the option to enable worktrees, each of which show up as a sub-agent with their own write-lock and Auto Run capability. Now you can truly develop in parallel on the same project and issue PRs when you're ready, all from within Maestro. Huge improvement, major thanks to @petersilberman.
 
 # Other Changes
 
@@ -324,6 +331,7 @@ Minor bugfixes on top of v0.7.3:
 **Latest: v0.6.1** | Released December 4, 2025
 
 In this release...
+
 - Added recursive subfolder support for Auto Run markdown files 🗂️
 - Enhanced document tree display with expandable folder navigation 🌳
 - Enabled creating documents in subfolders with path selection 📁
@@ -335,7 +343,8 @@ In this release...
 - Improved progress tracking with per-document completion visualization 📈
 - Added support for nested folder structures in document management 🏗️
 
-Plus the pre-release ALPHA...
+Plus the prerelease ALPHA...
+
 - Template vars now set context in default autorun prompt 🚀
 - Added Enter key support for queued message confirmation dialog ⌨️
 - Kill process capability added to System Process Monitor 💀
