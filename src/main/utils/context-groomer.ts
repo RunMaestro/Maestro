@@ -34,17 +34,17 @@ export interface GroomingProcessManager {
 		promptArgs?: (prompt: string) => string[];
 		noPromptSeparator?: boolean;
 		// SSH remote config for running on a remote host
-			sessionSshRemoteConfig?: {
-				enabled: boolean;
-				remoteId: string | null;
-				workingDirOverride?: string;
-			};
-			// Custom environment variables (resolved via applyAgentConfigOverrides)
-			customEnvVars?: Record<string, string>;
-			// Custom agent configuration
-			sessionCustomPath?: string;
-			sessionCustomArgs?: string;
-			sessionCustomEnvVars?: Record<string, string>;
+		sessionSshRemoteConfig?: {
+			enabled: boolean;
+			remoteId: string | null;
+			workingDirOverride?: string;
+		};
+		// Custom environment variables (resolved via applyAgentConfigOverrides)
+		customEnvVars?: Record<string, string>;
+		// Custom agent configuration
+		sessionCustomPath?: string;
+		sessionCustomArgs?: string;
+		sessionCustomEnvVars?: Record<string, string>;
 		}): Promise<{ pid: number; success?: boolean } | null>;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
@@ -334,7 +334,7 @@ export async function groomContext(
 		processManager.on('agent-error', onError);
 
 		// Spawn the process in batch mode
-		const spawnResult = await processManager.spawn({
+		const spawnResult = processManager.spawn({
 			sessionId: groomerSessionId,
 			toolType: agentType,
 			cwd: projectRoot,

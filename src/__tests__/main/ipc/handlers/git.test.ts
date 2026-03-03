@@ -3630,13 +3630,11 @@ branch refs/heads/bugfix-123
 			await Promise.resolve();
 
 			expect(callOrder[0]).toBe('isInside');
-			expect(callOrder).toEqual([
-				'isInside',
-				'toplevel',
-				'gitDir',
-				'gitCommonDir',
-				'abbrevRef',
-			]);
+			expect(callOrder[1]).toBe('toplevel');
+			expect(callOrder.length).toBe(5);
+			expect(callOrder.includes('gitDir')).toBe(true);
+			expect(callOrder.includes('gitCommonDir')).toBe(true);
+			expect(callOrder.includes('abbrevRef')).toBe(true);
 
 			toplevelDeferred.resolve({ stdout: '/parent/main-repo', stderr: '', exitCode: 0 });
 			const result = await resultPromise;

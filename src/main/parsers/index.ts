@@ -52,7 +52,7 @@ export {
 // Import parser implementations
 import { ClaudeOutputParser } from './claude-output-parser';
 import { OpenCodeOutputParser } from './opencode-output-parser';
-import { CodexOutputParser, invalidateCodexConfigCache } from './codex-output-parser';
+import { CodexOutputParser } from './codex-output-parser';
 import { FactoryDroidOutputParser } from './factory-droid-output-parser';
 import {
 	registerOutputParser,
@@ -76,7 +76,6 @@ const LOG_CONTEXT = '[OutputParsers]';
 export function initializeOutputParsers(): void {
 	// Clear any existing registrations (for testing/reloading)
 	clearParserRegistry();
-	invalidateCodexConfigCache();
 
 	// Register all parser implementations
 	registerOutputParser(new ClaudeOutputParser());

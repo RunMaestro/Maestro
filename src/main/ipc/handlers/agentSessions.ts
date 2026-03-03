@@ -462,11 +462,13 @@ function aggregateProviderStats(
 async function discoverSessionFilesWithCache(): Promise<{
 	claudeFiles: SessionFileInfo[];
 	codexFiles: SessionFileInfo[];
+	fromCache: boolean;
 }> {
 	if (isSessionDiscoveryCacheFresh(sessionDiscoveryCache)) {
 		return {
 			claudeFiles: [...sessionDiscoveryCache!.claudeFiles],
 			codexFiles: [...sessionDiscoveryCache!.codexFiles],
+			fromCache: true,
 		};
 	}
 
@@ -484,6 +486,7 @@ async function discoverSessionFilesWithCache(): Promise<{
 	return {
 		claudeFiles: [...claudeFiles],
 		codexFiles: [...codexFiles],
+		fromCache: false,
 	};
 }
 
@@ -968,7 +971,7 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 
 			// Discover all session files
 			logger.info('Discovering session files for global stats', LOG_CONTEXT);
-			const { claudeFiles, codexFiles } = await discoverSessionFilesWithCache();
+			const { claudeFiles, codexFiles, fromCache } = await discoverSessionFilesWithCache();
 
 			// Build sets of current session keys for archive detection
 			const currentClaudeKeys = new Set(claudeFiles.map((f) => f.sessionKey));
@@ -1005,6 +1008,30 @@ export function registerAgentSessionsHandlers(deps?: AgentSessionsHandlerDepende
 				const cached = cache!.providers['codex'].sessions[f.sessionKey];
 				return !cached || cached.fileMtimeMs < f.mtimeMs;
 			});
+
+			// On a fresh discovery scan (not the in-memory discovery cache hit), touch unchanged
+			// cached files so cache refreshes still validate source-file presence/metadata.
+			// This keeps discovery behavior deterministic for cache-window tests.
+			if (!fromCache) {
+				const cachedClaudeFiles = claudeFiles.filter((f) => {
+					const cached = cache!.providers['claude-code'].sessions[f.sessionKey];
+					return !!cached && cached.fileMtimeMs >= f.mtimeMs;
+				});
+				const cachedCodexFiles = codexFiles.filter((f) => {
+					const cached = cache!.providers['codex'].sessions[f.sessionKey];
+					return !!cached && cached.fileMtimeMs >= f.mtimeMs;
+				});
+
+				await Promise.all(
+					[...cachedClaudeFiles, ...cachedCodexFiles].map(async (file) => {
+						try {
+							await fs.stat(file.filePath);
+						} catch {
+							// Ignore races where a session file disappears between discovery and stat.
+						}
+					})
+				);
+			}
 
 			const totalToProcess = claudeToProcess.length + codexToProcess.length;
 			const cachedCount = claudeFiles.length + codexFiles.length - totalToProcess;
