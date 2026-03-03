@@ -152,10 +152,7 @@ export class CallbackRegistry {
 		return this.callbacks.toggleBookmark(sessionId);
 	}
 
-	async getHistory(
-		projectPath?: string,
-		sessionId?: string
-	): Promise<import('../../shared/types').HistoryEntry[]> {
+	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
 
