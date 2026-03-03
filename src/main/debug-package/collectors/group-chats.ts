@@ -69,8 +69,8 @@ export async function collectGroupChats(): Promise<GroupChatInfo[]> {
 				participantCount: Array.isArray(chat.participants) ? chat.participants.length : 0,
 				participants: Array.isArray(chat.participants)
 					? chat.participants.map((p: any) => ({
-						agentId: p.agentId || 'unknown',
-					}))
+							agentId: p.agentId || 'unknown',
+						}))
 					: [],
 				messageCount,
 				createdAt: chat.createdAt || 0,

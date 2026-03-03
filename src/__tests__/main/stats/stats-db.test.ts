@@ -70,11 +70,11 @@ const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
 const mockFsAccess = vi.fn((pathArg: string) => {
-		if (mockFsExistsSync(pathArg)) {
-			return Promise.resolve();
-		}
-		return Promise.reject(new Error('ENOENT'));
-	});
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
 const mockFsMkdir = vi.fn(() => Promise.resolve());
 const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
 const mockFsCopyFile = vi.fn(() => Promise.resolve());
@@ -95,16 +95,16 @@ vi.mock('fs', () => ({
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
 	readdirSync: (...args: unknown[]) => mockFsReaddirSync(...args),
-		promises: {
-			access: (...args: unknown[]) => mockFsAccess(...args),
-			mkdir: (...args: unknown[]) => mockFsMkdir(...args),
-			stat: (...args: unknown[]) => mockFsStat(...args),
-			copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
-			unlink: (...args: unknown[]) => mockFsUnlink(...args),
-			readdir: (...args: unknown[]) => mockFsReaddir(...args),
-			rename: (...args: unknown[]) => mockFsRename(...args),
-		}
-	}));
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+}));
 
 // Mock logger
 vi.mock('../../../main/utils/logger', () => ({

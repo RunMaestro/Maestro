@@ -184,7 +184,7 @@ export const SessionListItem = memo(function SessionListItem({
 			theme.colors.textDim,
 			theme.colors.border,
 			theme.colors.bgActivity,
-		],
+		]
 	);
 
 	return (
@@ -200,10 +200,7 @@ export const SessionListItem = memo(function SessionListItem({
 				className="p-1 -ml-1 rounded hover:bg-white/10 transition-colors shrink-0"
 				title={isStarred ? 'Remove from favorites' : 'Add to favorites'}
 			>
-				<Star
-					className="w-4 h-4"
-					style={styles.starIcon}
-				/>
+				<Star className="w-4 h-4" style={styles.starIcon} />
 			</button>
 
 			{/* Quick Resume button */}
@@ -260,10 +257,7 @@ export const SessionListItem = memo(function SessionListItem({
 				<div
 					className={`flex items-center gap-1.5 ${session.sessionName ? 'mb-1' : 'mb-1.5'} group/title`}
 				>
-					<span
-						className="font-medium truncate text-sm flex-1 min-w-0"
-						style={styles.sessionTitle}
-					>
+					<span className="font-medium truncate text-sm flex-1 min-w-0" style={styles.sessionTitle}>
 						{session.firstMessage || `Session ${session.sessionId.slice(0, 8)}...`}
 					</span>
 					{/* Rename button for sessions without a name (shows on hover) */}
@@ -335,10 +329,7 @@ export const SessionListItem = memo(function SessionListItem({
 
 					{/* Cost per session */}
 					{(session.costUsd ?? 0) > 0 && (
-						<span
-							className="flex items-center gap-1 font-mono"
-							style={styles.costText}
-						>
+						<span className="flex items-center gap-1 font-mono" style={styles.costText}>
 							<DollarSign className="w-3 h-3" />
 							{(session.costUsd ?? 0).toFixed(2)}
 						</span>
@@ -366,10 +357,7 @@ export const SessionListItem = memo(function SessionListItem({
 
 			{/* Active indicator */}
 			{isActive && (
-				<span
-					className="text-[10px] px-2 py-0.5 rounded-full shrink-0"
-					style={styles.activeBadge}
-				>
+				<span className="text-[10px] px-2 py-0.5 rounded-full shrink-0" style={styles.activeBadge}>
 					ACTIVE
 				</span>
 			)}

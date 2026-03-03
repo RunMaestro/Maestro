@@ -1065,7 +1065,7 @@ export function registerGitHandlers(deps: GitHandlerDependencies): void {
 					// Process all subdirectories in parallel instead of sequentially
 					// This dramatically reduces the time for directories with many worktrees
 					const results = await Promise.all(
-				subdirs.map(async (subdir) => {
+						subdirs.map(async (subdir) => {
 							// Use POSIX path joining for remote paths
 							const subdirPath = sshRemote
 								? parentPath.endsWith('/')

@@ -70,18 +70,17 @@ const mockFsStatSync = vi.fn(() => ({ size: 1024 }));
 const mockFsReadFileSync = vi.fn(() => '0'); // Default: old timestamp (triggers vacuum check)
 const mockFsWriteFileSync = vi.fn();
 const mockFsAccess = vi.fn((pathArg: string) => {
-		if (mockFsExistsSync(pathArg)) {
-			return Promise.resolve();
-		}
-		return Promise.reject(new Error('ENOENT'));
-	});
+	if (mockFsExistsSync(pathArg)) {
+		return Promise.resolve();
+	}
+	return Promise.reject(new Error('ENOENT'));
+});
 const mockFsMkdir = vi.fn(() => Promise.resolve());
 const mockFsStat = vi.fn(() => Promise.resolve({ size: 1024 }));
 const mockFsCopyFile = vi.fn(() => Promise.resolve());
 const mockFsUnlink = vi.fn(() => Promise.resolve());
 const mockFsRename = vi.fn(() => Promise.resolve());
 const mockFsReaddir = vi.fn(() => Promise.resolve([] as string[]));
-
 
 // Mock fs
 vi.mock('fs', () => ({
@@ -93,16 +92,16 @@ vi.mock('fs', () => ({
 	statSync: (...args: unknown[]) => mockFsStatSync(...args),
 	readFileSync: (...args: unknown[]) => mockFsReadFileSync(...args),
 	writeFileSync: (...args: unknown[]) => mockFsWriteFileSync(...args),
-		promises: {
-			access: (...args: unknown[]) => mockFsAccess(...args),
-			mkdir: (...args: unknown[]) => mockFsMkdir(...args),
-			stat: (...args: unknown[]) => mockFsStat(...args),
-			copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
-			unlink: (...args: unknown[]) => mockFsUnlink(...args),
-			readdir: (...args: unknown[]) => mockFsReaddir(...args),
-			rename: (...args: unknown[]) => mockFsRename(...args),
-		}
-	}));
+	promises: {
+		access: (...args: unknown[]) => mockFsAccess(...args),
+		mkdir: (...args: unknown[]) => mockFsMkdir(...args),
+		stat: (...args: unknown[]) => mockFsStat(...args),
+		copyFile: (...args: unknown[]) => mockFsCopyFile(...args),
+		unlink: (...args: unknown[]) => mockFsUnlink(...args),
+		readdir: (...args: unknown[]) => mockFsReaddir(...args),
+		rename: (...args: unknown[]) => mockFsRename(...args),
+	},
+}));
 
 // Mock logger
 vi.mock('../../../main/utils/logger', () => ({
@@ -484,7 +483,7 @@ describe('Time-range filtering works correctly for all ranges', () => {
 		});
 	});
 
-		describe('SQL query structure verification', () => {
+	describe('SQL query structure verification', () => {
 		it('should include start_time >= ? in getQueryEvents SQL', async () => {
 			const { StatsDB } = await import('../../../main/stats');
 			const db = new StatsDB();

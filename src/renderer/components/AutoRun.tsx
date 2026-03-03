@@ -725,7 +725,10 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		resetUndoHistory(content);
 	}, [selectedFile, sessionId, content, resetUndoHistory]);
 
-	const completedTaskMatches = useMemo(() => localContent.match(AUTO_RUN_COMPLETED_TASK_REGEX) || [], [localContent]);
+	const completedTaskMatches = useMemo(
+		() => localContent.match(AUTO_RUN_COMPLETED_TASK_REGEX) || [],
+		[localContent]
+	);
 	const completedTaskCountFromLocalContent = useMemo(
 		() => completedTaskMatches.length,
 		[completedTaskMatches]
@@ -1070,10 +1073,16 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 	const trimmedSearchQuery = useMemo(() => searchQuery.trim(), [searchQuery]);
 	const searchQueryRegex = useMemo(() => {
 		if (!trimmedSearchQuery) return null;
-		const escapedSearchQuery = trimmedSearchQuery.replace(AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX, '\\$&');
+		const escapedSearchQuery = trimmedSearchQuery.replace(
+			AUTO_RUN_SEARCH_QUERY_ESCAPE_REGEX,
+			'\\$&'
+		);
 		return new RegExp(escapedSearchQuery, 'gi');
 	}, [trimmedSearchQuery]);
-	const searchMatches = useMemo(() => getSearchMatches(localContent, searchQueryRegex), [localContent, searchQueryRegex]);
+	const searchMatches = useMemo(
+		() => getSearchMatches(localContent, searchQueryRegex),
+		[localContent, searchQueryRegex]
+	);
 	const searchMatchCount = useMemo(() => searchMatches.length, [searchMatches]);
 	useEffect(() => {
 		// Clear any pending count
@@ -1182,17 +1191,17 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			textarea.focus();
 			textarea.setSelectionRange(matchPosition, matchPosition + trimmedSearchQuery.length);
 			userNavigatedToMatchRef.current = false;
-			}
-		}, [
-			currentMatchIndex,
-			searchOpen,
-			totalMatches,
-			mode,
-			localContent,
-			searchMatches,
-			searchMatchCount,
-			trimmedSearchQuery,
-		]);
+		}
+	}, [
+		currentMatchIndex,
+		searchOpen,
+		totalMatches,
+		mode,
+		localContent,
+		searchMatches,
+		searchMatchCount,
+		trimmedSearchQuery,
+	]);
 
 	const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
 		// Let template autocomplete handle keys first
