@@ -1,16 +1,18 @@
 /**
- * EditGroupChatModal.tsx
+ * GroupChatModal.tsx
  *
- * Modal for editing an existing Group Chat. Allows user to:
- * - Change the name of the group chat
- * - Change the moderator agent via dropdown
+ * Unified modal for creating and editing Group Chats. Supports two modes:
+ * - 'create': Empty initial state, "Create" button, Beta badge, description text
+ * - 'edit': Pre-populated from existing group chat, "Save" button, moderator change warning
+ *
+ * Allows user to:
+ * - Select a moderator agent from a dropdown of available agents
  * - Customize moderator settings (CLI args, path, ENV vars) via expandable panel
- *
- * Similar to NewGroupChatModal but pre-populated with existing values.
+ * - Enter/edit a name for the group chat
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Settings, ChevronDown, Check } from 'lucide-react';
+import { X, Settings, ChevronDown, Check } from 'lucide-react';
 import type { Theme, AgentConfig, ModeratorConfig, GroupChat } from '../types';
 import type { SshRemoteConfig, AgentSshRemoteConfig } from '../../shared/types';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
@@ -19,10 +21,20 @@ import { AGENT_TILES } from './Wizard/screens/AgentSelectionScreen';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
 import { SshRemoteSelector } from './shared/SshRemoteSelector';
 
-interface EditGroupChatModalProps {
+interface GroupChatModalCreateProps {
+	mode: 'create';
 	theme: Theme;
 	isOpen: boolean;
-	groupChat: GroupChat | null;
+	onClose: () => void;
+	onCreate: (name: string, moderatorAgentId: string, moderatorConfig?: ModeratorConfig) => void;
+	groupChat?: undefined;
+	onSave?: undefined;
+}
+
+interface GroupChatModalEditProps {
+	mode: 'edit';
+	theme: Theme;
+	isOpen: boolean;
 	onClose: () => void;
 	onSave: (
 		id: string,
@@ -30,15 +42,16 @@ interface EditGroupChatModalProps {
 		moderatorAgentId: string,
 		moderatorConfig?: ModeratorConfig
 	) => void;
+	groupChat: GroupChat | null;
+	onCreate?: undefined;
 }
 
-export function EditGroupChatModal({
-	theme,
-	isOpen,
-	groupChat,
-	onClose,
-	onSave,
-}: EditGroupChatModalProps): JSX.Element | null {
+type GroupChatModalProps = GroupChatModalCreateProps | GroupChatModalEditProps;
+
+export function GroupChatModal(props: GroupChatModalProps): JSX.Element | null {
+	const { mode, theme, isOpen, onClose } = props;
+	const groupChat = mode === 'edit' ? props.groupChat : undefined;
+
 	const [name, setName] = useState('');
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 	const [detectedAgents, setDetectedAgents] = useState<AgentConfig[]>([]);
@@ -55,7 +68,7 @@ export function EditGroupChatModal({
 	const [availableModels, setAvailableModels] = useState<string[]>([]);
 	const [loadingModels, setLoadingModels] = useState(false);
 	const [refreshingAgent, setRefreshingAgent] = useState(false);
-	// Track if user has visited/modified the config panel (agent-level settings like model)
+	// Track if user has visited/modified the config panel (edit mode only)
 	const [configWasModified, setConfigWasModified] = useState(false);
 
 	// SSH Remote configuration state
@@ -68,9 +81,9 @@ export function EditGroupChatModal({
 	// Ref to track latest agentConfig for async save operations
 	const agentConfigRef = useRef<Record<string, any>>({});
 
-	// Initialize state from groupChat when modal opens
+	// Initialize state from groupChat when modal opens (edit mode)
 	useEffect(() => {
-		if (!isOpen || !groupChat) {
+		if (mode !== 'edit' || !isOpen || !groupChat) {
 			return;
 		}
 
@@ -85,9 +98,9 @@ export function EditGroupChatModal({
 		setAvailableModels([]);
 		setLoadingModels(false);
 		setRefreshingAgent(false);
-	}, [isOpen, groupChat]);
+	}, [mode, isOpen, groupChat]);
 
-	// Reset state when modal closes
+	// Reset all state when modal closes
 	const resetState = useCallback(() => {
 		setName('');
 		setSelectedAgent(null);
@@ -116,6 +129,19 @@ export function EditGroupChatModal({
 				const agents = await window.maestro.agents.detect();
 				const available = agents.filter((a: AgentConfig) => a.available && !a.hidden);
 				setDetectedAgents(available);
+
+				// Auto-select first available supported agent (create mode only)
+				if (mode === 'create' && available.length > 0) {
+					const firstSupported = AGENT_TILES.find((tile) => {
+						if (!tile.supported) return false;
+						return available.some((a: AgentConfig) => a.id === tile.id);
+					});
+					if (firstSupported) {
+						setSelectedAgent(firstSupported.id);
+					} else if (available.length > 0) {
+						setSelectedAgent(available[0].id);
+					}
+				}
 			} catch (error) {
 				console.error('Failed to detect agents:', error);
 			} finally {
@@ -136,7 +162,7 @@ export function EditGroupChatModal({
 
 		detect();
 		loadSshRemotes();
-	}, [isOpen, resetState]);
+	}, [isOpen, resetState, mode]);
 
 	// Focus name input when agents detected
 	useEffect(() => {
@@ -178,26 +204,35 @@ export function EditGroupChatModal({
 
 	// Build moderator config from state
 	const buildModeratorConfig = useCallback((): ModeratorConfig | undefined => {
-		const hasConfig = customPath || customArgs || Object.keys(customEnvVars).length > 0;
+		const customModelValue = mode === 'create' ? agentConfig.model : undefined;
+		const hasConfig =
+			customPath || customArgs || Object.keys(customEnvVars).length > 0 || customModelValue;
 		if (!hasConfig) return undefined;
 
 		return {
 			customPath: customPath || undefined,
 			customArgs: customArgs || undefined,
 			customEnvVars: Object.keys(customEnvVars).length > 0 ? customEnvVars : undefined,
+			customModel: customModelValue || undefined,
 		};
-	}, [customPath, customArgs, customEnvVars]);
+	}, [mode, customPath, customArgs, customEnvVars, agentConfig]);
 
-	const handleSave = useCallback(() => {
-		if (name.trim() && selectedAgent && groupChat) {
-			const moderatorConfig = buildModeratorConfig();
-			onSave(groupChat.id, name.trim(), selectedAgent, moderatorConfig);
-			resetState();
-			onClose();
+	const handleSubmit = useCallback(() => {
+		if (!name.trim() || !selectedAgent) return;
+
+		const moderatorConfig = buildModeratorConfig();
+
+		if (mode === 'create') {
+			props.onCreate(name.trim(), selectedAgent, moderatorConfig);
+		} else if (groupChat) {
+			props.onSave(groupChat.id, name.trim(), selectedAgent, moderatorConfig);
 		}
-	}, [name, selectedAgent, groupChat, buildModeratorConfig, onSave, resetState, onClose]);
 
-	// Check if anything has changed
+		resetState();
+		onClose();
+	}, [name, selectedAgent, buildModeratorConfig, mode, props, groupChat, resetState, onClose]);
+
+	// Check if anything has changed (edit mode only)
 	const hasChanges = useCallback((): boolean => {
 		if (!groupChat) return false;
 
@@ -209,7 +244,6 @@ export function EditGroupChatModal({
 		const originalEnvVars = groupChat.moderatorConfig?.customEnvVars || {};
 		const envVarsChanged = JSON.stringify(customEnvVars) !== JSON.stringify(originalEnvVars);
 
-		// Also consider changes if user modified agent-level config (model, etc.)
 		return (
 			nameChanged ||
 			agentChanged ||
@@ -220,7 +254,8 @@ export function EditGroupChatModal({
 		);
 	}, [groupChat, name, selectedAgent, customPath, customArgs, customEnvVars, configWasModified]);
 
-	const canSave = name.trim().length > 0 && selectedAgent !== null && hasChanges();
+	const canSubmit =
+		name.trim().length > 0 && selectedAgent !== null && (mode === 'create' || hasChanges());
 
 	// Toggle configuration panel
 	const handleToggleConfig = useCallback(() => {
@@ -274,7 +309,8 @@ export function EditGroupChatModal({
 		[isConfigExpanded, loadAgentConfig]
 	);
 
-	if (!isOpen || !groupChat) return null;
+	if (!isOpen) return null;
+	if (mode === 'edit' && !groupChat) return null;
 
 	// Filter AGENT_TILES to only show supported + detected agents
 	const availableTiles = AGENT_TILES.filter((tile) => {
@@ -289,37 +325,90 @@ export function EditGroupChatModal({
 	// Check if there's any customization set
 	const hasCustomization = customPath || customArgs || Object.keys(customEnvVars).length > 0;
 
+	const isCreate = mode === 'create';
+	const modalTitle = isCreate ? 'New Group Chat' : 'Edit Group Chat';
+	const modalPriority = isCreate
+		? MODAL_PRIORITIES.NEW_GROUP_CHAT
+		: MODAL_PRIORITIES.EDIT_GROUP_CHAT;
+
 	return (
 		<Modal
 			theme={theme}
-			title="Edit Group Chat"
-			priority={MODAL_PRIORITIES.EDIT_GROUP_CHAT}
+			title={modalTitle}
+			priority={modalPriority}
 			onClose={onClose}
 			initialFocusRef={nameInputRef}
 			width={600}
+			customHeader={
+				isCreate ? (
+					<div
+						className="p-4 border-b flex items-center justify-between shrink-0"
+						style={{ borderColor: theme.colors.border }}
+					>
+						<div className="flex items-center gap-3">
+							<h2 className="text-sm font-bold" style={{ color: theme.colors.textMain }}>
+								New Group Chat
+							</h2>
+							<span
+								className="text-[10px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded"
+								style={{
+									backgroundColor: `${theme.colors.accent}20`,
+									color: theme.colors.accent,
+									border: `1px solid ${theme.colors.accent}40`,
+								}}
+							>
+								Beta
+							</span>
+						</div>
+						<button
+							type="button"
+							onClick={onClose}
+							className="p-1 rounded hover:bg-white/10 transition-colors"
+							style={{ color: theme.colors.textDim }}
+							aria-label="Close modal"
+						>
+							<X className="w-4 h-4" />
+						</button>
+					</div>
+				) : undefined
+			}
 			footer={
 				<ModalFooter
 					theme={theme}
 					onCancel={onClose}
-					onConfirm={handleSave}
-					confirmLabel="Save"
-					confirmDisabled={!canSave}
+					onConfirm={handleSubmit}
+					confirmLabel={isCreate ? 'Create' : 'Save'}
+					confirmDisabled={!canSubmit}
 				/>
 			}
 		>
 			<div>
-				{/* Name Input */}
-				<div className="mb-6">
-					<FormInput
-						ref={nameInputRef}
-						theme={theme}
-						label="Chat Name"
-						value={name}
-						onChange={setName}
-						onSubmit={canSave ? handleSave : undefined}
-						placeholder="e.g., Auth Feature Implementation"
-					/>
-				</div>
+				{/* Description (create mode only) */}
+				{isCreate && (
+					<div className="mb-6 text-sm leading-relaxed" style={{ color: theme.colors.textDim }}>
+						A Group Chat lets you collaborate with multiple AI agents in a single conversation. The{' '}
+						<span style={{ color: theme.colors.textMain }}>moderator</span> manages the conversation
+						flow, deciding when to involve other agents. You can{' '}
+						<span style={{ color: theme.colors.accent }}>@mention</span> any agent defined in
+						Maestro to bring them into the discussion. We're still working on this feature, but
+						right now Claude appears to be the best performing moderator.
+					</div>
+				)}
+
+				{/* Name Input (edit mode: before moderator, create mode: after) */}
+				{!isCreate && (
+					<div className="mb-6">
+						<FormInput
+							ref={nameInputRef}
+							theme={theme}
+							label="Chat Name"
+							value={name}
+							onChange={setName}
+							onSubmit={canSubmit ? handleSubmit : undefined}
+							placeholder="e.g., Auth Feature Implementation"
+						/>
+					</div>
+				)}
 
 				{/* Moderator Selection - Dropdown with Customize button */}
 				<div className="mb-6">
@@ -327,7 +416,7 @@ export function EditGroupChatModal({
 						className="block text-xs font-bold opacity-70 uppercase mb-2"
 						style={{ color: theme.colors.textMain }}
 					>
-						Moderator Agent
+						{isCreate ? 'Select Moderator' : 'Moderator Agent'}
 					</label>
 
 					{isDetecting ? (
@@ -469,13 +558,17 @@ export function EditGroupChatModal({
 									const newConfig = { ...agentConfig, [key]: value };
 									setAgentConfig(newConfig);
 									agentConfigRef.current = newConfig;
-									setConfigWasModified(true);
+									if (mode === 'edit') {
+										setConfigWasModified(true);
+									}
 								}}
 								onConfigBlur={async () => {
 									if (selectedAgent) {
 										// Use ref to get latest config (state may be stale in async callback)
 										await window.maestro.agents.setConfig(selectedAgent, agentConfigRef.current);
-										setConfigWasModified(true);
+										if (mode === 'edit') {
+											setConfigWasModified(true);
+										}
 									}
 								}}
 								availableModels={availableModels}
@@ -502,8 +595,8 @@ export function EditGroupChatModal({
 					</div>
 				)}
 
-				{/* Warning about changing moderator */}
-				{groupChat && selectedAgent !== groupChat.moderatorAgentId && (
+				{/* Warning about changing moderator (edit mode only) */}
+				{mode === 'edit' && groupChat && selectedAgent !== groupChat.moderatorAgentId && (
 					<div
 						className="text-xs p-3 rounded"
 						style={{
@@ -515,6 +608,19 @@ export function EditGroupChatModal({
 						<strong>Note:</strong> Changing the moderator agent will restart the moderator process.
 						Existing conversation history will be preserved.
 					</div>
+				)}
+
+				{/* Name Input (create mode: at bottom) */}
+				{isCreate && (
+					<FormInput
+						ref={nameInputRef}
+						theme={theme}
+						label="Chat Name"
+						value={name}
+						onChange={setName}
+						onSubmit={canSubmit ? handleSubmit : undefined}
+						placeholder="e.g., Auth Feature Implementation"
+					/>
 				)}
 			</div>
 		</Modal>

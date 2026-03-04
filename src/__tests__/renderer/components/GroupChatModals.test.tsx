@@ -1,5 +1,5 @@
 /**
- * @fileoverview Tests for NewGroupChatModal and EditGroupChatModal components
+ * @fileoverview Tests for GroupChatModal component (create and edit modes)
  *
  * Regression test for: MAESTRO_SESSION_RESUMED env var display in group chat moderator customization
  * This test ensures that when users customize the moderator agent in group chat modals,
@@ -8,8 +8,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { NewGroupChatModal } from '../../../renderer/components/NewGroupChatModal';
-import { EditGroupChatModal } from '../../../renderer/components/EditGroupChatModal';
+import { GroupChatModal } from '../../../renderer/components/GroupChatModal';
 import type { Theme, GroupChat, AgentConfig } from '../../../renderer/types';
 
 // Mock lucide-react icons
@@ -134,7 +133,7 @@ function createMockGroupChat(overrides: Partial<GroupChat> = {}): GroupChat {
 // TESTS
 // =============================================================================
 
-describe('Group Chat Modals', () => {
+describe('GroupChatModal', () => {
 	beforeEach(() => {
 		mockRegisterLayer.mockClear().mockReturnValue('layer-group-chat-123');
 		mockUnregisterLayer.mockClear();
@@ -153,13 +152,14 @@ describe('Group Chat Modals', () => {
 		vi.clearAllMocks();
 	});
 
-	describe('NewGroupChatModal', () => {
+	describe('create mode', () => {
 		it('should display MAESTRO_SESSION_RESUMED in moderator configuration panel', async () => {
 			const onCreate = vi.fn();
 			const onClose = vi.fn();
 
 			render(
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={createMockTheme()}
 					isOpen={true}
 					onClose={onClose}
@@ -202,7 +202,8 @@ describe('Group Chat Modals', () => {
 			const onClose = vi.fn();
 
 			render(
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={createMockTheme()}
 					isOpen={true}
 					onClose={onClose}
@@ -223,14 +224,15 @@ describe('Group Chat Modals', () => {
 		});
 	});
 
-	describe('EditGroupChatModal', () => {
+	describe('edit mode', () => {
 		it('should display MAESTRO_SESSION_RESUMED in moderator configuration panel', async () => {
 			const onSave = vi.fn();
 			const onClose = vi.fn();
 			const groupChat = createMockGroupChat();
 
 			render(
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={createMockTheme()}
 					isOpen={true}
 					groupChat={groupChat}
@@ -273,7 +275,8 @@ describe('Group Chat Modals', () => {
 			const groupChat = createMockGroupChat({ moderatorAgentId: 'claude-code' });
 
 			render(
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={createMockTheme()}
 					isOpen={true}
 					groupChat={groupChat}

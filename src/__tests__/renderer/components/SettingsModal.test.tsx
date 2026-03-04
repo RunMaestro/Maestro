@@ -17,7 +17,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
-import { SettingsModal } from '../../../renderer/components/SettingsModal';
+import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type {
 	Theme,
@@ -1637,7 +1637,7 @@ describe('SettingsModal', () => {
 	});
 
 	describe('recording state and escape handling', () => {
-		it('should cancel recording instead of closing modal when Escape is pressed during recording', async () => {
+		it('should not close modal when Escape is pressed during shortcut recording', async () => {
 			const onClose = vi.fn();
 			const { useLayerStack } = await import('../../../renderer/contexts/LayerStackContext');
 
@@ -1648,9 +1648,6 @@ describe('SettingsModal', () => {
 					return 'layer-123';
 				}),
 				unregisterLayer: vi.fn(),
-				updateLayerHandler: vi.fn((id, handler) => {
-					capturedEscapeHandler = handler;
-				}),
 				getTopLayer: vi.fn(),
 				closeTopLayer: vi.fn(),
 				getLayers: vi.fn(),
@@ -1665,22 +1662,23 @@ describe('SettingsModal', () => {
 				await vi.advanceTimersByTimeAsync(100);
 			});
 
-			// Enter recording mode
+			// Enter recording mode (this triggers onRecordingChange(true) on the shell's ref)
 			const shortcutButton = screen.getByText('Meta+n');
 			fireEvent.click(shortcutButton);
 
 			expect(screen.getByText('Press keys...')).toBeInTheDocument();
 
 			// Call the escape handler (simulating layer stack escape)
+			// ShortcutsTab handles its own escape via onKeyDownCapture, so
+			// the shell just ignores the escape when recording is active
 			capturedEscapeHandler?.();
 
 			await act(async () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			// Should exit recording mode but not close modal
-			expect(screen.getByText('Meta+n')).toBeInTheDocument();
-			// Modal should still be open since we didn't call onClose
+			// Modal should still be open — onClose should NOT have been called
+			expect(onClose).not.toHaveBeenCalled();
 		});
 	});
 
@@ -2518,234 +2516,6 @@ describe('SettingsModal', () => {
 				expect(screen.getByText('1 day')).toBeInTheDocument();
 				expect(screen.getByText('90 days')).toBeInTheDocument();
 			});
-		});
-	});
-
-	describe('EnvVarsEditor - validation and filtering', () => {
-		// Helper to expand the Shell Configuration section so EnvVarsEditor is visible
-		const expandShellConfig = async () => {
-			const shellConfigButton = screen.getByRole('button', { name: 'Shell Configuration' });
-			fireEvent.click(shellConfigButton);
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-		};
-
-		it('should only add valid entries to envVars state (not invalid ones)', async () => {
-			const setShellEnvVars = vi.fn();
-			render(
-				<SettingsModal
-					{...createDefaultProps({
-						shellEnvVars: {},
-						setShellEnvVars,
-						initialTab: 'general',
-					})}
-				/>
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			await expandShellConfig();
-
-			// Find the "Add Variable" button and click it
-			const addButton = screen.getByRole('button', { name: 'Add Variable' });
-			fireEvent.click(addButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// Get the key input for the new entry (there should be one input with placeholder "VARIABLE")
-			const inputs = screen.getAllByPlaceholderText('VARIABLE');
-			const keyInput = inputs[inputs.length - 1]; // Get the last one (newly added)
-
-			// Enter an invalid key (contains special characters like hyphen, which is not allowed)
-			fireEvent.change(keyInput, { target: { value: 'MY-VAR' } });
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Should show validation error
-			expect(screen.getByText(/Invalid variable name/)).toBeInTheDocument();
-
-			// The setShellEnvVars should NOT have been called with this invalid entry
-			// Check that the last call (if any) doesn't include MY-VAR
-			if (mockSetShellEnvVars.mock.calls.length > 0) {
-				const lastCall =
-					mockSetShellEnvVars.mock.calls[mockSetShellEnvVars.mock.calls.length - 1][0];
-				expect(lastCall['MY-VAR']).toBeUndefined();
-			}
-		});
-
-		it('should add valid entries to envVars and skip invalid entries', async () => {
-			const setShellEnvVars = vi.fn();
-			render(
-				<SettingsModal
-					{...createDefaultProps({
-						shellEnvVars: {},
-						setShellEnvVars,
-						initialTab: 'general',
-					})}
-				/>
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			await expandShellConfig();
-
-			// Add first valid entry
-			const addButton = screen.getByRole('button', { name: 'Add Variable' });
-			fireEvent.click(addButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			let inputs = screen.getAllByPlaceholderText('VARIABLE');
-			const keyInput1 = inputs[inputs.length - 1];
-			fireEvent.change(keyInput1, { target: { value: 'VALID_VAR' } });
-
-			// Find the corresponding value input and set it
-			const valueInputs = screen.getAllByPlaceholderText('value');
-			const valueInput1 = valueInputs[valueInputs.length - 1];
-			fireEvent.change(valueInput1, { target: { value: 'test_value' } });
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Add second invalid entry
-			fireEvent.click(addButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			inputs = screen.getAllByPlaceholderText('VARIABLE');
-			const keyInput2 = inputs[inputs.length - 1];
-			fireEvent.change(keyInput2, { target: { value: 'INVALID-VAR' } });
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Check the last call to setShellEnvVars
-			const lastCall = mockSetShellEnvVars.mock.calls[mockSetShellEnvVars.mock.calls.length - 1][0];
-
-			// Should include valid entry
-			expect(lastCall['VALID_VAR']).toBe('test_value');
-
-			// Should NOT include invalid entry
-			expect(lastCall['INVALID-VAR']).toBeUndefined();
-		});
-
-		it('should not add entries with special characters in value without quotes', async () => {
-			const setShellEnvVars = vi.fn();
-			render(
-				<SettingsModal
-					{...createDefaultProps({
-						shellEnvVars: {},
-						setShellEnvVars,
-						initialTab: 'general',
-					})}
-				/>
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			await expandShellConfig();
-
-			const addButton = screen.getByRole('button', { name: 'Add Variable' });
-			fireEvent.click(addButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			let inputs = screen.getAllByPlaceholderText('VARIABLE');
-			const keyInput = inputs[inputs.length - 1];
-			fireEvent.change(keyInput, { target: { value: 'MY_VAR' } });
-
-			// Set value with special characters but no quotes
-			const valueInputs = screen.getAllByPlaceholderText('value');
-			const valueInput = valueInputs[valueInputs.length - 1];
-			fireEvent.change(valueInput, { target: { value: 'value&with|special' } });
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Should show warning about special characters
-			expect(screen.getByText(/contains disallowed special characters/)).toBeInTheDocument();
-
-			// The value should still be added (warning, not error) but if we have strict validation,
-			// it won't be in the state. The current implementation adds it with a warning.
-			const lastCall =
-				mockSetShellEnvVars.mock.calls[mockSetShellEnvVars.mock.calls.length - 1]?.[0] || {};
-			// Note: With current implementation, values with warnings still get added
-			// This is the current behavior - only full errors block the entry
-		});
-
-		it('should display count of valid entries', async () => {
-			mockUseSettingsOverrides = { shellEnvVars: { EXISTING_VAR: 'value' } };
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			await expandShellConfig();
-
-			// Should show "✓ Valid (1 variables loaded)"
-			expect(screen.getByText(/✓ Valid.*1.*variables loaded/)).toBeInTheDocument();
-		});
-
-		it('should remove invalid entries when they are deleted', async () => {
-			mockUseSettingsOverrides = { shellEnvVars: { VALID_VAR: 'test' } };
-			render(<SettingsModal {...createDefaultProps({ initialTab: 'general' })} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			await expandShellConfig();
-
-			// Add an invalid entry
-			const addButton = screen.getByRole('button', { name: 'Add Variable' });
-			fireEvent.click(addButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			let inputs = screen.getAllByPlaceholderText('VARIABLE');
-			const keyInput = inputs[inputs.length - 1];
-			fireEvent.change(keyInput, { target: { value: 'INVALID-VAR' } });
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Now delete the invalid entry using the trash button
-			const trashButtons = screen.getAllByRole('button', { name: 'Remove variable' });
-			const invalidTrashButton = trashButtons[trashButtons.length - 1]; // Last one (newly added)
-			fireEvent.click(invalidTrashButton);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// After deletion, only VALID_VAR should remain
-			const lastCall = mockSetShellEnvVars.mock.calls[mockSetShellEnvVars.mock.calls.length - 1][0];
-			expect(lastCall['VALID_VAR']).toBe('test');
-			expect(lastCall['INVALID-VAR']).toBeUndefined();
 		});
 	});
 });

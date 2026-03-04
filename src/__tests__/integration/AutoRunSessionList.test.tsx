@@ -144,6 +144,10 @@ vi.mock('../../renderer/contexts/GitStatusContext', () => ({
 		getFileCount: () => 0,
 		getStatus: () => undefined,
 	}),
+	useGitFileStatus: () => ({
+		getFileCount: () => 0,
+		hasChanges: () => false,
+	}),
 }));
 
 vi.mock('../../renderer/hooks/useLiveOverlay', () => ({

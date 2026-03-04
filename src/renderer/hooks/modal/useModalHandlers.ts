@@ -405,7 +405,9 @@ export function useModalHandlers(
 	// Determine the effective error: historical wins when explicitly requested (user clicked Details),
 	// otherwise fall back to live session error
 	const isHistorical = !!historicalAgentError;
-	const effectiveError = isHistorical ? historicalAgentError : (errorSession?.agentError ?? undefined);
+	const effectiveError = isHistorical
+		? historicalAgentError
+		: (errorSession?.agentError ?? undefined);
 
 	// Use the agent error recovery hook to get recovery actions
 	// Historical errors get no recovery actions (they're read-only)
@@ -413,11 +415,22 @@ export function useModalHandlers(
 		error: effectiveError,
 		agentId: errorSession?.toolType || 'claude-code',
 		sessionId: errorSession?.id || '',
-		onNewSession: !isHistorical && errorSession ? () => handleStartNewSessionAfterError(errorSession.id) : undefined,
-		onRetry: !isHistorical && errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
-		onClearError: !isHistorical && errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
-		onRestartAgent: !isHistorical && errorSession ? () => handleRestartAgentAfterError(errorSession.id) : undefined,
-		onAuthenticate: !isHistorical && errorSession ? () => handleAuthenticateAfterError(errorSession.id) : undefined,
+		onNewSession:
+			!isHistorical && errorSession
+				? () => handleStartNewSessionAfterError(errorSession.id)
+				: undefined,
+		onRetry:
+			!isHistorical && errorSession ? () => handleRetryAfterError(errorSession.id) : undefined,
+		onClearError:
+			!isHistorical && errorSession ? () => handleClearAgentError(errorSession.id) : undefined,
+		onRestartAgent:
+			!isHistorical && errorSession
+				? () => handleRestartAgentAfterError(errorSession.id)
+				: undefined,
+		onAuthenticate:
+			!isHistorical && errorSession
+				? () => handleAuthenticateAfterError(errorSession.id)
+				: undefined,
 	});
 
 	// ====================================================================

@@ -97,10 +97,9 @@ import { AutoRunSetupModal } from './AutoRunSetupModal';
 import { LightboxModal } from './LightboxModal';
 
 // Group Chat Modal Components
-import { NewGroupChatModal } from './NewGroupChatModal';
+import { GroupChatModal } from './GroupChatModal';
 import { DeleteGroupChatModal } from './DeleteGroupChatModal';
 import { RenameGroupChatModal } from './RenameGroupChatModal';
-import { EditGroupChatModal } from './EditGroupChatModal';
 import { GroupChatInfoOverlay } from './GroupChatInfoOverlay';
 
 // Agent/Transfer Modal Components
@@ -1488,7 +1487,8 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 		<>
 			{/* --- NEW GROUP CHAT MODAL --- */}
 			{showNewGroupChatModal && (
-				<NewGroupChatModal
+				<GroupChatModal
+					mode="create"
 					theme={theme}
 					isOpen={showNewGroupChatModal}
 					onClose={onCloseNewGroupChatModal}
@@ -1520,7 +1520,8 @@ export const AppGroupChatModals = memo(function AppGroupChatModals({
 
 			{/* --- EDIT GROUP CHAT MODAL --- */}
 			{showEditGroupChatModal && (
-				<EditGroupChatModal
+				<GroupChatModal
+					mode="edit"
 					theme={theme}
 					isOpen={!!showEditGroupChatModal}
 					groupChat={editGroupChat || null}

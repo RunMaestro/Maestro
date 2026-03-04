@@ -408,7 +408,7 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			// Overlay should appear with description text
-			expect(screen.getByText(/Control your AI sessions/)).toBeInTheDocument();
+			expect(screen.getByText(/Control your agents/)).toBeInTheDocument();
 		});
 
 		it('shows QR code in live overlay', () => {
@@ -2874,13 +2874,13 @@ describe('SessionList', () => {
 			fireEvent.click(screen.getByText('LIVE'));
 
 			// Verify overlay is open
-			expect(screen.getByText(/Control your AI sessions/)).toBeInTheDocument();
+			expect(screen.getByText(/Control your agents/)).toBeInTheDocument();
 
 			// Press Escape
 			fireEvent.keyDown(document, { key: 'Escape' });
 
 			// Overlay should be closed
-			expect(screen.queryByText(/Control your AI sessions/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/Control your agents/)).not.toBeInTheDocument();
 		});
 	});
 
