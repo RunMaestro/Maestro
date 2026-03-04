@@ -11,21 +11,21 @@ import {
 	Server,
 	Monitor,
 } from 'lucide-react';
-import { useSettings } from '../hooks';
-import type { Theme, LLMProvider } from '../types';
-import { useLayerStack } from '../contexts/LayerStackContext';
-import { MODAL_PRIORITIES } from '../constants/modalPriorities';
-import { AICommandsPanel } from './AICommandsPanel';
-import { SpecKitCommandsPanel } from './SpecKitCommandsPanel';
-import { OpenSpecCommandsPanel } from './OpenSpecCommandsPanel';
-import { NotificationsPanel } from './NotificationsPanel';
-import { SshRemotesSection } from './Settings/SshRemotesSection';
-import { SshRemoteIgnoreSection } from './Settings/SshRemoteIgnoreSection';
-import { GeneralTab } from './Settings/tabs/GeneralTab';
-import { DisplayTab } from './Settings/tabs/DisplayTab';
-import { EncoreTab } from './Settings/tabs/EncoreTab';
-import { ShortcutsTab } from './Settings/tabs/ShortcutsTab';
-import { ThemeTab } from './Settings/tabs/ThemeTab';
+import { useSettings } from '../../hooks';
+import type { Theme, LLMProvider } from '../../types';
+import { useLayerStack } from '../../contexts/LayerStackContext';
+import { MODAL_PRIORITIES } from '../../constants/modalPriorities';
+import { AICommandsPanel } from '../AICommandsPanel';
+import { SpecKitCommandsPanel } from '../SpecKitCommandsPanel';
+import { OpenSpecCommandsPanel } from '../OpenSpecCommandsPanel';
+import { NotificationsPanel } from '../NotificationsPanel';
+import { SshRemotesSection } from './SshRemotesSection';
+import { SshRemoteIgnoreSection } from './SshRemoteIgnoreSection';
+import { GeneralTab } from './tabs/GeneralTab';
+import { DisplayTab } from './tabs/DisplayTab';
+import { EncoreTab } from './tabs/EncoreTab';
+import { ShortcutsTab } from './tabs/ShortcutsTab';
+import { ThemeTab } from './tabs/ThemeTab';
 
 // Feature flags - set to true to enable dormant features
 const FEATURE_FLAGS = {

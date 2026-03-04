@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 // SettingsModal is lazy-loaded for performance (large component, only loaded when settings opened)
 const SettingsModal = lazy(() =>
-	import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+	import('./components/Settings/SettingsModal').then((m) => ({ default: m.SettingsModal }))
 );
 import { SessionList } from './components/SessionList';
 import { RightPanel, RightPanelHandle } from './components/RightPanel';

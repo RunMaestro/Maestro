@@ -17,7 +17,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, waitFor, within } from '@testing-library/react';
-import { SettingsModal } from '../../../renderer/components/SettingsModal';
+import { SettingsModal } from '../../../renderer/components/Settings/SettingsModal';
 import { formatEnterToSend } from '../../../renderer/utils/shortcutFormatter';
 import type {
 	Theme,
