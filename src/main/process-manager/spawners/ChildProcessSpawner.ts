@@ -87,7 +87,11 @@ export class ChildProcessSpawner {
 		const argsHaveInputStreamJson = args.some(
 			(arg, i) => arg === 'stream-json' && i > 0 && args[i - 1] === '--input-format'
 		);
-		const promptViaStdin = sendPromptViaStdin || sendPromptViaStdinRaw || argsHaveInputStreamJson;
+		const promptViaStdin =
+			sendPromptViaStdin ||
+			sendPromptViaStdinRaw ||
+			argsHaveInputStreamJson ||
+			!!config.sshStdinScript;
 
 		// Build final args based on batch mode and images
 		// Track whether the prompt was added to CLI args (used later to decide stdin behavior)

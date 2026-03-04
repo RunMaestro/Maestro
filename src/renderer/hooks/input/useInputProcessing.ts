@@ -709,6 +709,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							userMessage: effectiveInputValue,
 							agentType: activeSession.toolType,
 							cwd: activeSession.cwd,
+							sessionCustomModel: activeSession.customModel,
 							sessionSshRemoteConfig: activeSession.sessionSshRemoteConfig,
 						})
 						.then((generatedName) => {

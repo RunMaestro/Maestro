@@ -97,6 +97,8 @@ export interface AgentConfig {
 	noPromptSeparator?: boolean; // If true, don't add '--' before the prompt in batch mode (OpenCode doesn't support it)
 	defaultEnvVars?: Record<string, string>; // Default environment variables for this agent (merged with user customEnvVars)
 	readOnlyEnvOverrides?: Record<string, string>; // Env var overrides applied in read-only mode (replaces keys from defaultEnvVars)
+	// Optional default model id discovered from the agent's local config or binary
+	defaultModel?: string;
 }
 
 /**

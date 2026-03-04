@@ -20,13 +20,22 @@ import {
 } from '../../utils/ipcHandler';
 import { buildAgentArgs, applyAgentConfigOverrides } from '../../utils/agent-args';
 import { getSshRemoteConfig, createSshRemoteStoreAdapter } from '../../utils/ssh-remote-resolver';
-import { buildSshCommand } from '../../utils/ssh-command-builder';
+import { buildSshCommandWithStdin } from '../../utils/ssh-command-builder';
 import { tabNamingPrompt } from '../../../prompts';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
 import type { MaestroSettings } from './persistence';
 
 const LOG_CONTEXT = '[TabNaming]';
+
+// Safe debug wrapper to centralize console.debug error isolation
+const safeDebug = (message: string, data?: any) => {
+	try {
+		console.debug(message, data);
+	} catch {
+		// swallow
+	}
+};
 
 /**
  * Helper to create handler options with consistent context
@@ -84,6 +93,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 				userMessage: string;
 				agentType: string;
 				cwd: string;
+				sessionCustomModel?: string;
 				sessionSshRemoteConfig?: {
 					enabled: boolean;
 					remoteId: string | null;
@@ -122,32 +132,135 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 					const baseArgs = (agent.args ?? []).filter(
 						(arg) => arg !== '--dangerously-skip-permissions'
 					);
+
+					// Fetch stored agent config values (user overrides) early so we can
+					// prefer the configured model when building args for the tab naming call.
+					const allConfigs = agentConfigsStore.get('configs', {});
+					const agentConfigValues = allConfigs[config.agentType] || {};
+
+					// Resolve model id with stricter rules:
+					// Preference: session override -> agent-config model (only if it looks complete) -> agent.defaultModel
+					// Only accept agent-config model when it contains a provider/model (contains a '/')
+					let resolvedModelId: string | undefined;
+					if (typeof config.sessionCustomModel === 'string' && config.sessionCustomModel.trim()) {
+						resolvedModelId = config.sessionCustomModel.trim();
+					} else if (
+						agentConfigValues &&
+						typeof agentConfigValues.model === 'string' &&
+						agentConfigValues.model.trim() &&
+						agentConfigValues.model.includes('/')
+					) {
+						resolvedModelId = agentConfigValues.model.trim();
+					} else if (agent.defaultModel && typeof agent.defaultModel === 'string') {
+						resolvedModelId = agent.defaultModel;
+					}
+
+					// Sanitize resolved model id (remove trailing slashes)
+					if (resolvedModelId) {
+						resolvedModelId = resolvedModelId.replace(/\/+$/, '').trim();
+						if (resolvedModelId === '') resolvedModelId = undefined;
+					}
+
+					// Debug: log resolved model for tab naming
+					safeDebug('[TabNaming] Resolved model', {
+						sessionId,
+						agentType: config.agentType,
+						agentConfigModel: agentConfigValues.model,
+						resolvedModelId,
+					});
+
 					let finalArgs = buildAgentArgs(agent, {
 						baseArgs,
 						prompt: fullPrompt,
 						cwd: config.cwd,
 						readOnlyMode: true, // Always read-only since we're not modifying anything
+						// modelId intentionally omitted — applyAgentConfigOverrides is the single source of model injection
 					});
 
-					// Apply config overrides from store
-					const allConfigs = agentConfigsStore.get('configs', {});
-					const agentConfigValues = allConfigs[config.agentType] || {};
+					// Apply config overrides from store (customArgs/env only).
+					// Do NOT pass sessionCustomModel here so modelSource reflects the true origin
+					// (agent-config or default). resolvedModelId is applied explicitly below.
 					const configResolution = applyAgentConfigOverrides(agent, finalArgs, {
 						agentConfigValues,
 					});
 					finalArgs = configResolution.args;
 
+					// Debug: log how model was resolved for tab naming requests so we can
+					// verify whether session/agent overrides are applied as expected.
+					safeDebug('[TabNaming] Config resolution', {
+						sessionId,
+						agentType: config.agentType,
+						modelSource: configResolution.modelSource,
+						agentConfigModel: agentConfigValues?.model,
+						resolvedModelId,
+					});
+
+					// Canonicalize model flags: strip all existing --model/-m tokens before the
+					// prompt separator, then re-inject the single canonical model flag using the
+					// agent-specific flag style (e.g. Codex uses -m, Claude Code uses --model=).
+					// This must run BEFORE SSH wrapping so the flag ends up inside the remote
+					// agent invocation, not in the SSH wrapper arguments.
+					const sepIndex =
+						finalArgs.indexOf('--') >= 0 ? finalArgs.indexOf('--') : finalArgs.length;
+					const prefix = finalArgs.slice(0, sepIndex);
+					const suffix = finalArgs.slice(sepIndex);
+
+					const filteredPrefix: string[] = [];
+					for (let i = 0; i < prefix.length; i++) {
+						const a = prefix[i];
+						if (typeof a === 'string') {
+							if (a.startsWith('--model=')) {
+								continue; // drop explicit --model=value
+							}
+							if (a === '--model') {
+								// Only consume the next token as a value if it exists and looks like a value (not a flag)
+								if (i + 1 < prefix.length && typeof prefix[i + 1] === 'string' && !String(prefix[i + 1]).startsWith('-')) {
+									i++;
+								}
+								continue;
+							}
+							if (a === '-m') {
+								// Only consume the next token as a value if it exists and looks like a value (not a flag)
+								if (i + 1 < prefix.length && typeof prefix[i + 1] === 'string' && !String(prefix[i + 1]).startsWith('-')) {
+									i++;
+								}
+								continue;
+							}
+						}
+						filteredPrefix.push(a);
+					}
+
+					// Re-inject using resolvedModelId directly — it already reflects session >
+					// agent-config > agent-default precedence. Use agent.modelArgs() when available
+					// so each agent gets its own flag style.
+					if (resolvedModelId) {
+						const modelArgTokens = agent.modelArgs
+							? agent.modelArgs(resolvedModelId)
+							: [`--model=${resolvedModelId}`];
+						filteredPrefix.push(...modelArgTokens);
+						safeDebug('[TabNaming] Injected canonical model flag for spawn', {
+							sessionId,
+							modelLength: resolvedModelId.length,
+							tokenCount: modelArgTokens.length,
+						});
+					}
+
+					finalArgs = [...filteredPrefix, ...suffix];
+
 					// Determine command and working directory
 					let command = agent.path || agent.command;
 					let cwd = config.cwd;
+					// Start with resolved env vars from config resolution, allow mutation below
 					const customEnvVars: Record<string, string> | undefined =
-						configResolution.effectiveCustomEnvVars;
+						configResolution.effectiveCustomEnvVars
+							? { ...configResolution.effectiveCustomEnvVars }
+							: undefined;
 
 					// Handle SSH remote execution if configured
-					// IMPORTANT: For SSH, we must send the prompt via stdin to avoid shell escaping issues.
-					// The prompt contains special characters that break when passed through multiple layers
-					// of shell escaping (local spawn -> SSH -> remote zsh -> bash -c).
-					let shouldSendPromptViaStdin = false;
+					// Use stdin-based execution to completely bypass shell escaping issues.
+					// The prompt contains special characters that break when passed through multiple
+					// layers of shell escaping (local spawn -> SSH -> remote bash -c).
+					let sshStdinScript: string | undefined;
 					if (config.sessionSshRemoteConfig?.enabled && config.sessionSshRemoteConfig.remoteId) {
 						const sshStoreAdapter = createSshRemoteStoreAdapter(settingsStore);
 						const sshResult = getSshRemoteConfig(sshStoreAdapter, {
@@ -160,40 +273,30 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							const remoteCommand = agent.command;
 							const remoteCwd = config.sessionSshRemoteConfig.workingDirOverride || config.cwd;
 
-							// For agents that support stream-json input, use stdin for the prompt
-							// This completely avoids shell escaping issues with multi-layer SSH commands
-							const agentSupportsStreamJson = agent.capabilities?.supportsStreamJsonInput ?? false;
-							if (agentSupportsStreamJson) {
-								// Add --input-format stream-json to args so agent reads from stdin
-								const hasStreamJsonInput =
-									finalArgs.includes('--input-format') && finalArgs.includes('stream-json');
-								if (!hasStreamJsonInput) {
-									finalArgs = [...finalArgs, '--input-format', 'stream-json'];
-								}
-								shouldSendPromptViaStdin = true;
-								logger.debug(
-									'Using stdin for tab naming prompt in SSH remote execution',
-									LOG_CONTEXT,
-									{
-										sessionId,
-										promptLength: fullPrompt.length,
-										agentSupportsStreamJson,
-									}
-								);
-							}
-
-							const sshCommand = await buildSshCommand(sshResult.config, {
+							const sshCommand = await buildSshCommandWithStdin(sshResult.config, {
 								command: remoteCommand,
 								args: finalArgs,
 								cwd: remoteCwd,
 								env: customEnvVars,
-								useStdin: shouldSendPromptViaStdin,
+								// Pass the prompt via stdin so it's never parsed by any shell layer
+								stdinInput: fullPrompt,
 							});
 							command = sshCommand.command;
 							finalArgs = sshCommand.args;
+							sshStdinScript = sshCommand.stdinScript;
 							// Local cwd is not used for SSH commands - the command runs on remote
 							cwd = process.cwd();
 						}
+					}
+
+					// Final safety sanitization: ensure args are all plain strings
+					const nonStringItems = finalArgs.filter((a) => typeof a !== 'string');
+					if (nonStringItems.length > 0) {
+						finalArgs = finalArgs.filter((a) => typeof a === 'string');
+						safeDebug('[TabNaming] Removing non-string args before spawn', {
+							sessionId,
+							removedCount: nonStringItems.length,
+						});
 					}
 
 					// Create a promise that resolves when we get the tab name
@@ -231,6 +334,34 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 
 							// Extract the tab name from the output
 							// The agent should return just the tab name, but we clean up any extra whitespace/formatting
+							// Log raw output and context to help diagnose generic/low-quality tab names
+							try {
+								safeDebug('[TabNaming] Raw output before extraction', {
+									sessionId,
+									agentType: config.agentType,
+									agentConfigModel: agentConfigValues?.model,
+									resolvedModelId,
+									finalArgsCount: finalArgs.length,
+									promptLength: String(fullPrompt).length,
+									outputLength: String(output).length,
+								});
+								// Detect obviously generic outputs to surface in logs
+								const genericRegex =
+									/^("|')?\s*(coding task|task tab name|task tab|coding task tab|task name)\b/i;
+								if (genericRegex.test(String(output))) {
+									logger.warn(
+										'[TabNaming] Agent returned a generic tab name candidate; consider adjusting prompt or model',
+										LOG_CONTEXT,
+										{
+											sessionId,
+											outputLength: String(output).length,
+										}
+									);
+								}
+							} catch {
+								// swallow logging errors
+							}
+
 							const tabName = extractTabName(output);
 							logger.info('Tab naming completed', LOG_CONTEXT, {
 								sessionId,
@@ -245,8 +376,16 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 						processManager.on('exit', onExit);
 
 						// Spawn the process
-						// When using SSH with stdin, pass the flag so ChildProcessSpawner
-						// sends the prompt via stdin instead of command line args
+						// For SSH, sshStdinScript contains the full bash script + prompt
+						// Debug: log full finalArgs array and types just before spawn
+						// (kept in console.debug for diagnosis only)
+						safeDebug('[TabNaming] About to spawn with final args', {
+							sessionId,
+							agentType: config.agentType,
+							hasSshStdinScript: !!sshStdinScript,
+							finalArgsCount: finalArgs.length,
+						});
+
 						processManager.spawn({
 							sessionId,
 							toolType: config.agentType,
@@ -255,7 +394,7 @@ export function registerTabNamingHandlers(deps: TabNamingHandlerDependencies): v
 							args: finalArgs,
 							prompt: fullPrompt,
 							customEnvVars,
-							sendPromptViaStdin: shouldSendPromptViaStdin,
+							sshStdinScript,
 						});
 					});
 				} catch (error) {
@@ -301,14 +440,19 @@ function extractTabName(output: string): string | null {
 	// Split by newlines, periods, or arrow symbols and take meaningful lines
 	const lines = cleaned.split(/[.\n→]/).filter((line) => {
 		const trimmed = line.trim();
-		// Filter out empty lines and lines that look like instructions/examples
+		// Filter out empty lines and lines that look like instructions/examples.
+		// Lines that are fully wrapped in quotes (e.g. "Fix CI flaky tests") are valid
+		// tab name candidates — keep them so the unquoting step below can clean them.
+		// Only discard lines that START with a quote but are not fully wrapped (example inputs).
+		const isWrappedQuoted = /^["'].+["']$/.test(trimmed);
+		if ((trimmed.startsWith('"') || trimmed.startsWith("'")) && !isWrappedQuoted) return false;
+		const unquoted = trimmed.replace(/^['"]+|['"]+$/g, '');
 		return (
-			trimmed.length > 0 &&
-			trimmed.length <= 40 && // Tab names should be short
-			!trimmed.toLowerCase().includes('example') &&
-			!trimmed.toLowerCase().includes('message:') &&
-			!trimmed.toLowerCase().includes('rules:') &&
-			!trimmed.startsWith('"') // Skip example inputs in quotes
+			unquoted.length > 0 &&
+			unquoted.length <= 40 && // Tab names should be short
+			!unquoted.toLowerCase().includes('example') &&
+			!unquoted.toLowerCase().includes('message:') &&
+			!unquoted.toLowerCase().includes('rules:')
 		);
 	});
 

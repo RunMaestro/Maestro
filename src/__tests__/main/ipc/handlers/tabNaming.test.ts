@@ -59,7 +59,7 @@ vi.mock('../../../../main/utils/ssh-remote-resolver', () => ({
 }));
 
 vi.mock('../../../../main/utils/ssh-command-builder', () => ({
-	buildSshCommand: vi.fn(),
+	buildSshCommandWithStdin: vi.fn(),
 }));
 
 // Capture registered handlers
@@ -479,9 +479,10 @@ describe('Tab Naming IPC Handlers', () => {
 			expect(result).toBeNull();
 		});
 
-		it('filters out lines starting with quotes (example inputs)', async () => {
-			// Lines starting with quotes are filtered as they typically represent
-			// example inputs in the prompt, not actual tab names
+		it('unquotes fully-wrapped quoted output (e.g. agent wraps name in quotes)', async () => {
+			// extractTabName accepts fully-wrapped quoted strings and strips the quotes.
+			// A line like `"Quoted Tab Name"` is kept (isWrappedQuoted = true) and
+			// returned as 'Quoted Tab Name' — only partially-quoted lines are discarded.
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
 
@@ -502,13 +503,13 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// Simulate output with quotes - lines starting with " are filtered
+			// Fully-wrapped quoted output: the agent wraps the tab name in quotes.
+			// extractTabName unquotes and returns the inner string.
 			onDataCallback?.('tab-naming-mock-uuid-1234', '"Quoted Tab Name"');
 			onExitCallback?.('tab-naming-mock-uuid-1234');
 
 			const result = await resultPromise;
-			// Lines starting with quotes are filtered out as example inputs
-			expect(result).toBeNull();
+			expect(result).toBe('Quoted Tab Name');
 		});
 
 		it('removes trailing quotes from tab names', async () => {
@@ -543,7 +544,8 @@ describe('Tab Naming IPC Handlers', () => {
 		it('uses stdin for prompt when SSH remote is configured', async () => {
 			// Import and mock the SSH utilities
 			const { getSshRemoteConfig } = await import('../../../../main/utils/ssh-remote-resolver');
-			const { buildSshCommand } = await import('../../../../main/utils/ssh-command-builder');
+			const { buildSshCommandWithStdin } =
+				await import('../../../../main/utils/ssh-command-builder');
 
 			// Mock SSH config resolution to return a valid config
 			(getSshRemoteConfig as Mock).mockReturnValue({
@@ -555,25 +557,13 @@ describe('Tab Naming IPC Handlers', () => {
 				source: 'session',
 			});
 
-			// Mock buildSshCommand to return SSH-wrapped command
-			(buildSshCommand as Mock).mockResolvedValue({
+			// Mock buildSshCommandWithStdin to return SSH-wrapped command
+			(buildSshCommandWithStdin as Mock).mockResolvedValue({
 				command: '/usr/bin/ssh',
-				args: [
-					'-o',
-					'BatchMode=yes',
-					'test.example.com',
-					'claude --print --input-format stream-json',
-				],
+				args: ['-o', 'BatchMode=yes', 'test.example.com', '/bin/bash'],
+				stdinScript:
+					'export PATH=...\nexec claude run --format json\nHelp me with SSH remote feature',
 			});
-
-			// Update mock agent to support stream-json input
-			const mockAgentWithStreamJson: AgentConfig = {
-				...mockClaudeAgent,
-				capabilities: {
-					supportsStreamJsonInput: true,
-				},
-			};
-			mockAgentDetector.getAgent.mockResolvedValue(mockAgentWithStreamJson);
 
 			let onDataCallback: ((sessionId: string, data: string) => void) | undefined;
 			let onExitCallback: ((sessionId: string) => void) | undefined;
@@ -599,18 +589,18 @@ describe('Tab Naming IPC Handlers', () => {
 				expect(mockProcessManager.spawn).toHaveBeenCalled();
 			});
 
-			// Verify spawn was called with sendPromptViaStdin flag
+			// Verify spawn was called with sshStdinScript
 			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
 				expect.objectContaining({
-					sendPromptViaStdin: true,
+					sshStdinScript: expect.any(String),
 				})
 			);
 
-			// Verify buildSshCommand was called with useStdin option
-			expect(buildSshCommand).toHaveBeenCalledWith(
+			// Verify buildSshCommandWithStdin was called with stdinInput (the prompt)
+			expect(buildSshCommandWithStdin).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.objectContaining({
-					useStdin: true,
+					stdinInput: expect.any(String),
 				})
 			);
 

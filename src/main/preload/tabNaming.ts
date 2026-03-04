@@ -17,6 +17,8 @@ export interface TabNamingConfig {
 	agentType: string;
 	/** Working directory for the session */
 	cwd: string;
+	/** Optional session-level model override */
+	sessionCustomModel?: string;
 	/** Optional SSH remote configuration */
 	sessionSshRemoteConfig?: {
 		enabled: boolean;
