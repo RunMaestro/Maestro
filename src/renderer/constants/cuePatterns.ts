@@ -119,4 +119,33 @@ subscriptions:
     enabled: true
 `,
 	},
+	{
+		id: 'pr-review',
+		name: 'PR Review',
+		description: 'Auto-review new GitHub pull requests',
+		yaml: `subscriptions:
+  - name: "Review New PRs"
+    event: github.pull_request
+    # repo: "owner/repo"  # optional — auto-detected from git remote
+    poll_minutes: 5
+    prompt: prompts/pr-review.md
+    filter:
+      author: "!dependabot[bot]"
+      draft: false
+    enabled: true
+`,
+	},
+	{
+		id: 'issue-triage',
+		name: 'Issue Triage',
+		description: 'Auto-triage new GitHub issues',
+		yaml: `subscriptions:
+  - name: "Triage New Issues"
+    event: github.issue
+    # repo: "owner/repo"  # optional — auto-detected from git remote
+    poll_minutes: 10
+    prompt: prompts/issue-triage.md
+    enabled: true
+`,
+	},
 ];
