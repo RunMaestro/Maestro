@@ -12,7 +12,12 @@
 import { ipcRenderer } from 'electron';
 
 /** Event types that can trigger a Cue subscription */
-export type CueEventType = 'time.interval' | 'file.changed' | 'agent.completed';
+export type CueEventType =
+	| 'time.interval'
+	| 'file.changed'
+	| 'agent.completed'
+	| 'github.pull_request'
+	| 'github.issue';
 
 /** Status of a Cue run */
 export type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';

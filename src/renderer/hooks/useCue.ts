@@ -1,7 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 /** Event types that can trigger a Cue subscription */
-type CueEventType = 'time.interval' | 'file.changed' | 'agent.completed';
+type CueEventType =
+	| 'time.interval'
+	| 'file.changed'
+	| 'agent.completed'
+	| 'github.pull_request'
+	| 'github.issue';
 
 /** Status of a Cue run */
 type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';
