@@ -61,6 +61,19 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_FILE_EXT}}       - Changed file extension
  *   {{CUE_SOURCE_SESSION}} - Source session name (agent.completed events)
  *   {{CUE_SOURCE_OUTPUT}}  - Source session output (agent.completed events)
+ *
+ *   {{CUE_GH_TYPE}}         - GitHub item type: "pull_request" or "issue" (github.* events)
+ *   {{CUE_GH_NUMBER}}       - PR/issue number (github.* events)
+ *   {{CUE_GH_TITLE}}        - PR/issue title (github.* events)
+ *   {{CUE_GH_AUTHOR}}       - PR/issue author login (github.* events)
+ *   {{CUE_GH_URL}}          - PR/issue HTML URL (github.* events)
+ *   {{CUE_GH_BODY}}         - PR/issue body text, truncated (github.* events)
+ *   {{CUE_GH_LABELS}}       - Comma-separated labels (github.* events)
+ *   {{CUE_GH_STATE}}        - State: "open" or "closed" (github.* events)
+ *   {{CUE_GH_REPO}}         - GitHub repo (owner/repo) (github.* events)
+ *   {{CUE_GH_BRANCH}}       - Head branch (github.pull_request events)
+ *   {{CUE_GH_BASE_BRANCH}}  - Base branch (github.pull_request events)
+ *   {{CUE_GH_ASSIGNEES}}    - Comma-separated assignees (github.issue events)
  */
 
 /**
@@ -106,6 +119,19 @@ export interface TemplateContext {
 		fileExt?: string;
 		sourceSession?: string;
 		sourceOutput?: string;
+		// GitHub event fields (github.pull_request, github.issue)
+		ghType?: string;
+		ghNumber?: string;
+		ghTitle?: string;
+		ghAuthor?: string;
+		ghUrl?: string;
+		ghBody?: string;
+		ghLabels?: string;
+		ghState?: string;
+		ghRepo?: string;
+		ghBranch?: string;
+		ghBaseBranch?: string;
+		ghAssignees?: string;
 	};
 }
 
@@ -125,6 +151,22 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CONTEXT_USAGE}}', description: 'Context usage %' },
 	{ variable: '{{CUE_EVENT_TIMESTAMP}}', description: 'Cue event timestamp', cueOnly: true },
 	{ variable: '{{CUE_EVENT_TYPE}}', description: 'Cue event type', cueOnly: true },
+	{
+		variable: '{{CUE_GH_ASSIGNEES}}',
+		description: 'Issue assignees (comma-separated)',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_GH_AUTHOR}}', description: 'PR/issue author login', cueOnly: true },
+	{ variable: '{{CUE_GH_BASE_BRANCH}}', description: 'PR base branch', cueOnly: true },
+	{ variable: '{{CUE_GH_BODY}}', description: 'PR/issue body (truncated)', cueOnly: true },
+	{ variable: '{{CUE_GH_BRANCH}}', description: 'PR head branch', cueOnly: true },
+	{ variable: '{{CUE_GH_LABELS}}', description: 'Labels (comma-separated)', cueOnly: true },
+	{ variable: '{{CUE_GH_NUMBER}}', description: 'PR/issue number', cueOnly: true },
+	{ variable: '{{CUE_GH_REPO}}', description: 'GitHub repo (owner/repo)', cueOnly: true },
+	{ variable: '{{CUE_GH_STATE}}', description: 'PR/issue state', cueOnly: true },
+	{ variable: '{{CUE_GH_TITLE}}', description: 'PR/issue title', cueOnly: true },
+	{ variable: '{{CUE_GH_TYPE}}', description: 'Item type (pull_request/issue)', cueOnly: true },
+	{ variable: '{{CUE_GH_URL}}', description: 'PR/issue HTML URL', cueOnly: true },
 	{ variable: '{{CUE_FILE_DIR}}', description: 'Changed file directory', cueOnly: true },
 	{ variable: '{{CUE_FILE_EXT}}', description: 'Changed file extension', cueOnly: true },
 	{ variable: '{{CUE_FILE_NAME}}', description: 'Changed file name', cueOnly: true },
@@ -252,6 +294,20 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_FILE_EXT: context.cue?.fileExt || '',
 		CUE_SOURCE_SESSION: context.cue?.sourceSession || '',
 		CUE_SOURCE_OUTPUT: context.cue?.sourceOutput || '',
+
+		// Cue GitHub variables
+		CUE_GH_TYPE: context.cue?.ghType || '',
+		CUE_GH_NUMBER: context.cue?.ghNumber || '',
+		CUE_GH_TITLE: context.cue?.ghTitle || '',
+		CUE_GH_AUTHOR: context.cue?.ghAuthor || '',
+		CUE_GH_URL: context.cue?.ghUrl || '',
+		CUE_GH_BODY: context.cue?.ghBody || '',
+		CUE_GH_LABELS: context.cue?.ghLabels || '',
+		CUE_GH_STATE: context.cue?.ghState || '',
+		CUE_GH_REPO: context.cue?.ghRepo || '',
+		CUE_GH_BRANCH: context.cue?.ghBranch || '',
+		CUE_GH_BASE_BRANCH: context.cue?.ghBaseBranch || '',
+		CUE_GH_ASSIGNEES: context.cue?.ghAssignees || '',
 	};
 
 	// Perform case-insensitive replacement

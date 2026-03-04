@@ -126,6 +126,25 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sourceOutput: String(event.payload.sourceOutput ?? ''),
 	};
 
+	// Populate GitHub-specific template context
+	if (event.type === 'github.pull_request' || event.type === 'github.issue') {
+		templateContext.cue = {
+			...templateContext.cue,
+			ghType: String(event.payload.type ?? ''),
+			ghNumber: String(event.payload.number ?? ''),
+			ghTitle: String(event.payload.title ?? ''),
+			ghAuthor: String(event.payload.author ?? ''),
+			ghUrl: String(event.payload.url ?? ''),
+			ghBody: String(event.payload.body ?? ''),
+			ghLabels: String(event.payload.labels ?? ''),
+			ghState: String(event.payload.state ?? ''),
+			ghRepo: String(event.payload.repo ?? ''),
+			ghBranch: String(event.payload.head_branch ?? ''),
+			ghBaseBranch: String(event.payload.base_branch ?? ''),
+			ghAssignees: String(event.payload.assignees ?? ''),
+		};
+	}
+
 	// 4. Substitute template variables
 	const substitutedPrompt = substituteTemplateVariables(promptContent, templateContext);
 

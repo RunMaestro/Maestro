@@ -23,6 +23,7 @@ import type {
 } from './cue-types';
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
+import { createCueGitHubPoller } from './cue-github-poller';
 import { matchesFilter, describeFilter } from './cue-filter';
 import { initCueDb, closeCueDb, updateHeartbeat, getLastHeartbeat, pruneCueEvents } from './cue-db';
 import { reconcileMissedTimeEvents } from './cue-reconciler';
@@ -609,6 +610,8 @@ export class CueEngine {
 				this.setupTimerSubscription(session, state, sub);
 			} else if (sub.event === 'file.changed' && sub.watch) {
 				this.setupFileWatcherSubscription(session, state, sub);
+			} else if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
+				this.setupGitHubPollerSubscription(session, state, sub);
 			}
 			// agent.completed subscriptions are handled reactively via notifyAgentCompleted
 		}
@@ -714,6 +717,40 @@ export class CueEngine {
 				}
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (file.changed)`);
+				state.lastTriggered = event.timestamp;
+				this.executeCueRun(session.id, sub.prompt, event, sub.name);
+			},
+		});
+
+		state.watchers.push(cleanup);
+	}
+
+	private setupGitHubPollerSubscription(
+		session: SessionInfo,
+		state: SessionState,
+		sub: CueSubscription
+	): void {
+		const cleanup = createCueGitHubPoller({
+			eventType: sub.event as 'github.pull_request' | 'github.issue',
+			repo: sub.repo,
+			pollMinutes: sub.poll_minutes ?? 5,
+			projectRoot: session.projectRoot,
+			triggerName: sub.name,
+			subscriptionId: `${session.id}:${sub.name}`,
+			onLog: (level, message) => this.deps.onLog(level as MainLogLevel, message),
+			onEvent: (event) => {
+				if (!this.enabled) return;
+
+				// Check payload filter
+				if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
+					this.deps.onLog(
+						'cue',
+						`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+					);
+					return;
+				}
+
+				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (${sub.event})`);
 				state.lastTriggered = event.timestamp;
 				this.executeCueRun(session.id, sub.prompt, event, sub.name);
 			},

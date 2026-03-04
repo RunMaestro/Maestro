@@ -670,6 +670,95 @@ describe('cue-executor', () => {
 			expect(result.endedAt).toBeTruthy();
 		});
 
+		it('should populate github.pull_request event context correctly', async () => {
+			const subscription = createMockSubscription({
+				name: 'PR watcher',
+				event: 'github.pull_request',
+			});
+			const event = createMockEvent({
+				type: 'github.pull_request',
+				triggerName: 'PR watcher',
+				payload: {
+					type: 'pull_request',
+					number: 42,
+					title: 'Add feature X',
+					author: 'octocat',
+					url: 'https://github.com/owner/repo/pull/42',
+					body: 'This PR adds feature X',
+					labels: 'enhancement,review-needed',
+					state: 'open',
+					repo: 'owner/repo',
+					head_branch: 'feature-x',
+					base_branch: 'main',
+					assignees: '',
+				},
+			});
+
+			const templateContext = createMockTemplateContext();
+			const config = createExecutionConfig({ event, subscription, templateContext });
+
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(templateContext.cue?.ghType).toBe('pull_request');
+			expect(templateContext.cue?.ghNumber).toBe('42');
+			expect(templateContext.cue?.ghTitle).toBe('Add feature X');
+			expect(templateContext.cue?.ghAuthor).toBe('octocat');
+			expect(templateContext.cue?.ghUrl).toBe('https://github.com/owner/repo/pull/42');
+			expect(templateContext.cue?.ghBranch).toBe('feature-x');
+			expect(templateContext.cue?.ghBaseBranch).toBe('main');
+			expect(templateContext.cue?.ghRepo).toBe('owner/repo');
+			// Base cue fields should still be populated
+			expect(templateContext.cue?.eventType).toBe('github.pull_request');
+			expect(templateContext.cue?.triggerName).toBe('PR watcher');
+			expect(templateContext.cue?.runId).toBe('run-1');
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
+		it('should populate github.issue event context correctly', async () => {
+			const subscription = createMockSubscription({
+				name: 'Issue watcher',
+				event: 'github.issue',
+			});
+			const event = createMockEvent({
+				type: 'github.issue',
+				triggerName: 'Issue watcher',
+				payload: {
+					type: 'issue',
+					number: 99,
+					title: 'Bug report',
+					author: 'user1',
+					url: 'https://github.com/owner/repo/issues/99',
+					body: 'Found a bug',
+					labels: 'bug',
+					state: 'open',
+					repo: 'owner/repo',
+					assignees: 'dev1,dev2',
+				},
+			});
+
+			const templateContext = createMockTemplateContext();
+			const config = createExecutionConfig({ event, subscription, templateContext });
+
+			const resultPromise = executeCuePrompt(config);
+			await vi.advanceTimersByTimeAsync(0);
+
+			expect(templateContext.cue?.ghType).toBe('issue');
+			expect(templateContext.cue?.ghNumber).toBe('99');
+			expect(templateContext.cue?.ghAssignees).toBe('dev1,dev2');
+			// head_branch / base_branch not in payload → empty string
+			expect(templateContext.cue?.ghBranch).toBe('');
+			expect(templateContext.cue?.ghBaseBranch).toBe('');
+			// Base cue fields preserved
+			expect(templateContext.cue?.eventType).toBe('github.issue');
+			expect(templateContext.cue?.triggerName).toBe('Issue watcher');
+
+			mockChild.emit('close', 0);
+			await resultPromise;
+		});
+
 		it('should populate agent.completed event context correctly', async () => {
 			const event = createMockEvent({
 				type: 'agent.completed',

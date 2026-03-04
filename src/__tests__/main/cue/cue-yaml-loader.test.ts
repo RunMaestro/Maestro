@@ -451,6 +451,132 @@ subscriptions:
 		});
 	});
 
+	describe('loadCueConfig with GitHub events', () => {
+		it('parses repo and poll_minutes from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: pr-watch
+    event: github.pull_request
+    prompt: Review the PR
+    repo: owner/repo
+    poll_minutes: 10
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].repo).toBe('owner/repo');
+			expect(result!.subscriptions[0].poll_minutes).toBe(10);
+		});
+
+		it('defaults poll_minutes to undefined when not specified', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: issue-watch
+    event: github.issue
+    prompt: Triage issue
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].poll_minutes).toBeUndefined();
+			expect(result!.subscriptions[0].repo).toBeUndefined();
+		});
+	});
+
+	describe('validateCueConfig for GitHub events', () => {
+		it('accepts valid github.pull_request subscription', () => {
+			const result = validateCueConfig({
+				subscriptions: [{ name: 'pr-watch', event: 'github.pull_request', prompt: 'Review it' }],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('accepts github.pull_request with repo and poll_minutes', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-watch',
+						event: 'github.pull_request',
+						prompt: 'Review it',
+						repo: 'owner/repo',
+						poll_minutes: 10,
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('rejects github.pull_request with poll_minutes < 1', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-watch',
+						event: 'github.pull_request',
+						prompt: 'Review',
+						poll_minutes: 0.5,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('poll_minutes')])
+			);
+		});
+
+		it('rejects github.pull_request with poll_minutes = 0', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'pr-watch',
+						event: 'github.pull_request',
+						prompt: 'Review',
+						poll_minutes: 0,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('poll_minutes')])
+			);
+		});
+
+		it('rejects github.issue with non-string repo', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'issue-watch',
+						event: 'github.issue',
+						prompt: 'Triage',
+						repo: 123,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('"repo" must be a string')])
+			);
+		});
+
+		it('accepts github.issue with filter', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'issue-watch',
+						event: 'github.issue',
+						prompt: 'Triage',
+						filter: { author: 'octocat', labels: 'bug' },
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+	});
+
 	describe('loadCueConfig with filter', () => {
 		it('parses filter field from YAML', () => {
 			mockExistsSync.mockReturnValue(true);
