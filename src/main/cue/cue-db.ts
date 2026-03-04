@@ -59,6 +59,19 @@ const CREATE_CUE_HEARTBEAT_SQL = `
   )
 `;
 
+const CREATE_CUE_GITHUB_SEEN_SQL = `
+  CREATE TABLE IF NOT EXISTS cue_github_seen (
+    subscription_id TEXT NOT NULL,
+    item_key TEXT NOT NULL,
+    seen_at INTEGER NOT NULL,
+    PRIMARY KEY (subscription_id, item_key)
+  )
+`;
+
+const CREATE_CUE_GITHUB_SEEN_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS idx_cue_github_seen_at ON cue_github_seen(seen_at)
+`;
+
 // ============================================================================
 // Module State
 // ============================================================================
@@ -103,6 +116,8 @@ export function initCueDb(
 		db.prepare(sql).run();
 	}
 	db.prepare(CREATE_CUE_HEARTBEAT_SQL).run();
+	db.prepare(CREATE_CUE_GITHUB_SEEN_SQL).run();
+	db.prepare(CREATE_CUE_GITHUB_SEEN_INDEX_SQL).run();
 
 	log('info', `Cue database initialized at ${dbPath}`);
 }
@@ -248,4 +263,58 @@ export function pruneCueEvents(olderThanMs: number): void {
 	if (result.changes > 0) {
 		log('info', `Pruned ${result.changes} old Cue event(s)`);
 	}
+}
+
+// ============================================================================
+// GitHub Seen Tracking
+// ============================================================================
+
+/**
+ * Check if a GitHub item has been seen for a given subscription.
+ */
+export function isGitHubItemSeen(subscriptionId: string, itemKey: string): boolean {
+	const row = getDb()
+		.prepare(`SELECT 1 FROM cue_github_seen WHERE subscription_id = ? AND item_key = ?`)
+		.get(subscriptionId, itemKey);
+	return row !== undefined;
+}
+
+/**
+ * Mark a GitHub item as seen for a given subscription.
+ */
+export function markGitHubItemSeen(subscriptionId: string, itemKey: string): void {
+	getDb()
+		.prepare(
+			`INSERT OR IGNORE INTO cue_github_seen (subscription_id, item_key, seen_at) VALUES (?, ?, ?)`
+		)
+		.run(subscriptionId, itemKey, Date.now());
+}
+
+/**
+ * Check if any GitHub items have been seen for a subscription.
+ * Used for first-run seeding detection.
+ */
+export function hasAnyGitHubSeen(subscriptionId: string): boolean {
+	const row = getDb()
+		.prepare(`SELECT 1 FROM cue_github_seen WHERE subscription_id = ? LIMIT 1`)
+		.get(subscriptionId);
+	return row !== undefined;
+}
+
+/**
+ * Delete GitHub seen records older than the specified age in milliseconds.
+ */
+export function pruneGitHubSeen(olderThanMs: number): void {
+	const cutoff = Date.now() - olderThanMs;
+	const result = getDb().prepare(`DELETE FROM cue_github_seen WHERE seen_at < ?`).run(cutoff);
+	if (result.changes > 0) {
+		log('info', `Pruned ${result.changes} old GitHub seen record(s)`);
+	}
+}
+
+/**
+ * Delete all GitHub seen records for a subscription.
+ */
+export function clearGitHubSeenForSubscription(subscriptionId: string): void {
+	getDb().prepare(`DELETE FROM cue_github_seen WHERE subscription_id = ?`).run(subscriptionId);
 }

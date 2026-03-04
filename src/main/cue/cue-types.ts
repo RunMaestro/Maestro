@@ -5,10 +5,17 @@
  * - time.interval: periodic timer-based triggers
  * - file.changed: file system change triggers
  * - agent.completed: triggers when another agent finishes
+ * - github.pull_request: triggers when new PRs are detected via GitHub CLI polling
+ * - github.issue: triggers when new issues are detected via GitHub CLI polling
  */
 
 /** Event types that can trigger a Cue subscription */
-export type CueEventType = 'time.interval' | 'file.changed' | 'agent.completed';
+export type CueEventType =
+	| 'time.interval'
+	| 'file.changed'
+	| 'agent.completed'
+	| 'github.pull_request'
+	| 'github.issue';
 
 /** A Cue subscription defines a trigger-prompt pairing */
 export interface CueSubscription {
@@ -21,6 +28,8 @@ export interface CueSubscription {
 	source_session?: string | string[];
 	fan_out?: string[];
 	filter?: Record<string, string | number | boolean>;
+	repo?: string;
+	poll_minutes?: number;
 }
 
 /** Global Cue settings */

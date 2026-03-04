@@ -77,6 +77,11 @@ import {
 	updateHeartbeat,
 	getLastHeartbeat,
 	pruneCueEvents,
+	isGitHubItemSeen,
+	markGitHubItemSeen,
+	hasAnyGitHubSeen,
+	pruneGitHubSeen,
+	clearGitHubSeenForSubscription,
 } from '../../../main/cue/cue-db';
 
 beforeEach(() => {
@@ -135,6 +140,10 @@ describe('cue-db lifecycle', () => {
 		).toBe(true);
 		expect(prepareCalls.some((sql) => sql.includes('idx_cue_events_created'))).toBe(true);
 		expect(prepareCalls.some((sql) => sql.includes('idx_cue_events_session'))).toBe(true);
+		expect(
+			prepareCalls.some((sql) => sql.includes('CREATE TABLE IF NOT EXISTS cue_github_seen'))
+		).toBe(true);
+		expect(prepareCalls.some((sql) => sql.includes('idx_cue_github_seen_at'))).toBe(true);
 	});
 
 	it('should throw when accessing before initialization', () => {
@@ -323,5 +332,89 @@ describe('cue-db pruning', () => {
 		// The cutoff should be approximately Date.now() - olderThanMs
 		expect(cutoff).toBeLessThanOrEqual(before);
 		expect(cutoff).toBeGreaterThan(before - olderThanMs - 1000);
+	});
+});
+
+describe('cue-db github seen tracking', () => {
+	beforeEach(() => {
+		initCueDb(undefined, path.join(os.tmpdir(), 'test-cue.db'));
+		vi.clearAllMocks();
+		runCalls.length = 0;
+		getCalls.length = 0;
+		prepareCalls.length = 0;
+		mockGetReturn = undefined;
+	});
+
+	it('isGitHubItemSeen should return false when item not found', () => {
+		mockGetReturn = undefined;
+		const result = isGitHubItemSeen('sub-1', 'pr:owner/repo:123');
+		expect(result).toBe(false);
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining(
+				'SELECT 1 FROM cue_github_seen WHERE subscription_id = ? AND item_key = ?'
+			)
+		);
+		const lastGet = getCalls[getCalls.length - 1];
+		expect(lastGet[0]).toBe('sub-1');
+		expect(lastGet[1]).toBe('pr:owner/repo:123');
+	});
+
+	it('isGitHubItemSeen should return true when item exists', () => {
+		mockGetReturn = { '1': 1 };
+		const result = isGitHubItemSeen('sub-1', 'pr:owner/repo:123');
+		expect(result).toBe(true);
+	});
+
+	it('markGitHubItemSeen should INSERT OR IGNORE with correct parameters', () => {
+		markGitHubItemSeen('sub-1', 'pr:owner/repo:456');
+
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('INSERT OR IGNORE INTO cue_github_seen')
+		);
+		const lastRun = runCalls[runCalls.length - 1];
+		expect(lastRun[0]).toBe('sub-1');
+		expect(lastRun[1]).toBe('pr:owner/repo:456');
+		expect(typeof lastRun[2]).toBe('number'); // seen_at
+	});
+
+	it('hasAnyGitHubSeen should return false when no records exist', () => {
+		mockGetReturn = undefined;
+		const result = hasAnyGitHubSeen('sub-1');
+		expect(result).toBe(false);
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('SELECT 1 FROM cue_github_seen WHERE subscription_id = ? LIMIT 1')
+		);
+		const lastGet = getCalls[getCalls.length - 1];
+		expect(lastGet[0]).toBe('sub-1');
+	});
+
+	it('hasAnyGitHubSeen should return true when records exist', () => {
+		mockGetReturn = { '1': 1 };
+		const result = hasAnyGitHubSeen('sub-1');
+		expect(result).toBe(true);
+	});
+
+	it('pruneGitHubSeen should delete old records with correct cutoff', () => {
+		const olderThanMs = 30 * 24 * 60 * 60 * 1000;
+		const before = Date.now();
+		pruneGitHubSeen(olderThanMs);
+
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('DELETE FROM cue_github_seen WHERE seen_at < ?')
+		);
+		const lastRun = runCalls[runCalls.length - 1];
+		const cutoff = lastRun[0] as number;
+		expect(cutoff).toBeLessThanOrEqual(before);
+		expect(cutoff).toBeGreaterThan(before - olderThanMs - 1000);
+	});
+
+	it('clearGitHubSeenForSubscription should delete all records for a subscription', () => {
+		clearGitHubSeenForSubscription('sub-1');
+
+		expect(mockDb.prepare).toHaveBeenCalledWith(
+			expect.stringContaining('DELETE FROM cue_github_seen WHERE subscription_id = ?')
+		);
+		const lastRun = runCalls[runCalls.length - 1];
+		expect(lastRun[0]).toBe('sub-1');
 	});
 });
