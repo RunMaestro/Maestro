@@ -31,6 +31,9 @@ import type { Theme, ShellInfo } from '../../../../../renderer/types';
 // Mock platformUtils
 vi.mock('../../../../../renderer/utils/platformUtils', () => ({
 	getOpenInLabel: vi.fn(() => 'Open in Finder'),
+	isWindowsPlatform: vi.fn(() => false),
+	isMacOSPlatform: vi.fn(() => false),
+	isLinuxPlatform: vi.fn(() => false),
 }));
 
 // Shared mock fns so tests can assert on useSettings setters

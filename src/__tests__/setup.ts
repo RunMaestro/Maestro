@@ -82,7 +82,7 @@ vi.mock('lucide-react', () => {
 });
 
 // Global mock for shortcutFormatter to ensure platform-independent test output.
-// Without this, shortcutFormatter detects the platform via navigator.userAgent, producing
+// Without this, shortcutFormatter detects the platform via window.maestro.platform, producing
 // different output on macOS vs Linux CI. This mock always uses the non-Mac format (Ctrl+, Shift+, etc.)
 // so tests are deterministic regardless of where they run. Individual test files can override
 // this with their own vi.mock() if they need custom behavior.

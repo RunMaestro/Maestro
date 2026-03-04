@@ -38,7 +38,7 @@ import {
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
 import { formatMetaKey, formatEnterToSend } from '../../../utils/shortcutFormatter';
-import { getOpenInLabel } from '../../../utils/platformUtils';
+import { getOpenInLabel, isLinuxPlatform } from '../../../utils/platformUtils';
 import { ToggleButtonGroup } from '../../ToggleButtonGroup';
 import { SettingCheckbox } from '../../SettingCheckbox';
 import { EnvVarsEditor } from '../EnvVarsEditor';
@@ -814,7 +814,7 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 					</div>
 
 					{/* Linux note */}
-					{navigator.platform.toLowerCase().includes('linux') && (
+					{isLinuxPlatform() && (
 						<div
 							className="text-xs p-2 rounded"
 							style={{

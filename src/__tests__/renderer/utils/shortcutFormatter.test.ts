@@ -1,9 +1,10 @@
 /**
  * Tests for shortcutFormatter.ts
  *
- * This module formats keyboard shortcuts for display based on the platform.
- * Since platform detection happens at module load time, we need to use
- * dynamic imports with different navigator mocks for each platform.
+ * Platform detection now uses window.maestro.platform (Electron preload bridge)
+ * instead of navigator.userAgent. Since isMac() is a function call (not a
+ * module-level constant), we can simply set window.maestro.platform before
+ * each test — no dynamic imports needed.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -11,32 +12,23 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // Undo the global mock from setup.ts — this file tests the real module
 vi.unmock('../../../renderer/utils/shortcutFormatter');
 
-describe('shortcutFormatter', () => {
-	// Store original navigator to restore after tests
-	const originalNavigator = global.navigator;
+import {
+	formatKey,
+	formatShortcutKeys,
+	formatMetaKey,
+	formatEnterToSend,
+	formatEnterToSendTooltip,
+	isMacOS,
+} from '../../../renderer/utils/shortcutFormatter';
 
+describe('shortcutFormatter', () => {
 	afterEach(() => {
-		// Restore original navigator
 		vi.unstubAllGlobals();
-		// Reset module cache to allow re-evaluation with different navigator
-		vi.resetModules();
 	});
 
 	describe('macOS Platform', () => {
-		let formatKey: (key: string) => string;
-		let formatShortcutKeys: (keys: string[], separator?: string) => string;
-		let isMacOS: () => boolean;
-
-		beforeEach(async () => {
-			// Reset modules first
-			vi.resetModules();
-			// Mock navigator for macOS
-			vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' });
-			// Dynamically import after setting up mock
-			const module = await import('../../../renderer/utils/shortcutFormatter');
-			formatKey = module.formatKey;
-			formatShortcutKeys = module.formatShortcutKeys;
-			isMacOS = module.isMacOS;
+		beforeEach(() => {
+			(window as any).maestro = { platform: 'darwin' };
 		});
 
 		describe('isMacOS()', () => {
@@ -181,23 +173,37 @@ describe('shortcutFormatter', () => {
 				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('⌥ F4');
 			});
 		});
+
+		describe('formatMetaKey()', () => {
+			it('returns ⌘ on macOS', () => {
+				expect(formatMetaKey()).toBe('⌘');
+			});
+		});
+
+		describe('formatEnterToSend()', () => {
+			it('returns Enter when enterToSend is true', () => {
+				expect(formatEnterToSend(true)).toBe('Enter');
+			});
+
+			it('returns ⌘ + Enter when enterToSend is false', () => {
+				expect(formatEnterToSend(false)).toBe('⌘ + Enter');
+			});
+		});
+
+		describe('formatEnterToSendTooltip()', () => {
+			it('returns Cmd variant when enterToSend is true', () => {
+				expect(formatEnterToSendTooltip(true)).toBe('Switch to Cmd+Enter to send');
+			});
+
+			it('returns Enter variant when enterToSend is false', () => {
+				expect(formatEnterToSendTooltip(false)).toBe('Switch to Enter to send');
+			});
+		});
 	});
 
 	describe('Windows/Linux Platform', () => {
-		let formatKey: (key: string) => string;
-		let formatShortcutKeys: (keys: string[], separator?: string) => string;
-		let isMacOS: () => boolean;
-
-		beforeEach(async () => {
-			// Reset modules first
-			vi.resetModules();
-			// Mock navigator for Windows
-			vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' });
-			// Dynamically import after setting up mock
-			const module = await import('../../../renderer/utils/shortcutFormatter');
-			formatKey = module.formatKey;
-			formatShortcutKeys = module.formatShortcutKeys;
-			isMacOS = module.isMacOS;
+		beforeEach(() => {
+			(window as any).maestro = { platform: 'win32' };
 		});
 
 		describe('isMacOS()', () => {
@@ -342,80 +348,76 @@ describe('shortcutFormatter', () => {
 				expect(formatShortcutKeys(['Alt', 'F4'])).toBe('Alt+F4');
 			});
 		});
+
+		describe('formatMetaKey()', () => {
+			it('returns Ctrl on Windows/Linux', () => {
+				expect(formatMetaKey()).toBe('Ctrl');
+			});
+		});
+
+		describe('formatEnterToSend()', () => {
+			it('returns Enter when enterToSend is true', () => {
+				expect(formatEnterToSend(true)).toBe('Enter');
+			});
+
+			it('returns Ctrl + Enter when enterToSend is false', () => {
+				expect(formatEnterToSend(false)).toBe('Ctrl + Enter');
+			});
+		});
+
+		describe('formatEnterToSendTooltip()', () => {
+			it('returns Ctrl variant when enterToSend is true', () => {
+				expect(formatEnterToSendTooltip(true)).toBe('Switch to Ctrl+Enter to send');
+			});
+
+			it('returns Enter variant when enterToSend is false', () => {
+				expect(formatEnterToSendTooltip(false)).toBe('Switch to Enter to send');
+			});
+		});
 	});
 
 	describe('Edge Cases', () => {
-		beforeEach(async () => {
-			vi.resetModules();
-			// Use macOS for these tests
-			vi.stubGlobal('navigator', { userAgent: 'Mac' });
-			// Need to wait for import
+		it('handles missing window.maestro gracefully', () => {
+			(window as any).maestro = undefined;
+			// When maestro is undefined, isMac() returns false (non-Mac fallback)
+			expect(isMacOS()).toBe(false);
 		});
 
-		it('handles undefined navigator gracefully', async () => {
-			vi.resetModules();
-			// Simulate environment without navigator (like Node.js)
-			vi.stubGlobal('navigator', undefined);
-
-			// Module should fall back to non-Mac behavior when navigator is undefined
-			const module = await import('../../../renderer/utils/shortcutFormatter');
-			// When navigator is undefined, the check `typeof navigator !== 'undefined'` is false
-			// So isMac will be false
-			expect(module.isMacOS()).toBe(false);
+		it('handles Linux platform', () => {
+			(window as any).maestro = { platform: 'linux' };
+			expect(isMacOS()).toBe(false);
+			expect(formatKey('Meta')).toBe('Ctrl');
 		});
 
-		it('handles Linux user agent', async () => {
-			vi.resetModules();
-			vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64)' });
-
-			const module = await import('../../../renderer/utils/shortcutFormatter');
-			expect(module.isMacOS()).toBe(false);
-			expect(module.formatKey('Meta')).toBe('Ctrl');
+		it('handles empty platform', () => {
+			(window as any).maestro = { platform: '' };
+			expect(isMacOS()).toBe(false);
 		});
 
-		it('handles empty user agent', async () => {
-			vi.resetModules();
-			vi.stubGlobal('navigator', { userAgent: '' });
-
-			const module = await import('../../../renderer/utils/shortcutFormatter');
-			expect(module.isMacOS()).toBe(false);
-		});
-
-		it('handles special characters in key names', async () => {
-			vi.resetModules();
-			vi.stubGlobal('navigator', { userAgent: 'Mac' });
-
-			const module = await import('../../../renderer/utils/shortcutFormatter');
+		it('handles special characters in key names', () => {
+			(window as any).maestro = { platform: 'darwin' };
 			// Key names with special characters should be returned as-is
-			expect(module.formatKey('+')).toBe('+');
-			expect(module.formatKey('-')).toBe('-');
-			expect(module.formatKey('/')).toBe('/');
+			expect(formatKey('+')).toBe('+');
+			expect(formatKey('-')).toBe('-');
+			expect(formatKey('/')).toBe('/');
 		});
 
-		it('handles unicode characters', async () => {
-			vi.resetModules();
-			vi.stubGlobal('navigator', { userAgent: 'Mac' });
-
-			const module = await import('../../../renderer/utils/shortcutFormatter');
+		it('handles unicode characters', () => {
+			(window as any).maestro = { platform: 'darwin' };
 			// Unicode characters should be uppercased if single char
-			expect(module.formatKey('a')).toBe('A');
+			expect(formatKey('a')).toBe('A');
 			// Multi-char unicode should be returned as-is
-			expect(module.formatKey('hello')).toBe('hello');
+			expect(formatKey('hello')).toBe('hello');
 		});
 	});
 
 	describe('All Key Mappings Coverage', () => {
 		describe('macOS - complete key map coverage', () => {
-			beforeEach(async () => {
-				vi.resetModules();
-				vi.stubGlobal('navigator', { userAgent: 'Mac' });
+			beforeEach(() => {
+				(window as any).maestro = { platform: 'darwin' };
 			});
 
-			it('covers all 16 macOS key mappings', async () => {
-				const module = await import('../../../renderer/utils/shortcutFormatter');
-				const { formatKey } = module;
-
-				// All keys from MAC_KEY_MAP
+			it('covers all 16 macOS key mappings', () => {
 				const macMappings: [string, string][] = [
 					['Meta', '⌘'],
 					['Alt', '⌥'],
@@ -442,16 +444,11 @@ describe('shortcutFormatter', () => {
 		});
 
 		describe('Windows/Linux - complete key map coverage', () => {
-			beforeEach(async () => {
-				vi.resetModules();
-				vi.stubGlobal('navigator', { userAgent: 'Windows' });
+			beforeEach(() => {
+				(window as any).maestro = { platform: 'win32' };
 			});
 
-			it('covers all 16 Windows/Linux key mappings', async () => {
-				const module = await import('../../../renderer/utils/shortcutFormatter');
-				const { formatKey } = module;
-
-				// All keys from OTHER_KEY_MAP
+			it('covers all 16 Windows/Linux key mappings', () => {
 				const otherMappings: [string, string][] = [
 					['Meta', 'Ctrl'],
 					['Alt', 'Alt'],
