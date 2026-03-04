@@ -116,6 +116,8 @@ export const DEFAULT_ONBOARDING_STATS: OnboardingStats = {
 
 export const DEFAULT_ENCORE_FEATURES: EncoreFeatureFlags = {
 	directorNotes: false,
+	usageStats: true,
+	symphony: true,
 };
 
 export const DEFAULT_DIRECTOR_NOTES_SETTINGS: DirectorNotesSettings = {
@@ -246,6 +248,7 @@ export interface SettingsStoreState {
 	autoScrollAiMode: boolean;
 	userMessageAlignment: 'left' | 'right';
 	encoreFeatures: EncoreFeatureFlags;
+	symphonyRegistryUrls: string[];
 	directorNotesSettings: DirectorNotesSettings;
 	wakatimeApiKey: string;
 	wakatimeEnabled: boolean;
@@ -318,6 +321,7 @@ export interface SettingsStoreActions {
 	setAutoScrollAiMode: (value: boolean) => void;
 	setUserMessageAlignment: (value: 'left' | 'right') => void;
 	setEncoreFeatures: (value: EncoreFeatureFlags) => void;
+	setSymphonyRegistryUrls: (value: string[]) => void;
 	setDirectorNotesSettings: (value: DirectorNotesSettings) => void;
 	setWakatimeApiKey: (value: string) => void;
 	setWakatimeEnabled: (value: boolean) => void;
@@ -470,6 +474,7 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		autoScrollAiMode: false,
 		userMessageAlignment: 'right',
 		encoreFeatures: DEFAULT_ENCORE_FEATURES,
+		symphonyRegistryUrls: [],
 		directorNotesSettings: DEFAULT_DIRECTOR_NOTES_SETTINGS,
 		wakatimeApiKey: '',
 		wakatimeEnabled: false,
@@ -856,6 +861,11 @@ export const useSettingsStore = create<SettingsStore>()((set, get) => {
 		setEncoreFeatures: (value) => {
 			set({ encoreFeatures: value });
 			window.maestro.settings.set('encoreFeatures', value);
+		},
+
+		setSymphonyRegistryUrls: (value) => {
+			set({ symphonyRegistryUrls: value });
+			window.maestro.settings.set('symphonyRegistryUrls', value);
 		},
 
 		setDirectorNotesSettings: (value) => {
@@ -1773,6 +1783,10 @@ export async function loadAllSettings(): Promise<void> {
 				...(allSettings['encoreFeatures'] as Partial<EncoreFeatureFlags>),
 			};
 		}
+
+		// Symphony registry URLs (additional user-configured registries)
+		if (allSettings['symphonyRegistryUrls'] !== undefined)
+			patch.symphonyRegistryUrls = allSettings['symphonyRegistryUrls'] as string[];
 
 		// Director's Notes settings (merge with defaults to preserve new fields)
 		if (allSettings['directorNotesSettings'] !== undefined) {

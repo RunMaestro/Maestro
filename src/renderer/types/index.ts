@@ -912,6 +912,8 @@ export interface LeaderboardSubmitResponse {
 // Each key is a feature ID, value indicates whether it's enabled
 export interface EncoreFeatureFlags {
 	directorNotes: boolean;
+	usageStats: boolean;
+	symphony: boolean;
 }
 
 // Director's Notes settings for synopsis generation

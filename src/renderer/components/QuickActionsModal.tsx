@@ -51,7 +51,7 @@ interface QuickActionsModalProps {
 	setAboutModalOpen: (open: boolean) => void;
 	setLogViewerOpen: (open: boolean) => void;
 	setProcessMonitorOpen: (open: boolean) => void;
-	setUsageDashboardOpen: (open: boolean) => void;
+	setUsageDashboardOpen?: (open: boolean) => void;
 	setAgentSessionsOpen: (open: boolean) => void;
 	setActiveAgentSessionId: (id: string | null) => void;
 	setGitDiffPreview: (diff: string | null) => void;
@@ -695,15 +695,19 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 				setQuickActionOpen(false);
 			},
 		},
-		{
-			id: 'usageDashboard',
-			label: 'Usage Dashboard',
-			shortcut: shortcuts.usageDashboard,
-			action: () => {
-				setUsageDashboardOpen(true);
-				setQuickActionOpen(false);
-			},
-		},
+		...(setUsageDashboardOpen
+			? [
+					{
+						id: 'usageDashboard',
+						label: 'Usage Dashboard',
+						shortcut: shortcuts.usageDashboard,
+						action: () => {
+							setUsageDashboardOpen(true);
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
 		...(activeSession && hasActiveSessionCapability?.('supportsSessionStorage')
 			? [
 					{

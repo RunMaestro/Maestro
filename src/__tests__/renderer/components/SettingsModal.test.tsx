@@ -207,7 +207,7 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		customAICommands: [],
 		setCustomAICommands: mockSetCustomAICommands,
 		// Encore features
-		encoreFeatures: { directorNotes: false },
+		encoreFeatures: { directorNotes: false, usageStats: true, symphony: true },
 		setEncoreFeatures: mockSetEncoreFeatures,
 		// Conductor profile settings
 		conductorProfile: '',
@@ -273,6 +273,9 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setUseNativeTitleBar: vi.fn(),
 		autoHideMenuBar: false,
 		setAutoHideMenuBar: vi.fn(),
+		// Symphony registry URLs
+		symphonyRegistryUrls: [],
+		setSymphonyRegistryUrls: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -2333,12 +2336,14 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: true,
+				usageStats: true,
+				symphony: true,
 			});
 		});
 
 		it('should call setEncoreFeatures with false when toggling DN off', async () => {
 			mockSetEncoreFeatures.mockClear();
-			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true, usageStats: true, symphony: true } };
 			render(<SettingsModal {...createDefaultProps()} />);
 
 			await act(async () => {
@@ -2357,12 +2362,148 @@ describe('SettingsModal', () => {
 
 			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
 				directorNotes: false,
+				usageStats: true,
+				symphony: true,
 			});
+		});
+
+		it('should show Usage & Stats feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Enable stats collection')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Usage & Stats toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const usSection = screen.getByText('Usage & Stats').closest('button');
+			expect(usSection).toBeInTheDocument();
+			fireEvent.click(usSection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: false,
+				symphony: true,
+			});
+		});
+
+		it('should show Maestro Symphony feature toggle defaulting to on', async () => {
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			// Settings should be visible when enabled (default on)
+			expect(screen.getByText('Registry Sources')).toBeInTheDocument();
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked off', async () => {
+			mockSetEncoreFeatures.mockClear();
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: false,
+			});
+		});
+
+		it('should call setEncoreFeatures when Symphony toggle is clicked on', async () => {
+			mockSetEncoreFeatures.mockClear();
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: false, usageStats: true, symphony: false } };
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			const symphonySection = screen.getByText('Maestro Symphony').closest('button');
+			expect(symphonySection).toBeInTheDocument();
+			fireEvent.click(symphonySection!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith({
+				directorNotes: false,
+				usageStats: true,
+				symphony: true,
+			});
+		});
+
+		it('should hide Symphony registry settings when symphony is disabled', async () => {
+			mockUseSettingsOverrides = { encoreFeatures: { directorNotes: false, usageStats: true, symphony: false } };
+
+			render(<SettingsModal {...createDefaultProps()} />);
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			fireEvent.click(screen.getByTitle('Encore Features'));
+
+			await act(async () => {
+				await vi.advanceTimersByTimeAsync(50);
+			});
+
+			expect(screen.getByText('Maestro Symphony')).toBeInTheDocument();
+			expect(screen.queryByText('Registry Sources')).not.toBeInTheDocument();
 		});
 
 		describe("with Director's Notes enabled", () => {
 			beforeEach(() => {
-				mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true } };
+				mockUseSettingsOverrides = { encoreFeatures: { directorNotes: true, usageStats: true, symphony: true } };
 			});
 
 			it('should render provider dropdown with detected available agents', async () => {

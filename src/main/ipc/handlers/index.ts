@@ -270,6 +270,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		app: deps.app,
 		getMainWindow: deps.getMainWindow,
 		sessionsStore: deps.sessionsStore,
+		settingsStore: deps.settingsStore,
 	});
 	// Register agent error handlers (error state management)
 	registerAgentErrorHandlers();

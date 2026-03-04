@@ -425,11 +425,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setProcessMonitorOpen(true);
 				trackShortcut('processMonitor');
-			} else if (ctx.isShortcut(e, 'usageDashboard')) {
+			} else if (ctx.isShortcut(e, 'usageDashboard') && ctx.encoreFeatures?.usageStats) {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
 				trackShortcut('usageDashboard');
-			} else if (ctx.isShortcut(e, 'openSymphony')) {
+			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);
 				trackShortcut('openSymphony');

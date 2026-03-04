@@ -201,6 +201,7 @@ export interface SymphonyHandlerDependencies {
 	app: App;
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<SessionsData>;
+	settingsStore: Store;
 }
 
 // ============================================================================
@@ -382,37 +383,65 @@ function parseDocumentPaths(body: string): DocumentReference[] {
 // ============================================================================
 
 /**
- * Fetch the symphony registry from GitHub.
+ * Fetch a single symphony registry from a URL.
+ * Returns null on failure instead of throwing (isolated error handling per URL).
  */
-async function fetchRegistry(): Promise<SymphonyRegistry> {
-	logger.info('Fetching Symphony registry', LOG_CONTEXT);
-
+async function fetchSingleRegistry(url: string): Promise<SymphonyRegistry | null> {
 	try {
-		const response = await fetch(SYMPHONY_REGISTRY_URL);
-
+		const response = await fetch(url);
 		if (!response.ok) {
-			throw new SymphonyError(
-				`Failed to fetch registry: ${response.status} ${response.statusText}`,
-				'network'
-			);
+			logger.warn(`Failed to fetch registry from ${url}: ${response.status}`, LOG_CONTEXT);
+			return null;
 		}
-
 		const data = (await response.json()) as SymphonyRegistry;
-
 		if (!data.repositories || !Array.isArray(data.repositories)) {
-			throw new SymphonyError('Invalid registry structure', 'parse');
+			logger.warn(`Invalid registry structure from ${url}`, LOG_CONTEXT);
+			return null;
 		}
-
-		logger.info(`Fetched registry with ${data.repositories.length} repos`, LOG_CONTEXT);
+		logger.info(`Fetched ${data.repositories.length} repos from ${url}`, LOG_CONTEXT);
 		return data;
 	} catch (error) {
-		if (error instanceof SymphonyError) throw error;
-		throw new SymphonyError(
-			`Network error: ${error instanceof Error ? error.message : String(error)}`,
-			'network',
-			error
-		);
+		logger.warn(`Network error fetching registry from ${url}: ${error instanceof Error ? error.message : String(error)}`, LOG_CONTEXT);
+		return null;
 	}
+}
+
+/**
+ * Fetch and merge symphony registries from all configured URLs.
+ * Default URL always fetched first (wins on slug conflicts).
+ * Custom URL failures are isolated — other registries still load.
+ */
+async function fetchRegistries(customUrls: string[]): Promise<SymphonyRegistry> {
+	logger.info(`Fetching Symphony registries (1 default + ${customUrls.length} custom)`, LOG_CONTEXT);
+
+	const allUrls = [SYMPHONY_REGISTRY_URL, ...customUrls];
+	const results = await Promise.allSettled(allUrls.map(fetchSingleRegistry));
+
+	const seenSlugs = new Set<string>();
+	const mergedRepos: SymphonyRegistry['repositories'] = [];
+
+	for (const result of results) {
+		if (result.status === 'fulfilled' && result.value) {
+			for (const repo of result.value.repositories) {
+				if (!seenSlugs.has(repo.slug)) {
+					seenSlugs.add(repo.slug);
+					mergedRepos.push(repo);
+				}
+			}
+		}
+	}
+
+	if (mergedRepos.length === 0) {
+		throw new SymphonyError('Failed to fetch registry from all configured URLs', 'network');
+	}
+
+	logger.info(`Merged registry: ${mergedRepos.length} repos from ${allUrls.length} sources`, LOG_CONTEXT);
+
+	return {
+		schemaVersion: '1.0',
+		lastUpdated: new Date().toISOString(),
+		repositories: mergedRepos,
+	};
 }
 
 /**
@@ -1024,6 +1053,7 @@ export function registerSymphonyHandlers({
 	app,
 	getMainWindow,
 	sessionsStore,
+	settingsStore,
 }: SymphonyHandlerDependencies): void {
 	// ─────────────────────────────────────────────────────────────────────────
 	// Registry Operations
@@ -1112,9 +1142,10 @@ export function registerSymphonyHandlers({
 					};
 				}
 
-				// Fetch fresh data
+				// Fetch fresh data from all configured registries
 				try {
-					const registry = await fetchRegistry();
+					const customUrls = (settingsStore.get('symphonyRegistryUrls') as string[] | undefined) ?? [];
+					const registry = await fetchRegistries(customUrls);
 					const enriched = await enrichWithStars(registry, cache, !!forceRefresh);
 
 					// Update cache (enriched registry includes stars on repo objects,
