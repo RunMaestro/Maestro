@@ -35,9 +35,11 @@ export function createNotificationApi() {
 		 * Show an OS notification
 		 * @param title - Notification title
 		 * @param body - Notification body text
+		 * @param sessionId - Optional session ID for click-to-navigate
+		 * @param tabId - Optional tab ID for click-to-navigate
 		 */
-		show: (title: string, body: string): Promise<NotificationShowResponse> =>
-			ipcRenderer.invoke('notification:show', title, body),
+		show: (title: string, body: string, sessionId?: string, tabId?: string): Promise<NotificationShowResponse> =>
+			ipcRenderer.invoke('notification:show', title, body, sessionId, tabId),
 
 		/**
 		 * Execute a custom notification command (e.g., TTS, logging)

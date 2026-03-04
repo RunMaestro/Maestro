@@ -1504,6 +1504,35 @@ function MaestroConsoleInner() {
 		[setActiveSessionId]
 	);
 
+	// Deep link navigation handler — processes maestro:// URLs from OS notifications,
+	// external apps, and CLI commands
+	useEffect(() => {
+		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+			if (deepLink.action === 'focus') {
+				// Window already brought to foreground by main process
+				return;
+			}
+			if (deepLink.action === 'session' && deepLink.sessionId) {
+				handleToastSessionClick(deepLink.sessionId, deepLink.tabId);
+				return;
+			}
+			if (deepLink.action === 'group' && deepLink.groupId) {
+				// Find first session in group and navigate to it
+				const groupSession = sessions.find((s) => s.groupId === deepLink.groupId);
+				if (groupSession) {
+					handleToastSessionClick(groupSession.id);
+				}
+				// Expand the group if it's collapsed
+				setGroups((prev) =>
+					prev.map((g) =>
+						g.id === deepLink.groupId ? { ...g, collapsed: false } : g
+					)
+				);
+			}
+		});
+		return unsubscribe;
+	}, [handleToastSessionClick, sessions, setGroups]);
+
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions } = useSortedSessions({

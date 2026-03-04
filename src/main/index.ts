@@ -92,6 +92,7 @@ import {
 } from './constants';
 // initAutoUpdater is now used by window-manager.ts (Phase 4 refactoring)
 import { checkWslEnvironment } from './utils/wslDetector';
+import { setupDeepLinkHandling, flushPendingDeepLink } from './deep-links';
 // Extracted modules (Phase 1 refactoring)
 import { parseParticipantSessionId } from './group-chat/session-parser';
 import { extractTextFromStreamJson } from './group-chat/output-parser';
@@ -292,6 +293,12 @@ function createWindow() {
 // Set up global error handlers for uncaught exceptions (Phase 4 refactoring)
 setupGlobalErrorHandlers();
 
+// Set up deep link protocol handling (must be before app.whenReady for requestSingleInstanceLock)
+const gotSingleInstanceLock = setupDeepLinkHandling(() => mainWindow);
+if (!gotSingleInstanceLock) {
+	app.quit();
+}
+
 app.whenReady().then(async () => {
 	// Load logger settings first
 	const logLevel = store.get('logLevel', 'info');
@@ -394,6 +401,9 @@ app.whenReady().then(async () => {
 	// Create main window
 	logger.info('Creating main window', 'Startup');
 	createWindow();
+
+	// Flush any deep link URL that arrived before the window was ready (cold start)
+	flushPendingDeepLink(() => mainWindow);
 
 	// Note: History file watching is handled by HistoryManager.startWatching() above
 	// which uses the new per-session file format in the history/ directory
@@ -657,7 +667,7 @@ function setupIpcHandlers() {
 	registerAgentErrorHandlers();
 
 	// Register notification handlers (extracted to handlers/notifications.ts)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({ getMainWindow: () => mainWindow });
 
 	// Register attachments handlers (extracted to handlers/attachments.ts)
 	registerAttachmentsHandlers({ app });

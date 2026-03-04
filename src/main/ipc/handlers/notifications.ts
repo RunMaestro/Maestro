@@ -14,6 +14,7 @@ import { ipcMain, Notification, BrowserWindow } from 'electron';
 import { spawn, type ChildProcess } from 'child_process';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
+import { parseDeepLink, dispatchDeepLink } from '../../deep-links';
 
 // ==========================================================================
 // Constants
@@ -330,13 +331,20 @@ async function processNextNotification(): Promise<void> {
 // ==========================================================================
 
 /**
+ * Dependencies for notification handlers
+ */
+export interface NotificationsHandlerDependencies {
+	getMainWindow: () => BrowserWindow | null;
+}
+
+/**
  * Register all notification-related IPC handlers
  */
-export function registerNotificationsHandlers(): void {
-	// Show OS notification
+export function registerNotificationsHandlers(deps?: NotificationsHandlerDependencies): void {
+	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
 		'notification:show',
-		async (_event, title: string, body: string): Promise<NotificationShowResponse> => {
+		async (_event, title: string, body: string, sessionId?: string, tabId?: string): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
 					const notification = new Notification({
@@ -344,8 +352,23 @@ export function registerNotificationsHandlers(): void {
 						body,
 						silent: true, // Don't play system sound - we have our own audio feedback option
 					});
+
+					// Wire click handler for navigation if session context is provided
+					if (sessionId && deps?.getMainWindow) {
+						const deepLinkUrl = tabId
+							? `maestro://session/${sessionId}/tab/${tabId}`
+							: `maestro://session/${sessionId}`;
+
+						notification.on('click', () => {
+							const parsed = parseDeepLink(deepLinkUrl);
+							if (parsed) {
+								dispatchDeepLink(parsed, deps.getMainWindow);
+							}
+						});
+					}
+
 					notification.show();
-					logger.debug('Showed OS notification', 'Notification', { title, body });
+					logger.debug('Showed OS notification', 'Notification', { title, body, sessionId, tabId });
 					return { success: true };
 				} else {
 					logger.warn('OS notifications not supported on this platform', 'Notification');

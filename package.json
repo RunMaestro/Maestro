@@ -61,6 +61,12 @@
 		"npmRebuild": false,
 		"appId": "com.maestro.app",
 		"productName": "Maestro",
+		"protocols": [
+			{
+				"name": "Maestro",
+				"schemes": ["maestro"]
+			}
+		],
 		"publish": {
 			"provider": "github",
 			"owner": "RunMaestro",
