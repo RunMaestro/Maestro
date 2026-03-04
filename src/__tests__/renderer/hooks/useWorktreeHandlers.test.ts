@@ -578,6 +578,24 @@ describe('handleCreateWorktreeFromConfig', () => {
 		expect(parent?.worktreesExpanded).toBe(true);
 	});
 
+	it('auto-focuses the new worktree session after creation', async () => {
+		useSessionStore.setState({
+			sessions: [mockParentSession],
+			activeSessionId: 'parent-1',
+		} as any);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktreeFromConfig('feature-new', '/projects/worktrees');
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		const newSession = sessions.find((s) => s.worktreeBranch === 'feature-new');
+		expect(newSession).toBeDefined();
+		expect(useSessionStore.getState().activeSessionId).toBe(newSession!.id);
+	});
+
 	it('shows error toast on IPC failure and re-throws error', async () => {
 		useSessionStore.setState({
 			sessions: [mockParentSession],
@@ -672,6 +690,21 @@ describe('handleCreateWorktree', () => {
 
 		const sessions = useSessionStore.getState().sessions;
 		expect(sessions.some((s) => s.worktreeBranch === 'new-branch')).toBe(true);
+	});
+
+	it('auto-focuses the new worktree session after creation', async () => {
+		getModalActions().setCreateWorktreeSession(mockParentSession);
+
+		const { result } = renderHook(() => useWorktreeHandlers());
+
+		await act(async () => {
+			await result.current.handleCreateWorktree('new-branch');
+		});
+
+		const sessions = useSessionStore.getState().sessions;
+		const newSession = sessions.find((s) => s.worktreeBranch === 'new-branch');
+		expect(newSession).toBeDefined();
+		expect(useSessionStore.getState().activeSessionId).toBe(newSession!.id);
 	});
 
 	it('uses default basePath (parent cwd + /worktrees) when no worktreeConfig', async () => {
