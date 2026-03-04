@@ -333,6 +333,13 @@ interface MaestroAPI {
 			) => void
 		) => () => void;
 	};
+	feedback: {
+		checkGhAuth: () => Promise<{ authenticated: boolean; message?: string }>;
+		submit: (
+			sessionId: string,
+			feedbackText: string
+		) => Promise<{ success: boolean; error?: string }>;
+	};
 	agentError: {
 		clearError: (sessionId: string) => Promise<{ success: boolean }>;
 		retryAfterError: (

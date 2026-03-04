@@ -17,6 +17,17 @@ vi.mock('lucide-react', () => ({
 			×
 		</span>
 	),
+	MessageSquarePlus: ({
+		className,
+		style,
+	}: {
+		className?: string;
+		style?: React.CSSProperties;
+	}) => (
+		<span data-testid="message-square-plus-icon" className={className} style={style}>
+			✉
+		</span>
+	),
 	Wand2: ({ className, style }: { className?: string; style?: React.CSSProperties }) => (
 		<span data-testid="wand-icon" className={className} style={style}>
 			🪄
