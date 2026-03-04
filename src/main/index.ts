@@ -301,6 +301,7 @@ setupGlobalErrorHandlers();
 const gotSingleInstanceLock = setupDeepLinkHandling(() => mainWindow);
 if (!gotSingleInstanceLock) {
 	app.quit();
+	process.exit(0);
 }
 
 app.whenReady().then(async () => {

@@ -217,6 +217,20 @@ describe('Notification IPC Handlers', () => {
 			expect(mocks.mockNotificationOn).toHaveBeenCalledWith('click', expect.any(Function));
 		});
 
+		it('should URI-encode sessionId and tabId in deep link URL', async () => {
+			const { parseDeepLink } = await import('../../../../main/deep-links');
+			const handler = handlers.get('notification:show')!;
+			await handler({}, 'Title', 'Body', 'id/with/slashes', 'tab?special');
+
+			// Trigger the click handler
+			const clickHandler = mocks.mockNotificationOn.mock.calls[0][1];
+			clickHandler();
+
+			expect(parseDeepLink).toHaveBeenCalledWith(
+				`maestro://session/${encodeURIComponent('id/with/slashes')}/tab/${encodeURIComponent('tab?special')}`
+			);
+		});
+
 		it('should not register click handler when sessionId is not provided', async () => {
 			const handler = handlers.get('notification:show')!;
 			await handler({}, 'Title', 'Body');

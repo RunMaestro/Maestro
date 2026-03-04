@@ -344,7 +344,13 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 	// Show OS notification (with optional click-to-navigate support)
 	ipcMain.handle(
 		'notification:show',
-		async (_event, title: string, body: string, sessionId?: string, tabId?: string): Promise<NotificationShowResponse> => {
+		async (
+			_event,
+			title: string,
+			body: string,
+			sessionId?: string,
+			tabId?: string
+		): Promise<NotificationShowResponse> => {
 			try {
 				if (Notification.isSupported()) {
 					const notification = new Notification({
@@ -356,8 +362,8 @@ export function registerNotificationsHandlers(deps?: NotificationsHandlerDepende
 					// Wire click handler for navigation if session context is provided
 					if (sessionId && deps?.getMainWindow) {
 						const deepLinkUrl = tabId
-							? `maestro://session/${sessionId}/tab/${tabId}`
-							: `maestro://session/${sessionId}`;
+							? `maestro://session/${encodeURIComponent(sessionId)}/tab/${encodeURIComponent(tabId)}`
+							: `maestro://session/${encodeURIComponent(sessionId)}`;
 
 						notification.on('click', () => {
 							const parsed = parseDeepLink(deepLinkUrl);
