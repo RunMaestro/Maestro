@@ -18,8 +18,13 @@ import { HistoryEntry } from '../../../shared/types';
 import { PaginationOptions, ORPHANED_SESSION_ID } from '../../../shared/history';
 import { getHistoryManager } from '../../history-manager';
 import { withIpcErrorLogging, CreateHandlerOptions } from '../../utils/ipcHandler';
+import type { SafeSendFn } from '../../utils/safe-send';
 
 const LOG_CONTEXT = '[History]';
+
+export interface HistoryHandlerDependencies {
+	safeSend: SafeSendFn;
+}
 
 // Helper to create handler options with consistent context
 const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 'operation'> => ({
@@ -39,7 +44,7 @@ const handlerOpts = (operation: string): Pick<CreateHandlerOptions, 'context' | 
  * - Get history file path (for AI context integration)
  * - List sessions with history
  */
-export function registerHistoryHandlers(): void {
+export function registerHistoryHandlers(deps: HistoryHandlerDependencies): void {
 	const historyManager = getHistoryManager();
 
 	// Get all history entries, optionally filtered by project and/or session
@@ -111,6 +116,10 @@ export function registerHistoryHandlers(): void {
 			const sessionId = entry.sessionId || ORPHANED_SESSION_ID;
 			historyManager.addEntry(sessionId, entry.projectPath, entry);
 			logger.info(`Added history entry: ${entry.type}`, LOG_CONTEXT, { summary: entry.summary });
+
+			// Broadcast to renderer for real-time Director's Notes streaming
+			deps.safeSend('history:entryAdded', entry, sessionId);
+
 			return true;
 		})
 	);

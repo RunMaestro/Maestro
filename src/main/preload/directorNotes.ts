@@ -106,6 +106,22 @@ export function createDirectorNotesApi() {
 		// Generate AI synopsis
 		generateSynopsis: (options: SynopsisOptions): Promise<SynopsisResult> =>
 			ipcRenderer.invoke('director-notes:generateSynopsis', options),
+
+		/**
+		 * Subscribe to new history entries as they are added in real-time.
+		 * Returns a cleanup function to unsubscribe.
+		 */
+		onHistoryEntryAdded: (
+			callback: (entry: UnifiedHistoryEntry, sourceSessionId: string) => void
+		): (() => void) => {
+			const handler = (_event: unknown, entry: UnifiedHistoryEntry, sessionId: string) => {
+				callback(entry, sessionId);
+			};
+			ipcRenderer.on('history:entryAdded', handler);
+			return () => {
+				ipcRenderer.removeListener('history:entryAdded', handler);
+			};
+		},
 	};
 }
 
