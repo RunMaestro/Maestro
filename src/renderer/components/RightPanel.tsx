@@ -318,6 +318,18 @@ export const RightPanel = memo(
 				}
 			}
 
+			// On batch start with auto-follow: switch to autorun tab, open panel, switch to preview mode
+			if (autoFollowEnabled && batchJustStarted) {
+				setActiveRightTab('autorun');
+				if (!rightPanelOpen) {
+					setRightPanelOpen(true);
+				}
+				// Switch to preview mode so the user sees rendered markdown with scrolling tasks
+				if (session?.autoRunMode === 'edit') {
+					onAutoRunModeChange('preview');
+				}
+			}
+
 			// Reset on batch end
 			if (!isRunning) {
 				prevBatchDocIndexRef.current = -1;
@@ -332,6 +344,11 @@ export const RightPanel = memo(
 			autoFollowEnabled,
 			onAutoRunSelectDocument,
 			session?.autoRunSelectedFile,
+			setActiveRightTab,
+			rightPanelOpen,
+			setRightPanelOpen,
+			onAutoRunModeChange,
+			session?.autoRunMode,
 		]);
 
 		// Expose methods to parent
