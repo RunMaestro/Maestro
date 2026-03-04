@@ -1615,4 +1615,79 @@ describe('QuickActionsModal', () => {
 			expect(screen.queryByText('Context: Send to Agent')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('Create Worktree action', () => {
+		it('shows Create Worktree action for git repo sessions with callback', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const props = createDefaultProps({
+				sessions: [createMockSession({ isGitRepo: true })],
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.getByText('Create Worktree')).toBeInTheDocument();
+		});
+
+		it('calls onQuickCreateWorktree with active session and closes modal', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const session = createMockSession({ isGitRepo: true });
+			const props = createDefaultProps({
+				sessions: [session],
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Create Worktree'));
+
+			expect(onQuickCreateWorktree).toHaveBeenCalledWith(session);
+			expect(props.setQuickActionOpen).toHaveBeenCalledWith(false);
+		});
+
+		it('resolves to parent session when active session is a worktree child', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const parentSession = createMockSession({
+				id: 'parent-1',
+				name: 'Parent',
+				isGitRepo: true,
+			});
+			const childSession = createMockSession({
+				id: 'child-1',
+				name: 'Child',
+				isGitRepo: true,
+				parentSessionId: 'parent-1',
+				worktreeBranch: 'feature-1',
+			});
+			const props = createDefaultProps({
+				sessions: [parentSession, childSession],
+				activeSessionId: 'child-1',
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			fireEvent.click(screen.getByText('Create Worktree'));
+
+			// Should resolve to parent, not the child
+			expect(onQuickCreateWorktree).toHaveBeenCalledWith(parentSession);
+		});
+
+		it('does not show Create Worktree when session is not a git repo', () => {
+			const onQuickCreateWorktree = vi.fn();
+			const props = createDefaultProps({
+				sessions: [createMockSession({ isGitRepo: false })],
+				onQuickCreateWorktree,
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+		});
+
+		it('does not show Create Worktree when callback is not provided', () => {
+			const props = createDefaultProps({
+				sessions: [createMockSession({ isGitRepo: true })],
+			});
+			render(<QuickActionsModal {...props} />);
+
+			expect(screen.queryByText('Create Worktree')).not.toBeInTheDocument();
+		});
+	});
 });

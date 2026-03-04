@@ -119,6 +119,21 @@ export const FIXED_SHORTCUTS: Record<string, Shortcut> = {
 		label: 'File Preview: Go Forward',
 		keys: ['Meta', 'ArrowRight'],
 	},
+	fontSizeIncrease: {
+		id: 'fontSizeIncrease',
+		label: 'Increase Font Size',
+		keys: ['Meta', '='],
+	},
+	fontSizeDecrease: {
+		id: 'fontSizeDecrease',
+		label: 'Decrease Font Size',
+		keys: ['Meta', '-'],
+	},
+	fontSizeReset: {
+		id: 'fontSizeReset',
+		label: 'Reset Font Size',
+		keys: ['Meta', '0'],
+	},
 };
 
 // Tab navigation shortcuts (AI mode only)

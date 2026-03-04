@@ -2586,6 +2586,7 @@ function MaestroConsoleInner() {
 					hasActiveSessionCapability={hasActiveSessionCapability}
 					onOpenMergeSession={handleQuickActionsOpenMergeSession}
 					onOpenSendToAgent={handleQuickActionsOpenSendToAgent}
+					onQuickCreateWorktree={handleQuickCreateWorktree}
 					onOpenCreatePR={handleQuickActionsOpenCreatePR}
 					onSummarizeAndContinue={handleQuickActionsSummarizeAndContinue}
 					canSummarizeActiveTab={

@@ -2,6 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
+import { useSettingsStore } from '../../stores/settingsStore';
+
+// Font size keyboard shortcut constants
+const FONT_SIZE_STEP = 2;
+const FONT_SIZE_MIN = 10;
+const FONT_SIZE_MAX = 24;
+const FONT_SIZE_DEFAULT = 14;
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -140,22 +147,29 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 				// Allow toggleMode (Cmd+J) to switch to terminal view from file preview
 				const isToggleModeShortcut = ctx.isShortcut(e, 'toggleMode');
+				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
+				const isFontSizeShortcut =
+					(e.metaKey || e.ctrlKey) &&
+					!e.altKey &&
+					!e.shiftKey &&
+					(e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0');
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
 					// BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump,
-					// jumpToBottom, and markdown toggle to work (these are benign viewing preferences)
+					// jumpToBottom, markdown toggle, and font size to work (these are benign viewing preferences)
 					if (
 						!isLayoutShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
-						!isMarkdownToggleShortcut
+						!isMarkdownToggleShortcut &&
+						!isFontSizeShortcut
 					) {
 						return;
 					}
-					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle shortcuts below
+					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle/font size shortcuts below
 				} else {
 					// Only OVERLAYS are open (file tabs, LogViewer, etc.)
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
@@ -172,7 +186,8 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isMarkdownToggleShortcut &&
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&
-						!isToggleModeShortcut
+						!isToggleModeShortcut &&
+						!isFontSizeShortcut
 					) {
 						return;
 					}
@@ -479,6 +494,34 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (!ctx.leftSidebarOpen) {
 						ctx.setLeftSidebarOpen(true);
 					}
+				}
+			}
+
+			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+0 (reset)
+			// These take priority over tab shortcuts (Cmd+0 was previously goToLastTab)
+			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
+				if (e.key === '=' || e.key === '+') {
+					e.preventDefault();
+					const { fontSize, setFontSize } = useSettingsStore.getState();
+					const newSize = Math.min(fontSize + FONT_SIZE_STEP, FONT_SIZE_MAX);
+					if (newSize !== fontSize) setFontSize(newSize);
+					trackShortcut('fontSizeIncrease');
+					return;
+				}
+				if (e.key === '-') {
+					e.preventDefault();
+					const { fontSize, setFontSize } = useSettingsStore.getState();
+					const newSize = Math.max(fontSize - FONT_SIZE_STEP, FONT_SIZE_MIN);
+					if (newSize !== fontSize) setFontSize(newSize);
+					trackShortcut('fontSizeDecrease');
+					return;
+				}
+				if (e.key === '0') {
+					e.preventDefault();
+					const { fontSize, setFontSize } = useSettingsStore.getState();
+					if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
+					trackShortcut('fontSizeReset');
+					return;
 				}
 			}
 

@@ -91,6 +91,8 @@ interface QuickActionsModalProps {
 	onOpenSendToAgent?: () => void;
 	// Remote control
 	onToggleRemoteControl?: () => void;
+	// Worktree creation (from command palette)
+	onQuickCreateWorktree?: (session: Session) => void;
 	// Worktree PR creation
 	onOpenCreatePR?: (session: Session) => void;
 	// Summarize and continue
@@ -187,6 +189,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		hasActiveSessionCapability,
 		onOpenMergeSession,
 		onOpenSendToAgent,
+		onQuickCreateWorktree,
 		onOpenCreatePR,
 		onSummarizeAndContinue,
 		canSummarizeActiveTab,
@@ -829,6 +832,26 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 										error instanceof Error ? error.message : 'Failed to open repository in browser',
 								});
 							}
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Create Worktree - for git repos (resolves parent if already in a worktree)
+		...(activeSession && activeSession.isGitRepo && onQuickCreateWorktree
+			? [
+					{
+						id: 'createWorktree',
+						label: 'Create Worktree',
+						subtext: activeSession.parentSessionId
+							? `New worktree under ${sessions.find((s) => s.id === activeSession.parentSessionId)?.name || 'parent'}`
+							: 'Create a new git worktree branch',
+						action: () => {
+							// If in a worktree child, resolve to parent session
+							const targetSession = activeSession.parentSessionId
+								? sessions.find((s) => s.id === activeSession.parentSessionId) || activeSession
+								: activeSession;
+							onQuickCreateWorktree(targetSession);
 							setQuickActionOpen(false);
 						},
 					},
