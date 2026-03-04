@@ -23,6 +23,7 @@ import {
 import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useSettings } from '../../hooks';
+import { useSessionStore } from '../../stores/sessionStore';
 import type { TabFocusHandle } from './OverviewTab';
 
 /** Page size for progressive loading */
@@ -85,6 +86,114 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 		const listRef = useRef<HTMLDivElement>(null);
 		const loadingMoreRef = useRef(false); // Guard against concurrent loads
 		const searchInputRef = useRef<HTMLInputElement>(null);
+
+		// --- Live agent activity from Zustand (primitive selectors for efficient re-renders) ---
+		const activeAgentCount = useSessionStore(
+			(s) => s.sessions.filter((sess) => sess.state === 'busy').length
+		);
+		const totalQueuedItems = useSessionStore((s) =>
+			s.sessions.reduce((sum, sess) => sum + (sess.executionQueue?.length || 0), 0)
+		);
+
+		// Merge live counts into history stats for the stats bar
+		const enrichedStats = useMemo<HistoryStats | null>(() => {
+			if (!historyStats) return null;
+			return {
+				...historyStats,
+				activeAgentCount,
+				totalQueuedItems,
+			};
+		}, [historyStats, activeAgentCount, totalQueuedItems]);
+
+		// --- Real-time streaming of new history entries ---
+		const pendingEntriesRef = useRef<UnifiedHistoryEntry[]>([]);
+		const rafIdRef = useRef<number | null>(null);
+
+		// Build session name map for enriching streamed entries with agentName
+		const sessionNameMap = useSessionStore((s) => {
+			const map = new Map<string, string>();
+			for (const sess of s.sessions) {
+				map.set(sess.id, sess.name);
+			}
+			return map;
+		});
+
+		useEffect(() => {
+			const flushPending = () => {
+				rafIdRef.current = null;
+				const batch = pendingEntriesRef.current;
+				if (batch.length === 0) return;
+				pendingEntriesRef.current = [];
+
+				setEntries((prev) => {
+					const existingIds = new Set(prev.map((e) => e.id));
+					const newEntries = batch.filter((e) => !existingIds.has(e.id));
+					if (newEntries.length === 0) return prev;
+					const merged = [...newEntries, ...prev];
+					merged.sort((a, b) => b.timestamp - a.timestamp);
+					return merged;
+				});
+
+				setTotalEntries((prev) => prev + batch.length);
+
+				// Update graph entries for ActivityGraph
+				setGraphEntries((prev) => {
+					const existingIds = new Set(prev.map((e) => e.id));
+					const newEntries = batch.filter((e) => !existingIds.has(e.id));
+					if (newEntries.length === 0) return prev;
+					const merged = [...newEntries, ...prev];
+					merged.sort((a, b) => b.timestamp - a.timestamp);
+					return merged;
+				});
+
+				// Incrementally update stats counters
+				setHistoryStats((prev) => {
+					if (!prev) return prev;
+					let newAuto = 0;
+					let newUser = 0;
+					for (const entry of batch) {
+						if (entry.type === 'AUTO') newAuto++;
+						else if (entry.type === 'USER') newUser++;
+					}
+					return {
+						...prev,
+						autoCount: prev.autoCount + newAuto,
+						userCount: prev.userCount + newUser,
+						totalCount: prev.totalCount + newAuto + newUser,
+					};
+				});
+			};
+
+			const cleanup = window.maestro.directorNotes.onHistoryEntryAdded(
+				(rawEntry, sourceSessionId) => {
+					// Check if entry is within lookback window
+					if (lookbackHours !== null) {
+						const cutoff = Date.now() - lookbackHours * 60 * 60 * 1000;
+						if (rawEntry.timestamp < cutoff) return;
+					}
+
+					const enriched = {
+						...rawEntry,
+						sourceSessionId,
+						agentName: sessionNameMap.get(sourceSessionId),
+					} as UnifiedHistoryEntry;
+
+					pendingEntriesRef.current.push(enriched);
+
+					// Coalesce into a single frame update
+					if (rafIdRef.current === null) {
+						rafIdRef.current = requestAnimationFrame(flushPending);
+					}
+				}
+			);
+
+			return () => {
+				cleanup();
+				if (rafIdRef.current !== null) {
+					cancelAnimationFrame(rafIdRef.current);
+				}
+			};
+		}, [lookbackHours, sessionNameMap]);
 
 		useImperativeHandle(
 			ref,
@@ -439,8 +548,8 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 					onScroll={handleScroll}
 				>
 					{/* Stats bar — scrolls with entries */}
-					{!isLoading && historyStats && historyStats.totalCount > 0 && (
-						<HistoryStatsBar stats={historyStats} theme={theme} />
+					{!isLoading && enrichedStats && enrichedStats.totalCount > 0 && (
+						<HistoryStatsBar stats={enrichedStats} theme={theme} />
 					)}
 
 					{isLoading ? (
