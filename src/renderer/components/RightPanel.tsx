@@ -24,6 +24,7 @@ import { AutoRunExpandedModal } from './AutoRunExpandedModal';
 import { formatShortcutKeys } from '../utils/shortcutFormatter';
 import { ConfirmModal } from './ConfirmModal';
 import { useResizablePanel } from '../hooks';
+import { useAutoRunAutoFollow } from '../hooks/batch/useAutoRunAutoFollow';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useFileExplorerStore } from '../stores/fileExplorerStore';
@@ -236,9 +237,16 @@ export const RightPanel = memo(
 		}, [autoRunContent, autoRunContentVersion, session?.id, session?.autoRunSelectedFile]);
 
 		// Auto-follow: automatically select the active document during batch runs
-		const [autoFollowEnabled, setAutoFollowEnabled] = useState(false);
-		const prevBatchDocIndexRef = useRef<number>(-1);
-		const prevIsRunningRef = useRef<boolean>(false);
+		const { autoFollowEnabled, setAutoFollowEnabled } = useAutoRunAutoFollow({
+			currentSessionBatchState,
+			onAutoRunSelectDocument,
+			selectedFile: session?.autoRunSelectedFile ?? null,
+			setActiveRightTab,
+			rightPanelOpen,
+			setRightPanelOpen,
+			onAutoRunModeChange,
+			currentMode: session?.autoRunMode,
+		});
 
 		// Expanded modal state for Auto Run
 		const [autoRunExpanded, setAutoRunExpanded] = useState(false);
@@ -297,59 +305,6 @@ export const RightPanel = memo(
 
 			return () => clearInterval(interval);
 		}, [currentSessionBatchState?.isRunning, currentSessionBatchState?.startTime, formatElapsed]);
-
-		// Auto-follow: select active document when batch document index changes
-		useEffect(() => {
-			const isRunning = currentSessionBatchState?.isRunning ?? false;
-			const currentDocumentIndex = currentSessionBatchState?.currentDocumentIndex ?? -1;
-			const documents = currentSessionBatchState?.documents;
-
-			// Detect batch start
-			const batchJustStarted = isRunning && !prevIsRunningRef.current;
-
-			// Detect document transition
-			const docChanged = currentDocumentIndex !== prevBatchDocIndexRef.current;
-
-			// Auto-follow on batch start or document transition
-			if (autoFollowEnabled && (batchJustStarted || docChanged)) {
-				const activeDoc = documents?.[currentDocumentIndex];
-				if (activeDoc && activeDoc !== session?.autoRunSelectedFile) {
-					onAutoRunSelectDocument(activeDoc);
-				}
-			}
-
-			// On batch start with auto-follow: switch to autorun tab, open panel, switch to preview mode
-			if (autoFollowEnabled && batchJustStarted) {
-				setActiveRightTab('autorun');
-				if (!rightPanelOpen) {
-					setRightPanelOpen(true);
-				}
-				// Switch to preview mode so the user sees rendered markdown with scrolling tasks
-				if (session?.autoRunMode === 'edit') {
-					onAutoRunModeChange('preview');
-				}
-			}
-
-			// Reset on batch end
-			if (!isRunning) {
-				prevBatchDocIndexRef.current = -1;
-			} else {
-				prevBatchDocIndexRef.current = currentDocumentIndex ?? -1;
-			}
-			prevIsRunningRef.current = !!isRunning;
-		}, [
-			currentSessionBatchState?.isRunning,
-			currentSessionBatchState?.currentDocumentIndex,
-			currentSessionBatchState?.documents,
-			autoFollowEnabled,
-			onAutoRunSelectDocument,
-			session?.autoRunSelectedFile,
-			setActiveRightTab,
-			rightPanelOpen,
-			setRightPanelOpen,
-			onAutoRunModeChange,
-			session?.autoRunMode,
-		]);
 
 		// Expose methods to parent
 		useImperativeHandle(
