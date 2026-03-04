@@ -83,7 +83,7 @@ describe('LiveOverlayPanel', () => {
 	describe('rendering', () => {
 		it('renders the description text', () => {
 			render(<LiveOverlayPanel {...createDefaultProps()} />);
-			expect(screen.getByText(/Control your AI sessions from your phone or tablet/)).toBeTruthy();
+			expect(screen.getByText(/Control your agents from your phone or tablet/)).toBeTruthy();
 		});
 
 		it('shows local network text when tunnel is not connected', () => {

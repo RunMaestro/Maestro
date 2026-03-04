@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useRef, useEffect } from 'react';
 import { Copy, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import type { Theme } from '../../types';
@@ -23,9 +23,9 @@ interface LiveOverlayPanelProps {
 	setWebInterfaceUseCustomPort: (v: boolean) => void;
 	setWebInterfaceCustomPort: (v: number) => void;
 	isLiveMode: boolean;
-	toggleGlobalLive: () => void;
+	toggleGlobalLive: () => Promise<void>;
 	setLiveOverlayOpen: (open: boolean) => void;
-	restartWebServer: () => void;
+	restartWebServer: () => Promise<string | null>;
 }
 
 export const LiveOverlayPanel = memo(function LiveOverlayPanel({
@@ -49,8 +49,14 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 	setLiveOverlayOpen,
 	restartWebServer,
 }: LiveOverlayPanelProps) {
+	const containerRef = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		containerRef.current?.focus();
+	}, []);
+
 	return (
 		<div
+			ref={containerRef}
 			className="absolute top-full left-0 pt-2 z-50 outline-none"
 			style={{ width: '280px' }}
 			tabIndex={-1}
@@ -74,7 +80,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 				{/* Description Header */}
 				<div className="p-3 border-b" style={{ borderColor: theme.colors.border }}>
 					<div className="text-[11px] leading-relaxed" style={{ color: theme.colors.textDim }}>
-						Control your AI sessions from your phone or tablet.
+						Control your agents from your phone or tablet.
 						{tunnelStatus === 'connected' ? (
 							<span className="text-blue-400">
 								{' '}
@@ -187,10 +193,10 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 						{/* Toggle Switch */}
 						<button
 							type="button"
-							onClick={async () => {
+							onClick={() => {
 								setWebInterfaceUseCustomPort(!webInterfaceUseCustomPort);
 								if (isLiveMode) {
-									setTimeout(() => restartWebServer(), 100);
+									setTimeout(() => void restartWebServer(), 100);
 								}
 							}}
 							className={`relative w-10 h-5 rounded-full transition-colors ${
@@ -232,7 +238,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 											setWebInterfaceCustomPort(clampedPort);
 										}
 										if (isLiveMode) {
-											restartWebServer();
+											void restartWebServer();
 										}
 									}}
 									onKeyDown={(e) => {
@@ -242,7 +248,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 												setWebInterfaceCustomPort(clampedPort);
 											}
 											if (isLiveMode) {
-												restartWebServer();
+												void restartWebServer();
 											}
 											(e.target as HTMLInputElement).blur();
 										}
@@ -423,7 +429,7 @@ export const LiveOverlayPanel = memo(function LiveOverlayPanel({
 					<button
 						type="button"
 						onClick={() => {
-							toggleGlobalLive();
+							void toggleGlobalLive();
 							setLiveOverlayOpen(false);
 						}}
 						className="w-full py-1.5 rounded text-[10px] font-medium transition-colors hover:bg-red-500/20 text-red-400 border border-red-500/30"

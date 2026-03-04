@@ -29,7 +29,7 @@ export interface UseSessionListPropsDeps {
 	sidebarContainerRef: React.RefObject<HTMLDivElement>;
 
 	// Domain handlers
-	toggleGlobalLive: () => void;
+	toggleGlobalLive: () => Promise<void>;
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;

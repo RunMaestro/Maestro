@@ -57,7 +57,9 @@ export function useSessionFilterMode(): SessionFilterModeState {
 			// Save current (non-filter) states when filter opens
 			if (preFilterGroupStates.size === 0) {
 				const currentStates = new Map<string, boolean>();
-				groups.forEach((g) => currentStates.set(g.id, g.collapsed));
+				groups.forEach((g) => {
+					currentStates.set(g.id, g.collapsed);
+				});
 				setPreFilterGroupStates(currentStates);
 			}
 			if (preFilterBookmarksCollapsed === null) {
@@ -82,12 +84,14 @@ export function useSessionFilterMode(): SessionFilterModeState {
 			}
 		} else {
 			// Filter closing - save current states as filter mode preferences
-			if (preFilterGroupStates.size > 0) {
-				const currentFilterStates = new Map<string, boolean>();
-				groups.forEach((g) => currentFilterStates.set(g.id, g.collapsed));
-				setFilterModeGroupStates(currentFilterStates);
-				setFilterModeBookmarksCollapsed(bookmarksCollapsed);
+			const currentFilterStates = new Map<string, boolean>();
+			groups.forEach((g) => {
+				currentFilterStates.set(g.id, g.collapsed);
+			});
+			setFilterModeGroupStates(currentFilterStates);
+			setFilterModeBookmarksCollapsed(bookmarksCollapsed);
 
+			if (preFilterGroupStates.size > 0) {
 				// Restore original (non-filter) states
 				setGroups((prev) =>
 					prev.map((g) => ({

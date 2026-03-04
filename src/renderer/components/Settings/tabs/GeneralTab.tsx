@@ -1371,7 +1371,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 													setSyncMigratedCount(result.migrated);
 												}
 											} else {
-												setSyncError(result.error || 'Failed to change storage location');
+												setSyncError(
+													result.errors?.join(', ') ||
+														result.error ||
+														'Failed to change storage location'
+												);
 											}
 											if (result.errors && result.errors.length > 0) {
 												setSyncError(result.errors.join(', '));
@@ -1417,7 +1421,11 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 												setSyncMigratedCount(result.migrated);
 											}
 										} else {
-											setSyncError(result.error || 'Failed to reset storage location');
+											setSyncError(
+												result.errors?.join(', ') ||
+													result.error ||
+													'Failed to reset storage location'
+											);
 										}
 									} catch (error) {
 										setSyncError(error instanceof Error ? error.message : String(error));

@@ -53,7 +53,7 @@ interface SessionListProps {
 	sidebarContainerRef?: React.RefObject<HTMLDivElement>;
 
 	// Domain handlers
-	toggleGlobalLive: () => void;
+	toggleGlobalLive: () => Promise<void>;
 	restartWebServer: () => Promise<string | null>;
 	toggleGroup: (groupId: string) => void;
 	handleDragStart: (sessionId: string) => void;
@@ -252,6 +252,7 @@ function SessionListInner(props: SessionListProps) {
 		? sessions.find((s) => s.id === contextMenu.sessionId)
 		: null;
 	const menuRef = useRef<HTMLDivElement>(null);
+	const ignoreNextBlurRef = useRef(false);
 
 	// Toggle bookmark for a session - memoized to prevent SessionItem re-renders
 	const toggleBookmark = useCallback(
@@ -291,12 +292,15 @@ function SessionListInner(props: SessionListProps) {
 		showConfirmation(
 			`Are you sure you want to remove "${session.name}"? This action cannot be undone.`,
 			() => {
-				const newSessions = sessions.filter((s) => s.id !== sessionId);
-				setSessions(newSessions);
-				// If deleting the active session, switch to another one
-				if (activeSessionId === sessionId && newSessions.length > 0) {
-					setActiveSessionId(newSessions[0].id);
-				}
+				setSessions((prev) => {
+					const remaining = prev.filter((s) => s.id !== sessionId);
+					// If deleting the active session, switch to another one
+					const currentActive = useSessionStore.getState().activeSessionId;
+					if (currentActive === sessionId && remaining.length > 0) {
+						setActiveSessionId(remaining[0].id);
+					}
+					return remaining;
+				});
 			}
 		);
 	};
@@ -572,13 +576,18 @@ function SessionListInner(props: SessionListProps) {
 		return <div key={`${options.keyPrefix}-${session.id}`}>{content}</div>;
 	};
 
-	// Get the jump number (1-9, 0=10th) for a session based on its position in visibleSessions
+	// Precomputed jump number map (1-9, 0=10th) for sessions based on position in visibleSessions
+	const jumpNumberMap = useMemo(() => {
+		if (!showSessionJumpNumbers) return new Map<string, string>();
+		const map = new Map<string, string>();
+		for (let i = 0; i < Math.min(visibleSessions.length, 10); i++) {
+			map.set(visibleSessions[i].id, i === 9 ? '0' : String(i + 1));
+		}
+		return map;
+	}, [showSessionJumpNumbers, visibleSessions]);
+
 	const getSessionJumpNumber = (sessionId: string): string | null => {
-		if (!showSessionJumpNumbers) return null;
-		const index = visibleSessions.findIndex((s) => s.id === sessionId);
-		if (index < 0 || index >= 10) return null;
-		// Show 1-9 for positions 0-8, and 0 for position 9 (10th session)
-		return index === 9 ? '0' : String(index + 1);
+		return jumpNumberMap.get(sessionId) ?? null;
 	};
 
 	return (
@@ -655,7 +664,7 @@ function SessionListInner(props: SessionListProps) {
 								<button
 									onClick={() => {
 										if (!isLiveMode) {
-											toggleGlobalLive();
+											void toggleGlobalLive();
 											setLiveOverlayOpen(true);
 										} else {
 											setLiveOverlayOpen(!liveOverlayOpen);
@@ -801,9 +810,11 @@ function SessionListInner(props: SessionListProps) {
 					{/* BOOKMARKS SECTION - only show if there are bookmarked sessions */}
 					{bookmarkedSessions.length > 0 && (
 						<div className="mb-1">
-							<div
-								className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
+							<button
+								type="button"
+								className="w-full px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
 								onClick={() => setBookmarksCollapsed(!bookmarksCollapsed)}
+								aria-expanded={!bookmarksCollapsed}
 							>
 								<div
 									className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider flex-1"
@@ -817,7 +828,7 @@ function SessionListInner(props: SessionListProps) {
 									<Bookmark className="w-3.5 h-3.5" fill={theme.colors.accent} />
 									<span>Bookmarks</span>
 								</div>
-							</div>
+							</button>
 
 							{!bookmarksCollapsed ? (
 								<div
@@ -864,6 +875,15 @@ function SessionListInner(props: SessionListProps) {
 						return (
 							<div key={group.id} className="mb-1">
 								<div
+									role="button"
+									tabIndex={0}
+									aria-expanded={!group.collapsed}
+									onKeyDown={(e) => {
+										if (e.key === 'Enter' || e.key === ' ') {
+											e.preventDefault();
+											toggleGroup(group.id);
+										}
+									}}
 									className="px-3 py-1.5 flex items-center justify-between cursor-pointer hover:bg-opacity-50 group"
 									onClick={() => toggleGroup(group.id)}
 									onDragOver={handleDragOver}
@@ -885,11 +905,19 @@ function SessionListInner(props: SessionListProps) {
 												className="bg-transparent outline-none w-full border-b border-indigo-500"
 												defaultValue={group.name}
 												onClick={(e) => e.stopPropagation()}
-												onBlur={(e) => finishRenamingGroup(group.id, e.target.value)}
+												onBlur={(e) => {
+													if (ignoreNextBlurRef.current) {
+														ignoreNextBlurRef.current = false;
+														return;
+													}
+													finishRenamingGroup(group.id, e.target.value);
+												}}
 												onKeyDown={(e) => {
 													e.stopPropagation();
-													if (e.key === 'Enter')
+													if (e.key === 'Enter') {
+														ignoreNextBlurRef.current = true;
 														finishRenamingGroup(group.id, e.currentTarget.value);
+													}
 												}}
 											/>
 										) : (

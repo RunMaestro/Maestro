@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { Session, Group } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { compareNamesIgnoringEmojis as compareSessionNames } from '../../../shared/emojiUtils';
@@ -60,9 +60,10 @@ export function useSessionCategories(
 		return map;
 	}, [sortedSessions]);
 
-	const getWorktreeChildren = (parentId: string): Session[] => {
-		return worktreeChildrenByParentId.get(parentId) || [];
-	};
+	const getWorktreeChildren = useCallback(
+		(parentId: string): Session[] => worktreeChildrenByParentId.get(parentId) || [],
+		[worktreeChildrenByParentId]
+	);
 
 	// Consolidated session categorization and sorting - computed in a single pass
 	const sessionCategories = useMemo(() => {

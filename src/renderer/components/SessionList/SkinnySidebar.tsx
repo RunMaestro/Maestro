@@ -43,9 +43,18 @@ export const SkinnySidebar = memo(function SkinnySidebar({
 				return (
 					<div
 						key={session.id}
+						role="button"
+						tabIndex={0}
+						aria-label={`Switch to ${session.name}`}
 						onClick={() => setActiveSessionId(session.id)}
 						onContextMenu={(e) => handleContextMenu(e, session.id)}
-						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								setActiveSessionId(session.id);
+							}
+						}}
+						className={`group relative w-8 h-8 rounded-full flex items-center justify-center cursor-pointer transition-all outline-none ${activeSessionId === session.id ? '' : 'hover:bg-white/10'}`}
 					>
 						<div className="relative">
 							<div

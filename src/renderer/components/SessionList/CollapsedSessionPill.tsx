@@ -49,6 +49,9 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 				return (
 					<div
 						key={`${keyPrefix}-part-${s.id}`}
+						role="button"
+						tabIndex={0}
+						aria-label={`Switch to ${s.name}`}
 						className={`group/segment relative flex-1 h-full ${isInBatch ? 'animate-pulse' : ''}`}
 						style={{
 							...(s.toolType === 'claude-code' && !s.agentSessionId && !isInBatch
@@ -64,9 +67,23 @@ export const CollapsedSessionPill = memo(function CollapsedSessionPill({
 						}}
 						onMouseEnter={(e) => setTooltipPosition({ x: e.clientX, y: e.clientY })}
 						onMouseLeave={() => setTooltipPosition(null)}
+						onFocus={(e) =>
+							setTooltipPosition({
+								x: e.currentTarget.getBoundingClientRect().x,
+								y: e.currentTarget.getBoundingClientRect().y,
+							})
+						}
+						onBlur={() => setTooltipPosition(null)}
 						onClick={(e) => {
 							e.stopPropagation();
 							setActiveSessionId(s.id);
+						}}
+						onKeyDown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								e.stopPropagation();
+								setActiveSessionId(s.id);
+							}
 						}}
 					>
 						{hasUnreadTabs && isLast && (

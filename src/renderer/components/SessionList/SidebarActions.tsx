@@ -29,11 +29,8 @@ export const SidebarActions = memo(function SidebarActions({
 		>
 			<button
 				type="button"
-				onClick={() => {
-					if (!hasNoSessions || !leftSidebarOpen) {
-						setLeftSidebarOpen(!leftSidebarOpen);
-					}
-				}}
+				disabled={hasNoSessions && leftSidebarOpen}
+				onClick={() => setLeftSidebarOpen(!leftSidebarOpen)}
 				className={`flex items-center justify-center p-2 rounded transition-colors w-8 h-8 shrink-0 ${hasNoSessions && leftSidebarOpen ? 'opacity-20 cursor-not-allowed' : 'hover:bg-white/5'}`}
 				title={
 					hasNoSessions && leftSidebarOpen
