@@ -416,6 +416,7 @@ export const RightPanel = memo(
 			onOpenMarketplace,
 			onLaunchWizard,
 			onShowFlash,
+			autoFollowEnabled,
 		};
 
 		return (
