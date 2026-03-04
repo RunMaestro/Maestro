@@ -235,6 +235,11 @@ export const RightPanel = memo(
 			}
 		}, [autoRunContent, autoRunContentVersion, session?.id, session?.autoRunSelectedFile]);
 
+		// Auto-follow: automatically select the active document during batch runs
+		const [autoFollowEnabled, setAutoFollowEnabled] = useState(false);
+		const prevBatchDocIndexRef = useRef<number>(-1);
+		const prevIsRunningRef = useRef<boolean>(false);
+
 		// Expanded modal state for Auto Run
 		const [autoRunExpanded, setAutoRunExpanded] = useState(false);
 		const handleExpandAutoRun = useCallback(() => setAutoRunExpanded(true), []);
@@ -292,6 +297,42 @@ export const RightPanel = memo(
 
 			return () => clearInterval(interval);
 		}, [currentSessionBatchState?.isRunning, currentSessionBatchState?.startTime, formatElapsed]);
+
+		// Auto-follow: select active document when batch document index changes
+		useEffect(() => {
+			const isRunning = currentSessionBatchState?.isRunning ?? false;
+			const currentDocumentIndex = currentSessionBatchState?.currentDocumentIndex ?? -1;
+			const documents = currentSessionBatchState?.documents;
+
+			// Detect batch start
+			const batchJustStarted = isRunning && !prevIsRunningRef.current;
+
+			// Detect document transition
+			const docChanged = currentDocumentIndex !== prevBatchDocIndexRef.current;
+
+			// Auto-follow on batch start or document transition
+			if (autoFollowEnabled && (batchJustStarted || docChanged)) {
+				const activeDoc = documents?.[currentDocumentIndex];
+				if (activeDoc && activeDoc !== session?.autoRunSelectedFile) {
+					onAutoRunSelectDocument(activeDoc);
+				}
+			}
+
+			// Reset on batch end
+			if (!isRunning) {
+				prevBatchDocIndexRef.current = -1;
+			} else {
+				prevBatchDocIndexRef.current = currentDocumentIndex ?? -1;
+			}
+			prevIsRunningRef.current = !!isRunning;
+		}, [
+			currentSessionBatchState?.isRunning,
+			currentSessionBatchState?.currentDocumentIndex,
+			currentSessionBatchState?.documents,
+			autoFollowEnabled,
+			onAutoRunSelectDocument,
+			session?.autoRunSelectedFile,
+		]);
 
 		// Expose methods to parent
 		useImperativeHandle(
@@ -729,6 +770,20 @@ export const RightPanel = memo(
 									</button>
 								)}
 							</div>
+						</div>
+						<div className="mt-2 flex items-center gap-2">
+							<label className="flex items-center gap-1.5 cursor-pointer">
+								<input
+									type="checkbox"
+									checked={autoFollowEnabled}
+									onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+									className="w-3 h-3 rounded cursor-pointer accent-current"
+									style={{ accentColor: theme.colors.accent }}
+								/>
+								<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+									Follow active task
+								</span>
+							</label>
 						</div>
 					</div>
 				)}
