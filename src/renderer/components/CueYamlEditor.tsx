@@ -29,6 +29,18 @@ const YAML_TEMPLATE = `# maestro-cue.yaml
 #     prompt: prompts/deploy.md
 #     enabled: true
 #
+#   - name: "review new PRs"
+#     event: github.pull_request
+#     poll_minutes: 5
+#     prompt: prompts/pr-review.md
+#     enabled: true
+#
+#   - name: "triage issues"
+#     event: github.issue
+#     poll_minutes: 10
+#     prompt: prompts/issue-triage.md
+#     enabled: true
+#
 # settings:
 #   timeout_minutes: 30
 #   timeout_on_fail: break
@@ -42,6 +54,8 @@ Available event types:
 - time.interval: Runs on a timer. Requires \`interval_minutes\`.
 - file.changed: Runs when files matching a glob pattern change. Requires \`watch\` (glob pattern).
 - agent.completed: Runs when another agent session completes. Requires \`source_session\` (name or array for fan-in). Optional \`fan_out\` array to trigger multiple sessions.
+- github.pull_request: Polls for new GitHub pull requests via \`gh\` CLI. Optional \`repo\` (owner/repo, auto-detected from git remote). Optional \`poll_minutes\` (default 5, min 1). Requires \`gh\` CLI installed and authenticated.
+- github.issue: Polls for new GitHub issues via \`gh\` CLI. Same options as github.pull_request.
 
 Event filtering (optional \`filter\` block on any subscription):
 - All conditions are AND'd together. Keys are payload field names (dot-notation for nested).
@@ -54,15 +68,19 @@ Event filtering (optional \`filter\` block on any subscription):
 
 file.changed payload fields: path, filename, directory, extension, changeType
 agent.completed payload fields: sourceSession, sourceSessionId, status, exitCode, durationMs
+github.pull_request payload fields: type, number, title, author, url, body, state, draft, labels, head_branch, base_branch, repo, created_at, updated_at
+github.issue payload fields: type, number, title, author, url, body, state, labels, assignees, repo, created_at, updated_at
 
 YAML format:
 subscriptions:
   - name: "descriptive name"
-    event: time.interval | file.changed | agent.completed
+    event: time.interval | file.changed | agent.completed | github.pull_request | github.issue
     interval_minutes: N          # for time.interval
     watch: "glob/pattern/**"     # for file.changed
     source_session: "name"       # for agent.completed (string or string[])
     fan_out: ["name1", "name2"]  # optional, for agent.completed
+    repo: "owner/repo"            # for github.* (optional, auto-detected)
+    poll_minutes: 5               # for github.* (optional, default 5)
     filter:                      # optional, narrow when subscription fires
       extension: ".ts"           # example: only .ts files
       path: "!*.test.ts"         # example: exclude test files
@@ -82,6 +100,8 @@ When the user describes a multi-agent workflow, identify the best matching patte
 - **Research Swarm**: Multiple agents research in parallel, then synthesize → fan_out + fan-in with source_session array
 - **Sequential Chain**: A → B → C pipeline → agent.completed linking sessions
 - **Debate**: Multiple perspectives, then synthesis → fan_out to opposing agents + fan-in to moderator
+- **PR Review**: Auto-review new pull requests → github.pull_request with optional author filter
+- **Issue Triage**: Auto-triage new issues → github.issue with optional label filter
 
 For multi-session patterns (Swarm, Chain, Debate), generate the YAML for the primary orchestrator session and include commented-out YAML for the secondary sessions, clearly labeled with which session each block belongs to.
 
