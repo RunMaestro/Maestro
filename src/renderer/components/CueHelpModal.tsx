@@ -185,6 +185,76 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 								to the session name.
 							</p>
 						</div>
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>GitHub Pull Request</strong>{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									github.pull_request
+								</code>
+							</p>
+							<p className="mt-1">
+								Polls for new pull requests via the GitHub CLI. Optional:{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									repo
+								</code>{' '}
+								(auto-detected),{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									poll_minutes
+								</code>{' '}
+								(default 5). Requires{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									gh
+								</code>{' '}
+								CLI installed and authenticated.
+							</p>
+						</div>
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>GitHub Issue</strong>{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									github.issue
+								</code>
+							</p>
+							<p className="mt-1">
+								Polls for new issues via the GitHub CLI. Optional:{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									repo
+								</code>{' '}
+								(auto-detected),{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									poll_minutes
+								</code>{' '}
+								(default 5). Requires{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									gh
+								</code>{' '}
+								CLI installed and authenticated.
+							</p>
+						</div>
 						<div
 							className="font-mono text-xs p-3 rounded border space-y-3"
 							style={{
@@ -218,6 +288,24 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 								{'  '}event: agent.completed
 								<br />
 								{'  '}source_session: "my-agent"
+							</div>
+							<div>
+								# GitHub PR
+								<br />
+								- name: "Review PRs"
+								<br />
+								{'  '}event: github.pull_request
+								<br />
+								{'  '}poll_minutes: 5
+							</div>
+							<div>
+								# GitHub Issue
+								<br />
+								- name: "Triage Issues"
+								<br />
+								{'  '}event: github.issue
+								<br />
+								{'  '}poll_minutes: 10
 							</div>
 						</div>
 					</div>
@@ -336,7 +424,8 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 						>
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> — Event
-								type (time.interval, file.changed, agent.completed)
+								type (time.interval, file.changed, agent.completed, github.pull_request,
+								github.issue)
 							</div>
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> —
@@ -372,6 +461,34 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_OUTPUT}}'}</code> —
 								Source session output (agent.completed)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_NUMBER}}'}</code> — PR/issue
+								number (github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_TITLE}}'}</code> — PR/issue
+								title (github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_AUTHOR}}'}</code> — Author
+								login (github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_URL}}'}</code> — HTML URL
+								(github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_LABELS}}'}</code> — Labels,
+								comma-separated (github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_REPO}}'}</code> — Repo
+								(owner/repo) (github.*)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_BRANCH}}'}</code> — Head
+								branch (github.pull_request)
 							</div>
 						</div>
 						<div
