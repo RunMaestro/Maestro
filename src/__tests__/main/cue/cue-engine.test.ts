@@ -31,6 +31,12 @@ vi.mock('../../../main/cue/cue-file-watcher', () => ({
 	createCueFileWatcher: (...args: unknown[]) => mockCreateCueFileWatcher(args[0]),
 }));
 
+// Mock the GitHub poller
+const mockCreateCueGitHubPoller = vi.fn<(config: unknown) => () => void>();
+vi.mock('../../../main/cue/cue-github-poller', () => ({
+	createCueGitHubPoller: (...args: unknown[]) => mockCreateCueGitHubPoller(args[0]),
+}));
+
 // Mock crypto
 vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `uuid-${Math.random().toString(36).slice(2, 8)}`),
@@ -83,6 +89,8 @@ describe('CueEngine', () => {
 	let yamlWatcherCleanup: ReturnType<typeof vi.fn>;
 	let fileWatcherCleanup: ReturnType<typeof vi.fn>;
 
+	let gitHubPollerCleanup: ReturnType<typeof vi.fn>;
+
 	beforeEach(() => {
 		vi.clearAllMocks();
 		vi.useFakeTimers();
@@ -92,6 +100,9 @@ describe('CueEngine', () => {
 
 		fileWatcherCleanup = vi.fn();
 		mockCreateCueFileWatcher.mockReturnValue(fileWatcherCleanup);
+
+		gitHubPollerCleanup = vi.fn();
+		mockCreateCueGitHubPoller.mockReturnValue(gitHubPollerCleanup);
 	});
 
 	afterEach(() => {
@@ -894,6 +905,106 @@ describe('CueEngine', () => {
 			expect(engine.getActiveRuns().length).toBeGreaterThan(0);
 			engine.stopAll();
 			expect(engine.getActiveRuns()).toHaveLength(0);
+
+			engine.stop();
+		});
+	});
+
+	describe('github.pull_request / github.issue subscriptions', () => {
+		it('github.pull_request subscription creates a GitHub poller with correct config', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'pr-watcher',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: 'review PR',
+						repo: 'owner/repo',
+						poll_minutes: 10,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueGitHubPoller).toHaveBeenCalledWith(
+				expect.objectContaining({
+					eventType: 'github.pull_request',
+					repo: 'owner/repo',
+					pollMinutes: 10,
+					projectRoot: '/projects/test',
+					triggerName: 'pr-watcher',
+					subscriptionId: 'session-1:pr-watcher',
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('github.issue subscription creates a GitHub poller', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'issue-watcher',
+						event: 'github.issue',
+						enabled: true,
+						prompt: 'triage issue',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueGitHubPoller).toHaveBeenCalledWith(
+				expect.objectContaining({
+					eventType: 'github.issue',
+					pollMinutes: 5, // default
+					triggerName: 'issue-watcher',
+					subscriptionId: 'session-1:issue-watcher',
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('cleanup function is called on session teardown', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'pr-watcher',
+						event: 'github.pull_request',
+						enabled: true,
+						prompt: 'review',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			engine.removeSession('session-1');
+
+			expect(gitHubPollerCleanup).toHaveBeenCalled();
+		});
+
+		it('disabled github subscription is skipped', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'pr-watcher',
+						event: 'github.pull_request',
+						enabled: false,
+						prompt: 'review',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueGitHubPoller).not.toHaveBeenCalled();
 
 			engine.stop();
 		});

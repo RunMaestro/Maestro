@@ -68,6 +68,8 @@ export function loadCueConfig(projectRoot: string): CueConfig | null {
 					source_session: sub.source_session,
 					fan_out: Array.isArray(sub.fan_out) ? sub.fan_out : undefined,
 					filter,
+					repo: typeof sub.repo === 'string' ? sub.repo : undefined,
+					poll_minutes: typeof sub.poll_minutes === 'number' ? sub.poll_minutes : undefined,
 				});
 			}
 		}
@@ -188,6 +190,18 @@ export function validateCueConfig(config: unknown): { valid: boolean; errors: st
 					errors.push(
 						`${prefix}: "source_session" must be a string or array of strings for agent.completed events`
 					);
+				}
+			} else if (event === 'github.pull_request' || event === 'github.issue') {
+				// repo is optional (auto-detected from git remote)
+				if (sub.repo !== undefined && typeof sub.repo !== 'string') {
+					errors.push(
+						`${prefix}: "repo" must be a string (e.g., "owner/repo") for ${event} events`
+					);
+				}
+				if (sub.poll_minutes !== undefined) {
+					if (typeof sub.poll_minutes !== 'number' || sub.poll_minutes < 1) {
+						errors.push(`${prefix}: "poll_minutes" must be a number >= 1 for ${event} events`);
+					}
 				}
 			}
 
