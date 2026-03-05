@@ -37,7 +37,6 @@ function createDeps(overrides: Partial<UseAutoRunAutoFollowDeps> = {}): UseAutoR
 		setActiveRightTab: vi.fn(),
 		rightPanelOpen: true,
 		setRightPanelOpen: vi.fn(),
-		toggleRightPanel: vi.fn(),
 		onAutoRunModeChange: vi.fn(),
 		currentMode: 'preview',
 		...overrides,

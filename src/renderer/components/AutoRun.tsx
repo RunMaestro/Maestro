@@ -986,6 +986,7 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 			if (!previewRef.current) return;
 
 			const checkboxes = previewRef.current.querySelectorAll('input[type="checkbox"]');
+			if (checkboxes.length === 0) return;
 			for (const checkbox of checkboxes) {
 				if (!(checkbox as HTMLInputElement).checked) {
 					const li = (checkbox as HTMLElement).closest('li');
