@@ -1,4 +1,4 @@
-import { memo, forwardRef, useImperativeHandle, useRef, useEffect, useCallback, useState } from 'react';
+import { memo, forwardRef, useImperativeHandle, useRef, useEffect, useCallback } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { XTerminal, XTerminalHandle } from './XTerminal';
 import { TerminalSearchBar } from './TerminalSearchBar';
@@ -108,7 +108,7 @@ export const TerminalView = memo(
 				window.maestro.process
 					.spawnTerminalTab({
 						sessionId: terminalSessionId,
-						cwd: tab.cwd || session.cwd,
+						cwd: tab.cwd || session.cwd || session.projectRoot || '',
 						shell: defaultShell || undefined,
 						shellArgs,
 						shellEnvVars,

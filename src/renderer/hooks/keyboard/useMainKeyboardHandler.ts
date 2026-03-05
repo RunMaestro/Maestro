@@ -684,13 +684,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
 					e.preventDefault();
-					const activeTab = ctx.getActiveTab(ctx.activeSession);
-					// Only allow rename if tab has an active Claude session
-					if (activeTab?.agentSessionId) {
-						ctx.setRenameTabId(activeTab.id);
-						ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
-						ctx.setRenameTabModalOpen(true);
-						trackShortcut('renameTab');
+					if (ctx.activeSession?.inputMode === 'terminal') {
+						// Rename active terminal tab
+						const activeTerminalTabId = ctx.activeSession?.activeTerminalTabId;
+						const terminalTab = ctx.activeSession?.terminalTabs?.find(
+							(t: { id: string }) => t.id === activeTerminalTabId
+						);
+						if (activeTerminalTabId && terminalTab) {
+							ctx.setRenameTabId(activeTerminalTabId);
+							ctx.setRenameTabInitialName(terminalTab.name ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
+					} else {
+						const activeTab = ctx.getActiveTab(ctx.activeSession);
+						// Only allow rename if tab has an active Claude session
+						if (activeTab?.agentSessionId) {
+							ctx.setRenameTabId(activeTab.id);
+							ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
