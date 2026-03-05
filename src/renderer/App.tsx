@@ -2098,6 +2098,9 @@ function MaestroConsoleInner() {
 		// Auto-scroll AI mode toggle
 		autoScrollAiMode,
 		setAutoScrollAiMode,
+
+		// Unread agents filter toggle
+		toggleShowUnreadAgentsOnly: useUIStore.getState().toggleShowUnreadAgentsOnly,
 	};
 
 	// NOTE: File explorer effects (flat file list, pending jump path, scroll, keyboard nav) are

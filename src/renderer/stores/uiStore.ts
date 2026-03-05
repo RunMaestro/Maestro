@@ -28,6 +28,7 @@ export interface UIStoreState {
 
 	// Session list filter
 	showUnreadOnly: boolean;
+	showUnreadAgentsOnly: boolean;
 	preFilterActiveTabId: string | null;
 	preTerminalFileTabId: string | null;
 
@@ -79,6 +80,8 @@ export interface UIStoreActions {
 	// Session list filter
 	setShowUnreadOnly: (show: boolean | ((prev: boolean) => boolean)) => void;
 	toggleShowUnreadOnly: () => void;
+	setShowUnreadAgentsOnly: (show: boolean | ((prev: boolean) => boolean)) => void;
+	toggleShowUnreadAgentsOnly: () => void;
 	setPreFilterActiveTabId: (id: string | null) => void;
 	setPreTerminalFileTabId: (id: string | null) => void;
 
@@ -130,6 +133,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	bookmarksCollapsed: false,
 	groupChatsExpanded: true,
 	showUnreadOnly: false,
+	showUnreadAgentsOnly: false,
 	preFilterActiveTabId: null,
 	preTerminalFileTabId: null,
 	selectedSidebarIndex: 0,
@@ -162,6 +166,9 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setShowUnreadOnly: (v) => set((s) => ({ showUnreadOnly: resolve(v, s.showUnreadOnly) })),
 	toggleShowUnreadOnly: () => set((s) => ({ showUnreadOnly: !s.showUnreadOnly })),
+	setShowUnreadAgentsOnly: (v) =>
+		set((s) => ({ showUnreadAgentsOnly: resolve(v, s.showUnreadAgentsOnly) })),
+	toggleShowUnreadAgentsOnly: () => set((s) => ({ showUnreadAgentsOnly: !s.showUnreadAgentsOnly })),
 	setPreFilterActiveTabId: (id) => set({ preFilterActiveTabId: id }),
 	setPreTerminalFileTabId: (id) => set({ preTerminalFileTabId: id }),
 

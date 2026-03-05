@@ -15,6 +15,7 @@ function resetStore() {
 		bookmarksCollapsed: false,
 		groupChatsExpanded: true,
 		showUnreadOnly: false,
+		showUnreadAgentsOnly: false,
 		preFilterActiveTabId: null,
 		preTerminalFileTabId: null,
 		selectedSidebarIndex: 0,
@@ -164,6 +165,19 @@ describe('uiStore', () => {
 			expect(useUIStore.getState().showUnreadOnly).toBe(true);
 			useUIStore.getState().toggleShowUnreadOnly();
 			expect(useUIStore.getState().showUnreadOnly).toBe(false);
+		});
+
+		it('sets show unread agents only', () => {
+			useUIStore.getState().setShowUnreadAgentsOnly(true);
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+		});
+
+		it('toggles show unread agents only', () => {
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(true);
+			useUIStore.getState().toggleShowUnreadAgentsOnly();
+			expect(useUIStore.getState().showUnreadAgentsOnly).toBe(false);
 		});
 
 		it('sets pre-filter active tab id', () => {

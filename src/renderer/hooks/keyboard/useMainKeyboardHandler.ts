@@ -441,10 +441,14 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
-			} else if (ctx.isShortcut(e, 'maestroCue') && ctx.encoreFeatures?.maestroCue) {
+			} else if (ctx.isShortcut(e, 'openCue') && ctx.encoreFeatures?.maestroCue) {
 				e.preventDefault();
 				ctx.setCueModalOpen?.(true);
-				trackShortcut('maestroCue');
+				trackShortcut('openCue');
+			} else if (ctx.isShortcut(e, 'filterUnreadAgents')) {
+				e.preventDefault();
+				ctx.toggleShowUnreadAgentsOnly();
+				trackShortcut('filterUnreadAgents');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)

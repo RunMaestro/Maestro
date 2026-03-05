@@ -242,6 +242,55 @@ describe('useSessionCategories', () => {
 	});
 
 	// -----------------------------------------------------------------------
+	// Unread agents filter
+	// -----------------------------------------------------------------------
+	describe('showUnreadAgentsOnly', () => {
+		it('returns all sessions when showUnreadAgentsOnly is false', () => {
+			const s1 = makeSession({ name: 'Alpha' });
+			const s2 = makeSession({ name: 'Beta' });
+			resetStore([s1, s2]);
+
+			const { result } = renderHook(() => useSessionCategories('', [s1, s2], false));
+			expect(result.current.sortedFilteredSessions).toHaveLength(2);
+		});
+
+		it('filters to only sessions with unread tabs when showUnreadAgentsOnly is true', () => {
+			const s1 = makeSession({
+				name: 'Has Unread',
+				aiTabs: [{ id: 't1', hasUnread: true } as any],
+			});
+			const s2 = makeSession({
+				name: 'No Unread',
+				aiTabs: [{ id: 't2', hasUnread: false } as any],
+			});
+			const s3 = makeSession({ name: 'No Tabs' });
+			resetStore([s1, s2, s3]);
+
+			const { result } = renderHook(() => useSessionCategories('', [s1, s2, s3], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Has Unread');
+		});
+
+		it('combines unread filter with text filter', () => {
+			const s1 = makeSession({
+				name: 'Frontend',
+				aiTabs: [{ id: 't1', hasUnread: true } as any],
+			});
+			const s2 = makeSession({
+				name: 'Backend',
+				aiTabs: [{ id: 't2', hasUnread: true } as any],
+			});
+			resetStore([s1, s2]);
+
+			const { result } = renderHook(() => useSessionCategories('front', [s1, s2], true));
+
+			expect(result.current.sortedFilteredSessions).toHaveLength(1);
+			expect(result.current.sortedFilteredSessions[0].name).toBe('Frontend');
+		});
+	});
+
+	// -----------------------------------------------------------------------
 	// Categorization: bookmarked
 	// -----------------------------------------------------------------------
 	describe('bookmarked sessions', () => {

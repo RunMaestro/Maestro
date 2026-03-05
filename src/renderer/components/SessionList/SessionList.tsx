@@ -263,6 +263,8 @@ function SessionListInner(props: SessionListProps) {
 		});
 	const sessionFilterOpen = useUIStore((s) => s.sessionFilterOpen);
 	const setSessionFilterOpen = useUIStore((s) => s.setSessionFilterOpen);
+	const showUnreadAgentsOnly = useUIStore((s) => s.showUnreadAgentsOnly);
+	const toggleShowUnreadAgentsOnly = useUIStore((s) => s.toggleShowUnreadAgentsOnly);
 	const [menuOpen, setMenuOpen] = useState(false);
 
 	// Live overlay state (extracted hook)
@@ -417,7 +419,12 @@ function SessionListInner(props: SessionListProps) {
 		sortedUngroupedParentSessions,
 		sortedFilteredSessions,
 		sortedGroups,
-	} = useSessionCategories(sessionFilter, sortedSessions);
+	} = useSessionCategories(sessionFilter, sortedSessions, showUnreadAgentsOnly);
+
+	const hasUnreadAgents = useMemo(
+		() => sessions.some((s) => !s.parentSessionId && s.aiTabs?.some((tab) => tab.hasUnread)),
+		[sessions]
+	);
 
 	// PERF: Cached callback maps to prevent SessionItem re-renders
 	// These Maps store stable function references keyed by session/editing ID
@@ -1225,9 +1232,12 @@ function SessionListInner(props: SessionListProps) {
 				leftSidebarOpen={leftSidebarOpen}
 				hasNoSessions={sessions.length === 0}
 				shortcuts={shortcuts}
+				showUnreadAgentsOnly={showUnreadAgentsOnly}
+				hasUnreadAgents={hasUnreadAgents}
 				addNewSession={addNewSession}
 				openWizard={openWizard}
 				setLeftSidebarOpen={setLeftSidebarOpen}
+				toggleShowUnreadAgentsOnly={toggleShowUnreadAgentsOnly}
 			/>
 
 			{/* Session Context Menu */}
