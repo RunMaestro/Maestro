@@ -74,7 +74,7 @@ Use "agent" in user-facing language. Reserve "session" for provider-level conver
 
 ### Automation
 
-- **Cue** — Event-driven automation system (Maestro Cue), gated as an Encore Feature. Watches for file changes, time intervals, and agent completions to trigger automated prompts. Configured via `maestro-cue.yaml` per project.
+- **Cue** — Event-driven automation system (Maestro Cue), gated as an Encore Feature. Watches for file changes, time intervals, agent completions, GitHub PRs/issues, and pending markdown tasks to trigger automated prompts. Configured via `maestro-cue.yaml` per project.
 - **Cue Modal** — Dashboard for managing Cue subscriptions and viewing activity (`CueModal.tsx`)
 
 ### Agent States (color-coded)
