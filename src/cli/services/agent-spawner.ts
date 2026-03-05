@@ -219,7 +219,12 @@ export function getCodexCommand(): string {
 }
 
 /**
- * Spawn Claude Code with a prompt and return the result
+ * Spawn Claude Code with a prompt and return the result.
+ *
+ * NOTE: CLI spawner does not apply applyAgentConfigOverrides() or SSH wrapping.
+ * Designed for headless batch execution without access to the Electron settings
+ * store or per-session agent configuration. Custom model, args, env vars, and
+ * SSH remote execution are not supported in CLI mode.
  */
 async function spawnClaudeAgent(
 	cwd: string,
@@ -372,7 +377,10 @@ function mergeUsageStats(
 }
 
 /**
- * Spawn Codex with a prompt and return the result
+ * Spawn Codex with a prompt and return the result.
+ *
+ * NOTE: Same limitations as spawnClaudeAgent — no applyAgentConfigOverrides()
+ * or SSH wrapping in CLI mode.
  */
 async function spawnCodexAgent(
 	cwd: string,
