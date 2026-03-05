@@ -1,7 +1,14 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
-import { spawnAgent, detectClaude, detectCodex, type AgentResult } from '../services/agent-spawner';
+import {
+	spawnAgent,
+	detectClaude,
+	detectCodex,
+	detectOpenCode,
+	detectDroid,
+	type AgentResult,
+} from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import type { ToolType } from '../../shared/types';
@@ -88,7 +95,7 @@ export async function send(
 	}
 
 	// Validate agent type is supported for CLI spawning
-	const supportedTypes: ToolType[] = ['claude-code', 'codex'];
+	const supportedTypes: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
 	if (!supportedTypes.includes(agent.toolType)) {
 		emitErrorJson(
 			`Agent type "${agent.toolType}" is not supported for send mode. Supported: ${supportedTypes.join(', ')}`,
@@ -99,7 +106,7 @@ export async function send(
 
 	// Verify agent CLI is available
 	if (agent.toolType === 'claude-code') {
-		const claude = await detectClaude();
+		const claude = await detectClaude(agent.customPath);
 		if (!claude.available) {
 			emitErrorJson(
 				'Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code',
@@ -108,7 +115,7 @@ export async function send(
 			process.exit(1);
 		}
 	} else if (agent.toolType === 'codex') {
-		const codex = await detectCodex();
+		const codex = await detectCodex(agent.customPath);
 		if (!codex.available) {
 			emitErrorJson(
 				'Codex CLI not found. Install with: npm install -g @openai/codex',
@@ -116,10 +123,33 @@ export async function send(
 			);
 			process.exit(1);
 		}
+	} else if (agent.toolType === 'opencode') {
+		const opencode = await detectOpenCode(agent.customPath);
+		if (!opencode.available) {
+			emitErrorJson(
+				'OpenCode CLI not found. Install with: npm install -g opencode',
+				'OPENCODE_NOT_FOUND'
+			);
+			process.exit(1);
+		}
+	} else if (agent.toolType === 'factory-droid') {
+		const droid = await detectDroid(agent.customPath);
+		if (!droid.available) {
+			emitErrorJson(
+				'Factory Droid CLI not found. Install with: https://factory.ai/product/cli',
+				'DROID_NOT_FOUND'
+			);
+			process.exit(1);
+		}
 	}
 
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session);
+	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session, {
+		customPath: agent.customPath,
+		customArgs: agent.customArgs,
+		customEnvVars: agent.customEnvVars,
+		customModel: agent.customModel,
+	});
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));

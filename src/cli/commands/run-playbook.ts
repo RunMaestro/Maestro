@@ -4,7 +4,7 @@
 import { getSessionById } from '../services/storage';
 import { findPlaybookById } from '../services/playbooks';
 import { runPlaybook as executePlaybook } from '../services/batch-processor';
-import { detectClaude, detectCodex } from '../services/agent-spawner';
+import { detectClaude, detectCodex, detectOpenCode, detectDroid } from '../services/agent-spawner';
 import { emitError } from '../output/jsonl';
 import {
 	formatRunEvent,
@@ -149,7 +149,7 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 
 		// Check if agent CLI is available
 		if (agent.toolType === 'codex') {
-			const codex = await detectCodex();
+			const codex = await detectCodex(agent.customPath);
 			if (!codex.available) {
 				if (useJson) {
 					emitError('Codex CLI not found. Please install codex CLI.', 'CODEX_NOT_FOUND');
@@ -159,12 +159,32 @@ export async function runPlaybook(playbookId: string, options: RunPlaybookOption
 				process.exit(1);
 			}
 		} else if (agent.toolType === 'claude-code') {
-			const claude = await detectClaude();
+			const claude = await detectClaude(agent.customPath);
 			if (!claude.available) {
 				if (useJson) {
 					emitError('Claude Code not found. Please install claude-code CLI.', 'CLAUDE_NOT_FOUND');
 				} else {
 					console.error(formatError('Claude Code not found. Please install claude-code CLI.'));
+				}
+				process.exit(1);
+			}
+		} else if (agent.toolType === 'opencode') {
+			const opencode = await detectOpenCode(agent.customPath);
+			if (!opencode.available) {
+				if (useJson) {
+					emitError('OpenCode CLI not found. Please install opencode CLI.', 'OPENCODE_NOT_FOUND');
+				} else {
+					console.error(formatError('OpenCode CLI not found. Please install opencode CLI.'));
+				}
+				process.exit(1);
+			}
+		} else if (agent.toolType === 'factory-droid') {
+			const droid = await detectDroid(agent.customPath);
+			if (!droid.available) {
+				if (useJson) {
+					emitError('Factory Droid CLI not found. Please install droid CLI.', 'DROID_NOT_FOUND');
+				} else {
+					console.error(formatError('Factory Droid CLI not found. Please install droid CLI.'));
 				}
 				process.exit(1);
 			}

@@ -439,7 +439,13 @@ export async function* runPlaybook(
 				}
 
 				// Spawn agent with combined prompt + document
-				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt);
+				const spawnOverrides = {
+					customPath: session.customPath,
+					customArgs: session.customArgs,
+					customEnvVars: session.customEnvVars,
+					customModel: session.customModel,
+				};
+				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, spawnOverrides);
 
 				const elapsedMs = Date.now() - taskStartTime;
 
@@ -476,7 +482,8 @@ export async function* runPlaybook(
 						session.toolType,
 						session.cwd,
 						BATCH_SYNOPSIS_PROMPT,
-						result.agentSessionId
+						result.agentSessionId,
+						spawnOverrides
 					);
 
 					if (synopsisResult.success && synopsisResult.response) {

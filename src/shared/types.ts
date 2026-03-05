@@ -28,6 +28,10 @@ export interface SessionInfo {
 	cwd: string;
 	projectRoot: string;
 	autoRunFolderPath?: string;
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customModel?: string;
 }
 
 // Usage statistics from AI agent CLI (Claude Code, Codex, etc.)

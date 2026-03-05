@@ -241,6 +241,14 @@ export function getAgentCustomPath(agentId: string): string | undefined {
 }
 
 /**
+ * Get stored agent config values for a specific agent (e.g., customArgs, customEnvVars, model)
+ */
+export function getAgentConfigValues(agentId: string): Record<string, unknown> {
+	const configs = readAgentConfigs();
+	return configs[agentId] || {};
+}
+
+/**
  * Resolve a partial ID to a full ID
  * Returns: { id, ambiguous, matches }
  * - If exact match found, returns that ID

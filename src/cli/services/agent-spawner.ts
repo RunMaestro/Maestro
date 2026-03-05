@@ -1,12 +1,16 @@
 // Agent spawner service for CLI
-// Spawns agent CLIs (Claude Code, Codex) and parses their output
+// Spawns agent CLIs (Claude Code, Codex, OpenCode, Factory Droid) and parses their output
 
 import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
+import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
+import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
-import { getAgentCustomPath } from './storage';
+import { getAgentDefinition } from '../../main/agents/definitions';
+import { applyAgentConfigOverrides, buildAgentArgs, getContextWindowValue } from '../../main/utils/agent-args';
+import { getAgentConfigValues, getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
 import { isWindows, getWhichCommand } from '../../shared/platformDetection';
@@ -36,6 +40,18 @@ const CODEX_ARGS = [
 // Cached Codex path (resolved once at startup)
 let cachedCodexPath: string | null = null;
 
+// OpenCode default command
+const OPENCODE_DEFAULT_COMMAND = 'opencode';
+
+// Cached OpenCode path (resolved once at startup)
+let cachedOpenCodePath: string | null = null;
+
+// Factory Droid default command
+const DROID_DEFAULT_COMMAND = 'droid';
+
+// Cached Factory Droid path (resolved once at startup)
+let cachedDroidPath: string | null = null;
+
 // Result from spawning an agent
 export interface AgentResult {
 	success: boolean;
@@ -43,6 +59,13 @@ export interface AgentResult {
 	agentSessionId?: string;
 	usageStats?: UsageStats;
 	error?: string;
+}
+
+export interface AgentSpawnOverrides {
+	customPath?: string;
+	customArgs?: string;
+	customEnvVars?: Record<string, string>;
+	customModel?: string;
 }
 
 /**
@@ -75,14 +98,14 @@ async function isExecutable(filePath: string): Promise<boolean> {
 }
 
 /**
- * Find Claude in PATH using 'which' command
+ * Find a command in PATH using 'which' command
  */
-async function findClaudeInPath(): Promise<string | undefined> {
+async function findCommandInPath(commandName: string): Promise<string | undefined> {
 	return new Promise((resolve) => {
 		const env = { ...process.env, PATH: getExpandedPath() };
 		const command = getWhichCommand();
 
-		const proc = spawn(command, [CLAUDE_DEFAULT_COMMAND], { env });
+		const proc = spawn(command, [commandName], { env });
 		let stdout = '';
 
 		proc.stdout?.on('data', (data) => {
@@ -101,46 +124,43 @@ async function findClaudeInPath(): Promise<string | undefined> {
 			resolve(undefined);
 		});
 	});
+}
+
+/**
+ * Find Claude in PATH using 'which' command
+ */
+async function findClaudeInPath(): Promise<string | undefined> {
+	return findCommandInPath(CLAUDE_DEFAULT_COMMAND);
 }
 
 /**
  * Find Codex in PATH using 'which' command
  */
 async function findCodexInPath(): Promise<string | undefined> {
-	return new Promise((resolve) => {
-		const env = { ...process.env, PATH: getExpandedPath() };
-		const command = getWhichCommand();
-
-		const proc = spawn(command, [CODEX_DEFAULT_COMMAND], { env });
-		let stdout = '';
-
-		proc.stdout?.on('data', (data) => {
-			stdout += data.toString();
-		});
-
-		proc.on('close', (code) => {
-			if (code === 0 && stdout.trim()) {
-				resolve(stdout.trim().split('\n')[0]); // First match
-			} else {
-				resolve(undefined);
-			}
-		});
-
-		proc.on('error', () => {
-			resolve(undefined);
-		});
-	});
+	return findCommandInPath(CODEX_DEFAULT_COMMAND);
 }
 
 /**
  * Check if Claude Code is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectClaude(): Promise<{
+export async function detectClaude(
+	customPathOverride?: string
+): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';
 }> {
+	if (customPathOverride) {
+		if (await isExecutable(customPathOverride)) {
+			cachedClaudePath = customPathOverride;
+			return { available: true, path: customPathOverride, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom Claude path "${customPathOverride}" is not executable, falling back to PATH detection`
+		);
+	}
+
 	// Return cached result if available
 	if (cachedClaudePath) {
 		return { available: true, path: cachedClaudePath, source: 'settings' };
@@ -173,11 +193,23 @@ export async function detectClaude(): Promise<{
  * Check if Codex CLI is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectCodex(): Promise<{
+export async function detectCodex(
+	customPathOverride?: string
+): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';
 }> {
+	if (customPathOverride) {
+		if (await isExecutable(customPathOverride)) {
+			cachedCodexPath = customPathOverride;
+			return { available: true, path: customPathOverride, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom Codex path "${customPathOverride}" is not executable, falling back to PATH detection`
+		);
+	}
+
 	if (cachedCodexPath) {
 		return { available: true, path: cachedCodexPath, source: 'settings' };
 	}
@@ -203,6 +235,96 @@ export async function detectCodex(): Promise<{
 }
 
 /**
+ * Check if OpenCode CLI is available
+ * First checks for a custom path in settings, then falls back to PATH detection
+ */
+export async function detectOpenCode(
+	customPathOverride?: string
+): Promise<{
+	available: boolean;
+	path?: string;
+	source?: 'settings' | 'path';
+}> {
+	if (customPathOverride) {
+		if (await isExecutable(customPathOverride)) {
+			cachedOpenCodePath = customPathOverride;
+			return { available: true, path: customPathOverride, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom OpenCode path "${customPathOverride}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	if (cachedOpenCodePath) {
+		return { available: true, path: cachedOpenCodePath, source: 'settings' };
+	}
+
+	const customPath = getAgentCustomPath('opencode');
+	if (customPath) {
+		if (await isExecutable(customPath)) {
+			cachedOpenCodePath = customPath;
+			return { available: true, path: customPath, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom OpenCode path "${customPath}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	const pathResult = await findCommandInPath(OPENCODE_DEFAULT_COMMAND);
+	if (pathResult) {
+		cachedOpenCodePath = pathResult;
+		return { available: true, path: pathResult, source: 'path' };
+	}
+
+	return { available: false };
+}
+
+/**
+ * Check if Factory Droid CLI is available
+ * First checks for a custom path in settings, then falls back to PATH detection
+ */
+export async function detectDroid(
+	customPathOverride?: string
+): Promise<{
+	available: boolean;
+	path?: string;
+	source?: 'settings' | 'path';
+}> {
+	if (customPathOverride) {
+		if (await isExecutable(customPathOverride)) {
+			cachedDroidPath = customPathOverride;
+			return { available: true, path: customPathOverride, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom Droid path "${customPathOverride}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	if (cachedDroidPath) {
+		return { available: true, path: cachedDroidPath, source: 'settings' };
+	}
+
+	const customPath = getAgentCustomPath('factory-droid');
+	if (customPath) {
+		if (await isExecutable(customPath)) {
+			cachedDroidPath = customPath;
+			return { available: true, path: customPath, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom Droid path "${customPath}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	const pathResult = await findCommandInPath(DROID_DEFAULT_COMMAND);
+	if (pathResult) {
+		cachedDroidPath = pathResult;
+		return { available: true, path: pathResult, source: 'path' };
+	}
+
+	return { available: false };
+}
+
+/**
  * Get the resolved Claude command/path for spawning
  * Uses cached path from detectClaude() or falls back to default command
  */
@@ -216,6 +338,20 @@ export function getClaudeCommand(): string {
  */
 export function getCodexCommand(): string {
 	return cachedCodexPath || CODEX_DEFAULT_COMMAND;
+}
+
+/**
+ * Get the resolved OpenCode command/path for spawning
+ */
+export function getOpenCodeCommand(): string {
+	return cachedOpenCodePath || OPENCODE_DEFAULT_COMMAND;
+}
+
+/**
+ * Get the resolved Factory Droid command/path for spawning
+ */
+export function getDroidCommand(): string {
+	return cachedDroidPath || DROID_DEFAULT_COMMAND;
 }
 
 /**
@@ -371,6 +507,50 @@ function mergeUsageStats(
 	return merged;
 }
 
+function resolveAgentInvocation(
+	toolType: ToolType,
+	cwd: string,
+	prompt: string,
+	agentSessionId: string | undefined,
+	overrides?: AgentSpawnOverrides
+): {
+	args: string[];
+	env: NodeJS.ProcessEnv;
+	contextWindow: number;
+} {
+	const agentDef = getAgentDefinition(toolType);
+	const agentConfigValues = getAgentConfigValues(toolType) as Record<string, any>;
+
+	const baseArgs = buildAgentArgs(agentDef, {
+		baseArgs: [],
+		prompt,
+		cwd,
+		agentSessionId,
+	});
+
+	const { args: resolvedArgs, effectiveCustomEnvVars } = applyAgentConfigOverrides(
+		agentDef,
+		baseArgs,
+		{
+			agentConfigValues,
+			sessionCustomModel: overrides?.customModel,
+			sessionCustomArgs: overrides?.customArgs,
+			sessionCustomEnvVars: overrides?.customEnvVars,
+		}
+	);
+
+	const finalArgs = [...resolvedArgs];
+	if (!agentDef?.noPromptSeparator) {
+		finalArgs.push('--');
+	}
+	finalArgs.push(prompt);
+
+	const env = buildExpandedEnv(effectiveCustomEnvVars);
+	const contextWindow = getContextWindowValue(agentDef, agentConfigValues);
+
+	return { args: finalArgs, env, contextWindow };
+}
+
 /**
  * Spawn Codex with a prompt and return the result
  */
@@ -474,13 +654,234 @@ async function spawnCodexAgent(
 }
 
 /**
+ * Spawn OpenCode with a prompt and return the result
+ */
+async function spawnOpenCodeAgent(
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	overrides?: AgentSpawnOverrides
+): Promise<AgentResult> {
+	return new Promise((resolve) => {
+		const { args, env, contextWindow } = resolveAgentInvocation(
+			'opencode',
+			cwd,
+			prompt,
+			agentSessionId,
+			overrides
+		);
+
+		const options: SpawnOptions = {
+			cwd,
+			env,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		};
+
+		const opencodeCommand = getOpenCodeCommand();
+		const child = spawn(opencodeCommand, args, options);
+
+		const parser = new OpenCodeOutputParser();
+		let jsonBuffer = '';
+		let result: string | undefined;
+		let sessionId: string | undefined;
+		let usageStats: UsageStats | undefined;
+		let stderr = '';
+		let errorText: string | undefined;
+
+		child.stdout?.on('data', (data: Buffer) => {
+			jsonBuffer += data.toString();
+			const lines = jsonBuffer.split('\n');
+			jsonBuffer = lines.pop() || '';
+
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				const event = parser.parseJsonLine(line);
+				if (!event) continue;
+
+				const extractedSessionId = parser.extractSessionId(event);
+				if (extractedSessionId && !sessionId) {
+					sessionId = extractedSessionId;
+				}
+
+				if (parser.isResultMessage(event) && event.text) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
+
+				if (event.type === 'error' && event.text && !errorText) {
+					errorText = event.text;
+				}
+
+				const usage = parser.extractUsage(event);
+				if (usage) {
+					usageStats = mergeUsageStats(usageStats, {
+						inputTokens: usage.inputTokens,
+						outputTokens: usage.outputTokens,
+						cacheReadTokens: usage.cacheReadTokens,
+						cacheCreationTokens: usage.cacheCreationTokens,
+						costUsd: usage.costUsd,
+						contextWindow: usage.contextWindow,
+						reasoningTokens: usage.reasoningTokens,
+					});
+				}
+			}
+		});
+
+		child.stderr?.on('data', (data: Buffer) => {
+			stderr += data.toString();
+		});
+
+		child.stdin?.end();
+
+		child.on('close', (code) => {
+			if (usageStats && (!usageStats.contextWindow || usageStats.contextWindow === 0)) {
+				usageStats.contextWindow = contextWindow;
+			}
+
+			if (code === 0 && !errorText) {
+				resolve({
+					success: true,
+					response: result,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			} else {
+				resolve({
+					success: false,
+					error: errorText || stderr || `Process exited with code ${code}`,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			}
+		});
+
+		child.on('error', (error) => {
+			resolve({
+				success: false,
+				error: `Failed to spawn OpenCode: ${error.message}`,
+			});
+		});
+	});
+}
+
+/**
+ * Spawn Factory Droid with a prompt and return the result
+ */
+async function spawnFactoryDroidAgent(
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string,
+	overrides?: AgentSpawnOverrides
+): Promise<AgentResult> {
+	return new Promise((resolve) => {
+		const { args, env, contextWindow } = resolveAgentInvocation(
+			'factory-droid',
+			cwd,
+			prompt,
+			agentSessionId,
+			overrides
+		);
+
+		const options: SpawnOptions = {
+			cwd,
+			env,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		};
+
+		const droidCommand = getDroidCommand();
+		const child = spawn(droidCommand, args, options);
+
+		const parser = new FactoryDroidOutputParser();
+		let jsonBuffer = '';
+		let result: string | undefined;
+		let sessionId: string | undefined;
+		let usageStats: UsageStats | undefined;
+		let stderr = '';
+		let errorText: string | undefined;
+
+		child.stdout?.on('data', (data: Buffer) => {
+			jsonBuffer += data.toString();
+			const lines = jsonBuffer.split('\n');
+			jsonBuffer = lines.pop() || '';
+
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				const event = parser.parseJsonLine(line);
+				if (!event) continue;
+
+				const extractedSessionId = parser.extractSessionId(event);
+				if (extractedSessionId && !sessionId) {
+					sessionId = extractedSessionId;
+				}
+
+				if (parser.isResultMessage(event) && event.text) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
+
+				if (event.type === 'error' && event.text && !errorText) {
+					errorText = event.text;
+				}
+
+				const usage = parser.extractUsage(event);
+				if (usage) {
+					usageStats = mergeUsageStats(usageStats, {
+						inputTokens: usage.inputTokens,
+						outputTokens: usage.outputTokens,
+						cacheReadTokens: usage.cacheReadTokens,
+						cacheCreationTokens: usage.cacheCreationTokens,
+						costUsd: usage.costUsd,
+						contextWindow: usage.contextWindow,
+						reasoningTokens: usage.reasoningTokens,
+					});
+				}
+			}
+		});
+
+		child.stderr?.on('data', (data: Buffer) => {
+			stderr += data.toString();
+		});
+
+		child.stdin?.end();
+
+		child.on('close', (code) => {
+			if (usageStats && (!usageStats.contextWindow || usageStats.contextWindow === 0)) {
+				usageStats.contextWindow = contextWindow;
+			}
+
+			if (code === 0 && !errorText) {
+				resolve({
+					success: true,
+					response: result,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			} else {
+				resolve({
+					success: false,
+					error: errorText || stderr || `Process exited with code ${code}`,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			}
+		});
+
+		child.on('error', (error) => {
+			resolve({
+				success: false,
+				error: `Failed to spawn Factory Droid: ${error.message}`,
+			});
+		});
+	});
+}
+
+/**
  * Spawn an agent with a prompt and return the result
  */
 export async function spawnAgent(
 	toolType: ToolType,
 	cwd: string,
 	prompt: string,
-	agentSessionId?: string
+	agentSessionId?: string,
+	overrides?: AgentSpawnOverrides
 ): Promise<AgentResult> {
 	if (toolType === 'codex') {
 		return spawnCodexAgent(cwd, prompt, agentSessionId);
@@ -488,6 +889,14 @@ export async function spawnAgent(
 
 	if (toolType === 'claude-code') {
 		return spawnClaudeAgent(cwd, prompt, agentSessionId);
+	}
+
+	if (toolType === 'opencode') {
+		return spawnOpenCodeAgent(cwd, prompt, agentSessionId, overrides);
+	}
+
+	if (toolType === 'factory-droid') {
+		return spawnFactoryDroidAgent(cwd, prompt, agentSessionId, overrides);
 	}
 
 	return {
