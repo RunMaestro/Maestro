@@ -126,6 +126,19 @@ export async function executeCuePrompt(config: CueExecutionConfig): Promise<CueR
 		sourceOutput: String(event.payload.sourceOutput ?? ''),
 	};
 
+	// Populate task.pending-specific template context
+	if (event.type === 'task.pending') {
+		templateContext.cue = {
+			...templateContext.cue,
+			taskFile: String(event.payload.path ?? ''),
+			taskFileName: String(event.payload.filename ?? ''),
+			taskFileDir: String(event.payload.directory ?? ''),
+			taskCount: String(event.payload.taskCount ?? '0'),
+			taskList: String(event.payload.taskList ?? ''),
+			taskContent: String(event.payload.content ?? ''),
+		};
+	}
+
 	// Populate GitHub-specific template context
 	if (event.type === 'github.pull_request' || event.type === 'github.issue') {
 		templateContext.cue = {

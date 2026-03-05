@@ -37,6 +37,12 @@ vi.mock('../../../main/cue/cue-github-poller', () => ({
 	createCueGitHubPoller: (...args: unknown[]) => mockCreateCueGitHubPoller(args[0]),
 }));
 
+// Mock the task scanner
+const mockCreateCueTaskScanner = vi.fn<(config: unknown) => () => void>();
+vi.mock('../../../main/cue/cue-task-scanner', () => ({
+	createCueTaskScanner: (...args: unknown[]) => mockCreateCueTaskScanner(args[0]),
+}));
+
 // Mock crypto
 vi.mock('crypto', () => ({
 	randomUUID: vi.fn(() => `uuid-${Math.random().toString(36).slice(2, 8)}`),
@@ -90,6 +96,7 @@ describe('CueEngine', () => {
 	let fileWatcherCleanup: ReturnType<typeof vi.fn>;
 
 	let gitHubPollerCleanup: ReturnType<typeof vi.fn>;
+	let taskScannerCleanup: ReturnType<typeof vi.fn>;
 
 	beforeEach(() => {
 		vi.clearAllMocks();
@@ -103,6 +110,9 @@ describe('CueEngine', () => {
 
 		gitHubPollerCleanup = vi.fn();
 		mockCreateCueGitHubPoller.mockReturnValue(gitHubPollerCleanup);
+
+		taskScannerCleanup = vi.fn();
+		mockCreateCueTaskScanner.mockReturnValue(taskScannerCleanup);
 	});
 
 	afterEach(() => {
@@ -1005,6 +1015,104 @@ describe('CueEngine', () => {
 			engine.start();
 
 			expect(mockCreateCueGitHubPoller).not.toHaveBeenCalled();
+
+			engine.stop();
+		});
+	});
+
+	describe('task.pending subscriptions', () => {
+		it('creates a task scanner with correct config', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+						poll_minutes: 2,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueTaskScanner).toHaveBeenCalledWith(
+				expect.objectContaining({
+					watchGlob: 'tasks/**/*.md',
+					pollMinutes: 2,
+					projectRoot: '/projects/test',
+					triggerName: 'task-queue',
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('defaults poll_minutes to 1 when not specified', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueTaskScanner).toHaveBeenCalledWith(
+				expect.objectContaining({
+					pollMinutes: 1,
+				})
+			);
+
+			engine.stop();
+		});
+
+		it('cleanup function is called on session teardown', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: true,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			engine.removeSession('session-1');
+
+			expect(taskScannerCleanup).toHaveBeenCalled();
+		});
+
+		it('disabled task.pending subscription is skipped', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						enabled: false,
+						prompt: 'process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const engine = new CueEngine(createMockDeps());
+			engine.start();
+
+			expect(mockCreateCueTaskScanner).not.toHaveBeenCalled();
 
 			engine.stop();
 		});

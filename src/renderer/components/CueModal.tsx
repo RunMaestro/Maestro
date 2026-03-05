@@ -218,6 +218,10 @@ function ActivityLog({ log, theme }: { log: CueRunResult[]; theme: Theme }) {
 					eventType === 'file.changed' && entry.event.payload?.file
 						? ` (${String(entry.event.payload.file).split('/').pop()})`
 						: '';
+				const taskPayload =
+					eventType === 'task.pending' && entry.event.payload?.filename
+						? ` (${String(entry.event.payload.filename)}: ${String(entry.event.payload.taskCount ?? 0)} task(s))`
+						: '';
 				const githubPayload =
 					(eventType === 'github.pull_request' || eventType === 'github.issue') &&
 					entry.event.payload?.number
@@ -244,6 +248,7 @@ function ActivityLog({ log, theme }: { log: CueRunResult[]; theme: Theme }) {
 							<span style={{ color: theme.colors.textDim }}>
 								{' '}
 								triggered ({eventType}){filePayload}
+								{taskPayload}
 								{githubPayload} →{' '}
 							</span>
 							{isFailed ? (

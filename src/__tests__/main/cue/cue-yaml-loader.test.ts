@@ -577,6 +577,84 @@ subscriptions:
 		});
 	});
 
+	describe('validateCueConfig for task.pending events', () => {
+		it('accepts valid task.pending subscription', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						prompt: 'Process tasks',
+						watch: 'tasks/**/*.md',
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+			expect(result.errors).toHaveLength(0);
+		});
+
+		it('requires watch for task.pending', () => {
+			const result = validateCueConfig({
+				subscriptions: [{ name: 'task-queue', event: 'task.pending', prompt: 'Process tasks' }],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining('watch')]));
+		});
+
+		it('accepts task.pending with poll_minutes', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						prompt: 'Process',
+						watch: 'tasks/**/*.md',
+						poll_minutes: 5,
+					},
+				],
+			});
+			expect(result.valid).toBe(true);
+		});
+
+		it('rejects task.pending with poll_minutes < 1', () => {
+			const result = validateCueConfig({
+				subscriptions: [
+					{
+						name: 'task-queue',
+						event: 'task.pending',
+						prompt: 'Process',
+						watch: 'tasks/**/*.md',
+						poll_minutes: 0,
+					},
+				],
+			});
+			expect(result.valid).toBe(false);
+			expect(result.errors).toEqual(
+				expect.arrayContaining([expect.stringContaining('poll_minutes')])
+			);
+		});
+	});
+
+	describe('loadCueConfig with task.pending', () => {
+		it('parses watch and poll_minutes from YAML', () => {
+			mockExistsSync.mockReturnValue(true);
+			mockReadFileSync.mockReturnValue(`
+subscriptions:
+  - name: task-queue
+    event: task.pending
+    prompt: Process the tasks
+    watch: "tasks/**/*.md"
+    poll_minutes: 2
+`);
+
+			const result = loadCueConfig('/projects/test');
+			expect(result).not.toBeNull();
+			expect(result!.subscriptions[0].event).toBe('task.pending');
+			expect(result!.subscriptions[0].watch).toBe('tasks/**/*.md');
+			expect(result!.subscriptions[0].poll_minutes).toBe(2);
+		});
+	});
+
 	describe('loadCueConfig with filter', () => {
 		it('parses filter field from YAML', () => {
 			mockExistsSync.mockReturnValue(true);

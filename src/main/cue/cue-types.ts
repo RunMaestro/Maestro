@@ -7,6 +7,7 @@
  * - agent.completed: triggers when another agent finishes
  * - github.pull_request: triggers when new PRs are detected via GitHub CLI polling
  * - github.issue: triggers when new issues are detected via GitHub CLI polling
+ * - task.pending: triggers when unchecked markdown tasks (- [ ]) are found in watched files
  */
 
 /** Event types that can trigger a Cue subscription */
@@ -15,7 +16,8 @@ export type CueEventType =
 	| 'file.changed'
 	| 'agent.completed'
 	| 'github.pull_request'
-	| 'github.issue';
+	| 'github.issue'
+	| 'task.pending';
 
 /** A Cue subscription defines a trigger-prompt pairing */
 export interface CueSubscription {

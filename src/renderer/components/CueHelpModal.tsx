@@ -255,6 +255,41 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 								CLI installed and authenticated.
 							</p>
 						</div>
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Task Pending</strong>{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									task.pending
+								</code>
+							</p>
+							<p className="mt-1">
+								Polls markdown files for unchecked tasks (
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									- [ ]
+								</code>
+								). Requires{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									watch
+								</code>{' '}
+								glob pattern. Optional{' '}
+								<code
+									className="px-1 rounded text-xs"
+									style={{ backgroundColor: theme.colors.bgActivity }}
+								>
+									poll_minutes
+								</code>{' '}
+								(default 1). Fires per file when content changes and pending tasks exist.
+							</p>
+						</div>
 						<div
 							className="font-mono text-xs p-3 rounded border space-y-3"
 							style={{
@@ -306,6 +341,17 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 								{'  '}event: github.issue
 								<br />
 								{'  '}poll_minutes: 10
+							</div>
+							<div>
+								# Task Pending
+								<br />
+								- name: "Process Tasks"
+								<br />
+								{'  '}event: task.pending
+								<br />
+								{'  '}watch: "tasks/**/*.md"
+								<br />
+								{'  '}poll_minutes: 1
 							</div>
 						</div>
 					</div>
@@ -425,7 +471,7 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TYPE}}'}</code> — Event
 								type (time.interval, file.changed, agent.completed, github.pull_request,
-								github.issue)
+								github.issue, task.pending)
 							</div>
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_EVENT_TIMESTAMP}}'}</code> —
@@ -461,6 +507,22 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_SOURCE_OUTPUT}}'}</code> —
 								Source session output (agent.completed)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_FILE}}'}</code> — File
+								path with pending tasks (task.pending)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_COUNT}}'}</code> — Number
+								of pending tasks (task.pending)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_LIST}}'}</code> —
+								Formatted task list with line numbers (task.pending)
+							</div>
+							<div>
+								<code style={{ color: theme.colors.accent }}>{'{{CUE_TASK_CONTENT}}'}</code> — Full
+								file content, truncated (task.pending)
 							</div>
 							<div>
 								<code style={{ color: theme.colors.accent }}>{'{{CUE_GH_NUMBER}}'}</code> — PR/issue
@@ -666,6 +728,22 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 								}}
 							>
 								[Moderator] &rarr; [Pro, Con] &rarr; [Moderator]
+							</div>
+						</div>
+
+						<div>
+							<p>
+								<strong style={{ color: theme.colors.textMain }}>Task Queue</strong> &mdash; Watch
+								markdown files for unchecked tasks and process them.
+							</p>
+							<div
+								className="font-mono text-xs p-2 rounded border mt-1"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									borderColor: theme.colors.border,
+								}}
+							>
+								[tasks/*.md] &rarr; [Agent] (per file with pending tasks)
 							</div>
 						</div>
 

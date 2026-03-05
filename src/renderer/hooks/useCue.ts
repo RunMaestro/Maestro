@@ -6,7 +6,8 @@ type CueEventType =
 	| 'file.changed'
 	| 'agent.completed'
 	| 'github.pull_request'
-	| 'github.issue';
+	| 'github.issue'
+	| 'task.pending';
 
 /** Status of a Cue run */
 type CueRunStatus = 'running' | 'completed' | 'failed' | 'timeout' | 'stopped';

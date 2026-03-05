@@ -24,6 +24,7 @@ import type {
 import { loadCueConfig, watchCueYaml } from './cue-yaml-loader';
 import { createCueFileWatcher } from './cue-file-watcher';
 import { createCueGitHubPoller } from './cue-github-poller';
+import { createCueTaskScanner } from './cue-task-scanner';
 import { matchesFilter, describeFilter } from './cue-filter';
 import { initCueDb, closeCueDb, updateHeartbeat, getLastHeartbeat, pruneCueEvents } from './cue-db';
 import { reconcileMissedTimeEvents } from './cue-reconciler';
@@ -610,6 +611,8 @@ export class CueEngine {
 				this.setupTimerSubscription(session, state, sub);
 			} else if (sub.event === 'file.changed' && sub.watch) {
 				this.setupFileWatcherSubscription(session, state, sub);
+			} else if (sub.event === 'task.pending' && sub.watch) {
+				this.setupTaskScannerSubscription(session, state, sub);
 			} else if (sub.event === 'github.pull_request' || sub.event === 'github.issue') {
 				this.setupGitHubPollerSubscription(session, state, sub);
 			}
@@ -751,6 +754,43 @@ export class CueEngine {
 				}
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (${sub.event})`);
+				state.lastTriggered = event.timestamp;
+				this.executeCueRun(session.id, sub.prompt, event, sub.name);
+			},
+		});
+
+		state.watchers.push(cleanup);
+	}
+
+	private setupTaskScannerSubscription(
+		session: SessionInfo,
+		state: SessionState,
+		sub: CueSubscription
+	): void {
+		if (!sub.watch) return;
+
+		const cleanup = createCueTaskScanner({
+			watchGlob: sub.watch,
+			pollMinutes: sub.poll_minutes ?? 1,
+			projectRoot: session.projectRoot,
+			triggerName: sub.name,
+			onLog: (level, message) => this.deps.onLog(level as MainLogLevel, message),
+			onEvent: (event) => {
+				if (!this.enabled) return;
+
+				// Check payload filter
+				if (sub.filter && !matchesFilter(event.payload, sub.filter)) {
+					this.deps.onLog(
+						'cue',
+						`[CUE] "${sub.name}" filter not matched (${describeFilter(sub.filter)})`
+					);
+					return;
+				}
+
+				this.deps.onLog(
+					'cue',
+					`[CUE] "${sub.name}" triggered (task.pending: ${event.payload.taskCount} task(s) in ${event.payload.filename})`
+				);
 				state.lastTriggered = event.timestamp;
 				this.executeCueRun(session.id, sub.prompt, event, sub.name);
 			},

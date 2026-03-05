@@ -62,6 +62,13 @@ import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
  *   {{CUE_SOURCE_SESSION}} - Source session name (agent.completed events)
  *   {{CUE_SOURCE_OUTPUT}}  - Source session output (agent.completed events)
  *
+ *   {{CUE_TASK_FILE}}        - File path with pending tasks (task.pending events)
+ *   {{CUE_TASK_FILE_NAME}}   - File name with pending tasks (task.pending events)
+ *   {{CUE_TASK_FILE_DIR}}    - Directory of file with pending tasks (task.pending events)
+ *   {{CUE_TASK_COUNT}}       - Number of pending tasks found (task.pending events)
+ *   {{CUE_TASK_LIST}}        - Formatted list of pending tasks (task.pending events)
+ *   {{CUE_TASK_CONTENT}}     - Full file content, truncated to 10K chars (task.pending events)
+ *
  *   {{CUE_GH_TYPE}}         - GitHub item type: "pull_request" or "issue" (github.* events)
  *   {{CUE_GH_NUMBER}}       - PR/issue number (github.* events)
  *   {{CUE_GH_TITLE}}        - PR/issue title (github.* events)
@@ -119,6 +126,13 @@ export interface TemplateContext {
 		fileExt?: string;
 		sourceSession?: string;
 		sourceOutput?: string;
+		// Task pending fields (task.pending)
+		taskFile?: string;
+		taskFileName?: string;
+		taskFileDir?: string;
+		taskCount?: string;
+		taskList?: string;
+		taskContent?: string;
 		// GitHub event fields (github.pull_request, github.issue)
 		ghType?: string;
 		ghNumber?: string;
@@ -167,6 +181,20 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{CUE_GH_TITLE}}', description: 'PR/issue title', cueOnly: true },
 	{ variable: '{{CUE_GH_TYPE}}', description: 'Item type (pull_request/issue)', cueOnly: true },
 	{ variable: '{{CUE_GH_URL}}', description: 'PR/issue HTML URL', cueOnly: true },
+	{ variable: '{{CUE_TASK_CONTENT}}', description: 'Task file content (truncated)', cueOnly: true },
+	{ variable: '{{CUE_TASK_COUNT}}', description: 'Number of pending tasks', cueOnly: true },
+	{ variable: '{{CUE_TASK_FILE}}', description: 'File path with pending tasks', cueOnly: true },
+	{
+		variable: '{{CUE_TASK_FILE_DIR}}',
+		description: 'Directory of task file',
+		cueOnly: true,
+	},
+	{
+		variable: '{{CUE_TASK_FILE_NAME}}',
+		description: 'Name of file with pending tasks',
+		cueOnly: true,
+	},
+	{ variable: '{{CUE_TASK_LIST}}', description: 'Formatted list of pending tasks', cueOnly: true },
 	{ variable: '{{CUE_FILE_DIR}}', description: 'Changed file directory', cueOnly: true },
 	{ variable: '{{CUE_FILE_EXT}}', description: 'Changed file extension', cueOnly: true },
 	{ variable: '{{CUE_FILE_NAME}}', description: 'Changed file name', cueOnly: true },
@@ -294,6 +322,14 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		CUE_FILE_EXT: context.cue?.fileExt || '',
 		CUE_SOURCE_SESSION: context.cue?.sourceSession || '',
 		CUE_SOURCE_OUTPUT: context.cue?.sourceOutput || '',
+
+		// Cue task variables
+		CUE_TASK_FILE: context.cue?.taskFile || '',
+		CUE_TASK_FILE_NAME: context.cue?.taskFileName || '',
+		CUE_TASK_FILE_DIR: context.cue?.taskFileDir || '',
+		CUE_TASK_COUNT: context.cue?.taskCount || '',
+		CUE_TASK_LIST: context.cue?.taskList || '',
+		CUE_TASK_CONTENT: context.cue?.taskContent || '',
 
 		// Cue GitHub variables
 		CUE_GH_TYPE: context.cue?.ghType || '',

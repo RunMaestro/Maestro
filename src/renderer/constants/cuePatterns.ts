@@ -148,4 +148,24 @@ subscriptions:
     enabled: true
 `,
 	},
+	{
+		id: 'task-queue',
+		name: 'Task Queue',
+		description: 'Process pending markdown tasks from a directory',
+		yaml: `subscriptions:
+  - name: "Process Task Queue"
+    event: task.pending
+    watch: "tasks/**/*.md"
+    poll_minutes: 1
+    prompt: prompts/process-task.md
+    enabled: true
+
+# Template variables available in your prompt:
+#   {{CUE_TASK_FILE}}      — Full path to the file with pending tasks
+#   {{CUE_TASK_FILE_NAME}} — File name (e.g., "sprint-tasks.md")
+#   {{CUE_TASK_COUNT}}     — Number of unchecked tasks found
+#   {{CUE_TASK_LIST}}      — Formatted list of pending tasks with line numbers
+#   {{CUE_TASK_CONTENT}}   — Full file content (truncated to 10K chars)
+`,
+	},
 ];
