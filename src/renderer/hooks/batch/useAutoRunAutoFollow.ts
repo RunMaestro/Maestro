@@ -9,7 +9,6 @@ export interface UseAutoRunAutoFollowDeps {
 	setActiveRightTab: (tab: RightPanelTab) => void;
 	rightPanelOpen: boolean;
 	setRightPanelOpen?: (open: boolean) => void;
-	toggleRightPanel?: () => void;
 	onAutoRunModeChange?: (mode: 'edit' | 'preview') => void;
 	currentMode?: 'edit' | 'preview';
 }
@@ -79,8 +78,8 @@ export function useAutoRunAutoFollow(deps: UseAutoRunAutoFollowDeps): UseAutoRun
 		// Detect document transition
 		const docChanged = currentDocumentIndex !== prevBatchDocIndexRef.current;
 
-		// Auto-follow on batch start or document transition
-		if (autoFollowEnabled && (batchJustStarted || docChanged)) {
+		// Auto-follow on batch start or document transition (only while running)
+		if (autoFollowEnabled && isRunning && (batchJustStarted || docChanged)) {
 			const activeDoc = documents?.[currentDocumentIndex];
 			if (activeDoc && activeDoc !== selectedFile) {
 				onAutoRunSelectDocument(activeDoc);
