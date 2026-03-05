@@ -201,6 +201,7 @@ interface MainPanelProps {
 	onFileTabClose?: (tabId: string) => void;
 
 	// Terminal tab callbacks (Phase 8)
+	onNewTerminalTab?: () => void;
 	onTerminalTabSelect?: (tabId: string) => void;
 	onTerminalTabClose?: (tabId: string) => void;
 	onTerminalTabRename?: (tabId: string) => void;
@@ -498,6 +499,7 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 			onFileTabScrollPositionChange,
 			onFileTabSearchQueryChange,
 			// Terminal tab callbacks (Phase 8)
+			onNewTerminalTab,
 			onTerminalTabSelect,
 			onTerminalTabClose,
 			onTerminalTabRename,
@@ -1525,6 +1527,7 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 									onFileTabSelect={onFileTabSelect}
 									onFileTabClose={onFileTabClose}
 									// Terminal tab props (Phase 8)
+									onNewTerminalTab={onNewTerminalTab}
 									activeTerminalTabId={activeSession.activeTerminalTabId}
 									inputMode={activeSession.inputMode}
 									onTerminalTabSelect={onTerminalTabSelect}
@@ -1661,7 +1664,7 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 								{/* Logs Area - Show DocumentGenerationView while generating OR when docs exist (waiting for user to click Exit Wizard), WizardConversationView when wizard is active, otherwise show TerminalOutput */}
 								{/* Note: wizardState is per-tab (stored on activeTab), not per-session */}
 								{/* User clicks "Exit Wizard" button in DocumentGenerationView which calls onWizardComplete to convert tab to normal session */}
-								<div className="flex-1 overflow-hidden flex flex-col" data-tour="main-terminal">
+								<div className="flex-1 overflow-hidden flex flex-col relative" data-tour="main-terminal">
 									{activeSession.inputMode === 'ai' &&
 									(activeTab?.wizardState?.isGeneratingDocs ||
 										(activeTab?.wizardState?.generatedDocuments?.length ?? 0) > 0) ? (
@@ -1707,19 +1710,6 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 											}
 											setLightboxImage={setLightboxImage}
 										/>
-									) : activeSession.inputMode === 'terminal' ? (
-										<TerminalView
-											ref={terminalViewRef}
-											session={activeSession}
-											theme={theme}
-											fontFamily={fontFamily}
-											fontSize={fontSize}
-											defaultShell={defaultShell}
-											onTabStateChange={createTabStateChangeHandler(activeSession.id)}
-											onTabPidChange={createTabPidChangeHandler(activeSession.id)}
-											searchOpen={terminalSearchOpen}
-											onSearchClose={() => setTerminalSearchOpen(false)}
-										/>
 									) : (
 										<TerminalOutput
 											key={`${activeSession.id}-${activeSession.activeTabId}`}
@@ -1764,6 +1754,29 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 											userMessageAlignment={userMessageAlignment}
 											onOpenInTab={props.onOpenSavedFileInTab}
 										/>
+									)}
+
+									{/* TerminalView is always mounted (when tabs exist) to preserve xterm.js scrollback history.
+									     It is hidden via CSS when not in terminal mode so switching to AI mode and back
+									     preserves the terminal display buffer without needing to replay PTY output. */}
+									{(activeSession.terminalTabs?.length ?? 0) > 0 && (
+										<div
+											className="absolute inset-0 flex flex-col"
+											style={{ display: activeSession.inputMode === 'terminal' ? 'flex' : 'none' }}
+										>
+											<TerminalView
+												ref={terminalViewRef}
+												session={activeSession}
+												theme={theme}
+												fontFamily={fontFamily}
+												fontSize={fontSize}
+												defaultShell={defaultShell}
+												onTabStateChange={createTabStateChangeHandler(activeSession.id)}
+												onTabPidChange={createTabPidChangeHandler(activeSession.id)}
+												searchOpen={terminalSearchOpen}
+												onSearchClose={() => setTerminalSearchOpen(false)}
+											/>
+										</div>
 									)}
 								</div>
 

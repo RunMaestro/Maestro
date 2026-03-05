@@ -17,10 +17,8 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { Session, SessionState, ToolType, LogEntry } from '../../types';
 import { useSessionStore } from '../../stores/sessionStore';
 import { useGroupChatStore } from '../../stores/groupChatStore';
-import { useSettingsStore } from '../../stores/settingsStore';
 import { gitService } from '../../services/git';
 import { generateId } from '../../utils/ids';
-import { createTerminalTab } from '../../utils/terminalTabHelpers';
 import { AUTO_RUN_FOLDER_NAME } from '../../components/Wizard';
 
 // ============================================================================
@@ -276,37 +274,23 @@ export function useSessionRestoration(): SessionRestorationReturn {
 				}
 			}
 
-			// Migration: ensure terminalTabs exists with at least one default tab
-			if (!correctedSession.terminalTabs || correctedSession.terminalTabs.length === 0) {
-				console.log('[session migration] Added terminal tabs to session', correctedSession.id);
-				const defaultTerminalTab = createTerminalTab(
-					useSettingsStore.getState().defaultShell || 'zsh',
-					correctedSession.cwd,
-					null
-				);
+			// Migration: ensure terminalTabs exists (may be empty — terminals are created on demand)
+			if (!correctedSession.terminalTabs) {
 				correctedSession = {
 					...correctedSession,
-					terminalTabs: [defaultTerminalTab],
+					terminalTabs: [],
 					activeTerminalTabId: null,
-					// When unifiedTabOrder already exists, append the new terminal tab.
-					// When it's undefined (legacy session), build the full order from all
-					// existing tabs so no tab type is lost.
-					unifiedTabOrder: correctedSession.unifiedTabOrder
-						? [
-								...correctedSession.unifiedTabOrder,
-								{ type: 'terminal' as const, id: defaultTerminalTab.id },
-							]
-						: [
-								...correctedSession.aiTabs.map((tab) => ({
-									type: 'ai' as const,
-									id: tab.id,
-								})),
-								...(correctedSession.filePreviewTabs || []).map((tab) => ({
-									type: 'file' as const,
-									id: tab.id,
-								})),
-								{ type: 'terminal' as const, id: defaultTerminalTab.id },
-							],
+					// When unifiedTabOrder is undefined (legacy session), build it from AI+file tabs only.
+					unifiedTabOrder: correctedSession.unifiedTabOrder ?? [
+						...correctedSession.aiTabs.map((tab) => ({
+							type: 'ai' as const,
+							id: tab.id,
+						})),
+						...(correctedSession.filePreviewTabs || []).map((tab) => ({
+							type: 'file' as const,
+							id: tab.id,
+						})),
+					],
 				};
 			}
 

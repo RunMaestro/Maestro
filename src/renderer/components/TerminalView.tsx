@@ -244,6 +244,8 @@ export const TerminalView = memo(
 									</span>
 									<button
 										onClick={() => {
+											// Clear the loading-written guard so 'Starting terminal...' shows again on retry
+											loadingWrittenRef.current.delete(tab.id);
 											onTabStateChange(tab.id, 'idle');
 											onTabPidChange(tab.id, 0);
 											spawnPtyForTab({ ...tab, state: 'idle', pid: 0 });
@@ -284,7 +286,8 @@ export const TerminalView = memo(
 												}
 											} else {
 												terminalRefs.current.delete(tab.id);
-												loadingWrittenRef.current.delete(tab.id);
+												// Do NOT clear loadingWrittenRef here — React calls inline ref callbacks with
+												// null then the new handle on re-renders; clearing it would cause repeated writes.
 											}
 										}}
 										sessionId={terminalSessionId}

@@ -213,15 +213,18 @@ describe('closeTerminalTab', () => {
 		expect(updated.terminalTabs!.map((t) => t.id)).toEqual(['tab-1']);
 	});
 
-	it('prevents closing the last terminal tab', () => {
+	it('allows closing the last terminal tab and switches inputMode to ai', () => {
 		const tab = createMockTerminalTab({ id: 'only-tab' });
 		const session = createMockSession({
 			terminalTabs: [tab],
 			activeTerminalTabId: 'only-tab',
+			inputMode: 'terminal',
+			unifiedTabOrder: [{ type: 'terminal' as const, id: 'only-tab' }],
 		});
 		const updated = closeTerminalTab(session, 'only-tab');
-		expect(updated).toBe(session); // unchanged reference
-		expect(updated.terminalTabs).toHaveLength(1);
+		expect(updated.terminalTabs).toHaveLength(0);
+		expect(updated.activeTerminalTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
 	});
 
 	it('selects the adjacent tab when closing the active tab', () => {

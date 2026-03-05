@@ -41,6 +41,8 @@ interface TabBarProps {
 	onTabSelect: (tabId: string) => void;
 	onTabClose: (tabId: string) => void;
 	onNewTab: () => void;
+	/** Handler to create a new terminal tab (shown in the + button popover) */
+	onNewTerminalTab?: () => void;
 	onRequestRename?: (tabId: string) => void;
 	onTabReorder?: (fromIndex: number, toIndex: number) => void;
 	/** Handler to reorder tabs in unified tab order (AI + file tabs) */
@@ -2010,6 +2012,7 @@ function TabBarInner({
 	onTabSelect,
 	onTabClose,
 	onNewTab,
+	onNewTerminalTab,
 	onRequestRename,
 	onTabReorder,
 	onTabStar,
@@ -2050,6 +2053,35 @@ function TabBarInner({
 	const showUnreadOnly = showUnreadOnlyProp ?? showUnreadOnlyLocal;
 	const toggleUnreadFilter =
 		onToggleUnreadFilter ?? (() => setShowUnreadOnlyLocal((prev) => !prev));
+
+	// New-tab-type popover state (shown when onNewTerminalTab is provided)
+	const [newTabPopoverOpen, setNewTabPopoverOpen] = useState(false);
+	const [newTabPopoverPos, setNewTabPopoverPos] = useState<{ top: number; left: number } | null>(null);
+	const newTabBtnRef = useRef<HTMLButtonElement>(null);
+
+	// Close popover on outside click
+	useEffect(() => {
+		if (!newTabPopoverOpen) return;
+		const handler = (e: MouseEvent) => {
+			if (newTabBtnRef.current && newTabBtnRef.current.contains(e.target as Node)) return;
+			setNewTabPopoverOpen(false);
+		};
+		document.addEventListener('mousedown', handler);
+		return () => document.removeEventListener('mousedown', handler);
+	}, [newTabPopoverOpen]);
+
+	const handleNewTabButtonClick = useCallback(() => {
+		if (!onNewTerminalTab) {
+			// No terminal option — just create an AI tab directly
+			onNewTab();
+			return;
+		}
+		const btn = newTabBtnRef.current;
+		if (!btn) return;
+		const rect = btn.getBoundingClientRect();
+		setNewTabPopoverPos({ top: rect.bottom + 4, left: rect.left });
+		setNewTabPopoverOpen((open) => !open);
+	}, [onNewTerminalTab, onNewTab]);
 
 	const tabBarRef = useRef<HTMLDivElement>(null);
 	const tabRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -2691,14 +2723,53 @@ function TabBarInner({
 				}}
 			>
 				<button
-					onClick={onNewTab}
+					ref={newTabBtnRef}
+					onClick={handleNewTabButtonClick}
 					className="flex items-center justify-center w-6 h-6 rounded hover:bg-white/10 transition-colors"
 					style={{ color: theme.colors.textDim }}
-					title={`New tab (${formatShortcutKeys(['Meta', 't'])})`}
+					title={onNewTerminalTab ? 'New tab…' : `New tab (${formatShortcutKeys(['Meta', 't'])})`}
 				>
 					<Plus className="w-4 h-4" />
 				</button>
 			</div>
+
+			{/* New-tab-type popover (portal, shown when both AI and terminal options are available) */}
+			{newTabPopoverOpen && newTabPopoverPos && createPortal(
+				<div
+					className="fixed z-50 rounded-lg shadow-xl overflow-hidden"
+					style={{
+						top: newTabPopoverPos.top,
+						left: newTabPopoverPos.left,
+						backgroundColor: theme.colors.bgSidebar,
+						border: `1px solid ${theme.colors.border}`,
+						minWidth: 180,
+					}}
+				>
+					<button
+						className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+						onClick={() => { setNewTabPopoverOpen(false); onNewTab(); }}
+					>
+						<Plus className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						New AI Chat
+						<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							{formatShortcutKeys(['Meta', 't'])}
+						</span>
+					</button>
+					<button
+						className="flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-white/10 transition-colors"
+						style={{ color: theme.colors.textMain }}
+						onClick={() => { setNewTabPopoverOpen(false); onNewTerminalTab?.(); }}
+					>
+						<Terminal className="w-3.5 h-3.5" style={{ color: theme.colors.textDim }} />
+						New Terminal
+						<span className="ml-auto text-xs" style={{ color: theme.colors.textDim }}>
+							{formatShortcutKeys(['Meta', 'j'])}
+						</span>
+					</button>
+				</div>,
+				document.body
+			)}
 		</div>
 	);
 }

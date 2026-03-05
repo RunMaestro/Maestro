@@ -123,20 +123,15 @@ export function addTerminalTab(session: Session, tab: TerminalTab): Session {
 
 /**
  * Close a terminal tab and add it to the unified closed tab history (for Cmd+Shift+T undo).
- * Refuses to close the last terminal tab (returns session unchanged).
+ * When closing the last terminal tab, switches inputMode back to 'ai'.
  * When closing the active terminal tab, selects the adjacent tab to the left (or right if at index 0).
  *
  * @param session - The Maestro session containing the terminal tab
  * @param tabId - The ID of the terminal tab to close
- * @returns New session with the tab removed, or the original session if closing is not allowed
+ * @returns New session with the tab removed
  */
 export function closeTerminalTab(session: Session, tabId: string): Session {
 	const terminalTabs = session.terminalTabs || [];
-
-	// Refuse to close the last terminal tab
-	if (terminalTabs.length <= 1) {
-		return session;
-	}
 
 	const tabToClose = terminalTabs.find((tab) => tab.id === tabId);
 	if (!tabToClose) {
@@ -176,12 +171,16 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 		...(session.unifiedClosedTabHistory || []),
 	].slice(0, MAX_CLOSED_UNIFIED_HISTORY);
 
+	// If no terminal tabs remain, switch back to AI mode
+	const newInputMode = updatedTerminalTabs.length === 0 ? 'ai' : session.inputMode;
+
 	return {
 		...session,
 		terminalTabs: updatedTerminalTabs,
 		activeTerminalTabId: newActiveTerminalTabId,
 		unifiedTabOrder: updatedUnifiedTabOrder,
 		unifiedClosedTabHistory: updatedUnifiedHistory,
+		inputMode: newInputMode,
 	};
 }
 

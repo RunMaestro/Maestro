@@ -515,7 +515,7 @@ describe('restoreSession — Runtime state reset', () => {
 		expect(restored!.filePreviewTabs).toEqual([]);
 	});
 
-	it('builds unifiedTabOrder from aiTabs and terminal tabs when missing', async () => {
+	it('builds unifiedTabOrder from aiTabs only when terminalTabs is missing', async () => {
 		const session = createMockSession({ unifiedTabOrder: undefined as any });
 		const { result } = renderHook(() => useSessionRestoration());
 
@@ -525,11 +525,9 @@ describe('restoreSession — Runtime state reset', () => {
 		});
 
 		// When unifiedTabOrder is undefined and terminalTabs is missing,
-		// the restoration migrates a default terminal tab and builds the full order.
-		expect(restored!.unifiedTabOrder).toEqual([
-			{ type: 'ai', id: 'tab-1' },
-			{ type: 'terminal', id: 'mock-id-1' },
-		]);
+		// restoration builds order from AI tabs only — no default terminal tab is created.
+		expect(restored!.unifiedTabOrder).toEqual([{ type: 'ai', id: 'tab-1' }]);
+		expect(restored!.terminalTabs).toHaveLength(0);
 	});
 
 	it('resets closedTabHistory to empty', async () => {
@@ -1151,7 +1149,7 @@ describe('restoreSession — Terminal tab persistence', () => {
 		expect(restored!.activeTerminalTabId).toBeNull();
 	});
 
-	it('creates a default terminal tab when terminalTabs is empty', async () => {
+	it('does NOT create a default terminal tab when terminalTabs is empty', async () => {
 		const session = createMockSession({
 			terminalTabs: [],
 			activeTerminalTabId: null,
@@ -1163,12 +1161,12 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(restored!.terminalTabs).toHaveLength(1);
-		expect(restored!.terminalTabs[0].pid).toBe(0);
-		expect(restored!.terminalTabs[0].state).toBe('idle');
+		// Terminal tabs are created on demand, not by restoration
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
 	});
 
-	it('creates a default terminal tab when terminalTabs is missing', async () => {
+	it('does NOT create a default terminal tab when terminalTabs is missing (migration)', async () => {
 		const session = createMockSession({
 			terminalTabs: undefined as any,
 			activeTerminalTabId: null,
@@ -1180,11 +1178,12 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
-		expect(restored!.terminalTabs).toHaveLength(1);
-		expect(restored!.terminalTabs[0].pid).toBe(0);
+		// Migration only ensures the array exists — it does not add a default tab
+		expect(restored!.terminalTabs).toHaveLength(0);
+		expect(restored!.activeTerminalTabId).toBeNull();
 	});
 
-	it('adds default terminal tab to existing unifiedTabOrder when migrating', async () => {
+	it('preserves existing unifiedTabOrder without adding a terminal ref when migrating empty terminalTabs', async () => {
 		const session = createMockSession({
 			terminalTabs: [],
 			activeTerminalTabId: null,
@@ -1197,9 +1196,9 @@ describe('restoreSession — Terminal tab persistence', () => {
 			restored = await result.current.restoreSession(session);
 		});
 
+		// No terminal ref should be added since no terminal tab was created
 		const termRef = restored!.unifiedTabOrder.find((r) => r.type === 'terminal');
-		expect(termRef).toBeDefined();
-		expect(termRef!.id).toBe(restored!.terminalTabs[0].id);
+		expect(termRef).toBeUndefined();
 		// AI tab should still be present
 		const aiRef = restored!.unifiedTabOrder.find((r) => r.type === 'ai');
 		expect(aiRef).toBeDefined();

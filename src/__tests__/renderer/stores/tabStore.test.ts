@@ -1048,7 +1048,7 @@ describe('closeTerminalTab', () => {
 		expect(session.terminalTabs![0].id).toBe('term-1');
 	});
 
-	it('does not kill PTY when closing the last terminal tab', () => {
+	it('kills PTY and removes the last terminal tab when closing it', () => {
 		const tab1 = createMockTerminalTabForStore({ id: 'term-1', pid: 100 });
 		setupSessionWithTerminalTabs([tab1]);
 
@@ -1056,11 +1056,15 @@ describe('closeTerminalTab', () => {
 			getTabActions().closeTerminalTab('term-1');
 		});
 
-		// Close was rejected — kill must NOT be called
-		expect(window.maestro.process.kill).not.toHaveBeenCalled();
+		// PTY should be killed
+		expect(window.maestro.process.kill).toHaveBeenCalledTimes(1);
+		expect(window.maestro.process.kill).toHaveBeenCalledWith(
+			expect.stringContaining('term-1')
+		);
 
-		// Tab still present
+		// Tab removed and inputMode reverted to 'ai'
 		const session = useSessionStore.getState().sessions[0];
-		expect(session.terminalTabs).toHaveLength(1);
+		expect(session.terminalTabs).toHaveLength(0);
+		expect(session.inputMode).toBe('ai');
 	});
 });

@@ -191,6 +191,7 @@ export interface UseMainPanelPropsDeps {
 	handleFileTabClose: (tabId: string) => void;
 
 	// Terminal tab callbacks (Phase 8)
+	handleOpenTerminalTab: (options?: { shell?: string; cwd?: string; name?: string | null }) => void;
 	handleTerminalTabSelect: (tabId: string) => void;
 	handleTerminalTabClose: (tabId: string) => void;
 	handleTerminalTabRename: (tabId: string) => void;
@@ -373,6 +374,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			onFileTabSelect: deps.handleFileTabSelect,
 			onFileTabClose: deps.handleFileTabClose,
 			// Terminal tab callbacks (Phase 8)
+			onNewTerminalTab: deps.handleOpenTerminalTab,
 			onTerminalTabSelect: deps.handleTerminalTabSelect,
 			onTerminalTabClose: deps.handleTerminalTabClose,
 			onTerminalTabRename: deps.handleTerminalTabRename,
@@ -579,6 +581,7 @@ export function useMainPanelProps(deps: UseMainPanelPropsDeps) {
 			deps.handleFileTabSelect,
 			deps.handleFileTabClose,
 			// Terminal tab (Phase 8)
+			deps.handleOpenTerminalTab,
 			deps.handleTerminalTabSelect,
 			deps.handleTerminalTabClose,
 			deps.handleTerminalTabRename,

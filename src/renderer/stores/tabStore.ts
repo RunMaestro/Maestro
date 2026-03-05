@@ -489,10 +489,9 @@ export const useTabStore = create<TabStore>()((set) => ({
 	closeTerminalTab: (tabId) => {
 		const session = getActiveSession();
 		if (!session) return;
-		// Validate close first — closeTerminalTabHelper refuses to close the last tab
 		const updatedSession = closeTerminalTabHelper(session, tabId);
-		if (updatedSession === session) return; // Close was rejected (e.g., last tab)
-		// Kill the PTY process only after confirming the tab will be removed
+		if (updatedSession === session) return; // Tab not found
+		// Kill the PTY process after confirming the tab will be removed
 		window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
 		updateActiveSession(updatedSession);
 	},
