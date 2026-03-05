@@ -1884,7 +1884,7 @@ describe('TerminalOutput', () => {
 			expect(screen.getByText('npm run test')).toBeInTheDocument();
 		});
 
-		it('renders tool with no extractable detail gracefully', () => {
+		it('renders tool with boolean input as key=value', () => {
 			const logs: LogEntry[] = [
 				createLogEntry({
 					text: 'SomeUnknownTool',
@@ -1906,8 +1906,88 @@ describe('TerminalOutput', () => {
 			const props = createDefaultProps({ session });
 			render(<TerminalOutput {...props} />);
 
-			// Tool name should still render even with no detail
+			// Tool name should render
 			expect(screen.getByText('SomeUnknownTool')).toBeInTheDocument();
+			// Generic summarizer shows boolean as key=value
+			expect(screen.getByText('someWeirdField=true')).toBeInTheDocument();
+		});
+
+		it('renders any tool with string input fields generically', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Skill',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'running',
+							input: { skill_name: 'commit-push-pr' },
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Skill')).toBeInTheDocument();
+			expect(screen.getByText('commit-push-pr')).toBeInTheDocument();
+		});
+
+		it('renders tool with multiple input fields joined', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'Grep',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: { pattern: 'TODO', path: '/src', output_mode: 'content' },
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('Grep')).toBeInTheDocument();
+			// Generic summarizer joins all string fields
+			expect(screen.getByText('TODO /src content')).toBeInTheDocument();
+		});
+
+		it('renders tool with empty input gracefully', () => {
+			const logs: LogEntry[] = [
+				createLogEntry({
+					text: 'EmptyTool',
+					source: 'tool',
+					metadata: {
+						toolState: {
+							status: 'completed',
+							input: {},
+						},
+					},
+				}),
+			];
+
+			const session = createDefaultSession({
+				tabs: [{ id: 'tab-1', agentSessionId: 'claude-123', logs, isUnread: false }],
+				activeTabId: 'tab-1',
+			});
+
+			const props = createDefaultProps({ session });
+			render(<TerminalOutput {...props} />);
+
+			expect(screen.getByText('EmptyTool')).toBeInTheDocument();
 		});
 	});
 
