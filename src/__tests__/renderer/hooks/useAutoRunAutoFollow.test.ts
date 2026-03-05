@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAutoRunAutoFollow } from '../../../renderer/hooks/batch/useAutoRunAutoFollow';
 import type { UseAutoRunAutoFollowDeps } from '../../../renderer/hooks/batch/useAutoRunAutoFollow';
 import type { BatchRunState } from '../../../renderer/types';
+import { useUIStore } from '../../../renderer/stores/uiStore';
 
 function createBatchState(overrides: Partial<BatchRunState> = {}): BatchRunState {
 	return {
@@ -44,6 +45,11 @@ function createDeps(overrides: Partial<UseAutoRunAutoFollowDeps> = {}): UseAutoR
 }
 
 describe('useAutoRunAutoFollow', () => {
+	beforeEach(() => {
+		// Reset the zustand store between tests
+		useUIStore.setState({ autoFollowEnabled: false });
+	});
+
 	it('should not auto-select when autoFollowEnabled is false', () => {
 		const onAutoRunSelectDocument = vi.fn();
 		const deps = createDeps({

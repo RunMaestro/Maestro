@@ -25,6 +25,7 @@ import { AgentPromptComposerModal } from './AgentPromptComposerModal';
 import { DocumentsPanel } from './DocumentsPanel';
 import { WorktreeRunSection } from './WorktreeRunSection';
 import { useSessionStore } from '../stores/sessionStore';
+import { useUIStore } from '../stores/uiStore';
 import { getModalActions } from '../stores/modalStore';
 import {
 	usePlaybookManagement,
@@ -99,6 +100,11 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		sessionId,
 		onOpenMarketplace,
 	} = props;
+
+	// Auto-follow state (initialized from store)
+	const autoFollowFromStore = useUIStore((s) => s.autoFollowEnabled);
+	const setAutoFollowStore = useUIStore((s) => s.setAutoFollowEnabled);
+	const [autoFollowEnabled, setAutoFollowEnabled] = useState(autoFollowFromStore);
 
 	// Worktree run target state
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
@@ -360,6 +366,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	};
 
 	const handleGo = async () => {
+		// Apply auto-follow setting to the store
+		setAutoFollowStore(autoFollowEnabled);
+
 		// Also save when running
 		onSave(prompt);
 
@@ -811,15 +820,35 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 					className="p-4 border-t flex items-center justify-between shrink-0"
 					style={{ borderColor: theme.colors.border }}
 				>
-					{/* Left side: Hint */}
-					<div className="flex items-center gap-2 text-xs" style={{ color: theme.colors.textDim }}>
-						<span
-							className="px-1.5 py-0.5 rounded border text-[10px] font-mono"
-							style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgActivity }}
+					{/* Left side: Auto-follow toggle + Hint */}
+					<div className="flex items-center gap-4">
+						<label className="flex items-center gap-1.5 cursor-pointer">
+							<input
+								type="checkbox"
+								checked={autoFollowEnabled}
+								onChange={(e) => setAutoFollowEnabled(e.target.checked)}
+								className="w-3 h-3 rounded cursor-pointer accent-current"
+								style={{ accentColor: theme.colors.accent }}
+							/>
+							<span className="text-xs" style={{ color: theme.colors.textDim }}>
+								Follow active task
+							</span>
+						</label>
+						<div
+							className="flex items-center gap-2 text-xs"
+							style={{ color: theme.colors.textDim }}
 						>
-							{formatMetaKey()} + Drag
-						</span>
-						<span>to copy document</span>
+							<span
+								className="px-1.5 py-0.5 rounded border text-[10px] font-mono"
+								style={{
+									borderColor: theme.colors.border,
+									backgroundColor: theme.colors.bgActivity,
+								}}
+							>
+								{formatMetaKey()} + Drag
+							</span>
+							<span>to copy document</span>
+						</div>
 					</div>
 
 					{/* Right side: Buttons */}

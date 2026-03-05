@@ -1,5 +1,6 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect, useCallback } from 'react';
 import type { BatchRunState, RightPanelTab } from '../../types';
+import { useUIStore } from '../../stores/uiStore';
 
 export interface UseAutoRunAutoFollowDeps {
 	currentSessionBatchState: BatchRunState | null | undefined;
@@ -30,9 +31,42 @@ export function useAutoRunAutoFollow(deps: UseAutoRunAutoFollowDeps): UseAutoRun
 		currentMode,
 	} = deps;
 
-	const [autoFollowEnabled, setAutoFollowEnabled] = useState(false);
+	const autoFollowEnabled = useUIStore((s) => s.autoFollowEnabled);
+	const setAutoFollowStoreRaw = useUIStore((s) => s.setAutoFollowEnabled);
 	const prevBatchDocIndexRef = useRef<number>(-1);
 	const prevIsRunningRef = useRef<boolean>(false);
+
+	// Wrap setAutoFollowEnabled to immediately jump to active task when toggling on during a running batch
+	const setAutoFollowEnabled = useCallback(
+		(enabled: boolean) => {
+			setAutoFollowStoreRaw(enabled);
+			if (enabled && currentSessionBatchState?.isRunning) {
+				const currentDocumentIndex = currentSessionBatchState.currentDocumentIndex ?? -1;
+				const activeDoc = currentSessionBatchState.documents?.[currentDocumentIndex];
+				if (activeDoc && activeDoc !== selectedFile) {
+					onAutoRunSelectDocument(activeDoc);
+				}
+				setActiveRightTab('autorun');
+				if (!rightPanelOpen) {
+					setRightPanelOpen?.(true);
+				}
+				if (currentMode === 'edit') {
+					onAutoRunModeChange?.('preview');
+				}
+			}
+		},
+		[
+			setAutoFollowStoreRaw,
+			currentSessionBatchState,
+			selectedFile,
+			onAutoRunSelectDocument,
+			setActiveRightTab,
+			rightPanelOpen,
+			setRightPanelOpen,
+			onAutoRunModeChange,
+			currentMode,
+		]
+	);
 
 	useEffect(() => {
 		const isRunning = currentSessionBatchState?.isRunning ?? false;
