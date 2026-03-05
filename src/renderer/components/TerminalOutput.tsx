@@ -36,9 +36,6 @@ import { safeClipboardWrite } from '../utils/clipboard';
 // Tool display helpers (pure functions, hoisted out of render path)
 // ============================================================================
 
-/** Type-safe string extraction — returns null for non-strings */
-const safeStr = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-
 /** Handle command values that may be strings or string arrays (Codex uses arrays) */
 const safeCommand = (v: unknown): string | null => {
 	if (typeof v === 'string') return v;
@@ -46,13 +43,6 @@ const safeCommand = (v: unknown): string | null => {
 		return v.join(' ');
 	}
 	return null;
-};
-
-/** Truncate a value to max length with ellipsis, returns null for non-strings */
-const truncateStr = (v: unknown, max: number): string | null => {
-	const s = safeStr(v);
-	if (!s) return null;
-	return s.length > max ? s.substring(0, max) + '\u2026' : s;
 };
 
 /** Summarize TodoWrite todos array — shows in-progress task and progress count */
@@ -64,6 +54,48 @@ const summarizeTodos = (v: unknown): string | null => {
 	const label = inProgress?.activeForm || inProgress?.content || todos[0]?.content;
 	if (!label) return `${todos.length} tasks`;
 	return `${label} (${completed}/${todos.length})`;
+};
+
+/** Max length for tool detail summary */
+const TOOL_DETAIL_MAX = 120;
+
+/**
+ * Summarize tool input generically — no per-tool extractors needed.
+ * Walks all values in the input object and picks the most informative string-like
+ * value to display. Special-cases arrays (todos, commands) and falls back to
+ * joining short key=value pairs.
+ */
+const summarizeToolInput = (input: Record<string, unknown>): string | null => {
+	// Special case: TodoWrite todos array
+	const todosResult = summarizeTodos(input.todos);
+	if (todosResult) return todosResult;
+
+	// Collect displayable string values (skip huge blobs)
+	const parts: string[] = [];
+	for (const [key, val] of Object.entries(input)) {
+		if (val === undefined || val === null || val === '') continue;
+		// Command arrays (Codex)
+		const cmd = safeCommand(val);
+		if (cmd) {
+			parts.push(cmd.length > TOOL_DETAIL_MAX ? cmd.substring(0, TOOL_DETAIL_MAX) + '\u2026' : cmd);
+			continue;
+		}
+		// Arrays: show count
+		if (Array.isArray(val)) {
+			parts.push(`${key}: [${val.length}]`);
+			continue;
+		}
+		// Objects: skip (too noisy)
+		if (typeof val === 'object') continue;
+		// Booleans/numbers: show as key=value
+		if (typeof val === 'boolean' || typeof val === 'number') {
+			parts.push(`${key}=${val}`);
+			continue;
+		}
+	}
+	if (parts.length === 0) return null;
+	const joined = parts.join('  ');
+	return joined.length > TOOL_DETAIL_MAX ? joined.substring(0, TOOL_DETAIL_MAX) + '\u2026' : joined;
 };
 
 // ============================================================================
@@ -544,23 +576,7 @@ const LogItemComponent = memo(
 							const toolInput = log.metadata?.toolState?.input as
 								| Record<string, unknown>
 								| undefined;
-							const toolDetail = toolInput
-								? safeCommand(toolInput.command) ||
-									safeStr(toolInput.pattern) ||
-									safeStr(toolInput.file_path) ||
-									safeStr(toolInput.filePath) || // OpenCode read tool
-									safeStr(toolInput.query) ||
-									safeStr(toolInput.description) || // Task tool
-									safeStr(toolInput.prompt) || // Task tool fallback
-									safeStr(toolInput.task_id) || // TaskOutput tool
-									summarizeTodos(toolInput.todos) || // TodoWrite tool
-									// Codex-specific tool arg patterns
-									safeStr(toolInput.path) || // Codex file operations
-									safeStr(toolInput.cmd) || // Codex shell commands
-									safeStr(toolInput.code) || // Codex code execution
-									truncateStr(toolInput.content, 100) || // Codex write operations (truncated)
-									null
-								: null;
+							const toolDetail = toolInput ? summarizeToolInput(toolInput) : null;
 
 							return (
 								<div
