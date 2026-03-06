@@ -5,7 +5,10 @@ import { spawn, SpawnOptions } from 'child_process';
 import * as fs from 'fs';
 import type { ToolType, UsageStats } from '../../shared/types';
 import { CodexOutputParser } from '../../main/parsers/codex-output-parser';
+import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser';
+import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
+import { getAgentDefinition } from '../../main/agents/definitions';
 import { getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
@@ -35,6 +38,16 @@ const CODEX_ARGS = [
 
 // Cached Codex path (resolved once at startup)
 let cachedCodexPath: string | null = null;
+
+// OpenCode default command
+const OPENCODE_DEFAULT_COMMAND = 'opencode';
+// Cached OpenCode path (resolved once at startup)
+let cachedOpenCodePath: string | null = null;
+
+// Factory Droid default command
+const DROID_DEFAULT_COMMAND = 'droid';
+// Cached Factory Droid path (resolved once at startup)
+let cachedDroidPath: string | null = null;
 
 // Result from spawning an agent
 export interface AgentResult {
@@ -133,6 +146,35 @@ async function findCodexInPath(): Promise<string | undefined> {
 }
 
 /**
+ * Generic which-style lookup for arbitrary command names
+ */
+async function findCommandInPath(commandName: string): Promise<string | undefined> {
+	return new Promise((resolve) => {
+		const env = { ...process.env, PATH: getExpandedPath() };
+		const command = getWhichCommand();
+
+		const proc = spawn(command, [commandName], { env });
+		let stdout = '';
+
+		proc.stdout?.on('data', (data) => {
+			stdout += data.toString();
+		});
+
+		proc.on('close', (code) => {
+			if (code === 0 && stdout.trim()) {
+				resolve(stdout.trim().split('\n')[0]);
+			} else {
+				resolve(undefined);
+			}
+		});
+
+		proc.on('error', () => {
+			resolve(undefined);
+		});
+	});
+}
+
+/**
  * Check if Claude Code is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
@@ -200,6 +242,86 @@ export async function detectCodex(): Promise<{
 	}
 
 	return { available: false };
+}
+
+/**
+ * Check if OpenCode CLI is available
+ * First checks for a custom path in settings, then falls back to PATH detection
+ */
+export async function detectOpenCode(): Promise<{
+	available: boolean;
+	path?: string;
+	source?: 'settings' | 'path';
+}> {
+	if (cachedOpenCodePath) {
+		return { available: true, path: cachedOpenCodePath, source: 'settings' };
+	}
+
+	const customPath = getAgentCustomPath('opencode');
+	if (customPath) {
+		if (await isExecutable(customPath)) {
+			cachedOpenCodePath = customPath;
+			return { available: true, path: customPath, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom OpenCode path "${customPath}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	const pathResult = await findCommandInPath(OPENCODE_DEFAULT_COMMAND);
+	if (pathResult) {
+		cachedOpenCodePath = pathResult;
+		return { available: true, path: pathResult, source: 'path' };
+	}
+
+	return { available: false };
+}
+
+/**
+ * Check if Factory Droid CLI is available
+ * First checks for a custom path in settings, then falls back to PATH detection
+ */
+export async function detectDroid(): Promise<{
+	available: boolean;
+	path?: string;
+	source?: 'settings' | 'path';
+}> {
+	if (cachedDroidPath) {
+		return { available: true, path: cachedDroidPath, source: 'settings' };
+	}
+
+	const customPath = getAgentCustomPath('factory-droid');
+	if (customPath) {
+		if (await isExecutable(customPath)) {
+			cachedDroidPath = customPath;
+			return { available: true, path: customPath, source: 'settings' };
+		}
+		console.error(
+			`Warning: Custom Droid path "${customPath}" is not executable, falling back to PATH detection`
+		);
+	}
+
+	const pathResult = await findCommandInPath(DROID_DEFAULT_COMMAND);
+	if (pathResult) {
+		cachedDroidPath = pathResult;
+		return { available: true, path: pathResult, source: 'path' };
+	}
+
+	return { available: false };
+}
+
+/**
+ * Get the resolved OpenCode command/path for spawning
+ */
+export function getOpenCodeCommand(): string {
+	return cachedOpenCodePath || OPENCODE_DEFAULT_COMMAND;
+}
+
+/**
+ * Get the resolved Factory Droid command/path for spawning
+ */
+export function getDroidCommand(): string {
+	return cachedDroidPath || DROID_DEFAULT_COMMAND;
 }
 
 /**
@@ -481,6 +603,220 @@ async function spawnCodexAgent(
 	});
 }
 
+async function spawnOpenCodeAgent(
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string
+): Promise<AgentResult> {
+	return new Promise((resolve) => {
+		const env = buildExpandedEnv();
+
+		// Ensure OpenCode default env vars (prevents interactive permission prompts)
+		const def = getAgentDefinition('opencode');
+		if (def?.defaultEnvVars) {
+			for (const k of Object.keys(def.defaultEnvVars)) {
+				if (!env[k]) env[k] = def.defaultEnvVars[k];
+			}
+		}
+
+		const args: string[] = [];
+		// batchModePrefix + json output
+		const defArgs = def?.batchModePrefix || ['run'];
+		args.push(...defArgs);
+		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
+
+		if (agentSessionId && def?.resumeArgs) {
+			args.push(...def.resumeArgs(agentSessionId));
+		}
+
+		// OpenCode uses positional prompt without '--'
+		args.push(prompt);
+
+		const options: SpawnOptions = {
+			cwd,
+			env,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		};
+
+		const openCodeCommand = getOpenCodeCommand();
+		const child = spawn(openCodeCommand, args, options);
+
+		const parser = new OpenCodeOutputParser();
+		let jsonBuffer = '';
+		let result: string | undefined;
+		let sessionId: string | undefined;
+		let usageStats: UsageStats | undefined;
+		let stderr = '';
+		let errorText: string | undefined;
+
+		child.stdout?.on('data', (data: Buffer) => {
+			jsonBuffer += data.toString();
+			const lines = jsonBuffer.split('\n');
+			jsonBuffer = lines.pop() || '';
+
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				const event = parser.parseJsonLine(line);
+				if (!event) continue;
+
+				if (event.type === 'init' && event.sessionId && !sessionId) {
+					sessionId = event.sessionId;
+				}
+
+				if (event.type === 'result' && event.text) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
+
+				// Capture structured JSON error events emitted by OpenCode
+				// (opencode --format json can emit { type: 'error', error: ... })
+				if (event.type === 'error' && event.text && !errorText) {
+					errorText = event.text;
+				}
+
+				const usage = parser.extractUsage(event as any);
+				if (usage) {
+					usageStats = mergeUsageStats(usageStats, {
+						inputTokens: usage.inputTokens || 0,
+						outputTokens: usage.outputTokens || 0,
+						cacheReadTokens: usage.cacheReadTokens || 0,
+						cacheCreationTokens: usage.cacheCreationTokens || 0,
+						costUsd: usage.costUsd || 0,
+						contextWindow: usage.contextWindow || 0,
+						reasoningTokens: usage.reasoningTokens || 0,
+					});
+				}
+			}
+		});
+
+		child.stderr?.on('data', (data: Buffer) => {
+			stderr += data.toString();
+		});
+
+		child.stdin?.end();
+
+		child.on('close', (code) => {
+			// If OpenCode emitted a structured JSON 'error' event, treat it as a failure
+			// even when the process exits with code 0. This mirrors Codex/Factory Droid
+			// behaviour and preserves provider error messages emitted in JSON mode.
+			if (code === 0 && !errorText) {
+				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			} else {
+				resolve({
+					success: false,
+					error: errorText || stderr || `Process exited with code ${code}`,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			}
+		});
+
+		child.on('error', (error) => {
+			resolve({ success: false, error: `Failed to spawn OpenCode: ${error.message}` });
+		});
+	});
+}
+
+async function spawnDroidAgent(
+	cwd: string,
+	prompt: string,
+	agentSessionId?: string
+): Promise<AgentResult> {
+	return new Promise((resolve) => {
+		const env = buildExpandedEnv();
+
+		const def = getAgentDefinition('factory-droid');
+
+		const args: string[] = [];
+		if (def?.batchModePrefix) args.push(...def.batchModePrefix);
+		if (def?.batchModeArgs) args.push(...def.batchModeArgs);
+		if (def?.jsonOutputArgs) args.push(...def.jsonOutputArgs);
+
+		if (agentSessionId && def?.resumeArgs) {
+			args.push(...def.resumeArgs(agentSessionId));
+		}
+
+		// Factory Droid uses positional prompt
+		args.push(prompt);
+
+		const options: SpawnOptions = {
+			cwd,
+			env,
+			stdio: ['pipe', 'pipe', 'pipe'],
+		};
+
+		const droidCommand = getDroidCommand();
+		const child = spawn(droidCommand, args, options);
+
+		const parser = new FactoryDroidOutputParser();
+		let jsonBuffer = '';
+		let result: string | undefined;
+		let sessionId: string | undefined;
+		let usageStats: UsageStats | undefined;
+		let stderr = '';
+		let errorText: string | undefined;
+
+		child.stdout?.on('data', (data: Buffer) => {
+			jsonBuffer += data.toString();
+			const lines = jsonBuffer.split('\n');
+			jsonBuffer = lines.pop() || '';
+
+			for (const line of lines) {
+				if (!line.trim()) continue;
+				const event = parser.parseJsonLine(line);
+				if (!event) continue;
+
+				if (event.type === 'init' && event.sessionId && !sessionId) {
+					sessionId = event.sessionId;
+				}
+
+				if (event.type === 'result' && event.text) {
+					result = result ? `${result}\n${event.text}` : event.text;
+				}
+
+				if (event.type === 'error' && event.text && !errorText) {
+					errorText = event.text;
+				}
+
+				const usage = parser.extractUsage(event as any);
+				if (usage) {
+					usageStats = mergeUsageStats(usageStats, {
+						inputTokens: usage.inputTokens || 0,
+						outputTokens: usage.outputTokens || 0,
+						cacheReadTokens: usage.cacheReadTokens || 0,
+						cacheCreationTokens: usage.cacheCreationTokens || 0,
+						costUsd: usage.costUsd || 0,
+						contextWindow: usage.contextWindow || 0,
+						reasoningTokens: usage.reasoningTokens || 0,
+					});
+				}
+			}
+		});
+
+		child.stderr?.on('data', (data: Buffer) => {
+			stderr += data.toString();
+		});
+
+		child.stdin?.end();
+
+		child.on('close', (code) => {
+			if (code === 0 && !errorText) {
+				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
+			} else {
+				resolve({
+					success: false,
+					error: errorText || stderr || `Process exited with code ${code}`,
+					agentSessionId: sessionId,
+					usageStats,
+				});
+			}
+		});
+
+		child.on('error', (error) => {
+			resolve({ success: false, error: `Failed to spawn Factory Droid: ${error.message}` });
+		});
+	});
+}
+
 /**
  * Spawn an agent with a prompt and return the result
  */
@@ -496,6 +832,14 @@ export async function spawnAgent(
 
 	if (toolType === 'claude-code') {
 		return spawnClaudeAgent(cwd, prompt, agentSessionId);
+	}
+
+	if (toolType === 'opencode') {
+		return spawnOpenCodeAgent(cwd, prompt, agentSessionId);
+	}
+
+	if (toolType === 'factory-droid') {
+		return spawnDroidAgent(cwd, prompt, agentSessionId);
 	}
 
 	return {

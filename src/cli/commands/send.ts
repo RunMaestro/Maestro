@@ -1,7 +1,14 @@
 // Send command - send a message to an agent and get a JSON response
 // Requires a Maestro agent ID. Optionally resumes an existing agent session.
 
-import { spawnAgent, detectClaude, detectCodex, type AgentResult } from '../services/agent-spawner';
+import {
+	spawnAgent,
+	detectClaude,
+	detectCodex,
+	detectOpenCode,
+	detectDroid,
+	type AgentResult,
+} from '../services/agent-spawner';
 import { resolveAgentId, getSessionById } from '../services/storage';
 import { estimateContextUsage } from '../../main/parsers/usage-aggregator';
 import type { ToolType } from '../../shared/types';
@@ -88,7 +95,7 @@ export async function send(
 	}
 
 	// Validate agent type is supported for CLI spawning
-	const supportedTypes: ToolType[] = ['claude-code', 'codex'];
+	const supportedTypes: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
 	if (!supportedTypes.includes(agent.toolType)) {
 		emitErrorJson(
 			`Agent type "${agent.toolType}" is not supported for send mode. Supported: ${supportedTypes.join(', ')}`,
@@ -113,6 +120,24 @@ export async function send(
 			emitErrorJson(
 				'Codex CLI not found. Install with: npm install -g @openai/codex',
 				'CODEX_NOT_FOUND'
+			);
+			process.exit(1);
+		}
+	} else if (agent.toolType === 'opencode') {
+		const oc = await detectOpenCode();
+		if (!oc.available) {
+			emitErrorJson(
+				'OpenCode CLI not found. See https://github.com/opencode-ai/opencode for installation instructions',
+				'OPENCODE_NOT_FOUND'
+			);
+			process.exit(1);
+		}
+	} else if (agent.toolType === 'factory-droid') {
+		const droid = await detectDroid();
+		if (!droid.available) {
+			emitErrorJson(
+				'Factory Droid CLI not found. See your provider documentation for installation instructions',
+				'DROID_NOT_FOUND'
 			);
 			process.exit(1);
 		}
