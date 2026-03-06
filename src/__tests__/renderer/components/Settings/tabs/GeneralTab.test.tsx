@@ -17,8 +17,6 @@
  * - Rendering options (GPU acceleration, confetti)
  * - Update settings (check on startup, beta updates)
  * - Crash reporting toggle
- * - Stats collection toggle and time range selector
- * - WakaTime integration (toggle, API key, detailed tracking, CLI check)
  * - Storage location display
  */
 
@@ -56,11 +54,6 @@ const mockSetDisableConfetti = vi.fn();
 const mockSetCheckForUpdatesOnStartup = vi.fn();
 const mockSetEnableBetaUpdates = vi.fn();
 const mockSetCrashReportingEnabled = vi.fn();
-const mockSetStatsCollectionEnabled = vi.fn();
-const mockSetDefaultStatsTimeRange = vi.fn();
-const mockSetWakatimeEnabled = vi.fn();
-const mockSetWakatimeApiKey = vi.fn();
-const mockSetWakatimeDetailedTracking = vi.fn();
 
 // Allow per-test overrides of settings
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -112,18 +105,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setEnableBetaUpdates: mockSetEnableBetaUpdates,
 		crashReportingEnabled: true,
 		setCrashReportingEnabled: mockSetCrashReportingEnabled,
-		// Stats
-		statsCollectionEnabled: true,
-		setStatsCollectionEnabled: mockSetStatsCollectionEnabled,
-		defaultStatsTimeRange: 'week',
-		setDefaultStatsTimeRange: mockSetDefaultStatsTimeRange,
-		// WakaTime
-		wakatimeEnabled: false,
-		setWakatimeEnabled: mockSetWakatimeEnabled,
-		wakatimeApiKey: '',
-		setWakatimeApiKey: mockSetWakatimeApiKey,
-		wakatimeDetailedTracking: false,
-		setWakatimeDetailedTracking: mockSetWakatimeDetailedTracking,
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -161,10 +142,6 @@ describe('GeneralTab', () => {
 
 		// Reset window.maestro mocks
 		vi.mocked(window.maestro.shells.detect).mockResolvedValue(mockShells);
-		vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
-		vi.mocked(window.maestro.wakatime.validateApiKey).mockResolvedValue({ valid: false });
-		vi.mocked(window.maestro.stats.getDatabaseSize).mockResolvedValue(1024 * 1024);
-		vi.mocked(window.maestro.stats.getEarliestTimestamp).mockResolvedValue(null);
 		vi.mocked(window.maestro.sync.getDefaultPath).mockResolvedValue('/default/path');
 		vi.mocked(window.maestro.sync.getSettings).mockResolvedValue({
 			customSyncPath: undefined,
@@ -203,7 +180,6 @@ describe('GeneralTab', () => {
 			expect(screen.getByText('Updates')).toBeInTheDocument();
 			expect(screen.getByText('Pre-release Channel')).toBeInTheDocument();
 			expect(screen.getByText('Privacy')).toBeInTheDocument();
-			expect(screen.getByText('Usage & Stats')).toBeInTheDocument();
 			expect(screen.getByText('Storage Location')).toBeInTheDocument();
 		});
 
@@ -215,9 +191,8 @@ describe('GeneralTab', () => {
 			});
 
 			// The component still renders its JSX, but effects that fetch data won't fire
-			// Verify the sync/stats load effects didn't run
+			// Verify the sync load effects didn't run
 			expect(window.maestro.sync.getDefaultPath).not.toHaveBeenCalled();
-			expect(window.maestro.stats.getDatabaseSize).not.toHaveBeenCalled();
 		});
 	});
 
@@ -1351,274 +1326,6 @@ describe('GeneralTab', () => {
 		});
 	});
 
-	// =========================================================================
-	// 18. WakaTime
-	// =========================================================================
-	describe('WakaTime', () => {
-		it('should render WakaTime enable toggle', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Enable WakaTime tracking')).toBeInTheDocument();
-		});
-
-		it('should call setWakatimeEnabled when toggle is clicked', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// The WakaTime toggle is a standalone switch (not wrapped in SettingCheckbox).
-			// Find it via aria-checked attribute on the WakaTime section's switch.
-			// Since wakatimeEnabled is false by default, find the switch with aria-checked=false
-			// that is adjacent to the WakaTime label.
-			const titleElement = screen.getByText('Enable WakaTime tracking');
-			// Walk up from <p> -> <div> -> <div class="flex items-center justify-between">
-			const outerContainer = titleElement.parentElement?.parentElement;
-			const toggleSwitch = outerContainer?.querySelector('button[role="switch"]');
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetWakatimeEnabled).toHaveBeenCalledWith(true);
-		});
-
-		it('should show API key input when WakaTime is enabled', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByPlaceholderText('waka_...')).toBeInTheDocument();
-		});
-
-		it('should not show API key input when WakaTime is disabled', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.queryByPlaceholderText('waka_...')).not.toBeInTheDocument();
-		});
-
-		it('should call setWakatimeApiKey when API key input changes', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const apiKeyInput = screen.getByPlaceholderText('waka_...');
-			fireEvent.change(apiKeyInput, { target: { value: 'waka_test123' } });
-
-			expect(mockSetWakatimeApiKey).toHaveBeenCalledWith('waka_test123');
-		});
-
-		it('should show detailed tracking toggle when WakaTime is enabled', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Detailed file tracking')).toBeInTheDocument();
-		});
-
-		it('should call setWakatimeDetailedTracking when toggle is clicked', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const titleElement = screen.getByText('Detailed file tracking');
-			const parentDiv = titleElement.closest('.flex');
-			const toggleSwitch = parentDiv?.querySelector('button[role="switch"]');
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetWakatimeDetailedTracking).toHaveBeenCalledWith(true);
-		});
-
-		it('should check WakaTime CLI when enabled and modal is open', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).toHaveBeenCalled();
-		});
-
-		it('should not check WakaTime CLI when disabled', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.checkCli).not.toHaveBeenCalled();
-		});
-
-		it('should show CLI installing message when CLI is not available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
-
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.getByText('WakaTime CLI is being installed automatically...')
-			).toBeInTheDocument();
-		});
-
-		it('should not show CLI installing message when CLI is available', async () => {
-			mockUseSettingsOverrides = { wakatimeEnabled: true };
-			vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({
-				available: true,
-				version: '1.0.0',
-			});
-
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(
-				screen.queryByText('WakaTime CLI is being installed automatically...')
-			).not.toBeInTheDocument();
-		});
-
-		it('should validate API key on blur', async () => {
-			mockUseSettingsOverrides = {
-				wakatimeEnabled: true,
-				wakatimeApiKey: 'waka_test123',
-			};
-			vi.mocked(window.maestro.wakatime.validateApiKey).mockResolvedValue({ valid: true });
-
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const apiKeyInput = screen.getByPlaceholderText('waka_...');
-			fireEvent.blur(apiKeyInput);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(window.maestro.wakatime.validateApiKey).toHaveBeenCalledWith('waka_test123');
-		});
-	});
-
-	// =========================================================================
-	// 19. Stats Collection
-	// =========================================================================
-	describe('Stats Collection', () => {
-		it('should render stats collection toggle', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Enable stats collection')).toBeInTheDocument();
-		});
-
-		it('should call setStatsCollectionEnabled when toggle is clicked', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const titleElement = screen.getByText('Enable stats collection');
-			const parentDiv = titleElement.closest('.flex');
-			const toggleSwitch = parentDiv?.querySelector('button[role="switch"]');
-
-			fireEvent.click(toggleSwitch!);
-			expect(mockSetStatsCollectionEnabled).toHaveBeenCalledWith(false);
-		});
-
-		it('should render time range select', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Default dashboard time range')).toBeInTheDocument();
-			const select = screen.getByDisplayValue('Last 7 days') as HTMLSelectElement;
-			expect(select).toBeInTheDocument();
-		});
-
-		it('should call setDefaultStatsTimeRange when time range is changed', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			const select = screen.getByDisplayValue('Last 7 days');
-			fireEvent.change(select, { target: { value: 'month' } });
-
-			expect(mockSetDefaultStatsTimeRange).toHaveBeenCalledWith('month');
-		});
-
-		it('should show all time range options', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Last 24 hours')).toBeInTheDocument();
-			expect(screen.getByText('Last 7 days')).toBeInTheDocument();
-			expect(screen.getByText('Last 30 days')).toBeInTheDocument();
-			expect(screen.getByText('Last 365 days')).toBeInTheDocument();
-			expect(screen.getByText('All time')).toBeInTheDocument();
-		});
-
-		it('should display database size', async () => {
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Database size')).toBeInTheDocument();
-			// 1024*1024 bytes = 1.00 MB
-			expect(screen.getByText(/1\.00 MB/)).toBeInTheDocument();
-		});
-
-		it('should display Loading... when stats size is not yet loaded', async () => {
-			vi.mocked(window.maestro.stats.getDatabaseSize).mockImplementation(
-				() => new Promise(() => {}) // never resolves
-			);
-
-			render(<GeneralTab theme={mockTheme} isOpen={true} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			expect(screen.getByText('Loading...')).toBeInTheDocument();
-		});
-	});
 
 	// =========================================================================
 	// 20. Shell Detection Failure

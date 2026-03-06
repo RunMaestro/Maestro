@@ -2,11 +2,12 @@
  * EncoreTab - Encore Features settings tab for SettingsModal
  *
  * Contains: Feature flags for optional/experimental Maestro capabilities,
- * Director's Notes configuration (provider selection, agent config, lookback period).
+ * Director's Notes configuration (provider selection, agent config, lookback period),
+ * Usage & Stats configuration (stats collection, time ranges, WakaTime integration).
  */
 
-import { useState } from 'react';
-import { Clapperboard, ChevronDown, Settings, Check, Database, Music, Lock, Plus, X, Zap } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Clapperboard, ChevronDown, Settings, Check, Database, Music, Lock, Plus, X, Zap, Timer, Key, Trash2 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
@@ -28,11 +29,130 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 		setDirectorNotesSettings,
 		symphonyRegistryUrls,
 		setSymphonyRegistryUrls,
+		// Stats
+		statsCollectionEnabled,
+		setStatsCollectionEnabled,
+		defaultStatsTimeRange,
+		setDefaultStatsTimeRange,
+		// WakaTime
+		wakatimeEnabled,
+		setWakatimeEnabled,
+		wakatimeApiKey,
+		setWakatimeApiKey,
+		wakatimeDetailedTracking,
+		setWakatimeDetailedTracking,
 	} = useSettings();
+
+	// Stats data management state
+	const [statsDbSize, setStatsDbSize] = useState<number | null>(null);
+	const [statsEarliestDate, setStatsEarliestDate] = useState<string | null>(null);
+	const [statsClearing, setStatsClearing] = useState(false);
+	const [statsClearResult, setStatsClearResult] = useState<{
+		success: boolean;
+		deletedQueryEvents: number;
+		deletedAutoRunSessions: number;
+		deletedAutoRunTasks: number;
+		error?: string;
+	} | null>(null);
+
+	// WakaTime CLI check and API key validation state
+	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{
+		available: boolean;
+		version?: string;
+	} | null>(null);
+	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
+	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
+	const handleWakatimeApiKeyChange = useCallback(
+		(value: string) => {
+			setWakatimeApiKey(value);
+			setWakatimeKeyValid(null);
+		},
+		[setWakatimeApiKey]
+	);
 
 	// Symphony registry URL management
 	const [newRegistryUrl, setNewRegistryUrl] = useState('');
 	const [registryUrlError, setRegistryUrlError] = useState<string | null>(null);
+
+	// Check WakaTime CLI availability when section renders or toggle is enabled
+	useEffect(() => {
+		if (!isOpen || !wakatimeEnabled) return;
+		let cancelled = false;
+		let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+		window.maestro.wakatime
+			.checkCli()
+			.then((status) => {
+				if (cancelled) return;
+				setWakatimeCliStatus(status);
+				if (!status.available) {
+					retryTimer = setTimeout(() => {
+						if (!cancelled) {
+							window.maestro.wakatime
+								.checkCli()
+								.then((retryStatus) => {
+									if (!cancelled) setWakatimeCliStatus(retryStatus);
+								})
+								.catch(() => {
+									if (!cancelled) setWakatimeCliStatus({ available: false });
+								});
+						}
+					}, 3000);
+				}
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setWakatimeCliStatus({ available: false });
+				retryTimer = setTimeout(() => {
+					if (!cancelled) {
+						window.maestro.wakatime
+							.checkCli()
+							.then((retryStatus) => {
+								if (!cancelled) setWakatimeCliStatus(retryStatus);
+							})
+							.catch(() => {
+								if (!cancelled) setWakatimeCliStatus({ available: false });
+							});
+					}
+				}, 3000);
+			});
+
+		return () => {
+			cancelled = true;
+			if (retryTimer) clearTimeout(retryTimer);
+		};
+	}, [isOpen, wakatimeEnabled]);
+
+	// Load stats database size and earliest timestamp when tab opens
+	useEffect(() => {
+		if (!isOpen) return;
+
+		window.maestro.stats
+			.getDatabaseSize()
+			.then((size) => {
+				setStatsDbSize(size);
+			})
+			.catch((err) => {
+				console.error('Failed to load stats database size:', err);
+			});
+
+		window.maestro.stats
+			.getEarliestTimestamp()
+			.then((timestamp) => {
+				if (timestamp) {
+					const date = new Date(timestamp);
+					const formatted = date.toISOString().split('T')[0];
+					setStatsEarliestDate(formatted);
+				} else {
+					setStatsEarliestDate(null);
+				}
+			})
+			.catch((err) => {
+				console.error('Failed to load earliest stats timestamp:', err);
+			});
+
+		setStatsClearResult(null);
+	}, [isOpen]);
 
 	const canonicalizeUrl = (raw: string): string => {
 		const u = new URL(raw.trim());
