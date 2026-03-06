@@ -16,18 +16,21 @@ export interface SessionValidationResult {
  *
  * Rules:
  * 1. Session names must be unique across all sessions (hard error)
- * 2. Home directories (projectRoot) shared with any existing agent produce a warning
+ * 2. Home directories (projectRoot) shared with any existing agent on the same host produce a warning
  *    - Users can acknowledge the risk and proceed
  *    - Multiple agents in the same directory may clobber each other's work
+ *    - Agents on different hosts (local vs SSH, or different SSH remotes) are not considered conflicting
  */
 export function validateNewSession(
 	name: string,
 	directory: string,
 	_toolType: ToolType,
-	existingSessions: Session[]
+	existingSessions: Session[],
+	sshRemoteId?: string | null
 ): SessionValidationResult {
 	const trimmedName = name.trim();
 	const normalizedDir = normalizeDirectory(directory);
+	const newRemoteId = sshRemoteId || null;
 
 	// Check for duplicate name (hard error - cannot proceed)
 	const duplicateName = existingSessions.find(
@@ -41,10 +44,13 @@ export function validateNewSession(
 		};
 	}
 
-	// Check for duplicate directory with ANY existing agent (warning - user can acknowledge)
+	// Check for duplicate directory with existing agents on the SAME host (warning - user can acknowledge)
+	// Agents on different hosts (local vs SSH, or different SSH remotes) are not considered conflicting
 	const conflictingAgents = existingSessions.filter((session) => {
 		const sessionDir = normalizeDirectory(session.projectRoot || session.cwd);
-		return sessionDir === normalizedDir;
+		if (sessionDir !== normalizedDir) return false;
+		const existingRemoteId = session.sshRemoteId || session.sshRemote?.id || null;
+		return existingRemoteId === newRemoteId;
 	});
 
 	if (conflictingAgents.length > 0) {
