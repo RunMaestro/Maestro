@@ -271,6 +271,26 @@ describe('fileExplorer utils', () => {
 			expect(result[0].name).toBe('main.py');
 		});
 
+		it('always shows .maestro folder even when it matches ignore patterns', async () => {
+			vi.mocked(window.maestro.fs.readDir)
+				.mockResolvedValueOnce([
+					{ name: '.maestro', isFile: false, isDirectory: true },
+					{ name: 'node_modules', isFile: false, isDirectory: true },
+					{ name: 'src', isFile: false, isDirectory: true },
+				])
+				.mockResolvedValue([]); // Empty for folder recursion
+
+			// Use ignore patterns that would match .maestro (e.g., dotfile glob)
+			const result = await loadFileTree('/project', 10, 0, undefined, undefined, {
+				ignorePatterns: ['node_modules', '.*'],
+			});
+
+			// .maestro should be present, node_modules should be filtered
+			expect(result.find((n) => n.name === '.maestro')).toBeDefined();
+			expect(result.find((n) => n.name === 'node_modules')).toBeUndefined();
+			expect(result.find((n) => n.name === 'src')).toBeDefined();
+		});
+
 		it('sorts folders before files', async () => {
 			vi.mocked(window.maestro.fs.readDir)
 				.mockResolvedValueOnce([
