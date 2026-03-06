@@ -1635,6 +1635,38 @@ describe('useInputHandlers', () => {
 			const tab = sessions[0].aiTabs.find((t: any) => t.id === 'tab-1');
 			expect(tab?.stagedImages).toEqual(['existing.png']);
 		});
+
+		it('preserves draft input value after replay sends', () => {
+			const { result } = renderHook(() => useInputHandlers(createMockDeps()));
+
+			// Type a draft message
+			act(() => {
+				result.current.setInputValue('my draft message');
+			});
+
+			expect(result.current.inputValue).toBe('my draft message');
+
+			// Simulate processInput clearing the input (as it does in real usage)
+			mockProcessInput.mockImplementation(() => {
+				result.current.setInputValue('');
+			});
+
+			// Replay a previous message
+			act(() => {
+				result.current.handleReplayMessage('replayed message');
+			});
+
+			act(() => {
+				vi.runAllTimers();
+			});
+
+			// Draft should be restored after replay
+			expect(result.current.inputValue).toBe('my draft message');
+			expect(mockProcessInput).toHaveBeenCalledWith('replayed message');
+
+			// Clean up mock
+			mockProcessInput.mockReset();
+		});
 	});
 
 	// ========================================================================
