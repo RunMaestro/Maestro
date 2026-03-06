@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { LlmGuardState } from '../security/llm-guard';
 
 /**
  * Configuration for spawning a new process
@@ -36,6 +37,7 @@ export interface ProcessConfig {
 	sendPromptViaStdinRaw?: boolean;
 	/** Script to send via stdin for SSH execution (bypasses shell escaping) */
 	sshStdinScript?: string;
+	llmGuardState?: LlmGuardState;
 }
 
 /**
@@ -74,6 +76,7 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	llmGuardState?: LlmGuardState;
 }
 
 export interface UsageTotals {

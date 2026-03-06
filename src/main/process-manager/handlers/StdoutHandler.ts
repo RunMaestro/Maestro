@@ -7,6 +7,7 @@ import { aggregateModelUsage, type ModelStats } from '../../parsers/usage-aggreg
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import type { ManagedProcess, UsageStats, UsageTotals, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
+import { runLlmGuardPost } from '../../security/llm-guard';
 
 interface StdoutHandlerDependencies {
 	processes: Map<string, ManagedProcess>;
@@ -353,15 +354,16 @@ export class StdoutHandler {
 			const resultText = managedProcess.streamedText || '';
 			if (resultText) {
 				managedProcess.resultEmitted = true;
+				const guardedText = this.applyOutputGuard(sessionId, managedProcess, resultText);
 				logger.debug(
 					'[ProcessManager] Emitting final Codex result at turn completion',
 					'ProcessManager',
 					{
 						sessionId,
-						resultLength: resultText.length,
+						resultLength: guardedText.length,
 					}
 				);
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, guardedText);
 			}
 		}
 
@@ -392,13 +394,14 @@ export class StdoutHandler {
 			}
 
 			if (resultText) {
+				const guardedText = this.applyOutputGuard(sessionId, managedProcess, resultText);
 				logger.debug('[ProcessManager] Emitting result data via parser', 'ProcessManager', {
 					sessionId,
-					resultLength: resultText.length,
+					resultLength: guardedText.length,
 					hasEventText: !!event.text,
 					hasStreamedText: !!managedProcess.streamedText,
 				});
-				this.bufferManager.emitDataBuffered(sessionId, resultText);
+				this.bufferManager.emitDataBuffered(sessionId, guardedText);
 			} else if (sessionId.includes('-synopsis-')) {
 				logger.warn(
 					'[ProcessManager] Synopsis result is empty - no text to emit',
@@ -426,11 +429,16 @@ export class StdoutHandler {
 
 		if (msgRecord.type === 'result' && msgRecord.result && !managedProcess.resultEmitted) {
 			managedProcess.resultEmitted = true;
+			const guardedText = this.applyOutputGuard(
+				sessionId,
+				managedProcess,
+				msgRecord.result as string
+			);
 			logger.debug('[ProcessManager] Emitting result data', 'ProcessManager', {
 				sessionId,
-				resultLength: (msgRecord.result as string).length,
+				resultLength: guardedText.length,
 			});
-			this.bufferManager.emitDataBuffered(sessionId, msgRecord.result as string);
+			this.bufferManager.emitDataBuffered(sessionId, guardedText);
 		}
 
 		if (msgRecord.session_id && !managedProcess.sessionIdEmitted) {
@@ -490,5 +498,31 @@ export class StdoutHandler {
 			contextWindow: usage.contextWindow || managedProcess.contextWindow || 200000,
 			reasoningTokens: usage.reasoningTokens,
 		};
+	}
+
+	private applyOutputGuard(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		resultText: string
+	): string {
+		const guardState = managedProcess.llmGuardState;
+		if (!guardState?.config?.enabled) {
+			return resultText;
+		}
+
+		const guardResult = runLlmGuardPost(resultText, guardState.vault, guardState.config);
+		if (guardResult.findings.length > 0) {
+			logger.warn('[LLMGuard] Output findings detected', 'LLMGuard', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				findings: guardResult.findings.map((finding) => finding.type),
+			});
+		}
+
+		if (guardResult.blocked) {
+			return `[Maestro LLM Guard blocked response] ${guardResult.blockReason ?? 'Sensitive content detected.'}`;
+		}
+
+		return guardResult.sanitizedResponse;
 	}
 }
