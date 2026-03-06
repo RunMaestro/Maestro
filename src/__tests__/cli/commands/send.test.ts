@@ -81,6 +81,7 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Hello world',
+			undefined,
 			undefined
 		);
 		expect(consoleSpy).toHaveBeenCalledTimes(1);
@@ -128,7 +129,8 @@ describe('send command', () => {
 			'claude-code',
 			'/path/to/project',
 			'Continue from before',
-			'session-xyz-789'
+			'session-xyz-789',
+			undefined
 		);
 
 		const output = JSON.parse(consoleSpy.mock.calls[0][0]);
@@ -153,6 +155,7 @@ describe('send command', () => {
 			'claude-code',
 			'/custom/project/path',
 			'Do something',
+			undefined,
 			undefined
 		);
 	});
@@ -173,7 +176,13 @@ describe('send command', () => {
 
 		expect(detectCodex).toHaveBeenCalled();
 		expect(detectClaude).not.toHaveBeenCalled();
-		expect(spawnAgent).toHaveBeenCalledWith('codex', expect.any(String), 'Use codex', undefined);
+		expect(spawnAgent).toHaveBeenCalledWith(
+			'codex',
+			expect.any(String),
+			'Use codex',
+			undefined,
+			undefined
+		);
 	});
 
 	it('should exit with error when agent ID is not found', async () => {
