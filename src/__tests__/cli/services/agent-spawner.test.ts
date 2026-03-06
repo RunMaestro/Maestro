@@ -18,6 +18,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { EventEmitter } from 'events';
+import type { AgentSshRemoteConfig } from '../../../shared/types';
 
 // Create mock spawn function at module level
 const mockSpawn = vi.fn();
@@ -88,10 +89,23 @@ vi.mock('os', () => ({
 const mockGetAgentCustomPath = vi.fn();
 const mockGetAgentConfigValues = vi.fn(() => ({}));
 const mockReadSshRemotes = vi.fn(() => []);
+
+const mockWrapSpawnWithSsh = vi.fn(async () => ({
+	command: 'wrapped-cmd',
+	args: ['wrapped-arg-1', 'wrapped-arg-2'],
+	cwd: '/wrapped',
+	customEnvVars: undefined,
+	prompt: undefined,
+	sshRemoteUsed: null,
+}));
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
 	getAgentConfigValues: (...args: unknown[]) => mockGetAgentConfigValues(...args),
 	readSshRemotes: (...args: unknown[]) => mockReadSshRemotes(...args),
+}));
+
+vi.mock('../../../main/utils/ssh-spawn-wrapper', () => ({
+	wrapSpawnWithSsh: (...args: unknown[]) => mockWrapSpawnWithSsh(...args),
 }));
 
 import {
@@ -725,6 +739,25 @@ Some text with [x] in it that's not a checkbox
 			expect(result.source).toBe('path');
 		});
 
+		it('should short-circuit to remote availability when SSH is enabled', async () => {
+			const sshRemoteConfig: AgentSshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-opencode',
+			};
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+
+			vi.resetModules();
+			const { detectOpenCode: freshDetectOpenCode } =
+				await import('../../../cli/services/agent-spawner');
+
+			const result = await freshDetectOpenCode('/custom/opencode', sshRemoteConfig);
+
+			expect(result.available).toBe(true);
+			expect(result.path).toBeUndefined();
+			expect(result.source).toBe('settings');
+		});
+
 		it('should preserve cached source when override matches cached path', async () => {
 			mockGetAgentCustomPath.mockReturnValue(undefined);
 			mockSpawn.mockReturnValue(mockChild);
@@ -772,6 +805,23 @@ Some text with [x] in it that's not a checkbox
 			expect(result.source).toBe('path');
 		});
 
+		it('should short-circuit to remote availability when SSH is enabled', async () => {
+			const sshRemoteConfig: AgentSshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-droid',
+			};
+			mockGetAgentCustomPath.mockReturnValue(undefined);
+			mockSpawn.mockReturnValue(mockChild);
+
+			const { detectDroid: freshDetectDroid } = await import('../../../cli/services/agent-spawner');
+
+			const result = await freshDetectDroid('/custom/droid', sshRemoteConfig);
+
+			expect(result.available).toBe(true);
+			expect(result.path).toBeUndefined();
+			expect(result.source).toBe('settings');
+		});
+
 		it('should preserve cached source when override matches cached path', async () => {
 			mockGetAgentCustomPath.mockReturnValue(undefined);
 			mockSpawn.mockReturnValue(mockChild);
@@ -793,7 +843,7 @@ Some text with [x] in it that's not a checkbox
 		});
 	});
 
-	describe('spawnAgent', () => {
+		describe('spawnAgent', () => {
 		beforeEach(() => {
 			mockSpawn.mockReturnValue(mockChild);
 		});
@@ -1263,6 +1313,80 @@ Some text with [x] in it that's not a checkbox
 			mockStdout.emit('data', Buffer.from('{"type":"result","result":"Done"}\n'));
 			mockChild.emit('close', 0);
 			await resultPromise;
+		});
+
+		it('should wrap OpenCode spawn with SSH when enabled', async () => {
+			const sshRemoteConfig: AgentSshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-opencode',
+			};
+			mockWrapSpawnWithSsh.mockClear();
+
+			const resultPromise = spawnAgent(
+				'opencode',
+				'/project/path',
+				'OpenCode remote task',
+				undefined,
+				{ sshRemoteConfig }
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+			const [config, configSshRemote, configStore] = mockWrapSpawnWithSsh.mock.calls[0];
+
+			expect(config).toMatchObject({
+				command: expect.any(String),
+				args: expect.any(Array),
+				cwd: '/project/path',
+			});
+			expect(configSshRemote).toEqual(sshRemoteConfig);
+			expect(configStore).toEqual({
+				getSshRemotes: expect.any(Function),
+			});
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","text":"OpenCode done"}\n'));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
+		});
+
+		it('should wrap Factory Droid spawn with SSH when enabled', async () => {
+			const sshRemoteConfig: AgentSshRemoteConfig = {
+				enabled: true,
+				remoteId: 'remote-droid',
+			};
+			mockWrapSpawnWithSsh.mockClear();
+
+			const resultPromise = spawnAgent(
+				'factory-droid',
+				'/project/path',
+				'Droid remote task',
+				undefined,
+				{ sshRemoteConfig }
+			);
+
+			await new Promise((resolve) => setTimeout(resolve, 0));
+
+			expect(mockWrapSpawnWithSsh).toHaveBeenCalledTimes(1);
+			const [config, configSshRemote, configStore] = mockWrapSpawnWithSsh.mock.calls[0];
+
+			expect(config).toMatchObject({
+				command: expect.any(String),
+				args: expect.any(Array),
+				cwd: '/project/path',
+			});
+			expect(configSshRemote).toEqual(sshRemoteConfig);
+			expect(configStore).toEqual({
+				getSshRemotes: expect.any(Function),
+			});
+
+			mockStdout.emit('data', Buffer.from('{"type":"result","text":"Droid done"}\n'));
+			mockChild.emit('close', 0);
+
+			const result = await resultPromise;
+			expect(result.success).toBe(true);
 		});
 
 		it('should include user home paths', async () => {

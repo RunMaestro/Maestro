@@ -844,13 +844,14 @@ async function spawnCodexAgent(
 	// Global shell env vars are primarily used by the desktop app's process manager.
 	const env = buildExpandedEnv(effectiveCustomEnvVars);
 
-	let spawnCommand = getCodexCommand(overrides?.customPath);
+	let spawnCommand = !overrides?.customPath
+		? agentDef?.binaryName || getCodexCommand()
+		: getCodexCommand(overrides?.customPath);
 	let spawnArgs = args;
 	let spawnCwd = cwd;
 	let spawnEnv = env;
 
 	if (overrides?.sshRemoteConfig) {
-		spawnCommand = agentDef?.binaryName ?? getCodexCommand();
 		const sshWrapped = await wrapSpawnWithSsh(
 			{
 				command: spawnCommand,

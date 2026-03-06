@@ -95,6 +95,11 @@ export async function send(
 		process.exit(1);
 	}
 
+	const ssh =
+		agent.sshRemoteConfig && agent.sshRemoteConfig.enabled
+			? agent.sshRemoteConfig
+			: undefined;
+
 	// Validate agent type is supported for CLI spawning
 	const supportedTypes: ToolType[] = ['claude-code', 'codex', 'opencode', 'factory-droid'];
 	if (!supportedTypes.includes(agent.toolType)) {
@@ -107,7 +112,7 @@ export async function send(
 
 	// Verify agent CLI is available
 	if (agent.toolType === 'claude-code') {
-		const claude = await detectClaude(agent.customPath, agent.sshRemoteConfig);
+		const claude = await detectClaude(agent.customPath, ssh);
 		if (!claude.available) {
 			emitErrorJson(
 				'Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code',
@@ -116,7 +121,7 @@ export async function send(
 			process.exit(1);
 		}
 	} else if (agent.toolType === 'codex') {
-		const codex = await detectCodex(agent.customPath, agent.sshRemoteConfig);
+		const codex = await detectCodex(agent.customPath, ssh);
 		if (!codex.available) {
 			emitErrorJson(
 				'Codex CLI not found. Install with: npm install -g @openai/codex',
@@ -125,7 +130,7 @@ export async function send(
 			process.exit(1);
 		}
 	} else if (agent.toolType === 'opencode') {
-		const opencode = await detectOpenCode(agent.customPath, agent.sshRemoteConfig);
+		const opencode = await detectOpenCode(agent.customPath, ssh);
 		if (!opencode.available) {
 			emitErrorJson(
 				'OpenCode CLI not found. Install with: npm install -g opencode',
@@ -134,7 +139,7 @@ export async function send(
 			process.exit(1);
 		}
 	} else if (agent.toolType === 'factory-droid') {
-		const droid = await detectDroid(agent.customPath, agent.sshRemoteConfig);
+		const droid = await detectDroid(agent.customPath, ssh);
 		if (!droid.available) {
 			emitErrorJson(
 				'Factory Droid CLI not found. Install with: https://factory.ai/product/cli',
@@ -159,8 +164,8 @@ export async function send(
 		if (agent.customModel !== undefined) {
 			next.customModel = agent.customModel;
 		}
-		if (agent.sshRemoteConfig !== undefined) {
-			next.sshRemoteConfig = agent.sshRemoteConfig;
+		if (ssh !== undefined) {
+			next.sshRemoteConfig = ssh;
 		}
 
 		return Object.keys(next).length === 0 ? undefined : next;

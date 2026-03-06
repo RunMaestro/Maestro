@@ -2,7 +2,7 @@
 // Executes playbooks and yields JSONL events
 
 import { execFileSync } from 'child_process';
-import type { Playbook, SessionInfo, UsageStats, HistoryEntry } from '../../shared/types';
+import type { Playbook, SessionInfo, UsageStats, HistoryEntry, AgentSshRemoteConfig } from '../../shared/types';
 import type { JsonlEvent } from '../output/jsonl';
 import {
 	spawnAgent,
@@ -439,13 +439,21 @@ export async function* runPlaybook(
 				}
 
 				// Spawn agent with combined prompt + document
-				const spawnOverrides = {
+				const spawnOverrides: {
+					customPath?: string;
+					customArgs?: string;
+					customEnvVars?: Record<string, string>;
+					customModel?: string;
+					sshRemoteConfig?: AgentSshRemoteConfig;
+				} = {
 					customPath: session.customPath,
 					customArgs: session.customArgs,
 					customEnvVars: session.customEnvVars,
 					customModel: session.customModel,
-					sshRemoteConfig: session.sshRemoteConfig,
 				};
+				if (!session.sshRemoteConfig?.enabled) {
+					spawnOverrides.sshRemoteConfig = session.sshRemoteConfig;
+				}
 				const result = await spawnAgent(
 					session.toolType,
 					session.cwd,
