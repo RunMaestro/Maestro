@@ -143,13 +143,24 @@ export async function send(
 		}
 	}
 
+	const hasOverrides =
+		agent.customPath !== undefined ||
+		agent.customArgs !== undefined ||
+		agent.customEnvVars !== undefined ||
+		agent.customModel !== undefined;
+	const overrides = hasOverrides
+		? {
+				customPath: agent.customPath,
+				customArgs: agent.customArgs,
+				customEnvVars: agent.customEnvVars,
+				customModel: agent.customModel,
+		  }
+		: undefined;
+
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally
-	const result = await spawnAgent(agent.toolType, agent.cwd, message, options.session, {
-		customPath: agent.customPath,
-		customArgs: agent.customArgs,
-		customEnvVars: agent.customEnvVars,
-		customModel: agent.customModel,
-	});
+	const result = overrides
+		? await spawnAgent(agent.toolType, agent.cwd, message, options.session, overrides)
+		: await spawnAgent(agent.toolType, agent.cwd, message, options.session);
 	const response = buildResponse(agentId, agent.name, result, agent.toolType);
 
 	console.log(JSON.stringify(response, null, 2));

@@ -1,4 +1,6 @@
-import type { AgentConfig } from '../agents';
+import type { AgentConfig, AgentDefinition } from '../agents';
+
+type AgentArgsConfig = AgentConfig | AgentDefinition | null | undefined;
 
 type BuildAgentArgsOptions = {
 	baseArgs: string[];
@@ -40,7 +42,7 @@ function parseCustomArgs(customArgs?: string): string[] {
 }
 
 export function buildAgentArgs(
-	agent: AgentConfig | null | undefined,
+	agent: AgentArgsConfig,
 	options: BuildAgentArgsOptions
 ): string[] {
 	let finalArgs = [...options.baseArgs];
@@ -99,7 +101,7 @@ export function buildAgentArgs(
 }
 
 export function applyAgentConfigOverrides(
-	agent: AgentConfig | null | undefined,
+	agent: AgentArgsConfig,
 	baseArgs: string[],
 	overrides: AgentConfigOverrides
 ): AgentConfigResolution {
@@ -186,7 +188,7 @@ export function applyAgentConfigOverrides(
 }
 
 export function getContextWindowValue(
-	agent: AgentConfig | null | undefined,
+	agent: AgentArgsConfig,
 	agentConfigValues: Record<string, any>,
 	sessionCustomContextWindow?: number
 ): number {

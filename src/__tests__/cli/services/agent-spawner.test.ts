@@ -69,8 +69,10 @@ vi.mock('os', () => ({
 
 // Mock storage service
 const mockGetAgentCustomPath = vi.fn();
+const mockGetAgentConfigValues = vi.fn(() => ({}));
 vi.mock('../../../cli/services/storage', () => ({
 	getAgentCustomPath: (...args: unknown[]) => mockGetAgentCustomPath(...args),
+	getAgentConfigValues: (...args: unknown[]) => mockGetAgentConfigValues(...args),
 }));
 
 import {
