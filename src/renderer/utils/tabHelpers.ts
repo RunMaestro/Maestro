@@ -1348,8 +1348,8 @@ export function navigateToUnifiedTabByIndex(
 		const aiTab = session.aiTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!aiTab) return null;
 
-		// If already active, return current state (with repair if needed)
-		if (session.activeTabId === targetTabRef.id && session.activeFileTabId === null) {
+		// If already active and in AI mode, return current state (with repair if needed)
+		if (session.activeTabId === targetTabRef.id && session.activeFileTabId === null && session.inputMode === 'ai') {
 			return {
 				type: 'ai',
 				id: targetTabRef.id,
@@ -1357,7 +1357,10 @@ export function navigateToUnifiedTabByIndex(
 			};
 		}
 
-		// Set the AI tab as active and clear file tab selection
+		// Set the AI tab as active, clear terminal/file selection, and ensure inputMode is 'ai'.
+		// inputMode must be explicitly set because navigating from a terminal tab leaves inputMode
+		// as 'terminal' in the spread — without this, MainPanel would continue rendering the
+		// terminal view even though an AI tab is now active.
 		return {
 			type: 'ai',
 			id: targetTabRef.id,
@@ -1366,6 +1369,7 @@ export function navigateToUnifiedTabByIndex(
 				activeTabId: targetTabRef.id,
 				activeFileTabId: null,
 				activeTerminalTabId: null,
+				inputMode: 'ai',
 			},
 		};
 	} else if (targetTabRef.type === 'file') {
@@ -1373,8 +1377,8 @@ export function navigateToUnifiedTabByIndex(
 		const fileTab = session.filePreviewTabs.find((tab) => tab.id === targetTabRef.id);
 		if (!fileTab) return null;
 
-		// If already active, return current state (with repair if needed)
-		if (session.activeFileTabId === targetTabRef.id) {
+		// If already active and in AI mode, return current state (with repair if needed)
+		if (session.activeFileTabId === targetTabRef.id && session.inputMode === 'ai') {
 			return {
 				type: 'file',
 				id: targetTabRef.id,
@@ -1382,7 +1386,9 @@ export function navigateToUnifiedTabByIndex(
 			};
 		}
 
-		// Set the file tab as active (preserve activeTabId for switching back)
+		// Set the file tab as active and ensure inputMode is 'ai' (file preview is shown in
+		// non-terminal mode; without this, navigating from a terminal tab would leave the
+		// terminal visible instead of showing the file preview).
 		return {
 			type: 'file',
 			id: targetTabRef.id,
@@ -1390,6 +1396,7 @@ export function navigateToUnifiedTabByIndex(
 				...repairedSession,
 				activeFileTabId: targetTabRef.id,
 				activeTerminalTabId: null,
+				inputMode: 'ai',
 			},
 		};
 	} else {
