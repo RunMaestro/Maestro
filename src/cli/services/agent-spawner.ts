@@ -672,6 +672,7 @@ async function spawnOpenCodeAgent(
 		let sessionId: string | undefined;
 		let usageStats: UsageStats | undefined;
 		let stderr = '';
+		let errorText: string | undefined;
 
 		child.stdout?.on('data', (data: Buffer) => {
 			jsonBuffer += data.toString();
@@ -689,6 +690,12 @@ async function spawnOpenCodeAgent(
 
 				if (event.type === 'result' && event.text) {
 					result = result ? `${result}\n${event.text}` : event.text;
+				}
+
+				// Capture structured JSON error events emitted by OpenCode
+				// (opencode --format json can emit { type: 'error', error: ... })
+				if (event.type === 'error' && event.text && !errorText) {
+					errorText = event.text;
 				}
 
 				const usage = parser.extractUsage(event as any);
@@ -713,12 +720,15 @@ async function spawnOpenCodeAgent(
 		child.stdin?.end();
 
 		child.on('close', (code) => {
-			if (code === 0 && result) {
+			// If OpenCode emitted a structured JSON 'error' event, treat it as a failure
+			// even when the process exits with code 0. This mirrors Codex/Factory Droid
+			// behaviour and preserves provider error messages emitted in JSON mode.
+			if (code === 0 && !errorText) {
 				resolve({ success: true, response: result, agentSessionId: sessionId, usageStats });
 			} else {
 				resolve({
 					success: false,
-					error: stderr || `Process exited with code ${code}`,
+					error: errorText || stderr || `Process exited with code ${code}`,
 					agentSessionId: sessionId,
 					usageStats,
 				});
