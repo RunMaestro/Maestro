@@ -197,6 +197,48 @@ describe('StdoutHandler', () => {
 			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(sessionId, 'Here is the answer.');
 		});
 
+		it('should deanonymize vault placeholders and redact output secrets before emitting', () => {
+			const { handler, bufferManager, sessionId, proc } = createTestContext({
+				isStreamJsonMode: true,
+				outputParser: undefined,
+				llmGuardState: {
+					config: {
+						enabled: true,
+						action: 'sanitize',
+						input: {
+							anonymizePii: true,
+							redactSecrets: true,
+							detectPromptInjection: true,
+						},
+						output: {
+							deanonymizePii: true,
+							redactSecrets: true,
+							detectPiiLeakage: true,
+						},
+					},
+					vault: {
+						entries: [{ placeholder: '[EMAIL_1]', original: 'john@example.com', type: 'PII_EMAIL' }],
+					},
+					inputFindings: [],
+				},
+			} as Partial<ManagedProcess>);
+
+			sendJsonLine(handler, sessionId, {
+				type: 'result',
+				result: 'Contact [EMAIL_1] and rotate ghp_123456789012345678901234567890123456 immediately.',
+			});
+
+			expect(proc.resultEmitted).toBe(true);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				expect.stringContaining('john@example.com')
+			);
+			expect(bufferManager.emitDataBuffered).toHaveBeenCalledWith(
+				sessionId,
+				expect.stringContaining('[REDACTED_SECRET_GITHUB_TOKEN_1]')
+			);
+		});
+
 		it('should only emit result once (first result wins)', () => {
 			const { handler, bufferManager, sessionId } = createTestContext({
 				isStreamJsonMode: true,

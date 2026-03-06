@@ -4,7 +4,6 @@ import * as os from 'os';
 import { ProcessManager } from '../../process-manager';
 import { AgentDetector } from '../../agents';
 import { logger } from '../../utils/logger';
-import { isWindows } from '../../../shared/platformDetection';
 import { addBreadcrumb } from '../../utils/sentry';
 import { isWebContentsAvailable } from '../../utils/safe-send';
 import {
@@ -26,6 +25,13 @@ import { buildExpandedEnv } from '../../../shared/pathUtils';
 import type { SshRemoteConfig } from '../../../shared/types';
 import { powerManager } from '../../power-manager';
 import { MaestroSettings } from './persistence';
+import {
+	DEFAULT_LLM_GUARD_CONFIG,
+	normalizeLlmGuardConfig,
+	runLlmGuardPre,
+	type LlmGuardConfig,
+	type LlmGuardState,
+} from '../../security/llm-guard';
 
 const LOG_CONTEXT = '[ProcessManager]';
 
@@ -121,8 +127,8 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Get agent definition to access config options and argument builders
 				const agent = await agentDetector.getAgent(config.toolType);
 				// Use INFO level on Windows for better visibility in logs
-
-				const logFn = isWindows() ? logger.info.bind(logger) : logger.debug.bind(logger);
+				const isWindows = process.platform === 'win32';
+				const logFn = isWindows ? logger.info.bind(logger) : logger.debug.bind(logger);
 				logFn(`Spawn config received`, LOG_CONTEXT, {
 					platform: process.platform,
 					configToolType: config.toolType,
@@ -136,7 +142,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					promptLength: config.prompt?.length,
 					// On Windows, show prompt preview to help debug truncation issues
 					promptPreview:
-						config.prompt && isWindows()
+						config.prompt && isWindows
 							? {
 									first50: config.prompt.substring(0, 50),
 									last50: config.prompt.substring(Math.max(0, config.prompt.length - 50)),
@@ -154,9 +160,39 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							}
 						: null,
 				});
+				let effectivePrompt = config.prompt;
+				let llmGuardState: LlmGuardState | undefined;
+				const llmGuardConfig = normalizeLlmGuardConfig(
+					(settingsStore.get('llmGuardConfig', DEFAULT_LLM_GUARD_CONFIG) as
+						| Partial<LlmGuardConfig>
+						| undefined) ?? DEFAULT_LLM_GUARD_CONFIG
+				);
+
+				if (config.toolType !== 'terminal' && effectivePrompt) {
+					const guardResult = runLlmGuardPre(effectivePrompt, llmGuardConfig);
+					if (guardResult.findings.length > 0) {
+						logger.warn('[LLMGuard] Input findings detected', 'LLMGuard', {
+							sessionId: config.sessionId,
+							toolType: config.toolType,
+							findings: guardResult.findings.map((finding) => finding.type),
+						});
+					}
+
+					if (guardResult.blocked) {
+						throw new Error(guardResult.blockReason ?? 'Prompt blocked by LLM Guard.');
+					}
+
+					effectivePrompt = guardResult.sanitizedPrompt;
+					llmGuardState = {
+						config: llmGuardConfig,
+						vault: guardResult.vault,
+						inputFindings: guardResult.findings,
+					};
+				}
+
 				let finalArgs = buildAgentArgs(agent, {
 					baseArgs: config.args,
-					prompt: config.prompt,
+					prompt: effectivePrompt,
 					cwd: config.cwd,
 					readOnlyMode: config.readOnlyMode,
 					modelId: config.modelId,
@@ -276,9 +312,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					...(config.readOnlyMode && { readOnlyMode: true }),
 					...(config.yoloMode && { yoloMode: true }),
 					...(config.modelId && { modelId: config.modelId }),
-					...(config.prompt && {
+					...(effectivePrompt && {
 						prompt:
-							config.prompt.length > 500 ? config.prompt.substring(0, 500) + '...' : config.prompt,
+							effectivePrompt.length > 500
+								? effectivePrompt.substring(0, 500) + '...'
+								: effectivePrompt,
 					}),
 				});
 
@@ -323,7 +361,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// On Windows (except SSH), always use shell execution for agents
 				// This avoids cmd.exe command line length limits (~8191 chars) which can cause
 				// "Die Befehlszeile ist zu lang" errors with long prompts
-				if (isWindows() && !config.sessionSshRemoteConfig?.enabled) {
+				if (isWindows && !config.sessionSshRemoteConfig?.enabled) {
 					// Use expanded environment with custom env vars to ensure PATH includes all binary locations
 					const expandedEnv = buildExpandedEnv(customEnvVarsToPass);
 					// Filter out undefined values to match Record<string, string> type
@@ -357,7 +395,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 				// Only consider SSH remote for non-terminal AI agent sessions
 				// SSH is session-level ONLY - no agent-level or global defaults
 				// Log SSH evaluation on Windows for debugging
-				if (isWindows()) {
+				if (isWindows) {
 					logger.info(`Evaluating SSH remote config`, LOG_CONTEXT, {
 						toolType: config.toolType,
 						isTerminal: config.toolType === 'terminal',
@@ -411,11 +449,11 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 						//   (e.g., -i /tmp/image.png for Codex, -f /tmp/image.png for OpenCode).
 						const hasImages = config.images && config.images.length > 0;
 						let sshArgs = finalArgs;
-						let stdinInput: string | undefined = config.prompt;
+						let stdinInput: string | undefined = effectivePrompt;
 
-						if (hasImages && config.prompt && agent?.capabilities?.supportsStreamJsonInput) {
+						if (hasImages && effectivePrompt && agent?.capabilities?.supportsStreamJsonInput) {
 							// Stream-json agent (Claude Code): embed images in the stdin message
-							stdinInput = buildStreamJsonMessage(config.prompt, config.images!) + '\n';
+							stdinInput = buildStreamJsonMessage(effectivePrompt, config.images!) + '\n';
 							if (!sshArgs.includes('--input-format')) {
 								sshArgs = [...sshArgs, '--input-format', 'stream-json'];
 							}
@@ -478,6 +516,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 							remoteCommand,
 							remoteCwd: config.cwd,
 							promptLength: config.prompt?.length,
+							sanitizedPromptLength: effectivePrompt?.length,
 							stdinScriptLength: sshCommand.stdinScript?.length,
 							hasImages,
 							imageCount: config.images?.length,
@@ -490,12 +529,12 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sessionId: config.sessionId,
 					useShell,
 					shellToUse,
-					isWindows: isWindows(),
+					isWindows,
 					isSshCommand: !!sshRemoteUsed,
 					globalEnvVarsCount: Object.keys(globalShellEnvVars).length,
 				});
 
-				const result = processManager.spawn({
+				const result = await processManager.spawn({
 					...config,
 					command: commandToSpawn,
 					args: argsToSpawn,
@@ -507,7 +546,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					requiresPty: sshRemoteUsed ? false : agent?.requiresPty,
 					// For SSH, prompt is included in the stdin script, not passed separately
 					// For local execution, pass prompt as normal
-					prompt: sshRemoteUsed ? undefined : config.prompt,
+					prompt: sshRemoteUsed ? undefined : effectivePrompt,
 					shell: shellToUse,
 					runInShell: useShell,
 					shellArgs: shellArgsStr, // Shell-specific CLI args (for terminal sessions)
@@ -525,6 +564,7 @@ export function registerProcessHandlers(deps: ProcessHandlerDependencies): void 
 					sshRemoteHost: sshRemoteUsed?.host,
 					// SSH stdin script - the entire command is sent via stdin to /bin/bash on remote
 					sshStdinScript,
+					llmGuardState,
 				});
 
 				logger.info(`Process spawned successfully`, LOG_CONTEXT, {
