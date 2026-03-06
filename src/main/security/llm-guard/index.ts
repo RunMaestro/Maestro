@@ -10,7 +10,8 @@ import type {
 const EMAIL_REGEX = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const PHONE_REGEX = /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b/g;
 const SSN_REGEX = /\b\d{3}-\d{2}-\d{4}\b/g;
-const IPV4_REGEX = /\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b/g;
+const IPV4_REGEX =
+	/\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b/g;
 const CREDIT_CARD_REGEX = /\b(?:\d[ -]*?){13,19}\b/g;
 
 const SECRET_PATTERNS = [
@@ -101,7 +102,10 @@ export function normalizeLlmGuardConfig(config?: Partial<LlmGuardConfig> | null)
 	};
 }
 
-export function runLlmGuardPre(prompt: string, config?: Partial<LlmGuardConfig> | null): LlmGuardPreResult {
+export function runLlmGuardPre(
+	prompt: string,
+	config?: Partial<LlmGuardConfig> | null
+): LlmGuardPreResult {
 	const effectiveConfig = normalizeLlmGuardConfig(config);
 	if (!effectiveConfig.enabled) {
 		return {
@@ -171,8 +175,9 @@ export function runLlmGuardPost(
 		};
 	}
 
-	let sanitizedResponse =
-		effectiveConfig.output.deanonymizePii ? PiiVault.deanonymize(response, vault) : response;
+	let sanitizedResponse = effectiveConfig.output.deanonymizePii
+		? PiiVault.deanonymize(response, vault)
+		: response;
 	const findings: LlmGuardFinding[] = [];
 
 	if (effectiveConfig.output.redactSecrets) {
@@ -188,7 +193,9 @@ export function runLlmGuardPost(
 
 	const blocked =
 		effectiveConfig.action === 'block' &&
-		findings.some((finding) => finding.type.startsWith('SECRET_') || finding.type.startsWith('PII_'));
+		findings.some(
+			(finding) => finding.type.startsWith('SECRET_') || finding.type.startsWith('PII_')
+		);
 
 	return {
 		sanitizedResponse,
@@ -198,7 +205,12 @@ export function runLlmGuardPost(
 	};
 }
 
-function collectMatches(regex: RegExp, text: string, type: string, confidence: number): LlmGuardFinding[] {
+function collectMatches(
+	regex: RegExp,
+	text: string,
+	type: string,
+	confidence: number
+): LlmGuardFinding[] {
 	const findings: LlmGuardFinding[] = [];
 	const matcher = new RegExp(regex.source, regex.flags);
 	let match: RegExpExecArray | null;
@@ -228,8 +240,7 @@ function applyReplacements(
 	sortedFindings.forEach((finding, reverseIndex) => {
 		const index = sortedFindings.length - reverseIndex;
 		const replacement = replacementBuilder(finding, index);
-		nextText =
-			nextText.slice(0, finding.start) + replacement + nextText.slice(finding.end);
+		nextText = nextText.slice(0, finding.start) + replacement + nextText.slice(finding.end);
 		finding.replacement = replacement;
 	});
 
@@ -248,10 +259,17 @@ function redactSecrets(text: string): { text: string; findings: LlmGuardFinding[
 		return { text, findings: [] };
 	}
 
-	return applyReplacements(text, findings, (finding, index) => `[REDACTED_${finding.type}_${index}]`);
+	return applyReplacements(
+		text,
+		findings,
+		(finding, index) => `[REDACTED_${finding.type}_${index}]`
+	);
 }
 
-function anonymizePii(text: string, vault: PiiVault): { text: string; findings: LlmGuardFinding[] } {
+function anonymizePii(
+	text: string,
+	vault: PiiVault
+): { text: string; findings: LlmGuardFinding[] } {
 	const piiPatterns = [
 		{ type: 'PII_EMAIL', regex: EMAIL_REGEX, confidence: 0.99 },
 		{ type: 'PII_PHONE', regex: PHONE_REGEX, confidence: 0.92 },
@@ -260,12 +278,12 @@ function anonymizePii(text: string, vault: PiiVault): { text: string; findings: 
 		{ type: 'PII_CREDIT_CARD', regex: CREDIT_CARD_REGEX, confidence: 0.75 },
 	];
 
-	const findings = piiPatterns.flatMap((pattern) =>
-		collectMatches(pattern.regex, text, pattern.type, pattern.confidence)
-	).filter((finding) => {
-		if (finding.type !== 'PII_CREDIT_CARD') return true;
-		return passesLuhnCheck(finding.value.replace(/[ -]/g, ''));
-	});
+	const findings = piiPatterns
+		.flatMap((pattern) => collectMatches(pattern.regex, text, pattern.type, pattern.confidence))
+		.filter((finding) => {
+			if (finding.type !== 'PII_CREDIT_CARD') return true;
+			return passesLuhnCheck(finding.value.replace(/[ -]/g, ''));
+		});
 
 	if (!findings.length) {
 		return { text, findings: [] };

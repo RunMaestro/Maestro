@@ -217,7 +217,9 @@ describe('StdoutHandler', () => {
 						},
 					},
 					vault: {
-						entries: [{ placeholder: '[EMAIL_1]', original: 'john@example.com', type: 'PII_EMAIL' }],
+						entries: [
+							{ placeholder: '[EMAIL_1]', original: 'john@example.com', type: 'PII_EMAIL' },
+						],
 					},
 					inputFindings: [],
 				},
@@ -225,7 +227,8 @@ describe('StdoutHandler', () => {
 
 			sendJsonLine(handler, sessionId, {
 				type: 'result',
-				result: 'Contact [EMAIL_1] and rotate ghp_123456789012345678901234567890123456 immediately.',
+				result:
+					'Contact [EMAIL_1] and rotate ghp_123456789012345678901234567890123456 immediately.',
 			});
 
 			expect(proc.resultEmitted).toBe(true);
