@@ -247,7 +247,8 @@ describe('EncoreTab', () => {
 				await vi.advanceTimersByTimeAsync(50);
 			});
 
-			expect(screen.getByText('Beta')).toBeInTheDocument();
+			const betaBadges = screen.getAllByText('Beta');
+			expect(betaBadges.length).toBeGreaterThanOrEqual(1);
 		});
 
 		it("should render subtitle description for Director's Notes", async () => {
@@ -1451,6 +1452,71 @@ describe('EncoreTab', () => {
 			});
 
 			expect(window.maestro.agents.getConfig).toHaveBeenCalledWith('codex');
+		});
+	});
+
+	describe('Maestro Cue feature section', () => {
+		it('should render Maestro Cue section with toggle', async () => {
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			expect(screen.getByText('Maestro Cue')).toBeInTheDocument();
+			expect(screen.getByText(/Event-driven automation/)).toBeInTheDocument();
+		});
+
+		it('should use theme accent for border when Maestro Cue is enabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: true },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// Find the Maestro Cue section container (second .rounded-lg.border div)
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			expect(cueSection).toHaveStyle({ borderColor: mockTheme.colors.accent });
+		});
+
+		it('should use theme border color when Maestro Cue is disabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: false },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			expect(cueSection).toHaveStyle({ borderColor: mockTheme.colors.border });
+		});
+
+		it('should use theme accent for toggle when Maestro Cue is enabled', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: true },
+			};
+
+			const { container } = render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// The toggle is a rounded-full div inside the Maestro Cue button
+			const sections = container.querySelectorAll('.rounded-lg.border');
+			const cueSection = Array.from(sections).find((el) => el.textContent?.includes('Maestro Cue'));
+			const toggle = cueSection?.querySelector('.rounded-full');
+			expect(toggle).toHaveStyle({ backgroundColor: mockTheme.colors.accent });
+		});
+
+		it('should call setEncoreFeatures with maestroCue toggled when clicked', async () => {
+			mockUseSettingsOverrides = {
+				encoreFeatures: { directorNotes: false, maestroCue: false },
+			};
+
+			render(<EncoreTab theme={mockTheme} isOpen={true} />);
+
+			// Click the Maestro Cue section button
+			const cueButton = screen.getByText('Maestro Cue').closest('button');
+			expect(cueButton).toBeTruthy();
+			fireEvent.click(cueButton!);
+
+			expect(mockSetEncoreFeatures).toHaveBeenCalledWith(
+				expect.objectContaining({ maestroCue: true })
+			);
 		});
 	});
 });

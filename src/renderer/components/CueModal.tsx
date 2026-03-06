@@ -456,14 +456,16 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 											onClick={handleToggle}
 											className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
 											style={{
-												backgroundColor: isEnabled ? `${CUE_TEAL}20` : theme.colors.bgActivity,
-												color: isEnabled ? CUE_TEAL : theme.colors.textDim,
+												backgroundColor: isEnabled
+													? `${theme.colors.accent}20`
+													: theme.colors.bgActivity,
+												color: isEnabled ? theme.colors.accent : theme.colors.textDim,
 											}}
 										>
 											<div
 												className="relative w-8 h-4 rounded-full transition-colors"
 												style={{
-													backgroundColor: isEnabled ? CUE_TEAL : theme.colors.border,
+													backgroundColor: isEnabled ? theme.colors.accent : theme.colors.border,
 												}}
 											>
 												<div
