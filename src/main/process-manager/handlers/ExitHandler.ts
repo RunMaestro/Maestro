@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import { logger } from '../../utils/logger';
 import { matchSshErrorPattern } from '../../parsers/error-patterns';
 import { aggregateModelUsage } from '../../parsers/usage-aggregator';
+import { runLlmGuardPost } from '../../security/llm-guard';
 import { cleanupTempFiles } from '../utils/imageUtils';
 import type { ManagedProcess, AgentError } from '../types';
 import type { DataBufferManager } from './DataBufferManager';
@@ -27,6 +28,32 @@ export class ExitHandler {
 		this.processes = deps.processes;
 		this.emitter = deps.emitter;
 		this.bufferManager = deps.bufferManager;
+	}
+
+	private applyOutputGuard(
+		sessionId: string,
+		managedProcess: ManagedProcess,
+		resultText: string
+	): string {
+		const guardState = managedProcess.llmGuardState;
+		if (!guardState?.config?.enabled) {
+			return resultText;
+		}
+
+		const guardResult = runLlmGuardPost(resultText, guardState.vault, guardState.config);
+		if (guardResult.findings.length > 0) {
+			logger.warn('[LLMGuard] Output findings detected', 'LLMGuard', {
+				sessionId,
+				toolType: managedProcess.toolType,
+				findings: guardResult.findings.map((finding) => finding.type),
+			});
+		}
+
+		if (guardResult.blocked) {
+			return `[Maestro LLM Guard blocked response] ${guardResult.blockReason ?? 'Sensitive content detected.'}`;
+		}
+
+		return guardResult.sanitizedResponse;
 	}
 
 	/**
@@ -90,7 +117,10 @@ export class ExitHandler {
 					managedProcess.resultEmitted = true;
 					const resultText = event.text || managedProcess.streamedText || '';
 					if (resultText) {
-						this.bufferManager.emitDataBuffered(sessionId, resultText);
+						this.bufferManager.emitDataBuffered(
+							sessionId,
+							this.applyOutputGuard(sessionId, managedProcess, resultText)
+						);
 					}
 				}
 			} catch {
@@ -111,7 +141,10 @@ export class ExitHandler {
 					streamedTextLength: managedProcess.streamedText.length,
 				}
 			);
-			this.bufferManager.emitDataBuffered(sessionId, managedProcess.streamedText);
+			this.bufferManager.emitDataBuffered(
+				sessionId,
+				this.applyOutputGuard(sessionId, managedProcess, managedProcess.streamedText)
+			);
 		}
 
 		// Check for errors using the parser (if not already emitted)
@@ -241,7 +274,11 @@ export class ExitHandler {
 			// Emit the result text (only once per process)
 			if (jsonResponse.result && !managedProcess.resultEmitted) {
 				managedProcess.resultEmitted = true;
-				this.emitter.emit('data', sessionId, jsonResponse.result);
+				this.emitter.emit(
+					'data',
+					sessionId,
+					this.applyOutputGuard(sessionId, managedProcess, jsonResponse.result)
+				);
 			}
 
 			// Emit session_id if present (only once per process)

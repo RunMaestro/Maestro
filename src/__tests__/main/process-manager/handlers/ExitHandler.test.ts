@@ -229,6 +229,60 @@ describe('ExitHandler', () => {
 
 			expect(dataEvents).toContain('Accumulated streaming text');
 		});
+
+		it('should sanitize guarded result text emitted from jsonBuffer at exit', () => {
+			const githubToken = 'ghp_abcdefghijklmnopqrstuvwxyz1234567890';
+			const resultJson =
+				'{"type":"result","text":"Reply to [EMAIL_1] and remove ghp_abcdefghijklmnopqrstuvwxyz1234567890"}';
+			const mockParser = createMockOutputParser({
+				parseJsonLine: vi.fn(() => ({
+					type: 'result',
+					text: `Reply to [EMAIL_1] and remove ${githubToken}`,
+				})) as unknown as AgentOutputParser['parseJsonLine'],
+				isResultMessage: vi.fn(() => true) as unknown as AgentOutputParser['isResultMessage'],
+			});
+
+			const proc = createMockProcess({
+				isStreamJsonMode: true,
+				isBatchMode: true,
+				jsonBuffer: resultJson,
+				outputParser: mockParser,
+				llmGuardState: {
+					config: {
+						enabled: true,
+						action: 'sanitize',
+						input: {
+							anonymizePii: true,
+							redactSecrets: true,
+							detectPromptInjection: true,
+						},
+						output: {
+							deanonymizePii: true,
+							redactSecrets: true,
+							detectPiiLeakage: true,
+						},
+						thresholds: {
+							promptInjection: 0.7,
+						},
+					},
+					vault: {
+						entries: [{ placeholder: '[EMAIL_1]', original: 'john@acme.com', type: 'PII_EMAIL' }],
+					},
+					inputFindings: [],
+				},
+			});
+			processes.set('test-session', proc);
+
+			const dataEvents: string[] = [];
+			emitter.on('data', (_sid: string, data: string) => dataEvents.push(data));
+
+			exitHandler.handleExit('test-session', 0);
+
+			expect(dataEvents[0]).toContain('john@acme.com');
+			expect(dataEvents[0]).toContain('[REDACTED_SECRET_GITHUB_TOKEN_1]');
+			expect(dataEvents[0]).not.toContain('[EMAIL_1]');
+			expect(dataEvents[0]).not.toContain(githubToken);
+		});
 	});
 
 	describe('final data buffer flush', () => {
