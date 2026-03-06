@@ -52,8 +52,6 @@
 							"history",
 							"context-management",
 							"document-graph",
-							"usage-dashboard",
-							"symphony",
 							"git-worktrees",
 							"group-chat",
 							"remote-control",
@@ -74,7 +72,7 @@
 					{
 						"group": "Encore Features",
 						"icon": "flask",
-						"pages": ["encore-features", "director-notes"]
+						"pages": ["encore-features", "director-notes", "usage-dashboard", "symphony"]
 					},
 					{
 						"group": "Providers & CLI",
