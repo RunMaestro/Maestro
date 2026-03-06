@@ -12,6 +12,7 @@ import { CueHelpModal } from './CueHelpModal';
 interface CueModalProps {
 	theme: Theme;
 	onClose: () => void;
+	cueShortcutKeys?: string[];
 }
 
 const CUE_TEAL = '#06b6d4';
@@ -275,7 +276,7 @@ function ActivityLog({ log, theme }: { log: CueRunResult[]; theme: Theme }) {
 	);
 }
 
-export function CueModal({ theme, onClose }: CueModalProps) {
+export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	const { registerLayer, unregisterLayer } = useLayerStack();
 	const layerIdRef = useRef<string>();
 	const onCloseRef = useRef(onClose);
@@ -517,7 +518,13 @@ export function CueModal({ theme, onClose }: CueModalProps) {
 					theme={theme}
 				/>
 			)}
-			{showHelp && <CueHelpModal theme={theme} onClose={() => setShowHelp(false)} />}
+			{showHelp && (
+				<CueHelpModal
+					theme={theme}
+					onClose={() => setShowHelp(false)}
+					cueShortcutKeys={cueShortcutKeys}
+				/>
+			)}
 		</>
 	);
 }

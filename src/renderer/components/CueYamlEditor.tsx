@@ -433,6 +433,7 @@ export function CueYamlEditor({
 					<ModalFooter
 						theme={theme}
 						onCancel={handleClose}
+						cancelLabel="Exit"
 						onConfirm={handleSave}
 						confirmLabel="Save"
 						confirmDisabled={!isValid || !isDirty || chatBusy}

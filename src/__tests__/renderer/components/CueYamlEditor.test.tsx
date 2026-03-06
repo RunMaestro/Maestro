@@ -6,7 +6,7 @@
  * - YAML template shown when no file exists
  * - Real-time validation with error display
  * - AI assist chat with agent spawn and conversation resume
- * - Save/Cancel functionality with dirty state
+ * - Save/Exit functionality with dirty state
  * - Line numbers gutter
  */
 
@@ -39,16 +39,18 @@ vi.mock('../../../renderer/components/ui/Modal', () => ({
 		onCancel,
 		onConfirm,
 		confirmLabel,
+		cancelLabel = 'Cancel',
 		confirmDisabled,
 	}: {
 		onCancel: () => void;
 		onConfirm: () => void;
 		confirmLabel: string;
+		cancelLabel?: string;
 		confirmDisabled: boolean;
 		theme: Theme;
 	}) => (
 		<>
-			<button onClick={onCancel}>Cancel</button>
+			<button onClick={onCancel}>{cancelLabel}</button>
 			<button onClick={onConfirm} disabled={confirmDisabled}>
 				{confirmLabel}
 			</button>
@@ -658,19 +660,19 @@ describe('CueYamlEditor', () => {
 			expect(defaultProps.onClose).toHaveBeenCalledOnce();
 		});
 
-		it('should call onClose when Cancel is clicked and content is not dirty', async () => {
+		it('should call onClose when Exit is clicked and content is not dirty', async () => {
 			render(<CueYamlEditor {...defaultProps} />);
 
 			await waitFor(() => {
-				expect(screen.getByText('Cancel')).toBeInTheDocument();
+				expect(screen.getByText('Exit')).toBeInTheDocument();
 			});
 
-			fireEvent.click(screen.getByText('Cancel'));
+			fireEvent.click(screen.getByText('Exit'));
 
 			expect(defaultProps.onClose).toHaveBeenCalledOnce();
 		});
 
-		it('should prompt for confirmation when Cancel is clicked with dirty content', async () => {
+		it('should prompt for confirmation when Exit is clicked with dirty content', async () => {
 			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
 			mockReadYaml.mockResolvedValue('original');
 
@@ -684,7 +686,7 @@ describe('CueYamlEditor', () => {
 				target: { value: 'modified' },
 			});
 
-			fireEvent.click(screen.getByText('Cancel'));
+			fireEvent.click(screen.getByText('Exit'));
 
 			expect(mockConfirm).toHaveBeenCalledWith('You have unsaved changes. Discard them?');
 			expect(defaultProps.onClose).not.toHaveBeenCalled();
@@ -692,7 +694,7 @@ describe('CueYamlEditor', () => {
 			mockConfirm.mockRestore();
 		});
 
-		it('should close when user confirms discard on Cancel', async () => {
+		it('should close when user confirms discard on Exit', async () => {
 			const mockConfirm = vi.spyOn(window, 'confirm').mockReturnValue(true);
 			mockReadYaml.mockResolvedValue('original');
 
@@ -706,7 +708,7 @@ describe('CueYamlEditor', () => {
 				target: { value: 'modified' },
 			});
 
-			fireEvent.click(screen.getByText('Cancel'));
+			fireEvent.click(screen.getByText('Exit'));
 
 			expect(defaultProps.onClose).toHaveBeenCalledOnce();
 
