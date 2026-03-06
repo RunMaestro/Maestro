@@ -370,6 +370,37 @@ describe('CueModal', () => {
 		});
 	});
 
+	describe('toggle styling', () => {
+		it('should use theme accent color for enabled toggle', () => {
+			mockUseCueReturn = {
+				...defaultUseCueReturn,
+				sessions: [mockSession],
+			};
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			const enabledButton = screen.getByText('Enabled').closest('button');
+			expect(enabledButton).toHaveStyle({
+				color: mockTheme.colors.accent,
+			});
+
+			// The toggle pill should use theme accent
+			const togglePill = enabledButton?.querySelector('.rounded-full');
+			expect(togglePill).toHaveStyle({
+				backgroundColor: mockTheme.colors.accent,
+			});
+		});
+
+		it('should use dim colors for disabled toggle', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			const disabledButton = screen.getByText('Disabled').closest('button');
+			expect(disabledButton).toHaveStyle({
+				color: mockTheme.colors.textDim,
+			});
+		});
+	});
+
 	describe('close behavior', () => {
 		it('should call onClose when close button is clicked', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);

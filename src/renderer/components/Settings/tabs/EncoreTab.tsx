@@ -515,8 +515,8 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			<div
 				className="rounded-lg border"
 				style={{
-					borderColor: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.border,
-					backgroundColor: encoreFeatures.maestroCue ? '#06b6d408' : 'transparent',
+					borderColor: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.border,
+					backgroundColor: encoreFeatures.maestroCue ? `${theme.colors.accent}08` : 'transparent',
 				}}
 			>
 				<button
@@ -532,7 +532,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 						<Zap
 							className="w-5 h-5"
 							style={{
-								color: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.textDim,
+								color: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.textDim,
 							}}
 						/>
 						<div>
@@ -560,7 +560,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 					<div
 						className={`relative w-10 h-5 rounded-full transition-colors ${encoreFeatures.maestroCue ? '' : 'opacity-50'}`}
 						style={{
-							backgroundColor: encoreFeatures.maestroCue ? '#06b6d4' : theme.colors.border,
+							backgroundColor: encoreFeatures.maestroCue ? theme.colors.accent : theme.colors.border,
 						}}
 					>
 						<div
