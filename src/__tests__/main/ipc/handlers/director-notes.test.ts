@@ -118,6 +118,7 @@ describe('director-notes IPC handlers', () => {
 		registerDirectorNotesHandlers({
 			getProcessManager: () => mockProcessManager,
 			getAgentDetector: () => mockAgentDetector,
+			agentConfigsStore: { get: vi.fn(() => ({})) } as any,
 		});
 	});
 

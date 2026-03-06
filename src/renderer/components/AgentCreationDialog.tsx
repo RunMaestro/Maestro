@@ -28,6 +28,7 @@ import type { RegisteredRepository, SymphonyIssue } from '../../shared/symphony-
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { AgentConfigPanel } from './shared/AgentConfigPanel';
+import { useAgentConfiguration } from '../hooks/agent/useAgentConfiguration';
 
 // ============================================================================
 // Types
@@ -79,9 +80,24 @@ export function AgentCreationDialog({
 	const onCloseRef = useRef(onClose);
 	onCloseRef.current = onClose;
 
-	// State
-	const [agents, setAgents] = useState<AgentConfig[]>([]);
-	const [isLoadingAgents, setIsLoadingAgents] = useState(true);
+	// Filter function: only agents that support batch mode (required for Symphony)
+	const symphonyAgentFilter = useCallback((agent: AgentConfig) => {
+		return (
+			agent.id !== 'terminal' &&
+			agent.available &&
+			!agent.hidden &&
+			agent.capabilities?.supportsBatchMode === true
+		);
+	}, []);
+
+	// Centralized detection + filtering via shared hook
+	const ac = useAgentConfiguration({
+		enabled: isOpen,
+		agentFilter: symphonyAgentFilter,
+		autoSelect: false,
+	});
+
+	// Local state (not handled by the hook)
 	const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
 	const [expandedAgent, setExpandedAgent] = useState<string | null>(null);
 	const [sessionName, setSessionName] = useState('');
@@ -99,16 +115,6 @@ export function AgentCreationDialog({
 	const [agentConfigs, setAgentConfigs] = useState<Record<string, Record<string, any>>>({});
 	const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
 	const [loadingModels, setLoadingModels] = useState<Record<string, boolean>>({});
-
-	// Filter function: only agents that support batch mode (required for Symphony)
-	const symphonyAgentFilter = useCallback((agent: AgentConfig) => {
-		return (
-			agent.id !== 'terminal' &&
-			agent.available &&
-			!agent.hidden &&
-			agent.capabilities?.supportsBatchMode === true
-		);
-	}, []);
 
 	// Reset all state when dialog opens
 	useEffect(() => {
@@ -137,29 +143,18 @@ export function AgentCreationDialog({
 		}
 	}, [isOpen, repo, issue]);
 
-	// Fetch available agents
+	// Auto-select first compatible agent when detection completes,
+	// and clear stale selection if the selected agent is no longer available
 	useEffect(() => {
-		if (isOpen) {
-			setIsLoadingAgents(true);
-			window.maestro.agents
-				.detect()
-				.then((detectedAgents: AgentConfig[]) => {
-					setAgents(detectedAgents);
-					// Auto-select first compatible agent
-					const compatibleAgents = detectedAgents.filter(symphonyAgentFilter);
-					if (compatibleAgents.length > 0 && !selectedAgent) {
-						setSelectedAgent(compatibleAgents[0].id);
-					}
-				})
-				.catch((err: Error) => {
-					setError('Failed to detect available agents');
-					console.error('Agent detection failed:', err);
-				})
-				.finally(() => {
-					setIsLoadingAgents(false);
-				});
+		if (ac.isDetecting) return;
+		if (ac.detectedAgents.length === 0) {
+			setSelectedAgent(null);
+			return;
 		}
-	}, [isOpen, symphonyAgentFilter]);
+		if (!selectedAgent || !ac.detectedAgents.some((a) => a.id === selectedAgent)) {
+			setSelectedAgent(ac.detectedAgents[0].id);
+		}
+	}, [ac.isDetecting, ac.detectedAgents, selectedAgent]);
 
 	// Load models for an agent
 	const loadModelsForAgent = useCallback(
@@ -179,21 +174,20 @@ export function AgentCreationDialog({
 		[availableModels]
 	);
 
-	// Refresh single agent detection
-	const handleRefreshAgent = useCallback(async (agentId: string) => {
-		setRefreshingAgent(agentId);
-		try {
-			const result = await window.maestro.agents.refresh(agentId);
-			if (result?.agents) {
-				// Update all agents with the refreshed data
-				setAgents(result.agents);
+	// Refresh single agent detection (re-detects all agents via shared hook)
+	const handleRefreshAgent = useCallback(
+		async (_agentId: string) => {
+			setRefreshingAgent(_agentId);
+			try {
+				await ac.refreshAgent();
+			} catch (err) {
+				console.error('Failed to refresh agent:', err);
+			} finally {
+				setRefreshingAgent(null);
 			}
-		} catch (err) {
-			console.error('Failed to refresh agent:', err);
-		} finally {
-			setRefreshingAgent(null);
-		}
-	}, []);
+		},
+		[ac.refreshAgent]
+	);
 
 	// Layer stack registration
 	useEffect(() => {
@@ -226,12 +220,12 @@ export function AgentCreationDialog({
 			setExpandedAgent((prev) => (prev === agentId ? null : agentId));
 
 			// Load models if agent supports model selection
-			const agent = agents.find((a) => a.id === agentId);
+			const agent = ac.detectedAgents.find((a) => a.id === agentId);
 			if (agent?.capabilities?.supportsModelSelection) {
 				loadModelsForAgent(agentId);
 			}
 		},
-		[agents, loadModelsForAgent]
+		[ac.detectedAgents, loadModelsForAgent]
 	);
 
 	// Handle create
@@ -277,9 +271,6 @@ export function AgentCreationDialog({
 	]);
 
 	if (!isOpen) return null;
-
-	// Get filtered agents
-	const filteredAgents = agents.filter(symphonyAgentFilter);
 
 	const modalContent = (
 		<div
@@ -347,11 +338,11 @@ export function AgentCreationDialog({
 							Select AI Provider
 						</label>
 
-						{isLoadingAgents ? (
+						{ac.isDetecting ? (
 							<div className="flex items-center justify-center py-8">
 								<Loader2 className="w-6 h-6 animate-spin" style={{ color: theme.colors.accent }} />
 							</div>
-						) : filteredAgents.length === 0 ? (
+						) : ac.detectedAgents.length === 0 ? (
 							<div className="text-center py-4" style={{ color: theme.colors.textDim }}>
 								<p>No compatible AI agents detected.</p>
 								<p className="text-xs mt-1">
@@ -361,7 +352,7 @@ export function AgentCreationDialog({
 							</div>
 						) : (
 							<div className="space-y-2">
-								{filteredAgents.map((agent) => {
+								{ac.detectedAgents.map((agent) => {
 									const isSelected = selectedAgent === agent.id;
 									const isExpanded = expandedAgent === agent.id;
 									const isBetaAgent = agent.id === 'codex' || agent.id === 'opencode';
@@ -377,8 +368,17 @@ export function AgentCreationDialog({
 										>
 											{/* Agent header row */}
 											<div
+												role="button"
+												tabIndex={0}
 												onClick={() => handleSelectAgent(agent.id)}
-												className="w-full text-left px-3 py-2 flex items-center justify-between hover:bg-white/5 cursor-pointer"
+												onKeyDown={(e) => {
+													if (e.target !== e.currentTarget) return;
+													if (e.key === 'Enter' || e.key === ' ') {
+														e.preventDefault();
+														handleSelectAgent(agent.id);
+													}
+												}}
+												className="w-full text-left px-3 py-2 flex items-center justify-between hover:bg-white/5 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-offset-1"
 												style={{ color: theme.colors.textMain }}
 											>
 												<div className="flex items-center gap-2">
@@ -615,7 +615,7 @@ export function AgentCreationDialog({
 					<button
 						onClick={handleCreate}
 						disabled={
-							!selectedAgent || !sessionName.trim() || isCreating || filteredAgents.length === 0
+							!selectedAgent || !sessionName.trim() || isCreating || ac.detectedAgents.length === 0
 						}
 						className="px-4 py-2 rounded font-semibold text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
 						style={{ backgroundColor: theme.colors.accent, color: theme.colors.accentForeground }}

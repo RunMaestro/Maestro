@@ -5,9 +5,9 @@
  * Director's Notes configuration (provider selection, agent config, lookback period).
  */
 
-import { useState, useEffect, useRef } from 'react';
 import { Clapperboard, ChevronDown, Settings, Check } from 'lucide-react';
 import { useSettings } from '../../../hooks';
+import { useAgentConfiguration } from '../../../hooks/agent/useAgentConfiguration';
 import type { Theme, AgentConfig, ToolType } from '../../../types';
 import { AgentConfigPanel } from '../../shared/AgentConfigPanel';
 import { AGENT_TILES } from '../../Wizard/screens/AgentSelectionScreen';
@@ -21,83 +21,26 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 	const { encoreFeatures, setEncoreFeatures, directorNotesSettings, setDirectorNotesSettings } =
 		useSettings();
 
-	// Director's Notes agent configuration state
-	const [dnDetectedAgents, setDnDetectedAgents] = useState<AgentConfig[]>([]);
-	const [dnIsDetecting, setDnIsDetecting] = useState(false);
-	const [dnIsConfigExpanded, setDnIsConfigExpanded] = useState(false);
-	const [dnCustomPath, setDnCustomPath] = useState(directorNotesSettings.customPath || '');
-	const [dnCustomArgs, setDnCustomArgs] = useState(directorNotesSettings.customArgs || '');
-	const [dnCustomEnvVars, setDnCustomEnvVars] = useState<Record<string, string>>(
-		directorNotesSettings.customEnvVars || {}
-	);
-	const [dnAgentConfig, setDnAgentConfig] = useState<Record<string, any>>({});
-	const [dnAvailableModels, setDnAvailableModels] = useState<string[]>([]);
-	const [dnLoadingModels, setDnLoadingModels] = useState(false);
-	const [dnRefreshingAgent, setDnRefreshingAgent] = useState(false);
-	const dnAgentConfigRef = useRef<Record<string, any>>({});
-
-	// Detect agents when Encore Features tab is active (needed for Director's Notes config)
-	useEffect(() => {
-		if (!isOpen || !encoreFeatures.directorNotes) return;
-		let cancelled = false;
-		setDnIsDetecting(true);
-		window.maestro.agents
-			.detect()
-			.then((agents) => {
-				if (cancelled) return;
-				const available = agents.filter((a: AgentConfig) => a.available && !a.hidden);
-				setDnDetectedAgents(available);
-				setDnIsDetecting(false);
-			})
-			.catch(() => {
-				if (!cancelled) setDnIsDetecting(false);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [isOpen, encoreFeatures.directorNotes]);
-
-	// Sync local Director's Notes custom config state from settings when tab opens
-	useEffect(() => {
-		setDnCustomPath(directorNotesSettings.customPath || '');
-		setDnCustomArgs(directorNotesSettings.customArgs || '');
-		setDnCustomEnvVars(directorNotesSettings.customEnvVars || {});
-		setDnIsConfigExpanded(false);
-	}, []);
-
-	// Load agent config when expanding Director's Notes configuration panel
-	useEffect(() => {
-		if (dnIsConfigExpanded && directorNotesSettings.provider) {
-			const agentId = directorNotesSettings.provider;
-			window.maestro.agents.getConfig(agentId).then((config) => {
-				setDnAgentConfig(config || {});
-				dnAgentConfigRef.current = config || {};
-			});
-			// Load models if agent supports it
-			const agent = dnDetectedAgents.find((a) => a.id === agentId);
-			if (agent?.capabilities?.supportsModelSelection) {
-				setDnLoadingModels(true);
-				window.maestro.agents
-					.getModels(agentId)
-					.then((models) => {
-						setDnAvailableModels(models);
-					})
-					.catch(() => {})
-					.finally(() => setDnLoadingModels(false));
-			}
-		}
-	}, [dnIsConfigExpanded, directorNotesSettings.provider, dnDetectedAgents]);
+	// Centralized agent configuration via shared hook
+	const ac = useAgentConfiguration({
+		enabled: isOpen && encoreFeatures.directorNotes,
+		autoSelect: false,
+		initialValues: {
+			selectedAgent: directorNotesSettings.provider,
+			customPath: directorNotesSettings.customPath || '',
+			customArgs: directorNotesSettings.customArgs || '',
+			customEnvVars: directorNotesSettings.customEnvVars || {},
+		},
+	});
 
 	const dnAvailableTiles = AGENT_TILES.filter((tile) => {
 		if (!tile.supported) return false;
-		return dnDetectedAgents.some((a: AgentConfig) => a.id === tile.id);
+		return ac.detectedAgents.some((a: AgentConfig) => a.id === tile.id);
 	});
-	const dnSelectedAgentConfig = dnDetectedAgents.find(
+	const dnSelectedAgentConfig = ac.detectedAgents.find(
 		(a) => a.id === directorNotesSettings.provider
 	);
 	const dnSelectedTile = AGENT_TILES.find((t) => t.id === directorNotesSettings.provider);
-	const dnHasCustomization =
-		dnCustomPath || dnCustomArgs || Object.keys(dnCustomEnvVars).length > 0;
 
 	const handleDnAgentChange = (agentId: ToolType) => {
 		setDirectorNotesSettings({
@@ -107,60 +50,15 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 			customArgs: undefined,
 			customEnvVars: undefined,
 		});
-		setDnCustomPath('');
-		setDnCustomArgs('');
-		setDnCustomEnvVars({});
-		setDnAgentConfig({});
-		dnAgentConfigRef.current = {};
-		if (dnIsConfigExpanded) {
-			window.maestro.agents.getConfig(agentId).then((config) => {
-				setDnAgentConfig(config || {});
-				dnAgentConfigRef.current = config || {};
-			});
-			const agent = dnDetectedAgents.find((a) => a.id === agentId);
-			if (agent?.capabilities?.supportsModelSelection) {
-				setDnLoadingModels(true);
-				window.maestro.agents
-					.getModels(agentId)
-					.then((models) => {
-						setDnAvailableModels(models);
-					})
-					.catch(() => {})
-					.finally(() => setDnLoadingModels(false));
-			}
-		}
-	};
-
-	const handleDnRefreshAgent = async () => {
-		setDnRefreshingAgent(true);
-		try {
-			const agents = await window.maestro.agents.detect();
-			const available = agents.filter((a: AgentConfig) => a.available && !a.hidden);
-			setDnDetectedAgents(available);
-		} finally {
-			setDnRefreshingAgent(false);
-		}
-	};
-
-	const handleDnRefreshModels = async () => {
-		if (!directorNotesSettings.provider) return;
-		setDnLoadingModels(true);
-		try {
-			const models = await window.maestro.agents.getModels(directorNotesSettings.provider, true);
-			setDnAvailableModels(models);
-		} catch (err) {
-			console.error('Failed to refresh models:', err);
-		} finally {
-			setDnLoadingModels(false);
-		}
+		ac.handleAgentChange(agentId);
 	};
 
 	const persistDnCustomConfig = () => {
 		setDirectorNotesSettings({
 			...directorNotesSettings,
-			customPath: dnCustomPath || undefined,
-			customArgs: dnCustomArgs || undefined,
-			customEnvVars: Object.keys(dnCustomEnvVars).length > 0 ? dnCustomEnvVars : undefined,
+			customPath: ac.customPath || undefined,
+			customArgs: ac.customArgs || undefined,
+			customEnvVars: Object.keys(ac.customEnvVars).length > 0 ? ac.customEnvVars : undefined,
 		});
 	};
 
@@ -259,7 +157,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								Synopsis Provider
 							</div>
 
-							{dnIsDetecting ? (
+							{ac.isDetecting ? (
 								<div className="flex items-center gap-2 py-2">
 									<div
 										className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
@@ -311,12 +209,12 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									</div>
 
 									<button
-										onClick={() => setDnIsConfigExpanded((prev) => !prev)}
+										onClick={ac.toggleConfigExpanded}
 										className="flex items-center gap-1.5 px-3 py-2 rounded-lg border transition-colors hover:bg-white/5"
 										style={{
-											borderColor: dnIsConfigExpanded ? theme.colors.accent : theme.colors.border,
-											color: dnIsConfigExpanded ? theme.colors.accent : theme.colors.textDim,
-											backgroundColor: dnIsConfigExpanded
+											borderColor: ac.isConfigExpanded ? theme.colors.accent : theme.colors.border,
+											color: ac.isConfigExpanded ? theme.colors.accent : theme.colors.textDim,
+											backgroundColor: ac.isConfigExpanded
 												? `${theme.colors.accent}10`
 												: 'transparent',
 										}}
@@ -324,7 +222,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									>
 										<Settings className="w-4 h-4" />
 										<span className="text-sm">Customize</span>
-										{dnHasCustomization && (
+										{ac.hasCustomization && (
 											<span
 												className="w-2 h-2 rounded-full"
 												style={{ backgroundColor: theme.colors.accent }}
@@ -334,7 +232,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 								</div>
 							)}
 
-							{dnIsConfigExpanded && dnSelectedAgentConfig && dnSelectedTile && (
+							{ac.isConfigExpanded && dnSelectedAgentConfig && dnSelectedTile && (
 								<div
 									className="mt-3 p-4 rounded-lg border"
 									style={{
@@ -346,7 +244,7 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 										<span className="text-xs font-medium" style={{ color: theme.colors.textDim }}>
 											{dnSelectedTile.name} Configuration
 										</span>
-										{dnHasCustomization && (
+										{ac.hasCustomization && (
 											<div className="flex items-center gap-1">
 												<Check className="w-3 h-3" style={{ color: theme.colors.success }} />
 												<span className="text-xs" style={{ color: theme.colors.success }}>
@@ -358,70 +256,67 @@ export function EncoreTab({ theme, isOpen }: EncoreTabProps) {
 									<AgentConfigPanel
 										theme={theme}
 										agent={dnSelectedAgentConfig}
-										customPath={dnCustomPath}
-										onCustomPathChange={setDnCustomPath}
+										customPath={ac.customPath}
+										onCustomPathChange={ac.setCustomPath}
 										onCustomPathBlur={persistDnCustomConfig}
 										onCustomPathClear={() => {
-											setDnCustomPath('');
+											ac.setCustomPath('');
 											setDirectorNotesSettings({
 												...directorNotesSettings,
 												customPath: undefined,
 											});
 										}}
-										customArgs={dnCustomArgs}
-										onCustomArgsChange={setDnCustomArgs}
+										customArgs={ac.customArgs}
+										onCustomArgsChange={ac.setCustomArgs}
 										onCustomArgsBlur={persistDnCustomConfig}
 										onCustomArgsClear={() => {
-											setDnCustomArgs('');
+											ac.setCustomArgs('');
 											setDirectorNotesSettings({
 												...directorNotesSettings,
 												customArgs: undefined,
 											});
 										}}
-										customEnvVars={dnCustomEnvVars}
+										customEnvVars={ac.customEnvVars}
 										onEnvVarKeyChange={(oldKey, newKey, value) => {
-											const newVars = { ...dnCustomEnvVars };
+											const newVars = { ...ac.customEnvVars };
 											delete newVars[oldKey];
 											newVars[newKey] = value;
-											setDnCustomEnvVars(newVars);
+											ac.setCustomEnvVars(newVars);
 										}}
 										onEnvVarValueChange={(key, value) => {
-											setDnCustomEnvVars({ ...dnCustomEnvVars, [key]: value });
+											ac.setCustomEnvVars({ ...ac.customEnvVars, [key]: value });
 										}}
 										onEnvVarRemove={(key) => {
-											const newVars = { ...dnCustomEnvVars };
+											const newVars = { ...ac.customEnvVars };
 											delete newVars[key];
-											setDnCustomEnvVars(newVars);
+											ac.setCustomEnvVars(newVars);
 										}}
 										onEnvVarAdd={() => {
 											let newKey = 'NEW_VAR';
 											let counter = 1;
-											while (dnCustomEnvVars[newKey]) {
+											while (ac.customEnvVars[newKey]) {
 												newKey = `NEW_VAR_${counter}`;
 												counter++;
 											}
-											setDnCustomEnvVars({ ...dnCustomEnvVars, [newKey]: '' });
+											ac.setCustomEnvVars({ ...ac.customEnvVars, [newKey]: '' });
 										}}
 										onEnvVarsBlur={persistDnCustomConfig}
-										agentConfig={dnAgentConfig}
+										agentConfig={ac.agentConfig}
 										onConfigChange={(key, value) => {
-											const newConfig = { ...dnAgentConfig, [key]: value };
-											setDnAgentConfig(newConfig);
-											dnAgentConfigRef.current = newConfig;
+											const newConfig = { ...ac.agentConfig, [key]: value };
+											ac.setAgentConfig(newConfig);
+											ac.agentConfigRef.current = newConfig;
 										}}
 										onConfigBlur={async () => {
 											if (directorNotesSettings.provider) {
-												await window.maestro.agents.setConfig(
-													directorNotesSettings.provider,
-													dnAgentConfigRef.current
-												);
+												await ac.saveAgentConfig(directorNotesSettings.provider);
 											}
 										}}
-										availableModels={dnAvailableModels}
-										loadingModels={dnLoadingModels}
-										onRefreshModels={handleDnRefreshModels}
-										onRefreshAgent={handleDnRefreshAgent}
-										refreshingAgent={dnRefreshingAgent}
+										availableModels={ac.availableModels}
+										loadingModels={ac.loadingModels}
+										onRefreshModels={ac.refreshModels}
+										onRefreshAgent={ac.refreshAgent}
+										refreshingAgent={ac.refreshingAgent}
 										compact
 										showBuiltInEnvVars
 									/>

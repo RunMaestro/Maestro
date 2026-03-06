@@ -14,7 +14,7 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from './logger';
-import { buildAgentArgs } from './agent-args';
+import { buildAgentArgs, applyAgentConfigOverrides } from './agent-args';
 import type { AgentDetector } from '../agents';
 
 const LOG_CONTEXT = '[ContextGroomer]';
@@ -39,10 +39,8 @@ export interface GroomingProcessManager {
 			remoteId: string | null;
 			workingDirOverride?: string;
 		};
-		// Custom agent configuration
-		sessionCustomPath?: string;
-		sessionCustomArgs?: string;
-		sessionCustomEnvVars?: Record<string, string>;
+		// Custom environment variables (resolved via applyAgentConfigOverrides)
+		customEnvVars?: Record<string, string>;
 	}): { pid: number; success?: boolean } | null;
 	on(event: string, handler: (...args: unknown[]) => void): void;
 	off(event: string, handler: (...args: unknown[]) => void): void;
@@ -129,6 +127,8 @@ export interface GroomContextOptions {
 	sessionCustomArgs?: string;
 	/** Custom environment variables for the agent */
 	sessionCustomEnvVars?: Record<string, string>;
+	/** Agent-level config values (from agent config store) for override resolution */
+	agentConfigValues?: Record<string, any>;
 }
 
 /**
@@ -170,6 +170,7 @@ export async function groomContext(
 		sessionCustomPath,
 		sessionCustomArgs,
 		sessionCustomEnvVars,
+		agentConfigValues,
 	} = options;
 
 	const groomerSessionId = `groomer-${uuidv4()}`;
@@ -192,7 +193,7 @@ export async function groomContext(
 	}
 
 	// Build args using the unified buildAgentArgs utility
-	const finalArgs = buildAgentArgs(agent, {
+	const baseArgs = buildAgentArgs(agent, {
 		baseArgs: agent.args || [],
 		prompt: prompt,
 		cwd: projectRoot,
@@ -201,6 +202,17 @@ export async function groomContext(
 		yoloMode: false,
 		agentSessionId,
 	});
+
+	// Apply agent config overrides (model, custom args, custom env vars)
+	// This merges agent-level config with session-level overrides
+	const configResolution = applyAgentConfigOverrides(agent, baseArgs, {
+		agentConfigValues: agentConfigValues ?? {},
+		sessionCustomArgs,
+		sessionCustomEnvVars,
+	});
+	const resolvedArgs = configResolution.args;
+	const resolvedEnvVars = configResolution.effectiveCustomEnvVars;
+	const resolvedCommand = sessionCustomPath || agent.command;
 
 	// Create a promise that collects the response
 	return new Promise<GroomContextResult>((resolve, reject) => {
@@ -322,16 +334,15 @@ export async function groomContext(
 			sessionId: groomerSessionId,
 			toolType: agentType,
 			cwd: projectRoot,
-			command: agent.command,
-			args: finalArgs,
+			command: resolvedCommand,
+			args: resolvedArgs,
 			prompt: prompt, // Triggers batch mode (no PTY)
 			promptArgs: agent.promptArgs, // For agents using flag-based prompt (e.g., OpenCode -p)
 			noPromptSeparator: agent.noPromptSeparator,
 			// Pass SSH config for remote execution support
 			sessionSshRemoteConfig,
-			sessionCustomPath,
-			sessionCustomArgs,
-			sessionCustomEnvVars,
+			// Pass resolved env vars (merged from agent defaults + agent config + session overrides)
+			customEnvVars: resolvedEnvVars,
 		});
 
 		if (!spawnResult || spawnResult.pid <= 0) {

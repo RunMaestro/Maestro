@@ -482,6 +482,7 @@ function setupIpcHandlers() {
 	registerDirectorNotesHandlers({
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
 	});
 
 	// Agent management operations - extracted to src/main/ipc/handlers/agents.ts
@@ -578,6 +579,7 @@ function setupIpcHandlers() {
 		getMainWindow: () => mainWindow,
 		getProcessManager: () => processManager,
 		getAgentDetector: () => agentDetector,
+		agentConfigsStore,
 	});
 
 	// Register Marketplace handlers for fetching and importing playbooks

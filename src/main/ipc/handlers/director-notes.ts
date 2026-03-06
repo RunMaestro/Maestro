@@ -26,6 +26,8 @@ import { groomContext } from '../../utils/context-groomer';
 import { directorNotesPrompt } from '../../../prompts';
 import type { ProcessManager } from '../../process-manager';
 import type { AgentDetector } from '../../agents';
+import type Store from 'electron-store';
+import type { AgentConfigsData } from '../../stores/types';
 
 const LOG_CONTEXT = '[DirectorNotes]';
 
@@ -73,6 +75,7 @@ function buildSessionNameMap(): Map<string, string> {
 export interface DirectorNotesHandlerDependencies {
 	getProcessManager: () => ProcessManager | null;
 	getAgentDetector: () => AgentDetector | null;
+	agentConfigsStore: Store<AgentConfigsData>;
 }
 
 export interface UnifiedHistoryOptions {
@@ -128,7 +131,7 @@ export interface SynopsisResult {
  * - AI synopsis generation via batch-mode agent
  */
 export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependencies): void {
-	const { getProcessManager, getAgentDetector } = deps;
+	const { getProcessManager, getAgentDetector, agentConfigsStore } = deps;
 	const historyManager = getHistoryManager();
 
 	// Aggregate history from all sessions with pagination support
@@ -309,6 +312,10 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 				);
 
 				try {
+					// Look up agent-level config values for override resolution
+					const allConfigs = agentConfigsStore.get('configs', {});
+					const dnAgentConfigValues = allConfigs[options.provider] || {};
+
 					const result = await groomContext(
 						{
 							projectRoot: process.cwd(),
@@ -318,6 +325,7 @@ export function registerDirectorNotesHandlers(deps: DirectorNotesHandlerDependen
 							sessionCustomPath: options.customPath,
 							sessionCustomArgs: options.customArgs,
 							sessionCustomEnvVars: options.customEnvVars,
+							agentConfigValues: dnAgentConfigValues,
 						},
 						processManager,
 						agentDetector

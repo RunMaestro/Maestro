@@ -114,3 +114,10 @@ export type { UseQueueHandlersReturn } from './useQueueHandlers';
 // Queue processing (execution queue processing and startup recovery)
 export { useQueueProcessing } from './useQueueProcessing';
 export type { UseQueueProcessingDeps, UseQueueProcessingReturn } from './useQueueProcessing';
+
+// Agent configuration state management (detection, config, models, SSH)
+export { useAgentConfiguration } from './useAgentConfiguration';
+export type {
+	UseAgentConfigurationOptions,
+	UseAgentConfigurationReturn,
+} from './useAgentConfiguration';
