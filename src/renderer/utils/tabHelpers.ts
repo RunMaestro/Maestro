@@ -441,6 +441,8 @@ export function closeTab(
 
 	// If we just closed the last tab, create a fresh new tab to replace it
 	let newActiveTabId = session.activeTabId;
+	// Fallback unified tab ref when the closed tab was active — may be terminal or file
+	let fallbackRef: UnifiedTabRef | null = null;
 	if (updatedTabs.length === 0) {
 		const freshTab: AITab = {
 			id: generateId(),
@@ -478,10 +480,25 @@ export function closeTab(
 				newActiveTabId = updatedTabs[newIndex].id;
 			}
 		} else {
-			// Normal mode: select the tab to the left (previous tab)
-			// If closing the first tab (index 0), select the new first tab
-			const newIndex = Math.max(0, tabIndex - 1);
-			newActiveTabId = updatedTabs[newIndex].id;
+			// Normal mode: use unifiedTabOrder to find the correct left neighbor.
+			// This respects the visual tab order which includes terminal and file tabs —
+			// without this, closing an AI tab that sits to the right of a terminal tab
+			// would fall back to a random AI tab instead of the adjacent terminal tab.
+			const unifiedOrder = session.unifiedTabOrder || [];
+			const closedUnifiedIndex = unifiedOrder.findIndex(
+				(ref) => ref.type === 'ai' && ref.id === tabId
+			);
+			const remainingUnified = unifiedOrder.filter(
+				(ref) => !(ref.type === 'ai' && ref.id === tabId)
+			);
+			if (closedUnifiedIndex !== -1 && remainingUnified.length > 0) {
+				const fallbackIndex = Math.max(0, closedUnifiedIndex - 1);
+				fallbackRef = remainingUnified[Math.min(fallbackIndex, remainingUnified.length - 1)];
+			} else {
+				// unifiedTabOrder out of sync — fall back to aiTabs position
+				const newIndex = Math.max(0, tabIndex - 1);
+				newActiveTabId = updatedTabs[newIndex].id;
+			}
 		}
 	}
 
@@ -504,14 +521,49 @@ export function closeTab(
 		finalUnifiedTabOrder = [...updatedUnifiedTabOrder, freshTabRef];
 	}
 
-	// Create updated session
-	const updatedSession: Session = {
-		...session,
-		aiTabs: updatedTabs,
-		activeTabId: newActiveTabId,
-		closedTabHistory: updatedHistory,
-		unifiedTabOrder: finalUnifiedTabOrder,
-	};
+	// Create updated session.
+	// When the fallback is a non-AI tab (terminal or file), we must update the corresponding
+	// active ID and inputMode so the UI switches to the correct view.
+	const updatedSession: Session =
+		fallbackRef?.type === 'terminal'
+			? {
+					...session,
+					aiTabs: updatedTabs,
+					// Keep activeTabId as-is; the terminal tab is now active
+					activeTerminalTabId: fallbackRef.id,
+					activeFileTabId: null,
+					inputMode: 'terminal',
+					closedTabHistory: updatedHistory,
+					unifiedTabOrder: finalUnifiedTabOrder,
+				}
+			: fallbackRef?.type === 'file'
+				? {
+						...session,
+						aiTabs: updatedTabs,
+						activeFileTabId: fallbackRef.id,
+						activeTerminalTabId: null,
+						inputMode: 'ai',
+						closedTabHistory: updatedHistory,
+						unifiedTabOrder: finalUnifiedTabOrder,
+					}
+				: fallbackRef?.type === 'ai'
+					? {
+							...session,
+							aiTabs: updatedTabs,
+							activeTabId: fallbackRef.id,
+							activeFileTabId: null,
+							activeTerminalTabId: null,
+							inputMode: 'ai',
+							closedTabHistory: updatedHistory,
+							unifiedTabOrder: finalUnifiedTabOrder,
+						}
+					: {
+							...session,
+							aiTabs: updatedTabs,
+							activeTabId: newActiveTabId,
+							closedTabHistory: updatedHistory,
+							unifiedTabOrder: finalUnifiedTabOrder,
+						};
 
 	return {
 		closedTab,
