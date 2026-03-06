@@ -445,7 +445,13 @@ export async function* runPlaybook(
 					customEnvVars: session.customEnvVars,
 					customModel: session.customModel,
 				};
-				const result = await spawnAgent(session.toolType, session.cwd, finalPrompt, undefined, spawnOverrides);
+				const result = await spawnAgent(
+					session.toolType,
+					session.cwd,
+					finalPrompt,
+					undefined,
+					spawnOverrides
+				);
 
 				const elapsedMs = Date.now() - taskStartTime;
 

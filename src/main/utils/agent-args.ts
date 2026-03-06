@@ -41,10 +41,7 @@ function parseCustomArgs(customArgs?: string): string[] {
 	});
 }
 
-export function buildAgentArgs(
-	agent: AgentArgsConfig,
-	options: BuildAgentArgsOptions
-): string[] {
+export function buildAgentArgs(agent: AgentArgsConfig, options: BuildAgentArgsOptions): string[] {
 	let finalArgs = [...options.baseArgs];
 
 	if (!agent) {

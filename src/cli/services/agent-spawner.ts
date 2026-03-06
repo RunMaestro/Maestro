@@ -9,7 +9,11 @@ import { OpenCodeOutputParser } from '../../main/parsers/opencode-output-parser'
 import { FactoryDroidOutputParser } from '../../main/parsers/factory-droid-output-parser';
 import { aggregateModelUsage } from '../../main/parsers/usage-aggregator';
 import { getAgentDefinition } from '../../main/agents/definitions';
-import { applyAgentConfigOverrides, buildAgentArgs, getContextWindowValue } from '../../main/utils/agent-args';
+import {
+	applyAgentConfigOverrides,
+	buildAgentArgs,
+	getContextWindowValue,
+} from '../../main/utils/agent-args';
 import { getAgentConfigValues, getAgentCustomPath } from './storage';
 import { generateUUID } from '../../shared/uuid';
 import { buildExpandedPath, buildExpandedEnv } from '../../shared/pathUtils';
@@ -146,9 +150,7 @@ async function findCodexInPath(): Promise<string | undefined> {
  * Check if Claude Code is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectClaude(
-	customPathOverride?: string
-): Promise<{
+export async function detectClaude(customPathOverride?: string): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';
@@ -199,9 +201,7 @@ export async function detectClaude(
  * Check if Codex CLI is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectCodex(
-	customPathOverride?: string
-): Promise<{
+export async function detectCodex(customPathOverride?: string): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';
@@ -248,9 +248,7 @@ export async function detectCodex(
  * Check if OpenCode CLI is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectOpenCode(
-	customPathOverride?: string
-): Promise<{
+export async function detectOpenCode(customPathOverride?: string): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';
@@ -297,9 +295,7 @@ export async function detectOpenCode(
  * Check if Factory Droid CLI is available
  * First checks for a custom path in settings, then falls back to PATH detection
  */
-export async function detectDroid(
-	customPathOverride?: string
-): Promise<{
+export async function detectDroid(customPathOverride?: string): Promise<{
 	available: boolean;
 	path?: string;
 	source?: 'settings' | 'path';

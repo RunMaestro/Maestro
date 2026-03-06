@@ -154,7 +154,7 @@ export async function send(
 				customArgs: agent.customArgs,
 				customEnvVars: agent.customEnvVars,
 				customModel: agent.customModel,
-		  }
+			}
 		: undefined;
 
 	// Spawn agent — spawnAgent handles --resume vs --session-id internally
