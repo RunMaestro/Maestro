@@ -57,6 +57,9 @@ export interface UIStoreState {
 	// Editing (inline renaming in sidebar)
 	editingGroupId: string | null;
 	editingSessionId: string | null;
+
+	// Auto-follow active task during batch runs
+	autoFollowEnabled: boolean;
 }
 
 export interface UIStoreActions {
@@ -110,6 +113,9 @@ export interface UIStoreActions {
 	// Editing
 	setEditingGroupId: (id: string | null | ((prev: string | null) => string | null)) => void;
 	setEditingSessionId: (id: string | null | ((prev: string | null) => string | null)) => void;
+
+	// Auto-follow
+	setAutoFollowEnabled: (enabled: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 export type UIStore = UIStoreState & UIStoreActions;
@@ -143,6 +149,7 @@ export const useUIStore = create<UIStore>()((set) => ({
 	draggingSessionId: null,
 	editingGroupId: null,
 	editingSessionId: null,
+	autoFollowEnabled: false,
 
 	// --- Actions ---
 	setLeftSidebarOpen: (v) => set((s) => ({ leftSidebarOpen: resolve(v, s.leftSidebarOpen) })),
@@ -187,4 +194,6 @@ export const useUIStore = create<UIStore>()((set) => ({
 
 	setEditingGroupId: (v) => set((s) => ({ editingGroupId: resolve(v, s.editingGroupId) })),
 	setEditingSessionId: (v) => set((s) => ({ editingSessionId: resolve(v, s.editingSessionId) })),
+
+	setAutoFollowEnabled: (v) => set((s) => ({ autoFollowEnabled: resolve(v, s.autoFollowEnabled) })),
 }));
