@@ -1394,6 +1394,48 @@ describe('tabHelpers', () => {
 			expect(result3!.type).toBe('file');
 			expect(result3!.id).toBe('file-2');
 		});
+
+		it('resets inputMode to ai when navigating from terminal tab to AI tab', () => {
+			const aiTab = createMockTab({ id: 'ai-1' });
+			const session = createMockSession({
+				aiTabs: [aiTab],
+				activeTabId: 'ai-1',
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'ai', id: 'ai-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabByIndex(session, 1);
+
+			expect(result!.type).toBe('ai');
+			expect(result!.session.inputMode).toBe('ai');
+			expect(result!.session.activeTerminalTabId).toBeNull();
+		});
+
+		it('resets inputMode to ai when navigating from terminal tab to file tab', () => {
+			const fileTab = createMockFileTab({ id: 'file-1' });
+			const session = createMockSession({
+				aiTabs: [],
+				filePreviewTabs: [fileTab],
+				activeFileTabId: null,
+				inputMode: 'terminal',
+				activeTerminalTabId: 'term-1',
+				unifiedTabOrder: [
+					{ type: 'terminal', id: 'term-1' },
+					{ type: 'file', id: 'file-1' },
+				],
+			});
+
+			const result = navigateToUnifiedTabByIndex(session, 1);
+
+			expect(result!.type).toBe('file');
+			expect(result!.session.inputMode).toBe('ai');
+			expect(result!.session.activeTerminalTabId).toBeNull();
+		});
 	});
 
 	describe('navigateToLastUnifiedTab', () => {
