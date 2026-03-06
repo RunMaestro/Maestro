@@ -38,6 +38,7 @@ vi.mock('../../../../main/utils/logger', () => ({
 describe('history IPC handlers', () => {
 	let handlers: Map<string, Function>;
 	let mockHistoryManager: Partial<HistoryManager>;
+	let mockSafeSend: ReturnType<typeof vi.fn>;
 
 	// Sample history entries for testing
 	const createMockEntry = (overrides: Partial<HistoryEntry> = {}): HistoryEntry => ({
@@ -53,6 +54,8 @@ describe('history IPC handlers', () => {
 	beforeEach(() => {
 		// Clear mocks
 		vi.clearAllMocks();
+
+		mockSafeSend = vi.fn();
 
 		// Create mock history manager
 		mockHistoryManager = {
@@ -101,8 +104,8 @@ describe('history IPC handlers', () => {
 			handlers.set(channel, handler);
 		});
 
-		// Register handlers
-		registerHistoryHandlers();
+		// Register handlers with mock safeSend
+		registerHistoryHandlers({ safeSend: mockSafeSend });
 	});
 
 	afterEach(() => {
@@ -280,6 +283,15 @@ describe('history IPC handlers', () => {
 
 			expect(mockHistoryManager.addEntry).toHaveBeenCalledWith('session-1', '/test', entry);
 			expect(result).toBe(true);
+		});
+
+		it('should broadcast entry via safeSend after adding', async () => {
+			const entry = createMockEntry({ sessionId: 'session-1', projectPath: '/test' });
+
+			const handler = handlers.get('history:add');
+			await handler!({} as any, entry);
+
+			expect(mockSafeSend).toHaveBeenCalledWith('history:entryAdded', entry, 'session-1');
 		});
 
 		it('should use orphaned session ID when sessionId is missing', async () => {
