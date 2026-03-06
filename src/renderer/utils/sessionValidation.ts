@@ -49,7 +49,7 @@ export function validateNewSession(
 	const conflictingAgents = existingSessions.filter((session) => {
 		const sessionDir = normalizeDirectory(session.projectRoot || session.cwd);
 		if (sessionDir !== normalizedDir) return false;
-		const existingRemoteId = session.sshRemoteId || session.sshRemote?.id || null;
+		const existingRemoteId = getSessionSshRemoteId(session);
 		return existingRemoteId === newRemoteId;
 	});
 
@@ -95,6 +95,19 @@ export function validateEditSession(
 	}
 
 	return { valid: true };
+}
+
+/**
+ * Resolve the SSH remote ID from a session, checking all possible locations.
+ * Returns null for local sessions.
+ */
+function getSessionSshRemoteId(session: Session): string | null {
+	// sessionSshRemoteConfig is the canonical per-session SSH config
+	if (session.sessionSshRemoteConfig?.enabled && session.sessionSshRemoteConfig.remoteId) {
+		return session.sessionSshRemoteConfig.remoteId;
+	}
+	// Fallback to flattened fields set during session lifecycle
+	return session.sshRemoteId || session.sshRemote?.id || null;
 }
 
 /**
