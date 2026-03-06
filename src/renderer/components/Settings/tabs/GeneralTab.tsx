@@ -3,13 +3,12 @@
  *
  * Contains: About Me, Shell, Log Level, GitHub CLI, Input Behavior,
  * History, Thinking Mode, Tab Naming, Auto-scroll, Power, Rendering,
- * Updates, Pre-release, Privacy, Stats & WakaTime, Storage Location.
+ * Updates, Pre-release, Privacy, Storage Location.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import {
 	X,
-	Key,
 	Check,
 	Terminal,
 	History,
@@ -22,18 +21,15 @@ import {
 	ChevronDown,
 	Brain,
 	FlaskConical,
-	Database,
 	Battery,
 	Monitor,
 	PartyPopper,
 	Tag,
-	Timer,
 	User,
 	ArrowDownToLine,
 	HelpCircle,
 	ExternalLink,
 	Keyboard,
-	Trash2,
 } from 'lucide-react';
 import { useSettings } from '../../../hooks';
 import type { Theme, ShellInfo } from '../../../types';
@@ -96,20 +92,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 		setEnableBetaUpdates,
 		crashReportingEnabled,
 		setCrashReportingEnabled,
-		// Encore features
-		encoreFeatures,
-		// Stats
-		statsCollectionEnabled,
-		setStatsCollectionEnabled,
-		defaultStatsTimeRange,
-		setDefaultStatsTimeRange,
-		// WakaTime
-		wakatimeEnabled,
-		setWakatimeEnabled,
-		wakatimeApiKey,
-		setWakatimeApiKey,
-		wakatimeDetailedTracking,
-		setWakatimeDetailedTracking,
 	} = useSettings();
 
 	// Shell state
@@ -127,83 +109,8 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 	const [syncError, setSyncError] = useState<string | null>(null);
 	const [syncMigratedCount, setSyncMigratedCount] = useState<number | null>(null);
 
-	// Stats data management state
-	const [statsDbSize, setStatsDbSize] = useState<number | null>(null);
-	const [statsEarliestDate, setStatsEarliestDate] = useState<string | null>(null);
-	const [statsClearing, setStatsClearing] = useState(false);
-	const [statsClearResult, setStatsClearResult] = useState<{
-		success: boolean;
-		deletedQueryEvents: number;
-		deletedAutoRunSessions: number;
-		deletedAutoRunTasks: number;
-		error?: string;
-	} | null>(null);
 
-	// WakaTime CLI check and API key validation state
-	const [wakatimeCliStatus, setWakatimeCliStatus] = useState<{
-		available: boolean;
-		version?: string;
-	} | null>(null);
-	const [wakatimeKeyValid, setWakatimeKeyValid] = useState<boolean | null>(null);
-	const [wakatimeKeyValidating, setWakatimeKeyValidating] = useState(false);
-	const handleWakatimeApiKeyChange = useCallback(
-		(value: string) => {
-			setWakatimeApiKey(value);
-			setWakatimeKeyValid(null);
-		},
-		[setWakatimeApiKey]
-	);
-
-	// Check WakaTime CLI availability when section renders or toggle is enabled
-	useEffect(() => {
-		if (!isOpen || !wakatimeEnabled) return;
-		let cancelled = false;
-		let retryTimer: ReturnType<typeof setTimeout> | null = null;
-
-		window.maestro.wakatime
-			.checkCli()
-			.then((status) => {
-				if (cancelled) return;
-				setWakatimeCliStatus(status);
-				if (!status.available) {
-					retryTimer = setTimeout(() => {
-						if (!cancelled) {
-							window.maestro.wakatime
-								.checkCli()
-								.then((retryStatus) => {
-									if (!cancelled) setWakatimeCliStatus(retryStatus);
-								})
-								.catch(() => {
-									if (!cancelled) setWakatimeCliStatus({ available: false });
-								});
-						}
-					}, 3000);
-				}
-			})
-			.catch(() => {
-				if (cancelled) return;
-				setWakatimeCliStatus({ available: false });
-				retryTimer = setTimeout(() => {
-					if (!cancelled) {
-						window.maestro.wakatime
-							.checkCli()
-							.then((retryStatus) => {
-								if (!cancelled) setWakatimeCliStatus(retryStatus);
-							})
-							.catch(() => {
-								if (!cancelled) setWakatimeCliStatus({ available: false });
-							});
-					}
-				}, 3000);
-			});
-
-		return () => {
-			cancelled = true;
-			if (retryTimer) clearTimeout(retryTimer);
-		};
-	}, [isOpen, wakatimeEnabled]);
-
-	// Load sync settings and stats data when modal opens
+	// Load sync settings when modal opens
 	useEffect(() => {
 		if (!isOpen) return;
 
@@ -226,33 +133,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				setSyncError('Failed to load storage settings');
 			});
 
-		// Load stats database size and earliest timestamp
-		window.maestro.stats
-			.getDatabaseSize()
-			.then((size) => {
-				setStatsDbSize(size);
-			})
-			.catch((err) => {
-				console.error('Failed to load stats database size:', err);
-			});
-
-		window.maestro.stats
-			.getEarliestTimestamp()
-			.then((timestamp) => {
-				if (timestamp) {
-					const date = new Date(timestamp);
-					const formatted = date.toISOString().split('T')[0]; // YYYY-MM-DD
-					setStatsEarliestDate(formatted);
-				} else {
-					setStatsEarliestDate(null);
-				}
-			})
-			.catch((err) => {
-				console.error('Failed to load earliest stats timestamp:', err);
-			});
-
-		// Reset stats clear state
-		setStatsClearResult(null);
 	}, [isOpen]);
 
 	const loadShells = async () => {
@@ -966,331 +846,6 @@ export function GeneralTab({ theme, isOpen }: GeneralTabProps) {
 				theme={theme}
 			/>
 
-			{/* Stats Data Management (gated by Encore Features) */}
-			{encoreFeatures.usageStats && (<>
-			{/* Stats Data Management */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2 flex items-center gap-2">
-					<Database className="w-3 h-3" />
-					Usage & Stats
-					<span
-						className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase"
-						style={{
-							backgroundColor: theme.colors.warning + '30',
-							color: theme.colors.warning,
-						}}
-					>
-						Beta
-					</span>
-				</div>
-				<div
-					className="p-3 rounded border space-y-3"
-					style={{ borderColor: theme.colors.border, backgroundColor: theme.colors.bgMain }}
-				>
-					{/* Enable/Disable Stats Collection */}
-					<div className="flex items-center justify-between">
-						<div>
-							<p className="text-sm" style={{ color: theme.colors.textMain }}>
-								Enable stats collection
-							</p>
-							<p className="text-xs opacity-50 mt-0.5">
-								Track queries and Auto Run sessions for the dashboard.
-							</p>
-						</div>
-						<button
-							onClick={() => setStatsCollectionEnabled(!statsCollectionEnabled)}
-							className={`relative w-10 h-5 rounded-full transition-colors ${
-								statsCollectionEnabled ? '' : ''
-							}`}
-							style={{
-								backgroundColor: statsCollectionEnabled
-									? theme.colors.accent
-									: theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={statsCollectionEnabled}
-							aria-label="Enable stats collection"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									statsCollectionEnabled ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
-					</div>
-
-					{/* Default Time Range */}
-					<div>
-						<div className="block text-xs opacity-60 mb-2">Default dashboard time range</div>
-						<select
-							value={defaultStatsTimeRange}
-							onChange={(e) =>
-								setDefaultStatsTimeRange(
-									e.target.value as 'day' | 'week' | 'month' | 'year' | 'all'
-								)
-							}
-							className="w-full p-2 rounded border bg-transparent outline-none text-sm"
-							style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-						>
-							<option value="day">Last 24 hours</option>
-							<option value="week">Last 7 days</option>
-							<option value="month">Last 30 days</option>
-							<option value="year">Last 365 days</option>
-							<option value="all">All time</option>
-						</select>
-						<p className="text-xs opacity-50 mt-1">
-							Time range shown when opening the Usage Dashboard.
-						</p>
-					</div>
-
-					{/* Divider */}
-					<div className="border-t" style={{ borderColor: theme.colors.border }} />
-
-					{/* Database Size Display */}
-					<div className="flex items-center justify-between">
-						<span className="text-sm" style={{ color: theme.colors.textDim }}>
-							Database size
-						</span>
-						<span className="text-sm font-mono" style={{ color: theme.colors.textMain }}>
-							{statsDbSize !== null ? (statsDbSize / 1024 / 1024).toFixed(2) + ' MB' : 'Loading...'}
-							{statsEarliestDate && (
-								<span style={{ color: theme.colors.textDim }}> (since {statsEarliestDate})</span>
-							)}
-						</span>
-					</div>
-
-					{/* Clear Old Data Dropdown */}
-					<div>
-						<div className="block text-xs opacity-60 mb-2">Clear stats older than...</div>
-						<div className="flex items-center gap-2">
-							<select
-								id="clear-stats-period"
-								className="flex-1 p-2 rounded border bg-transparent outline-none text-sm"
-								style={{ borderColor: theme.colors.border, color: theme.colors.textMain }}
-								defaultValue=""
-								disabled={statsClearing}
-							>
-								<option value="" disabled>
-									Select a time period
-								</option>
-								<option value="7">7 days</option>
-								<option value="30">30 days</option>
-								<option value="90">90 days</option>
-								<option value="180">6 months</option>
-								<option value="365">1 year</option>
-							</select>
-							<button
-								onClick={async () => {
-									const select = document.getElementById('clear-stats-period') as HTMLSelectElement;
-									const days = parseInt(select.value, 10);
-									if (!days || isNaN(days)) {
-										return; // No selection
-									}
-									setStatsClearing(true);
-									setStatsClearResult(null);
-									try {
-										const result = await window.maestro.stats.clearOldData(days);
-										setStatsClearResult(result);
-										if (result.success) {
-											// Refresh database size
-											const newSize = await window.maestro.stats.getDatabaseSize();
-											setStatsDbSize(newSize);
-										}
-									} catch (err) {
-										console.error('Failed to clear old stats:', err);
-										setStatsClearResult({
-											success: false,
-											deletedQueryEvents: 0,
-											deletedAutoRunSessions: 0,
-											deletedAutoRunTasks: 0,
-											error: err instanceof Error ? err.message : 'Unknown error',
-										});
-									} finally {
-										setStatsClearing(false);
-									}
-								}}
-								disabled={statsClearing}
-								className="px-3 py-2 rounded text-xs font-medium transition-colors flex items-center gap-2 disabled:opacity-50"
-								style={{
-									backgroundColor: theme.colors.error + '20',
-									color: theme.colors.error,
-									border: `1px solid ${theme.colors.error}40`,
-								}}
-							>
-								<Trash2 className="w-3 h-3" />
-								{statsClearing ? 'Clearing...' : 'Clear'}
-							</button>
-						</div>
-						<p className="text-xs opacity-50 mt-2">
-							Remove old query events, Auto Run sessions, and tasks from the stats database.
-						</p>
-					</div>
-
-					{/* Clear Result Feedback */}
-					{statsClearResult && (
-						<div
-							className="p-2 rounded text-xs flex items-start gap-2"
-							style={{
-								backgroundColor: statsClearResult.success
-									? theme.colors.success + '20'
-									: theme.colors.error + '20',
-								color: statsClearResult.success ? theme.colors.success : theme.colors.error,
-							}}
-						>
-							{statsClearResult.success ? (
-								<>
-									<Check className="w-3 h-3 flex-shrink-0 mt-0.5" />
-									<span>
-										Cleared{' '}
-										{statsClearResult.deletedQueryEvents +
-											statsClearResult.deletedAutoRunSessions +
-											statsClearResult.deletedAutoRunTasks}{' '}
-										records ({statsClearResult.deletedQueryEvents} queries,{' '}
-										{statsClearResult.deletedAutoRunSessions} sessions,{' '}
-										{statsClearResult.deletedAutoRunTasks} tasks)
-									</span>
-								</>
-							) : (
-								<>
-									<X className="w-3 h-3 flex-shrink-0 mt-0.5" />
-									<span>{statsClearResult.error || 'Failed to clear stats data'}</span>
-								</>
-							)}
-						</div>
-					)}
-
-					{/* Divider */}
-					<div className="border-t" style={{ borderColor: theme.colors.border }} />
-
-					{/* WakaTime Integration */}
-					<div className="flex items-center justify-between">
-						<div>
-							<p
-								className="text-sm flex items-center gap-2"
-								style={{ color: theme.colors.textMain }}
-							>
-								<Timer className="w-3.5 h-3.5 opacity-60" />
-								Enable WakaTime tracking
-							</p>
-							<p className="text-xs opacity-50 mt-0.5">
-								Track coding activity in Maestro sessions via WakaTime.
-							</p>
-						</div>
-						<button
-							onClick={() => setWakatimeEnabled(!wakatimeEnabled)}
-							className="relative w-10 h-5 rounded-full transition-colors"
-							style={{
-								backgroundColor: wakatimeEnabled ? theme.colors.accent : theme.colors.bgActivity,
-							}}
-							role="switch"
-							aria-checked={wakatimeEnabled}
-							aria-label="Enable WakaTime tracking"
-						>
-							<span
-								className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-									wakatimeEnabled ? 'translate-x-5' : 'translate-x-0.5'
-								}`}
-							/>
-						</button>
-					</div>
-
-					{/* CLI not found warning */}
-					{wakatimeEnabled && wakatimeCliStatus && !wakatimeCliStatus.available && (
-						<p className="text-xs mt-1" style={{ color: theme.colors.warning }}>
-							WakaTime CLI is being installed automatically...
-						</p>
-					)}
-
-					{/* Detailed file tracking toggle (only shown when enabled) */}
-					{wakatimeEnabled && (
-						<div className="flex items-center justify-between">
-							<div>
-								<p className="text-sm" style={{ color: theme.colors.textMain }}>
-									Detailed file tracking
-								</p>
-								<p className="text-xs opacity-50 mt-0.5">
-									Track per-file write activity. Sends file paths (not content) to WakaTime.
-								</p>
-							</div>
-							<button
-								onClick={() => setWakatimeDetailedTracking(!wakatimeDetailedTracking)}
-								className="relative w-10 h-5 rounded-full transition-colors flex-shrink-0 outline-none"
-								tabIndex={0}
-								style={{
-									backgroundColor: wakatimeDetailedTracking
-										? theme.colors.accent
-										: theme.colors.bgActivity,
-								}}
-								role="switch"
-								aria-checked={wakatimeDetailedTracking}
-								aria-label="Detailed file tracking"
-							>
-								<span
-									className={`absolute left-0 top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-										wakatimeDetailedTracking ? 'translate-x-5' : 'translate-x-0.5'
-									}`}
-								/>
-							</button>
-						</div>
-					)}
-
-					{/* API Key Input (only shown when enabled) */}
-					{wakatimeEnabled && (
-						<div>
-							<div className="block text-xs opacity-60 mb-1">API Key</div>
-							<div
-								className="flex items-center border rounded px-3 py-2"
-								style={{
-									backgroundColor: theme.colors.bgMain,
-									borderColor: theme.colors.border,
-								}}
-							>
-								<Key className="w-4 h-4 mr-2 opacity-50" />
-								<input
-									type="password"
-									value={wakatimeApiKey}
-									onChange={(e) => handleWakatimeApiKeyChange(e.target.value)}
-									onBlur={() => {
-										if (wakatimeApiKey) {
-											setWakatimeKeyValidating(true);
-											setWakatimeKeyValid(null);
-											window.maestro.wakatime
-												.validateApiKey(wakatimeApiKey)
-												.then((result) => setWakatimeKeyValid(result.valid))
-												.catch(() => setWakatimeKeyValid(false))
-												.finally(() => setWakatimeKeyValidating(false));
-										}
-									}}
-									className="bg-transparent flex-1 text-sm outline-none"
-									style={{ color: theme.colors.textMain }}
-									placeholder="waka_..."
-								/>
-								{wakatimeKeyValidating && <span className="ml-2 text-xs opacity-50">...</span>}
-								{!wakatimeKeyValidating && wakatimeKeyValid === true && (
-									<Check className="w-4 h-4 ml-2" style={{ color: theme.colors.success }} />
-								)}
-								{!wakatimeKeyValidating && wakatimeKeyValid === false && wakatimeApiKey && (
-									<X className="w-4 h-4 ml-2" style={{ color: theme.colors.error }} />
-								)}
-								{wakatimeApiKey && (
-									<button
-										onClick={() => handleWakatimeApiKeyChange('')}
-										className="ml-2 opacity-50 hover:opacity-100"
-										title="Clear API key"
-									>
-										<X className="w-3 h-3" />
-									</button>
-								)}
-							</div>
-							<p className="text-[10px] mt-1.5 opacity-50">
-								Get your API key from wakatime.com/settings/api-key. Keys are stored locally in
-								~/.maestro/settings.json.
-							</p>
-						</div>
-					)}
-				</div>
-			</div>
-			</>)}
 
 			{/* Settings Storage Location */}
 			<div>

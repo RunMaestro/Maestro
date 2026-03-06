@@ -87,6 +87,11 @@ vi.mock('../../../../../renderer/components/Wizard/screens/AgentSelectionScreen'
 // Shared mock fns for useSettings setters
 const mockSetEncoreFeatures = vi.fn();
 const mockSetDirectorNotesSettings = vi.fn();
+const mockSetStatsCollectionEnabled = vi.fn();
+const mockSetDefaultStatsTimeRange = vi.fn();
+const mockSetWakatimeEnabled = vi.fn();
+const mockSetWakatimeApiKey = vi.fn();
+const mockSetWakatimeDetailedTracking = vi.fn();
 
 // Override mechanism for per-test customization
 let mockUseSettingsOverrides: Record<string, any> = {};
@@ -100,6 +105,21 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 			defaultLookbackDays: 7,
 		},
 		setDirectorNotesSettings: mockSetDirectorNotesSettings,
+		// Stats
+		statsCollectionEnabled: true,
+		setStatsCollectionEnabled: mockSetStatsCollectionEnabled,
+		defaultStatsTimeRange: 'week',
+		setDefaultStatsTimeRange: mockSetDefaultStatsTimeRange,
+		// WakaTime
+		wakatimeEnabled: false,
+		setWakatimeEnabled: mockSetWakatimeEnabled,
+		wakatimeApiKey: '',
+		setWakatimeApiKey: mockSetWakatimeApiKey,
+		wakatimeDetailedTracking: false,
+		setWakatimeDetailedTracking: mockSetWakatimeDetailedTracking,
+		// Symphony
+		symphonyRegistryUrls: [],
+		setSymphonyRegistryUrls: vi.fn(),
 		...mockUseSettingsOverrides,
 	}),
 }));
@@ -170,6 +190,10 @@ describe('EncoreTab', () => {
 		vi.mocked(window.maestro.agents.getConfig).mockResolvedValue({});
 		vi.mocked(window.maestro.agents.setConfig).mockResolvedValue(undefined);
 		vi.mocked(window.maestro.agents.getModels).mockResolvedValue([]);
+		vi.mocked(window.maestro.stats.getDatabaseSize).mockResolvedValue(1024 * 1024);
+		vi.mocked(window.maestro.stats.getEarliestTimestamp).mockResolvedValue(null);
+		vi.mocked(window.maestro.wakatime.checkCli).mockResolvedValue({ available: false });
+		vi.mocked(window.maestro.wakatime.validateApiKey).mockResolvedValue({ valid: false });
 	});
 
 	afterEach(() => {
