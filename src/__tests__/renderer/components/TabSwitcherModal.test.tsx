@@ -24,6 +24,7 @@ vi.mock('lucide-react', () => ({
 	Search: () => <svg data-testid="search-icon" />,
 	Star: () => <svg data-testid="star-icon" />,
 	FileText: () => <svg data-testid="file-text-icon" />,
+	Terminal: () => <svg data-testid="terminal-icon" />,
 }));
 
 // Create a test theme
@@ -2359,5 +2360,178 @@ describe('TabSwitcherModal', () => {
 
 			expect(screen.getByText('/project/src/components/example.ts')).toBeInTheDocument();
 		});
+	describe('terminal tab support', () => {
+		// Helper to create a test terminal tab
+		const createTestTerminalTab = (
+			overrides: Partial<import('../../../renderer/types').TerminalTab> = {}
+		) => ({
+			id: `terminal-tab-${Math.random().toString(36).substr(2, 9)}`,
+			name: null,
+			shellType: 'zsh',
+			pid: 1234,
+			cwd: '/Users/pedram/Projects',
+			state: 'idle' as const,
+			exitCode: undefined,
+			...overrides,
+		});
+
+		it('includes terminal tabs in Open Tabs count', () => {
+			const aiTabs = [createTestTab({ name: 'AI Tab' })];
+			const terminalTabs = [
+				createTestTerminalTab(),
+				createTestTerminalTab(),
+			];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={aiTabs}
+					terminalTabs={terminalTabs}
+					activeTabId={aiTabs[0].id}
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			// Should show 3 total tabs (1 AI + 2 terminal)
+			expect(screen.getByText('Open Tabs (3)')).toBeInTheDocument();
+		});
+
+		it('renders terminal tabs with shell type badge and Terminal label', () => {
+			const terminalTabs = [createTestTerminalTab({ shellType: 'zsh', cwd: '/home/user' })];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			// 'Terminal' appears twice: as the display name fallback and as the right-side type badge
+			expect(screen.getAllByText('Terminal')).toHaveLength(2);
+			expect(screen.getByText('zsh')).toBeInTheDocument(); // shell type badge (uppercase via CSS, text is lowercase)
+			expect(screen.getByText('/home/user')).toBeInTheDocument(); // cwd shown
+		});
+
+		it('uses custom name when set', () => {
+			const terminalTabs = [createTestTerminalTab({ name: 'My Shell' })];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByText('My Shell')).toBeInTheDocument();
+		});
+
+		it('calls onTerminalTabSelect when clicking a terminal tab', () => {
+			const terminalTabs = [createTestTerminalTab({ name: 'Dev Shell' })];
+			const onTerminalTabSelect = vi.fn();
+			const onClose = vi.fn();
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onTerminalTabSelect={onTerminalTabSelect}
+					onNamedSessionSelect={vi.fn()}
+					onClose={onClose}
+				/>
+			);
+
+			fireEvent.click(screen.getByText('Dev Shell'));
+
+			expect(onTerminalTabSelect).toHaveBeenCalledWith(terminalTabs[0].id);
+			expect(onClose).toHaveBeenCalled();
+		});
+
+		it('filters terminal tabs by search query', () => {
+			const terminalTabs = [
+				createTestTerminalTab({ name: 'build-server', shellType: 'bash' }),
+				createTestTerminalTab({ name: 'dev-shell', shellType: 'zsh' }),
+			];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			const input = screen.getByPlaceholderText('Search open tabs...');
+			fireEvent.change(input, { target: { value: 'build' } });
+
+			expect(screen.getByText('build-server')).toBeInTheDocument();
+			expect(screen.queryByText('dev-shell')).not.toBeInTheDocument();
+		});
+
+		it('shows active indicator for the active terminal tab', () => {
+			const terminalTabs = [createTestTerminalTab({ id: 'active-term-tab', name: 'Active Term' })];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					activeTerminalTabId="active-term-tab"
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			// Active terminal tab shows a green dot instead of the terminal icon
+			expect(screen.queryByTestId('terminal-icon')).not.toBeInTheDocument();
+		});
+
+		it('shows terminal icon for inactive terminal tab', () => {
+			const terminalTabs = [createTestTerminalTab({ id: 'inactive-term', name: 'Inactive Term' })];
+
+			renderWithLayerStack(
+				<TabSwitcherModal
+					theme={theme}
+					tabs={[]}
+					terminalTabs={terminalTabs}
+					activeTabId=""
+					activeTerminalTabId="other-tab"
+					projectRoot="/test"
+					onTabSelect={vi.fn()}
+					onNamedSessionSelect={vi.fn()}
+					onClose={vi.fn()}
+				/>
+			);
+
+			expect(screen.getByTestId('terminal-icon')).toBeInTheDocument();
+		});
+	});
+
 	});
 });

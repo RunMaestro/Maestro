@@ -139,12 +139,17 @@ export const TerminalView = memo(
 			spawnPtyForTab(activeTab);
 		}, [activeTab?.id, spawnPtyForTab]);
 
-		// Focus the active terminal when the active tab changes
+		// Focus and repaint the active terminal when the active tab changes.
+		// The refresh() call is necessary because switching tabs uses CSS visibility: hidden
+		// rather than unmounting, so xterm.js's ResizeObserver never fires — the WebGL/canvas
+		// renderer won't repaint unless explicitly told to after the element becomes visible.
 		useEffect(() => {
 			if (activeTab) {
-				// Use a short delay so the DOM is visible before focusing
+				// Short delay so the DOM visibility change applies before fitting/repainting
 				const timer = setTimeout(() => {
-					terminalRefs.current.get(activeTab.id)?.focus();
+					const handle = terminalRefs.current.get(activeTab.id);
+					handle?.refresh();
+					handle?.focus();
 				}, 50);
 				return () => clearTimeout(timer);
 			}

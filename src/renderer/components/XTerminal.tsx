@@ -102,6 +102,8 @@ export interface XTerminalHandle {
 	searchPrevious(): boolean;
 	getSelection(): string;
 	resize(): void;
+	/** Force fit + full canvas repaint — call when the terminal becomes visible after being hidden */
+	refresh(): void;
 }
 
 export interface XTerminalProps {
@@ -167,6 +169,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 			resize() {
 				fitAddonRef.current?.fit();
 			},
+			refresh() {
+				const fitAddon = fitAddonRef.current;
+				const term = terminalRef.current;
+				if (!fitAddon || !term) return;
+				fitAddon.fit();
+				term.refresh(0, term.rows - 1);
+			},
 		}),
 		[]
 	);
@@ -179,9 +188,19 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		resizeTimerRef.current = setTimeout(() => {
 			const fitAddon = fitAddonRef.current;
 			const term = terminalRef.current;
-			if (!fitAddon || !term) return;
+			const container = containerRef.current;
+			if (!fitAddon || !term || !container) return;
+
+			// Skip when the container is hidden (display:none → offsetWidth/Height = 0).
+			// Calling fit() or refresh() on a zero-size WebGL canvas clears the GPU
+			// framebuffer, wiping the terminal content when the user navigates away.
+			if (container.offsetWidth === 0 || container.offsetHeight === 0) return;
 
 			fitAddon.fit();
+			// Force repaint now that we've confirmed the container is visible.
+			// This handles the display:none → display:flex transition (returning from AI mode):
+			// fitAddon.fit() only resizes rows/cols but doesn't always repaint WebGL content.
+			term.refresh(0, term.rows - 1);
 			const { cols, rows } = term;
 			onResize?.(cols, rows);
 			window.maestro.process.resize(sessionId, cols, rows).catch(() => {
