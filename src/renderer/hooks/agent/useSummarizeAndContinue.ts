@@ -347,7 +347,7 @@ export function useSummarizeAndContinue(session: Session | null): UseSummarizeAn
 					type: 'warning',
 					title: 'Cannot Compact',
 					message: `Context too small. Need at least ${contextSummarizationService.getMinContextUsagePercent()}% usage, ~2k tokens, or 8+ messages to compact.`,
-					sessionId,
+					sessionId: session.id,
 					tabId: targetTabId,
 				});
 				return;

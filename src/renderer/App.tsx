@@ -1559,12 +1559,6 @@ function MaestroConsoleInner() {
 		[setActiveSessionId]
 	);
 
-	// Keep a ref to sessions so the deep link listener doesn't churn on every sessions change
-	const sessionsRef = useRef(sessions);
-	useEffect(() => {
-		sessionsRef.current = sessions;
-	}, [sessions]);
-
 	// Deep link navigation handler — processes maestro:// URLs from OS notifications,
 	// external apps, and CLI commands
 	useEffect(() => {
