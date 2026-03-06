@@ -243,6 +243,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							substituteTemplateVariables(matchingCustomCommand.prompt, {
 								session: activeSession,
 								gitBranch,
+								groupId: activeSession.groupId,
+								activeTabId: activeSession.activeTabId,
 								conductorProfile,
 							});
 
@@ -976,6 +978,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 							const substitutedSystemPrompt = substituteTemplateVariables(maestroSystemPrompt, {
 								session: freshSession,
 								gitBranch,
+								groupId: freshSession.groupId,
+								activeTabId: freshSession.activeTabId,
 								historyFilePath,
 								conductorProfile,
 							});

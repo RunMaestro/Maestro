@@ -259,7 +259,7 @@ export function registerAllHandlers(deps: HandlerDependencies): void {
 		settingsStore: deps.settingsStore,
 	});
 	// Register notification handlers (OS notifications and TTS)
-	registerNotificationsHandlers();
+	registerNotificationsHandlers({ getMainWindow: deps.getMainWindow });
 	// Register Symphony handlers for token donation / open source contributions
 	registerSymphonyHandlers({
 		app: deps.app,

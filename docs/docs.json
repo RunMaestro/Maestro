@@ -82,7 +82,7 @@
 					},
 					{
 						"group": "Integrations",
-						"pages": ["mcp-server"],
+						"pages": ["mcp-server", "deep-links"],
 						"icon": "plug"
 					},
 					{

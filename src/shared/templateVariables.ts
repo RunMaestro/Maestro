@@ -1,3 +1,5 @@
+import { buildSessionDeepLink, buildGroupDeepLink } from './deep-link-urls';
+
 /**
  * Template Variable System for Auto Run and Custom AI Commands
  *
@@ -40,6 +42,11 @@
  *   {{GIT_BRANCH}}        - Current git branch name (requires git repo)
  *   {{IS_GIT_REPO}}       - "true" or "false"
  *
+ * Deep Link Variables:
+ *   {{AGENT_DEEP_LINK}}   - maestro:// deep link to this agent
+ *   {{TAB_DEEP_LINK}}     - maestro:// deep link to this agent + active tab
+ *   {{GROUP_DEEP_LINK}}   - maestro:// deep link to this agent's group (if grouped)
+ *
  * Context Variables:
  *   {{CONTEXT_USAGE}}     - Current context window usage percentage
  */
@@ -64,6 +71,8 @@ export interface TemplateContext {
 	session: TemplateSessionInfo;
 	gitBranch?: string;
 	groupName?: string;
+	groupId?: string;
+	activeTabId?: string;
 	autoRunFolder?: string;
 	loopNumber?: number;
 	// Auto Run document context
@@ -78,6 +87,7 @@ export interface TemplateContext {
 // List of all available template variables for documentation (alphabetically sorted)
 // Variables marked as autoRunOnly are only shown in Auto Run contexts, not in AI Commands settings
 export const TEMPLATE_VARIABLES = [
+	{ variable: '{{AGENT_DEEP_LINK}}', description: 'Deep link to this agent (maestro://)' },
 	{ variable: '{{AGENT_GROUP}}', description: 'Agent group name' },
 	{ variable: '{{CONDUCTOR_PROFILE}}', description: "Conductor's About Me profile" },
 	{ variable: '{{AGENT_HISTORY_PATH}}', description: 'History file path (task recall)' },
@@ -95,6 +105,7 @@ export const TEMPLATE_VARIABLES = [
 	{ variable: '{{DOCUMENT_NAME}}', description: 'Current document name', autoRunOnly: true },
 	{ variable: '{{DOCUMENT_PATH}}', description: 'Current document path', autoRunOnly: true },
 	{ variable: '{{GIT_BRANCH}}', description: 'Git branch name' },
+	{ variable: '{{GROUP_DEEP_LINK}}', description: 'Deep link to agent group (maestro://)' },
 	{ variable: '{{IS_GIT_REPO}}', description: 'Is git repo (true/false)' },
 	{
 		variable: '{{LOOP_NUMBER}}',
@@ -102,6 +113,7 @@ export const TEMPLATE_VARIABLES = [
 		autoRunOnly: true,
 	},
 	{ variable: '{{MONTH}}', description: 'Month (01-12)' },
+	{ variable: '{{TAB_DEEP_LINK}}', description: 'Deep link to agent + active tab (maestro://)' },
 	{ variable: '{{TIME}}', description: 'Time (HH:MM:SS)' },
 	{ variable: '{{TIMESTAMP}}', description: 'Unix timestamp (ms)' },
 	{ variable: '{{TIME_SHORT}}', description: 'Time (HH:MM)' },
@@ -121,6 +133,8 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		session,
 		gitBranch,
 		groupName,
+		groupId,
+		activeTabId,
 		autoRunFolder,
 		loopNumber,
 		documentName,
@@ -180,6 +194,11 @@ export function substituteTemplateVariables(template: string, context: TemplateC
 		// Git variables
 		GIT_BRANCH: gitBranch || '',
 		IS_GIT_REPO: String(session.isGitRepo ?? false),
+
+		// Deep link variables
+		AGENT_DEEP_LINK: buildSessionDeepLink(session.id),
+		TAB_DEEP_LINK: buildSessionDeepLink(session.id, activeTabId),
+		GROUP_DEEP_LINK: groupId ? buildGroupDeepLink(groupId) : '',
 
 		// Context variables
 		CONTEXT_USAGE: String(session.contextUsage || 0),

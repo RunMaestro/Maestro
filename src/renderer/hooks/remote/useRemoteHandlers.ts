@@ -284,6 +284,8 @@ export function useRemoteHandlers(deps: UseRemoteHandlersDeps): UseRemoteHandler
 					promptToSend = substituteTemplateVariables(matchingCommand.prompt, {
 						session,
 						gitBranch,
+						groupId: session.groupId,
+						activeTabId: session.activeTabId,
 						conductorProfile,
 					});
 					commandMetadata = {

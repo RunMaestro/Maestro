@@ -1504,6 +1504,41 @@ function MaestroConsoleInner() {
 		[setActiveSessionId]
 	);
 
+	// Keep a ref to sessions so the deep link listener doesn't churn on every sessions change
+	const sessionsRef = useRef(sessions);
+	useEffect(() => {
+		sessionsRef.current = sessions;
+	}, [sessions]);
+
+	// Deep link navigation handler — processes maestro:// URLs from OS notifications,
+	// external apps, and CLI commands
+	useEffect(() => {
+		const unsubscribe = window.maestro.app.onDeepLink((deepLink) => {
+			if (deepLink.action === 'focus') {
+				// Window already brought to foreground by main process
+				return;
+			}
+			if (deepLink.action === 'session' && deepLink.sessionId) {
+				const targetExists = sessionsRef.current.some((s) => s.id === deepLink.sessionId);
+				if (!targetExists) return;
+				handleToastSessionClick(deepLink.sessionId, deepLink.tabId);
+				return;
+			}
+			if (deepLink.action === 'group' && deepLink.groupId) {
+				// Find first session in group and navigate to it
+				const groupSession = sessionsRef.current.find((s) => s.groupId === deepLink.groupId);
+				if (groupSession) {
+					handleToastSessionClick(groupSession.id);
+				}
+				// Expand the group if it's collapsed
+				setGroups((prev) =>
+					prev.map((g) => (g.id === deepLink.groupId ? { ...g, collapsed: false } : g))
+				);
+			}
+		});
+		return unsubscribe;
+	}, [handleToastSessionClick, setGroups]);
+
 	// --- SESSION SORTING ---
 	// Extracted hook for sorted and visible session lists (ignores leading emojis for alphabetization)
 	const { sortedSessions, visibleSessions } = useSortedSessions({
@@ -1721,6 +1756,7 @@ function MaestroConsoleInner() {
 				message: prDetails.title,
 				actionUrl: prDetails.url,
 				actionLabel: prDetails.url,
+				sessionId: session?.id,
 			});
 			// Add history entry with PR details
 			if (session) {
