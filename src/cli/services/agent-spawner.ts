@@ -387,10 +387,9 @@ export function getDroidCommand(customPath?: string): string {
 /**
  * Spawn Claude Code with a prompt and return the result.
  *
- * NOTE: CLI spawner does not apply applyAgentConfigOverrides() or SSH wrapping.
- * Designed for headless batch execution without access to the Electron settings
- * store or per-session agent configuration. Custom model, args, env vars, and
- * SSH remote execution are not supported in CLI mode.
+ * NOTE: CLI spawner does not support SSH wrapping and does not use the Electron
+ * settingsStore/global shell env, but session overrides (model, args, env vars,
+ * and custom CLI path) are still applied via applyAgentConfigOverrides().
  */
 async function spawnClaudeAgent(
 	cwd: string,
@@ -733,8 +732,8 @@ function resolveAgentInvocation(
 /**
  * Spawn Codex with a prompt and return the result.
  *
- * NOTE: Same limitations as spawnClaudeAgent — no applyAgentConfigOverrides()
- * or SSH wrapping in CLI mode.
+ * NOTE: Same limitations as spawnClaudeAgent (no SSH wrapping and no global
+ * settingsStore); per-session overrides are still applied.
  */
 async function spawnCodexAgent(
 	cwd: string,
