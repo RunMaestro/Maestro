@@ -983,19 +983,22 @@ const AutoRunInner = forwardRef<AutoRunHandle, AutoRunProps>(function AutoRunInn
 		if (!autoFollowEnabled || !batchRunState?.isRunning || mode !== 'preview') return;
 
 		const timeout = setTimeout(() => {
-			if (!previewRef.current) return;
+			// Wait for React to commit new content before querying the DOM
+			requestAnimationFrame(() => {
+				if (!previewRef.current) return;
 
-			const checkboxes = previewRef.current.querySelectorAll('input[type="checkbox"]');
-			if (checkboxes.length === 0) return;
-			for (const checkbox of checkboxes) {
-				if (!(checkbox as HTMLInputElement).checked) {
-					const li = (checkbox as HTMLElement).closest('li');
-					if (li) {
-						li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+				const checkboxes = previewRef.current.querySelectorAll('input[type="checkbox"]');
+				if (checkboxes.length === 0) return;
+				for (const checkbox of checkboxes) {
+					if (!(checkbox as HTMLInputElement).checked) {
+						const li = (checkbox as HTMLElement).closest('li');
+						if (li) {
+							li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						}
+						break;
 					}
-					break;
 				}
-			}
+			});
 		}, 150);
 
 		return () => clearTimeout(timeout);

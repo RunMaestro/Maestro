@@ -101,10 +101,9 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 		onOpenMarketplace,
 	} = props;
 
-	// Auto-follow state (initialized from store)
-	const autoFollowFromStore = useUIStore((s) => s.autoFollowEnabled);
-	const setAutoFollowStore = useUIStore((s) => s.setAutoFollowEnabled);
-	const [autoFollowEnabled, setAutoFollowEnabled] = useState(autoFollowFromStore);
+	// Auto-follow state (read/write directly from store to avoid stale local copy)
+	const autoFollowEnabled = useUIStore((s) => s.autoFollowEnabled);
+	const setAutoFollowEnabled = useUIStore((s) => s.setAutoFollowEnabled);
 
 	// Worktree run target state
 	const [worktreeTarget, setWorktreeTarget] = useState<WorktreeRunTarget | null>(null);
@@ -366,9 +365,6 @@ export function BatchRunnerModal(props: BatchRunnerModalProps) {
 	};
 
 	const handleGo = async () => {
-		// Apply auto-follow setting to the store
-		setAutoFollowStore(autoFollowEnabled);
-
 		// Also save when running
 		onSave(prompt);
 

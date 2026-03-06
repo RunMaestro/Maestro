@@ -260,6 +260,37 @@ describe('useAutoRunAutoFollow', () => {
 		expect(setRightPanelOpen).toHaveBeenCalledWith(true);
 	});
 
+	it('should immediately jump to active document when enabling during a running batch', () => {
+		const onAutoRunSelectDocument = vi.fn();
+		const setActiveRightTab = vi.fn();
+		const setRightPanelOpen = vi.fn();
+		const deps = createDeps({
+			onAutoRunSelectDocument,
+			setActiveRightTab,
+			rightPanelOpen: false,
+			setRightPanelOpen,
+			currentMode: 'edit',
+			currentSessionBatchState: createBatchState({
+				isRunning: true,
+				documents: ['doc-a', 'doc-b'],
+				currentDocumentIndex: 1,
+			}),
+		});
+
+		const { result } = renderHook(
+			(props: UseAutoRunAutoFollowDeps) => useAutoRunAutoFollow(props),
+			{ initialProps: deps }
+		);
+
+		act(() => {
+			result.current.setAutoFollowEnabled(true);
+		});
+
+		expect(onAutoRunSelectDocument).toHaveBeenCalledWith('doc-b');
+		expect(setActiveRightTab).toHaveBeenCalledWith('autorun');
+		expect(setRightPanelOpen).toHaveBeenCalledWith(true);
+	});
+
 	it('should reset refs when batch ends', () => {
 		const onAutoRunSelectDocument = vi.fn();
 		const deps = createDeps({
