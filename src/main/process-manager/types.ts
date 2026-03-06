@@ -2,6 +2,7 @@ import type { ChildProcess } from 'child_process';
 import type { IPty } from 'node-pty';
 import type { AgentOutputParser } from '../parsers';
 import type { AgentError } from '../../shared/types';
+import type { LlmGuardState } from '../security/llm-guard';
 
 /**
  * Configuration for spawning a new process
@@ -40,6 +41,7 @@ export interface ProcessConfig {
 	cols?: number;
 	/** PTY terminal height in rows (default 24) */
 	rows?: number;
+	llmGuardState?: LlmGuardState;
 }
 
 /**
@@ -78,6 +80,7 @@ export interface ManagedProcess {
 	sshRemoteHost?: string;
 	dataBuffer?: string;
 	dataBufferTimeout?: NodeJS.Timeout;
+	llmGuardState?: LlmGuardState;
 }
 
 export interface UsageTotals {
