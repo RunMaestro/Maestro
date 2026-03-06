@@ -1846,10 +1846,13 @@ function MaestroConsoleInner() {
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Clear activeFileTabId when selecting an AI tab
+			// Clear activeFileTabId and activeTerminalTabId when selecting an AI tab.
+			// Also reset inputMode to 'ai' in case we're coming from terminal mode.
 			setSessions((prev) =>
 				prev.map((s) =>
-					s.id === activeSession.id ? { ...s, activeTabId: tabId, activeFileTabId: null } : s
+					s.id === activeSession.id
+						? { ...s, activeTabId: tabId, activeFileTabId: null, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
 				)
 			);
 		},
@@ -1858,9 +1861,14 @@ function MaestroConsoleInner() {
 	const handleUtilityFileTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs)
+			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
+			// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
 			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSession.id ? { ...s, activeFileTabId: tabId } : s))
+				prev.map((s) =>
+					s.id === activeSession.id
+						? { ...s, activeFileTabId: tabId, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
+				)
 			);
 		},
 		[activeSession]

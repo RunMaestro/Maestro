@@ -558,11 +558,12 @@ export function useTabHandlers(): TabHandlersReturn {
 		const fileTab = currentSession.filePreviewTabs.find((tab) => tab.id === tabId);
 		if (!fileTab) return;
 
-		// Set the tab as active immediately
+		// Set the tab as active immediately, and reset inputMode/activeTerminalTabId in case
+		// we're switching away from terminal mode (clicking a file tab while terminal is active).
 		setSessions((prev: Session[]) =>
 			prev.map((s) => {
 				if (s.id !== activeSessionId) return s;
-				return { ...s, activeFileTabId: tabId };
+				return { ...s, activeFileTabId: tabId, activeTerminalTabId: null, inputMode: 'ai' };
 			})
 		);
 
