@@ -158,11 +158,19 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 		(ref) => !(ref.type === 'terminal' && ref.id === tabId)
 	);
 
-	// Select adjacent terminal tab when closing the active tab
+	// Select adjacent tab using unifiedTabOrder when closing the active tab.
+	// This respects visual tab order across all tab types (AI, file, terminal).
+	let fallbackRef: UnifiedTabRef | null = null;
 	let newActiveTerminalTabId = session.activeTerminalTabId;
 	if (session.activeTerminalTabId === tabId) {
-		const newIndex = Math.max(0, tabIndex - 1);
-		newActiveTerminalTabId = updatedTerminalTabs[newIndex]?.id ?? null;
+		if (updatedUnifiedTabOrder.length > 0 && unifiedIndex !== -1) {
+			const fallbackIndex = Math.max(0, unifiedIndex - 1);
+			fallbackRef = updatedUnifiedTabOrder[Math.min(fallbackIndex, updatedUnifiedTabOrder.length - 1)];
+		} else {
+			// unifiedTabOrder out of sync — fall back to terminalTabs position
+			const newIndex = Math.max(0, tabIndex - 1);
+			newActiveTerminalTabId = updatedTerminalTabs[newIndex]?.id ?? null;
+		}
 	}
 
 	// Prepend to unified closed history, capped at MAX_CLOSED_UNIFIED_HISTORY
@@ -171,17 +179,45 @@ export function closeTerminalTab(session: Session, tabId: string): Session {
 		...(session.unifiedClosedTabHistory || []),
 	].slice(0, MAX_CLOSED_UNIFIED_HISTORY);
 
-	// If no terminal tabs remain, switch back to AI mode
-	const newInputMode = updatedTerminalTabs.length === 0 ? 'ai' : session.inputMode;
-
-	return {
+	const baseSession = {
 		...session,
 		terminalTabs: updatedTerminalTabs,
-		activeTerminalTabId: newActiveTerminalTabId,
 		unifiedTabOrder: updatedUnifiedTabOrder,
 		unifiedClosedTabHistory: updatedUnifiedHistory,
-		inputMode: newInputMode,
 	};
+
+	// Activate the correct tab based on the fallback neighbor type
+	if (fallbackRef?.type === 'terminal') {
+		return {
+			...baseSession,
+			activeTerminalTabId: fallbackRef.id,
+			activeFileTabId: null,
+			inputMode: 'terminal',
+		};
+	} else if (fallbackRef?.type === 'file') {
+		return {
+			...baseSession,
+			activeTerminalTabId: null,
+			activeFileTabId: fallbackRef.id,
+			inputMode: 'ai',
+		};
+	} else if (fallbackRef?.type === 'ai') {
+		return {
+			...baseSession,
+			activeTabId: fallbackRef.id,
+			activeTerminalTabId: null,
+			activeFileTabId: null,
+			inputMode: 'ai',
+		};
+	} else {
+		// No fallback ref (unifiedTabOrder out of sync or no tabs left)
+		const newInputMode = updatedTerminalTabs.length === 0 ? 'ai' : session.inputMode;
+		return {
+			...baseSession,
+			activeTerminalTabId: newActiveTerminalTabId,
+			inputMode: newInputMode,
+		};
+	}
 }
 
 /**

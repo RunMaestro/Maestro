@@ -275,6 +275,66 @@ describe('closeTerminalTab', () => {
 		const updated = closeTerminalTab(session, 'tab-2');
 		expect(updated.unifiedTabOrder!.find((r) => r.id === 'tab-2')).toBeUndefined();
 	});
+
+	it('falls back to a file tab to the left in unifiedTabOrder', () => {
+		const fileTab = { id: 'file-1', path: '/foo.ts', name: 'foo', extension: '.ts', content: '', scrollTop: 0, searchQuery: '', editMode: false, editContent: undefined, createdAt: 1000, lastModified: 1000 };
+		const termTab = createMockTerminalTab({ id: 'term-1' });
+		const session = createMockSession({
+			filePreviewTabs: [fileTab],
+			activeFileTabId: null,
+			terminalTabs: [termTab],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'file', id: 'file-1' },
+				{ type: 'terminal', id: 'term-1' },
+			],
+		});
+		const updated = closeTerminalTab(session, 'term-1');
+		expect(updated.activeFileTabId).toBe('file-1');
+		expect(updated.activeTerminalTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
+	});
+
+	it('falls back to an AI tab to the left in unifiedTabOrder', () => {
+		const termTab = createMockTerminalTab({ id: 'term-1' });
+		const session = createMockSession({
+			aiTabs: [{ id: 'ai-1' } as any],
+			activeTabId: 'ai-1',
+			terminalTabs: [termTab],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'ai', id: 'ai-1' },
+				{ type: 'terminal', id: 'term-1' },
+			],
+		});
+		const updated = closeTerminalTab(session, 'term-1');
+		expect(updated.activeTabId).toBe('ai-1');
+		expect(updated.activeTerminalTabId).toBeNull();
+		expect(updated.activeFileTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
+	});
+
+	it('falls back to the right neighbor when closing the leftmost tab', () => {
+		const termTab = createMockTerminalTab({ id: 'term-1' });
+		const fileTab = { id: 'file-1', path: '/foo.ts', name: 'foo', extension: '.ts', content: '', scrollTop: 0, searchQuery: '', editMode: false, editContent: undefined, createdAt: 1000, lastModified: 1000 };
+		const session = createMockSession({
+			filePreviewTabs: [fileTab],
+			terminalTabs: [termTab],
+			activeTerminalTabId: 'term-1',
+			inputMode: 'terminal',
+			unifiedTabOrder: [
+				{ type: 'terminal', id: 'term-1' },
+				{ type: 'file', id: 'file-1' },
+			],
+		});
+		const updated = closeTerminalTab(session, 'term-1');
+		// term-1 is at index 0; fallbackIndex = max(0, 0-1) = 0, which maps to file-1 after removal
+		expect(updated.activeFileTabId).toBe('file-1');
+		expect(updated.activeTerminalTabId).toBeNull();
+		expect(updated.inputMode).toBe('ai');
+	});
 });
 
 describe('selectTerminalTab', () => {
