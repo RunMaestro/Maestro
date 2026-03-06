@@ -48,6 +48,9 @@ const DirectorNotesModal = lazy(() =>
 	import('./components/DirectorNotes').then((m) => ({ default: m.DirectorNotesModal }))
 );
 const CueModal = lazy(() => import('./components/CueModal').then((m) => ({ default: m.CueModal })));
+const CueYamlEditor = lazy(() =>
+	import('./components/CueYamlEditor').then((m) => ({ default: m.CueYamlEditor }))
+);
 
 import { captureException } from './utils/sentry';
 
@@ -339,6 +342,11 @@ function MaestroConsoleInner() {
 		// Maestro Cue Modal
 		cueModalOpen,
 		setCueModalOpen,
+		// Maestro Cue YAML Editor (standalone)
+		cueYamlEditorOpen,
+		cueYamlEditorSessionId,
+		cueYamlEditorProjectRoot,
+		closeCueYamlEditor,
 	} = useModalActions();
 
 	// --- MOBILE LANDSCAPE MODE (reading-only view) ---
@@ -924,6 +932,7 @@ function MaestroConsoleInner() {
 		handleOpenMarketplace,
 		handleEditAgent,
 		handleOpenCreatePRSession,
+		handleConfigureCue,
 		handleStartTour,
 		handleSetLightboxImage,
 		handleCloseLightbox,
@@ -2372,6 +2381,7 @@ function MaestroConsoleInner() {
 		handleOpenWorktreeConfigSession,
 		handleDeleteWorktreeSession,
 		handleToggleWorktreeExpanded,
+		handleConfigureCue,
 		openWizardModal,
 		handleStartTour,
 
@@ -2721,6 +2731,7 @@ function MaestroConsoleInner() {
 						encoreFeatures.directorNotes ? () => setDirectorNotesOpen(true) : undefined
 					}
 					onOpenMaestroCue={encoreFeatures.maestroCue ? () => setCueModalOpen(true) : undefined}
+					onConfigureCue={encoreFeatures.maestroCue ? handleConfigureCue : undefined}
 					autoScrollAiMode={autoScrollAiMode}
 					setAutoScrollAiMode={setAutoScrollAiMode}
 					onCloseTabSwitcher={handleCloseTabSwitcher}
@@ -2918,6 +2929,23 @@ function MaestroConsoleInner() {
 						<CueModal theme={theme} onClose={() => setCueModalOpen(false)} />
 					</Suspense>
 				)}
+
+				{/* --- MAESTRO CUE YAML EDITOR (standalone, lazy-loaded) --- */}
+				{encoreFeatures.maestroCue &&
+					cueYamlEditorOpen &&
+					cueYamlEditorSessionId &&
+					cueYamlEditorProjectRoot && (
+						<Suspense fallback={null}>
+							<CueYamlEditor
+								key={cueYamlEditorSessionId}
+								isOpen={true}
+								onClose={closeCueYamlEditor}
+								projectRoot={cueYamlEditorProjectRoot}
+								sessionId={cueYamlEditorSessionId}
+								theme={theme}
+							/>
+						</Suspense>
+					)}
 
 				{/* --- GIST PUBLISH MODAL --- */}
 				{/* Supports both file preview tabs and tab context gist publishing */}
