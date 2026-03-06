@@ -122,6 +122,7 @@ interface QuickActionsModalProps {
 	onOpenDirectorNotes?: () => void;
 	// Maestro Cue
 	onOpenMaestroCue?: () => void;
+	onConfigureCue?: (session: Session) => void;
 	// Auto-scroll
 	autoScrollAiMode?: boolean;
 	setAutoScrollAiMode?: (value: boolean) => void;
@@ -211,6 +212,7 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 		onOpenSymphony,
 		onOpenDirectorNotes,
 		onOpenMaestroCue,
+		onConfigureCue,
 		autoScrollAiMode,
 		setAutoScrollAiMode,
 	} = props;
@@ -1075,6 +1077,20 @@ export const QuickActionsModal = memo(function QuickActionsModal(props: QuickAct
 						subtext: 'Event-driven automation dashboard',
 						action: () => {
 							onOpenMaestroCue();
+							setQuickActionOpen(false);
+						},
+					},
+				]
+			: []),
+		// Configure Maestro Cue YAML for active agent
+		...(onConfigureCue && activeSession
+			? [
+					{
+						id: 'configure-cue',
+						label: `Configure Maestro Cue: ${activeSession.name}`,
+						subtext: 'Open YAML editor for event-driven automation',
+						action: () => {
+							onConfigureCue(activeSession);
 							setQuickActionOpen(false);
 						},
 					},

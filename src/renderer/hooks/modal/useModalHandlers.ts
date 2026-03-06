@@ -95,6 +95,7 @@ export interface ModalHandlersReturn {
 	// Session list openers
 	handleEditAgent: (session: Session) => void;
 	handleOpenCreatePRSession: (session: Session) => void;
+	handleConfigureCue: (session: Session) => void;
 
 	// Tour
 	handleStartTour: () => void;
@@ -479,6 +480,10 @@ export function useModalHandlers(
 
 	const handleOpenCreatePRSession = useCallback((session: Session) => {
 		getModalActions().setCreatePRSession(session);
+	}, []);
+
+	const handleConfigureCue = useCallback((session: Session) => {
+		getModalActions().openCueYamlEditor(session.id, session.projectRoot);
 	}, []);
 
 	// ====================================================================
@@ -917,6 +922,7 @@ export function useModalHandlers(
 		// Session list openers
 		handleEditAgent,
 		handleOpenCreatePRSession,
+		handleConfigureCue,
 
 		// Tour
 		handleStartTour,

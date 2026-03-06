@@ -31,7 +31,7 @@ export function CueHelpModal({ theme, onClose }: CueHelpModalProps) {
 			width={672}
 			maxHeight="85vh"
 			closeOnBackdropClick
-			zIndex={50}
+			zIndex={MODAL_PRIORITIES.CUE_HELP}
 			footer={
 				<button
 					onClick={onClose}

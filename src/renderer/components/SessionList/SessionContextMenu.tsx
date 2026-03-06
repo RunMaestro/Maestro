@@ -11,6 +11,7 @@ import {
 	GitPullRequest,
 	Trash2,
 	Edit3,
+	Zap,
 } from 'lucide-react';
 import type { Group, Session, Theme } from '../../types';
 import { useClickOutside, useContextMenuPosition } from '../../hooks';
@@ -34,6 +35,7 @@ interface SessionContextMenuProps {
 	onConfigureWorktrees?: () => void;
 	onDeleteWorktree?: () => void;
 	onCreateGroup?: () => void;
+	onConfigureCue?: () => void;
 }
 
 export function SessionContextMenu({
@@ -55,6 +57,7 @@ export function SessionContextMenu({
 	onConfigureWorktrees,
 	onDeleteWorktree,
 	onCreateGroup,
+	onConfigureCue,
 }: SessionContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const moveToGroupRef = useRef<HTMLDivElement>(null);
@@ -197,6 +200,21 @@ export function SessionContextMenu({
 				>
 					<Bookmark className="w-3.5 h-3.5" fill={session.bookmarked ? 'currentColor' : 'none'} />
 					{session.bookmarked ? 'Remove Bookmark' : 'Add Bookmark'}
+				</button>
+			)}
+
+			{onConfigureCue && (
+				<button
+					type="button"
+					onClick={() => {
+						onConfigureCue();
+						onDismiss();
+					}}
+					className="w-full text-left px-3 py-1.5 text-xs hover:bg-white/5 transition-colors flex items-center gap-2"
+					style={{ color: '#06b6d4' }}
+				>
+					<Zap className="w-3.5 h-3.5" />
+					Configure Maestro Cue
 				</button>
 			)}
 

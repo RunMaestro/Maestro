@@ -115,6 +115,12 @@ export interface DeleteAgentModalData {
 	session: Session;
 }
 
+/** Cue YAML editor data */
+export interface CueYamlEditorData {
+	sessionId: string;
+	projectRoot: string;
+}
+
 /** Worktree modal data (create/delete/PR) */
 export interface WorktreeModalData {
 	session: Session;
@@ -222,7 +228,8 @@ export type ModalId =
 	// Director's Notes
 	| 'directorNotes'
 	// Maestro Cue
-	| 'cueModal';
+	| 'cueModal'
+	| 'cueYamlEditor';
 
 /**
  * Type mapping from ModalId to its data type.
@@ -253,6 +260,7 @@ export interface ModalDataMap {
 	firstRunCelebration: FirstRunCelebrationData;
 	keyboardMastery: KeyboardMasteryData;
 	lightbox: LightboxData;
+	cueYamlEditor: CueYamlEditorData;
 }
 
 // Helper type to get data type for a modal ID
@@ -766,6 +774,11 @@ export function getModalActions() {
 		// Maestro Cue Modal
 		setCueModalOpen: (open: boolean) => (open ? openModal('cueModal') : closeModal('cueModal')),
 
+		// Maestro Cue YAML Editor (standalone, bypasses CueModal dashboard)
+		openCueYamlEditor: (sessionId: string, projectRoot: string) =>
+			openModal('cueYamlEditor', { sessionId, projectRoot }),
+		closeCueYamlEditor: () => closeModal('cueYamlEditor'),
+
 		// Lightbox refs replacement - use updateModalData instead
 		setLightboxIsGroupChat: (isGroupChat: boolean) => updateModalData('lightbox', { isGroupChat }),
 		setLightboxAllowDelete: (allowDelete: boolean) => updateModalData('lightbox', { allowDelete }),
@@ -856,6 +869,8 @@ export function useModalActions() {
 	const windowsWarningModalOpen = useModalStore(selectModalOpen('windowsWarning'));
 	const directorNotesOpen = useModalStore(selectModalOpen('directorNotes'));
 	const cueModalOpen = useModalStore(selectModalOpen('cueModal'));
+	const cueYamlEditorOpen = useModalStore(selectModalOpen('cueYamlEditor'));
+	const cueYamlEditorData = useModalStore(selectModalData('cueYamlEditor'));
 
 	// Get stable actions
 	const actions = getModalActions();
@@ -1026,6 +1041,11 @@ export function useModalActions() {
 
 		// Maestro Cue Modal
 		cueModalOpen,
+
+		// Maestro Cue YAML Editor (standalone)
+		cueYamlEditorOpen,
+		cueYamlEditorSessionId: cueYamlEditorData?.sessionId ?? null,
+		cueYamlEditorProjectRoot: cueYamlEditorData?.projectRoot ?? null,
 
 		// Lightbox ref replacements (now stored as data)
 		lightboxIsGroupChat: lightboxData?.isGroupChat ?? false,
