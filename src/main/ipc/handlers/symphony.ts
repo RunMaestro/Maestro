@@ -16,7 +16,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { logger } from '../../utils/logger';
 import { isWebContentsAvailable } from '../../utils/safe-send';
-import type { SessionsData, StoredSession } from '../../stores/types';
+import type { SessionsData, StoredSession, MaestroSettings } from '../../stores/types';
 import { createIpcHandler, CreateHandlerOptions } from '../../utils/ipcHandler';
 import { execFileNoThrow } from '../../utils/execFile';
 import { getExpandedEnv } from '../../agents/path-prober';
@@ -201,7 +201,7 @@ export interface SymphonyHandlerDependencies {
 	app: App;
 	getMainWindow: () => BrowserWindow | null;
 	sessionsStore: Store<SessionsData>;
-	settingsStore: Store;
+	settingsStore: Store<MaestroSettings>;
 }
 
 // ============================================================================

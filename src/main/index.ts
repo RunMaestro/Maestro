@@ -543,7 +543,7 @@ function setupIpcHandlers() {
 
 	// History operations - extracted to src/main/ipc/handlers/history.ts
 	// Uses HistoryManager singleton for per-session storage
-	registerHistoryHandlers();
+	registerHistoryHandlers({ safeSend });
 
 	// Director's Notes - unified history + synopsis generation
 	registerDirectorNotesHandlers({

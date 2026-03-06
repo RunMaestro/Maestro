@@ -64,7 +64,9 @@
 		"protocols": [
 			{
 				"name": "Maestro",
-				"schemes": ["maestro"]
+				"schemes": [
+					"maestro"
+				]
 			}
 		],
 		"publish": {
