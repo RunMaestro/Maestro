@@ -23,6 +23,7 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { HistoryPanel, HistoryPanelHandle } from '../../../renderer/components/HistoryPanel';
 import type { Theme, Session, HistoryEntry, HistoryEntryType } from '../../../renderer/types';
 import { useUIStore } from '../../../renderer/stores/uiStore';
+import { useSettingsStore } from '../../../renderer/stores/settingsStore';
 
 // Mock child components
 vi.mock('../../../renderer/components/HistoryDetailModal', () => ({
@@ -166,6 +167,9 @@ describe('HistoryPanel', () => {
 
 		// Reset uiStore state used by HistoryPanel
 		useUIStore.setState({ historySearchFilterOpen: false });
+
+		// Default: maestroCue disabled
+		useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: false } });
 
 		// Mock scrollIntoView for jsdom
 		Element.prototype.scrollIntoView = vi.fn();
@@ -508,6 +512,9 @@ describe('HistoryPanel', () => {
 		});
 
 		it('should toggle CUE filter', async () => {
+			// Enable maestroCue so CUE filter button is visible
+			useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: true } });
+
 			const autoEntry = createMockEntry({ type: 'AUTO', summary: 'Auto task' });
 			const cueEntry = createMockEntry({
 				id: 'cue-1',
@@ -540,6 +547,28 @@ describe('HistoryPanel', () => {
 			await waitFor(() => {
 				expect(screen.getByText('Cue triggered task')).toBeInTheDocument();
 			});
+		});
+
+		it('should hide CUE filter button when maestroCue is disabled', async () => {
+			useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: false } });
+
+			const cueEntry = createMockEntry({
+				type: 'CUE',
+				summary: 'Cue triggered task',
+			});
+			mockHistoryGetAll.mockResolvedValue([cueEntry]);
+
+			render(<HistoryPanel session={createMockSession()} theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByRole('button', { name: /AUTO/i })).toBeInTheDocument();
+				expect(screen.getByRole('button', { name: /USER/i })).toBeInTheDocument();
+			});
+
+			// CUE button should not be rendered
+			expect(screen.queryByRole('button', { name: /CUE/i })).not.toBeInTheDocument();
+			// CUE entries should be filtered out (not in activeFilters)
+			expect(screen.queryByText('Cue triggered task')).not.toBeInTheDocument();
 		});
 
 		it('should filter by search text in summary', async () => {

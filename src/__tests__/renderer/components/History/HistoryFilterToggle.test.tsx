@@ -148,6 +148,34 @@ describe('HistoryFilterToggle', () => {
 		expect(screen.getByText('CUE')).toBeInTheDocument();
 	});
 
+	it('hides CUE button when visibleTypes excludes it', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				visibleTypes={['AUTO', 'USER']}
+			/>
+		);
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.queryByText('CUE')).not.toBeInTheDocument();
+	});
+
+	it('shows CUE button when visibleTypes includes it', () => {
+		render(
+			<HistoryFilterToggle
+				activeFilters={new Set<HistoryEntryType>(['AUTO', 'USER', 'CUE'])}
+				onToggleFilter={vi.fn()}
+				theme={mockTheme}
+				visibleTypes={['AUTO', 'USER', 'CUE']}
+			/>
+		);
+		expect(screen.getByText('AUTO')).toBeInTheDocument();
+		expect(screen.getByText('USER')).toBeInTheDocument();
+		expect(screen.getByText('CUE')).toBeInTheDocument();
+	});
+
 	it('renders CUE filter button', () => {
 		render(
 			<HistoryFilterToggle

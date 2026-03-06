@@ -6,6 +6,8 @@ export interface HistoryFilterToggleProps {
 	activeFilters: Set<HistoryEntryType>;
 	onToggleFilter: (type: HistoryEntryType) => void;
 	theme: Theme;
+	/** Which filter types to display. Defaults to all types when omitted. */
+	visibleTypes?: HistoryEntryType[];
 }
 
 // Get pill color based on type
@@ -52,14 +54,17 @@ const getEntryIcon = (type: HistoryEntryType) => {
 	}
 };
 
+const ALL_TYPES: HistoryEntryType[] = ['AUTO', 'USER', 'CUE'];
+
 export const HistoryFilterToggle = memo(function HistoryFilterToggle({
 	activeFilters,
 	onToggleFilter,
 	theme,
+	visibleTypes = ALL_TYPES,
 }: HistoryFilterToggleProps) {
 	return (
 		<div className="flex gap-2 flex-shrink-0">
-			{(['AUTO', 'USER', 'CUE'] as HistoryEntryType[]).map((type) => {
+			{visibleTypes.map((type) => {
 				const isActive = activeFilters.has(type);
 				const colors = getPillColor(type, theme);
 				const Icon = getEntryIcon(type);

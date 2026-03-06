@@ -24,6 +24,7 @@ import type { HistoryStats } from '../History';
 import { HistoryDetailModal } from '../HistoryDetailModal';
 import { useListNavigation, useSettings } from '../../hooks';
 import { useSessionStore } from '../../stores/sessionStore';
+import { useSettingsStore } from '../../stores/settingsStore';
 import type { TabFocusHandle } from './OverviewTab';
 
 /** Page size for progressive loading */
@@ -64,13 +65,18 @@ function daysToLookbackHours(days: number): number | null {
 export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabProps>(
 	function UnifiedHistoryTab({ theme, onResumeSession, fileTree, onFileClick }, ref) {
 		const { directorNotesSettings } = useSettings();
+		const maestroCueEnabled = useSettingsStore((s) => s.encoreFeatures.maestroCue);
+		const visibleTypes: HistoryEntryType[] = maestroCueEnabled
+			? ['AUTO', 'USER', 'CUE']
+			: ['AUTO', 'USER'];
+
 		const [entries, setEntries] = useState<UnifiedHistoryEntry[]>([]);
 		const [isLoading, setIsLoading] = useState(true);
 		const [isLoadingMore, setIsLoadingMore] = useState(false);
 		const [hasMore, setHasMore] = useState(true);
 		const [totalEntries, setTotalEntries] = useState(0);
 		const [activeFilters, setActiveFilters] = useState<Set<HistoryEntryType>>(
-			new Set(['AUTO', 'USER', 'CUE'])
+			() => new Set(maestroCueEnabled ? ['AUTO', 'USER', 'CUE'] : ['AUTO', 'USER'])
 		);
 		const [detailModalEntry, setDetailModalEntry] = useState<HistoryEntry | null>(null);
 		const [lookbackHours, setLookbackHours] = useState<number | null>(() =>
@@ -323,6 +329,21 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 			});
 		}, [entries, activeFilters, searchQuery]);
 
+		// Sync activeFilters when cue feature is toggled
+		useEffect(() => {
+			setActiveFilters((prev) => {
+				if (maestroCueEnabled && !prev.has('CUE')) {
+					return new Set([...prev, 'CUE']);
+				}
+				if (!maestroCueEnabled && prev.has('CUE')) {
+					const next = new Set(prev);
+					next.delete('CUE');
+					return next;
+				}
+				return prev;
+			});
+		}, [maestroCueEnabled]);
+
 		// Toggle filter
 		const toggleFilter = useCallback((type: HistoryEntryType) => {
 			setActiveFilters((prev) => {
@@ -521,6 +542,7 @@ export const UnifiedHistoryTab = forwardRef<TabFocusHandle, UnifiedHistoryTabPro
 						activeFilters={activeFilters}
 						onToggleFilter={toggleFilter}
 						theme={theme}
+						visibleTypes={visibleTypes}
 					/>
 					<ActivityGraph
 						entries={graphEntries}

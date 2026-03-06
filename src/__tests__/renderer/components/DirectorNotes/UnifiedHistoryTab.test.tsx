@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { UnifiedHistoryTab } from '../../../../renderer/components/DirectorNotes/UnifiedHistoryTab';
 import type { Theme } from '../../../../renderer/types';
+import { useSettingsStore } from '../../../../renderer/stores/settingsStore';
 
 // Mock useSettings hook (mutable so individual tests can override)
 const mockDirNotesSettings = vi.hoisted(() => ({
@@ -108,7 +109,7 @@ vi.mock('../../../../renderer/components/History', () => ({
 			)}
 		</div>
 	),
-	HistoryFilterToggle: ({ activeFilters, onToggleFilter }: any) => (
+	HistoryFilterToggle: ({ activeFilters, onToggleFilter, visibleTypes }: any) => (
 		<div data-testid="history-filter-toggle">
 			<button
 				data-testid="filter-auto"
@@ -124,6 +125,15 @@ vi.mock('../../../../renderer/components/History', () => ({
 			>
 				USER
 			</button>
+			{visibleTypes?.includes('CUE') && (
+				<button
+					data-testid="filter-cue"
+					data-active={activeFilters.has('CUE')}
+					onClick={() => onToggleFilter('CUE')}
+				>
+					CUE
+				</button>
+			)}
 		</div>
 	),
 	HistoryStatsBar: ({ stats }: any) => (
@@ -233,6 +243,9 @@ beforeEach(() => {
 	};
 	mockHistoryUpdate.mockResolvedValue(true);
 	mockGetUnifiedHistory.mockResolvedValue(createPaginatedResponse(createMockEntries()));
+
+	// Default: maestroCue disabled
+	useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: false } });
 });
 
 afterEach(() => {
@@ -394,6 +407,29 @@ describe('UnifiedHistoryTab', () => {
 
 			// USER entries should remain
 			expect(screen.getByText('User performed action A')).toBeInTheDocument();
+		});
+
+		it('hides CUE filter when maestroCue is disabled', async () => {
+			useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: false } });
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('filter-auto')).toBeInTheDocument();
+				expect(screen.getByTestId('filter-user')).toBeInTheDocument();
+			});
+
+			expect(screen.queryByTestId('filter-cue')).not.toBeInTheDocument();
+		});
+
+		it('shows CUE filter when maestroCue is enabled', async () => {
+			useSettingsStore.setState({ encoreFeatures: { directorNotes: false, maestroCue: true } });
+
+			render(<UnifiedHistoryTab theme={mockTheme} />);
+
+			await waitFor(() => {
+				expect(screen.getByTestId('filter-cue')).toBeInTheDocument();
+			});
 		});
 	});
 
