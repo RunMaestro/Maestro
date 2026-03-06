@@ -43,6 +43,7 @@ import { useAgentCapabilities, useHoverTooltip } from '../hooks';
 import { safeClipboardWrite } from '../utils/clipboard';
 import { useUIStore } from '../stores/uiStore';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useSessionStore } from '../stores/sessionStore';
 import type {
 	Session,
 	Theme,
@@ -461,9 +462,58 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 		const headerRef = useRef<HTMLDivElement>(null);
 		const filePreviewContainerRef = useRef<HTMLDivElement>(null);
 		const filePreviewRef = useRef<FilePreviewHandle>(null);
-		const terminalViewRef = useRef<TerminalViewHandle>(null);
+		// Map of sessionId → TerminalViewHandle for each mounted terminal session.
+		// Using a Map instead of a single ref so we can keep terminals alive for all sessions,
+		// not just the currently active one.
+		const terminalViewRefs = useRef<Map<string, TerminalViewHandle>>(new Map());
+
+		// Tracks which sessions have had their TerminalView mounted (by session ID).
+		// Once a session's terminals are mounted we keep them alive (display:none) so that
+		// switching away and back doesn't destroy the xterm.js buffer contents.
+		const mountedTerminalSessionsRef = useRef<Map<string, Session>>(new Map());
+		const [mountedTerminalSessionIds, setMountedTerminalSessionIds] = useState<string[]>([]);
+
 		const [terminalSearchOpen, setTerminalSearchOpen] = useState(false);
 		const [configuredContextWindow, setConfiguredContextWindow] = useState(0);
+
+		// Narrow subscription: only re-renders when sessions are added/removed (not on content updates).
+		// Used to clean up deleted sessions from mountedTerminalSessionIds.
+		const allSessionIds = useSessionStore((s) => s.sessions.map((ses) => ses.id).join(','));
+
+		// Add session to the mounted set when it becomes active and has terminal tabs.
+		// Remove it when its terminal tabs are all closed.
+		// Deliberately depend only on id and terminalTabs.length to avoid running on every AI message.
+		useEffect(() => {
+			if (!activeSession) return;
+			const hasTerminalTabs = (activeSession.terminalTabs?.length ?? 0) > 0;
+			if (hasTerminalTabs) {
+				// Always update the snapshot so we have the latest when this session becomes non-active.
+				mountedTerminalSessionsRef.current.set(activeSession.id, activeSession);
+				setMountedTerminalSessionIds((prev) =>
+					prev.includes(activeSession.id) ? prev : [...prev, activeSession.id]
+				);
+			} else if (mountedTerminalSessionsRef.current.has(activeSession.id)) {
+				// Last terminal tab was closed — remove from mounted set.
+				mountedTerminalSessionsRef.current.delete(activeSession.id);
+				setMountedTerminalSessionIds((prev) => prev.filter((id) => id !== activeSession.id));
+			}
+		}, [activeSession?.id, activeSession?.terminalTabs?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+		// Evict sessions that were deleted entirely from the store.
+		useEffect(() => {
+			const liveIds = new Set(allSessionIds.split(',').filter(Boolean));
+			setMountedTerminalSessionIds((prev) => {
+				const filtered = prev.filter((id) => liveIds.has(id));
+				if (filtered.length !== prev.length) {
+					// Also clean up the snapshot ref.
+					prev.filter((id) => !liveIds.has(id)).forEach((id) =>
+						mountedTerminalSessionsRef.current.delete(id)
+					);
+					return filtered;
+				}
+				return prev; // Same reference → no re-render
+			});
+		}, [allSessionIds]);
 
 		// Close terminal search when switching away from terminal mode
 		useEffect(() => {
@@ -660,10 +710,14 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 					}
 				},
 				clearActiveTerminal: () => {
-					terminalViewRef.current?.clearActiveTerminal();
+					if (activeSession) {
+						terminalViewRefs.current.get(activeSession.id)?.clearActiveTerminal();
+					}
 				},
 				focusActiveTerminal: () => {
-					terminalViewRef.current?.focusActiveTerminal();
+					if (activeSession) {
+						terminalViewRefs.current.get(activeSession.id)?.focusActiveTerminal();
+					}
 				},
 				openTerminalSearch: () => {
 					setTerminalSearchOpen(true);
@@ -1756,29 +1810,41 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 										/>
 									)}
 
-									{/* TerminalView is always mounted (when tabs exist) to preserve xterm.js scrollback history.
-									     It is hidden via CSS when not in terminal mode so switching to AI mode and back
-									     preserves the terminal display buffer without needing to replay PTY output. */}
-									{(activeSession.terminalTabs?.length ?? 0) > 0 && (
-										<div
-											className="absolute inset-0 flex flex-col"
-											style={{ display: activeSession.inputMode === 'terminal' ? 'flex' : 'none' }}
-										>
-											<TerminalView
-												ref={terminalViewRef}
-												session={activeSession}
-												theme={theme}
-												fontFamily={fontFamily}
-												fontSize={fontSize}
-												defaultShell={defaultShell}
-												onTabStateChange={createTabStateChangeHandler(activeSession.id)}
-												onTabPidChange={createTabPidChangeHandler(activeSession.id)}
-												searchOpen={terminalSearchOpen}
-												onSearchClose={() => setTerminalSearchOpen(false)}
-												isVisible={activeSession.inputMode === 'terminal'}
-											/>
-										</div>
-									)}
+									{/* TerminalView is kept alive for every session that has terminal tabs so that
+									     switching between sessions (or to AI mode) does not destroy the xterm.js
+									     scrollback buffer. Visibility is controlled via CSS display, not mount/unmount. */}
+									{mountedTerminalSessionIds.map((sessionId) => {
+										const isCurrentSession = sessionId === activeSession.id;
+										const session = isCurrentSession
+											? activeSession
+											: mountedTerminalSessionsRef.current.get(sessionId);
+										if (!session) return null;
+										const isTerminalVisible = isCurrentSession && session.inputMode === 'terminal';
+										return (
+											<div
+												key={sessionId}
+												className="absolute inset-0 flex flex-col"
+												style={{ display: isTerminalVisible ? 'flex' : 'none' }}
+											>
+												<TerminalView
+													ref={(handle) => {
+														if (handle) terminalViewRefs.current.set(sessionId, handle);
+														else terminalViewRefs.current.delete(sessionId);
+													}}
+													session={session}
+													theme={theme}
+													fontFamily={fontFamily}
+													fontSize={fontSize}
+													defaultShell={defaultShell}
+													onTabStateChange={createTabStateChangeHandler(sessionId)}
+													onTabPidChange={createTabPidChangeHandler(sessionId)}
+													searchOpen={isCurrentSession ? terminalSearchOpen : false}
+													onSearchClose={isCurrentSession ? () => setTerminalSearchOpen(false) : undefined}
+													isVisible={isTerminalVisible}
+												/>
+											</div>
+										);
+									})}
 								</div>
 
 								{/* Input Area (hidden in mobile landscape, during wizard doc generation, and in terminal mode — xterm.js handles its own input) */}

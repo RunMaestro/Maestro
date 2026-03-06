@@ -12,12 +12,47 @@ import type {
 import { gitService } from '../../../renderer/services/git';
 import { useUIStore } from '../../../renderer/stores/uiStore';
 import { useSettingsStore } from '../../../renderer/stores/settingsStore';
+import { useSessionStore } from '../../../renderer/stores/sessionStore';
 import {
 	clearCapabilitiesCache,
 	setCapabilitiesCache,
 } from '../../../renderer/hooks/agent/useAgentCapabilities';
 
 // Mock child components to simplify testing - must be before MainPanel import
+
+// TerminalView: forwardRef stub that records render calls per session so we can
+// assert persistence (kept mounted) vs destruction (unmounted) across sessions.
+const terminalViewSessions: string[] = [];
+vi.mock('../../../renderer/components/TerminalView', () => {
+	const React = require('react');
+	const TerminalView = React.forwardRef(
+		(props: { session: { id: string }; isVisible: boolean }, ref: React.Ref<unknown>) => {
+			React.useImperativeHandle(ref, () => ({
+				clearActiveTerminal: vi.fn(),
+				focusActiveTerminal: vi.fn(),
+			}));
+			// Track which session IDs have been mounted
+			React.useEffect(() => {
+				terminalViewSessions.push(props.session.id);
+				return () => {
+					const idx = terminalViewSessions.lastIndexOf(props.session.id);
+					if (idx !== -1) terminalViewSessions.splice(idx, 1);
+				};
+			}, [props.session.id]);
+			return React.createElement('div', {
+				'data-testid': `terminal-view-${props.session.id}`,
+				'data-visible': String(props.isVisible),
+			});
+		}
+	);
+	TerminalView.displayName = 'TerminalView';
+	return {
+		TerminalView,
+		createTabStateChangeHandler: vi.fn(() => vi.fn()),
+		createTabPidChangeHandler: vi.fn(() => vi.fn()),
+	};
+});
+
 vi.mock('../../../renderer/components/LogViewer', () => ({
 	LogViewer: (props: { onClose: () => void }) => {
 		return React.createElement(
@@ -3303,6 +3338,125 @@ describe('MainPanel', () => {
 
 			// The mock component just shows message count, but the agentName is passed through
 			expect(screen.getByTestId('wizard-conversation-view')).toBeInTheDocument();
+		});
+	});
+
+	// ---------------------------------------------------------------------------
+	// Terminal session persistence
+	// ---------------------------------------------------------------------------
+	describe('terminal session persistence', () => {
+		const makeTerminalTab = (id = 'ttab-1') => ({
+			id,
+			name: null,
+			shellType: 'zsh' as const,
+			pid: 9000,
+			cwd: '/tmp',
+			createdAt: Date.now(),
+			state: 'idle' as const,
+			exitCode: undefined,
+		});
+
+		beforeEach(() => {
+			terminalViewSessions.length = 0;
+		});
+
+		it('renders TerminalView when active session has terminal tabs in terminal mode', () => {
+			const tab = makeTerminalTab();
+			const session = createSession({
+				id: 'session-term',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			// Seed session store so the eviction effect keeps the session alive
+			useSessionStore.setState({ sessions: [session] });
+
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+
+			const view = screen.getByTestId('terminal-view-session-term');
+			expect(view).toBeInTheDocument();
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('hides TerminalView (display:none) when switching to AI mode, but keeps it mounted', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-persist',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-persist',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(
+				<MainPanel {...defaultProps} activeSession={sessionTerminal} />
+			);
+
+			// Confirm it is visible
+			expect(screen.getByTestId('terminal-view-session-persist').getAttribute('data-visible')).toBe('true');
+
+			// Simulate switching to AI mode (inputMode changes, terminalTabs unchanged)
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// TerminalView must still be in the DOM (not unmounted)
+			const view = screen.getByTestId('terminal-view-session-persist');
+			expect(view).toBeInTheDocument();
+			// But hidden
+			expect(view.getAttribute('data-visible')).toBe('false');
+		});
+
+		it('shows TerminalView again when switching back from AI mode to terminal mode', async () => {
+			const tab = makeTerminalTab();
+			const sessionTerminal = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'terminal',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			const sessionAI = createSession({
+				id: 'session-roundtrip',
+				inputMode: 'ai',
+				terminalTabs: [tab],
+				activeTerminalTabId: tab.id,
+				unifiedTabOrder: [{ type: 'terminal' as const, id: tab.id }],
+			});
+			useSessionStore.setState({ sessions: [sessionTerminal] });
+
+			const { rerender } = render(
+				<MainPanel {...defaultProps} activeSession={sessionTerminal} />
+			);
+
+			// Switch to AI mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionAI} />);
+			});
+
+			// Switch back to terminal mode
+			await act(async () => {
+				rerender(<MainPanel {...defaultProps} activeSession={sessionTerminal} />);
+			});
+
+			const view = screen.getByTestId('terminal-view-session-roundtrip');
+			expect(view.getAttribute('data-visible')).toBe('true');
+		});
+
+		it('does not render TerminalView when session has no terminal tabs', () => {
+			const session = createSession({ inputMode: 'ai', terminalTabs: [] });
+			useSessionStore.setState({ sessions: [session] });
+			render(<MainPanel {...defaultProps} activeSession={session} />);
+			expect(screen.queryByTestId('terminal-view-session-1')).not.toBeInTheDocument();
 		});
 	});
 });

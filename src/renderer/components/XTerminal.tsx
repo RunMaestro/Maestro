@@ -243,6 +243,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 					webglAddon.onContextLoss(() => {
 						console.warn('[XTerminal] WebGL context lost — falling back to canvas renderer');
 						webglAddon?.dispose();
+						webglAddon = null;
+						// The WebGL addon just disposed; xterm.js now uses its fallback canvas renderer.
+						// Force a full repaint so the fallback renderer draws from the internal buffer.
+						// Without this, the terminal can remain blank if context loss fires after the
+						// isVisible refresh call (context loss is async from the GPU).
+						term.refresh(0, term.rows - 1);
 					});
 					term.loadAddon(webglAddon);
 				} catch (err) {
@@ -271,7 +277,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		});
 
 		term.open(containerRef.current);
-		fitAddon.fit();
+		// Guard: only fit if the container is already visible. If mounted inside a display:none
+		// ancestor (e.g. session has terminal tabs but inputMode !== 'terminal'), calling fit()
+		// here would resize the terminal to the 2×2 minimum. The isVisible effect in TerminalView
+		// will call refresh() → fit() once the container becomes visible.
+		if (containerRef.current.offsetWidth > 0 && containerRef.current.offsetHeight > 0) {
+			fitAddon.fit();
+		}
 
 		if (onTitleChange) {
 			term.onTitleChange(onTitleChange);
@@ -334,7 +346,13 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		if (terminalRef.current) {
 			terminalRef.current.options.fontFamily = fontFamily;
 			terminalRef.current.options.fontSize = fontSize;
-			fitAddonRef.current?.fit();
+			// Guard: skip fit() when the container is hidden (display:none → offsetWidth/Height = 0).
+			// Calling fit() on a zero-size container resizes the terminal to the minimum (2×2),
+			// corrupting content written while at that reduced size.
+			const container = containerRef.current;
+			if (container && container.offsetWidth > 0 && container.offsetHeight > 0) {
+				fitAddonRef.current?.fit();
+			}
 		}
 	}, [fontFamily, fontSize]);
 
