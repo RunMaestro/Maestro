@@ -128,6 +128,14 @@ export function createCueApi() {
 		validateYaml: (content: string): Promise<{ valid: boolean; errors: string[] }> =>
 			ipcRenderer.invoke('cue:validateYaml', { content }),
 
+		// Save pipeline layout (node positions, viewport, pipeline selection)
+		savePipelineLayout: (layout: Record<string, unknown>): Promise<void> =>
+			ipcRenderer.invoke('cue:savePipelineLayout', { layout }),
+
+		// Load saved pipeline layout
+		loadPipelineLayout: (): Promise<Record<string, unknown> | null> =>
+			ipcRenderer.invoke('cue:loadPipelineLayout'),
+
 		// Listen for real-time activity updates from the main process
 		onActivityUpdate: (callback: (data: CueRunResult) => void): (() => void) => {
 			const handler = (_e: unknown, data: CueRunResult) => callback(data);

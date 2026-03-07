@@ -2823,6 +2823,8 @@ interface MaestroAPI {
 		readYaml: (projectRoot: string) => Promise<string | null>;
 		writeYaml: (projectRoot: string, content: string) => Promise<void>;
 		validateYaml: (content: string) => Promise<{ valid: boolean; errors: string[] }>;
+		savePipelineLayout: (layout: Record<string, unknown>) => Promise<void>;
+		loadPipelineLayout: () => Promise<Record<string, unknown> | null>;
 		onActivityUpdate: (
 			callback: (data: {
 				runId: string;
