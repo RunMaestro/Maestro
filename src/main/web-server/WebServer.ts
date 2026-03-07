@@ -65,6 +65,7 @@ import type {
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
 	RefreshAutoRunDocsCallback,
+	ConfigureAutoRunCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -316,6 +317,10 @@ export class WebServer {
 		this.callbackRegistry.setRefreshAutoRunDocsCallback(callback);
 	}
 
+	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
+		this.callbackRegistry.setConfigureAutoRunCallback(callback);
+	}
+
 	setGetHistoryCallback(callback: GetHistoryCallback): void {
 		this.callbackRegistry.setGetHistoryCallback(callback);
 	}
@@ -472,6 +477,8 @@ export class WebServer {
 				this.callbackRegistry.refreshFileTree(sessionId),
 			refreshAutoRunDocs: async (sessionId: string) =>
 				this.callbackRegistry.refreshAutoRunDocs(sessionId),
+			configureAutoRun: async (sessionId: string, config: any) =>
+				this.callbackRegistry.configureAutoRun(sessionId, config),
 			getSessions: () => this.callbackRegistry.getSessions(),
 			getLiveSessionInfo: (sessionId: string) =>
 				this.liveSessionManager.getLiveSessionInfo(sessionId),

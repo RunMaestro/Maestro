@@ -24,6 +24,7 @@ import type {
 	OpenFileTabCallback,
 	RefreshFileTreeCallback,
 	RefreshAutoRunDocsCallback,
+	ConfigureAutoRunCallback,
 	GetThemeCallback,
 	GetCustomCommandsCallback,
 	GetHistoryCallback,
@@ -54,6 +55,7 @@ export interface WebServerCallbacks {
 	openFileTab: OpenFileTabCallback | null;
 	refreshFileTree: RefreshFileTreeCallback | null;
 	refreshAutoRunDocs: RefreshAutoRunDocsCallback | null;
+	configureAutoRun: ConfigureAutoRunCallback | null;
 	getHistory: GetHistoryCallback | null;
 }
 
@@ -78,6 +80,7 @@ export class CallbackRegistry {
 		openFileTab: null,
 		refreshFileTree: null,
 		refreshAutoRunDocs: null,
+		configureAutoRun: null,
 		getHistory: null,
 	};
 
@@ -176,6 +179,21 @@ export class CallbackRegistry {
 		return this.callbacks.refreshAutoRunDocs(sessionId);
 	}
 
+	async configureAutoRun(
+		sessionId: string,
+		config: {
+			documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+			prompt?: string;
+			loopEnabled?: boolean;
+			maxLoops?: number;
+			saveAsPlaybook?: string;
+			launch?: boolean;
+		}
+	): Promise<{ success: boolean; playbookId?: string; error?: string }> {
+		if (!this.callbacks.configureAutoRun) return { success: false, error: 'Not configured' };
+		return this.callbacks.configureAutoRun(sessionId, config);
+	}
+
 	getHistory(projectPath?: string, sessionId?: string): ReturnType<GetHistoryCallback> | [] {
 		return this.callbacks.getHistory?.(projectPath, sessionId) ?? [];
 	}
@@ -262,6 +280,10 @@ export class CallbackRegistry {
 
 	setRefreshAutoRunDocsCallback(callback: RefreshAutoRunDocsCallback): void {
 		this.callbacks.refreshAutoRunDocs = callback;
+	}
+
+	setConfigureAutoRunCallback(callback: ConfigureAutoRunCallback): void {
+		this.callbacks.configureAutoRun = callback;
 	}
 
 	setGetHistoryCallback(callback: GetHistoryCallback): void {

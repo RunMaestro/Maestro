@@ -19,6 +19,7 @@
  * - open_file_tab: Open a file in a preview tab
  * - refresh_file_tree: Refresh the file tree for a session
  * - refresh_auto_run_docs: Refresh auto-run documents for a session
+ * - configure_auto_run: Configure and optionally launch an auto-run session
  */
 
 import { WebSocket } from 'ws';
@@ -93,6 +94,17 @@ export interface MessageHandlerCallbacks {
 	openFileTab: (sessionId: string, filePath: string) => Promise<boolean>;
 	refreshFileTree: (sessionId: string) => Promise<boolean>;
 	refreshAutoRunDocs: (sessionId: string) => Promise<boolean>;
+	configureAutoRun: (
+		sessionId: string,
+		config: {
+			documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+			prompt?: string;
+			loopEnabled?: boolean;
+			maxLoops?: number;
+			saveAsPlaybook?: string;
+			launch?: boolean;
+		}
+	) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 	getSessions: () => Array<{
 		id: string;
 		name: string;
@@ -212,6 +224,10 @@ export class WebSocketMessageHandler {
 
 			case 'refresh_auto_run_docs':
 				this.handleRefreshAutoRunDocs(client, message);
+				break;
+
+			case 'configure_auto_run':
+				this.handleConfigureAutoRun(client, message);
 				break;
 
 			default:
@@ -707,6 +723,57 @@ export class WebSocketMessageHandler {
 			})
 			.catch((error) => {
 				this.sendError(client, `Failed to refresh auto-run docs: ${error.message}`);
+			});
+	}
+
+	/**
+	 * Handle configure_auto_run message - configure and optionally launch an auto-run
+	 */
+	private handleConfigureAutoRun(client: WebClient, message: WebClientMessage): void {
+		const sessionId = message.sessionId as string;
+		const documents = message.documents as Array<{ filename: string; resetOnCompletion?: boolean }> | undefined;
+		logger.info(
+			`[Web] Received configure_auto_run message: session=${sessionId}, documents=${documents?.length || 0}`,
+			LOG_CONTEXT
+		);
+
+		if (!sessionId) {
+			this.sendError(client, 'Missing sessionId');
+			return;
+		}
+
+		if (!documents || !Array.isArray(documents) || documents.length === 0) {
+			this.sendError(client, 'Missing or empty documents array');
+			return;
+		}
+
+		if (!this.callbacks.configureAutoRun) {
+			this.sendError(client, 'Auto-run configuration not configured');
+			return;
+		}
+
+		const config = {
+			documents,
+			prompt: message.prompt as string | undefined,
+			loopEnabled: message.loopEnabled as boolean | undefined,
+			maxLoops: message.maxLoops as number | undefined,
+			saveAsPlaybook: message.saveAsPlaybook as string | undefined,
+			launch: message.launch as boolean | undefined,
+		};
+
+		this.callbacks
+			.configureAutoRun(sessionId, config)
+			.then((result) => {
+				this.send(client, {
+					type: 'configure_auto_run_result',
+					success: result.success,
+					playbookId: result.playbookId,
+					error: result.error,
+					sessionId,
+				});
+			})
+			.catch((error) => {
+				this.sendError(client, `Failed to configure auto-run: ${error.message}`);
 			});
 	}
 

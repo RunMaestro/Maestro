@@ -290,6 +290,17 @@ export type ToggleBookmarkCallback = (sessionId: string) => Promise<boolean>;
 export type OpenFileTabCallback = (sessionId: string, filePath: string) => Promise<boolean>;
 export type RefreshFileTreeCallback = (sessionId: string) => Promise<boolean>;
 export type RefreshAutoRunDocsCallback = (sessionId: string) => Promise<boolean>;
+export type ConfigureAutoRunCallback = (
+	sessionId: string,
+	config: {
+		documents: Array<{ filename: string; resetOnCompletion?: boolean }>;
+		prompt?: string;
+		loopEnabled?: boolean;
+		maxLoops?: number;
+		saveAsPlaybook?: string;
+		launch?: boolean;
+	}
+) => Promise<{ success: boolean; playbookId?: string; error?: string }>;
 
 /**
  * Callback type for fetching current theme.

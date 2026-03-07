@@ -466,6 +466,28 @@ export function createProcessApi() {
 		},
 
 		/**
+		 * Subscribe to remote configure auto-run from CLI/web interface
+		 */
+		onRemoteConfigureAutoRun: (
+			callback: (sessionId: string, config: any, responseChannel: string) => void
+		): (() => void) => {
+			const handler = (_: unknown, sessionId: string, config: any, responseChannel: string) =>
+				callback(sessionId, config, responseChannel);
+			ipcRenderer.on('remote:configureAutoRun', handler);
+			return () => ipcRenderer.removeListener('remote:configureAutoRun', handler);
+		},
+
+		/**
+		 * Send response for remote configure auto-run
+		 */
+		sendRemoteConfigureAutoRunResponse: (
+			responseChannel: string,
+			result: { success: boolean; playbookId?: string; error?: string }
+		): void => {
+			ipcRenderer.send(responseChannel, result);
+		},
+
+		/**
 		 * Subscribe to stderr from runCommand (separate stream)
 		 */
 		onStderr: (callback: (sessionId: string, data: string) => void): (() => void) => {
