@@ -41,33 +41,33 @@ export class PtySpawner {
 			let ptyArgs: string[];
 
 			if (isTerminal) {
-				// Full shell emulation for terminal mode
-				if (shell) {
-					ptyCommand = shell;
+				if (!shell) {
+					// No shell specified — use the explicit command/args directly (e.g. ssh for remote terminals)
+					ptyCommand = command;
+					ptyArgs = args;
 				} else {
-					ptyCommand = isWindows() ? 'powershell.exe' : 'bash';
-				}
+					// Full shell emulation: launch the shell with login+interactive flags
+					ptyCommand = shell;
+					ptyArgs = isWindows() ? [] : ['-l', '-i'];
 
-				// Use -l (login) AND -i (interactive) flags for fully configured shell
-				ptyArgs = isWindows() ? [] : ['-l', '-i'];
-
-				// Append custom shell arguments from user configuration
-				if (shellArgs && shellArgs.trim()) {
-					const customShellArgsArray = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
-					const cleanedArgs = customShellArgsArray.map((arg) => {
-						if (
-							(arg.startsWith('"') && arg.endsWith('"')) ||
-							(arg.startsWith("'") && arg.endsWith("'"))
-						) {
-							return arg.slice(1, -1);
-						}
-						return arg;
-					});
-					if (cleanedArgs.length > 0) {
-						logger.debug('Appending custom shell args', 'ProcessManager', {
-							shellArgs: cleanedArgs,
+					// Append custom shell arguments from user configuration
+					if (shellArgs && shellArgs.trim()) {
+						const customShellArgsArray = shellArgs.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
+						const cleanedArgs = customShellArgsArray.map((arg) => {
+							if (
+								(arg.startsWith('"') && arg.endsWith('"')) ||
+								(arg.startsWith("'") && arg.endsWith("'"))
+							) {
+								return arg.slice(1, -1);
+							}
+							return arg;
 						});
-						ptyArgs = [...ptyArgs, ...cleanedArgs];
+						if (cleanedArgs.length > 0) {
+							logger.debug('Appending custom shell args', 'ProcessManager', {
+								shellArgs: cleanedArgs,
+							});
+							ptyArgs = [...ptyArgs, ...cleanedArgs];
+						}
 					}
 				}
 			} else {
