@@ -255,11 +255,12 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		term.unicode.activeVersion = '11';
 
 		// Attempt WebGL renderer with canvas fallback.
-		// The async import may resolve while the container is still hidden (display:none → 0×0).
-		// Calling term.loadAddon(webglAddon) on a hidden canvas causes WebGL context creation to
-		// fail, leaving the terminal in a broken rendering state. Guard against this by deferring
-		// the load until the container is visible; pendingWebglLoadRef is applied on the next
-		// visible resize or explicit refresh() call.
+		// The WebGL addon must be loaded AFTER term.open() because xterm's internal link layer
+		// (onShowLinkUnderline etc.) is only initialised during open(). Loading before open()
+		// causes "Cannot read properties of undefined (reading 'onShowLinkUnderline')".
+		// Additionally, loading on a hidden (0×0) container causes WebGL context creation to
+		// fail, so we defer until the container is visible; pendingWebglLoadRef is applied on
+		// the next visible resize or explicit refresh() call.
 		let webglAddon: import('@xterm/addon-webgl').WebglAddon | null = null;
 
 		const tryLoadWebgl = (WebglAddon: typeof import('@xterm/addon-webgl').WebglAddon) => {
@@ -284,14 +285,6 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 				console.warn('[XTerminal] WebGL addon failed to load, using canvas renderer:', err);
 			}
 		};
-
-		import('@xterm/addon-webgl')
-			.then(({ WebglAddon }) => {
-				tryLoadWebgl(WebglAddon);
-			})
-			.catch((err) => {
-				console.warn('[XTerminal] WebGL addon import failed, using canvas renderer:', err);
-			});
 
 		// Allow Maestro's Meta-key (Cmd on macOS) and Ctrl+Shift shortcuts to bubble to
 		// the window-level handler in useMainKeyboardHandler.  Without this, xterm captures
@@ -318,6 +311,15 @@ export const XTerminal = forwardRef<XTerminalHandle, XTerminalProps>(function XT
 		if (containerRef.current.offsetWidth > 0 && containerRef.current.offsetHeight > 0) {
 			fitAddon.fit();
 		}
+
+		// Load WebGL addon after open() so xterm's internal link layer is initialised.
+		import('@xterm/addon-webgl')
+			.then(({ WebglAddon }) => {
+				tryLoadWebgl(WebglAddon);
+			})
+			.catch((err) => {
+				console.warn('[XTerminal] WebGL addon import failed, using canvas renderer:', err);
+			});
 
 		if (onTitleChange) {
 			term.onTitleChange(onTitleChange);

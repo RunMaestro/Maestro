@@ -10,6 +10,7 @@ import {
 	updateTerminalTabPid,
 } from '../utils/terminalTabHelpers';
 import { useSessionStore } from '../stores/sessionStore';
+import { captureException } from '../utils/sentry';
 import type { Session, TerminalTab } from '../types';
 import type { Theme } from '../../shared/theme-types';
 
@@ -145,7 +146,14 @@ export const TerminalView = memo(
 							onTabStateChange(tabId, 'exited', 1);
 						}
 					})
-					.catch(() => {
+					.catch((err) => {
+						captureException(err, {
+							extra: {
+								tabId,
+								terminalSessionId,
+								operation: 'spawnTerminalTab',
+							},
+						});
 						onTabStateChange(tabId, 'exited', 1);
 					})
 					.finally(() => {

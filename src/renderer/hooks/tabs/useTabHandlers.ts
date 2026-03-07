@@ -153,7 +153,12 @@ export function useTabHandlers(): TabHandlersReturn {
 	const unifiedTabs = useMemo((): UnifiedTab[] => {
 		if (!activeSession) return [];
 		return buildUnifiedTabs(activeSession);
-	}, [activeSession?.aiTabs, activeSession?.filePreviewTabs, activeSession?.unifiedTabOrder]);
+	}, [
+		activeSession?.aiTabs,
+		activeSession?.filePreviewTabs,
+		activeSession?.terminalTabs,
+		activeSession?.unifiedTabOrder,
+	]);
 
 	// Get the active file preview tab (if a file tab is active)
 	const activeFileTab = useMemo((): FilePreviewTab | null => {

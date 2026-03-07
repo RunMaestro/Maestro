@@ -288,6 +288,11 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 		// ================================================================
 		const unsubscribeExit = window.maestro.process.onExit(
 			async (sessionId: string, code: number) => {
+				// Terminal tab exits ({id}-terminal-{tabId}) are handled by TerminalView — skip here
+				if (sessionId.includes('-terminal-')) {
+					return;
+				}
+
 				console.log('[onExit] Process exit event received:', {
 					rawSessionId: sessionId,
 					exitCode: code,
@@ -672,7 +677,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 							busySource: anyAiTabBusy ? s.busySource : undefined,
 							// TODO: Remove shellLogs once terminal tabs migration is complete
-							...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, exitLog] }),
+							...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
 						};
 					})
 				);
@@ -1045,7 +1050,7 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								state: newState,
 								busySource: newBusySource,
 								// TODO: Remove shellLogs once terminal tabs migration is complete
-								...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, exitLog] }),
+								...(!s.terminalTabs?.length && { shellLogs: [...s.shellLogs, exitLog] }),
 							};
 						}
 
