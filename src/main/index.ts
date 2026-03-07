@@ -49,6 +49,7 @@ import {
 	registerFilesystemHandlers,
 	registerAttachmentsHandlers,
 	registerWebHandlers,
+	ensureCliServer,
 	registerLeaderboardHandlers,
 	registerNotificationsHandlers,
 	registerSymphonyHandlers,
@@ -542,7 +543,14 @@ app.whenReady().then(async () => {
 	// Start CLI activity watcher (Phase 4 refactoring)
 	cliWatcher.start();
 
-	// Note: Web server is not auto-started - it starts when user enables web interface
+	// Auto-start CLI server for CLI IPC (writes discovery file for CLI to connect)
+	await ensureCliServer({
+		getWebServer: () => webServer,
+		setWebServer: (server) => {
+			webServer = server;
+		},
+		createWebServer,
+	});
 	// via live:startServer IPC call from the renderer
 
 	app.on('activate', () => {
