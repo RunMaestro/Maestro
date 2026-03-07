@@ -303,6 +303,7 @@ export type {
 	ShellInfo,
 	UpdateStatus,
 } from './system';
+export type { ParsedDeepLink } from '../../shared/types';
 export type {
 	// From sshRemote
 	SshRemoteApi,

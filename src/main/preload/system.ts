@@ -5,6 +5,7 @@
  */
 
 import { ipcRenderer } from 'electron';
+import type { ParsedDeepLink } from '../../shared/types';
 
 /**
  * Shell information
@@ -201,6 +202,16 @@ export function createAppApi() {
 			const handler = () => callback();
 			ipcRenderer.on('app:systemResume', handler);
 			return () => ipcRenderer.removeListener('app:systemResume', handler);
+		},
+		/**
+		 * Listen for deep link navigation events (maestro:// URLs)
+		 * Fired when the app is activated via a deep link from OS notification clicks,
+		 * external apps, or CLI commands.
+		 */
+		onDeepLink: (callback: (deepLink: ParsedDeepLink) => void): (() => void) => {
+			const handler = (_: unknown, deepLink: ParsedDeepLink) => callback(deepLink);
+			ipcRenderer.on('app:deepLink', handler);
+			return () => ipcRenderer.removeListener('app:deepLink', handler);
 		},
 	};
 }

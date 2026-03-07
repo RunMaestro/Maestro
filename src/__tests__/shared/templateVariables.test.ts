@@ -93,6 +93,13 @@ describe('TEMPLATE_VARIABLES constant', () => {
 		expect(variables).toContain('{{IS_GIT_REPO}}');
 	});
 
+	it('should include deep link variables', () => {
+		const variables = TEMPLATE_VARIABLES.map((v) => v.variable);
+		expect(variables).toContain('{{AGENT_DEEP_LINK}}');
+		expect(variables).toContain('{{TAB_DEEP_LINK}}');
+		expect(variables).toContain('{{GROUP_DEEP_LINK}}');
+	});
+
 	it('should mark Auto Run-only variables with autoRunOnly flag', () => {
 		const autoRunOnlyVars = TEMPLATE_VARIABLES.filter((v) => v.autoRunOnly);
 		const autoRunOnlyNames = autoRunOnlyVars.map((v) => v.variable);
@@ -562,6 +569,62 @@ describe('substituteTemplateVariables', () => {
 			});
 			const result = substituteTemplateVariables('Usage: {{CONTEXT_USAGE}}%', context);
 			expect(result).toBe('Usage: 0%');
+		});
+	});
+
+	describe('Deep Link Variables', () => {
+		it('should replace {{AGENT_DEEP_LINK}} with session deep link URL', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+			});
+			const result = substituteTemplateVariables('Link: {{AGENT_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc');
+		});
+
+		it('should replace {{TAB_DEEP_LINK}} with session+tab deep link when activeTabId provided', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+				activeTabId: 'tab-def',
+			});
+			const result = substituteTemplateVariables('Link: {{TAB_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc/tab/tab-def');
+		});
+
+		it('should replace {{TAB_DEEP_LINK}} with session-only link when no activeTabId', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'sess-abc' }),
+			});
+			const result = substituteTemplateVariables('Link: {{TAB_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://session/sess-abc');
+		});
+
+		it('should replace {{GROUP_DEEP_LINK}} with group deep link when groupId provided', () => {
+			const context = createTestContext({
+				groupId: 'grp-789',
+			});
+			const result = substituteTemplateVariables('Link: {{GROUP_DEEP_LINK}}', context);
+			expect(result).toBe('Link: maestro://group/grp-789');
+		});
+
+		it('should replace {{GROUP_DEEP_LINK}} with empty string when no groupId', () => {
+			const context = createTestContext();
+			const result = substituteTemplateVariables('Link: {{GROUP_DEEP_LINK}}', context);
+			expect(result).toBe('Link: ');
+		});
+
+		it('should URI-encode special characters in deep link IDs', () => {
+			const context = createTestContext({
+				session: createTestSession({ id: 'id/with/slashes' }),
+				activeTabId: 'tab?special',
+				groupId: 'group#hash',
+			});
+			const agentResult = substituteTemplateVariables('{{AGENT_DEEP_LINK}}', context);
+			const tabResult = substituteTemplateVariables('{{TAB_DEEP_LINK}}', context);
+			const groupResult = substituteTemplateVariables('{{GROUP_DEEP_LINK}}', context);
+
+			expect(agentResult).toContain(encodeURIComponent('id/with/slashes'));
+			expect(tabResult).toContain(encodeURIComponent('tab?special'));
+			expect(groupResult).toContain(encodeURIComponent('group#hash'));
 		});
 	});
 
