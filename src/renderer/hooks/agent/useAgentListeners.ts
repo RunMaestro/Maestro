@@ -671,7 +671,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 							...s,
 							state: anyAiTabBusy ? s.state : ('idle' as SessionState),
 							busySource: anyAiTabBusy ? s.busySource : undefined,
-							shellLogs: [...s.shellLogs, exitLog],
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, exitLog] }),
 						};
 					})
 				);
@@ -1043,7 +1044,8 @@ export function useAgentListeners(deps: UseAgentListenersDeps): void {
 								...s,
 								state: newState,
 								busySource: newBusySource,
-								shellLogs: [...s.shellLogs, exitLog],
+								// TODO: Remove shellLogs once terminal tabs migration is complete
+								...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, exitLog] }),
 							};
 						}
 

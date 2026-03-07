@@ -133,6 +133,8 @@ const createMockSession = (overrides: Partial<Session> = {}): Session => ({
 	aiTabs: [{ id: 'tab-1', name: 'Tab 1', logs: [] }],
 	activeTabId: 'tab-1',
 	closedTabHistory: [],
+	terminalTabs: [],
+	activeTerminalTabId: null,
 	...overrides,
 });
 

@@ -137,6 +137,8 @@ function createMockSession(
 		aiTabs: [tab],
 		activeTabId: tab.id,
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 	};
 }
 

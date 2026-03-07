@@ -82,6 +82,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		shellLogs: [],
 		shellCwd: '/test',
 		terminalDraftInput: '',
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

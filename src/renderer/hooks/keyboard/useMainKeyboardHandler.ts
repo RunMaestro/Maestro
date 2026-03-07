@@ -2,13 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import type { Session, AITab, ThinkingMode } from '../../types';
 import { getInitialRenameValue } from '../../utils/tabHelpers';
 import { useModalStore } from '../../stores/modalStore';
-import { useSettingsStore } from '../../stores/settingsStore';
-
-// Font size keyboard shortcut constants
-const FONT_SIZE_STEP = 2;
-const FONT_SIZE_MIN = 10;
-const FONT_SIZE_MAX = 24;
-const FONT_SIZE_DEFAULT = 14;
 
 /**
  * Context object passed to the main keyboard handler via ref.
@@ -82,6 +75,20 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 			const ctx = keyboardHandlerRef.current;
 			if (!ctx) return;
 
+			// CRITICAL: When in terminal mode, let xterm.js handle Ctrl+[A-Z] control sequences.
+			// These include Ctrl+C (SIGINT), Ctrl+D (EOF), Ctrl+Z (suspend), Ctrl+\ (quit), etc.
+			// Only intercept Meta (Cmd) key combos from terminal mode — those are Maestro shortcuts.
+			// Exception: Ctrl+Shift+` always creates a new terminal tab regardless of mode.
+			if (
+				ctx.activeSession?.inputMode === 'terminal' &&
+				e.ctrlKey &&
+				!e.metaKey &&
+				!e.altKey &&
+				!(e.shiftKey && e.code === 'Backquote') // Allow Ctrl+Shift+` for new terminal tab
+			) {
+				return;
+			}
+
 			// When layers (modals/overlays) are open, we need nuanced shortcut handling:
 			// - Escape: handled by LayerStackContext in capture phase
 			// - Tab: allowed for accessibility navigation
@@ -147,29 +154,22 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					e.altKey && (e.metaKey || e.ctrlKey) && !e.shiftKey && codeKeyLower === 't';
 				// Allow toggleMode (Cmd+J) to switch to terminal view from file preview
 				const isToggleModeShortcut = ctx.isShortcut(e, 'toggleMode');
-				// Allow font size shortcuts (Cmd+=/+, Cmd+-, Cmd+0) even when modals/overlays are open
-				const isFontSizeShortcut =
-					(e.metaKey || e.ctrlKey) &&
-					!e.altKey &&
-					!e.shiftKey &&
-					(e.key === '=' || e.key === '+' || e.key === '-' || e.key === '0');
 
 				if (ctx.hasOpenModal()) {
 					// TRUE MODAL is open - block most shortcuts from App.tsx
 					// The modal's own handler will handle Cmd+Shift+[] if it supports it
 					// BUT allow layout shortcuts (sidebar toggles), system utility shortcuts, session jump,
-					// jumpToBottom, markdown toggle, and font size to work (these are benign viewing preferences)
+					// jumpToBottom, and markdown toggle to work (these are benign viewing preferences)
 					if (
 						!isLayoutShortcut &&
 						!isSystemUtilShortcut &&
 						!isSessionJumpShortcut &&
 						!isJumpToBottomShortcut &&
-						!isMarkdownToggleShortcut &&
-						!isFontSizeShortcut
+						!isMarkdownToggleShortcut
 					) {
 						return;
 					}
-					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle/font size shortcuts below
+					// Fall through to handle layout/system utility/session jump/jumpToBottom/markdown toggle shortcuts below
 				} else {
 					// Only OVERLAYS are open (file tabs, LogViewer, etc.)
 					// Allow Cmd+Shift+[] to fall through to App.tsx handler
@@ -186,8 +186,7 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 						!isMarkdownToggleShortcut &&
 						!isTabManagementShortcut &&
 						!isTabSwitcherShortcut &&
-						!isToggleModeShortcut &&
-						!isFontSizeShortcut
+						!isToggleModeShortcut
 					) {
 						return;
 					}
@@ -283,15 +282,16 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				);
 				if (activeTab?.wizardState?.isActive) return;
 				e.preventDefault();
-				ctx.toggleInputMode();
-				// Auto-focus the input so user can start typing immediately
-				ctx.setActiveFocus('main');
-				setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
-				trackShortcut('toggleMode');
+				if (ctx.activeSessionId) {
+					// Cmd+J always opens a new terminal tab (analogous to Cmd+T for AI tabs).
+					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically.
+					ctx.handleOpenTerminalTab();
+					setTimeout(() => ctx.mainPanelRef?.current?.focusActiveTerminal(), 100);
+				}				trackShortcut('toggleMode');
 			} else if (ctx.isShortcut(e, 'quickAction')) {
 				e.preventDefault();
-				// Only open quick actions if there are agents
 				if (ctx.sessions.length > 0) {
+					// Only open quick actions if there are agents
 					ctx.setQuickActionInitialMode('main');
 					ctx.setQuickActionOpen(true);
 					trackShortcut('quickAction');
@@ -425,11 +425,11 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setProcessMonitorOpen(true);
 				trackShortcut('processMonitor');
-			} else if (ctx.isShortcut(e, 'usageDashboard') && ctx.encoreFeatures?.usageStats) {
+			} else if (ctx.isShortcut(e, 'usageDashboard')) {
 				e.preventDefault();
 				ctx.setUsageDashboardOpen(true);
 				trackShortcut('usageDashboard');
-			} else if (ctx.isShortcut(e, 'openSymphony') && ctx.encoreFeatures?.symphony) {
+			} else if (ctx.isShortcut(e, 'openSymphony')) {
 				e.preventDefault();
 				ctx.setSymphonyModalOpen(true);
 				trackShortcut('openSymphony');
@@ -441,14 +441,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				e.preventDefault();
 				ctx.setDirectorNotesOpen?.(true);
 				trackShortcut('directorNotes');
-			} else if (ctx.isShortcut(e, 'maestroCue') && ctx.encoreFeatures?.maestroCue) {
-				e.preventDefault();
-				ctx.setCueModalOpen?.(true);
-				trackShortcut('maestroCue');
-			} else if (ctx.isShortcut(e, 'filterUnreadAgents')) {
-				e.preventDefault();
-				ctx.toggleShowUnreadAgentsOnly();
-				trackShortcut('filterUnreadAgents');
 			} else if (ctx.isShortcut(e, 'jumpToBottom')) {
 				e.preventDefault();
 				// Jump to the bottom of the current main panel output (AI logs or terminal output)
@@ -486,6 +478,17 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				trackShortcut('toggleAutoRunExpanded');
 			}
 
+			// Ctrl+Shift+` — Create a new terminal tab (works regardless of inputMode)
+			// Use e.code to reliably detect the backtick key (Shift+` produces ~ via e.key on US layout)
+			if (e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey && e.code === 'Backquote') {
+				e.preventDefault();
+				if (ctx.activeSessionId) {
+					// handleOpenTerminalTab creates the tab and sets inputMode:'terminal' automatically
+					ctx.handleOpenTerminalTab();
+					trackShortcut('newTerminalTab');
+				}
+			}
+
 			// Opt+Cmd+NUMBER: Jump to visible session by number (1-9, 0=10th)
 			// Use e.code instead of e.key because Option key on macOS produces special characters
 			const digitMatch = e.code?.match(/^Digit([0-9])$/);
@@ -502,34 +505,6 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 					if (!ctx.leftSidebarOpen) {
 						ctx.setLeftSidebarOpen(true);
 					}
-				}
-			}
-
-			// Font size shortcuts: Cmd+= (zoom in), Cmd+- (zoom out), Cmd+0 (reset)
-			// These take priority over tab shortcuts (Cmd+0 was previously goToLastTab)
-			if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey) {
-				if (e.key === '=' || e.key === '+') {
-					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.min(fontSize + FONT_SIZE_STEP, FONT_SIZE_MAX);
-					if (newSize !== fontSize) setFontSize(newSize);
-					trackShortcut('fontSizeIncrease');
-					return;
-				}
-				if (e.key === '-') {
-					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					const newSize = Math.max(fontSize - FONT_SIZE_STEP, FONT_SIZE_MIN);
-					if (newSize !== fontSize) setFontSize(newSize);
-					trackShortcut('fontSizeDecrease');
-					return;
-				}
-				if (e.key === '0') {
-					e.preventDefault();
-					const { fontSize, setFontSize } = useSettingsStore.getState();
-					if (fontSize !== FONT_SIZE_DEFAULT) setFontSize(FONT_SIZE_DEFAULT);
-					trackShortcut('fontSizeReset');
-					return;
 				}
 			}
 
@@ -637,13 +612,27 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 				if (ctx.isTabShortcut(e, 'renameTab')) {
 					e.preventDefault();
-					const activeTab = ctx.getActiveTab(ctx.activeSession);
-					// Only allow rename if tab has an active Claude session
-					if (activeTab?.agentSessionId) {
-						ctx.setRenameTabId(activeTab.id);
-						ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
-						ctx.setRenameTabModalOpen(true);
-						trackShortcut('renameTab');
+					if (ctx.activeSession?.inputMode === 'terminal') {
+						// Rename active terminal tab
+						const activeTerminalTabId = ctx.activeSession?.activeTerminalTabId;
+						const terminalTab = ctx.activeSession?.terminalTabs?.find(
+							(t: { id: string }) => t.id === activeTerminalTabId
+						);
+						if (activeTerminalTabId && terminalTab) {
+							ctx.setRenameTabId(activeTerminalTabId);
+							ctx.setRenameTabInitialName(terminalTab.name ?? '');
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
+					} else {
+						const activeTab = ctx.getActiveTab(ctx.activeSession);
+						// Only allow rename if tab has an active Claude session
+						if (activeTab?.agentSessionId) {
+							ctx.setRenameTabId(activeTab.id);
+							ctx.setRenameTabInitialName(getInitialRenameValue(activeTab));
+							ctx.setRenameTabModalOpen(true);
+							trackShortcut('renameTab');
+						}
 					}
 				}
 				if (ctx.isTabShortcut(e, 'toggleReadOnlyMode')) {
@@ -791,9 +780,108 @@ export function useMainKeyboardHandler(): UseMainKeyboardHandlerReturn {
 				}
 			}
 
+			// Tab shortcuts (terminal mode), requires an explicitly selected session, disabled in group chat
+			if (
+				ctx.activeSessionId &&
+				ctx.activeSession?.inputMode === 'terminal' &&
+				!ctx.activeGroupChatId
+			) {
+				const activeTerminalTabId = ctx.activeSession?.activeTerminalTabId;
+
+				// Cmd+W: Close the active terminal tab (switching to AI mode if it was the last one)
+				if (ctx.isTabShortcut(e, 'closeTab') && activeTerminalTabId) {
+					e.preventDefault();
+					ctx.handleCloseTerminalTab(activeTerminalTabId);
+					trackShortcut('closeTab');
+				}
+
+				// Cmd+T in terminal mode: create a new AI tab and switch to AI mode
+				if (ctx.isTabShortcut(e, 'newTab') && ctx.activeSession) {
+					e.preventDefault();
+					const result = ctx.createTab(ctx.activeSession, {
+						saveToHistory: ctx.defaultSaveToHistory,
+						showThinking: ctx.defaultShowThinking,
+					});
+					if (result) {
+						ctx.setSessions((prev: Session[]) =>
+							prev.map((s: Session) =>
+								s.id === ctx.activeSession!.id
+									? { ...result.session, inputMode: 'ai' as const }
+									: s
+							)
+						);
+						ctx.setActiveFocus('main');
+						setTimeout(() => ctx.inputRef.current?.focus(), FOCUS_AFTER_RENDER_DELAY_MS);
+						trackShortcut('newTab');
+					}
+				}
+
+				// Cmd+Shift+] — Navigate to next tab in unified order (crosses terminal/AI/file tab types)
+				if (ctx.isTabShortcut(e, 'nextTab')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const result = ctx.navigateToNextUnifiedTab(current, false);
+						if (!result) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+					});
+					trackShortcut('nextTab');
+				}
+
+				// Cmd+Shift+[ — Navigate to previous tab in unified order (crosses terminal/AI/file tab types)
+				if (ctx.isTabShortcut(e, 'prevTab')) {
+					e.preventDefault();
+					ctx.setSessions((prev: Session[]) => {
+						const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+						if (!current) return prev;
+						const result = ctx.navigateToPrevUnifiedTab(current, false);
+						if (!result) return prev;
+						return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+					});
+					trackShortcut('prevTab');
+				}
+
+				// Cmd+1-9 — Jump to tab by unified index (works across terminal/AI/file tabs)
+				if (!ctx.showUnreadOnly) {
+					for (let i = 1; i <= 9; i++) {
+						if (ctx.isTabShortcut(e, `goToTab${i}`)) {
+							e.preventDefault();
+							ctx.setSessions((prev: Session[]) => {
+								const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+								if (!current) return prev;
+								const result = ctx.navigateToUnifiedTabByIndex(current, i - 1);
+								if (!result) return prev;
+								return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+							});
+							trackShortcut(`goToTab${i}`);
+							break;
+						}
+					}
+
+					// Cmd+0 — Jump to last tab in unified order
+					if (ctx.isTabShortcut(e, 'goToLastTab')) {
+						e.preventDefault();
+						ctx.setSessions((prev: Session[]) => {
+							const current = prev.find((s: Session) => s.id === ctx.activeSessionId);
+							if (!current) return prev;
+							const result = ctx.navigateToLastUnifiedTab(current);
+							if (!result) return prev;
+							return prev.map((s: Session) => (s.id === current.id ? result.session : s));
+						});
+						trackShortcut('goToLastTab');
+					}
+				}
+			}
+
 			// Cmd+F contextual shortcuts - track based on current focus/context
 			if (e.key === 'f' && (e.metaKey || e.ctrlKey) && !e.shiftKey) {
-				if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
+				if (ctx.activeSession?.inputMode === 'terminal') {
+					// In terminal mode, Cmd+F opens the terminal search overlay (Phase 10 renders the UI)
+					e.preventDefault();
+					ctx.mainPanelRef?.current?.openTerminalSearch();
+					trackShortcut('searchTerminal');
+				} else if (ctx.activeFocus === 'right' && ctx.activeRightTab === 'files') {
 					e.preventDefault();
 					ctx.setFileTreeFilterOpen(true);
 					trackShortcut('filterFiles');

@@ -95,6 +95,7 @@ import {
 	useAutoRunHandlers,
 	// Tab handlers
 	useTabHandlers,
+	useTerminalTabHandlers,
 	// Group chat handlers
 	useGroupChatHandlers,
 	// Modal handlers
@@ -379,8 +380,6 @@ function MaestroConsoleInner() {
 		setChatRawTextMode,
 		showHiddenFiles: _showHiddenFiles,
 		setShowHiddenFiles: _setShowHiddenFiles,
-		terminalWidth: _terminalWidth,
-		setTerminalWidth: _setTerminalWidth,
 		logLevel,
 		logViewerSelectedLevels,
 		setLogViewerSelectedLevels,
@@ -816,6 +815,27 @@ function MaestroConsoleInner() {
 		handleAtBottomChange,
 		handleDeleteLog,
 	} = useTabHandlers();
+
+	// --- TERMINAL TAB HANDLERS ---
+	const {
+		handleOpenTerminalTab,
+		handleSelectTerminalTab,
+		handleCloseTerminalTab,
+	} = useTerminalTabHandlers();
+
+	// Opens the rename modal for a terminal tab (1-arg wrapper for useMainPanelProps)
+	const handleRequestTerminalTabRename = useCallback(
+		(tabId: string) => {
+			const session = selectActiveSession(useSessionStore.getState());
+			if (!session) return;
+			const tab = session.terminalTabs?.find((t) => t.id === tabId);
+			if (!tab) return;
+			setRenameTabId(tabId);
+			setRenameTabInitialName(tab.name ?? '');
+			setRenameTabModalOpen(true);
+		},
+		[setRenameTabId, setRenameTabInitialName, setRenameTabModalOpen]
+	);
 
 	// --- GROUP CHAT HANDLERS (extracted from App.tsx Phase 2B) ---
 	const {
@@ -1824,10 +1844,13 @@ function MaestroConsoleInner() {
 	const handleUtilityTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Clear activeFileTabId when selecting an AI tab
+			// Clear activeFileTabId and activeTerminalTabId when selecting an AI tab.
+			// Also reset inputMode to 'ai' in case we're coming from terminal mode.
 			setSessions((prev) =>
 				prev.map((s) =>
-					s.id === activeSession.id ? { ...s, activeTabId: tabId, activeFileTabId: null } : s
+					s.id === activeSession.id
+						? { ...s, activeTabId: tabId, activeFileTabId: null, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
 				)
 			);
 		},
@@ -1836,9 +1859,14 @@ function MaestroConsoleInner() {
 	const handleUtilityFileTabSelect = useCallback(
 		(tabId: string) => {
 			if (!activeSession) return;
-			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs)
+			// Set activeFileTabId, keep activeTabId as-is (for when returning to AI tabs).
+			// Also reset inputMode to 'ai' and clear activeTerminalTabId in case we're coming from terminal mode.
 			setSessions((prev) =>
-				prev.map((s) => (s.id === activeSession.id ? { ...s, activeFileTabId: tabId } : s))
+				prev.map((s) =>
+					s.id === activeSession.id
+						? { ...s, activeFileTabId: tabId, activeTerminalTabId: null, inputMode: 'ai' }
+						: s
+				)
 			);
 		},
 		[activeSession]
@@ -2063,6 +2091,12 @@ function MaestroConsoleInner() {
 		// Close current tab (Cmd+W) - works with both file and AI tabs
 		handleCloseCurrentTab,
 
+		// Terminal tab handlers for keyboard shortcuts (Phase 9)
+		handleOpenTerminalTab,
+		handleSelectTerminalTab,
+		handleCloseTerminalTab,
+		mainPanelRef,
+
 		// Session bookmark toggle
 		toggleBookmark,
 
@@ -2240,6 +2274,12 @@ function MaestroConsoleInner() {
 		activeFileTab,
 		handleFileTabSelect: handleSelectFileTab,
 		handleFileTabClose: handleCloseFileTab,
+
+		// Terminal tab callbacks (Phase 8)
+		handleOpenTerminalTab,
+		handleTerminalTabSelect: handleSelectTerminalTab,
+		handleTerminalTabClose: handleCloseTerminalTab,
+		handleTerminalTabRename: handleRequestTerminalTabRename,
 		handleFileTabEditModeChange,
 		handleFileTabEditContentChange,
 		handleFileTabScrollPositionChange,
@@ -2699,6 +2739,7 @@ function MaestroConsoleInner() {
 					onCloseTabSwitcher={handleCloseTabSwitcher}
 					onTabSelect={handleUtilityTabSelect}
 					onFileTabSelect={handleUtilityFileTabSelect}
+					onTerminalTabSelect={handleSelectTerminalTab}
 					onNamedSessionSelect={handleNamedSessionSelect}
 					filteredFileTree={filteredFileTree}
 					fileExplorerExpanded={activeSession?.fileExplorerExpanded}

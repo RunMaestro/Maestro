@@ -83,7 +83,6 @@ const mockSetShortcuts = vi.fn();
 const mockSetTabShortcuts = vi.fn();
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
-const mockSetTerminalWidth = vi.fn();
 const mockSetLogLevel = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
@@ -155,8 +154,6 @@ vi.mock('../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
-		terminalWidth: 100,
-		setTerminalWidth: mockSetTerminalWidth,
 		logLevel: 'info',
 		setLogLevel: mockSetLogLevel,
 		maxLogBuffer: 5000,
@@ -729,39 +726,6 @@ describe('SettingsModal', () => {
 
 			const mediumButton = screen.getByText('Medium');
 			expect(mediumButton).toHaveClass('ring-2');
-		});
-	});
-
-	describe('Display tab - Terminal width buttons', () => {
-		it('should call setTerminalWidth with 80', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '80' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(80);
-		});
-
-		it('should call setTerminalWidth with 100', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			// Find the terminal width 100 button (not font size)
-			const buttons = screen.getAllByText('100');
-			const terminalWidthButton = buttons[0]; // First one is terminal width
-			fireEvent.click(terminalWidthButton);
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(100);
 		});
 	});
 
@@ -1998,36 +1962,6 @@ describe('SettingsModal', () => {
 
 			// Should save updated custom fonts (without MyCustomFont)
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('customFonts', ['AnotherFont']);
-		});
-	});
-
-	describe('Terminal width 120 and 160 buttons', () => {
-		it('should call setTerminalWidth with 120', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '120' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(120);
-		});
-
-		it('should call setTerminalWidth with 160', async () => {
-			const setTerminalWidth = vi.fn();
-			render(
-				<SettingsModal {...createDefaultProps({ setTerminalWidth, initialTab: 'display' })} />
-			);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(100);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '160' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(160);
 		});
 	});
 

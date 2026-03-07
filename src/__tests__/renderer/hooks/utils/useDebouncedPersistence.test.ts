@@ -10,6 +10,7 @@ import type {
 	LogEntry,
 	FilePreviewTab,
 	UnifiedTabRef,
+	TerminalTab,
 } from '../../../../renderer/types';
 
 // ---------------------------------------------------------------------------
@@ -1467,6 +1468,226 @@ describe('useDebouncedPersistence', () => {
 				const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
 				expect(persisted[0].filePreviewTabs![0].scrollTop).toBe(150000);
 			});
+		});
+	});
+	// -----------------------------------------------------------------------
+	// Terminal tab persistence
+	// -----------------------------------------------------------------------
+	describe('terminal tab persistence', () => {
+		const makeTerminalTab = (overrides: Partial<TerminalTab> = {}): TerminalTab => ({
+			id: overrides.id ?? `term-${Math.random().toString(36).slice(2, 8)}`,
+			name: overrides.name ?? null,
+			shellType: overrides.shellType ?? 'zsh',
+			pid: overrides.pid ?? 0,
+			cwd: overrides.cwd ?? '/home/user',
+			createdAt: overrides.createdAt ?? Date.now(),
+			state: overrides.state ?? 'idle',
+			exitCode: overrides.exitCode,
+			scrollTop: overrides.scrollTop,
+			searchQuery: overrides.searchQuery,
+		});
+
+		it('should reset terminal tab runtime state (pid, state, exitCode) on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						name: 'My Terminal',
+						pid: 12345,
+						state: 'busy',
+						exitCode: 1,
+					}),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.pid).toBe(0);
+			expect(persistedTab.state).toBe('idle');
+			expect(persistedTab.exitCode).toBeUndefined();
+		});
+
+		it('should preserve terminal tab metadata (name, shellType, cwd, createdAt)', () => {
+			const createdAt = 1700000000000;
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						name: 'My Terminal',
+						shellType: 'bash',
+						pid: 999,
+						cwd: '/projects/myapp',
+						createdAt,
+						state: 'idle',
+					}),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.id).toBe('term-1');
+			expect(persistedTab.name).toBe('My Terminal');
+			expect(persistedTab.shellType).toBe('bash');
+			expect(persistedTab.cwd).toBe('/projects/myapp');
+			expect(persistedTab.createdAt).toBe(createdAt);
+		});
+
+		it('should preserve terminal tab scrollTop and searchQuery', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({
+						id: 'term-1',
+						scrollTop: 5000,
+						searchQuery: 'error',
+					}),
+				],
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const persistedTab = persisted[0].terminalTabs![0];
+			expect(persistedTab.scrollTop).toBe(5000);
+			expect(persistedTab.searchQuery).toBe('error');
+		});
+
+		it('should handle empty terminalTabs array', () => {
+			const session = makeSession({
+				terminalTabs: [],
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].terminalTabs).toEqual([]);
+		});
+
+		it('should handle undefined terminalTabs gracefully', () => {
+			const session = makeSession();
+			delete (session as Partial<Session>).terminalTabs;
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].terminalTabs).toEqual([]);
+		});
+
+		it('should preserve valid activeTerminalTabId on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1' }),
+					makeTerminalTab({ id: 'term-2' }),
+				],
+				activeTerminalTabId: 'term-2',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-2');
+		});
+
+		it('should normalize stale activeTerminalTabId to first tab on persist', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1' }),
+					makeTerminalTab({ id: 'term-2' }),
+				],
+				activeTerminalTabId: 'term-stale-999',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBe('term-1');
+		});
+
+		it('should set activeTerminalTabId to null when terminalTabs is empty', () => {
+			const session = makeSession({
+				terminalTabs: [],
+				activeTerminalTabId: 'term-orphan',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			expect(persisted[0].activeTerminalTabId).toBeNull();
+		});
+
+		it('should reset runtime state for multiple terminal tabs while preserving metadata', () => {
+			const session = makeSession({
+				terminalTabs: [
+					makeTerminalTab({ id: 'term-1', pid: 100, state: 'busy', name: 'Tab 1' }),
+					makeTerminalTab({ id: 'term-2', pid: 200, state: 'exited', exitCode: 1, name: 'Tab 2' }),
+				],
+				activeTerminalTabId: 'term-1',
+			});
+
+			const initialLoadRef = makeInitialLoadRef(true);
+			const { result } = renderHook(() => useDebouncedPersistence([session], initialLoadRef));
+
+			act(() => {
+				result.current.flushNow();
+			});
+
+			const persisted = vi.mocked(window.maestro.sessions.setAll).mock.calls[0][0] as Session[];
+			const tab1 = persisted[0].terminalTabs![0];
+			const tab2 = persisted[0].terminalTabs![1];
+
+			expect(tab1.pid).toBe(0);
+			expect(tab1.state).toBe('idle');
+			expect(tab1.name).toBe('Tab 1'); // Metadata preserved
+
+			expect(tab2.pid).toBe(0);
+			expect(tab2.state).toBe('idle');
+			expect(tab2.exitCode).toBeUndefined();
+			expect(tab2.name).toBe('Tab 2'); // Metadata preserved
 		});
 	});
 });

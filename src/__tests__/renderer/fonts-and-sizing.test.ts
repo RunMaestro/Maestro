@@ -89,7 +89,6 @@ describe('Cross-platform Fonts and Sizing', () => {
 			markdownEditMode: false,
 			chatRawTextMode: false,
 			showHiddenFiles: true,
-			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
 			maxOutputLines: 25,

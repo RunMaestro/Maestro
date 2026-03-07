@@ -598,11 +598,12 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 						newHistory.push(effectiveInputValue.trim());
 					}
 
-					// For terminal mode, add to shellLogs
+					// For terminal mode (legacy), add to shellLogs
 					if (currentMode !== 'ai') {
 						return {
 							...s,
-							shellLogs: [...s.shellLogs, newEntry],
+							// TODO: Remove shellLogs once terminal tabs migration is complete
+							...(!(s.terminalTabs?.length) && { shellLogs: [...s.shellLogs, newEntry] }),
 							state: 'busy',
 							busySource: currentMode,
 							shellCwd: newShellCwd,
@@ -1105,7 +1106,8 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 									state: 'idle',
 									busySource: undefined,
 									thinkingStartTime: undefined,
-									shellLogs: [
+// TODO: Remove shellLogs once terminal tabs migration is complete
+									...(!(s.terminalTabs?.length) && { shellLogs: [
 										...s.shellLogs,
 										{
 											id: generateId(),
@@ -1113,7 +1115,7 @@ export function useInputProcessing(deps: UseInputProcessingDeps): UseInputProces
 											source: 'system',
 											text: `Error: Failed to run command - ${(error as Error).message}`,
 										},
-									],
+									] }),
 								};
 							})
 						);

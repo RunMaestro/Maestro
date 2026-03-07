@@ -98,10 +98,6 @@ export interface UseSettingsReturn {
 	showHiddenFiles: boolean;
 	setShowHiddenFiles: (value: boolean) => void;
 
-	// Terminal settings
-	terminalWidth: number;
-	setTerminalWidth: (value: number) => void;
-
 	// Logging settings
 	logLevel: string;
 	setLogLevel: (value: string) => void;

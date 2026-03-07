@@ -51,6 +51,8 @@ function createMockSession(overrides: Partial<Session> = {}): Session {
 		aiTabs: [],
 		activeTabId: '',
 		closedTabHistory: [],
+		terminalTabs: [],
+		activeTerminalTabId: null,
 		...overrides,
 	} as Session;
 }

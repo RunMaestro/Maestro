@@ -200,6 +200,7 @@ describe('process IPC handlers', () => {
 		resize: ReturnType<typeof vi.fn>;
 		getAll: ReturnType<typeof vi.fn>;
 		runCommand: ReturnType<typeof vi.fn>;
+		spawnTerminalTab: ReturnType<typeof vi.fn>;
 	};
 	let mockAgentDetector: {
 		getAgent: ReturnType<typeof vi.fn>;
@@ -227,6 +228,7 @@ describe('process IPC handlers', () => {
 			resize: vi.fn(),
 			getAll: vi.fn(),
 			runCommand: vi.fn(),
+			spawnTerminalTab: vi.fn(),
 		};
 
 		// Create mock agent detector
@@ -287,6 +289,7 @@ describe('process IPC handlers', () => {
 				'process:kill',
 				'process:resize',
 				'process:getActiveProcesses',
+				'process:spawnTerminalTab',
 				'process:runCommand',
 			];
 
@@ -976,7 +979,181 @@ describe('process IPC handlers', () => {
 		});
 	});
 
-	describe('SSH remote execution (session-level only)', () => {
+	describe('process:spawnTerminalTab', () => {
+		const mockSshRemoteForTerminal = {
+			id: 'remote-1',
+			name: 'Dev Server',
+			host: 'dev.example.com',
+			port: 22,
+			username: 'devuser',
+			privateKeyPath: '~/.ssh/id_ed25519',
+			enabled: true,
+		};
+
+		it('should spawn local terminal when no SSH config is provided', async () => {
+			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 5000, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+			});
+
+			expect(mockProcessManager.spawnTerminalTab).toHaveBeenCalledWith(
+				expect.objectContaining({
+					sessionId: 'session-1-terminal-tab-1',
+					cwd: '/local/project',
+				})
+			);
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toEqual({ pid: 5000, success: true });
+		});
+
+		it('should spawn SSH session when sessionSshRemoteConfig is enabled', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5001, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+				},
+			});
+
+			expect(mockProcessManager.spawn).toHaveBeenCalledWith(
+				expect.objectContaining({
+					command: 'ssh',
+					args: expect.arrayContaining(['devuser@dev.example.com']),
+					toolType: 'terminal',
+				})
+			);
+			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
+			expect(result).toEqual({ pid: 5001, success: true });
+		});
+
+		it('should add -t flag and remote cd command when workingDirOverride is set', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5002, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'remote-1',
+					workingDirOverride: '/remote/project',
+				},
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			expect(spawnCall.command).toBe('ssh');
+			// -t must appear before the host in the args
+			const tIndex = spawnCall.args.indexOf('-t');
+			const hostIndex = spawnCall.args.indexOf('devuser@dev.example.com');
+			expect(tIndex).toBeGreaterThanOrEqual(0);
+			expect(tIndex).toBeLessThan(hostIndex);
+			// Remote command to cd and exec shell must be the last arg
+			const lastArg = spawnCall.args[spawnCall.args.length - 1];
+			expect(lastArg).toContain('/remote/project');
+			expect(lastArg).toContain('exec $SHELL');
+		});
+
+		it('should include port flag for non-default SSH port', async () => {
+			const remoteWithPort = { ...mockSshRemoteForTerminal, port: 2222 };
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [remoteWithPort];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5003, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const portIndex = spawnCall.args.indexOf('-p');
+			expect(portIndex).toBeGreaterThanOrEqual(0);
+			expect(spawnCall.args[portIndex + 1]).toBe('2222');
+		});
+
+		it('should include identity file flag when privateKeyPath is set', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawn.mockReturnValue({ pid: 5004, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: { enabled: true, remoteId: 'remote-1' },
+			});
+
+			const spawnCall = mockProcessManager.spawn.mock.calls[0][0];
+			const keyIndex = spawnCall.args.indexOf('-i');
+			expect(keyIndex).toBeGreaterThanOrEqual(0);
+			expect(spawnCall.args[keyIndex + 1]).toBe('~/.ssh/id_ed25519');
+		});
+
+		it('should return failure when SSH is enabled but remote config not found', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return []; // No remotes configured
+				return defaultValue;
+			});
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			const result = await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: true,
+					remoteId: 'nonexistent-remote',
+				},
+			});
+
+			// Must NOT silently fall through to local spawn
+			expect(mockProcessManager.spawnTerminalTab).not.toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+			expect(result).toEqual({ success: false, pid: 0 });
+		});
+
+		it('should spawn local terminal when SSH config is present but disabled', async () => {
+			mockSettingsStore.get.mockImplementation((key: string, defaultValue: unknown) => {
+				if (key === 'sshRemotes') return [mockSshRemoteForTerminal];
+				return defaultValue;
+			});
+			mockProcessManager.spawnTerminalTab.mockReturnValue({ pid: 5005, success: true });
+
+			const handler = handlers.get('process:spawnTerminalTab');
+			await handler!({} as any, {
+				sessionId: 'session-1-terminal-tab-1',
+				cwd: '/local/project',
+				sessionSshRemoteConfig: {
+					enabled: false, // Explicitly disabled
+					remoteId: 'remote-1',
+				},
+			});
+
+			expect(mockProcessManager.spawnTerminalTab).toHaveBeenCalled();
+			expect(mockProcessManager.spawn).not.toHaveBeenCalled();
+		});
+	});
+
+		describe('SSH remote execution (session-level only)', () => {
 		// SSH is SESSION-LEVEL ONLY - no agent-level or global defaults
 		const mockSshRemote = {
 			id: 'remote-1',
