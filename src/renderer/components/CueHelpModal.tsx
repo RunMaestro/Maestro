@@ -59,17 +59,6 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						file.
 					</p>
 					<div
-						className="flex items-center gap-2 px-3 py-2 rounded"
-						style={{ backgroundColor: theme.colors.accent + '15' }}
-					>
-						<Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
-						<span>
-							<strong style={{ color: theme.colors.textMain }}>Note:</strong> Maestro Cue is an
-							Encore Feature. Enable it in Settings → Encore tab, then use the master toggle in the
-							Cue dashboard to start/stop the engine.
-						</span>
-					</div>
-					<div
 						className="font-mono text-xs p-3 rounded border"
 						style={{
 							backgroundColor: theme.colors.bgActivity,

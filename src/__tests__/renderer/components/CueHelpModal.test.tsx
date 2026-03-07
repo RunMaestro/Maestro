@@ -19,7 +19,7 @@ vi.mock('../../../renderer/utils/shortcutFormatter', () => ({
 
 // Sample theme for testing
 const mockTheme: Theme = {
-	id: 'test-dark',
+	id: 'test-dark' as Theme['id'],
 	name: 'Test Dark',
 	mode: 'dark',
 	colors: {
@@ -30,12 +30,12 @@ const mockTheme: Theme = {
 		textMain: '#ffffff',
 		textDim: '#888888',
 		accent: '#007acc',
+		accentDim: '#007acc40',
+		accentText: '#007acc',
+		accentForeground: '#ffffff',
 		error: '#ff4444',
 		success: '#44ff44',
 		warning: '#ffaa00',
-		cursor: '#ffffff',
-		selection: '#264f78',
-		terminalBackground: '#000000',
 	},
 };
 
@@ -61,10 +61,6 @@ describe('CueHelpContent', () => {
 		it('should render Getting Started section', () => {
 			expect(screen.getByText('Getting Started')).toBeInTheDocument();
 			expect(screen.getByText(/maestro-cue.yaml/)).toBeInTheDocument();
-		});
-
-		it('should render Encore Feature callout', () => {
-			expect(screen.getByText(/Encore Feature/)).toBeInTheDocument();
 		});
 
 		it('should render minimal YAML example', () => {

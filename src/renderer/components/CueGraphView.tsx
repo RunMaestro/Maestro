@@ -10,6 +10,8 @@
  * - Agent nodes in the center/right
  * - Edges showing subscription connections with labels
  * - Pan/zoom with mouse
+ * - Click-and-drag to reposition individual nodes
+ * - Layout algorithm dropdown (Hierarchical, Force-Directed)
  * - Double-click an agent node to switch focus and close the modal
  */
 
@@ -25,7 +27,7 @@ import {
 	type SimulationNodeDatum,
 	type SimulationLinkDatum,
 } from 'd3-force';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Network, ChevronDown } from 'lucide-react';
 import type { Theme } from '../types';
 import { useSessionStore } from '../stores/sessionStore';
 
@@ -51,6 +53,8 @@ interface GraphNode extends SimulationNodeDatum {
 	eventType?: string;
 	width: number;
 	height: number;
+	/** Depth in the dependency graph (0 = trigger, 1+ = agents) */
+	depth?: number;
 }
 
 interface GraphEdge extends SimulationLinkDatum<GraphNode> {
@@ -59,6 +63,13 @@ interface GraphEdge extends SimulationLinkDatum<GraphNode> {
 	sourceId: string;
 	targetId: string;
 }
+
+type CueLayoutType = 'hierarchical' | 'force';
+
+const LAYOUT_LABELS: Record<CueLayoutType, { name: string; description: string }> = {
+	hierarchical: { name: 'Hierarchical', description: 'Left-to-right layers' },
+	force: { name: 'Force', description: 'Physics simulation' },
+};
 
 // ============================================================================
 // Constants
@@ -285,10 +296,108 @@ function getTriggerDetail(sub: {
 }
 
 // ============================================================================
-// Layout (d3-force)
+// Layout: Hierarchical (left-to-right layers)
 // ============================================================================
 
-function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], width: number, height: number): void {
+function layoutHierarchical(
+	nodes: GraphNode[],
+	edges: GraphEdge[],
+	width: number,
+	height: number
+): void {
+	if (nodes.length === 0) return;
+
+	// Build adjacency for depth calculation (source → targets)
+	const outgoing = new Map<string, string[]>();
+	for (const edge of edges) {
+		const srcId = typeof edge.source === 'string' ? edge.source : (edge.source as GraphNode).id;
+		const tgtId = typeof edge.target === 'string' ? edge.target : (edge.target as GraphNode).id;
+		if (!outgoing.has(srcId)) outgoing.set(srcId, []);
+		outgoing.get(srcId)!.push(tgtId);
+	}
+
+	// Assign depth via BFS from triggers (depth 0)
+	const depthMap = new Map<string, number>();
+	const triggers = nodes.filter((n) => n.type === 'trigger');
+	const agents = nodes.filter((n) => n.type === 'agent');
+
+	// All triggers are depth 0
+	for (const t of triggers) {
+		depthMap.set(t.id, 0);
+	}
+
+	// BFS to assign depths to agents
+	const queue: string[] = triggers.map((t) => t.id);
+	while (queue.length > 0) {
+		const current = queue.shift()!;
+		const currentDepth = depthMap.get(current) ?? 0;
+		const targets = outgoing.get(current) ?? [];
+		for (const targetId of targets) {
+			const existingDepth = depthMap.get(targetId);
+			const newDepth = currentDepth + 1;
+			if (existingDepth === undefined || newDepth > existingDepth) {
+				depthMap.set(targetId, newDepth);
+				queue.push(targetId);
+			}
+		}
+	}
+
+	// Agents without edges get depth 1
+	for (const a of agents) {
+		if (!depthMap.has(a.id)) {
+			depthMap.set(a.id, 1);
+		}
+	}
+
+	// Store depth on nodes
+	for (const node of nodes) {
+		node.depth = depthMap.get(node.id) ?? 0;
+	}
+
+	// Group nodes by depth
+	const layers = new Map<number, GraphNode[]>();
+	for (const node of nodes) {
+		const d = node.depth!;
+		if (!layers.has(d)) layers.set(d, []);
+		layers.get(d)!.push(node);
+	}
+
+	const sortedDepths = Array.from(layers.keys()).sort((a, b) => a - b);
+	const numLayers = sortedDepths.length;
+	if (numLayers === 0) return;
+
+	// Calculate horizontal spacing
+	const horizontalPadding = 80;
+	const availableWidth = width - horizontalPadding * 2;
+	const layerSpacing = numLayers > 1 ? availableWidth / (numLayers - 1) : 0;
+
+	// Position each layer
+	for (let i = 0; i < sortedDepths.length; i++) {
+		const depth = sortedDepths[i];
+		const layerNodes = layers.get(depth)!;
+
+		// X position for this layer
+		const layerX = numLayers === 1 ? width / 2 : horizontalPadding + i * layerSpacing;
+
+		// Vertical spacing within layer
+		const verticalPadding = 40;
+		const maxNodeHeight = Math.max(...layerNodes.map((n) => n.height));
+		const nodeSpacing = maxNodeHeight + 30;
+		const totalLayerHeight = layerNodes.length * nodeSpacing - 30;
+		const startY = (height - totalLayerHeight) / 2 + verticalPadding / 2;
+
+		for (let j = 0; j < layerNodes.length; j++) {
+			layerNodes[j].x = layerX;
+			layerNodes[j].y = Math.max(verticalPadding, startY + j * nodeSpacing);
+		}
+	}
+}
+
+// ============================================================================
+// Layout: Force-Directed (d3-force)
+// ============================================================================
+
+function layoutForce(nodes: GraphNode[], edges: GraphEdge[], width: number, height: number): void {
 	if (nodes.length === 0) return;
 
 	// Seed initial positions: triggers left, agents right
@@ -307,14 +416,14 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 			'link',
 			forceLink<GraphNode, GraphEdge>(edges)
 				.id((d) => d.id)
-				.distance(200)
+				.distance(220)
 				.strength(0.5)
 		)
-		.force('charge', forceManyBody().strength(-400))
+		.force('charge', forceManyBody().strength(-500))
 		.force('center', forceCenter(width / 2, height / 2))
 		.force(
 			'collide',
-			forceCollide<GraphNode>().radius((d) => Math.max(d.width, d.height) * 0.7)
+			forceCollide<GraphNode>().radius((d) => Math.max(d.width, d.height) * 0.8)
 		)
 		.force(
 			'x',
@@ -326,9 +435,26 @@ function layoutGraph(nodes: GraphNode[], edges: GraphEdge[], width: number, heig
 		.stop();
 
 	// Run simulation synchronously
-	const iterations = 200;
-	for (let i = 0; i < iterations; i++) {
+	for (let i = 0; i < 300; i++) {
 		simulation.tick();
+	}
+}
+
+// ============================================================================
+// Layout dispatcher
+// ============================================================================
+
+function layoutGraph(
+	layoutType: CueLayoutType,
+	nodes: GraphNode[],
+	edges: GraphEdge[],
+	width: number,
+	height: number
+): void {
+	if (layoutType === 'hierarchical') {
+		layoutHierarchical(nodes, edges, width, height);
+	} else {
+		layoutForce(nodes, edges, width, height);
 	}
 }
 
@@ -397,6 +523,7 @@ function renderGraph(
 	transform: { zoom: number; panX: number; panY: number },
 	hoveredNodeId: string | null,
 	selectedNodeId: string | null,
+	draggingNodeId: string | null,
 	canvasWidth: number,
 	canvasHeight: number
 ): void {
@@ -463,6 +590,7 @@ function renderGraph(
 		const ny = node.y - node.height / 2;
 		const isHovered = hoveredNodeId === node.id;
 		const isSelected = selectedNodeId === node.id;
+		const isDragging = draggingNodeId === node.id;
 
 		if (node.type === 'trigger') {
 			// Trigger node - pill shape with event color
@@ -471,8 +599,8 @@ function renderGraph(
 			roundRect(ctx, nx, ny, node.width, node.height, NODE_BORDER_RADIUS);
 			ctx.fillStyle = color + '18';
 			ctx.fill();
-			ctx.strokeStyle = isHovered || isSelected ? color : color + '60';
-			ctx.lineWidth = isHovered || isSelected ? 2 : 1;
+			ctx.strokeStyle = isHovered || isSelected || isDragging ? color : color + '60';
+			ctx.lineWidth = isHovered || isSelected || isDragging ? 2 : 1;
 			ctx.stroke();
 
 			// Event type label
@@ -500,8 +628,8 @@ function renderGraph(
 			ctx.fill();
 
 			// Border
-			ctx.strokeStyle = isHovered || isSelected ? accentColor : theme.colors.border;
-			ctx.lineWidth = isHovered || isSelected ? 2 : 1;
+			ctx.strokeStyle = isHovered || isSelected || isDragging ? accentColor : theme.colors.border;
+			ctx.lineWidth = isHovered || isSelected || isDragging ? 2 : 1;
 			ctx.stroke();
 
 			// Accent bar at top
@@ -597,11 +725,24 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 	const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
 	const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+	const [layoutType, setLayoutType] = useState<CueLayoutType>('hierarchical');
+	const [showLayoutDropdown, setShowLayoutDropdown] = useState(false);
 
 	const transformRef = useRef({ zoom: 1, panX: 0, panY: 0 });
-	const isDraggingRef = useRef(false);
+	const isPanningRef = useRef(false);
 	const lastMouseRef = useRef({ x: 0, y: 0 });
 	const rafRef = useRef<number>(0);
+
+	// Node dragging state
+	const draggingNodeRef = useRef<{
+		nodeId: string;
+		startX: number;
+		startY: number;
+		mouseX: number;
+		mouseY: number;
+	} | null>(null);
+	const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
+	const nodePositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map());
 
 	const sessions = useSessionStore((state) => state.sessions);
 	const setActiveSessionId = useSessionStore((state) => state.setActiveSessionId);
@@ -617,14 +758,16 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 				toolType: s.toolType,
 			}));
 			const graph = buildGraphData(data, allSessionsSimple);
-			layoutGraph(graph.nodes, graph.edges, dimensions.width, dimensions.height);
+			layoutGraph(layoutType, graph.nodes, graph.edges, dimensions.width, dimensions.height);
+			// Clear position overrides on fresh data
+			nodePositionOverrides.current.clear();
 			setGraphData(graph);
 		} catch {
 			setGraphData({ nodes: [], edges: [] });
 		} finally {
 			setLoading(false);
 		}
-	}, [sessions, dimensions.width, dimensions.height]);
+	}, [sessions, dimensions.width, dimensions.height, layoutType]);
 
 	useEffect(() => {
 		fetchGraphData();
@@ -648,15 +791,29 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 		return () => observer.disconnect();
 	}, []);
 
-	// Re-layout when dimensions change (but not on every render)
+	// Re-layout when dimensions or layout type change
 	useEffect(() => {
 		if (graphData && graphData.nodes.length > 0) {
-			layoutGraph(graphData.nodes, graphData.edges, dimensions.width, dimensions.height);
+			layoutGraph(
+				layoutType,
+				graphData.nodes,
+				graphData.edges,
+				dimensions.width,
+				dimensions.height
+			);
+			// Apply position overrides
+			for (const node of graphData.nodes) {
+				const override = nodePositionOverrides.current.get(node.id);
+				if (override) {
+					node.x = override.x;
+					node.y = override.y;
+				}
+			}
 			// Center the transform
 			transformRef.current = { zoom: 1, panX: 0, panY: 0 };
 			requestDraw();
 		}
-	}, [dimensions.width, dimensions.height, graphData]);
+	}, [dimensions.width, dimensions.height, graphData, layoutType]);
 
 	// Canvas setup and rendering
 	const requestDraw = useCallback(() => {
@@ -676,11 +833,12 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 				transformRef.current,
 				hoveredNodeId,
 				selectedNodeId,
+				draggingNodeId,
 				dimensions.width,
 				dimensions.height
 			);
 		});
-	}, [graphData, theme, hoveredNodeId, selectedNodeId, dimensions]);
+	}, [graphData, theme, hoveredNodeId, selectedNodeId, draggingNodeId, dimensions]);
 
 	useEffect(() => {
 		requestDraw();
@@ -698,6 +856,14 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 		requestDraw();
 	}, [dimensions, requestDraw]);
 
+	// Close layout dropdown on click outside
+	useEffect(() => {
+		if (!showLayoutDropdown) return;
+		const handleClick = () => setShowLayoutDropdown(false);
+		document.addEventListener('click', handleClick);
+		return () => document.removeEventListener('click', handleClick);
+	}, [showLayoutDropdown]);
+
 	// Mouse handlers
 	const handleMouseDown = useCallback(
 		(e: React.MouseEvent) => {
@@ -710,9 +876,18 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 			const node = hitTest(graphData.nodes, x, y, transformRef.current);
 			if (node) {
 				setSelectedNodeId(node.id);
+				// Start node drag
+				draggingNodeRef.current = {
+					nodeId: node.id,
+					startX: node.x!,
+					startY: node.y!,
+					mouseX: e.clientX,
+					mouseY: e.clientY,
+				};
+				setDraggingNodeId(node.id);
 			} else {
 				setSelectedNodeId(null);
-				isDraggingRef.current = true;
+				isPanningRef.current = true;
 				lastMouseRef.current = { x: e.clientX, y: e.clientY };
 			}
 		},
@@ -721,7 +896,31 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 
 	const handleMouseMove = useCallback(
 		(e: React.MouseEvent) => {
-			if (isDraggingRef.current) {
+			if (draggingNodeRef.current && graphData) {
+				// Dragging a node
+				const { nodeId, startX, startY, mouseX, mouseY } = draggingNodeRef.current;
+				const zoom = transformRef.current.zoom;
+				const deltaX = (e.clientX - mouseX) / zoom;
+				const deltaY = (e.clientY - mouseY) / zoom;
+				const newX = startX + deltaX;
+				const newY = startY + deltaY;
+
+				// Update node position
+				const node = graphData.nodes.find((n) => n.id === nodeId);
+				if (node) {
+					node.x = newX;
+					node.y = newY;
+					nodePositionOverrides.current.set(nodeId, { x: newX, y: newY });
+				}
+
+				if (canvasRef.current) {
+					canvasRef.current.style.cursor = 'grabbing';
+				}
+				requestDraw();
+				return;
+			}
+
+			if (isPanningRef.current) {
 				const dx = e.clientX - lastMouseRef.current.x;
 				const dy = e.clientY - lastMouseRef.current.y;
 				transformRef.current.panX += dx;
@@ -744,21 +943,20 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 
 			// Cursor style
 			if (canvasRef.current) {
-				canvasRef.current.style.cursor = node
-					? node.type === 'agent'
-						? 'pointer'
-						: 'default'
-					: isDraggingRef.current
-						? 'grabbing'
-						: 'grab';
+				canvasRef.current.style.cursor = node ? 'grab' : 'default';
 			}
 		},
 		[graphData, hoveredNodeId, requestDraw]
 	);
 
 	const handleMouseUp = useCallback(() => {
-		isDraggingRef.current = false;
-	}, []);
+		draggingNodeRef.current = null;
+		setDraggingNodeId(null);
+		isPanningRef.current = false;
+		if (canvasRef.current) {
+			canvasRef.current.style.cursor = hoveredNodeId ? 'grab' : 'default';
+		}
+	}, [hoveredNodeId]);
 
 	const handleDoubleClick = useCallback(
 		(e: React.MouseEvent) => {
@@ -800,6 +998,14 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 		[requestDraw]
 	);
 
+	// Handle layout type change
+	const handleLayoutTypeChange = useCallback((type: CueLayoutType) => {
+		// Clear position overrides when changing layout
+		nodePositionOverrides.current.clear();
+		setLayoutType(type);
+		setShowLayoutDropdown(false);
+	}, []);
+
 	// Selected node info
 	const selectedNode = useMemo(
 		() => graphData?.nodes.find((n) => n.id === selectedNodeId) ?? null,
@@ -809,7 +1015,7 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 	if (loading) {
 		return (
 			<div
-				className="flex items-center justify-center py-20"
+				className="flex-1 flex items-center justify-center"
 				style={{ color: theme.colors.textDim }}
 			>
 				<span className="text-sm">Loading Cue graph...</span>
@@ -820,7 +1026,7 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 	if (!graphData || graphData.nodes.length === 0) {
 		return (
 			<div
-				className="flex flex-col items-center justify-center py-20 gap-3"
+				className="flex-1 flex flex-col items-center justify-center gap-3"
 				style={{ color: theme.colors.textDim }}
 			>
 				<span className="text-sm">
@@ -834,17 +1040,82 @@ export function CueGraphView({ theme, onClose }: CueGraphViewProps) {
 		<div className="flex-1 flex flex-col overflow-hidden">
 			{/* Toolbar */}
 			<div
-				className="flex items-center justify-between px-4 py-2 border-b"
+				className="flex items-center justify-between px-4 py-2 border-b shrink-0"
 				style={{ borderColor: theme.colors.border }}
 			>
 				<div className="flex items-center gap-3">
 					<span className="text-xs" style={{ color: theme.colors.textDim }}>
 						{graphData.nodes.filter((n) => n.type === 'agent').length} agents
-						<span className="mx-1.5">·</span>
+						<span className="mx-1.5">&middot;</span>
 						{graphData.nodes.filter((n) => n.type === 'trigger').length} triggers
-						<span className="mx-1.5">·</span>
+						<span className="mx-1.5">&middot;</span>
 						{graphData.edges.length} connections
 					</span>
+
+					{/* Layout dropdown */}
+					<div className="relative">
+						<button
+							onClick={(e) => {
+								e.stopPropagation();
+								setShowLayoutDropdown(!showLayoutDropdown);
+							}}
+							className="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs transition-colors"
+							style={{
+								backgroundColor: `${theme.colors.accent}10`,
+								color: theme.colors.textDim,
+							}}
+							onMouseEnter={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}30`)
+							}
+							onMouseLeave={(e) =>
+								(e.currentTarget.style.backgroundColor = `${theme.colors.accent}10`)
+							}
+							title={`Layout: ${LAYOUT_LABELS[layoutType].name}`}
+						>
+							<Network className="w-3.5 h-3.5" />
+							{LAYOUT_LABELS[layoutType].name}
+							<ChevronDown className="w-3 h-3" />
+						</button>
+
+						{showLayoutDropdown && (
+							<div
+								className="absolute top-full left-0 mt-1 py-1 rounded-lg shadow-lg z-50"
+								style={{
+									backgroundColor: theme.colors.bgActivity,
+									border: `1px solid ${theme.colors.border}`,
+									minWidth: 180,
+								}}
+							>
+								{(['hierarchical', 'force'] as CueLayoutType[]).map((type) => (
+									<button
+										key={type}
+										onClick={(e) => {
+											e.stopPropagation();
+											handleLayoutTypeChange(type);
+										}}
+										className="w-full px-3 py-2 text-left text-xs transition-colors flex items-center justify-between"
+										style={{
+											backgroundColor:
+												layoutType === type ? `${theme.colors.accent}15` : 'transparent',
+											color: layoutType === type ? theme.colors.accent : theme.colors.textMain,
+										}}
+										onMouseEnter={(e) =>
+											(e.currentTarget.style.backgroundColor = `${theme.colors.accent}20`)
+										}
+										onMouseLeave={(e) =>
+											(e.currentTarget.style.backgroundColor =
+												layoutType === type ? `${theme.colors.accent}15` : 'transparent')
+										}
+									>
+										<span>{LAYOUT_LABELS[type].name}</span>
+										<span className="text-[10px]" style={{ color: theme.colors.textDim }}>
+											{LAYOUT_LABELS[type].description}
+										</span>
+									</button>
+								))}
+							</div>
+						)}
+					</div>
 				</div>
 				<div className="flex items-center gap-2">
 					{selectedNode?.type === 'agent' && selectedNode.sessionId && (
