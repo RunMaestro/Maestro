@@ -754,6 +754,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 								onSwitchToSession={handleSwitchToSession}
 								onClose={onClose}
 								theme={theme}
+								activeRuns={activeRuns}
 							/>
 						)}
 					</div>

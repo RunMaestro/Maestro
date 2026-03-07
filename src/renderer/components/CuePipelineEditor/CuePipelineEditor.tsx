@@ -69,12 +69,18 @@ interface SessionInfo {
 	projectRoot?: string;
 }
 
+interface ActiveRunInfo {
+	subscriptionName: string;
+	sessionName: string;
+}
+
 export interface CuePipelineEditorProps {
 	sessions: SessionInfo[];
 	graphSessions: CueGraphSession[];
 	onSwitchToSession: (id: string) => void;
 	onClose: () => void;
 	theme: Theme;
+	activeRuns?: ActiveRunInfo[];
 }
 
 const nodeTypes = {
@@ -214,18 +220,21 @@ function convertToReactFlowNodes(
 
 function convertToReactFlowEdges(
 	pipelines: CuePipelineState['pipelines'],
-	selectedPipelineId: string | null
+	selectedPipelineId: string | null,
+	runningPipelineIds?: Set<string>
 ): Edge[] {
 	const edges: Edge[] = [];
 
 	for (const pipeline of pipelines) {
 		const isActive = selectedPipelineId === null || pipeline.id === selectedPipelineId;
+		const isRunning = runningPipelineIds?.has(pipeline.id) ?? false;
 
 		for (const pEdge of pipeline.edges) {
 			const edgeData: PipelineEdgeData = {
 				pipelineColor: pipeline.color,
 				mode: pEdge.mode,
 				isActivePipeline: isActive,
+				isRunning,
 			};
 			edges.push({
 				id: `${pipeline.id}:${pEdge.id}`,
@@ -307,6 +316,7 @@ function CuePipelineEditorInner({
 	graphSessions,
 	onSwitchToSession,
 	theme,
+	activeRuns: activeRunsProp,
 }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
@@ -319,6 +329,15 @@ function CuePipelineEditorInner({
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
 	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+
+	// Context menu state
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		nodeId: string;
+		pipelineId: string;
+		nodeType: 'trigger' | 'agent';
+	} | null>(null);
 
 	// Save/load state
 	const [isDirty, setIsDirty] = useState(false);
@@ -565,14 +584,35 @@ function CuePipelineEditorInner({
 		setPipelineState((prev) => ({ ...prev, selectedPipelineId: id }));
 	}, []);
 
+	// Determine which pipelines have active runs
+	const runningPipelineIds = useMemo(() => {
+		const ids = new Set<string>();
+		if (!activeRunsProp || activeRunsProp.length === 0) return ids;
+		for (const run of activeRunsProp) {
+			// Match subscription name to pipeline name (strip -chain-N, -fanin suffixes)
+			const baseName = run.subscriptionName.replace(/-chain-\d+$/, '').replace(/-fanin$/, '');
+			for (const pipeline of pipelineState.pipelines) {
+				if (pipeline.name === baseName) {
+					ids.add(pipeline.id);
+				}
+			}
+		}
+		return ids;
+	}, [activeRunsProp, pipelineState.pipelines]);
+
 	const nodes = useMemo(
 		() => convertToReactFlowNodes(pipelineState.pipelines, pipelineState.selectedPipelineId),
 		[pipelineState.pipelines, pipelineState.selectedPipelineId]
 	);
 
 	const edges = useMemo(
-		() => convertToReactFlowEdges(pipelineState.pipelines, pipelineState.selectedPipelineId),
-		[pipelineState.pipelines, pipelineState.selectedPipelineId]
+		() =>
+			convertToReactFlowEdges(
+				pipelineState.pipelines,
+				pipelineState.selectedPipelineId,
+				runningPipelineIds
+			),
+		[pipelineState.pipelines, pipelineState.selectedPipelineId, runningPipelineIds]
 	);
 
 	// Collect session IDs currently on canvas for the agent drawer indicator
@@ -641,17 +681,85 @@ function CuePipelineEditorInner({
 	const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
 		setSelectedNodeId(node.id);
 		setSelectedEdgeId(null);
+		setContextMenu(null);
 	}, []);
 
 	const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
 		setSelectedEdgeId(edge.id);
 		setSelectedNodeId(null);
+		setContextMenu(null);
 	}, []);
 
 	const onPaneClick = useCallback(() => {
 		setSelectedNodeId(null);
 		setSelectedEdgeId(null);
+		setContextMenu(null);
 	}, []);
+
+	const onNodeContextMenu = useCallback((event: React.MouseEvent, node: Node) => {
+		event.preventDefault();
+		const sepIdx = node.id.indexOf(':');
+		if (sepIdx === -1) return;
+		const pipelineId = node.id.substring(0, sepIdx);
+		const nodeId = node.id.substring(sepIdx + 1);
+		setContextMenu({
+			x: event.clientX,
+			y: event.clientY,
+			nodeId,
+			pipelineId,
+			nodeType: node.type as 'trigger' | 'agent',
+		});
+	}, []);
+
+	const handleContextMenuConfigure = useCallback(() => {
+		if (!contextMenu) return;
+		setSelectedNodeId(`${contextMenu.pipelineId}:${contextMenu.nodeId}`);
+		setSelectedEdgeId(null);
+		setContextMenu(null);
+	}, [contextMenu]);
+
+	const handleContextMenuDelete = useCallback(() => {
+		if (!contextMenu) return;
+		setPipelineState((prev) => ({
+			...prev,
+			pipelines: prev.pipelines.map((p) => {
+				if (p.id !== contextMenu.pipelineId) return p;
+				return {
+					...p,
+					nodes: p.nodes.filter((n) => n.id !== contextMenu.nodeId),
+					edges: p.edges.filter(
+						(e) => e.source !== contextMenu.nodeId && e.target !== contextMenu.nodeId
+					),
+				};
+			}),
+		}));
+		setSelectedNodeId(null);
+		setContextMenu(null);
+	}, [contextMenu]);
+
+	const handleContextMenuDuplicate = useCallback(() => {
+		if (!contextMenu || contextMenu.nodeType !== 'trigger') return;
+		setPipelineState((prev) => {
+			const pipeline = prev.pipelines.find((p) => p.id === contextMenu.pipelineId);
+			if (!pipeline) return prev;
+			const original = pipeline.nodes.find((n) => n.id === contextMenu.nodeId);
+			if (!original || original.type !== 'trigger') return prev;
+			const newNode: PipelineNode = {
+				id: `trigger-${Date.now()}`,
+				type: 'trigger',
+				position: { x: original.position.x + 50, y: original.position.y + 50 },
+				data: { ...(original.data as TriggerNodeData) },
+			};
+			return {
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== contextMenu.pipelineId) return p;
+					return { ...p, nodes: [...p.nodes, newNode] };
+				}),
+			};
+		});
+		setContextMenu(null);
+	}, [contextMenu]);
 
 	const onUpdateNode = useCallback(
 		(nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => {
@@ -730,18 +838,16 @@ function CuePipelineEditorInner({
 		[selectedEdgePipelineId]
 	);
 
-	// Keyboard shortcut: Delete/Backspace removes selected node or edge
+	// Keyboard shortcuts: Delete/Backspace, Escape, Cmd+S, Cmd+Z
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			// Don't intercept if user is typing in an input
+			const target = e.target as HTMLElement;
+			const isInput =
+				target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT';
+
 			if (e.key === 'Delete' || e.key === 'Backspace') {
-				// Don't intercept if user is typing in an input
-				const target = e.target as HTMLElement;
-				if (
-					target.tagName === 'INPUT' ||
-					target.tagName === 'TEXTAREA' ||
-					target.tagName === 'SELECT'
-				)
-					return;
+				if (isInput) return;
 
 				if (selectedNode && selectedNodePipelineId) {
 					e.preventDefault();
@@ -750,7 +856,20 @@ function CuePipelineEditorInner({
 					e.preventDefault();
 					onDeleteEdge(selectedEdge.id);
 				}
+			} else if (e.key === 'Escape') {
+				if (triggerDrawerOpen) {
+					setTriggerDrawerOpen(false);
+				} else if (agentDrawerOpen) {
+					setAgentDrawerOpen(false);
+				} else if (selectedNodeId || selectedEdgeId) {
+					setSelectedNodeId(null);
+					setSelectedEdgeId(null);
+				}
+			} else if (e.key === 's' && (e.metaKey || e.ctrlKey)) {
+				e.preventDefault();
+				handleSave();
 			}
+			// TODO: Cmd+Z / Ctrl+Z undo support
 		};
 
 		window.addEventListener('keydown', handleKeyDown);
@@ -760,8 +879,13 @@ function CuePipelineEditorInner({
 		selectedNodePipelineId,
 		selectedEdge,
 		selectedEdgePipelineId,
+		selectedNodeId,
+		selectedEdgeId,
 		onDeleteNode,
 		onDeleteEdge,
+		triggerDrawerOpen,
+		agentDrawerOpen,
+		handleSave,
 	]);
 
 	const onNodesChange: OnNodesChange = useCallback(
@@ -833,6 +957,34 @@ function CuePipelineEditorInner({
 			});
 		},
 		[nodes]
+	);
+
+	// Connection validation: prevent invalid edges
+	const isValidConnection = useCallback(
+		(connection: Connection) => {
+			if (!connection.source || !connection.target) return false;
+			// Prevent self-connections
+			if (connection.source === connection.target) return false;
+
+			const sourceNode = nodes.find((n) => n.id === connection.source);
+			const targetNode = nodes.find((n) => n.id === connection.target);
+			if (!sourceNode || !targetNode) return false;
+
+			// Prevent trigger-to-trigger connections
+			if (sourceNode.type === 'trigger' && targetNode.type === 'trigger') return false;
+
+			// Prevent connecting into a trigger
+			if (targetNode.type === 'trigger') return false;
+
+			// Prevent duplicate edges
+			const exists = edges.some(
+				(e) => e.source === connection.source && e.target === connection.target
+			);
+			if (exists) return false;
+
+			return true;
+		},
+		[nodes, edges]
 	);
 
 	const onDragOver = useCallback((event: React.DragEvent) => {
@@ -1102,6 +1254,34 @@ function CuePipelineEditorInner({
 				{/* Trigger drawer (left) */}
 				<TriggerDrawer isOpen={triggerDrawerOpen} onClose={() => setTriggerDrawerOpen(false)} />
 
+				{/* Empty state overlay */}
+				{nodes.length === 0 && (
+					<div
+						className="absolute inset-0 flex items-center justify-center pointer-events-none"
+						style={{ zIndex: 5 }}
+					>
+						<div className="flex flex-col items-center gap-3 text-center px-8">
+							<div className="flex items-center gap-6" style={{ color: theme.colors.textDim }}>
+								<div className="flex flex-col items-center gap-1">
+									<span style={{ fontSize: 20 }}>←</span>
+									<span className="text-xs">Triggers</span>
+								</div>
+								<div className="flex flex-col items-center gap-2 max-w-xs">
+									<Zap size={24} style={{ color: theme.colors.textDim, opacity: 0.5 }} />
+									<span className="text-sm" style={{ color: theme.colors.textDim }}>
+										Drag a trigger from the left drawer and an agent from the right drawer to create
+										your first pipeline
+									</span>
+								</div>
+								<div className="flex flex-col items-center gap-1">
+									<span style={{ fontSize: 20 }}>→</span>
+									<span className="text-xs">Agents</span>
+								</div>
+							</div>
+						</div>
+					</div>
+				)}
+
 				{/* React Flow Canvas */}
 				<ReactFlow
 					nodes={nodes}
@@ -1111,9 +1291,11 @@ function CuePipelineEditorInner({
 					onNodesChange={onNodesChange}
 					onEdgesChange={onEdgesChange}
 					onConnect={onConnect}
+					isValidConnection={isValidConnection}
 					onNodeClick={onNodeClick}
 					onEdgeClick={onEdgeClick}
 					onPaneClick={onPaneClick}
+					onNodeContextMenu={onNodeContextMenu}
 					onDragOver={onDragOver}
 					onDrop={onDrop}
 					fitView
@@ -1134,7 +1316,27 @@ function CuePipelineEditorInner({
 							border: `1px solid ${theme.colors.border}`,
 						}}
 						maskColor={`${theme.colors.bgMain}cc`}
-						nodeColor={theme.colors.accent}
+						nodeColor={(node) => {
+							// Extract pipeline color from node data
+							if (node.type === 'trigger') {
+								const data = node.data as TriggerNodeDataProps;
+								// Use event type color palette
+								const eventColors: Record<string, string> = {
+									'time.interval': '#f59e0b',
+									'file.changed': '#3b82f6',
+									'agent.completed': '#22c55e',
+									'github.pull_request': '#a855f7',
+									'github.issue': '#f97316',
+									'task.pending': '#06b6d4',
+								};
+								return eventColors[data.eventType] ?? theme.colors.accent;
+							}
+							if (node.type === 'agent') {
+								const data = node.data as AgentNodeDataProps;
+								return data.pipelineColor ?? theme.colors.accent;
+							}
+							return theme.colors.accent;
+						}}
 					/>
 				</ReactFlow>
 
@@ -1165,6 +1367,93 @@ function CuePipelineEditorInner({
 						onUpdateEdge={onUpdateEdge}
 						onDeleteEdge={onDeleteEdge}
 					/>
+				)}
+
+				{/* Node context menu */}
+				{contextMenu && (
+					<div
+						className="fixed"
+						style={{
+							left: contextMenu.x,
+							top: contextMenu.y,
+							zIndex: 50,
+						}}
+					>
+						<div
+							style={{
+								backgroundColor: '#1e1e2e',
+								border: '1px solid #444',
+								borderRadius: 6,
+								boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+								padding: '4px 0',
+								minWidth: 140,
+							}}
+						>
+							<button
+								onClick={handleContextMenuConfigure}
+								style={{
+									display: 'block',
+									width: '100%',
+									textAlign: 'left',
+									padding: '6px 12px',
+									fontSize: 12,
+									color: '#e4e4e7',
+									backgroundColor: 'transparent',
+									border: 'none',
+									cursor: 'pointer',
+								}}
+								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+							>
+								Configure
+							</button>
+							{contextMenu.nodeType === 'trigger' && (
+								<button
+									onClick={handleContextMenuDuplicate}
+									style={{
+										display: 'block',
+										width: '100%',
+										textAlign: 'left',
+										padding: '6px 12px',
+										fontSize: 12,
+										color: '#e4e4e7',
+										backgroundColor: 'transparent',
+										border: 'none',
+										cursor: 'pointer',
+									}}
+									onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+									onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+								>
+									Duplicate
+								</button>
+							)}
+							<div
+								style={{
+									height: 1,
+									backgroundColor: '#333',
+									margin: '4px 0',
+								}}
+							/>
+							<button
+								onClick={handleContextMenuDelete}
+								style={{
+									display: 'block',
+									width: '100%',
+									textAlign: 'left',
+									padding: '6px 12px',
+									fontSize: 12,
+									color: '#ef4444',
+									backgroundColor: 'transparent',
+									border: 'none',
+									cursor: 'pointer',
+								}}
+								onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#2a2a3e')}
+								onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+							>
+								Delete
+							</button>
+						</div>
+					</div>
 				)}
 			</div>
 		</div>

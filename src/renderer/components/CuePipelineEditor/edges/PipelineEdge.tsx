@@ -7,6 +7,7 @@ export interface PipelineEdgeData {
 	pipelineColor: string;
 	mode: EdgeMode;
 	isActivePipeline: boolean;
+	isRunning?: boolean;
 }
 
 export const PipelineEdge = memo(function PipelineEdge({
@@ -24,6 +25,7 @@ export const PipelineEdge = memo(function PipelineEdge({
 	const color = data?.pipelineColor ?? '#06b6d4';
 	const mode = data?.mode ?? 'pass';
 	const isActive = data?.isActivePipeline !== false;
+	const isRunning = data?.isRunning ?? false;
 	const opacity = isActive ? 1 : 0.25;
 
 	const [edgePath, labelX, labelY] = getBezierPath({
@@ -43,10 +45,11 @@ export const PipelineEdge = memo(function PipelineEdge({
 				markerEnd={markerEnd}
 				style={{
 					stroke: color,
-					strokeWidth: selected ? 2.5 : 1.5,
+					strokeWidth: selected ? 2.5 : isRunning ? 2 : 1.5,
 					opacity,
-					strokeDasharray: mode === 'autorun' ? '6 3' : undefined,
-					animation: mode === 'autorun' ? 'pipeline-dash 0.8s linear infinite' : undefined,
+					strokeDasharray: mode === 'autorun' || isRunning ? '6 3' : undefined,
+					animation:
+						mode === 'autorun' || isRunning ? 'pipeline-dash 0.8s linear infinite' : undefined,
 				}}
 			/>
 
