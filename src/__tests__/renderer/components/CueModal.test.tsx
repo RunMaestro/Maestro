@@ -198,10 +198,11 @@ describe('CueModal', () => {
 			expect(mockUnregisterLayer).toHaveBeenCalledWith('layer-cue-modal');
 		});
 
-		it('should show loading state', () => {
+		it('should show loading state on dashboard tab', () => {
 			mockUseCueReturn = { ...defaultUseCueReturn, loading: true };
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('Loading Cue status...')).toBeInTheDocument();
 		});
@@ -210,6 +211,7 @@ describe('CueModal', () => {
 	describe('sessions table', () => {
 		it('should show empty state when no sessions have Cue configs', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText(/No sessions have a maestro-cue.yaml file/)).toBeInTheDocument();
 		});
@@ -221,6 +223,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('Test Session')).toBeInTheDocument();
 			expect(screen.getByText('claude-code')).toBeInTheDocument();
@@ -235,6 +238,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('Paused')).toBeInTheDocument();
 		});
@@ -243,6 +247,7 @@ describe('CueModal', () => {
 	describe('active runs', () => {
 		it('should show "No active runs" when empty', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('No active runs')).toBeInTheDocument();
 		});
@@ -254,6 +259,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('"on-save"')).toBeInTheDocument();
 			expect(screen.getByTitle('Stop run')).toBeInTheDocument();
@@ -266,6 +272,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			fireEvent.click(screen.getByTitle('Stop run'));
 			expect(mockStopRun).toHaveBeenCalledWith('run-1');
@@ -279,6 +286,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			const stopAllButton = screen.getByText('Stop All');
 			expect(stopAllButton).toBeInTheDocument();
@@ -291,6 +299,7 @@ describe('CueModal', () => {
 	describe('activity log', () => {
 		it('should show "No activity yet" when empty', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText('No activity yet')).toBeInTheDocument();
 		});
@@ -302,6 +311,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText(/completed in 5s/)).toBeInTheDocument();
 		});
@@ -313,6 +323,7 @@ describe('CueModal', () => {
 			};
 
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
 
 			expect(screen.getByText(/failed/)).toBeInTheDocument();
 		});
@@ -357,40 +368,42 @@ describe('CueModal', () => {
 	});
 
 	describe('tabs', () => {
-		it('should render Dashboard and Graph tabs', () => {
+		it('should render Dashboard and Pipeline Editor tabs', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
 			expect(screen.getByText('Dashboard')).toBeInTheDocument();
-			expect(screen.getByText('Graph')).toBeInTheDocument();
+			expect(screen.getByText('Pipeline Editor')).toBeInTheDocument();
 		});
 
-		it('should show dashboard content by default', () => {
+		it('should show Pipeline Editor content by default', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-
-			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
-		});
-
-		it('should switch to graph view when Graph tab is clicked', () => {
-			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
-
-			fireEvent.click(screen.getByText('Graph'));
 
 			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
-			// Dashboard content should not be visible
+			// Dashboard content should not be visible by default
 			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
 		});
 
-		it('should switch back to dashboard when Dashboard tab is clicked', () => {
+		it('should switch to dashboard when Dashboard tab is clicked', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
 
-			// Switch to graph
-			fireEvent.click(screen.getByText('Graph'));
-			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
+			fireEvent.click(screen.getByText('Dashboard'));
 
-			// Switch back to dashboard
+			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
+			// Pipeline editor should not be visible
+			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
+		});
+
+		it('should switch back to Pipeline Editor when Pipeline Editor tab is clicked', () => {
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+
+			// Switch to dashboard
 			fireEvent.click(screen.getByText('Dashboard'));
 			expect(screen.getByText('Sessions with Cue')).toBeInTheDocument();
-			expect(screen.queryByTestId('cue-pipeline-editor')).not.toBeInTheDocument();
+
+			// Switch back to pipeline editor
+			fireEvent.click(screen.getByText('Pipeline Editor'));
+			expect(screen.getByTestId('cue-pipeline-editor')).toBeInTheDocument();
+			expect(screen.queryByText('Sessions with Cue')).not.toBeInTheDocument();
 		});
 	});
 

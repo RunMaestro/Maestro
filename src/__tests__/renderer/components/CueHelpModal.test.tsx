@@ -126,8 +126,8 @@ describe('CueHelpContent', () => {
 			expect(screen.getByText(/Default timeout is 30 minutes/)).toBeInTheDocument();
 		});
 
-		it('should render AI YAML Editor section', () => {
-			expect(screen.getByText('AI YAML Editor')).toBeInTheDocument();
+		it('should render Visual Pipeline Editor section', () => {
+			expect(screen.getByText('Visual Pipeline Editor')).toBeInTheDocument();
 		});
 
 		it('should render Coordination Patterns section', () => {

@@ -49,11 +49,14 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						Create a{' '}
+						Use the <strong style={{ color: theme.colors.textMain }}>Pipeline Editor</strong> tab to
+						visually build your automation pipelines. Drag triggers from the left drawer and agents
+						from the right drawer onto the canvas, then connect them to define your workflow. The
+						editor automatically generates and manages the underlying{' '}
 						<code className="px-1 rounded" style={{ backgroundColor: theme.colors.bgActivity }}>
 							maestro-cue.yaml
 						</code>{' '}
-						file in your project root. Maestro auto-discovers it when the session loads.
+						file.
 					</p>
 					<div
 						className="flex items-center gap-2 px-3 py-2 rounded"
@@ -760,7 +763,10 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 						style={{ backgroundColor: theme.colors.accent + '15' }}
 					>
 						<Sparkles className="w-4 h-4 flex-shrink-0" style={{ color: theme.colors.accent }} />
-						<span>Use the YAML editor's pattern presets to get started quickly.</span>
+						<span>
+							Use the Pipeline Editor to visually build these patterns by dragging and connecting
+							triggers and agents.
+						</span>
 					</div>
 				</div>
 			</section>
@@ -856,16 +862,27 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 				</div>
 			</section>
 
-			{/* Section 9: AI YAML Editor */}
+			{/* Section 9: Visual Pipeline Editor */}
 			<section>
 				<div className="flex items-center gap-2 mb-3">
 					<Sparkles className="w-5 h-5" style={{ color: theme.colors.accent }} />
-					<h3 className="font-bold">AI YAML Editor</h3>
+					<h3 className="font-bold">Visual Pipeline Editor</h3>
 				</div>
 				<div className="text-sm space-y-2 pl-7" style={{ color: theme.colors.textDim }}>
 					<p>
-						Use the YAML editor to create your configuration. Describe what you want in plain text,
-						and AI will generate the YAML for you.
+						The Pipeline Editor provides a visual canvas for building automation workflows. Drag
+						triggers and agents onto the canvas, connect them with edges, and organize them into
+						named pipelines with distinct colors.
+					</p>
+					<p>
+						<strong style={{ color: theme.colors.textMain }}>Left drawer:</strong> Trigger types
+						(interval, file watch, agent completed, GitHub, task pending)
+						<br />
+						<strong style={{ color: theme.colors.textMain }}>Right drawer:</strong> Available agents
+						from your sessions
+						<br />
+						<strong style={{ color: theme.colors.textMain }}>Pipeline selector:</strong> Create,
+						rename, and switch between pipelines
 					</p>
 					<div
 						className="flex items-center gap-2 px-3 py-2 rounded"
@@ -883,7 +900,7 @@ export function CueHelpContent({ theme, cueShortcutKeys }: CueHelpContentProps) 
 							>
 								{formatShortcutKeys(cueShortcutKeys ?? DEFAULT_SHORTCUTS.maestroCue.keys)}
 							</kbd>{' '}
-							to open the Cue dashboard.
+							to open the Cue dashboard. The Pipeline Editor is the default tab.
 						</span>
 					</div>
 				</div>
