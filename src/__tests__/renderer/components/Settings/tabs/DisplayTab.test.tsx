@@ -5,7 +5,6 @@
  * - Font family selection and loading
  * - Custom font management (add/remove)
  * - Font size toggle buttons
- * - Terminal width toggle buttons
  * - Max log buffer toggle buttons
  * - Max output lines toggle buttons
  * - User message alignment toggle
@@ -27,7 +26,6 @@ import type { Theme } from '../../../../../renderer/types';
 // --- Mock setters (module-level for assertion access) ---
 const mockSetFontFamily = vi.fn();
 const mockSetFontSize = vi.fn();
-const mockSetTerminalWidth = vi.fn();
 const mockSetMaxLogBuffer = vi.fn();
 const mockSetMaxOutputLines = vi.fn();
 const mockSetUserMessageAlignment = vi.fn();
@@ -48,8 +46,6 @@ vi.mock('../../../../../renderer/hooks/settings/useSettings', () => ({
 		setFontFamily: mockSetFontFamily,
 		fontSize: 14,
 		setFontSize: mockSetFontSize,
-		terminalWidth: 100,
-		setTerminalWidth: mockSetTerminalWidth,
 		maxLogBuffer: 5000,
 		setMaxLogBuffer: mockSetMaxLogBuffer,
 		maxOutputLines: 25,
@@ -562,82 +558,6 @@ describe('DisplayTab', () => {
 	});
 
 	// =========================================================================
-	// Terminal Width
-	// =========================================================================
-
-	describe('Terminal Width', () => {
-		it('should render Terminal Width label', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			expect(screen.getByText('Terminal Width (Columns)')).toBeInTheDocument();
-		});
-
-		it('should call setTerminalWidth with 80', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '80' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(80);
-		});
-
-		it('should call setTerminalWidth with 100', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// There may be multiple "100" on screen (e.g., from max nodes slider)
-			// so get the one in the terminal width section
-			const buttons = screen.getAllByRole('button', { name: '100' });
-			fireEvent.click(buttons[0]);
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(100);
-		});
-
-		it('should call setTerminalWidth with 120', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '120' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(120);
-		});
-
-		it('should call setTerminalWidth with 160', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			fireEvent.click(screen.getByRole('button', { name: '160' }));
-			expect(mockSetTerminalWidth).toHaveBeenCalledWith(160);
-		});
-
-		it('should highlight selected terminal width (100)', async () => {
-			render(<DisplayTab theme={mockTheme} />);
-
-			await act(async () => {
-				await vi.advanceTimersByTimeAsync(50);
-			});
-
-			// Find the 100 button that has ring-2 class (the active one)
-			const buttons = screen.getAllByRole('button', { name: '100' });
-			const activeButton = buttons.find((btn) => btn.classList.contains('ring-2'));
-			expect(activeButton).toBeTruthy();
-		});
-	});
-
-	// =========================================================================
 	// Max Log Buffer
 	// =========================================================================
 
@@ -704,7 +624,7 @@ describe('DisplayTab', () => {
 			});
 
 			expect(
-				screen.getByText(/Maximum number of log messages to keep in memory/)
+				screen.getByText(/Maximum number of system log messages retained in memory/)
 			).toBeInTheDocument();
 		});
 	});
@@ -1615,8 +1535,6 @@ describe('DisplayTab', () => {
 			expect(screen.getByText('Interface Font')).toBeInTheDocument();
 			// Font Size
 			expect(screen.getByText('Font Size')).toBeInTheDocument();
-			// Terminal Width
-			expect(screen.getByText('Terminal Width (Columns)')).toBeInTheDocument();
 			// Max Log Buffer
 			expect(screen.getByText('Maximum Log Buffer')).toBeInTheDocument();
 			// Max Output Lines

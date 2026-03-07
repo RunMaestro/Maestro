@@ -47,7 +47,6 @@ function resetStore() {
 		markdownEditMode: false,
 		chatRawTextMode: false,
 		showHiddenFiles: true,
-		terminalWidth: 100,
 		logLevel: 'info',
 		maxLogBuffer: 5000,
 		maxOutputLines: 25,
@@ -145,7 +144,6 @@ describe('settingsStore', () => {
 			expect(state.markdownEditMode).toBe(false);
 			expect(state.chatRawTextMode).toBe(false);
 			expect(state.showHiddenFiles).toBe(true);
-			expect(state.terminalWidth).toBe(100);
 			expect(state.logLevel).toBe('info');
 			expect(state.maxLogBuffer).toBe(5000);
 			expect(state.maxOutputLines).toBe(25);
@@ -348,12 +346,6 @@ describe('settingsStore', () => {
 		});
 
 		describe('Terminal', () => {
-			it('setTerminalWidth updates state and persists', () => {
-				useSettingsStore.getState().setTerminalWidth(120);
-				expect(useSettingsStore.getState().terminalWidth).toBe(120);
-				expect(window.maestro.settings.set).toHaveBeenCalledWith('terminalWidth', 120);
-			});
-
 			it('setMaxOutputLines updates state and persists', () => {
 				useSettingsStore.getState().setMaxOutputLines(50);
 				expect(useSettingsStore.getState().maxOutputLines).toBe(50);

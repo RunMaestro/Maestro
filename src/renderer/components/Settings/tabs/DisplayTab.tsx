@@ -1,7 +1,7 @@
 /**
  * DisplayTab - Display settings tab for SettingsModal
  *
- * Contains: Font Configuration, Font Size, Terminal Width, Max Log Buffer,
+ * Contains: Font Configuration, Font Size, Max Log Buffer,
  * Max Output Lines, Message Alignment, Window Chrome, Document Graph,
  * Context Window Warnings, Local Ignore Patterns.
  */
@@ -25,8 +25,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 		setFontFamily,
 		fontSize,
 		setFontSize,
-		terminalWidth,
-		setTerminalWidth,
 		maxLogBuffer,
 		setMaxLogBuffer,
 		maxOutputLines,
@@ -128,19 +126,6 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 				/>
 			</div>
 
-			{/* Terminal Width */}
-			<div>
-				<div className="block text-xs font-bold opacity-70 uppercase mb-2">
-					Terminal Width (Columns)
-				</div>
-				<ToggleButtonGroup
-					options={[80, 100, 120, 160]}
-					value={terminalWidth}
-					onChange={setTerminalWidth}
-					theme={theme}
-				/>
-			</div>
-
 			{/* Max Log Buffer */}
 			<div>
 				<div className="block text-xs font-bold opacity-70 uppercase mb-2">Maximum Log Buffer</div>
@@ -151,7 +136,8 @@ export function DisplayTab({ theme }: DisplayTabProps) {
 					theme={theme}
 				/>
 				<p className="text-xs opacity-50 mt-2">
-					Maximum number of log messages to keep in memory. Older logs are automatically removed.
+					Maximum number of system log messages retained in memory for the Log Viewer. Older entries
+					are automatically discarded as new ones arrive.
 				</p>
 			</div>
 

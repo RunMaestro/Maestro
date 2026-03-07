@@ -53,7 +53,6 @@ describe('useSettings', () => {
 			markdownEditMode: false,
 			chatRawTextMode: false,
 			showHiddenFiles: true,
-			terminalWidth: 100,
 			logLevel: 'info',
 			maxLogBuffer: 5000,
 			maxOutputLines: 25,
@@ -159,13 +158,6 @@ describe('useSettings', () => {
 			expect(result.current.leftSidebarWidth).toBe(256);
 			expect(result.current.rightPanelWidth).toBe(384);
 			expect(result.current.markdownEditMode).toBe(false);
-		});
-
-		it('should have correct default values for terminal settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			expect(result.current.terminalWidth).toBe(100);
 		});
 
 		it('should have correct default values for logging settings', async () => {
@@ -644,20 +636,6 @@ describe('useSettings', () => {
 
 			expect(result.current.markdownEditMode).toBe(true);
 			expect(window.maestro.settings.set).toHaveBeenCalledWith('markdownEditMode', true);
-		});
-	});
-
-	describe('setter functions - terminal settings', () => {
-		it('should update terminalWidth and persist to settings', async () => {
-			const { result } = renderHook(() => useSettings());
-			await waitForSettingsLoaded(result);
-
-			act(() => {
-				result.current.setTerminalWidth(120);
-			});
-
-			expect(result.current.terminalWidth).toBe(120);
-			expect(window.maestro.settings.set).toHaveBeenCalledWith('terminalWidth', 120);
 		});
 	});
 
