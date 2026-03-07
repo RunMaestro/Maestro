@@ -108,6 +108,21 @@ export const TerminalView = memo(
 
 				const terminalSessionId = getTerminalSessionId(session.id, tabId);
 
+				// Build effective SSH config: prefer explicit sessionSshRemoteConfig, then fall back
+				// to sshRemoteId which is set after an AI agent connects. Without this fallback,
+				// terminal tabs under running SSH agents spawn locally instead of on the remote host.
+				const effectiveSshConfig = session.sessionSshRemoteConfig?.enabled
+					? session.sessionSshRemoteConfig
+					: session.sshRemoteId
+					? {
+							enabled: true,
+							remoteId: session.sshRemoteId,
+							// Use session.cwd as the remote working directory so the terminal starts
+							// in the project directory rather than the remote home directory.
+							workingDirOverride: session.cwd || undefined,
+					  }
+					: undefined;
+
 				window.maestro.process
 					.spawnTerminalTab({
 						sessionId: terminalSessionId,
@@ -115,7 +130,7 @@ export const TerminalView = memo(
 						shell: defaultShell || undefined,
 						shellArgs,
 						shellEnvVars,
-						sessionSshRemoteConfig: session.sessionSshRemoteConfig,
+						sessionSshRemoteConfig: effectiveSshConfig,
 					})
 					.then((result) => {
 						if (result.success) {
@@ -131,7 +146,7 @@ export const TerminalView = memo(
 						spawnInFlightRef.current.delete(tabId);
 					});
 			},
-			[session.id, session.cwd, session.sessionSshRemoteConfig, defaultShell, shellArgs, shellEnvVars, onTabPidChange, onTabStateChange]
+			[session.id, session.cwd, session.sessionSshRemoteConfig, session.sshRemoteId, defaultShell, shellArgs, shellEnvVars, onTabPidChange, onTabStateChange]
 		);
 
 		// Spawn PTY when active tab changes and has no PID yet
