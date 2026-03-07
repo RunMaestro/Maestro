@@ -75,6 +75,7 @@ interface QueuedEvent {
 	event: CueEvent;
 	subscription: CueSubscription;
 	prompt: string;
+	outputPrompt?: string;
 	subscriptionName: string;
 	queuedAt: number;
 }
@@ -210,10 +211,14 @@ export class CueEngine {
 	getStatus(): CueSessionStatus[] {
 		const result: CueSessionStatus[] = [];
 		const allSessions = this.deps.getSessions();
+		const reportedSessionIds = new Set<string>();
 
+		// Report active sessions with live state
 		for (const [sessionId, state] of this.sessions) {
 			const session = allSessions.find((s) => s.id === sessionId);
 			if (!session) continue;
+
+			reportedSessionIds.add(sessionId);
 
 			const activeRunCount = [...this.activeRuns.values()].filter(
 				(r) => r.result.sessionId === sessionId
@@ -236,6 +241,25 @@ export class CueEngine {
 				lastTriggered: state.lastTriggered,
 				nextTrigger,
 			});
+		}
+
+		// When engine is disabled, scan for sessions with cue configs on disk
+		if (!this.enabled) {
+			for (const session of allSessions) {
+				if (reportedSessionIds.has(session.id)) continue;
+				const config = loadCueConfig(session.projectRoot);
+				if (!config) continue;
+
+				result.push({
+					sessionId: session.id,
+					sessionName: session.name,
+					toolType: session.toolType,
+					projectRoot: session.projectRoot,
+					enabled: false,
+					subscriptionCount: config.subscriptions.filter((s) => s.enabled !== false).length,
+					activeRuns: 0,
+				});
+			}
 		}
 
 		return result;
@@ -307,17 +331,35 @@ export class CueEngine {
 	getGraphData(): CueGraphSession[] {
 		const result: CueGraphSession[] = [];
 		const allSessions = this.deps.getSessions();
+		const reportedSessionIds = new Set<string>();
 
 		for (const [sessionId, state] of this.sessions) {
 			const session = allSessions.find((s) => s.id === sessionId);
 			if (!session) continue;
 
+			reportedSessionIds.add(sessionId);
 			result.push({
 				sessionId,
 				sessionName: session.name,
 				toolType: session.toolType,
 				subscriptions: state.config.subscriptions,
 			});
+		}
+
+		// When engine is disabled, scan for sessions with cue configs on disk
+		if (!this.enabled) {
+			for (const session of allSessions) {
+				if (reportedSessionIds.has(session.id)) continue;
+				const config = loadCueConfig(session.projectRoot);
+				if (!config) continue;
+
+				result.push({
+					sessionId: session.id,
+					sessionName: session.name,
+					toolType: session.toolType,
+					subscriptions: config.subscriptions,
+				});
+			}
 		}
 
 		return result;
@@ -476,10 +518,10 @@ export class CueEngine {
 						fanOutIndex: i,
 					},
 				};
-				this.executeCueRun(targetSession.id, sub.prompt, fanOutEvent, sub.name);
+				this.executeCueRun(targetSession.id, sub.prompt, fanOutEvent, sub.name, sub.output_prompt);
 			}
 		} else {
-			this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name);
+			this.executeCueRun(ownerSessionId, sub.prompt, event, sub.name, sub.output_prompt);
 		}
 	}
 
@@ -663,6 +705,7 @@ export class CueEngine {
 		sub: {
 			name: string;
 			prompt: string;
+			output_prompt?: string;
 			interval_minutes?: number;
 			filter?: Record<string, string | number | boolean>;
 		}
@@ -682,7 +725,7 @@ export class CueEngine {
 		// Check payload filter (even for timer events)
 		if (!sub.filter || matchesFilter(immediateEvent.payload, sub.filter)) {
 			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval, initial)`);
-			this.executeCueRun(session.id, sub.prompt, immediateEvent, sub.name);
+			this.executeCueRun(session.id, sub.prompt, immediateEvent, sub.name, sub.output_prompt);
 		} else {
 			this.deps.onLog(
 				'cue',
@@ -714,7 +757,7 @@ export class CueEngine {
 			this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (time.interval)`);
 			state.lastTriggered = event.timestamp;
 			state.nextTriggers.set(sub.name, Date.now() + intervalMs);
-			this.executeCueRun(session.id, sub.prompt, event, sub.name);
+			this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
 		}, intervalMs);
 
 		state.nextTriggers.set(sub.name, Date.now() + intervalMs);
@@ -727,6 +770,7 @@ export class CueEngine {
 		sub: {
 			name: string;
 			prompt: string;
+			output_prompt?: string;
 			watch?: string;
 			filter?: Record<string, string | number | boolean>;
 		}
@@ -752,7 +796,7 @@ export class CueEngine {
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (file.changed)`);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name);
+				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
 			},
 		});
 
@@ -786,7 +830,7 @@ export class CueEngine {
 
 				this.deps.onLog('cue', `[CUE] "${sub.name}" triggered (${sub.event})`);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name);
+				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
 			},
 		});
 
@@ -823,7 +867,7 @@ export class CueEngine {
 					`[CUE] "${sub.name}" triggered (task.pending: ${event.payload.taskCount} task(s) in ${event.payload.filename})`
 				);
 				state.lastTriggered = event.timestamp;
-				this.executeCueRun(session.id, sub.prompt, event, sub.name);
+				this.executeCueRun(session.id, sub.prompt, event, sub.name, sub.output_prompt);
 			},
 		});
 
@@ -838,7 +882,8 @@ export class CueEngine {
 		sessionId: string,
 		prompt: string,
 		event: CueEvent,
-		subscriptionName: string
+		subscriptionName: string,
+		outputPrompt?: string
 	): void {
 		// Look up the config for this session to get concurrency settings
 		const state = this.sessions.get(sessionId);
@@ -865,6 +910,7 @@ export class CueEngine {
 				event,
 				subscription: { name: subscriptionName, event: event.type, enabled: true, prompt },
 				prompt,
+				outputPrompt,
 				subscriptionName,
 				queuedAt: Date.now(),
 			});
@@ -878,17 +924,22 @@ export class CueEngine {
 
 		// Slot available — dispatch immediately
 		this.activeRunCount.set(sessionId, currentCount + 1);
-		this.doExecuteCueRun(sessionId, prompt, event, subscriptionName);
+		this.doExecuteCueRun(sessionId, prompt, event, subscriptionName, outputPrompt);
 	}
 
 	/**
 	 * Actually executes a Cue run. Called when a concurrency slot is available.
+	 *
+	 * If outputPrompt is provided, a second run is executed after the main task
+	 * completes successfully. The output prompt receives the main task's stdout
+	 * as context, and its output replaces the stdout passed downstream.
 	 */
 	private async doExecuteCueRun(
 		sessionId: string,
 		prompt: string,
 		event: CueEvent,
-		subscriptionName: string
+		subscriptionName: string,
+		outputPrompt?: string
 	): Promise<void> {
 		const session = this.deps.getSessions().find((s) => s.id === sessionId);
 		const runId = crypto.randomUUID();
@@ -917,6 +968,36 @@ export class CueEngine {
 			result.stdout = runResult.stdout;
 			result.stderr = runResult.stderr;
 			result.exitCode = runResult.exitCode;
+
+			// Execute output prompt if the main task succeeded and an output prompt is configured
+			if (outputPrompt && result.status === 'completed') {
+				this.deps.onLog(
+					'cue',
+					`[CUE] "${subscriptionName}" executing output prompt for downstream handoff`
+				);
+
+				const outputEvent: CueEvent = {
+					...event,
+					id: crypto.randomUUID(),
+					payload: {
+						...event.payload,
+						sourceOutput: result.stdout.substring(0, SOURCE_OUTPUT_MAX_CHARS),
+						outputPromptPhase: true,
+					},
+				};
+
+				const contextPrompt = `${outputPrompt}\n\n---\n\nContext from completed task:\n${result.stdout.substring(0, SOURCE_OUTPUT_MAX_CHARS)}`;
+				const outputResult = await this.deps.onCueRun(sessionId, contextPrompt, outputEvent);
+
+				if (outputResult.status === 'completed') {
+					result.stdout = outputResult.stdout;
+				} else {
+					this.deps.onLog(
+						'cue',
+						`[CUE] "${subscriptionName}" output prompt failed (${outputResult.status}), using main task output`
+					);
+				}
+			}
 		} catch (error) {
 			result.status = 'failed';
 			result.stderr = error instanceof Error ? error.message : String(error);
@@ -976,7 +1057,13 @@ export class CueEngine {
 
 			// Dispatch the queued event
 			this.activeRunCount.set(sessionId, currentCount + 1);
-			this.doExecuteCueRun(sessionId, entry.prompt, entry.event, entry.subscriptionName);
+			this.doExecuteCueRun(
+				sessionId,
+				entry.prompt,
+				entry.event,
+				entry.subscriptionName,
+				entry.outputPrompt
+			);
 		}
 
 		// Clean up empty queue
@@ -1071,7 +1158,7 @@ export class CueEngine {
 				wakeTimeMs: now,
 				sessions: reconcileSessions,
 				onDispatch: (sessionId, sub, event) => {
-					this.executeCueRun(sessionId, sub.prompt, event, sub.name);
+					this.executeCueRun(sessionId, sub.prompt, event, sub.name, sub.output_prompt);
 				},
 				onLog: (level, message) => {
 					this.deps.onLog(level as MainLogLevel, message);

@@ -438,6 +438,34 @@ describe('CueModal', () => {
 		});
 	});
 
+	describe('Edit YAML button', () => {
+		it('should render Edit YAML button for each session', () => {
+			mockUseCueReturn = {
+				...defaultUseCueReturn,
+				sessions: [mockSession],
+			};
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
+
+			expect(screen.getByText('Edit YAML')).toBeInTheDocument();
+		});
+
+		it('should open CueYamlEditor when Edit YAML is clicked', () => {
+			mockUseCueReturn = {
+				...defaultUseCueReturn,
+				sessions: [mockSession],
+			};
+
+			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);
+			fireEvent.click(screen.getByText('Dashboard'));
+
+			fireEvent.click(screen.getByText('Edit YAML'));
+
+			expect(screen.getByTestId('cue-yaml-editor')).toBeInTheDocument();
+		});
+	});
+
 	describe('close behavior', () => {
 		it('should call onClose when close button is clicked', () => {
 			render(<CueModal theme={mockTheme} onClose={mockOnClose} />);

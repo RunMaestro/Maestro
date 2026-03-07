@@ -1152,5 +1152,133 @@ describe('CueEngine', () => {
 
 			engine.stop();
 		});
+
+		it('returns sessions with cue configs when engine is disabled', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			// Engine never started — getStatus should still find configs on disk
+
+			const status = engine.getStatus();
+			expect(status).toHaveLength(1);
+			expect(status[0].sessionId).toBe('session-1');
+			expect(status[0].sessionName).toBe('Test Session');
+			expect(status[0].enabled).toBe(false);
+			expect(status[0].subscriptionCount).toBe(1);
+			expect(status[0].activeRuns).toBe(0);
+		});
+
+		it('returns sessions with enabled=false after engine is stopped', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			// While running, enabled is true
+			expect(engine.getStatus()[0].enabled).toBe(true);
+
+			engine.stop();
+
+			// After stopping, sessions should still appear but with enabled=false
+			const status = engine.getStatus();
+			expect(status).toHaveLength(1);
+			expect(status[0].enabled).toBe(false);
+		});
+	});
+
+	describe('getGraphData', () => {
+		it('returns graph data for active sessions', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+
+			const graph = engine.getGraphData();
+			expect(graph).toHaveLength(1);
+			expect(graph[0].sessionId).toBe('session-1');
+			expect(graph[0].subscriptions).toHaveLength(1);
+
+			engine.stop();
+		});
+
+		it('returns graph data from disk configs when engine is disabled', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			// Never started
+
+			const graph = engine.getGraphData();
+			expect(graph).toHaveLength(1);
+			expect(graph[0].sessionId).toBe('session-1');
+			expect(graph[0].sessionName).toBe('Test Session');
+			expect(graph[0].subscriptions).toHaveLength(1);
+		});
+
+		it('returns graph data after engine is stopped', () => {
+			const config = createMockConfig({
+				subscriptions: [
+					{
+						name: 'timer',
+						event: 'time.interval',
+						enabled: true,
+						prompt: 'test',
+						interval_minutes: 5,
+					},
+				],
+			});
+			mockLoadCueConfig.mockReturnValue(config);
+			const deps = createMockDeps();
+			const engine = new CueEngine(deps);
+			engine.start();
+			engine.stop();
+
+			const graph = engine.getGraphData();
+			expect(graph).toHaveLength(1);
+			expect(graph[0].sessionId).toBe('session-1');
+		});
 	});
 });

@@ -9,14 +9,14 @@ import {
 	LayoutDashboard,
 	GitFork,
 	ArrowLeft,
+	FileCode,
 } from 'lucide-react';
 import type { Theme } from '../types';
 import { useLayerStack } from '../contexts/LayerStackContext';
 import { MODAL_PRIORITIES } from '../constants/modalPriorities';
 import { useCue } from '../hooks/useCue';
 import type { CueSessionStatus, CueRunResult } from '../hooks/useCue';
-// CueYamlEditor kept for future use - visual pipeline editor is the primary interface
-// import { CueYamlEditor } from './CueYamlEditor';
+import { CueYamlEditor } from './CueYamlEditor';
 import { CueHelpContent } from './CueHelpModal';
 // Kept for reference - visual pipeline editor replaces this
 // import { CueGraphView } from './CueGraphView';
@@ -118,12 +118,14 @@ function SessionsTable({
 	sessions,
 	theme,
 	onViewInPipeline,
+	onEditYaml,
 	queueStatus,
 	pipelines,
 }: {
 	sessions: CueSessionStatus[];
 	theme: Theme;
 	onViewInPipeline: (session: CueSessionStatus) => void;
+	onEditYaml: (session: CueSessionStatus) => void;
 	queueStatus: Record<string, number>;
 	pipelines: CuePipeline[];
 }) {
@@ -203,15 +205,26 @@ function SessionsTable({
 								{queueStatus[s.sessionId] ? `${queueStatus[s.sessionId]} queued` : '—'}
 							</td>
 							<td className="py-2 text-right">
-								<button
-									onClick={() => onViewInPipeline(s)}
-									className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
-									style={{ color: CUE_TEAL }}
-									title="View in Pipeline Editor"
-								>
-									<GitFork className="w-3.5 h-3.5" />
-									View in Pipeline
-								</button>
+								<span className="inline-flex items-center gap-2">
+									<button
+										onClick={() => onEditYaml(s)}
+										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
+										style={{ color: theme.colors.textDim }}
+										title="Edit cue.yaml"
+									>
+										<FileCode className="w-3.5 h-3.5" />
+										Edit YAML
+									</button>
+									<button
+										onClick={() => onViewInPipeline(s)}
+										className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs hover:opacity-80 transition-opacity"
+										style={{ color: CUE_TEAL }}
+										title="View in Pipeline Editor"
+									>
+										<GitFork className="w-3.5 h-3.5" />
+										View in Pipeline
+									</button>
+								</span>
 							</td>
 						</tr>
 					);
@@ -494,6 +507,13 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 	// Help modal state
 	const [showHelp, setShowHelp] = useState(false);
 
+	// YAML editor state
+	const [yamlEditorSession, setYamlEditorSession] = useState<CueSessionStatus | null>(null);
+
+	const handleEditYaml = useCallback((session: CueSessionStatus) => {
+		setYamlEditorSession(session);
+	}, []);
+
 	const handleViewInPipeline = useCallback((_session: CueSessionStatus) => {
 		setActiveTab('pipeline');
 	}, []);
@@ -672,6 +692,7 @@ export function CueModal({ theme, onClose, cueShortcutKeys }: CueModalProps) {
 												sessions={sessions}
 												theme={theme}
 												onViewInPipeline={handleViewInPipeline}
+												onEditYaml={handleEditYaml}
 												queueStatus={queueStatus}
 												pipelines={dashboardPipelines}
 											/>
