@@ -218,7 +218,6 @@ describe('Auto-scroll feature', () => {
 			const props = createDefaultProps({
 				session,
 				autoScrollAiMode: true,
-				setAutoScrollAiMode: vi.fn(),
 			});
 
 			const { container, rerender } = render(<TerminalOutput {...props} />);
@@ -250,7 +249,6 @@ describe('Auto-scroll feature', () => {
 					{...createDefaultProps({
 						session: updatedSession,
 						autoScrollAiMode: true,
-						setAutoScrollAiMode: vi.fn(),
 					})}
 				/>
 			);
@@ -283,7 +281,6 @@ describe('Auto-scroll feature', () => {
 			const props = createDefaultProps({
 				session,
 				autoScrollAiMode: false, // OFF — so badge system is active
-				setAutoScrollAiMode: vi.fn(),
 			});
 
 			const { container, rerender } = render(<TerminalOutput {...props} />);
@@ -310,7 +307,6 @@ describe('Auto-scroll feature', () => {
 					{...createDefaultProps({
 						session: updatedSession,
 						autoScrollAiMode: false,
-						setAutoScrollAiMode: vi.fn(),
 					})}
 				/>
 			);
@@ -338,7 +334,6 @@ describe('Auto-scroll feature', () => {
 			const props = createDefaultProps({
 				session,
 				autoScrollAiMode: true,
-				setAutoScrollAiMode: vi.fn(),
 			});
 
 			const { container, rerender } = render(<TerminalOutput {...props} />);
@@ -368,7 +363,6 @@ describe('Auto-scroll feature', () => {
 					{...createDefaultProps({
 						session: updatedSession,
 						autoScrollAiMode: true,
-						setAutoScrollAiMode: vi.fn(),
 					})}
 				/>
 			);
