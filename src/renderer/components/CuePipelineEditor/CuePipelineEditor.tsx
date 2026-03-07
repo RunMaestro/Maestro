@@ -6,7 +6,7 @@
  * connecting them, and managing named pipelines with distinct colors.
  */
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactFlow, {
 	Background,
 	Controls,
@@ -29,6 +29,7 @@ import type {
 	CuePipelineState,
 	CuePipeline,
 	PipelineNode,
+	PipelineEdge as PipelineEdgeType,
 	TriggerNodeData,
 	AgentNodeData,
 	CueEventType,
@@ -41,6 +42,8 @@ import { TriggerDrawer } from './drawers/TriggerDrawer';
 import { AgentDrawer } from './drawers/AgentDrawer';
 import { PipelineSelector } from './PipelineSelector';
 import { getNextPipelineColor } from './pipelineColors';
+import { NodeConfigPanel } from './panels/NodeConfigPanel';
+import { EdgeConfigPanel } from './panels/EdgeConfigPanel';
 
 interface CueGraphSession {
 	sessionId: string;
@@ -238,7 +241,7 @@ function convertToReactFlowEdges(
 	return edges;
 }
 
-function CuePipelineEditorInner({ sessions, theme }: CuePipelineEditorProps) {
+function CuePipelineEditorInner({ sessions, onSwitchToSession, theme }: CuePipelineEditorProps) {
 	const reactFlowInstance = useReactFlow();
 
 	const [pipelineState, setPipelineState] = useState<CuePipelineState>({
@@ -248,6 +251,8 @@ function CuePipelineEditorInner({ sessions, theme }: CuePipelineEditorProps) {
 
 	const [triggerDrawerOpen, setTriggerDrawerOpen] = useState(false);
 	const [agentDrawerOpen, setAgentDrawerOpen] = useState(false);
+	const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+	const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
 
 	const createPipeline = useCallback(() => {
 		setPipelineState((prev) => {
@@ -328,6 +333,182 @@ function CuePipelineEditorInner({ sessions, theme }: CuePipelineEditorProps) {
 		}
 		return ids;
 	}, [pipelineState.pipelines]);
+
+	// Resolve selected node/edge from pipeline state using the composite IDs
+	const { selectedNode, selectedNodePipelineId } = useMemo(() => {
+		if (!selectedNodeId) return { selectedNode: null, selectedNodePipelineId: null };
+		// selectedNodeId is composite: "pipelineId:nodeId"
+		const sepIdx = selectedNodeId.indexOf(':');
+		if (sepIdx === -1) return { selectedNode: null, selectedNodePipelineId: null };
+		const pipelineId = selectedNodeId.substring(0, sepIdx);
+		const nodeId = selectedNodeId.substring(sepIdx + 1);
+		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId);
+		const node = pipeline?.nodes.find((n) => n.id === nodeId);
+		return { selectedNode: node ?? null, selectedNodePipelineId: node ? pipelineId : null };
+	}, [selectedNodeId, pipelineState.pipelines]);
+
+	const { selectedEdge, selectedEdgePipelineId, selectedEdgePipelineColor } = useMemo(() => {
+		if (!selectedEdgeId)
+			return {
+				selectedEdge: null,
+				selectedEdgePipelineId: null,
+				selectedEdgePipelineColor: '#06b6d4',
+			};
+		const sepIdx = selectedEdgeId.indexOf(':');
+		if (sepIdx === -1)
+			return {
+				selectedEdge: null,
+				selectedEdgePipelineId: null,
+				selectedEdgePipelineColor: '#06b6d4',
+			};
+		const pipelineId = selectedEdgeId.substring(0, sepIdx);
+		const edgeLocalId = selectedEdgeId.substring(sepIdx + 1);
+		const pipeline = pipelineState.pipelines.find((p) => p.id === pipelineId);
+		const edge = pipeline?.edges.find((e) => e.id === edgeLocalId);
+		return {
+			selectedEdge: edge ?? null,
+			selectedEdgePipelineId: edge ? pipelineId : null,
+			selectedEdgePipelineColor: pipeline?.color ?? '#06b6d4',
+		};
+	}, [selectedEdgeId, pipelineState.pipelines]);
+
+	// Resolve source/target nodes for the selected edge
+	const { edgeSourceNode, edgeTargetNode } = useMemo(() => {
+		if (!selectedEdge || !selectedEdgePipelineId)
+			return { edgeSourceNode: null, edgeTargetNode: null };
+		const pipeline = pipelineState.pipelines.find((p) => p.id === selectedEdgePipelineId);
+		if (!pipeline) return { edgeSourceNode: null, edgeTargetNode: null };
+		return {
+			edgeSourceNode: pipeline.nodes.find((n) => n.id === selectedEdge.source) ?? null,
+			edgeTargetNode: pipeline.nodes.find((n) => n.id === selectedEdge.target) ?? null,
+		};
+	}, [selectedEdge, selectedEdgePipelineId, pipelineState.pipelines]);
+
+	const onNodeClick = useCallback((_event: React.MouseEvent, node: Node) => {
+		setSelectedNodeId(node.id);
+		setSelectedEdgeId(null);
+	}, []);
+
+	const onEdgeClick = useCallback((_event: React.MouseEvent, edge: Edge) => {
+		setSelectedEdgeId(edge.id);
+		setSelectedNodeId(null);
+	}, []);
+
+	const onPaneClick = useCallback(() => {
+		setSelectedNodeId(null);
+		setSelectedEdgeId(null);
+	}, []);
+
+	const onUpdateNode = useCallback(
+		(nodeId: string, data: Partial<TriggerNodeData | AgentNodeData>) => {
+			if (!selectedNodePipelineId) return;
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== selectedNodePipelineId) return p;
+					return {
+						...p,
+						nodes: p.nodes.map((n) => {
+							if (n.id !== nodeId) return n;
+							return { ...n, data: { ...n.data, ...data } };
+						}),
+					};
+				}),
+			}));
+		},
+		[selectedNodePipelineId]
+	);
+
+	const onDeleteNode = useCallback(
+		(nodeId: string) => {
+			if (!selectedNodePipelineId) return;
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== selectedNodePipelineId) return p;
+					return {
+						...p,
+						nodes: p.nodes.filter((n) => n.id !== nodeId),
+						edges: p.edges.filter((e) => e.source !== nodeId && e.target !== nodeId),
+					};
+				}),
+			}));
+			setSelectedNodeId(null);
+		},
+		[selectedNodePipelineId]
+	);
+
+	const onUpdateEdge = useCallback(
+		(edgeId: string, updates: Partial<PipelineEdgeType>) => {
+			if (!selectedEdgePipelineId) return;
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== selectedEdgePipelineId) return p;
+					return {
+						...p,
+						edges: p.edges.map((e) => {
+							if (e.id !== edgeId) return e;
+							return { ...e, ...updates };
+						}),
+					};
+				}),
+			}));
+		},
+		[selectedEdgePipelineId]
+	);
+
+	const onDeleteEdge = useCallback(
+		(edgeId: string) => {
+			if (!selectedEdgePipelineId) return;
+			setPipelineState((prev) => ({
+				...prev,
+				pipelines: prev.pipelines.map((p) => {
+					if (p.id !== selectedEdgePipelineId) return p;
+					return {
+						...p,
+						edges: p.edges.filter((e) => e.id !== edgeId),
+					};
+				}),
+			}));
+			setSelectedEdgeId(null);
+		},
+		[selectedEdgePipelineId]
+	);
+
+	// Keyboard shortcut: Delete/Backspace removes selected node or edge
+	useEffect(() => {
+		const handleKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				// Don't intercept if user is typing in an input
+				const target = e.target as HTMLElement;
+				if (
+					target.tagName === 'INPUT' ||
+					target.tagName === 'TEXTAREA' ||
+					target.tagName === 'SELECT'
+				)
+					return;
+
+				if (selectedNode && selectedNodePipelineId) {
+					e.preventDefault();
+					onDeleteNode(selectedNode.id);
+				} else if (selectedEdge && selectedEdgePipelineId) {
+					e.preventDefault();
+					onDeleteEdge(selectedEdge.id);
+				}
+			}
+		};
+
+		window.addEventListener('keydown', handleKeyDown);
+		return () => window.removeEventListener('keydown', handleKeyDown);
+	}, [
+		selectedNode,
+		selectedNodePipelineId,
+		selectedEdge,
+		selectedEdgePipelineId,
+		onDeleteNode,
+		onDeleteEdge,
+	]);
 
 	const onNodesChange: OnNodesChange = useCallback(
 		(changes) => {
@@ -570,6 +751,9 @@ function CuePipelineEditorInner({ sessions, theme }: CuePipelineEditorProps) {
 					onNodesChange={onNodesChange}
 					onEdgesChange={onEdgesChange}
 					onConnect={onConnect}
+					onNodeClick={onNodeClick}
+					onEdgeClick={onEdgeClick}
+					onPaneClick={onPaneClick}
 					onDragOver={onDragOver}
 					onDrop={onDrop}
 					fitView
@@ -601,6 +785,27 @@ function CuePipelineEditorInner({ sessions, theme }: CuePipelineEditorProps) {
 					sessions={sessions}
 					onCanvasSessionIds={onCanvasSessionIds}
 				/>
+
+				{/* Config panels */}
+				{selectedNode && !selectedEdge && (
+					<NodeConfigPanel
+						selectedNode={selectedNode}
+						pipelines={pipelineState.pipelines}
+						onUpdateNode={onUpdateNode}
+						onDeleteNode={onDeleteNode}
+						onSwitchToAgent={onSwitchToSession}
+					/>
+				)}
+				{selectedEdge && !selectedNode && (
+					<EdgeConfigPanel
+						selectedEdge={selectedEdge}
+						sourceNode={edgeSourceNode}
+						targetNode={edgeTargetNode}
+						pipelineColor={selectedEdgePipelineColor}
+						onUpdateEdge={onUpdateEdge}
+						onDeleteEdge={onDeleteEdge}
+					/>
+				)}
 			</div>
 		</div>
 	);
