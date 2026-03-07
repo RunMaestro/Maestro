@@ -35,6 +35,8 @@ import { AUTO_RUN_FOLDER_NAME, wizardDebugLogger } from '../services/phaseGenera
 import { getNextFillerPhrase } from '../services/fillerPhrases';
 import { ScreenReaderAnnouncement } from '../ScreenReaderAnnouncement';
 import { formatShortcutKeys } from '../../../utils/shortcutFormatter';
+import { TypingIndicator } from '../shared/TypingIndicator';
+import { formatAgentName, getToolDetail } from '../shared/wizardHelpers';
 
 interface ConversationScreenProps {
 	theme: Theme;
@@ -42,23 +44,6 @@ interface ConversationScreenProps {
 	showThinking: boolean;
 	/** Callback to toggle thinking display (controlled by parent for global shortcut) */
 	setShowThinking: (value: boolean | ((prev: boolean) => boolean)) => void;
-}
-
-/**
- * Check if a string contains an emoji
- */
-function containsEmoji(str: string): boolean {
-	const emojiRegex =
-		/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u;
-	return emojiRegex.test(str);
-}
-
-/**
- * Format agent name with robot emoji prefix if no emoji present
- */
-function formatAgentName(name: string): string {
-	if (!name) return '🤖 Agent';
-	return containsEmoji(name) ? name : `🤖 ${name}`;
 }
 
 /**
@@ -270,128 +255,6 @@ function MessageBubble({
 				</div>
 			</div>
 		</div>
-	);
-}
-
-/**
- * TypingIndicator - Shows when agent is "thinking" with a typewriter effect filler phrase
- * Rotates to a new phrase every 5 seconds after typing completes
- */
-function TypingIndicator({
-	theme,
-	agentName,
-	fillerPhrase,
-	onRequestNewPhrase,
-}: {
-	theme: Theme;
-	agentName: string;
-	fillerPhrase: string;
-	onRequestNewPhrase: () => void;
-}): JSX.Element {
-	const [displayedText, setDisplayedText] = useState('');
-	const [isTypingComplete, setIsTypingComplete] = useState(false);
-
-	// Typewriter effect
-	useEffect(() => {
-		const text = fillerPhrase || 'Thinking...';
-		let currentIndex = 0;
-		setDisplayedText('');
-		setIsTypingComplete(false);
-
-		const typeInterval = setInterval(() => {
-			if (currentIndex < text.length) {
-				setDisplayedText(text.slice(0, currentIndex + 1));
-				currentIndex++;
-			} else {
-				setIsTypingComplete(true);
-				clearInterval(typeInterval);
-			}
-		}, 30); // 30ms per character for a natural typing speed
-
-		return () => clearInterval(typeInterval);
-	}, [fillerPhrase]);
-
-	// Rotate to new phrase 5 seconds after typing completes
-	useEffect(() => {
-		if (!isTypingComplete) return;
-
-		const rotateTimer = setTimeout(() => {
-			onRequestNewPhrase();
-		}, 5000);
-
-		return () => clearTimeout(rotateTimer);
-	}, [isTypingComplete, onRequestNewPhrase]);
-
-	return (
-		<div className="flex justify-start mb-4">
-			<div
-				className="rounded-lg rounded-bl-none px-4 py-3"
-				style={{ backgroundColor: theme.colors.bgActivity }}
-			>
-				<div className="text-xs font-medium mb-2" style={{ color: theme.colors.accent }}>
-					{formatAgentName(agentName)}
-				</div>
-				<div className="text-sm" style={{ color: theme.colors.textMain }}>
-					<span className="italic" style={{ color: theme.colors.textDim }}>
-						{displayedText}
-					</span>
-					<span
-						className={`ml-1 inline-flex items-center gap-0.5 ${isTypingComplete ? 'opacity-100' : 'opacity-50'}`}
-					>
-						<span
-							className="w-1.5 h-1.5 rounded-full animate-bounce inline-block"
-							style={{
-								backgroundColor: theme.colors.accent,
-								animationDelay: '0ms',
-							}}
-						/>
-						<span
-							className="w-1.5 h-1.5 rounded-full animate-bounce inline-block"
-							style={{
-								backgroundColor: theme.colors.accent,
-								animationDelay: '150ms',
-							}}
-						/>
-						<span
-							className="w-1.5 h-1.5 rounded-full animate-bounce inline-block"
-							style={{
-								backgroundColor: theme.colors.accent,
-								animationDelay: '300ms',
-							}}
-						/>
-					</span>
-				</div>
-			</div>
-		</div>
-	);
-}
-
-/**
- * Safely convert a value to a string for rendering.
- * Returns the string if it's already a string, otherwise null.
- * This prevents objects from being passed to React as children.
- */
-function safeString(value: unknown): string | null {
-	return typeof value === 'string' ? value : null;
-}
-
-/**
- * Extract a descriptive detail string from tool input.
- * Looks for common properties like command, pattern, file_path, query.
- * Only returns actual strings - objects are safely ignored to prevent React errors.
- */
-function getToolDetail(input: unknown): string | null {
-	if (!input || typeof input !== 'object') return null;
-	const inputObj = input as Record<string, unknown>;
-	// Check common tool input properties in order of preference
-	// Use safeString to ensure we only return actual strings, not objects
-	return (
-		safeString(inputObj.command) ||
-		safeString(inputObj.pattern) ||
-		safeString(inputObj.file_path) ||
-		safeString(inputObj.query) ||
-		safeString(inputObj.path) ||
-		null
 	);
 }
 

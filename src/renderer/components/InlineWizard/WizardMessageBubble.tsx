@@ -18,6 +18,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Theme } from '../../types';
 import { getConfidenceColor } from '../Wizard/services/wizardPrompts';
+import { formatAgentName } from '../Wizard/shared/wizardHelpers';
 
 /**
  * Message structure for wizard conversations
@@ -50,23 +51,6 @@ export interface WizardMessageBubbleProps {
 		contextImages?: string[],
 		source?: 'staged' | 'history'
 	) => void;
-}
-
-/**
- * Check if a string contains an emoji
- */
-function containsEmoji(str: string): boolean {
-	const emojiRegex =
-		/[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]/u;
-	return emojiRegex.test(str);
-}
-
-/**
- * Format agent name with robot emoji prefix if no emoji present
- */
-function formatAgentName(name: string): string {
-	if (!name) return '🤖 Agent';
-	return containsEmoji(name) ? name : `🤖 ${name}`;
 }
 
 /**
