@@ -491,8 +491,10 @@ export const useTabStore = create<TabStore>()((set) => ({
 		if (!session) return;
 		const updatedSession = closeTerminalTabHelper(session, tabId);
 		if (updatedSession === session) return; // Tab not found
-		// Kill the PTY process after confirming the tab will be removed
-		window.maestro.process.kill(getTerminalSessionId(session.id, tabId));
+		// Kill the PTY process after confirming the tab will be removed.
+		// Catch is intentional: the process may have already exited (race between PTY exit
+		// and the close action), so a rejection here is expected and not fatal.
+		window.maestro.process.kill(getTerminalSessionId(session.id, tabId)).catch(() => {});
 		updateActiveSession(updatedSession);
 	},
 

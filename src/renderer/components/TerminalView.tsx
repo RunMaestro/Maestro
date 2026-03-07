@@ -178,10 +178,10 @@ export const TerminalView = memo(
 		// explicit refresh here. The display:none → display:flex transition can wipe the WebGL/canvas
 		// framebuffer, so we must tell xterm.js to redraw from its internal buffer.
 		useEffect(() => {
-				if (isVisible && activeTab) {
+			if (isVisible && activeTab) {
 				const timer = setTimeout(() => {
 					const handle = terminalRefs.current.get(activeTab.id);
-						handle?.refresh();
+					handle?.refresh();
 					handle?.focus();
 				}, 50);
 				return () => clearTimeout(timer);
@@ -206,7 +206,7 @@ export const TerminalView = memo(
 				onTabStateChange(parsed.tabId, 'exited', code);
 			});
 			return cleanup;
-		}, [session.id]);
+		}, [session.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
 		// Write shell exit message to xterm buffer when a tab transitions to 'exited'
 		useEffect(() => {

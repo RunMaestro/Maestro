@@ -429,7 +429,7 @@ export const MainPanel = React.memo(
 		const defaultShell = useSettingsStore((s) => s.defaultShell);
 		const fontSize = useSettingsStore((s) => s.fontSize);
 		const enterToSendAI = useSettingsStore((s) => s.enterToSendAI);
-const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
+		const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 		const autoScrollAiMode = useSettingsStore((s) => s.autoScrollAiMode);
 		const userMessageAlignment = useSettingsStore((s) => s.userMessageAlignment);
 		const shortcuts = useSettingsStore((s) => s.shortcuts);
@@ -479,6 +479,16 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 		// Narrow subscription: only re-renders when sessions are added/removed (not on content updates).
 		// Used to clean up deleted sessions from mountedTerminalSessionIds.
 		const allSessionIds = useSessionStore((s) => s.sessions.map((ses) => ses.id).join(','));
+
+		// Narrow subscription: re-renders when any mounted session's terminal tab states or PIDs change.
+		// This ensures non-active TerminalView components receive a fresh session object (e.g., when
+		// a background PTY exits) so their [session.terminalTabs] effect fires and writes the exit message.
+		const mountedTerminalTabStateKey = useSessionStore((s) =>
+			s.sessions
+				.filter((ses) => mountedTerminalSessionIds.includes(ses.id))
+				.flatMap((ses) => (ses.terminalTabs ?? []).map((t) => `${ses.id}:${t.id}:${t.state}:${t.pid}`))
+				.join('|')
+		);
 
 		// Add session to the mounted set when it becomes active and has terminal tabs.
 		// Remove it when its terminal tabs are all closed.
@@ -1922,9 +1932,16 @@ const chatRawTextMode = useSettingsStore((s) => s.chatRawTextMode);
 						     at non-zero dimensions so the WebGL context is never lost or cleared. */}
 						{mountedTerminalSessionIds.map((sessionId) => {
 							const isCurrentSession = sessionId === activeSession.id;
+							// For non-active sessions, look up the live session from the store so TerminalView
+							// receives fresh terminal tab states (e.g., 'exited') even while the session is
+							// hidden. mountedTerminalTabStateKey triggers the re-render; getState() provides
+							// up-to-date session data at render time. The ref is a fallback for the brief
+							// window between tab close and eviction.
+							void mountedTerminalTabStateKey;
 							const session = isCurrentSession
 								? activeSession
-								: mountedTerminalSessionsRef.current.get(sessionId);
+								: useSessionStore.getState().sessions.find((s) => s.id === sessionId)
+								  ?? mountedTerminalSessionsRef.current.get(sessionId);
 							if (!session) return null;
 							const isTerminalVisible = isCurrentSession && session.inputMode === 'terminal';
 							return (

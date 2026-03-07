@@ -17,18 +17,6 @@ vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
 	}),
 }));
 
-// Mock useSettings hook (mutable so individual tests can override)
-const mockDirNotesSettings = vi.hoisted(() => ({
-	provider: 'claude-code' as const,
-	defaultLookbackDays: 7,
-}));
-
-vi.mock('../../../../renderer/hooks/settings/useSettings', () => ({
-	useSettings: () => ({
-		directorNotesSettings: mockDirNotesSettings,
-	}),
-}));
-
 // Mock useListNavigation
 const mockHandleKeyDown = vi.fn();
 const mockSetSelectedIndex = vi.fn();
