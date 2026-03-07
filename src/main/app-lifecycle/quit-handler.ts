@@ -10,6 +10,7 @@ import type { WebServer } from '../web-server';
 import { tunnelManager as tunnelManagerInstance } from '../tunnel-manager';
 import type { HistoryManager } from '../history-manager';
 import { isWebContentsAvailable } from '../utils/safe-send';
+import { deleteCliServerInfo } from '../../shared/cli-server-discovery';
 
 /** Dependencies for quit handler */
 export interface QuitHandlerDependencies {
@@ -183,6 +184,10 @@ export function createQuitHandler(deps: QuitHandlerDependencies): QuitHandler {
 		webServer?.stop().catch((err: unknown) => {
 			logger.error(`Error stopping web server: ${err}`, 'Shutdown');
 		});
+
+		// Delete CLI server discovery file so CLI knows we're gone
+		logger.info('Deleting CLI server discovery file', 'Shutdown');
+		deleteCliServerInfo();
 
 		// Close stats database
 		logger.info('Closing stats database', 'Shutdown');

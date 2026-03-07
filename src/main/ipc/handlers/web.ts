@@ -27,7 +27,7 @@ import { logger } from '../../utils/logger';
 import { WebServer } from '../../web-server';
 import type { AITabData } from '../../web-server/services/broadcastService';
 import type { SettingsStoreInterface } from '../../stores/types';
-import { writeCliServerInfo } from '../../../shared/cli-server-discovery';
+import { writeCliServerInfo, deleteCliServerInfo } from '../../../shared/cli-server-discovery';
 
 /**
  * Timeout for waiting for web server to become active (ms)
@@ -304,6 +304,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info('Stopping web server', 'WebServer');
 			await webServer.stop();
 			setWebServer(null); // Allow garbage collection, will recreate on next start
+			deleteCliServerInfo(); // Remove discovery file since server is no longer running
 			logger.info('Web server stopped and cleaned up', 'WebServer');
 			return { success: true };
 		} catch (error: any) {
@@ -384,6 +385,7 @@ export function registerWebHandlers(deps: WebHandlerDependencies): void {
 			logger.info(`Disabled ${count} live sessions, stopping server`, 'Live');
 			await webServer.stop();
 			setWebServer(null);
+			deleteCliServerInfo(); // Remove discovery file since server is no longer running
 			return { success: true, count };
 		} catch (error: any) {
 			logger.error(`Failed to stop web server during disableAll: ${error.message}`, 'WebServer');
